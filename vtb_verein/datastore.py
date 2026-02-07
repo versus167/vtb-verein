@@ -7,7 +7,7 @@ Created on 07.02.2026
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 1  # hier erhöhst du bei Änderungen am Schema
+SCHEMA_VERSION = 3  # hier erhöhst du bei Änderungen am Schema
 
 
 class VereinsDB:
@@ -76,7 +76,14 @@ class VereinsDB:
         if current == 0:
             self._migrate_0_to_1()
             current = 1
-
+        
+        if current == 1:
+            self._migrate_1_to_2()
+            current = 2
+            
+        if current == 2:
+            self._migrate_2_to_3()
+            current = 3
         # hier zukünftige Migrationen einbauen:
         # if current == 1:
         #     self._migrate_1_to_2()
@@ -224,3 +231,186 @@ class VereinsDB:
             # Hier könntest du direkt noch Trigger hinzufügen (später Schritt)
 
         self._set_schema_version(1)
+    
+    # -----------------------------------
+    # Migration 1 -> 2
+    # -----------------------------------
+    def _migrate_1_to_2(self):
+        """Version-Spalte + History-Tabellen für alle Haupttabellen."""
+        with self.cursor() as cur:
+            # 1) version-Spalten ergänzen (falls noch nicht vorhanden)
+            # SQLite kennt IF NOT EXISTS bei ALTER TABLE ADD COLUMN nicht,
+            # daher hier simpel und idempotent: Fehler ignorieren.
+            for table in [
+                "mitglied",
+                "abteilung",
+                "mitglied_abteilung",
+                "beitragsregel",
+                "beitrag_sollstellung",
+            ]:
+                try:
+                    cur.execute(
+                        f"ALTER TABLE {table} ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+                    )
+                except sqlite3.OperationalError:
+                    # Spalte existiert bereits -> ignorieren
+                    pass
+
+            # 2) History-Tabellen anlegen
+
+            # mitglied_history
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mitglied_history (
+                  id                INTEGER NOT NULL,
+                  version           INTEGER NOT NULL,
+
+                  mitgliedsnummer   TEXT,
+                  vorname           TEXT,
+                  nachname          TEXT,
+                  geburtsdatum      TEXT,
+                  strasse           TEXT,
+                  plz               TEXT,
+                  ort               TEXT,
+                  land              TEXT,
+                  email             TEXT,
+                  telefon           TEXT,
+
+                  eintrittsdatum    TEXT,
+                  austrittsdatum    TEXT,
+                  status            TEXT,
+
+                  zahlungsart       TEXT,
+                  iban              TEXT,
+                  bic               TEXT,
+                  kontoinhaber      TEXT,
+                  abgerechnet_bis   TEXT,
+
+                  created_at        TEXT,
+                  created_by        TEXT,
+                  updated_at        TEXT,
+                  updated_by        TEXT,
+
+                  history_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  history_created_by TEXT,
+
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+
+            # abteilung_history
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS abteilung_history (
+                  id                INTEGER NOT NULL,
+                  version           INTEGER NOT NULL,
+
+                  name              TEXT,
+                  kuerzel           TEXT,
+                  beschreibung      TEXT,
+
+                  created_at        TEXT,
+                  created_by        TEXT,
+                  updated_at        TEXT,
+                  updated_by        TEXT,
+
+                  history_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  history_created_by TEXT,
+
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+
+            # mitglied_abteilung_history
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mitglied_abteilung_history (
+                  id                INTEGER NOT NULL,
+                  version           INTEGER NOT NULL,
+
+                  mitglied_id       INTEGER,
+                  abteilung_id      INTEGER,
+                  status            TEXT,
+                  von               TEXT,
+                  bis               TEXT,
+
+                  created_at        TEXT,
+                  created_by        TEXT,
+                  updated_at        TEXT,
+                  updated_by        TEXT,
+
+                  history_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  history_created_by TEXT,
+
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+
+            # beitragsregel_history
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS beitragsregel_history (
+                  id                INTEGER NOT NULL,
+                  version           INTEGER NOT NULL,
+
+                  name              TEXT,
+                  abteilung_id      INTEGER,
+                  betrag            REAL,
+                  periode           TEXT,
+                  gueltig_ab        TEXT,
+                  bedingung_raw     TEXT,
+
+                  created_at        TEXT,
+                  created_by        TEXT,
+                  updated_at        TEXT,
+                  updated_by        TEXT,
+
+                  history_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  history_created_by TEXT,
+
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+
+            # beitrag_sollstellung_history
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS beitrag_sollstellung_history (
+                  id                INTEGER NOT NULL,
+                  version           INTEGER NOT NULL,
+
+                  mitglied_id       INTEGER,
+                  beitragsregel_id  INTEGER,
+                  jahr              INTEGER,
+                  betrag_soll       REAL,
+                  faellig_am        TEXT,
+
+                  created_at        TEXT,
+                  created_by        TEXT,
+                  updated_at        TEXT,
+                  updated_by        TEXT,
+
+                  history_created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  history_created_by TEXT,
+
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+
+        self._set_schema_version(2)
+    
+    def _migrate_2_to_3(self):
+        """Entfernt die alte audit_log-Tabelle, die nicht mehr verwendet wird."""
+        with self.cursor() as cur:
+            try:
+                cur.execute("DROP TABLE IF EXISTS audit_log")
+            except sqlite3.OperationalError:
+                # falls sie nie existiert hat oder schon weg ist
+                pass
+
+        self._set_schema_version(3)
