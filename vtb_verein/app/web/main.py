@@ -1,27 +1,118 @@
-'''
-Created on 08.02.2026
-
-@author: volker
-'''
 # app/web/main.py
 from nicegui import ui
 
 from app.db.datastore import VereinsDB
 from app.services.abteilungen_service import AbteilungenService
+from app.models.abteilung import Abteilung
 
-db = VereinsDB('vereinsdb.sqlite')   # Pfad anpassen
+db = VereinsDB('vereinsdb.sqlite')
 abteilungen_service = AbteilungenService(db)
 
 
 @ui.page('/')
+@ui.page('/')
 def index():
     ui.label('Abteilungen verwalten').classes('text-h5 mb-4')
 
-    name_input = ui.input('Name')
-    kuerzel_input = ui.input('Kürzel')
-    beschreibung_input = ui.input('Beschreibung')
+    # ---------- Formular-Zustand ----------
+    current_abt: Abteilung | None = None
+    form_dirty = False
 
-    status_label = ui.label().classes('text-positive')
+    def mark_dirty(e=None):
+        nonlocal form_dirty
+        form_dirty = True
+
+    # ---------- Formular ----------
+    name_input = ui.input('Name').on('input', mark_dirty)
+    kuerzel_input = ui.input('Kürzel').on('input', mark_dirty)
+    beschreibung_input = ui.input('Beschreibung').on('input', mark_dirty)
+
+    status_label = ui.label().classes('text-positive text-caption mt-1')
+
+    # ---------- Platzhalter, wird später definiert ----------
+    def refresh_table():
+        ...
+
+    # ---------- Bestätigungs-Dialog fürs Verwerfen ----------
+    confirm_dialog = ui.dialog()
+    with confirm_dialog:
+        with ui.card():
+            ui.label('Ungespeicherte Änderungen verwerfen?').classes('text-h6 mb-2')
+            ui.label(
+                'Es liegen Änderungen im Formular vor, die noch nicht gespeichert wurden.'
+            ).classes('mb-3')
+            with ui.row():
+                ui.button(
+                    'Ja',
+                    on_click=lambda: confirm_dialog.submit(True),
+                    color='primary',
+                )
+                ui.button(
+                    'Nein',
+                    on_click=lambda: confirm_dialog.submit(False),
+                )
+
+    async def confirm_discard_if_dirty() -> bool:
+        nonlocal form_dirty
+        if not form_dirty:
+            return True
+        result = await confirm_dialog
+        return bool(result)
+
+    # ---------- Aktionen: Neu / Speichern (ÜBER der Tabelle) ----------
+    async def new_abteilung():
+        nonlocal current_abt, form_dirty
+        if not await confirm_discard_if_dirty():
+            return
+        current_abt = None
+        name_input.value = ''
+        kuerzel_input.value = ''
+        beschreibung_input.value = ''
+        status_label.text = 'Neu-Modus (neue Abteilung anlegen)'
+        form_dirty = False
+
+    def save_abteilung():
+        nonlocal current_abt, form_dirty
+        name = name_input.value or ''
+        kuerzel = kuerzel_input.value or None
+        beschreibung = beschreibung_input.value or None
+
+        if current_abt is None:
+            abteilungen_service.create_abteilung(
+                name=name,
+                kuerzel=kuerzel,
+                beschreibung=beschreibung,
+                user='webui',
+            )
+            status_label.text = 'Abteilung angelegt'
+        else:
+            current_abt.name = name
+            current_abt.kuerzel = kuerzel
+            current_abt.beschreibung = beschreibung
+            ok = abteilungen_service.update_abteilung(current_abt, user='webui')
+            if not ok:
+                status_label.text = (
+                    'Konflikt: Abteilung wurde inzwischen geändert. '
+                    'Bitte Ansicht aktualisieren.'
+                )
+                return
+            status_label.text = f'Abteilung #{current_abt.id} gespeichert'
+
+        form_dirty = False
+        refresh_table()
+
+    with ui.row().classes('mt-2'):
+        ui.button('Neu', on_click=new_abteilung)
+        ui.button('Speichern', on_click=save_abteilung, color='primary')
+
+    # ---------- Tabelle (unterhalb der Buttons) ----------
+    columns = [
+        {'name': 'id', 'label': 'ID', 'field': 'id'},
+        {'name': 'name', 'label': 'Name', 'field': 'name'},
+        {'name': 'kuerzel', 'label': 'Kürzel', 'field': 'kuerzel'},
+        {'name': 'beschreibung', 'label': 'Beschreibung', 'field': 'beschreibung'},
+    ]
+    table = ui.table(columns=columns, rows=[], row_key='id').classes('mt-2 w-full')
 
     def refresh_table():
         table.rows = [
@@ -33,31 +124,28 @@ def index():
             }
             for a in abteilungen_service.list_abteilungen()
         ]
+        table.update()
 
-    def create_abteilung():
-        abteilungen_service.create_abteilung(
-            name=name_input.value or '',
-            kuerzel=kuerzel_input.value or None,
-            beschreibung=beschreibung_input.value or None,
-            user='webui',
-        )
-        name_input.value = ''
-        kuerzel_input.value = ''
-        beschreibung_input.value = ''
-        status_label.text = 'Abteilung angelegt'
-        refresh_table()
+    # ---------- Tabellen-Klick lädt Abteilung ins Formular ----------
+    async def on_row_click(e):
+        nonlocal current_abt, form_dirty
+        if not await confirm_discard_if_dirty():
+            return
 
-    ui.button('Anlegen', on_click=create_abteilung).classes('mt-2')
+        row = e.args[1]
+        abteilungs_id = row['id']
+        current_abt = abteilungen_service.get_abteilung(abteilungs_id)
 
-    columns = [
-        {'name': 'id', 'label': 'ID', 'field': 'id'},
-        {'name': 'name', 'label': 'Name', 'field': 'name'},
-        {'name': 'kuerzel', 'label': 'Kürzel', 'field': 'kuerzel'},
-        {'name': 'beschreibung', 'label': 'Beschreibung', 'field': 'beschreibung'},
-    ]
-    table = ui.table(columns=columns, rows=[], row_key='id').classes('mt-6 w-full')
+        name_input.value = current_abt.name
+        kuerzel_input.value = current_abt.kuerzel or ''
+        beschreibung_input.value = current_abt.beschreibung or ''
+        status_label.text = f'Bearbeite Abteilung #{current_abt.id}'
+        form_dirty = False
+
+    table.on('rowClick', on_row_click)
 
     refresh_table()
+
 
 
 ui.run(title='Vereinsverwaltung – Abteilungen')

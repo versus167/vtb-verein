@@ -38,11 +38,11 @@ class VereinsDB:
         self.conn.close()
 
     def get_abteilung(self, id: int) -> Abteilung:
-        with self.cursor as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
-                       version, createdat, createdby, updatedat, updatedby
+                       version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE id = ?
                 """,
@@ -69,13 +69,13 @@ class VereinsDB:
         with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO abteilung (name, kuerzel, beschreibung, created_by)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO abteilung (name, kuerzel, beschreibung, created_by, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """,
-                (abt.name, abt.kuerzel, abt.beschreibung, created_by),
+                (abt.name, abt.kuerzel, abt.beschreibung, created_by, created_by),
             )
             abt.id = cur.lastrowid
-            # Version, createdat kommen aus Default-Werten der DB [file:1]
+    
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
@@ -86,7 +86,30 @@ class VereinsDB:
                 (abt.id,),
             )
             row = cur.fetchone()
-            return Abteilung(**dict(row))
+            abt_db = Abteilung(**dict(row))
+    
+            # erster History-Eintrag (Version 1)
+            cur.execute(
+                """
+                INSERT INTO abteilung_history
+                (id, version, name, kuerzel, beschreibung,
+                 created_at, created_by, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    abt_db.id,
+                    abt_db.version,
+                    abt_db.name,
+                    abt_db.kuerzel,
+                    abt_db.beschreibung,
+                    abt_db.created_at,
+                    abt_db.created_by,
+                    abt_db.updated_at,
+                    abt_db.updated_by,
+                ),
+            )
+    
+            return abt_db
 
     def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
         with self.cursor() as cur:
@@ -103,32 +126,45 @@ class VereinsDB:
                  updated_by, abt.id, abt.version),
             )
             if cur.rowcount == 0:
-                return False  # Versionskonflikt
-
-            # History-Eintrag [file:1]
+                return False
+    
+            # neuen Stand holen
             cur.execute(
                 """
-                INSERT INTO abteilunghistory
+                SELECT id, name, kuerzel, beschreibung,
+                       version, created_at, created_by, updated_at, updated_by
+                FROM abteilung
+                WHERE id = ?
+                """,
+                (abt.id,),
+            )
+            row = cur.fetchone()
+            new_row = dict(row)
+    
+            # History-Eintrag mit neuem Stand
+            cur.execute(
+                """
+                INSERT INTO abteilung_history
                 (id, version, name, kuerzel, beschreibung,
                  created_at, created_by, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    abt.id,
-                    abt.version,
-                    abt.name,
-                    abt.kuerzel,
-                    abt.beschreibung,
-                    abt.createdat,
-                    abt.createdby,
-                    updated_by,
+                    new_row["id"],
+                    new_row["version"],
+                    new_row["name"],
+                    new_row["kuerzel"],
+                    new_row["beschreibung"],
+                    new_row["created_at"],
+                    new_row["created_by"],
+                    new_row["updated_at"],
+                    new_row["updated_by"],
                 ),
             )
-
-            abt.version += 1
-            abt.updatedby = updated_by
-            # updatedat wird zwar in der DB gesetzt, wenn du magst,
-            # kannst du sie hier mit einem erneuten SELECT nachziehen.
+    
+            abt.version = new_row["version"]
+            abt.updated_at = new_row["updated_at"]
+            abt.updated_by = updated_by
             return True
     # -----------------------------------
     # Schema-Versionierung
