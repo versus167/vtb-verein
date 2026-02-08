@@ -166,6 +166,50 @@ class VereinsDB:
             abt.updated_at = new_row["updated_at"]
             abt.updated_by = updated_by
             return True
+        
+    def can_delete_abteilung(self, abteilung_id: int) -> bool:
+        """True, wenn es weder in Live- noch History-Tabellen Verknüpfungen gibt."""
+        with self.cursor() as cur:
+            # Live-Tabellen
+            cur.execute(
+                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            if cur.fetchone() is not None:
+                return False
+
+            cur.execute(
+                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            if cur.fetchone() is not None:
+                return False
+
+            # History-Tabellen
+            cur.execute(
+                'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            if cur.fetchone() is not None:
+                return False
+
+            cur.execute(
+                'SELECT 1 FROM beitragsregel_history WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            if cur.fetchone() is not None:
+                return False
+
+        return True
+    
+    def delete_abteilung(self, abteilung_id: int) -> bool:
+        """Löscht die Abteilung nur, wenn can_delete_abteilung True zurückgibt."""
+        if not self.can_delete_abteilung(abteilung_id):
+            return False
+
+        with self.cursor() as cur:
+            cur.execute('DELETE FROM abteilung WHERE id = ?', (abteilung_id,))
+            return cur.rowcount == 1    
     # -----------------------------------
     # Schema-Versionierung
     # -----------------------------------

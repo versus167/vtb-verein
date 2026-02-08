@@ -25,3 +25,6 @@ class AbteilungenService:
 
     def update_abteilung(self, abt: Abteilung, user: str) -> bool:
         return self.db.update_abteilung(abt, updated_by=user)
+    
+    def delete_abteilung(self, abteilung_id: int) -> bool:
+        return self.db.delete_abteilung(abteilung_id)
