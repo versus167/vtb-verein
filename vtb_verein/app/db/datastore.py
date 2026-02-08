@@ -6,6 +6,7 @@ Created on 07.02.2026
 
 import sqlite3
 from contextlib import contextmanager
+from app.models.abteilung import Abteilung
 
 SCHEMA_VERSION = 1  # initialer Stand
 
@@ -36,6 +37,99 @@ class VereinsDB:
     def close(self):
         self.conn.close()
 
+    def get_abteilung(self, id: int) -> Abteilung:
+        with self.cursor as cur:
+            cur.execute(
+                """
+                SELECT id, name, kuerzel, beschreibung,
+                       version, createdat, createdby, updatedat, updatedby
+                FROM abteilung
+                WHERE id = ?
+                """,
+                (id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError(f"Abteilung {id} nicht gefunden")
+            return Abteilung(**dict(row))
+
+    def list_abteilungen(self) -> list[Abteilung]:
+        with self.cursor as cur:
+            cur.execute(
+                """
+                SELECT id, name, kuerzel, beschreibung,
+                       version, createdat, createdby, updatedat, updatedby
+                FROM abteilung
+                ORDER BY name
+                """
+            )
+            return [Abteilung(**dict(row)) for row in cur.fetchall()]
+
+    def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
+        with self.cursor as cur:
+            cur.execute(
+                """
+                INSERT INTO abteilung (name, kuerzel, beschreibung, createdby)
+                VALUES (?, ?, ?, ?)
+                """,
+                (abt.name, abt.kuerzel, abt.beschreibung, created_by),
+            )
+            abt.id = cur.lastrowid
+            # Version, createdat kommen aus Default-Werten der DB [file:1]
+            cur.execute(
+                """
+                SELECT id, name, kuerzel, beschreibung,
+                       version, createdat, createdby, updatedat, updatedby
+                FROM abteilung
+                WHERE id = ?
+                """,
+                (abt.id,),
+            )
+            row = cur.fetchone()
+            return Abteilung(**dict(row))
+
+    def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
+        with self.cursor as cur:
+            cur.execute(
+                """
+                UPDATE abteilung
+                SET name = ?, kuerzel = ?, beschreibung = ?,
+                    version = version + 1,
+                    updatedat = CURRENT_TIMESTAMP,
+                    updatedby = ?
+                WHERE id = ? AND version = ?
+                """,
+                (abt.name, abt.kuerzel, abt.beschreibung,
+                 updated_by, abt.id, abt.version),
+            )
+            if cur.rowcount == 0:
+                return False  # Versionskonflikt
+
+            # History-Eintrag [file:1]
+            cur.execute(
+                """
+                INSERT INTO abteilunghistory
+                (id, version, name, kuerzel, beschreibung,
+                 createdat, createdby, updatedat, updatedby)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                """,
+                (
+                    abt.id,
+                    abt.version,
+                    abt.name,
+                    abt.kuerzel,
+                    abt.beschreibung,
+                    abt.createdat,
+                    abt.createdby,
+                    updated_by,
+                ),
+            )
+
+            abt.version += 1
+            abt.updatedby = updated_by
+            # updatedat wird zwar in der DB gesetzt, wenn du magst,
+            # kannst du sie hier mit einem erneuten SELECT nachziehen.
+            return True
     # -----------------------------------
     # Schema-Versionierung
     # -----------------------------------
