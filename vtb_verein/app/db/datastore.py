@@ -54,11 +54,11 @@ class VereinsDB:
             return Abteilung(**dict(row))
 
     def list_abteilungen(self) -> list[Abteilung]:
-        with self.cursor as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
-                       version, createdat, createdby, updatedat, updatedby
+                       version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 ORDER BY name
                 """
@@ -66,10 +66,10 @@ class VereinsDB:
             return [Abteilung(**dict(row)) for row in cur.fetchall()]
 
     def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
-        with self.cursor as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO abteilung (name, kuerzel, beschreibung, createdby)
+                INSERT INTO abteilung (name, kuerzel, beschreibung, created_by)
                 VALUES (?, ?, ?, ?)
                 """,
                 (abt.name, abt.kuerzel, abt.beschreibung, created_by),
@@ -79,7 +79,7 @@ class VereinsDB:
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
-                       version, createdat, createdby, updatedat, updatedby
+                       version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE id = ?
                 """,
@@ -89,14 +89,14 @@ class VereinsDB:
             return Abteilung(**dict(row))
 
     def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
-        with self.cursor as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE abteilung
                 SET name = ?, kuerzel = ?, beschreibung = ?,
                     version = version + 1,
-                    updatedat = CURRENT_TIMESTAMP,
-                    updatedby = ?
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = ?
                 WHERE id = ? AND version = ?
                 """,
                 (abt.name, abt.kuerzel, abt.beschreibung,
@@ -110,7 +110,7 @@ class VereinsDB:
                 """
                 INSERT INTO abteilunghistory
                 (id, version, name, kuerzel, beschreibung,
-                 createdat, createdby, updatedat, updatedby)
+                 created_at, created_by, updated_at, updated_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """,
                 (

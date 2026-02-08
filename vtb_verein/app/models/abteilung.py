@@ -14,7 +14,7 @@ class Abteilung:
     kuerzel: Optional[str] = None
     beschreibung: Optional[str] = None
     version: int = 1
-    createdat: Optional[str] = None
-    createdby: Optional[str] = None
-    updatedat: Optional[str] = None
-    updatedby: Optional[str] = None
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
