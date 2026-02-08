@@ -10,7 +10,6 @@ abteilungen_service = AbteilungenService(db)
 
 
 @ui.page('/')
-@ui.page('/')
 def index():
     ui.label('Abteilungen verwalten').classes('text-h5 mb-4')
 
@@ -59,7 +58,34 @@ def index():
         result = await confirm_dialog
         return bool(result)
 
-    # ---------- Aktionen: Neu / Speichern (ÜBER der Tabelle) ----------
+    # ---------- Bestätigungs-Dialog fürs Löschen ----------
+    delete_dialog = ui.dialog()
+    with delete_dialog:
+        with ui.card():
+            delete_title_label = ui.label().classes('text-h6 mb-2')
+            ui.label(
+                'Dieser Vorgang kann nicht rückgängig gemacht werden.'
+            ).classes('mb-3')
+            with ui.row():
+                ui.button(
+                    'Ja',
+                    on_click=lambda: delete_dialog.submit(True),
+                    color='red',
+                )
+                ui.button(
+                    'Nein',
+                    on_click=lambda: delete_dialog.submit(False),
+                )
+
+    async def confirm_delete() -> bool:
+        """Fragt mit dynamischem Titel nach, ob gelöscht werden soll."""
+        if current_abt is None:
+            return False
+        delete_title_label.text = f'Abteilung #{current_abt.id} wirklich löschen?'
+        result = await delete_dialog
+        return bool(result)
+
+    # ---------- Aktionen: Neu / Speichern / Löschen (ÜBER der Tabelle) ----------
     async def new_abteilung():
         nonlocal current_abt, form_dirty
         if not await confirm_discard_if_dirty():
@@ -101,9 +127,40 @@ def index():
         form_dirty = False
         refresh_table()
 
+    async def delete_abteilung():
+        nonlocal current_abt, form_dirty
+
+        if current_abt is None:
+            status_label.text = 'Keine Abteilung ausgewählt.'
+            return
+
+        # optional: erst Dirty-Check
+        if form_dirty and not await confirm_discard_if_dirty():
+            return
+
+        if not await confirm_delete():
+            return
+
+        success = abteilungen_service.delete_abteilung(current_abt.id)
+        if not success:
+            status_label.text = (
+                'Löschen nicht möglich: Es existieren noch Verknüpfungen '
+                '(inkl. History).'
+            )
+            return
+
+        status_label.text = f'Abteilung #{current_abt.id} gelöscht'
+        current_abt = None
+        name_input.value = ''
+        kuerzel_input.value = ''
+        beschreibung_input.value = ''
+        form_dirty = False
+        refresh_table()
+
     with ui.row().classes('mt-2'):
         ui.button('Neu', on_click=new_abteilung)
         ui.button('Speichern', on_click=save_abteilung, color='primary')
+        ui.button('Löschen', on_click=delete_abteilung, color='red')
 
     # ---------- Tabelle (unterhalb der Buttons) ----------
     columns = [
@@ -145,7 +202,6 @@ def index():
     table.on('rowClick', on_row_click)
 
     refresh_table()
-
 
 
 ui.run(title='Vereinsverwaltung – Abteilungen')
