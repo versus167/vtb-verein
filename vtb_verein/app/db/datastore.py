@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from app.models.abteilung import Abteilung
 
-SCHEMA_VERSION = 2  # erweitert um User-Tabellen
+SCHEMA_VERSION = 1  # Alles in migrate_0_to_1, da noch kein Produktivbetrieb
 
 
 class VereinsDB:
@@ -66,6 +66,7 @@ class VereinsDB:
             return [Abteilung(**dict(row)) for row in cur.fetchall()]
 
     def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
+        """Erstellt neue Abteilung - History wird automatisch durch Trigger geschrieben"""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -86,32 +87,10 @@ class VereinsDB:
                 (abt.id,),
             )
             row = cur.fetchone()
-            abt_db = Abteilung(**dict(row))
-    
-            # erster History-Eintrag (Version 1)
-            cur.execute(
-                """
-                INSERT INTO abteilung_history
-                (id, version, name, kuerzel, beschreibung,
-                 created_at, created_by, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    abt_db.id,
-                    abt_db.version,
-                    abt_db.name,
-                    abt_db.kuerzel,
-                    abt_db.beschreibung,
-                    abt_db.created_at,
-                    abt_db.created_by,
-                    abt_db.updated_at,
-                    abt_db.updated_by,
-                ),
-            )
-    
-            return abt_db
+            return Abteilung(**dict(row))
 
     def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
+        """Aktualisiert Abteilung - History wird automatisch durch Trigger geschrieben"""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -128,7 +107,7 @@ class VereinsDB:
             if cur.rowcount == 0:
                 return False
     
-            # neuen Stand holen
+            # Neuen Stand holen für Rückgabe
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
@@ -140,27 +119,6 @@ class VereinsDB:
             )
             row = cur.fetchone()
             new_row = dict(row)
-    
-            # History-Eintrag mit neuem Stand
-            cur.execute(
-                """
-                INSERT INTO abteilung_history
-                (id, version, name, kuerzel, beschreibung,
-                 created_at, created_by, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_row["id"],
-                    new_row["version"],
-                    new_row["name"],
-                    new_row["kuerzel"],
-                    new_row["beschreibung"],
-                    new_row["created_at"],
-                    new_row["created_by"],
-                    new_row["updated_at"],
-                    new_row["updated_by"],
-                ),
-            )
     
             abt.version = new_row["version"]
             abt.updated_at = new_row["updated_at"]
@@ -203,13 +161,15 @@ class VereinsDB:
         return True
     
     def delete_abteilung(self, abteilung_id: int) -> bool:
-        """Löscht die Abteilung nur, wenn can_delete_abteilung True zurückgibt."""
+        """Löscht die Abteilung nur, wenn can_delete_abteilung True zurückgibt.
+        History wird automatisch durch Trigger geschrieben."""
         if not self.can_delete_abteilung(abteilung_id):
             return False
 
         with self.cursor() as cur:
             cur.execute('DELETE FROM abteilung WHERE id = ?', (abteilung_id,))
-            return cur.rowcount == 1    
+            return cur.rowcount == 1
+
     # -----------------------------------
     # Schema-Versionierung
     # -----------------------------------
@@ -252,10 +212,6 @@ class VereinsDB:
         if current == 0:
             self._migrate_0_to_1()
             current = 1
-        
-        if current == 1:
-            self._migrate_1_to_2()
-            current = 2
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -267,9 +223,11 @@ class VereinsDB:
     # Migrationen
     # -----------------------------------
     def _migrate_0_to_1(self):
-        """Initiales Schema: Tabellen 1, 2, 2a, 3, 4 + History-Tabellen."""
+        """Initiales Schema: Alle Tabellen inkl. Users + History-Trigger."""
         with self.cursor() as cur:
+            # ============================================
             # Tabelle 1: mitglied
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied (
@@ -305,7 +263,6 @@ class VereinsDB:
                 """
             )
 
-            # mitglied_history
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied_history (
@@ -343,7 +300,9 @@ class VereinsDB:
                 """
             )
 
+            # ============================================
             # Tabelle 2: abteilung
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS abteilung (
@@ -362,7 +321,6 @@ class VereinsDB:
                 """
             )
 
-            # abteilung_history
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS abteilung_history (
@@ -383,7 +341,57 @@ class VereinsDB:
                 """
             )
 
+            # Trigger für abteilung: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS abteilung_audit_insert
+                AFTER INSERT ON abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO abteilung_history (
+                        id, version, name, kuerzel, beschreibung,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+                    );
+                END;
+            """)
+
+            # Trigger für abteilung: UPDATE
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS abteilung_audit_update
+                AFTER UPDATE ON abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO abteilung_history (
+                        id, version, name, kuerzel, beschreibung,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+                    );
+                END;
+            """)
+
+            # Trigger für abteilung: DELETE
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS abteilung_audit_delete
+                AFTER DELETE ON abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO abteilung_history (
+                        id, version, name, kuerzel, beschreibung,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.name, OLD.kuerzel, OLD.beschreibung,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by
+                    );
+                END;
+            """)
+
+            # ============================================
             # Tabelle 2a: mitglied_abteilung
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied_abteilung (
@@ -406,7 +414,6 @@ class VereinsDB:
                 """
             )
 
-            # mitglied_abteilung_history
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied_abteilung_history (
@@ -429,7 +436,9 @@ class VereinsDB:
                 """
             )
 
+            # ============================================
             # Tabelle 3: beitragsregel
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitragsregel (
@@ -453,7 +462,6 @@ class VereinsDB:
                 """
             )
 
-            # beitragsregel_history
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitragsregel_history (
@@ -478,7 +486,9 @@ class VereinsDB:
                 """
             )
 
+            # ============================================
             # Tabelle 4: beitrag_sollstellung
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitrag_sollstellung (
@@ -500,7 +510,6 @@ class VereinsDB:
                 """
             )
 
-            # beitrag_sollstellung_history
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitrag_sollstellung_history (
@@ -522,12 +531,9 @@ class VereinsDB:
                 """
             )
 
-        self._set_schema_version(1)
-
-    def _migrate_1_to_2(self):
-        """Migration 1 -> 2: User-Tabellen hinzufügen"""
-        with self.cursor() as cur:
-            # Users-Tabelle
+            # ============================================
+            # Tabelle 5: users
+            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -551,7 +557,6 @@ class VereinsDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
 
-            # Users-History-Tabelle (konsistent mit anderen History-Tabellen)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users_history (
                     id INTEGER NOT NULL,
@@ -572,7 +577,24 @@ class VereinsDB:
             
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_history_id ON users_history(id)")
 
-            # Trigger für UPDATE (konsistent mit anderen Tabellen)
+            # Trigger für users: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS users_audit_insert
+                AFTER INSERT ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by
+                    );
+                END;
+            """)
+
+            # Trigger für users: UPDATE (NEU statt ALT!)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_update
                 AFTER UPDATE ON users
@@ -582,14 +604,14 @@ class VereinsDB:
                         id, version, username, email, password_hash, role, active, last_login,
                         created_at, created_by, updated_at, updated_by
                     ) VALUES (
-                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
-                        OLD.active, OLD.last_login, OLD.created_at,
-                        OLD.created_by, OLD.updated_at, OLD.updated_by
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by
                     );
                 END;
             """)
             
-            # Trigger für DELETE (konsistent mit anderen Tabellen)
+            # Trigger für users: DELETE
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_delete
                 AFTER DELETE ON users
@@ -619,4 +641,4 @@ class VereinsDB:
                 
                 print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
-        self._set_schema_version(2)
+        self._set_schema_version(1)
