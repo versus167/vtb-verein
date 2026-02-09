@@ -378,11 +378,12 @@ class VereinsDB:
                 END;
             """)
 
-            # Trigger für abteilung: UPDATE
+            # Trigger für abteilung: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS abteilung_audit_update
                 AFTER UPDATE ON abteilung
                 FOR EACH ROW
+                WHEN NEW.version != OLD.version
                 BEGIN
                     INSERT INTO abteilung_history (
                         id, version, name, kuerzel, beschreibung,
@@ -638,11 +639,12 @@ class VereinsDB:
                 END;
             """)
 
-            # Trigger für users: UPDATE (NEU statt ALT!)
+            # Trigger für users: UPDATE (nur wenn Version sich ändert!)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_update
                 AFTER UPDATE ON users
                 FOR EACH ROW
+                WHEN NEW.version != OLD.version
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
