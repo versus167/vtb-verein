@@ -168,7 +168,8 @@ class UserService:
     
     def delete(self, user_id: int) -> bool:
         """
-        Löscht einen Benutzer (soft delete durch deaktivieren empfohlen)
+        Löscht einen Benutzer (hard delete)
+        Für Soft-Delete: active=False setzen via update()
         
         Args:
             user_id: ID des zu löschenden Users
