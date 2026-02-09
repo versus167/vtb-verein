@@ -30,8 +30,7 @@ class UserService:
         if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
             # Letzten Login aktualisieren
             self._update_last_login(user.id)
-            # User neu laden um aktuelles last_login zu haben
-            return self.get_by_id(user.id)
+            return user
         
         return None
     
@@ -85,8 +84,8 @@ class UserService:
             cur.execute(
                 """
                 INSERT INTO users (username, email, password_hash, role, active, 
-                                   created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                   version, created_by, updated_by)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (username, email, password_hash, role, active, created_by, created_by)
             )
@@ -111,9 +110,6 @@ class UserService:
             
         Returns:
             Aktualisierter User
-            
-        Raises:
-            ValueError: Bei Versionkonflikt oder wenn User nicht gefunden
         """
         user = self.get_by_id(user_id)
         if not user:
@@ -139,7 +135,7 @@ class UserService:
                 (new_username, new_email, new_role, new_active, updated_by, user_id, user.version)
             )
             if cur.rowcount == 0:
-                raise ValueError("Update fehlgeschlagen - möglicherweise Versionkonflikt")
+                raise ValueError("Update fehlgeschlagen - Versionkonflikt")
         
         return self.get_by_id(user_id)
     
@@ -172,8 +168,7 @@ class UserService:
     
     def delete(self, user_id: int) -> bool:
         """
-        Löscht einen Benutzer (hard delete)
-        Empfehlung: Stattdessen deaktivieren via update()
+        Löscht einen Benutzer (soft delete durch deaktivieren empfohlen)
         
         Args:
             user_id: ID des zu löschenden Users
