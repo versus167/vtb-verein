@@ -28,37 +28,37 @@ class UserService:
             return None
         
         if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            # Letzten Login aktualisieren
+            # Letzten Login aktualisieren (ohne Version zu erhöhen)
             self._update_last_login(user.id)
             return user
         
         return None
     
     def get_by_username(self, username: str) -> Optional[User]:
-        """Findet User nach Benutzername"""
+        """Findet User nach Benutzername (nur nicht gelöschte)"""
         with self.db.cursor() as cur:
             cur.execute(
-                "SELECT * FROM users WHERE username = ?",
+                "SELECT * FROM users WHERE username = ? AND deleted_at IS NULL",
                 (username,)
             )
             row = cur.fetchone()
             return self._row_to_user(row) if row else None
     
     def get_by_id(self, user_id: int) -> Optional[User]:
-        """Findet User nach ID"""
+        """Findet User nach ID (nur nicht gelöschte)"""
         with self.db.cursor() as cur:
             cur.execute(
-                "SELECT * FROM users WHERE id = ?",
+                "SELECT * FROM users WHERE id = ? AND deleted_at IS NULL",
                 (user_id,)
             )
             row = cur.fetchone()
             return self._row_to_user(row) if row else None
     
     def list_all(self) -> List[User]:
-        """Listet alle Benutzer"""
+        """Listet alle Benutzer (nur nicht gelöschte)"""
         with self.db.cursor() as cur:
             cur.execute(
-                "SELECT * FROM users ORDER BY username"
+                "SELECT * FROM users WHERE deleted_at IS NULL ORDER BY username"
             )
             return [self._row_to_user(row) for row in cur.fetchall()]
     
@@ -76,7 +76,7 @@ class UserService:
             active: Ob User aktiv ist
             
         Returns:
-            Erstellter User
+            Erstellter User (History wird automatisch durch Trigger geschrieben)
         """
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
@@ -109,7 +109,7 @@ class UserService:
             expected_version: Erwartete Version für optimistic locking
             
         Returns:
-            Aktualisierter User
+            Aktualisierter User (History wird automatisch durch Trigger geschrieben)
         """
         user = self.get_by_id(user_id)
         if not user:
@@ -130,12 +130,12 @@ class UserService:
                 UPDATE users 
                 SET username = ?, email = ?, role = ?, active = ?,
                     version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ?
+                WHERE id = ? AND version = ? AND deleted_at IS NULL
                 """,
                 (new_username, new_email, new_role, new_active, updated_by, user_id, user.version)
             )
             if cur.rowcount == 0:
-                raise ValueError("Update fehlgeschlagen - Versionkonflikt")
+                raise ValueError("Update fehlgeschlagen - Versionkonflikt oder User gelöscht")
         
         return self.get_by_id(user_id)
     
@@ -149,8 +149,13 @@ class UserService:
             updated_by: Username des Bearbeiters
             
         Returns:
-            True bei Erfolg
+            True bei Erfolg (History wird automatisch durch Trigger geschrieben)
         """
+        # Aktuellen User holen für Version-Check
+        user = self.get_by_id(user_id)
+        if not user:
+            raise ValueError(f"User mit ID {user_id} nicht gefunden")
+        
         password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
         with self.db.cursor() as cur:
@@ -159,34 +164,45 @@ class UserService:
                 UPDATE users 
                 SET password_hash = ?, version = version + 1, 
                     updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND version = ? AND deleted_at IS NULL
                 """,
-                (password_hash, updated_by, user_id)
+                (password_hash, updated_by, user_id, user.version)
             )
+            if cur.rowcount == 0:
+                raise ValueError("Passwort-Änderung fehlgeschlagen - Versionkonflikt oder User gelöscht")
         
         return True
     
-    def delete(self, user_id: int) -> bool:
+    def delete(self, user_id: int, deleted_by: str) -> bool:
         """
-        Löscht einen Benutzer (hard delete)
-        Für Soft-Delete: active=False setzen via update()
+        Löscht einen Benutzer (soft delete)
+        History wird automatisch durch Trigger geschrieben
         
         Args:
             user_id: ID des zu löschenden Users
+            deleted_by: Username des Löschenden
             
         Returns:
             True bei Erfolg
         """
         with self.db.cursor() as cur:
-            cur.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        
-        return True
+            cur.execute(
+                """
+                UPDATE users
+                SET deleted_at = CURRENT_TIMESTAMP,
+                    deleted_by = ?,
+                    version = version + 1
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (deleted_by, user_id)
+            )
+            return cur.rowcount == 1
     
     def _update_last_login(self, user_id: int):
-        """Aktualisiert den letzten Login-Zeitstempel"""
+        """Aktualisiert den letzten Login-Zeitstempel (ohne Version zu erhöhen)"""
         with self.db.cursor() as cur:
             cur.execute(
-                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
                 (user_id,)
             )
     
@@ -205,4 +221,6 @@ class UserService:
             created_by=row[9],
             updated_at=row[10],
             updated_by=row[11]
+            # deleted_at=row[12] und deleted_by=row[13] werden nicht im User-Objekt gespeichert
+            # da wir nur nicht-gelöschte User zurückgeben
         )
