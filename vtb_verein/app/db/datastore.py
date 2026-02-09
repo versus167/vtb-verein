@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import contextmanager
 from app.models.abteilung import Abteilung
 
-SCHEMA_VERSION = 1  # initialer Stand
+SCHEMA_VERSION = 2  # erweitert um User-Tabellen
 
 
 class VereinsDB:
@@ -252,6 +252,10 @@ class VereinsDB:
         if current == 0:
             self._migrate_0_to_1()
             current = 1
+        
+        if current == 1:
+            self._migrate_1_to_2()
+            current = 2
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -475,14 +479,13 @@ class VereinsDB:
             )
 
             # Tabelle 4: beitrag_sollstellung
-            # direkt mit 'zeitraum' statt 'jahr' + 'faellig_am'
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitrag_sollstellung (
                   id               INTEGER PRIMARY KEY,
                   mitglied_id      INTEGER NOT NULL,
                   beitragsregel_id INTEGER NOT NULL,
-                  zeitraum         TEXT NOT NULL,   -- z.B. '202600', '202601', '202641'
+                  zeitraum         TEXT NOT NULL,
                   betrag_soll      REAL NOT NULL,
 
                   version          INTEGER NOT NULL DEFAULT 1,
@@ -520,3 +523,100 @@ class VereinsDB:
             )
 
         self._set_schema_version(1)
+
+    def _migrate_1_to_2(self):
+        """Migration 1 -> 2: User-Tabellen hinzufügen"""
+        with self.cursor() as cur:
+            # Users-Tabelle
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly')),
+                    active INTEGER NOT NULL DEFAULT 1,
+                    last_login TEXT,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by TEXT NOT NULL
+                )
+            """)
+            
+            # Indices für Performance
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
+
+            # Users-History-Tabelle (konsistent mit anderen History-Tabellen)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users_history (
+                    id INTEGER NOT NULL,
+                    version INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    active INTEGER NOT NULL,
+                    last_login TEXT,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_history_id ON users_history(id)")
+
+            # Trigger für UPDATE (konsistent mit anderen Tabellen)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS users_audit_update
+                AFTER UPDATE ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.created_at,
+                        OLD.created_by, OLD.updated_at, OLD.updated_by
+                    );
+                END;
+            """)
+            
+            # Trigger für DELETE (konsistent mit anderen Tabellen)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS users_audit_delete
+                AFTER DELETE ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.created_at,
+                        OLD.created_by, OLD.updated_at, OLD.updated_by
+                    );
+                END;
+            """)
+
+            # Erstelle Standard-Admin wenn keine User existieren
+            cur.execute("SELECT COUNT(*) FROM users")
+            if cur.fetchone()[0] == 0:
+                import bcrypt
+                default_password = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                
+                cur.execute("""
+                    INSERT INTO users (username, email, password_hash, role, active, created_by, updated_by)
+                    VALUES (?, ?, ?, 'admin', 1, 'SYSTEM', 'SYSTEM')
+                """, ('admin', 'admin@verein.local', default_password))
+                
+                print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
+
+        self._set_schema_version(2)
