@@ -216,11 +216,11 @@ def create_user_management_page(db: VereinsDB):
             with ui.dialog() as dialog, ui.card():
                 ui.label(f'Benutzer löschen?').classes('text-h6 q-mb-md')
                 ui.label(f'Soll der Benutzer "{user.username}" wirklich gelöscht werden?')
-                ui.label('Diese Aktion kann nicht rückgängig gemacht werden!').classes('text-negative q-mt-sm')
+                ui.label('Gelöschte Benutzer können später wiederhergestellt werden.').classes('text-caption q-mt-sm')
                 
                 def delete_user():
                     try:
-                        user_service.delete(user.id)
+                        user_service.delete(user.id, deleted_by=current_user.username)
                         table.rows = load_users()
                         table.update()
                         dialog.close()
