@@ -44,7 +44,7 @@ class VereinsDB:
                 SELECT id, name, kuerzel, beschreibung,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (id,),
             )
@@ -60,6 +60,7 @@ class VereinsDB:
                 SELECT id, name, kuerzel, beschreibung,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
+                WHERE deleted_at IS NULL
                 ORDER BY name
                 """
             )
@@ -99,7 +100,7 @@ class VereinsDB:
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = ?
-                WHERE id = ? AND version = ?
+                WHERE id = ? AND version = ? AND deleted_at IS NULL
                 """,
                 (abt.name, abt.kuerzel, abt.beschreibung,
                  updated_by, abt.id, abt.version),
@@ -128,22 +129,22 @@ class VereinsDB:
     def can_delete_abteilung(self, abteilung_id: int) -> bool:
         """True, wenn es weder in Live- noch History-Tabellen Verknüpfungen gibt."""
         with self.cursor() as cur:
-            # Live-Tabellen
+            # Live-Tabellen (nur nicht-gelöschte)
             cur.execute(
-                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? LIMIT 1',
+                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
                 (abteilung_id,),
             )
             if cur.fetchone() is not None:
                 return False
 
             cur.execute(
-                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? LIMIT 1',
+                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
                 (abteilung_id,),
             )
             if cur.fetchone() is not None:
                 return False
 
-            # History-Tabellen
+            # History-Tabellen (alle inkl. gelöschte)
             cur.execute(
                 'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = ? LIMIT 1',
                 (abteilung_id,),
@@ -160,14 +161,24 @@ class VereinsDB:
 
         return True
     
-    def delete_abteilung(self, abteilung_id: int) -> bool:
-        """Löscht die Abteilung nur, wenn can_delete_abteilung True zurückgibt.
-        History wird automatisch durch Trigger geschrieben."""
+    def delete_abteilung(self, abteilung_id: int, deleted_by: str) -> bool:
+        """Soft-Delete: Markiert die Abteilung als gelöscht.
+        History wird automatisch durch Trigger geschrieben.
+        Prüft vorher ob Verknüpfungen existieren."""
         if not self.can_delete_abteilung(abteilung_id):
             return False
 
         with self.cursor() as cur:
-            cur.execute('DELETE FROM abteilung WHERE id = ?', (abteilung_id,))
+            cur.execute(
+                """
+                UPDATE abteilung
+                SET deleted_at = CURRENT_TIMESTAMP,
+                    deleted_by = ?,
+                    version = version + 1
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (deleted_by, abteilung_id)
+            )
             return cur.rowcount == 1
 
     # -----------------------------------
@@ -223,7 +234,7 @@ class VereinsDB:
     # Migrationen
     # -----------------------------------
     def _migrate_0_to_1(self):
-        """Initiales Schema: Alle Tabellen inkl. Users + History-Trigger."""
+        """Initiales Schema: Alle Tabellen inkl. Users + History-Trigger + Soft-Delete."""
         with self.cursor() as cur:
             # ============================================
             # Tabelle 1: mitglied
@@ -258,7 +269,9 @@ class VereinsDB:
                   created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   created_by        TEXT,
                   updated_at        TEXT,
-                  updated_by        TEXT
+                  updated_by        TEXT,
+                  deleted_at        TEXT,
+                  deleted_by        TEXT
                 )
                 """
             )
@@ -294,6 +307,8 @@ class VereinsDB:
                   created_by        TEXT,
                   updated_at        TEXT,
                   updated_by        TEXT,
+                  deleted_at        TEXT,
+                  deleted_by        TEXT,
 
                   PRIMARY KEY (id, version)
                 )
@@ -316,7 +331,9 @@ class VereinsDB:
                   created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   created_by    TEXT,
                   updated_at    TEXT,
-                  updated_by    TEXT
+                  updated_by    TEXT,
+                  deleted_at    TEXT,
+                  deleted_by    TEXT
                 )
                 """
             )
@@ -335,6 +352,8 @@ class VereinsDB:
                   created_by        TEXT,
                   updated_at        TEXT,
                   updated_by        TEXT,
+                  deleted_at        TEXT,
+                  deleted_by        TEXT,
 
                   PRIMARY KEY (id, version)
                 )
@@ -349,10 +368,12 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO abteilung_history (
                         id, version, name, kuerzel, beschreibung,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
@@ -365,15 +386,17 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO abteilung_history (
                         id, version, name, kuerzel, beschreibung,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
 
-            # Trigger für abteilung: DELETE
+            # Trigger für abteilung: DELETE (falls jemals hard delete)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS abteilung_audit_delete
                 AFTER DELETE ON abteilung
@@ -381,10 +404,12 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO abteilung_history (
                         id, version, name, kuerzel, beschreibung,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         OLD.id, OLD.version, OLD.name, OLD.kuerzel, OLD.beschreibung,
-                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
                     );
                 END;
             """)
@@ -408,6 +433,8 @@ class VereinsDB:
                   created_by     TEXT,
                   updated_at     TEXT,
                   updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
                   FOREIGN KEY (mitglied_id)  REFERENCES mitglied(id),
                   FOREIGN KEY (abteilung_id) REFERENCES abteilung(id)
                 )
@@ -430,6 +457,8 @@ class VereinsDB:
                   created_by     TEXT,
                   updated_at     TEXT,
                   updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
 
                   PRIMARY KEY (id, version)
                 )
@@ -457,6 +486,8 @@ class VereinsDB:
                   created_by     TEXT,
                   updated_at     TEXT,
                   updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
                   FOREIGN KEY (abteilung_id) REFERENCES abteilung(id)
                 )
                 """
@@ -480,6 +511,8 @@ class VereinsDB:
                   created_by     TEXT,
                   updated_at     TEXT,
                   updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
 
                   PRIMARY KEY (id, version)
                 )
@@ -504,6 +537,8 @@ class VereinsDB:
                   created_by       TEXT,
                   updated_at       TEXT,
                   updated_by       TEXT,
+                  deleted_at       TEXT,
+                  deleted_by       TEXT,
                   FOREIGN KEY (mitglied_id)      REFERENCES mitglied(id),
                   FOREIGN KEY (beitragsregel_id) REFERENCES beitragsregel(id)
                 )
@@ -525,6 +560,8 @@ class VereinsDB:
                   created_by       TEXT,
                   updated_at       TEXT,
                   updated_by       TEXT,
+                  deleted_at       TEXT,
+                  deleted_by       TEXT,
 
                   PRIMARY KEY (id, version)
                 )
@@ -547,7 +584,9 @@ class VereinsDB:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     created_by TEXT NOT NULL,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_by TEXT NOT NULL
+                    updated_by TEXT NOT NULL,
+                    deleted_at TEXT,
+                    deleted_by TEXT
                 )
             """)
             
@@ -556,6 +595,7 @@ class VereinsDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at)")
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users_history (
@@ -571,6 +611,8 @@ class VereinsDB:
                     created_by TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     updated_by TEXT NOT NULL,
+                    deleted_at TEXT,
+                    deleted_by TEXT,
                     PRIMARY KEY (id, version)
                 )
             """)
@@ -585,11 +627,13 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
                         NEW.active, NEW.last_login, NEW.created_at,
-                        NEW.created_by, NEW.updated_at, NEW.updated_by
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
@@ -602,16 +646,18 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
                         NEW.active, NEW.last_login, NEW.created_at,
-                        NEW.created_by, NEW.updated_at, NEW.updated_by
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
             
-            # Trigger für users: DELETE
+            # Trigger für users: DELETE (falls jemals hard delete)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_delete
                 AFTER DELETE ON users
@@ -619,11 +665,13 @@ class VereinsDB:
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
-                        created_at, created_by, updated_at, updated_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
                         OLD.active, OLD.last_login, OLD.created_at,
-                        OLD.created_by, OLD.updated_at, OLD.updated_by
+                        OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
                     );
                 END;
             """)
