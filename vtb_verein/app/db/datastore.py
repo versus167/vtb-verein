@@ -551,64 +551,57 @@ class VereinsDB:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
 
-            # Users-History-Tabelle
+            # Users-History-Tabelle (konsistent mit anderen History-Tabellen)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users_history (
-                    history_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     id INTEGER NOT NULL,
+                    version INTEGER NOT NULL,
                     username TEXT NOT NULL,
                     email TEXT NOT NULL,
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL,
                     active INTEGER NOT NULL,
                     last_login TEXT,
-                    version INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     created_by TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     updated_by TEXT NOT NULL,
-                    deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    deleted_by TEXT NOT NULL,
-                    operation TEXT NOT NULL
+                    PRIMARY KEY (id, version)
                 )
             """)
             
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_history_id ON users_history(id)")
 
-            # Trigger für UPDATE
+            # Trigger für UPDATE (konsistent mit anderen Tabellen)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_update
                 AFTER UPDATE ON users
                 FOR EACH ROW
                 BEGIN
                     INSERT INTO users_history (
-                        id, username, email, password_hash, role, active, last_login,
-                        version, created_at, created_by, updated_at, updated_by,
-                        deleted_by, operation
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by
                     ) VALUES (
-                        OLD.id, OLD.username, OLD.email, OLD.password_hash, OLD.role,
-                        OLD.active, OLD.last_login, OLD.version, OLD.created_at,
-                        OLD.created_by, OLD.updated_at, OLD.updated_by,
-                        NEW.updated_by, 'UPDATE'
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.created_at,
+                        OLD.created_by, OLD.updated_at, OLD.updated_by
                     );
                 END;
             """)
             
-            # Trigger für DELETE
+            # Trigger für DELETE (konsistent mit anderen Tabellen)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_delete
                 AFTER DELETE ON users
                 FOR EACH ROW
                 BEGIN
                     INSERT INTO users_history (
-                        id, username, email, password_hash, role, active, last_login,
-                        version, created_at, created_by, updated_at, updated_by,
-                        deleted_by, operation
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by
                     ) VALUES (
-                        OLD.id, OLD.username, OLD.email, OLD.password_hash, OLD.role,
-                        OLD.active, OLD.last_login, OLD.version, OLD.created_at,
-                        OLD.created_by, OLD.updated_at, OLD.updated_by,
-                        'SYSTEM', 'DELETE'
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.created_at,
+                        OLD.created_by, OLD.updated_at, OLD.updated_by
                     );
                 END;
             """)
