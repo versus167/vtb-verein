@@ -12,7 +12,16 @@ class AuthHelper:
     @staticmethod
     def get_current_user() -> Optional[User]:
         """Gibt den aktuell eingeloggten User zurück"""
-        return app.storage.user.get('current_user')
+        user_data = app.storage.user.get('current_user')
+        if user_data is None:
+            return None
+        
+        # Falls es bereits ein User-Objekt ist (sollte nicht passieren, aber sicher ist sicher)
+        if isinstance(user_data, User):
+            return user_data
+        
+        # Dict zurück in User-Objekt konvertieren
+        return User(**user_data)
     
     @staticmethod
     def set_current_user(user: User):
