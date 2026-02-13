@@ -62,6 +62,14 @@ class UserService:
             )
             return [self._row_to_user(row) for row in cur.fetchall()]
     
+    def count_active_admins(self) -> int:
+        """Zählt die Anzahl aktiver Administratoren"""
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1 AND deleted_at IS NULL"
+            )
+            return cur.fetchone()[0]
+    
     def create(self, username: str, email: str, password: str, role: str, 
                created_by: str, active: bool = True) -> User:
         """
@@ -124,6 +132,11 @@ class UserService:
         new_role = role if role is not None else user.role
         new_active = active if active is not None else user.active
         
+        # Prüfen, ob der letzte aktive Admin deaktiviert werden soll
+        if user.role == 'admin' and user.active and not new_active:
+            if self.count_active_admins() <= 1:
+                raise ValueError("Der letzte aktive Administrator kann nicht deaktiviert werden")
+        
         with self.db.cursor() as cur:
             cur.execute(
                 """
@@ -185,6 +198,12 @@ class UserService:
         Returns:
             True bei Erfolg
         """
+        # Prüfen, ob der letzte aktive Admin gelöscht werden soll
+        user = self.get_by_id(user_id)
+        if user and user.role == 'admin' and user.active:
+            if self.count_active_admins() <= 1:
+                raise ValueError("Der letzte aktive Administrator kann nicht gelöscht werden")
+        
         with self.db.cursor() as cur:
             cur.execute(
                 """
