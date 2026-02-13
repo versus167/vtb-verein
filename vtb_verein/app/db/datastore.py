@@ -12,6 +12,16 @@ SCHEMA_VERSION = 1  # Alles in migrate_0_to_1, da noch kein Produktivbetrieb
 
 
 class VereinsDB:
+    """Data Access Layer - Pure CRUD operations without business logic.
+    
+    This class provides direct database access for:
+    - Create, Read, Update, Delete operations
+    - History tracking (via database triggers)
+    - Schema migrations
+    
+    Business logic (validation, complex queries, rules) belongs in the service layer.
+    """
+    
     def __init__(self, path: str):
         self.path = path
         self.conn = sqlite3.connect(self.path)
@@ -37,7 +47,12 @@ class VereinsDB:
     def close(self):
         self.conn.close()
 
+    # -----------------------------------
+    # Abteilung CRUD Operations
+    # -----------------------------------
+    
     def get_abteilung(self, id: int) -> Abteilung:
+        """Get a single Abteilung by ID (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -54,6 +69,7 @@ class VereinsDB:
             return Abteilung(**dict(row))
 
     def list_abteilungen(self) -> list[Abteilung]:
+        """List all active (non-deleted) Abteilungen."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -67,7 +83,7 @@ class VereinsDB:
             return [Abteilung(**dict(row)) for row in cur.fetchall()]
 
     def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
-        """Erstellt neue Abteilung - History wird automatisch durch Trigger geschrieben"""
+        """Create a new Abteilung. History is written automatically via trigger."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -91,7 +107,11 @@ class VereinsDB:
             return Abteilung(**dict(row))
 
     def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
-        """Aktualisiert Abteilung - History wird automatisch durch Trigger geschrieben"""
+        """Update an Abteilung. History is written automatically via trigger.
+        
+        Returns:
+            bool: True if update successful, False if version conflict or not found
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -108,7 +128,7 @@ class VereinsDB:
             if cur.rowcount == 0:
                 return False
     
-            # Neuen Stand holen für Rückgabe
+            # Get new state for return
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
@@ -126,48 +146,14 @@ class VereinsDB:
             abt.updated_by = updated_by
             return True
         
-    def can_delete_abteilung(self, abteilung_id: int) -> bool:
-        """True, wenn es weder in Live- noch History-Tabellen Verknüpfungen gibt."""
-        with self.cursor() as cur:
-            # Live-Tabellen (nur nicht-gelöschte)
-            cur.execute(
-                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
-                (abteilung_id,),
-            )
-            if cur.fetchone() is not None:
-                return False
-
-            cur.execute(
-                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
-                (abteilung_id,),
-            )
-            if cur.fetchone() is not None:
-                return False
-
-            # History-Tabellen (alle inkl. gelöschte)
-            cur.execute(
-                'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = ? LIMIT 1',
-                (abteilung_id,),
-            )
-            if cur.fetchone() is not None:
-                return False
-
-            cur.execute(
-                'SELECT 1 FROM beitragsregel_history WHERE abteilung_id = ? LIMIT 1',
-                (abteilung_id,),
-            )
-            if cur.fetchone() is not None:
-                return False
-
-        return True
-    
-    def delete_abteilung(self, abteilung_id: int, deleted_by: str) -> bool:
-        """Soft-Delete: Markiert die Abteilung als gelöscht.
-        History wird automatisch durch Trigger geschrieben.
-        Prüft vorher ob Verknüpfungen existieren."""
-        if not self.can_delete_abteilung(abteilung_id):
-            return False
-
+    def mark_abteilung_deleted(self, abteilung_id: int, deleted_by: str) -> bool:
+        """Soft-delete: Mark Abteilung as deleted. History is written automatically via trigger.
+        
+        Note: Does NOT check for dependencies - that's business logic in the service layer.
+        
+        Returns:
+            bool: True if marked as deleted, False if not found or already deleted
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -180,6 +166,60 @@ class VereinsDB:
                 (deleted_by, abteilung_id)
             )
             return cur.rowcount == 1
+
+    # -----------------------------------
+    # Query Methods for Business Logic
+    # -----------------------------------
+    
+    def has_active_mitglied_abteilung_references(self, abteilung_id: int) -> bool:
+        """Check if there are active (non-deleted) mitglied_abteilung references."""
+        with self.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
+                (abteilung_id,),
+            )
+            return cur.fetchone() is not None
+
+    def has_active_beitragsregel_references(self, abteilung_id: int) -> bool:
+        """Check if there are active (non-deleted) beitragsregel references."""
+        with self.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
+                (abteilung_id,),
+            )
+            return cur.fetchone() is not None
+
+    def has_mitglied_abteilung_history(self, abteilung_id: int) -> bool:
+        """Check if there are any mitglied_abteilung_history entries."""
+        with self.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            return cur.fetchone() is not None
+
+    def has_beitragsregel_history(self, abteilung_id: int) -> bool:
+        """Check if there are any beitragsregel_history entries."""
+        with self.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM beitragsregel_history WHERE abteilung_id = ? LIMIT 1',
+                (abteilung_id,),
+            )
+            return cur.fetchone() is not None
+
+    # -----------------------------------
+    # Future: Prune Operations
+    # -----------------------------------
+    
+    def prune_deleted_abteilungen(self, days_old: int) -> int:
+        """Hard-delete Abteilungen that have been soft-deleted for more than days_old days.
+        
+        TODO: Implement when needed. Should check for any remaining references first.
+        
+        Returns:
+            int: Number of records physically deleted
+        """
+        raise NotImplementedError("Prune operations will be implemented later")
 
     # -----------------------------------
     # Schema-Versionierung
