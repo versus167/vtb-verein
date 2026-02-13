@@ -5,7 +5,7 @@ from nicegui import ui
 from app.services.user_service import UserService
 from app.auth.auth_helper import AuthHelper, require_role
 from app.db.datastore import VereinsDB
-from app.ui.navigation import create_navigation
+from app.ui.navigation import create_navigation, set_current_path
 
 def create_user_management_page(db: VereinsDB):
     """Erstellt die Benutzerverwaltungs-Seite"""
@@ -13,6 +13,7 @@ def create_user_management_page(db: VereinsDB):
     @ui.page('/users')
     @require_role('admin')
     def user_management_page():
+        set_current_path('/users')
         create_navigation()
         user_service = UserService(db)
         current_user = AuthHelper.get_current_user()
@@ -40,6 +41,8 @@ def create_user_management_page(db: VereinsDB):
                         'active': '✓' if u.active else '✗',
                         'last_login': u.last_login or 'Noch nie',
                         'version': u.version,
+                        'is_admin': u.role == 'admin',
+                        'is_active': u.active,
                     }
                     for u in users
                 ]
@@ -131,6 +134,24 @@ def create_user_management_page(db: VereinsDB):
                     )
                     
                     active_input = ui.checkbox('Aktiv', value=user.active)
+                    
+                    # Warnung anzeigen, wenn letzter Admin deaktiviert werden soll
+                    warning_label = ui.label('')
+                    warning_label.classes('text-warning q-mt-sm')
+                    warning_label.visible = False
+                    
+                    def check_admin_warning():
+                        if row['is_admin'] and row['is_active'] and not active_input.value:
+                            active_admins = user_service.count_active_admins()
+                            if active_admins <= 1:
+                                warning_label.text = '⚠️ Achtung: Dies ist der letzte aktive Administrator!'
+                                warning_label.visible = True
+                            else:
+                                warning_label.visible = False
+                        else:
+                            warning_label.visible = False
+                    
+                    active_input.on('update:model-value', check_admin_warning)
                     
                     error_label = ui.label('').classes('text-negative')
                     error_label.visible = False
@@ -228,6 +249,9 @@ def create_user_management_page(db: VereinsDB):
                             table.update()
                             dialog.close()
                             ui.notify('Benutzer erfolgreich gelöscht', type='positive')
+                        except ValueError as e:
+                            ui.notify(str(e), type='warning')
+                            dialog.close()
                         except Exception as e:
                             ui.notify(f'Fehler: {str(e)}', type='negative')
                             dialog.close()
