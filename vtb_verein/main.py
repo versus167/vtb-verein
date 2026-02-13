@@ -83,7 +83,8 @@ def unauthorized():
         ui.label('Sie haben keine Berechtigung für diese Seite.')
         ui.button('Zurück zur Startseite', on_click=lambda: ui.navigate.to('/')).props('color=primary')
 
-if __name__ == '__main__':
+# Multiprocessing-kompatible Main-Guard (wie von NiceGUI empfohlen)
+if __name__ in {'__main__', '__mp_main__'}:
     # Starte die Anwendung
     ui.run(
         storage_secret=STORAGE_SECRET,
