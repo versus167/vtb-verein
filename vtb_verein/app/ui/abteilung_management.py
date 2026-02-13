@@ -5,7 +5,7 @@ from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.models.abteilung import Abteilung
 from app.auth.auth_helper import AuthHelper, require_role
-from app.ui.navigation import create_navigation
+from app.ui.navigation import create_navigation, set_current_path
 
 def create_abteilung_management_page(db: VereinsDB):
     """Erstellt die Abteilungsverwaltungs-Seite"""
@@ -13,6 +13,7 @@ def create_abteilung_management_page(db: VereinsDB):
     @ui.page('/abteilungen')
     @require_role('user')  # user und admin können Abteilungen verwalten
     def abteilung_management_page():
+        set_current_path('/abteilungen')
         create_navigation()
         current_user = AuthHelper.get_current_user()
         
