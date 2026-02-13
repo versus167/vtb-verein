@@ -17,7 +17,7 @@ def create_navigation():
                 # Home Button
                 home_btn = ui.button('Home', on_click=lambda: ui.navigate.to('/'), icon='home')
                 if current_path == '/':
-                    home_btn.props('unelevated').classes('bg-white text-primary')
+                    home_btn.props('unelevated').classes('bg-blue-10 text-white')
                 else:
                     home_btn.props('flat').classes('text-white')
                 
@@ -25,7 +25,7 @@ def create_navigation():
                 if user and user.can_edit():
                     abt_btn = ui.button('Abteilungen', on_click=lambda: ui.navigate.to('/abteilungen'), icon='groups')
                     if current_path == '/abteilungen':
-                        abt_btn.props('unelevated').classes('bg-white text-primary')
+                        abt_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         abt_btn.props('flat').classes('text-white')
                 
@@ -33,7 +33,7 @@ def create_navigation():
                 if user and user.can_manage_users():
                     user_btn = ui.button('Benutzer', on_click=lambda: ui.navigate.to('/users'), icon='people')
                     if current_path == '/users':
-                        user_btn.props('unelevated').classes('bg-white text-primary')
+                        user_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         user_btn.props('flat').classes('text-white')
         
