@@ -9,7 +9,7 @@ from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
 from app.ui.user_management import create_user_management_page
 from app.ui.abteilung_management import create_abteilung_management_page
-from app.ui.navigation import create_navigation
+from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 
 # Konfiguration
@@ -35,6 +35,7 @@ create_abteilung_management_page(db)
 @ui.page('/')
 @require_auth()
 def main_page():
+    set_current_path('/')
     create_navigation()
     user = AuthHelper.get_current_user()
 
