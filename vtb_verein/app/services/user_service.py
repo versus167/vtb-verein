@@ -132,10 +132,16 @@ class UserService:
         new_role = role if role is not None else user.role
         new_active = active if active is not None else user.active
         
-        # Prüfen, ob der letzte aktive Admin deaktiviert werden soll
-        if user.role == 'admin' and user.active and not new_active:
+        # Prüfen, ob der letzte aktive Admin betroffen ist
+        # Ein Admin wird "inaktiv", wenn:
+        # 1. Seine Rolle von 'admin' auf etwas anderes geändert wird, ODER
+        # 2. Sein active-Status auf False gesetzt wird
+        user_is_currently_active_admin = (user.role == 'admin' and user.active)
+        user_will_be_active_admin = (new_role == 'admin' and new_active)
+        
+        if user_is_currently_active_admin and not user_will_be_active_admin:
             if self.count_active_admins() <= 1:
-                raise ValueError("Der letzte aktive Administrator kann nicht deaktiviert werden")
+                raise ValueError("Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden")
         
         with self.db.cursor() as cur:
             cur.execute(
