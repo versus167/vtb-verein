@@ -1,0 +1,12 @@
+# Development Dependencies für vtb-verein
+
+# Test-Framework
+pytest>=8.0.0
+pytest-cov>=4.1.0
+
+# Code-Qualität
+pylint>=3.0.0
+black>=24.0.0
+
+# Production Dependencies
+-r requirements.txt
