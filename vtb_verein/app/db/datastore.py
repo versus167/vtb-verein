@@ -166,6 +166,37 @@ class VereinsDB:
                 (deleted_by, abteilung_id)
             )
             return cur.rowcount == 1
+    
+    def can_delete_abteilung(self, abteilung_id: int) -> bool:
+        """Check if an Abteilung can be deleted (soft-deleted).
+        
+        Returns False if there are active references that prevent deletion.
+        Returns True if the Abteilung can be safely deleted (even with history).
+        
+        Returns:
+            bool: True if deletion is allowed, False otherwise
+        """
+        # Check for active (non-deleted) references
+        if self.has_active_mitglied_abteilung_references(abteilung_id):
+            return False
+        if self.has_active_beitragsregel_references(abteilung_id):
+            return False
+        
+        # History entries don't prevent soft-delete
+        return True
+    
+    def delete_abteilung(self, abteilung_id: int, deleted_by: str) -> bool:
+        """Delete (soft-delete) an Abteilung if allowed.
+        
+        Checks if deletion is allowed using can_delete_abteilung() first.
+        
+        Returns:
+            bool: True if successfully deleted, False if not allowed or not found
+        """
+        if not self.can_delete_abteilung(abteilung_id):
+            return False
+        
+        return self.mark_abteilung_deleted(abteilung_id, deleted_by)
 
     # -----------------------------------
     # Query Methods for Business Logic
