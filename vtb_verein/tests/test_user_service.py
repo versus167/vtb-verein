@@ -23,7 +23,9 @@ class TestLastAdminProtection:
         db = VereinsDB(db_path)
         
         # Standard-Admin löschen, damit Tests mit sauberem Zustand starten
+        # Wichtig: Auch History löschen, da DELETE-Trigger sonst Constraint verletzt
         with db.cursor() as cur:
+            cur.execute("DELETE FROM users_history")
             cur.execute("DELETE FROM users")
         
         yield db
