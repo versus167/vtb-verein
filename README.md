@@ -13,6 +13,15 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 - CRUD-Operationen für Abteilungen
 - Soft-Delete mit Wiederherstellung
 - Validierung von Abhängigkeiten
+- Anzeige und Wiederherstellung gelöschter Abteilungen
+
+✅ **Mitgliederverwaltung**
+- Vollständige Mitgliederverwaltung mit allen relevanten Daten
+- Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
+- Persönliche Daten, Kontakt, Adresse
+- Vereinsdaten (Eintritt, Austritt, Status)
+- Zahlungsdaten (IBAN, BIC, Zahlungsart)
+- Soft-Delete mit History
 
 ✅ **Audit-Trail**
 - Vollständige Versionierung aller Änderungen
@@ -23,6 +32,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 - Responsive Design mit Quasar Framework
 - Intuitive Navigation
 - Echtzeit-Validierung
+- Übersichtliche Dialoge mit Sections
 
 ## Installation
 
@@ -60,6 +70,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 
 5. **Anwendung starten**
    ```bash
+   cd vtb_verein
    python main.py
    ```
 
@@ -91,6 +102,17 @@ Beim ersten Start wird automatisch ein Admin-Account erstellt:
 1. Als Admin oder Bearbeiter einloggen
 2. Navigation: "Abteilungen" klicken
 3. Abteilungen anlegen, bearbeiten oder löschen
+4. Gelöschte Abteilungen können wiederhergestellt werden
+
+### Mitglieder verwalten
+
+1. Als Admin oder Bearbeiter einloggen
+2. Navigation: "Mitglieder" klicken
+3. "Neues Mitglied anlegen" Button
+4. Formular ausfüllen:
+   - Mitgliedsnummer wird automatisch vergeben (kann geändert werden)
+   - Pflichtfelder: Vorname, Nachname, Zahlungsart
+5. Mitglieder bearbeiten oder löschen
 
 ## Konfiguration
 
@@ -119,6 +141,7 @@ Die Anwendung verwendet SQLite als Datenbank. Die Datenbankdatei wird automatisc
 **Datenbank zurücksetzen:**
 ```bash
 rm verein.db
+cd vtb_verein
 python main.py
 ```
 
@@ -128,28 +151,30 @@ python main.py
 
 ```
 vtb-verein/
-├── main.py                      # Haupteinstiegspunkt
-├── EXAMPLE_main.py              # Beispiel-Konfiguration
 ├── requirements.txt             # Python-Abhängigkeiten
 ├── README.md                    # Diese Datei
 └── vtb_verein/
+    ├── main.py                  # Haupteinstiegspunkt
     ├── __init__.py
     └── app/
-        ├── auth/                   # Authentifizierung
+        ├── auth/               # Authentifizierung
         │   ├── auth_helper.py
         │   └── __init__.py
-        ├── db/                     # Datenbank
-        │   ├── datastore.py        # Schema & Migrationen
+        ├── db/                 # Datenbank
+        │   ├── datastore.py    # Schema & Migrationen
         │   └── __init__.py
-        ├── models/                 # Datenmodelle
+        ├── models/             # Datenmodelle
         │   ├── abteilung.py
+        │   ├── mitglied.py
         │   ├── user.py
         │   └── __init__.py
-        ├── services/               # Business-Logik
+        ├── services/           # Business-Logik
+        │   ├── abteilungen_service.py
         │   ├── user_service.py
         │   └── __init__.py
-        └── ui/                     # User Interface
+        └── ui/                 # User Interface
             ├── abteilung_management.py
+            ├── mitglied_management.py
             ├── login_page.py
             ├── navigation.py
             ├── user_management.py
@@ -160,6 +185,7 @@ vtb-verein/
 
 ```bash
 # Anwendung im Entwicklungsmodus starten
+cd vtb_verein
 python main.py
 ```
 
@@ -171,25 +197,70 @@ python main.py
 4. Push: `git push origin feature/mein-feature`
 5. Pull Request erstellen
 
+## Technische Details
+
+### Datenbank-Schema
+
+**Mitgliedsnummern:**
+- Typ: INTEGER (automatische Vergabe)
+- UNIQUE Constraint
+- Manuelle Überschreibung möglich
+- Validierung auf Duplikate
+
+**Soft-Delete:**
+- Alle Entitäten unterstützen Soft-Delete
+- `deleted_at` und `deleted_by` Felder
+- Wiederherstellung möglich
+- History bleibt erhalten
+
+**Optimistic Locking:**
+- Version-Feld für Concurrency Control
+- Verhindert Überschreiben von Änderungen
+- Konflikterkennung bei Updates
+
+### Architektur
+
+**Layered Architecture:**
+1. **UI Layer** (`app/ui/`): NiceGUI-Komponenten
+2. **Service Layer** (`app/services/`): Business-Logik
+3. **Data Layer** (`app/db/`): Pure CRUD-Operationen
+4. **Models** (`app/models/`): Datenklassen
+
+**Vorteile:**
+- Klare Trennung der Verantwortlichkeiten
+- Testbarkeit
+- Wartbarkeit
+- Erweiterbarkeit
+
 ## Roadmap
 
 ### Phase 1 (✅ Abgeschlossen)
 - [x] Benutzerverwaltung
 - [x] Abteilungsverwaltung
+- [x] Soft-Delete mit Wiederherstellung (Abteilungen)
 - [x] Navigation
 - [x] Audit-Trail
-- [x] Soft-Delete
+- [x] Mitgliederverwaltung (Basis)
+- [x] Automatische Mitgliedsnummer-Vergabe
 
-### Phase 2 (In Planung)
-- [ ] Mitgliederverwaltung
+### Phase 2 (In Arbeit)
+- [ ] Suchfunktion für Mitglieder
+- [ ] Filter in Mitgliederliste
 - [ ] Mitglied-Abteilung Zuordnung
-- [ ] Import/Export (CSV, Excel)
+- [ ] Sub-Dialog für Abteilungszuordnung
 
-### Phase 3 (Zukunft)
+### Phase 3 (Geplant)
+- [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
+- [ ] Import/Export (CSV, Excel)
+- [ ] Pagination bei vielen Einträgen
 - [ ] Beitragsregeln
 - [ ] Beitragssollstellung
+
+### Phase 4 (Zukunft)
 - [ ] Berichte & Statistiken
 - [ ] SEPA-Export
+- [ ] Dashboard mit Kennzahlen
+- [ ] E-Mail-Benachrichtigungen
 
 ## Support
 
