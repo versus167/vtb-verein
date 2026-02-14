@@ -41,6 +41,7 @@ def create_user_management_page(db: VereinsDB):
                         'active': '✓' if u.active else '✗',
                         'last_login': u.last_login or 'Noch nie',
                         'version': u.version,
+                        'role_key': u.role,  # Original-Rolle für Vergleich
                         'is_admin': u.role == 'admin',
                         'is_active': u.active,
                     }
@@ -135,23 +136,37 @@ def create_user_management_page(db: VereinsDB):
                     
                     active_input = ui.checkbox('Aktiv', value=user.active)
                     
-                    # Warnung anzeigen, wenn letzter Admin deaktiviert werden soll
+                    # Warnung anzeigen, wenn letzter Admin betroffen ist
                     warning_label = ui.label('')
                     warning_label.classes('text-warning q-mt-sm')
                     warning_label.visible = False
                     
                     def check_admin_warning():
-                        if row['is_admin'] and row['is_active'] and not active_input.value:
+                        """Prüft, ob der letzte aktive Admin betroffen ist"""
+                        # Nur prüfen, wenn User aktuell ein aktiver Admin ist
+                        if row['is_admin'] and row['is_active']:
                             active_admins = user_service.count_active_admins()
-                            if active_admins <= 1:
+                            
+                            # Prüfe ob Admin inaktiv wird (Rolle bleibt admin, aber Status wird false)
+                            will_be_deactivated = (role_input.value == 'admin' and not active_input.value)
+                            
+                            # Prüfe ob Admin herabgestuft wird (Rolle wird geändert, egal ob aktiv)
+                            will_be_demoted = (role_input.value != 'admin')
+                            
+                            if (will_be_deactivated or will_be_demoted) and active_admins <= 1:
                                 warning_label.text = '⚠️ Achtung: Dies ist der letzte aktive Administrator!'
                                 warning_label.visible = True
+                                save_button.disable()
                             else:
                                 warning_label.visible = False
+                                save_button.enable()
                         else:
                             warning_label.visible = False
+                            save_button.enable()
                     
+                    # Überwache Änderungen an Rolle und Status
                     active_input.on('update:model-value', check_admin_warning)
+                    role_input.on('update:model-value', check_admin_warning)
                     
                     error_label = ui.label('').classes('text-negative')
                     error_label.visible = False
@@ -182,7 +197,7 @@ def create_user_management_page(db: VereinsDB):
                     
                     with ui.row().classes('w-full'):
                         ui.button('Abbrechen', on_click=dialog.close)
-                        ui.button('Speichern', on_click=update_user).props('color=primary')
+                        save_button = ui.button('Speichern', on_click=update_user).props('color=primary')
                 
                 dialog.open()
             
