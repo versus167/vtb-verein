@@ -92,7 +92,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
                     zahlungsart = ui.select(
-                        'Zahlungsart *',
+                        label='Zahlungsart *',
                         options=['Lastschrift', 'Rechnung', 'Bar'],
                         value='Lastschrift'
                     )
@@ -198,7 +198,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
                     zahlungsart = ui.select(
-                        'Zahlungsart *',
+                        label='Zahlungsart *',
                         options=['Lastschrift', 'Rechnung', 'Bar'],
                         value=m.zahlungsart
                     )
