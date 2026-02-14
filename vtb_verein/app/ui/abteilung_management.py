@@ -170,7 +170,99 @@ def create_abteilung_management_page(db: VereinsDB):
                 
                 dialog.open()
             
+            def show_deleted_abteilungen_dialog():
+                """Zeigt Dialog mit gelöschten Abteilungen und Wiederherstellungs-Option"""
+                deleted_columns = [
+                    {'name': 'name', 'label': 'Name', 'field': 'name', 'align': 'left', 'sortable': True},
+                    {'name': 'kuerzel', 'label': 'Kürzel', 'field': 'kuerzel', 'align': 'left'},
+                    {'name': 'deleted_at', 'label': 'Gelöscht am', 'field': 'deleted_at', 'align': 'left'},
+                    {'name': 'deleted_by', 'label': 'Gelöscht von', 'field': 'deleted_by', 'align': 'left'},
+                    {'name': 'actions', 'label': 'Aktionen', 'field': 'actions', 'align': 'center'},
+                ]
+                
+                def load_deleted_abteilungen():
+                    deleted = db.list_deleted_abteilungen()
+                    return [
+                        {
+                            'id': d['id'],
+                            'name': d['name'],
+                            'kuerzel': d['kuerzel'] or '',
+                            'beschreibung': d['beschreibung'] or '',
+                            'deleted_at': d['deleted_at'][:19] if d['deleted_at'] else '',  # Format timestamp
+                            'deleted_by': d['deleted_by'] or '',
+                        }
+                        for d in deleted
+                    ]
+                
+                with ui.dialog() as deleted_dialog, ui.card().style('min-width: 800px'):
+                    ui.label('Gelöschte Abteilungen').classes('text-h6 q-mb-md')
+                    
+                    deleted_rows = load_deleted_abteilungen()
+                    
+                    if not deleted_rows:
+                        ui.label('Keine gelöschten Abteilungen vorhanden.').classes('text-body2 q-mb-md')
+                    else:
+                        deleted_table = ui.table(
+                            columns=deleted_columns, 
+                            rows=deleted_rows, 
+                            row_key='id'
+                        ).classes('w-full')
+                        
+                        deleted_table.add_slot('body-cell-actions', '''
+                            <q-td :props="props">
+                                <q-btn flat dense icon="restore" color="positive" 
+                                       @click="$parent.$emit('restore', props.row)">
+                                    <q-tooltip>Wiederherstellen</q-tooltip>
+                                </q-btn>
+                            </q-td>
+                        ''')
+                        
+                        def restore_abteilung(row):
+                            """Stellt eine gelöschte Abteilung wieder her"""
+                            with ui.dialog() as restore_dialog, ui.card():
+                                ui.label(f'Abteilung wiederherstellen?').classes('text-h6 q-mb-md')
+                                ui.label(f'Soll die Abteilung "{row["name"]}" wiederhergestellt werden?')
+                                
+                                def do_restore():
+                                    try:
+                                        success = db.restore_abteilung(row['id'], restored_by=current_user.username)
+                                        if success:
+                                            # Update beide Tabellen
+                                            table.rows = load_abteilungen()
+                                            table.update()
+                                            deleted_table.rows = load_deleted_abteilungen()
+                                            deleted_table.update()
+                                            
+                                            restore_dialog.close()
+                                            ui.notify('Abteilung erfolgreich wiederhergestellt', type='positive')
+                                            
+                                            # Schließe den gelöschte-Abteilungen-Dialog wenn leer
+                                            if not deleted_table.rows:
+                                                deleted_dialog.close()
+                                        else:
+                                            ui.notify('Wiederherstellung fehlgeschlagen', type='negative')
+                                            restore_dialog.close()
+                                    except Exception as e:
+                                        ui.notify(f'Fehler: {str(e)}', type='negative')
+                                        restore_dialog.close()
+                                
+                                with ui.row().classes('w-full'):
+                                    ui.button('Abbrechen', on_click=restore_dialog.close).props('color=secondary')
+                                    ui.button('Wiederherstellen', on_click=do_restore).props('color=positive')
+                            
+                            restore_dialog.open()
+                        
+                        deleted_table.on('restore', lambda e: restore_abteilung(e.args))
+                    
+                    with ui.row().classes('w-full q-mt-md'):
+                        ui.button('Schließen', on_click=deleted_dialog.close).props('color=secondary')
+                
+                deleted_dialog.open()
+            
             table.on('edit', lambda e: show_edit_dialog(e.args))
             table.on('delete', lambda e: show_delete_dialog(e.args))
             
-            ui.button('Neue Abteilung anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
+            # Button-Leiste
+            with ui.row().classes('q-mt-md'):
+                ui.button('Neue Abteilung anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
+                ui.button('Gelöschte Abteilungen anzeigen', on_click=show_deleted_abteilungen_dialog, icon='delete_sweep').props('color=secondary outline')

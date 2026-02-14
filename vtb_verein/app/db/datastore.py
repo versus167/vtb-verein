@@ -81,6 +81,27 @@ class VereinsDB:
                 """
             )
             return [Abteilung(**dict(row)) for row in cur.fetchall()]
+    
+    def list_deleted_abteilungen(self) -> list[dict]:
+        """List all deleted Abteilungen with deletion metadata.
+        
+        Returns a list of dictionaries containing the Abteilung data plus deletion info:
+        - All Abteilung fields
+        - deleted_at: timestamp when deleted
+        - deleted_by: user who deleted it
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, kuerzel, beschreibung,
+                       version, created_at, created_by, updated_at, updated_by,
+                       deleted_at, deleted_by
+                FROM abteilung
+                WHERE deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
         """Create a new Abteilung. History is written automatically via trigger."""
@@ -164,6 +185,30 @@ class VereinsDB:
                 WHERE id = ? AND deleted_at IS NULL
                 """,
                 (deleted_by, abteilung_id)
+            )
+            return cur.rowcount == 1
+    
+    def restore_abteilung(self, abteilung_id: int, restored_by: str) -> bool:
+        """Restore a soft-deleted Abteilung.
+        
+        Sets deleted_at and deleted_by to NULL and increments version.
+        History is written automatically via trigger.
+        
+        Returns:
+            bool: True if restored successfully, False if not found or not deleted
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE abteilung
+                SET deleted_at = NULL,
+                    deleted_by = NULL,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = ?
+                WHERE id = ? AND deleted_at IS NOT NULL
+                """,
+                (restored_by, abteilung_id)
             )
             return cur.rowcount == 1
     
