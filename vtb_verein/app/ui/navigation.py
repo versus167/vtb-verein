@@ -29,6 +29,14 @@ def create_navigation():
                     else:
                         abt_btn.props('flat').classes('text-white')
                 
+                # Mitglieder
+                if user and user.can_edit():
+                    mitgl_btn = ui.button('Mitglieder', on_click=lambda: ui.navigate.to('/mitglieder'), icon='group')
+                    if current_path == '/mitglieder':
+                        mitgl_btn.props('unelevated').classes('bg-blue-10 text-white')
+                    else:
+                        mitgl_btn.props('flat').classes('text-white')
+                
                 # Benutzer
                 if user and user.can_manage_users():
                     user_btn = ui.button('Benutzer', on_click=lambda: ui.navigate.to('/users'), icon='people')
