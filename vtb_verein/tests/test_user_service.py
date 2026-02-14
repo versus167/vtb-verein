@@ -18,8 +18,13 @@ class TestLastAdminProtection:
         fd, db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         
+        # VereinsDB initialisiert sich selbst beim Erstellen
+        # und legt automatisch Standard-Admin an
         db = VereinsDB(db_path)
-        db.init_db()
+        
+        # Standard-Admin löschen, damit Tests mit sauberem Zustand starten
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM users")
         
         yield db
         
