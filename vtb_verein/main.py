@@ -9,6 +9,7 @@ from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
 from app.ui.user_management import create_user_management_page
 from app.ui.abteilung_management import create_abteilung_management_page
+from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 
@@ -30,6 +31,7 @@ db = VereinsDB(DB_PATH)
 create_login_page(db)
 create_user_management_page(db)
 create_abteilung_management_page(db)
+create_mitglied_management_page(db)
 
 # Hauptseite (Dashboard)
 @ui.page('/')
@@ -54,6 +56,14 @@ def main_page():
                         ui.label('Abteilungen').classes('text-h6 q-mt-sm')
                         ui.label('Abteilungen verwalten').classes('text-caption text-grey')
 
+            # Mitgliederverwaltung
+            if user.can_edit():
+                with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/mitglieder')):
+                    with ui.card_section().classes('text-center'):
+                        ui.icon('group', size='3rem').classes('text-primary')
+                        ui.label('Mitglieder').classes('text-h6 q-mt-sm')
+                        ui.label('Mitglieder verwalten').classes('text-caption text-grey')
+
             # Benutzerverwaltung
             if user.can_manage_users():
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/users')):
@@ -64,12 +74,6 @@ def main_page():
 
             # Platzhalter für zukünftige Module
             if user.can_edit():
-                with ui.card().classes('cursor-pointer').style('min-width: 200px; opacity: 0.5'):
-                    with ui.card_section().classes('text-center'):
-                        ui.icon('group', size='3rem').classes('text-grey')
-                        ui.label('Mitglieder').classes('text-h6 q-mt-sm text-grey')
-                        ui.label('Bald verfügbar').classes('text-caption text-grey')
-
                 with ui.card().classes('cursor-pointer').style('min-width: 200px; opacity: 0.5'):
                     with ui.card_section().classes('text-center'):
                         ui.icon('payments', size='3rem').classes('text-grey')
