@@ -1,6 +1,5 @@
 """
-Services Package
-"""
-from app.services.user_service import UserService
+Service Layer Package
 
-__all__ = ['UserService']
+Enthält Business-Logik und orchestriert Datenbank-Operationen.
+"""
