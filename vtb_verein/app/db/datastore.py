@@ -780,7 +780,7 @@ class VereinsDB:
                   id             INTEGER PRIMARY KEY,
                   mitglied_id    INTEGER NOT NULL,
                   abteilung_id   INTEGER NOT NULL,
-                  status         TEXT NOT NULL DEFAULT 'standard',
+                  status         TEXT NOT NULL DEFAULT 'aktiv',
                   von            TEXT,
                   bis            TEXT,
 
@@ -821,6 +821,61 @@ class VereinsDB:
                 )
                 """
             )
+
+            # Trigger für mitglied_abteilung: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_insert
+                AFTER INSERT ON mitglied_abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied_abteilung: UPDATE (nur wenn Version sich ändert)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_update
+                AFTER UPDATE ON mitglied_abteilung
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied_abteilung: DELETE (falls jemals hard delete)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_delete
+                AFTER DELETE ON mitglied_abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.mitglied_id, OLD.abteilung_id, OLD.status, OLD.von, OLD.bis,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
+                    );
+                END;
+            """)
 
             # ============================================
             # Tabelle 3: beitragsregel
