@@ -23,6 +23,13 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 - Zahlungsdaten (IBAN, BIC, Zahlungsart)
 - Soft-Delete mit History
 
+✅ **Mitglied-Abteilung-Zuordnung**
+- Mehrfachzuordnung von Mitgliedern zu Abteilungen
+- Status-Management (aktiv, passiv, trainer, vorstand, etc.)
+- Von/Bis-Datumsfelder für zeitliche Zuordnungen
+- Sub-Dialog zur Verwaltung der Zuordnungen
+- Vollständiger Audit-Trail
+
 ✅ **Audit-Trail**
 - Vollständige Versionierung aller Änderungen
 - History-Tabellen für jeden Datensatz
@@ -113,6 +120,7 @@ Beim ersten Start wird automatisch ein Admin-Account erstellt:
    - Mitgliedsnummer wird automatisch vergeben (kann geändert werden)
    - Pflichtfelder: Vorname, Nachname, Zahlungsart
 5. Mitglieder bearbeiten oder löschen
+6. "Abteilungen verwalten" Button: Zuordnung zu Abteilungen
 
 ## Konfiguration
 
@@ -170,11 +178,13 @@ vtb-verein/
         │   └── __init__.py
         ├── services/           # Business-Logik
         │   ├── abteilungen_service.py
+        │   ├── mitglied_abteilung_service.py
         │   ├── user_service.py
         │   └── __init__.py
         └── ui/                 # User Interface
             ├── abteilung_management.py
             ├── mitglied_management.py
+            ├── mitglied_abteilung_dialog.py
             ├── login_page.py
             ├── navigation.py
             ├── user_management.py
@@ -206,6 +216,12 @@ python main.py
 - UNIQUE Constraint
 - Manuelle Überschreibung möglich
 - Validierung auf Duplikate
+
+**Mitglied-Abteilung-Zuordnung:**
+- Many-to-Many Beziehung via mitglied_abteilung Tabelle
+- Status-Feld für verschiedene Rollen
+- Von/Bis-Datumsfelder für zeitliche Zuordnungen
+- Soft-Delete Support
 
 **Soft-Delete:**
 - Alle Entitäten unterstützen Soft-Delete
@@ -243,13 +259,16 @@ python main.py
 - [x] Mitgliederverwaltung (Basis)
 - [x] Automatische Mitgliedsnummer-Vergabe
 
-### Phase 2 (In Arbeit)
+### Phase 2 (✅ Abgeschlossen)
+- [x] Mitglied-Abteilung Zuordnung
+- [x] Sub-Dialog für Abteilungszuordnung
+- [x] Status-Management für Zuordnungen
+- [x] History-Tracking für Zuordnungen
 - [ ] Suchfunktion für Mitglieder
 - [ ] Filter in Mitgliederliste
-- [ ] Mitglied-Abteilung Zuordnung
-- [ ] Sub-Dialog für Abteilungszuordnung
 
 ### Phase 3 (Geplant)
+- [ ] Abteilungsansicht: Übersicht aller Mitglieder einer Abteilung
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
 - [ ] Import/Export (CSV, Excel)
 - [ ] Pagination bei vielen Einträgen
