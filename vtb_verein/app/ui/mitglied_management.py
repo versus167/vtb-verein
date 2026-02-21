@@ -1,6 +1,7 @@
 """
 Mitgliederverwaltungs-Seite mit flexibler Datumseingabe
 """
+from typing import Optional
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.models.mitglied import Mitglied
