@@ -1,16 +1,28 @@
-"""
+'''
 User-Service für Benutzerverwaltung
-"""
+
+Refactored to use UserRepository for data access.
+'''
 from typing import List, Optional
 import bcrypt
 from app.models.user import User
 from app.db.datastore import VereinsDB
 
 class UserService:
-    """Service für Benutzerverwaltung"""
+    """Service für Benutzerverwaltung.
+    
+    Handles business logic:
+    - Password hashing and verification
+    - Last admin protection
+    - Authentication workflow
+    
+    Data access is delegated to UserRepository via VereinsDB.
+    """
     
     def __init__(self, db: VereinsDB):
         self.db = db
+        # Access repository through VereinsDB facade
+        self._user_repo = db._user_repo
     
     def authenticate(self, username: str, password: str) -> Optional[User]:
         """
@@ -23,52 +35,32 @@ class UserService:
         Returns:
             User-Objekt bei erfolgreicher Authentifizierung, sonst None
         """
-        user = self.get_by_username(username)
+        user = self._user_repo.get_by_username(username)
         if not user or not user.active:
             return None
         
         if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
             # Letzten Login aktualisieren (ohne Version zu erhöhen)
-            self._update_last_login(user.id)
+            self._user_repo.update_last_login(user.id)
             return user
         
         return None
     
     def get_by_username(self, username: str) -> Optional[User]:
         """Findet User nach Benutzername (nur nicht gelöschte)"""
-        with self.db.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM users WHERE username = ? AND deleted_at IS NULL",
-                (username,)
-            )
-            row = cur.fetchone()
-            return self._row_to_user(row) if row else None
+        return self._user_repo.get_by_username(username)
     
     def get_by_id(self, user_id: int) -> Optional[User]:
         """Findet User nach ID (nur nicht gelöschte)"""
-        with self.db.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM users WHERE id = ? AND deleted_at IS NULL",
-                (user_id,)
-            )
-            row = cur.fetchone()
-            return self._row_to_user(row) if row else None
+        return self._user_repo.get_by_id(user_id)
     
     def list_all(self) -> List[User]:
         """Listet alle Benutzer (nur nicht gelöschte)"""
-        with self.db.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM users WHERE deleted_at IS NULL ORDER BY username"
-            )
-            return [self._row_to_user(row) for row in cur.fetchall()]
+        return self._user_repo.list_all()
     
     def count_active_admins(self) -> int:
         """Zählt die Anzahl aktiver Administratoren"""
-        with self.db.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1 AND deleted_at IS NULL"
-            )
-            return cur.fetchone()[0]
+        return self._user_repo.count_active_admins()
     
     def create(self, username: str, email: str, password: str, role: str, 
                created_by: str, active: bool = True) -> User:
@@ -86,20 +78,11 @@ class UserService:
         Returns:
             Erstellter User (History wird automatisch durch Trigger geschrieben)
         """
+        # Business Logic: Hash password
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-        with self.db.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO users (username, email, password_hash, role, active, 
-                                   version, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-                """,
-                (username, email, password_hash, role, active, created_by, created_by)
-            )
-            user_id = cur.lastrowid
-        
-        return self.get_by_id(user_id)
+        # Delegate to repository
+        return self._user_repo.create(username, email, password_hash, role, created_by, active)
     
     def update(self, user_id: int, username: str = None, email: str = None,
                role: str = None, active: bool = None, updated_by: str = None,
@@ -119,7 +102,7 @@ class UserService:
         Returns:
             Aktualisierter User (History wird automatisch durch Trigger geschrieben)
         """
-        user = self.get_by_id(user_id)
+        user = self._user_repo.get_by_id(user_id)
         if not user:
             raise ValueError(f"User mit ID {user_id} nicht gefunden")
         
@@ -132,31 +115,24 @@ class UserService:
         new_role = role if role is not None else user.role
         new_active = active if active is not None else user.active
         
-        # Prüfen, ob der letzte aktive Admin betroffen ist
-        # Ein Admin wird "inaktiv", wenn:
-        # 1. Seine Rolle von 'admin' auf etwas anderes geändert wird, ODER
-        # 2. Sein active-Status auf False gesetzt wird
+        # Business Logic: Prüfen, ob der letzte aktive Admin betroffen ist
         user_is_currently_active_admin = (user.role == 'admin' and user.active)
         user_will_be_active_admin = (new_role == 'admin' and new_active)
         
         if user_is_currently_active_admin and not user_will_be_active_admin:
-            if self.count_active_admins() <= 1:
+            if self._user_repo.count_active_admins() <= 1:
                 raise ValueError("Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden")
         
-        with self.db.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE users 
-                SET username = ?, email = ?, role = ?, active = ?,
-                    version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
-                """,
-                (new_username, new_email, new_role, new_active, updated_by, user_id, user.version)
-            )
-            if cur.rowcount == 0:
-                raise ValueError("Update fehlgeschlagen - Versionkonflikt oder User gelöscht")
+        # Delegate to repository
+        success = self._user_repo.update(
+            user_id, new_username, new_email, new_role, new_active, 
+            updated_by, user.version
+        )
         
-        return self.get_by_id(user_id)
+        if not success:
+            raise ValueError("Update fehlgeschlagen - Versionkonflikt oder User gelöscht")
+        
+        return self._user_repo.get_by_id(user_id)
     
     def change_password(self, user_id: int, new_password: str, updated_by: str) -> bool:
         """
@@ -171,24 +147,18 @@ class UserService:
             True bei Erfolg (History wird automatisch durch Trigger geschrieben)
         """
         # Aktuellen User holen für Version-Check
-        user = self.get_by_id(user_id)
+        user = self._user_repo.get_by_id(user_id)
         if not user:
             raise ValueError(f"User mit ID {user_id} nicht gefunden")
         
+        # Business Logic: Hash password
         password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-        with self.db.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE users 
-                SET password_hash = ?, version = version + 1, 
-                    updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
-                """,
-                (password_hash, updated_by, user_id, user.version)
-            )
-            if cur.rowcount == 0:
-                raise ValueError("Passwort-Änderung fehlgeschlagen - Versionkonflikt oder User gelöscht")
+        # Delegate to repository
+        success = self._user_repo.update_password(user_id, password_hash, updated_by, user.version)
+        
+        if not success:
+            raise ValueError("Passwort-Änderung fehlgeschlagen - Versionkonflikt oder User gelöscht")
         
         return True
     
@@ -204,48 +174,11 @@ class UserService:
         Returns:
             True bei Erfolg
         """
-        # Prüfen, ob der letzte aktive Admin gelöscht werden soll
-        user = self.get_by_id(user_id)
+        # Business Logic: Prüfen, ob der letzte aktive Admin gelöscht werden soll
+        user = self._user_repo.get_by_id(user_id)
         if user and user.role == 'admin' and user.active:
-            if self.count_active_admins() <= 1:
+            if self._user_repo.count_active_admins() <= 1:
                 raise ValueError("Der letzte aktive Administrator kann nicht gelöscht werden")
         
-        with self.db.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE users
-                SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
-                    version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
-                """,
-                (deleted_by, user_id)
-            )
-            return cur.rowcount == 1
-    
-    def _update_last_login(self, user_id: int):
-        """Aktualisiert den letzten Login-Zeitstempel (ohne Version zu erhöhen)"""
-        with self.db.cursor() as cur:
-            cur.execute(
-                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
-                (user_id,)
-            )
-    
-    def _row_to_user(self, row) -> User:
-        """Konvertiert DB-Row zu User-Objekt"""
-        return User(
-            id=row[0],
-            username=row[1],
-            email=row[2],
-            password_hash=row[3],
-            role=row[4],
-            active=bool(row[5]),
-            last_login=row[6],
-            version=row[7],
-            created_at=row[8],
-            created_by=row[9],
-            updated_at=row[10],
-            updated_by=row[11]
-            # deleted_at=row[12] und deleted_by=row[13] werden nicht im User-Objekt gespeichert
-            # da wir nur nicht-gelöschte User zurückgeben
-        )
+        # Delegate to repository
+        return self._user_repo.mark_user_deleted(user_id, deleted_by)
