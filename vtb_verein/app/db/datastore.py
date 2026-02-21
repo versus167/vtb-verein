@@ -8,12 +8,14 @@ VereinsDB Facade - Maintains backward compatibility while delegating to reposito
 @refactored: AI Assistant
 '''
 
+from typing import Optional, List
 from app.db.database import Database
 from app.db.mitglied_repository import MitgliedRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.user_repository import UserRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
+from app.models.user import User
 
 
 class VereinsDB:
@@ -113,3 +115,46 @@ class VereinsDB:
     
     def prune_deleted_abteilungen(self, days_old: int) -> int:
         return self._abteilung_repo.prune_deleted_abteilungen(days_old)
+    
+    # -----------------------------------
+    # User Operations - Delegate to UserRepository
+    # -----------------------------------
+    
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get user by username (for backward compatibility)."""
+        return self._user_repo.get_by_username(username)
+    
+    def get_user_by_id(self, user_id: int) -> Optional[User]:
+        """Get user by ID (for backward compatibility)."""
+        return self._user_repo.get_by_id(user_id)
+    
+    def list_users(self) -> List[User]:
+        """List all users (for backward compatibility)."""
+        return self._user_repo.list_all()
+    
+    def count_active_admins(self) -> int:
+        """Count active administrators (for backward compatibility)."""
+        return self._user_repo.count_active_admins()
+    
+    def create_user(self, username: str, email: str, password_hash: str, role: str,
+                   created_by: str, active: bool = True) -> User:
+        """Create user (for backward compatibility)."""
+        return self._user_repo.create(username, email, password_hash, role, created_by, active)
+    
+    def update_user(self, user_id: int, username: str, email: str, role: str,
+                   active: bool, updated_by: str, expected_version: int) -> bool:
+        """Update user (for backward compatibility)."""
+        return self._user_repo.update(user_id, username, email, role, active, updated_by, expected_version)
+    
+    def update_user_password(self, user_id: int, password_hash: str, updated_by: str,
+                            expected_version: int) -> bool:
+        """Update user password (for backward compatibility)."""
+        return self._user_repo.update_password(user_id, password_hash, updated_by, expected_version)
+    
+    def update_last_login(self, user_id: int) -> bool:
+        """Update last login timestamp (for backward compatibility)."""
+        return self._user_repo.update_last_login(user_id)
+    
+    def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
+        """Soft-delete user (for backward compatibility)."""
+        return self._user_repo.mark_user_deleted(user_id, deleted_by)
