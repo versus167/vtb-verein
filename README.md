@@ -66,6 +66,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 
 3. **Abhängigkeiten installieren**
    ```bash
+   cd vtb_verein
    pip install -r requirements.txt
    ```
 
@@ -77,7 +78,6 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 
 5. **Anwendung starten**
    ```bash
-   cd vtb_verein
    python main.py
    ```
 
@@ -165,29 +165,36 @@ vtb-verein/
     ├── main.py                  # Haupteinstiegspunkt
     ├── __init__.py
     └── app/
-        ├── auth/               # Authentifizierung
+        ├── auth/                # Authentifizierung
         │   ├── auth_helper.py
         │   └── __init__.py
-        ├── db/                 # Datenbank
-        │   ├── datastore.py    # Schema & Migrationen
-        │   └── __init__.py
-        ├── models/             # Datenmodelle
+        ├── db/                  # Datenbank-Layer (Repository Pattern)
+        │   ├── __init__.py
+        │   ├── base_repository.py       # Basis-Klasse für Repositories
+        │   ├── database.py              # Connection & Schema-Management
+        │   ├── datastore.py             # VereinsDB Facade (Backward Compat.)
+        │   ├── mitglied_repository.py   # Mitglied-Datenzugriff
+        │   ├── abteilung_repository.py  # Abteilung-Datenzugriff
+        │   └── user_repository.py       # User-Datenzugriff
+        ├── models/              # Datenmodelle
         │   ├── abteilung.py
         │   ├── mitglied.py
         │   ├── user.py
         │   └── __init__.py
-        ├── services/           # Business-Logik
+        ├── services/            # Business-Logik
         │   ├── abteilungen_service.py
         │   ├── mitglied_abteilung_service.py
         │   ├── user_service.py
         │   └── __init__.py
-        └── ui/                 # User Interface
-            ├── abteilung_management.py
-            ├── mitglied_management.py
-            ├── mitglied_abteilung_dialog.py
-            ├── login_page.py
-            ├── navigation.py
-            ├── user_management.py
+        ├── ui/                  # User Interface
+        │   ├── abteilung_management.py
+        │   ├── mitglied_management.py
+        │   ├── mitglied_abteilung_dialog.py
+        │   ├── login_page.py
+        │   ├── navigation.py
+        │   ├── user_management.py
+        │   └── __init__.py
+        └── web/                 # Web-spezifische Komponenten
             └── __init__.py
 ```
 
@@ -208,6 +215,59 @@ python main.py
 5. Pull Request erstellen
 
 ## Technische Details
+
+### Architektur
+
+**Repository Pattern (seit v2.0):**
+
+Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugriff und Business-Logik:
+
+```
+┌─────────────────┐
+│   UI Layer      │  NiceGUI-Komponenten
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│ Service Layer   │  Business-Logik, Validierung, Orchestrierung
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│ Repository Layer│  Reine CRUD-Operationen, SQL-Queries
+└────────┬────────┘
+         │
+┌────────▼────────┐
+│   Database      │  SQLite mit Row Factory
+└─────────────────┘
+```
+
+**Layer-Verantwortlichkeiten:**
+
+1. **UI Layer** (`app/ui/`): 
+   - NiceGUI-Komponenten
+   - User Interaction
+   - Keine Business-Logik
+
+2. **Service Layer** (`app/services/`):
+   - Business-Logik (z.B. "Letzter Admin"-Schutz)
+   - Validierung (z.B. Passwort-Hashing)
+   - Orchestrierung mehrerer Repositories
+   - **Keine direkten SQL-Queries**
+
+3. **Repository Layer** (`app/db/`):
+   - Pure CRUD-Operationen
+   - SQL-Queries
+   - Mapping von DB-Rows zu Models
+   - **Keine Business-Logik**
+
+4. **Models** (`app/models/`):
+   - Datenklassen (dataclasses)
+   - Type Safety
+
+**Vorteile:**
+- ✅ Klare Trennung der Verantwortlichkeiten
+- ✅ Testbarkeit (Repositories können gemockt werden)
+- ✅ Wartbarkeit (SQL-Änderungen nur in Repositories)
+- ✅ Wiederverwendbarkeit (Repositories in mehreren Services nutzbar)
 
 ### Datenbank-Schema
 
@@ -234,19 +294,27 @@ python main.py
 - Verhindert Überschreiben von Änderungen
 - Konflikterkennung bei Updates
 
-### Architektur
+**History/Audit-Trail:**
+- Automatische Versionierung via Database-Triggers
+- Jede Änderung wird in *_history Tabellen protokolliert
+- Nachvollziehbarkeit aller Änderungen (wer, wann, was)
 
-**Layered Architecture:**
-1. **UI Layer** (`app/ui/`): NiceGUI-Komponenten
-2. **Service Layer** (`app/services/`): Business-Logik
-3. **Data Layer** (`app/db/`): Pure CRUD-Operationen
-4. **Models** (`app/models/`): Datenklassen
+### Repository Pattern Details
 
-**Vorteile:**
-- Klare Trennung der Verantwortlichkeiten
-- Testbarkeit
-- Wartbarkeit
-- Erweiterbarkeit
+**BaseRepository:**
+- Gemeinsame Basis für alle Repositories
+- Stellt `cursor()` Context Manager bereit
+- Automatisches Commit/Rollback
+
+**Spezialisierte Repositories:**
+- `MitgliedRepository`: CRUD für Mitglieder, Mitgliedsnummer-Management
+- `AbteilungRepository`: CRUD für Abteilungen, Dependency-Checks
+- `UserRepository`: CRUD für User, Authentication-Queries
+
+**VereinsDB Facade:**
+- Kombiniert alle Repositories
+- Stellt einheitliche Schnittstelle bereit
+- Backward Compatibility für Legacy-Code
 
 ## Roadmap
 
@@ -264,18 +332,20 @@ python main.py
 - [x] Sub-Dialog für Abteilungszuordnung
 - [x] Status-Management für Zuordnungen
 - [x] History-Tracking für Zuordnungen
+- [x] **Repository Pattern Migration**
+- [x] **Separation of Concerns: Service vs Repository**
+
+### Phase 3 (In Arbeit)
 - [ ] Suchfunktion für Mitglieder
 - [ ] Filter in Mitgliederliste
-
-### Phase 3 (Geplant)
 - [ ] Abteilungsansicht: Übersicht aller Mitglieder einer Abteilung
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
 - [ ] Import/Export (CSV, Excel)
 - [ ] Pagination bei vielen Einträgen
+
+### Phase 4 (Geplant)
 - [ ] Beitragsregeln
 - [ ] Beitragssollstellung
-
-### Phase 4 (Zukunft)
 - [ ] Berichte & Statistiken
 - [ ] SEPA-Export
 - [ ] Dashboard mit Kennzahlen
