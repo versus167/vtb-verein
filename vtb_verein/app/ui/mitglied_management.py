@@ -79,17 +79,16 @@ def create_mitglied_management_page(db: VereinsDB):
                     def validate_and_format(e):
                         if not input_field.value or not input_field.value.strip():
                             state['value'] = None
-                            input_field.props(remove='error')
+                            input_field.error = None
                             return
                         
                         parsed = DateInputHelper.parse_date(input_field.value)
                         if parsed:
                             state['value'] = parsed
                             input_field.value = DateInputHelper.format_date_display(parsed)
-                            input_field.props(remove='error')
+                            input_field.error = None
                         else:
-                            input_field.props('error')
-                            input_field.props('error-message="Ungültiges Format. Beispiele: 21.2.26, 210226, 21/2/2026"')
+                            input_field.error = 'Ungültiges Format. Beispiele: 21.2.26, 210226, 21/2/2026'
                     
                     input_field.on('blur', validate_and_format)
                     
@@ -106,7 +105,7 @@ def create_mitglied_management_page(db: VereinsDB):
                                     if date_picker.value:
                                         state['value'] = date_picker.value
                                         input_field.value = DateInputHelper.format_date_display(date_picker.value)
-                                        input_field.props(remove='error')
+                                        input_field.error = None
                                     dialog.close()
                                 
                                 ui.button('Übernehmen', on_click=apply_date).props('color=primary')
