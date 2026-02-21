@@ -1,11 +1,13 @@
 """
-Mitgliederverwaltungs-Seite
+Mitgliederverwaltungs-Seite mit flexibler Datumseingabe
 """
+from typing import Optional
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.models.mitglied import Mitglied
 from app.auth.auth_helper import AuthHelper, require_role
 from app.ui.navigation import create_navigation, set_current_path
+from app.ui.date_input_helper import DateInputHelper
 
 def create_mitglied_management_page(db: VereinsDB):
     """Erstellt die Mitgliederverwaltungs-Seite"""
@@ -38,7 +40,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     'mitgliedsnummer': m.mitgliedsnummer or '',
                     'vorname': m.vorname,
                     'nachname': m.nachname,
-                    'geburtsdatum': m.geburtsdatum or '',
+                    'geburtsdatum': DateInputHelper.format_date_display(m.geburtsdatum) if m.geburtsdatum else '',
                     'ort': m.ort or '',
                     'email': m.email or '',
                     'status': m.status,
@@ -56,6 +58,63 @@ def create_mitglied_management_page(db: VereinsDB):
                 </q-td>
             ''')
             
+            def create_date_input(label: str, value: Optional[str] = None) -> tuple[ui.input, dict]:
+                """
+                Erstellt ein Datumseingabefeld mit flexibler Eingabe.
+                
+                Returns:
+                    Tuple aus (input_widget, state_dict mit 'value' key)
+                """
+                state = {'value': value}
+                
+                with ui.row().classes('w-full gap-2 items-start'):
+                    display_value = DateInputHelper.format_date_display(value) if value else ''
+                    input_field = ui.input(
+                        label=label,
+                        value=display_value,
+                        placeholder='z.B. 21.2.26, 210226, 21/2/2026'
+                    ).classes('flex-grow')
+                    
+                    # Validation on blur
+                    def validate_and_format(e):
+                        if not input_field.value or not input_field.value.strip():
+                            state['value'] = None
+                            input_field.error = None
+                            return
+                        
+                        parsed = DateInputHelper.parse_date(input_field.value)
+                        if parsed:
+                            state['value'] = parsed
+                            input_field.value = DateInputHelper.format_date_display(parsed)
+                            input_field.error = None
+                        else:
+                            input_field.error = 'Ungültiges Format. Beispiele: 21.2.26, 210226, 21/2/2026'
+                    
+                    input_field.on('blur', validate_and_format)
+                    
+                    # Date picker button
+                    def open_picker():
+                        with ui.dialog() as dialog, ui.card():
+                            ui.label(label).classes('text-subtitle1 q-mb-md')
+                            date_picker = ui.date(value=state['value'])
+                            
+                            with ui.row().classes('w-full q-mt-md'):
+                                ui.button('Abbrechen', on_click=dialog.close)
+                                
+                                def apply_date():
+                                    if date_picker.value:
+                                        state['value'] = date_picker.value
+                                        input_field.value = DateInputHelper.format_date_display(date_picker.value)
+                                        input_field.error = None
+                                    dialog.close()
+                                
+                                ui.button('Übernehmen', on_click=apply_date).props('color=primary')
+                        dialog.open()
+                    
+                    ui.button(icon='calendar_today', on_click=open_picker).props('flat dense')
+                
+                return input_field, state
+            
             def show_create_dialog():
                 with ui.dialog() as dialog, ui.card().style('min-width: 700px; max-height: 80vh; overflow-y: auto'):
                     ui.label('Neues Mitglied anlegen').classes('text-h6 q-mb-md')
@@ -69,7 +128,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     ui.label('Persönliche Daten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     vorname = ui.input('Vorname *').classes('w-full')
                     nachname = ui.input('Nachname *').classes('w-full')
-                    geburtsdatum = ui.input('Geburtsdatum (YYYY-MM-DD)')
+                    geburtsdatum_input, geburtsdatum_state = create_date_input('Geburtsdatum')
                     
                     # Kontaktdaten
                     ui.label('Kontakt').classes('text-subtitle2 q-mt-md q-mb-sm')
@@ -86,8 +145,8 @@ def create_mitglied_management_page(db: VereinsDB):
                     
                     # Vereinsdaten
                     ui.label('Vereinsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
-                    eintrittsdatum = ui.input('Eintrittsdatum (YYYY-MM-DD)')
-                    austrittsdatum = ui.input('Austrittsdatum (YYYY-MM-DD)')
+                    eintrittsdatum_input, eintrittsdatum_state = create_date_input('Eintrittsdatum')
+                    austrittsdatum_input, austrittsdatum_state = create_date_input('Austrittsdatum')
                     
                     # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
@@ -99,7 +158,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     iban = ui.input('IBAN')
                     bic = ui.input('BIC')
                     kontoinhaber = ui.input('Kontoinhaber')
-                    abgerechnet_bis = ui.input('Abgerechnet bis (YYYY-MM-DD)')
+                    abgerechnet_bis_input, abgerechnet_bis_state = create_date_input('Abgerechnet bis')
                     
                     error_label = ui.label('').classes('text-negative')
                     error_label.visible = False
@@ -130,21 +189,21 @@ def create_mitglied_management_page(db: VereinsDB):
                                 mitgliedsnummer=nummer,
                                 vorname=vorname.value,
                                 nachname=nachname.value,
-                                geburtsdatum=geburtsdatum.value or None,
+                                geburtsdatum=geburtsdatum_state['value'],
                                 strasse=strasse.value or None,
                                 plz=plz.value or None,
                                 ort=ort.value or None,
                                 land=land.value or None,
                                 email=email.value or None,
                                 telefon=telefon.value or None,
-                                eintrittsdatum=eintrittsdatum.value or None,
-                                austrittsdatum=austrittsdatum.value or None,
+                                eintrittsdatum=eintrittsdatum_state['value'],
+                                austrittsdatum=austrittsdatum_state['value'],
                                 status='aktiv',
                                 zahlungsart=zahlungsart.value,
                                 iban=iban.value or None,
                                 bic=bic.value or None,
                                 kontoinhaber=kontoinhaber.value or None,
-                                abgerechnet_bis=abgerechnet_bis.value or None,
+                                abgerechnet_bis=abgerechnet_bis_state['value'],
                             )
                             db.create_mitglied(m, created_by=current_user.username)
                             table.rows = load_mitglieder()
@@ -175,7 +234,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     ui.label('Persönliche Daten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     vorname = ui.input('Vorname *', value=m.vorname)
                     nachname = ui.input('Nachname *', value=m.nachname)
-                    geburtsdatum = ui.input('Geburtsdatum (YYYY-MM-DD)', value=m.geburtsdatum or '')
+                    geburtsdatum_input, geburtsdatum_state = create_date_input('Geburtsdatum', m.geburtsdatum)
                     
                     # Kontaktdaten
                     ui.label('Kontakt').classes('text-subtitle2 q-mt-md q-mb-sm')
@@ -192,8 +251,8 @@ def create_mitglied_management_page(db: VereinsDB):
                     
                     # Vereinsdaten
                     ui.label('Vereinsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
-                    eintrittsdatum = ui.input('Eintrittsdatum (YYYY-MM-DD)', value=m.eintrittsdatum or '')
-                    austrittsdatum = ui.input('Austrittsdatum (YYYY-MM-DD)', value=m.austrittsdatum or '')
+                    eintrittsdatum_input, eintrittsdatum_state = create_date_input('Eintrittsdatum', m.eintrittsdatum)
+                    austrittsdatum_input, austrittsdatum_state = create_date_input('Austrittsdatum', m.austrittsdatum)
                     
                     # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
@@ -205,7 +264,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     iban = ui.input('IBAN', value=m.iban or '')
                     bic = ui.input('BIC', value=m.bic or '')
                     kontoinhaber = ui.input('Kontoinhaber', value=m.kontoinhaber or '')
-                    abgerechnet_bis = ui.input('Abgerechnet bis (YYYY-MM-DD)', value=m.abgerechnet_bis or '')
+                    abgerechnet_bis_input, abgerechnet_bis_state = create_date_input('Abgerechnet bis', m.abgerechnet_bis)
                     
                     error_label = ui.label('').classes('text-negative')
                     error_label.visible = False
@@ -235,20 +294,20 @@ def create_mitglied_management_page(db: VereinsDB):
                             m.mitgliedsnummer = nummer
                             m.vorname = vorname.value
                             m.nachname = nachname.value
-                            m.geburtsdatum = geburtsdatum.value or None
+                            m.geburtsdatum = geburtsdatum_state['value']
                             m.strasse = strasse.value or None
                             m.plz = plz.value or None
                             m.ort = ort.value or None
                             m.land = land.value or None
                             m.email = email.value or None
                             m.telefon = telefon.value or None
-                            m.eintrittsdatum = eintrittsdatum.value or None
-                            m.austrittsdatum = austrittsdatum.value or None
+                            m.eintrittsdatum = eintrittsdatum_state['value']
+                            m.austrittsdatum = austrittsdatum_state['value']
                             m.zahlungsart = zahlungsart.value
                             m.iban = iban.value or None
                             m.bic = bic.value or None
                             m.kontoinhaber = kontoinhaber.value or None
-                            m.abgerechnet_bis = abgerechnet_bis.value or None
+                            m.abgerechnet_bis = abgerechnet_bis_state['value']
                             
                             success = db.update_mitglied(m, updated_by=current_user.username)
                             if not success:
