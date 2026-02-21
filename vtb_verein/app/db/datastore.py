@@ -21,6 +21,11 @@ class VereinsDB:
     - Schema migrations
     
     Business logic (validation, complex queries, rules) belongs in the service layer.
+    
+    Delete Pattern:
+    - mark_<entity>_deleted() - Soft-delete an entity
+    - restore_<entity>() - Restore a soft-deleted entity
+    - list_deleted_<entity_plural>() - List soft-deleted entities
     """
     
     def __init__(self, path: str):
@@ -218,7 +223,7 @@ class VereinsDB:
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         """Soft-delete: Mark Mitglied as deleted.
         
-        Note: Does NOT check for dependencies.
+        Note: Does NOT check for dependencies - that's business logic in the service layer.
         
         Returns:
             bool: True if marked as deleted, False if not found or already deleted
@@ -235,14 +240,6 @@ class VereinsDB:
                 (deleted_by, mitglied_id)
             )
             return cur.rowcount == 1
-    
-    def delete_mitglied(self, mitglied_id: int, deleted_by: str) -> bool:
-        """Delete (soft-delete) a Mitglied.
-        
-        Returns:
-            bool: True if successfully deleted, False if not found
-        """
-        return self.mark_mitglied_deleted(mitglied_id, deleted_by)
 
     # -----------------------------------
     # Abteilung CRUD Operations
@@ -393,80 +390,6 @@ class VereinsDB:
         
         Returns:
             bool: True if restored successfully, False if not found or not deleted
-        """
-        with self.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE abteilung
-                SET deleted_at = NULL,
-                    deleted_by = NULL,
-                    version = version + 1,
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND deleted_at IS NOT NULL
-                """,
-                (restored_by, abteilung_id)
-            )
-            return cur.rowcount == 1
-    
-    def can_delete_abteilung(self, abteilung_id: int) -> bool:
-        """Check if an Abteilung can be deleted (soft-deleted).
-        
-        Returns False if there are active references that prevent deletion.
-        Returns True if the Abteilung can be safely deleted (even with history).
-        
-        Returns:
-            bool: True if deletion is allowed, False otherwise
-        """
-        # Check for active (non-deleted) references
-        if self.has_active_mitglied_abteilung_references(abteilung_id):
-            return False
-        if self.has_active_beitragsregel_references(abteilung_id):
-            return False
-        
-        # History entries don't prevent soft-delete
-        return True
-    
-    def delete_abteilung(self, abteilung_id: int, deleted_by: str) -> bool:
-        """Delete (soft-delete) an Abteilung if allowed.
-        
-        Checks if deletion is allowed using can_delete_abteilung() first.
-        
-        Returns:
-            bool: True if successfully deleted, False if not allowed or not found
-        """
-        if not self.can_delete_abteilung(abteilung_id):
-            return False
-        
-        return self.mark_abteilung_deleted(abteilung_id, deleted_by)
-    
-    def list_deleted_abteilungen(self) -> list[dict]:
-        """List all soft-deleted Abteilungen with deletion metadata.
-        
-        Returns:
-            list[dict]: List of deleted Abteilungen with all fields including deleted_at, deleted_by
-        """
-        with self.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, kuerzel, beschreibung,
-                       version, created_at, created_by, updated_at, updated_by,
-                       deleted_at, deleted_by
-                FROM abteilung
-                WHERE deleted_at IS NOT NULL
-                ORDER BY deleted_at DESC
-                """
-            )
-            return [dict(row) for row in cur.fetchall()]
-    
-    def restore_abteilung(self, abteilung_id: int, restored_by: str) -> bool:
-        """Restore a soft-deleted Abteilung.
-        
-        Sets deleted_at and deleted_by to NULL and increments version.
-        History entry is created automatically via trigger.
-        
-        Returns:
-            bool: True if restored, False if not found or not deleted
         """
         with self.cursor() as cur:
             cur.execute(
@@ -780,7 +703,7 @@ class VereinsDB:
                   id             INTEGER PRIMARY KEY,
                   mitglied_id    INTEGER NOT NULL,
                   abteilung_id   INTEGER NOT NULL,
-                  status         TEXT NOT NULL DEFAULT 'standard',
+                  status         TEXT NOT NULL DEFAULT 'aktiv',
                   von            TEXT,
                   bis            TEXT,
 
@@ -821,6 +744,61 @@ class VereinsDB:
                 )
                 """
             )
+
+            # Trigger für mitglied_abteilung: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_insert
+                AFTER INSERT ON mitglied_abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied_abteilung: UPDATE (nur wenn Version sich ändert)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_update
+                AFTER UPDATE ON mitglied_abteilung
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied_abteilung: DELETE (falls jemals hard delete)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_delete
+                AFTER DELETE ON mitglied_abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.mitglied_id, OLD.abteilung_id, OLD.status, OLD.von, OLD.bis,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
+                    );
+                END;
+            """)
 
             # ============================================
             # Tabelle 3: beitragsregel
