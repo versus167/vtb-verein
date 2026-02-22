@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 1  # Alles in migrate_0_to_1, da noch kein Produktivbetrieb
+SCHEMA_VERSION = 2  # Version 2: History-Trigger für mitglied hinzugefügt, DELETE-Trigger entfernt
 
 
 class Database:
@@ -88,6 +88,9 @@ class Database:
         if current == 0:
             self._migrate_0_to_1()
             current = 1
+        if current == 1:
+            self._migrate_1_to_2()
+            current = 2
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -611,3 +614,76 @@ class Database:
                 print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
         self._set_schema_version(1)
+
+    def _migrate_1_to_2(self):
+        """Migration 1->2: History-Trigger für mitglied hinzufügen, DELETE-Trigger entfernen.
+        
+        Änderungen:
+        1. Fügt fehlende INSERT/UPDATE Trigger für mitglied-Tabelle hinzu
+        2. Entfernt alle DELETE-Trigger (Hard-Delete soll nicht in History landen)
+        """
+        with self.cursor() as cur:
+            # ============================================
+            # 1. Trigger für mitglied hinzufügen
+            # ============================================
+            
+            # Trigger für mitglied: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_audit_insert
+                AFTER INSERT ON mitglied
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_history (
+                        id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                        strasse, plz, ort, land, email, telefon,
+                        eintrittsdatum, austrittsdatum, status,
+                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                        NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
+                        NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                        NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied: UPDATE (nur wenn Version sich ändert)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_audit_update
+                AFTER UPDATE ON mitglied
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO mitglied_history (
+                        id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                        strasse, plz, ort, land, email, telefon,
+                        eintrittsdatum, austrittsdatum, status,
+                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                        NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
+                        NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                        NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # ============================================
+            # 2. DELETE-Trigger für alle Tabellen entfernen
+            # ============================================
+            # Hard-Delete ist nur für Prune-Funktionen, soll nicht in History
+            
+            cur.execute("DROP TRIGGER IF EXISTS mitglied_audit_delete")
+            cur.execute("DROP TRIGGER IF EXISTS abteilung_audit_delete")
+            cur.execute("DROP TRIGGER IF EXISTS mitglied_abteilung_audit_delete")
+            cur.execute("DROP TRIGGER IF EXISTS users_audit_delete")
+
+        self._set_schema_version(2)
