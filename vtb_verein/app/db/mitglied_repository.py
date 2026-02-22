@@ -92,6 +92,48 @@ class MitgliedRepository(BaseRepository):
             )
             return [Mitglied(**dict(row)) for row in cur.fetchall()]
     
+    def list_mitglieder_for_standard_view(self) -> list[tuple[Mitglied, bool]]:
+        """List Mitglieder for standard view (active + recently left).
+        
+        Returns members that:
+        - Have no austrittsdatum (active members), OR
+        - Have austrittsdatum within the last 6 months
+        
+        Returns:
+            list[tuple[Mitglied, bool]]: List of (member, recently_left) tuples
+                where recently_left=True for members who left within 6 months
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                       strasse, plz, ort, land, email, telefon,
+                       eintrittsdatum, austrittsdatum, status,
+                       zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                       version, created_at, created_by, updated_at, updated_by,
+                       CASE 
+                           WHEN austrittsdatum IS NOT NULL 
+                                AND austrittsdatum >= date('now', '-6 months')
+                           THEN 1
+                           ELSE 0
+                       END as recently_left
+                FROM mitglied
+                WHERE deleted_at IS NULL
+                  AND (
+                      austrittsdatum IS NULL
+                      OR austrittsdatum >= date('now', '-6 months')
+                  )
+                ORDER BY nachname, vorname
+                """
+            )
+            results = []
+            for row in cur.fetchall():
+                row_dict = dict(row)
+                recently_left = bool(row_dict.pop('recently_left'))
+                mitglied = Mitglied(**row_dict)
+                results.append((mitglied, recently_left))
+            return results
+    
     def create_mitglied(self, mitglied: Mitglied, created_by: str) -> Mitglied:
         """Create a new Mitglied.
         

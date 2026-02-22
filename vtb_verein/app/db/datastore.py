@@ -67,6 +67,14 @@ class VereinsDB:
     def list_mitglieder(self) -> list[Mitglied]:
         return self._mitglied_repo.list_mitglieder()
     
+    def list_mitglieder_for_standard_view(self) -> list[tuple[Mitglied, bool]]:
+        """List Mitglieder for standard view (active + recently left).
+        
+        Returns:
+            list[tuple[Mitglied, bool]]: List of (member, recently_left) tuples
+        """
+        return self._mitglied_repo.list_mitglieder_for_standard_view()
+    
     def create_mitglied(self, mitglied: Mitglied, created_by: str) -> Mitglied:
         return self._mitglied_repo.create_mitglied(mitglied, created_by)
     

@@ -15,6 +15,18 @@ def create_mitglied_management_page(db: VereinsDB):
     @ui.page('/mitglieder')
     @require_role('user')
     def mitglied_management_page():
+        # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
+        ui.add_head_html('''
+            <style>
+                .q-table tbody tr.recently-left-member {
+                    background-color: #fff3cd !important;
+                }
+                .q-table tbody tr.recently-left-member:hover {
+                    background-color: #ffe69c !important;
+                }
+            </style>
+        ''')
+        
         set_current_path('/mitglieder')
         create_navigation()
         current_user = AuthHelper.get_current_user()
@@ -33,7 +45,8 @@ def create_mitglied_management_page(db: VereinsDB):
         ]
         
         def load_mitglieder():
-            mitglieder = db.list_mitglieder()
+            """Load members for standard view (active + recently left)."""
+            mitglieder_with_flag = db.list_mitglieder_for_standard_view()
             return [
                 {
                     'id': m.id,
@@ -45,17 +58,27 @@ def create_mitglied_management_page(db: VereinsDB):
                     'email': m.email or '',
                     'status': m.status,
                     'version': m.version,
+                    'recently_left': recently_left,
                 }
-                for m in mitglieder
+                for m, recently_left in mitglieder_with_flag
             ]
         
         with ui.card().classes('w-full q-ma-md'):
             table = ui.table(columns=columns, rows=load_mitglieder(), row_key='id').classes('w-full')
-            table.add_slot('body-cell-actions', '''
-                <q-td :props="props">
-                    <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
-                    <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
-                </q-td>
+            
+            # Add custom body slot with row class binding
+            table.add_slot('body', '''
+                <q-tr :props="props" :class="props.row.recently_left ? 'recently-left-member' : ''">
+                    <q-td v-for="col in props.cols" :key="col.name" :props="props">
+                        <template v-if="col.name === 'actions'">
+                            <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
+                            <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
+                        </template>
+                        <template v-else>
+                            {{ col.value }}
+                        </template>
+                    </q-td>
+                </q-tr>
             ''')
             
             def create_date_input(label: str, value: Optional[str] = None) -> tuple[ui.input, dict]:
