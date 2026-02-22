@@ -18,8 +18,11 @@ def create_mitglied_management_page(db: VereinsDB):
         # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
         ui.add_head_html('''
             <style>
-                .recently-left-member {
+                .q-table tbody tr.recently-left-member {
                     background-color: #fff3cd !important;
+                }
+                .q-table tbody tr.recently-left-member:hover {
+                    background-color: #ffe69c !important;
                 }
             </style>
         ''')
@@ -63,17 +66,19 @@ def create_mitglied_management_page(db: VereinsDB):
         with ui.card().classes('w-full q-ma-md'):
             table = ui.table(columns=columns, rows=load_mitglieder(), row_key='id').classes('w-full')
             
-            # Add CSS class for recently left members
-            def get_row_classes(row):
-                return 'recently-left-member' if row.get('recently_left', False) else ''
-            
-            table.props('row-class-name=get_row_classes')
-            
-            table.add_slot('body-cell-actions', '''
-                <q-td :props="props">
-                    <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
-                    <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
-                </q-td>
+            # Add custom body slot with row class binding
+            table.add_slot('body', '''
+                <q-tr :props="props" :class="props.row.recently_left ? 'recently-left-member' : ''">
+                    <q-td v-for="col in props.cols" :key="col.name" :props="props">
+                        <template v-if="col.name === 'actions'">
+                            <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
+                            <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
+                        </template>
+                        <template v-else>
+                            {{ col.value }}
+                        </template>
+                    </q-td>
+                </q-tr>
             ''')
             
             def create_date_input(label: str, value: Optional[str] = None) -> tuple[ui.input, dict]:
