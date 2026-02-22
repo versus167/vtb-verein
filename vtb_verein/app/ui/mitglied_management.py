@@ -338,7 +338,7 @@ def create_mitglied_management_page(db: VereinsDB):
                     
                     def delete_mitglied():
                         try:
-                            success = db.delete_mitglied(m.id, deleted_by=current_user.username)
+                            success = db.mark_mitglied_deleted(m.id, deleted_by=current_user.username)
                             if success:
                                 table.rows = load_mitglieder()
                                 table.update()
