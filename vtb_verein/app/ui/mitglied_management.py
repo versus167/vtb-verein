@@ -12,18 +12,18 @@ from app.ui.date_input_helper import DateInputHelper
 def create_mitglied_management_page(db: VereinsDB):
     """Erstellt die Mitgliederverwaltungs-Seite"""
     
-    # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
-    ui.add_head_html('''
-        <style>
-            .recently-left-member {
-                background-color: #fff3cd !important;
-            }
-        </style>
-    ''')
-    
     @ui.page('/mitglieder')
     @require_role('user')
     def mitglied_management_page():
+        # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
+        ui.add_head_html('''
+            <style>
+                .recently-left-member {
+                    background-color: #fff3cd !important;
+                }
+            </style>
+        ''')
+        
         set_current_path('/mitglieder')
         create_navigation()
         current_user = AuthHelper.get_current_user()
