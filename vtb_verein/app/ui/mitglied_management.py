@@ -12,6 +12,15 @@ from app.ui.date_input_helper import DateInputHelper
 def create_mitglied_management_page(db: VereinsDB):
     """Erstellt die Mitgliederverwaltungs-Seite"""
     
+    # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
+    ui.add_head_html('''
+        <style>
+            .recently-left-member {
+                background-color: #fff3cd !important;
+            }
+        </style>
+    ''')
+    
     @ui.page('/mitglieder')
     @require_role('user')
     def mitglied_management_page():
@@ -33,7 +42,8 @@ def create_mitglied_management_page(db: VereinsDB):
         ]
         
         def load_mitglieder():
-            mitglieder = db.list_mitglieder()
+            """Load members for standard view (active + recently left)."""
+            mitglieder_with_flag = db.list_mitglieder_for_standard_view()
             return [
                 {
                     'id': m.id,
@@ -45,12 +55,20 @@ def create_mitglied_management_page(db: VereinsDB):
                     'email': m.email or '',
                     'status': m.status,
                     'version': m.version,
+                    'recently_left': recently_left,
                 }
-                for m in mitglieder
+                for m, recently_left in mitglieder_with_flag
             ]
         
         with ui.card().classes('w-full q-ma-md'):
             table = ui.table(columns=columns, rows=load_mitglieder(), row_key='id').classes('w-full')
+            
+            # Add CSS class for recently left members
+            def get_row_classes(row):
+                return 'recently-left-member' if row.get('recently_left', False) else ''
+            
+            table.props('row-class-name=get_row_classes')
+            
             table.add_slot('body-cell-actions', '''
                 <q-td :props="props">
                     <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
