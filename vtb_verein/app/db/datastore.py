@@ -76,6 +76,10 @@ class VereinsDB:
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         return self._mitglied_repo.mark_mitglied_deleted(mitglied_id, deleted_by)
     
+    def delete_mitglied(self, mitglied_id: int, deleted_by: str) -> bool:
+        """Delete (soft-delete) a Mitglied. Alias for mark_mitglied_deleted."""
+        return self.mark_mitglied_deleted(mitglied_id, deleted_by)
+    
     # -----------------------------------
     # Abteilung Operations - Delegate to AbteilungRepository
     # -----------------------------------
