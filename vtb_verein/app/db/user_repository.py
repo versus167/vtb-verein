@@ -1,5 +1,6 @@
 '''
 Created on 21.02.2026
+Extended on 07.03.2026 - Magic-Link Authentication
 
 User Repository - All database operations for User entity.
 
@@ -33,6 +34,18 @@ class UserRepository(BaseRepository):
                           version, created_at, created_by, updated_at, updated_by
                    FROM users WHERE username = ? AND deleted_at IS NULL""",
                 (username,)
+            )
+            row = cur.fetchone()
+            return self._row_to_user(row) if row else None
+    
+    def get_by_email(self, email: str) -> Optional[User]:
+        """Find User by email (only non-deleted). Used for Magic-Link authentication."""
+        with self.cursor() as cur:
+            cur.execute(
+                """SELECT id, username, email, password_hash, role, active, last_login,
+                          version, created_at, created_by, updated_at, updated_by
+                   FROM users WHERE email = ? AND deleted_at IS NULL""",
+                (email,)
             )
             row = cur.fetchone()
             return self._row_to_user(row) if row else None
@@ -75,7 +88,7 @@ class UserRepository(BaseRepository):
             username: Unique username
             email: Email address
             password_hash: Already hashed password (hashing done in service layer)
-            role: Role ('admin', 'user', 'readonly')
+            role: Role ('admin', 'user', 'special', 'readonly')
             created_by: Username of creator
             active: Whether user is active
             

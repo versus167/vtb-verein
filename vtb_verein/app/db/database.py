@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 3  # Version 3: Rolle 'special' zur users-Tabelle hinzugefügt
+SCHEMA_VERSION = 4  # Version 4: auth_tokens Tabelle für Magic-Link-Authentication
 
 
 class Database:
@@ -94,6 +94,9 @@ class Database:
         if current == 2:
             self._migrate_2_to_3()
             current = 3
+        if current == 3:
+            self._migrate_3_to_4()
+            current = 4
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -776,3 +779,96 @@ class Database:
             """)
 
         self._set_schema_version(3)
+    
+    def _migrate_3_to_4(self):
+        """Migration 3->4: auth_tokens Tabelle für Magic-Link-Authentication.
+        
+        Änderungen:
+        1. Neue auth_tokens Tabelle für Magic-Links und Remember-Me-Tokens
+        2. History-Tabelle für auth_tokens
+        3. Trigger für INSERT/UPDATE (kein DELETE - Cleanup soll nicht getrackt werden)
+        """
+        with self.cursor() as cur:
+            # ============================================
+            # Tabelle: auth_tokens
+            # ============================================
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS auth_tokens (
+                  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id       INTEGER NOT NULL,
+                  token         TEXT UNIQUE NOT NULL,
+                  token_type    TEXT NOT NULL CHECK(token_type IN ('magic_link', 'remember_me')),
+                  expires_at    TEXT NOT NULL,
+                  used_at       TEXT,
+                  
+                  version       INTEGER NOT NULL DEFAULT 1,
+                  
+                  created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  
+                  FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """
+            )
+            
+            # Indices für Performance
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token_type ON auth_tokens(token_type)")
+            
+            # History-Tabelle
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS auth_tokens_history (
+                  id            INTEGER NOT NULL,
+                  version       INTEGER NOT NULL,
+                  
+                  user_id       INTEGER NOT NULL,
+                  token         TEXT NOT NULL,
+                  token_type    TEXT NOT NULL,
+                  expires_at    TEXT NOT NULL,
+                  used_at       TEXT,
+                  created_at    TEXT NOT NULL,
+                  
+                  PRIMARY KEY (id, version)
+                )
+                """
+            )
+            
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_history_id ON auth_tokens_history(id)")
+            
+            # Trigger für auth_tokens: INSERT
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_insert
+                AFTER INSERT ON auth_tokens
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO auth_tokens_history (
+                        id, version, user_id, token, token_type, expires_at, used_at, created_at
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.token, NEW.token_type,
+                        NEW.expires_at, NEW.used_at, NEW.created_at
+                    );
+                END;
+            """)
+            
+            # Trigger für auth_tokens: UPDATE (nur wenn Version sich ändert)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_update
+                AFTER UPDATE ON auth_tokens
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO auth_tokens_history (
+                        id, version, user_id, token, token_type, expires_at, used_at, created_at
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.token, NEW.token_type,
+                        NEW.expires_at, NEW.used_at, NEW.created_at
+                    );
+                END;
+            """)
+            
+            # KEIN DELETE-Trigger - Token-Cleanup soll nicht in History landen
+
+        self._set_schema_version(4)

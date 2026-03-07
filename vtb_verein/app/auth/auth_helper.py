@@ -4,6 +4,7 @@ Authentication Helper für NiceGUI
 from nicegui import app, ui
 from functools import wraps
 from typing import Optional, Callable
+from datetime import datetime, timedelta
 from app.models.user import User
 
 class AuthHelper:
@@ -12,6 +13,11 @@ class AuthHelper:
     @staticmethod
     def get_current_user() -> Optional[User]:
         """Gibt den aktuell eingeloggten User zurück"""
+        # Session-Ablauf prüfen
+        if AuthHelper.is_session_expired():
+            AuthHelper.logout()
+            return None
+        
         user_data = app.storage.user.get('current_user')
         if user_data is None:
             return None
@@ -24,10 +30,68 @@ class AuthHelper:
         return User(**user_data)
     
     @staticmethod
-    def set_current_user(user: User):
-        """Setzt den aktuell eingeloggten User"""
+    def set_current_user(user: User, remember_me: bool = False):
+        """
+        Setzt den aktuell eingeloggten User mit rollenbezogener Session-Dauer
+        
+        Args:
+            user: User-Objekt
+            remember_me: Wenn True, wird Session verlngert
+        """
         app.storage.user['current_user'] = user
         app.storage.user['authenticated'] = True
+        app.storage.user['remember_me'] = remember_me
+        
+        # Session-Timeout basierend auf Rolle und Remember-Me
+        timeout_days = AuthHelper._get_session_timeout_days(user.role, remember_me)
+        expires_at = datetime.now() + timedelta(days=timeout_days)
+        app.storage.user['session_expires'] = expires_at.isoformat()
+        
+        # Letzten Login-Zeitpunkt speichern
+        app.storage.user['last_activity'] = datetime.now().isoformat()
+    
+    @staticmethod
+    def _get_session_timeout_days(role: str, remember_me: bool) -> int:
+        """
+        Berechnet Session-Timeout in Tagen basierend auf Rolle
+        
+        Args:
+            role: User-Rolle ('admin', 'user', 'special', 'readonly')
+            remember_me: Remember-Me aktiviert?
+            
+        Returns:
+            Anzahl Tage bis Session abläuft
+        """
+        if remember_me:
+            # Verlängerte Sessions mit Remember-Me
+            if role in ['admin', 'user']:
+                return 30  # 30 Tage für Admins/Users
+            elif role == 'special':
+                return 14  # 14 Tage für Abteilungs-/Übungsleiter
+            else:  # readonly
+                return 7   # 7 Tage für Readonly
+        else:
+            # Standard-Sessions (ohne Remember-Me)
+            return 1  # 24 Stunden für alle
+    
+    @staticmethod
+    def is_session_expired() -> bool:
+        """Prüft ob die aktuelle Session abgelaufen ist"""
+        expires_str = app.storage.user.get('session_expires')
+        if not expires_str:
+            return False
+        
+        try:
+            expires_at = datetime.fromisoformat(expires_str)
+            return datetime.now() > expires_at
+        except (ValueError, TypeError):
+            return True
+    
+    @staticmethod
+    def update_activity():
+        """Aktualisiert letzten Aktivitäts-Zeitpunkt (für Idle-Timeout)"""
+        if AuthHelper.is_authenticated():
+            app.storage.user['last_activity'] = datetime.now().isoformat()
     
     @staticmethod
     def logout():
@@ -37,7 +101,13 @@ class AuthHelper:
     @staticmethod
     def is_authenticated() -> bool:
         """Prüft ob ein User eingeloggt ist"""
-        return app.storage.user.get('authenticated', False)
+        if app.storage.user.get('authenticated', False):
+            # Session-Ablauf prüfen
+            if AuthHelper.is_session_expired():
+                AuthHelper.logout()
+                return False
+            return True
+        return False
     
     @staticmethod
     def has_role(required_role: str) -> bool:
@@ -45,7 +115,7 @@ class AuthHelper:
         Prüft ob aktueller User eine bestimmte Rolle hat
         
         Args:
-            required_role: 'admin', 'user', oder 'readonly'
+            required_role: 'admin', 'user', 'special' oder 'readonly'
         """
         user = AuthHelper.get_current_user()
         if not user:
@@ -57,6 +127,10 @@ class AuthHelper:
         
         # User hat user + readonly Rechte
         if user.role == 'user' and required_role in ['user', 'readonly']:
+            return True
+        
+        # Special hat special + readonly Rechte
+        if user.role == 'special' and required_role in ['special', 'readonly']:
             return True
         
         # Readonly hat nur readonly Rechte

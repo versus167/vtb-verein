@@ -4,14 +4,20 @@ Vereins-Mitgliederverwaltung
 Haupteinstiegspunkt für die Anwendung (unter vtb_verein/)
 """
 import os
+from dotenv import load_dotenv
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
+from app.ui.magic_link_page import create_magic_link_page
 from app.ui.user_management import create_user_management_page
 from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
+from app.config.email_config import EmailConfig
+
+# .env-Datei laden (muss VOR os.getenv() aufgerufen werden!)
+load_dotenv()
 
 # Konfiguration
 DB_PATH = os.getenv('VTB_DB_PATH', 'verein.db')
@@ -22,6 +28,13 @@ PORT = int(os.getenv('VTB_PORT', '8080'))
 print("\n=== Vereinsverwaltung ===")
 print(f"Datenbank: {DB_PATH}")
 print(f"Host: {HOST}:{PORT}")
+
+# E-Mail-Status ausgeben
+if EmailConfig.is_configured():
+    print(f"E-Mail: ✅ Konfiguriert ({EmailConfig.get_smtp_server()})")
+else:
+    print("E-Mail: ⚠️  Nicht konfiguriert - Magic-Link-Login nicht verfügbar")
+
 print("=" * 30 + "\n")
 
 # Datenbank initialisieren
@@ -29,6 +42,7 @@ db = VereinsDB(DB_PATH)
 
 # Seiten registrieren
 create_login_page(db)
+create_magic_link_page(db)
 create_user_management_page(db)
 create_abteilung_management_page(db)
 create_mitglied_management_page(db)

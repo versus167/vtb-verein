@@ -1,6 +1,7 @@
 '''
 Created on 07.02.2026
 Refactored on 21.02.2026
+Extended on 07.03.2026 - Magic-Link Authentication
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -13,6 +14,7 @@ from app.db.database import Database
 from app.db.mitglied_repository import MitgliedRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.user_repository import UserRepository
+from app.db.auth_token_repository import AuthTokenRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -42,6 +44,17 @@ class VereinsDB:
         self._mitglied_repo = MitgliedRepository(self.conn)
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
+        self._auth_token_repo = AuthTokenRepository(self._database)
+    
+    @property
+    def user_repository(self) -> UserRepository:
+        """Access to UserRepository (for services)."""
+        return self._user_repo
+    
+    @property
+    def auth_token_repository(self) -> AuthTokenRepository:
+        """Access to AuthTokenRepository (for services)."""
+        return self._auth_token_repo
     
     def cursor(self):
         """Provide cursor for custom queries (use sparingly)."""
@@ -131,6 +144,10 @@ class VereinsDB:
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Get user by username (for backward compatibility)."""
         return self._user_repo.get_by_username(username)
+    
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get user by email (for Magic-Link authentication)."""
+        return self._user_repo.get_by_email(email)
     
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         """Get user by ID (for backward compatibility)."""
