@@ -1,0 +1,184 @@
+# TODO - VTB Vereinsverwaltung
+
+## 🔥 High Priority
+
+### User-Management
+- [x] Neue Rolle 'special' implementiert (für Abteilungsleiter/Übungsleiter)
+- [ ] One-Time-Link Authentication per E-Mail
+  - Token-Generierung und Speicherung (neue Tabelle `auth_tokens`)
+  - E-Mail-Versand mit Login-Link
+  - Login via Link (Alternative zu Passwort)
+  - Token-Gültigkeit: 7 Tage
+  - Button "Login-Link anfordern" auf Login-Page
+  - Automatische Token-Bereinigung (expired tokens)
+
+### Abteilungen
+- [ ] Abteilungsleiter-Zuordnung
+  - Feld `abteilungsleiter_id` in Abteilung-Tabelle
+  - User-Auswahl (Dropdown) in Abteilungsverwaltung
+  - Ein Abteilungsleiter pro Abteilung
+  - User kann mehrere Abteilungen leiten
+  - Anzeige in Abteilungsliste (neue Spalte)
+  - Migration für DB-Schema
+
+- [ ] Übungsleiter-Zuordnung
+  - Analog zu Abteilungsleiter
+  - Feld `uebungsleiter_id` in Abteilung-Tabelle
+  - Eigene Berechtigung/Dashboard später
+
+## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
+
+### Anzeige & Navigation
+- [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
+  - Eigene Ansicht "Gelöschte Mitglieder"
+  - Wiederherstellungs-Button
+  - Konsistent mit Abteilungs-Wiederherstellung
+
+- [ ] Filter in Mitgliederliste
+  - Nach Status (aktiv, passiv, ausgetreten)
+  - Nach Abteilung
+  - Nach Zahlungsart
+  - Nach Austrittsdatum (z.B. "Letzte 6 Monate")
+
+- [ ] Suchfunktion für Mitglieder
+  - Volltextsuche: Name, Mitgliedsnummer, E-Mail
+  - Ergänzung zu Filtern
+  - Live-Search während Eingabe
+
+- [ ] Abteilungsansicht: Übersicht aller Mitglieder einer Abteilung
+  - Neue Seite/Dialog pro Abteilung
+  - Liste aller zugeordneten Mitglieder
+  - Inkl. Status und Von/Bis-Datum
+
+### Import/Export
+- [ ] CSV-Export
+  - Mitgliederliste exportieren
+  - Konfigurierbare Spalten
+
+- [ ] Excel-Export
+  - Formatierte Excel-Datei
+  - Mehrere Sheets (Mitglieder, Abteilungen, etc.)
+
+- [ ] CSV-Import
+  - Mitglieder importieren
+  - Validierung und Fehlerbehandlung
+  - Duplikatserkennung
+
+### Performance
+- [ ] Pagination bei vielen Einträgen
+  - Lazy Loading für große Listen
+  - Konfigurierbare Seitengröße
+  - Performance-Tests mit >1000 Mitgliedern
+
+## 🔮 Phase 4 - Beiträge & Berichte
+
+### Beitragsverwaltung
+- [ ] Beitragsregeln definieren
+  - Pro Abteilung oder vereinsweit
+  - Betrag und Periode (monatlich, jährlich, etc.)
+  - Gültigkeit (von/bis)
+  - Bedingungen (Alter, Status, etc.)
+
+- [ ] Beitragssollstellung
+  - Automatische Berechnung basierend auf Regeln
+  - Zeitraum-basiert
+  - Berücksichtigung von Ein-/Austritten
+
+- [ ] SEPA-Export
+  - XML-Format für Banken
+  - Lastschrift-Dateien generieren
+  - Validierung IBAN/BIC
+
+### Reporting
+- [ ] Berichte & Statistiken
+  - Mitgliederentwicklung (Zu-/Abgänge)
+  - Abteilungsübersicht
+  - Altersstruktur
+  - Zahlungsstatus
+
+- [ ] Dashboard mit Kennzahlen
+  - Gesamtanzahl Mitglieder (aktiv/passiv)
+  - Neueintritte/Austritte im Monat
+  - Beitragsstand
+  - Grafische Auswertungen
+
+### Kommunikation
+- [ ] E-Mail-Benachrichtigungen
+  - Willkommens-Mail bei Neuanmeldung
+  - Erinnerung bei fehlendem Beitrag
+  - Benachrichtigung an Abteilungsleiter
+  - E-Mail-Templates konfigurierbar
+
+## 💡 Ideen / Backlog
+
+### Spezielle Features für Rollen
+- [ ] Dashboard für Abteilungsleiter
+  - Nur ihre Abteilung(en) sichtbar
+  - Mitgliederübersicht
+  - Statistiken ihrer Abteilung
+
+- [ ] Dashboard für Übungsleiter
+  - Trainingsgruppen-Verwaltung
+  - Anwesenheitslisten
+  - Trainingspläne
+
+### Erweiterte Funktionen
+- [ ] Trainingsplan-Management
+  - Trainingszeiten definieren
+  - Hallenplanung
+  - Trainer-Zuordnung
+
+- [ ] Anwesenheitslisten
+  - Check-in/Check-out
+  - Statistiken pro Mitglied
+  - Export für Abrechnungen
+
+- [ ] Dokumentenverwaltung
+  - Dateianhang pro Mitglied
+  - Verträge, Bescheinigungen, etc.
+  - Ablaufdatum-Tracking
+
+### Technische Verbesserungen
+- [ ] Mobile App / Progressive Web App
+  - Offline-Fähigkeit
+  - Push-Benachrichtigungen
+  - Native App-Feeling
+
+- [ ] Multi-Mandanten-Fähigkeit
+  - Mehrere Vereine in einer Instanz
+  - Trennung der Daten
+  - Zentrales Admin-Dashboard
+
+- [ ] API-Endpunkte
+  - REST-API für externe Integrationen
+  - Webhook-Support
+  - API-Dokumentation
+
+## ✅ Abgeschlossen
+
+### Phase 1
+- [x] Benutzerverwaltung
+- [x] Abteilungsverwaltung
+- [x] Soft-Delete mit Wiederherstellung (Abteilungen)
+- [x] Navigation
+- [x] Audit-Trail
+- [x] Mitgliederverwaltung (Basis)
+- [x] Automatische Mitgliedsnummer-Vergabe
+
+### Phase 2
+- [x] Mitglied-Abteilung Zuordnung
+- [x] Sub-Dialog für Abteilungszuordnung
+- [x] Status-Management für Zuordnungen
+- [x] History-Tracking für Zuordnungen
+- [x] Repository Pattern Migration
+- [x] Separation of Concerns: Service vs Repository
+- [x] Neue Benutzerrolle 'special'
+
+---
+
+**Legende:**
+- 🔥 = Hohe Priorität, nächste Schritte
+- 📋 = Mittelfristig, Phase 3
+- 🔮 = Längerfristig, Phase 4
+- 💡 = Ideen, noch nicht priorisiert
+- ✅ = Fertig
