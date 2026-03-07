@@ -28,7 +28,7 @@ class UserService:
         Returns:
             User-Objekt wenn erfolgreich, sonst None
         """
-        user = self.user_repo.get_user_by_username(username)
+        user = self.user_repo.get_by_username(username)
         
         if not user:
             return None
@@ -60,7 +60,7 @@ class UserService:
             return False
         
         # User anhand E-Mail finden
-        user = self.user_repo.get_user_by_email(email)
+        user = self.user_repo.get_by_email(email)
         
         if not user:
             print(f"⚠️  Keine User mit E-Mail {email} gefunden")
@@ -113,7 +113,7 @@ class UserService:
             return None
         
         # User laden
-        user = self.user_repo.get_user_by_id(result['user_id'])
+        user = self.user_repo.get_by_id(result['user_id'])
         
         if not user:
             print(f"❌ User mit ID {result['user_id']} nicht gefunden")
@@ -148,7 +148,7 @@ class UserService:
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
         try:
-            user_id = self.user_repo.create_user(
+            user = self.user_repo.create(
                 username=username,
                 email=email,
                 password_hash=password_hash,
@@ -156,7 +156,7 @@ class UserService:
                 created_by=created_by
             )
             
-            return self.user_repo.get_user_by_id(user_id)
+            return user
         except Exception as e:
             print(f"❌ User-Erstellung fehlgeschlagen: {e}")
             return None
