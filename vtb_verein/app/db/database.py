@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 2  # Version 2: History-Trigger für mitglied hinzugefügt, DELETE-Trigger entfernt
+SCHEMA_VERSION = 3  # Version 3: Rolle 'special' zur users-Tabelle hinzugefügt
 
 
 class Database:
@@ -91,6 +91,9 @@ class Database:
         if current == 1:
             self._migrate_1_to_2()
             current = 2
+        if current == 2:
+            self._migrate_2_to_3()
+            current = 3
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -687,3 +690,89 @@ class Database:
             cur.execute("DROP TRIGGER IF EXISTS users_audit_delete")
 
         self._set_schema_version(2)
+
+    def _migrate_2_to_3(self):
+        """Migration 2->3: Rolle 'special' zur users-Tabelle hinzufügen.
+        
+        SQLite unterstützt kein ALTER TABLE ... ALTER CONSTRAINT,
+        daher müssen wir die Tabelle neu erstellen.
+        """
+        with self.cursor() as cur:
+            # Temporäre Tabelle mit neuer Constraint erstellen
+            cur.execute("""
+                CREATE TABLE users_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special')),
+                    active INTEGER NOT NULL DEFAULT 1,
+                    last_login TEXT,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by TEXT NOT NULL,
+                    deleted_at TEXT,
+                    deleted_by TEXT
+                )
+            """)
+            
+            # Daten kopieren
+            cur.execute("""
+                INSERT INTO users_new 
+                SELECT * FROM users
+            """)
+            
+            # Alte Tabelle löschen
+            cur.execute("DROP TABLE users")
+            
+            # Neue Tabelle umbenennen
+            cur.execute("ALTER TABLE users_new RENAME TO users")
+            
+            # Indices neu erstellen
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at)")
+            
+            # Trigger neu erstellen
+            cur.execute("""
+                CREATE TRIGGER users_audit_insert
+                AFTER INSERT ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER users_audit_update
+                AFTER UPDATE ON users
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+        self._set_schema_version(3)

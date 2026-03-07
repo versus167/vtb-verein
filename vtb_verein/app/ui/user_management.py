@@ -6,6 +6,7 @@ from app.services.user_service import UserService
 from app.auth.auth_helper import AuthHelper, require_role
 from app.db.datastore import VereinsDB
 from app.ui.navigation import create_navigation, set_current_path
+from app.models.user import User
 
 def create_user_management_page(db: VereinsDB):
     """Erstellt die Benutzerverwaltungs-Seite"""
@@ -17,6 +18,14 @@ def create_user_management_page(db: VereinsDB):
         create_navigation()
         user_service = UserService(db)
         current_user = AuthHelper.get_current_user()
+        
+        # Rollen-Mapping für Anzeige
+        role_labels = {
+            'admin': 'Administrator',
+            'user': 'Bearbeiter',
+            'readonly': 'Nur Lesen',
+            'special': 'Spezielle Funktion'
+        }
         
         with ui.column().classes('q-ma-md'):
             ui.label('Benutzerverwaltung').classes('text-h4 q-mb-md')
@@ -37,7 +46,7 @@ def create_user_management_page(db: VereinsDB):
                         'id': u.id,
                         'username': u.username,
                         'email': u.email,
-                        'role': {'admin': 'Administrator', 'user': 'Bearbeiter', 'readonly': 'Nur Lesen'}[u.role],
+                        'role': role_labels.get(u.role, u.role),
                         'active': '✓' if u.active else '✗',
                         'last_login': u.last_login or 'Noch nie',
                         'version': u.version,
@@ -69,7 +78,7 @@ def create_user_management_page(db: VereinsDB):
                     
                     role = ui.select(
                         label='Rolle',
-                        options={'admin': 'Administrator', 'user': 'Bearbeiter', 'readonly': 'Nur Lesen'},
+                        options=User.get_available_roles(),
                         value='user'
                     )
                     
@@ -130,7 +139,7 @@ def create_user_management_page(db: VereinsDB):
                     
                     role_input = ui.select(
                         label='Rolle',
-                        options={'admin': 'Administrator', 'user': 'Bearbeiter', 'readonly': 'Nur Lesen'},
+                        options=User.get_available_roles(),
                         value=user.role
                     )
                     
