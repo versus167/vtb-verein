@@ -1,184 +1,162 @@
-'''
-User-Service für Benutzerverwaltung
-
-Refactored to use UserRepository for data access.
-'''
-from typing import List, Optional
+"""
+User-Service mit Authentifizierung und Magic-Link-Funktionalität
+"""
 import bcrypt
+from typing import Optional
+from datetime import datetime
 from app.models.user import User
 from app.db.datastore import VereinsDB
+from app.services.email_service import EmailService
+from app.config.email_config import EmailConfig
 
 class UserService:
-    """Service für Benutzerverwaltung.
-    
-    Handles business logic:
-    - Password hashing and verification
-    - Last admin protection
-    - Authentication workflow
-    
-    Data access is delegated to UserRepository via VereinsDB.
-    """
+    """Service für User-Verwaltung und Authentifizierung"""
     
     def __init__(self, db: VereinsDB):
         self.db = db
-        # Access repository through VereinsDB facade
-        self._user_repo = db._user_repo
+        self.user_repo = db.user_repository
+        self.token_repo = db.auth_token_repository
     
     def authenticate(self, username: str, password: str) -> Optional[User]:
         """
-        Authentifiziert einen Benutzer
+        Authentifiziert User mit Username und Passwort
         
         Args:
             username: Benutzername
-            password: Klartext-Passwort
+            password: Passwort (Klartext)
             
         Returns:
-            User-Objekt bei erfolgreicher Authentifizierung, sonst None
+            User-Objekt wenn erfolgreich, sonst None
         """
-        user = self._user_repo.get_by_username(username)
-        if not user or not user.active:
+        user = self.user_repo.get_user_by_username(username)
+        
+        if not user:
             return None
         
+        if not user.active:
+            return None
+        
+        # Passwort prüfen
         if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            # Letzten Login aktualisieren (ohne Version zu erhöhen)
-            self._user_repo.update_last_login(user.id)
+            # Last-Login aktualisieren
+            self.user_repo.update_last_login(user.id)
             return user
         
         return None
     
-    def get_by_username(self, username: str) -> Optional[User]:
-        """Findet User nach Benutzername (nur nicht gelöschte)"""
-        return self._user_repo.get_by_username(username)
-    
-    def get_by_id(self, user_id: int) -> Optional[User]:
-        """Findet User nach ID (nur nicht gelöschte)"""
-        return self._user_repo.get_by_id(user_id)
-    
-    def list_all(self) -> List[User]:
-        """Listet alle Benutzer (nur nicht gelöschte)"""
-        return self._user_repo.list_all()
-    
-    def count_active_admins(self) -> int:
-        """Zählt die Anzahl aktiver Administratoren"""
-        return self._user_repo.count_active_admins()
-    
-    def create(self, username: str, email: str, password: str, role: str, 
-               created_by: str, active: bool = True) -> User:
+    def send_magic_link(self, email: str) -> bool:
         """
-        Erstellt neuen Benutzer
+        Sendet Magic-Link an User per E-Mail
         
         Args:
-            username: Eindeutiger Benutzername
-            email: E-Mail-Adresse
-            password: Klartext-Passwort (wird gehasht)
-            role: Rolle ('admin', 'user', 'readonly')
-            created_by: Username des Erstellers
-            active: Ob User aktiv ist
+            email: E-Mail-Adresse des Users
             
         Returns:
-            Erstellter User (History wird automatisch durch Trigger geschrieben)
+            True wenn erfolgreich, False wenn E-Mail nicht gefunden oder Versand fehlgeschlagen
         """
-        # Business Logic: Hash password
-        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # E-Mail-Konfiguration prüfen
+        if not EmailConfig.is_configured():
+            print("⚠️  E-Mail nicht konfiguriert. Bitte .env-Datei prüfen.")
+            return False
         
-        # Delegate to repository
-        return self._user_repo.create(username, email, password_hash, role, created_by, active)
-    
-    def update(self, user_id: int, username: str = None, email: str = None,
-               role: str = None, active: bool = None, updated_by: str = None,
-               expected_version: int = None) -> User:
-        """
-        Aktualisiert Benutzerdaten (ohne Passwort)
+        # User anhand E-Mail finden
+        user = self.user_repo.get_user_by_email(email)
         
-        Args:
-            user_id: ID des zu aktualisierenden Users
-            username: Neuer Benutzername (optional)
-            email: Neue E-Mail (optional)
-            role: Neue Rolle (optional)
-            active: Neuer aktiv-Status (optional)
-            updated_by: Username des Bearbeiters
-            expected_version: Erwartete Version für optimistic locking
-            
-        Returns:
-            Aktualisierter User (History wird automatisch durch Trigger geschrieben)
-        """
-        user = self._user_repo.get_by_id(user_id)
         if not user:
-            raise ValueError(f"User mit ID {user_id} nicht gefunden")
+            print(f"⚠️  Keine User mit E-Mail {email} gefunden")
+            return False
         
-        if expected_version is not None and user.version != expected_version:
-            raise ValueError("Versionkonflikt - Datensatz wurde zwischenzeitlich geändert")
+        if not user.active:
+            print(f"⚠️  User {user.username} ist deaktiviert")
+            return False
         
-        # Nur übergebene Werte aktualisieren
-        new_username = username if username is not None else user.username
-        new_email = email if email is not None else user.email
-        new_role = role if role is not None else user.role
-        new_active = active if active is not None else user.active
-        
-        # Business Logic: Prüfen, ob der letzte aktive Admin betroffen ist
-        user_is_currently_active_admin = (user.role == 'admin' and user.active)
-        user_will_be_active_admin = (new_role == 'admin' and new_active)
-        
-        if user_is_currently_active_admin and not user_will_be_active_admin:
-            if self._user_repo.count_active_admins() <= 1:
-                raise ValueError("Der letzte aktive Administrator kann nicht herabgestuft oder deaktiviert werden")
-        
-        # Delegate to repository
-        success = self._user_repo.update(
-            user_id, new_username, new_email, new_role, new_active, 
-            updated_by, user.version
+        # Token erstellen (7 Tage Gültigkeit)
+        token = self.token_repo.create_token(
+            user_id=user.id,
+            token_type='magic_link',
+            expires_days=7
         )
         
-        if not success:
-            raise ValueError("Update fehlgeschlagen - Versionkonflikt oder User gelöscht")
+        # E-Mail senden
+        success = EmailService.send_magic_link(
+            recipient_email=email,
+            token=token,
+            username=user.username
+        )
         
-        return self._user_repo.get_by_id(user_id)
+        if success:
+            print(f"✅ Magic-Link gesendet an {email} für User {user.username}")
+        else:
+            print(f"❌ E-Mail-Versand fehlgeschlagen an {email}")
+        
+        return success
     
-    def change_password(self, user_id: int, new_password: str, updated_by: str) -> bool:
+    def validate_magic_link(self, token: str) -> Optional[User]:
         """
-        Ändert das Passwort eines Benutzers
+        Validiert Magic-Link-Token und gibt User zurück
         
         Args:
-            user_id: ID des Users
-            new_password: Neues Klartext-Passwort
-            updated_by: Username des Bearbeiters
+            token: Magic-Link-Token
             
         Returns:
-            True bei Erfolg (History wird automatisch durch Trigger geschrieben)
+            User-Objekt wenn Token gültig, sonst None
         """
-        # Aktuellen User holen für Version-Check
-        user = self._user_repo.get_by_id(user_id)
+        # Token validieren und als verwendet markieren
+        result = self.token_repo.validate_and_use_token(token)
+        
+        if not result:
+            print("❌ Token ungültig oder bereits verwendet")
+            return None
+        
+        if result['token_type'] != 'magic_link':
+            print(f"❌ Falscher Token-Typ: {result['token_type']}")
+            return None
+        
+        # User laden
+        user = self.user_repo.get_user_by_id(result['user_id'])
+        
         if not user:
-            raise ValueError(f"User mit ID {user_id} nicht gefunden")
+            print(f"❌ User mit ID {result['user_id']} nicht gefunden")
+            return None
         
-        # Business Logic: Hash password
-        password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        if not user.active:
+            print(f"❌ User {user.username} ist deaktiviert")
+            return None
         
-        # Delegate to repository
-        success = self._user_repo.update_password(user_id, password_hash, updated_by, user.version)
+        # Last-Login aktualisieren
+        self.user_repo.update_last_login(user.id)
         
-        if not success:
-            raise ValueError("Passwort-Änderung fehlgeschlagen - Versionkonflikt oder User gelöscht")
-        
-        return True
+        print(f"✅ Magic-Link-Login erfolgreich für User {user.username}")
+        return user
     
-    def delete(self, user_id: int, deleted_by: str) -> bool:
+    def create_user(self, username: str, email: str, password: str, 
+                   role: str, created_by: str) -> Optional[User]:
         """
-        Löscht einen Benutzer (soft delete)
-        History wird automatisch durch Trigger geschrieben
+        Erstellt neuen User
         
         Args:
-            user_id: ID des zu löschenden Users
-            deleted_by: Username des Löschenden
+            username: Benutzername
+            email: E-Mail-Adresse
+            password: Passwort (Klartext, wird gehasht)
+            role: Rolle ('admin', 'user', 'special', 'readonly')
+            created_by: Username des Erstellers
             
         Returns:
-            True bei Erfolg
+            User-Objekt wenn erfolgreich, sonst None
         """
-        # Business Logic: Prüfen, ob der letzte aktive Admin gelöscht werden soll
-        user = self._user_repo.get_by_id(user_id)
-        if user and user.role == 'admin' and user.active:
-            if self._user_repo.count_active_admins() <= 1:
-                raise ValueError("Der letzte aktive Administrator kann nicht gelöscht werden")
+        # Passwort hashen
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-        # Delegate to repository
-        return self._user_repo.mark_user_deleted(user_id, deleted_by)
+        try:
+            user_id = self.user_repo.create_user(
+                username=username,
+                email=email,
+                password_hash=password_hash,
+                role=role,
+                created_by=created_by
+            )
+            
+            return self.user_repo.get_user_by_id(user_id)
+        except Exception as e:
+            print(f"❌ User-Erstellung fehlgeschlagen: {e}")
+            return None
