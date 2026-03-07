@@ -2,16 +2,6 @@
 
 ## 🔥 High Priority
 
-### User-Management
-- [x] Neue Rolle 'special' implementiert (für Abteilungsleiter/Übungsleiter)
-- [ ] One-Time-Link Authentication per E-Mail
-  - Token-Generierung und Speicherung (neue Tabelle `auth_tokens`)
-  - E-Mail-Versand mit Login-Link
-  - Login via Link (Alternative zu Passwort)
-  - Token-Gültigkeit: 7 Tage
-  - Button "Login-Link anfordern" auf Login-Page
-  - Automatische Token-Bereinigung (expired tokens)
-
 ### Abteilungen
 - [ ] Abteilungsleiter-Zuordnung
   - Feld `abteilungsleiter_id` in Abteilung-Tabelle
@@ -173,6 +163,22 @@
 - [x] Repository Pattern Migration
 - [x] Separation of Concerns: Service vs Repository
 - [x] Neue Benutzerrolle 'special'
+
+### Phase 2.5 - Authentication & Security
+- [x] Magic-Link Authentication per E-Mail
+  - [x] Token-Generierung und Speicherung (`auth_tokens` Tabelle)
+  - [x] E-Mail-Versand mit Login-Link (HTML-Templates)
+  - [x] Login via Link (Alternative zu Passwort)
+  - [x] Token-Gültigkeit: 7 Tage
+  - [x] Dual-Login-UI: Passwort + Magic-Link Tabs
+  - [x] Einmalige Token-Verwendung
+  - [x] Token-Cleanup (expire/used)
+- [x] Remember-Me Sessions
+  - [x] Rollenbezogene Session-Timeouts
+  - [x] Admin/User: 30 Tage (mit Remember-Me)
+  - [x] Special: 14 Tage
+  - [x] Readonly: 7 Tage
+  - [x] Standard: 24h (ohne Remember-Me)
 
 ---
 
