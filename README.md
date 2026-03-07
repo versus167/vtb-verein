@@ -5,7 +5,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 ## Features
 
 ✅ **Benutzerverwaltung**
-- Rollenbasierte Zugriffskontrolle (Admin, Bearbeiter, Nur Lesen)
+- Rollenbasierte Zugriffskontrolle (Admin, Bearbeiter, Nur Lesen, Spezielle Funktionen)
 - Passwort-Management mit bcrypt
 - Session-Management
 
@@ -161,6 +161,7 @@ python main.py
 vtb-verein/
 ├── requirements.txt             # Python-Abhängigkeiten
 ├── README.md                    # Diese Datei
+├── TODO.md                      # Roadmap und offene Aufgaben
 └── vtb_verein/
     ├── main.py                  # Haupteinstiegspunkt
     ├── __init__.py
@@ -227,15 +228,15 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 │   UI Layer      │  NiceGUI-Komponenten
 └────────┬────────┘
          │
-┌────────▼────────┐
+┌────────┴────────┐
 │ Service Layer   │  Business-Logik, Validierung, Orchestrierung
 └────────┬────────┘
          │
-┌────────▼────────┐
+┌────────┴────────┐
 │ Repository Layer│  Reine CRUD-Operationen, SQL-Queries
 └────────┬────────┘
          │
-┌────────▼────────┐
+┌────────┴────────┐
 │   Database      │  SQLite mit Row Factory
 └─────────────────┘
 ```
@@ -318,38 +319,7 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 
 ## Roadmap
 
-### Phase 1 (✅ Abgeschlossen)
-- [x] Benutzerverwaltung
-- [x] Abteilungsverwaltung
-- [x] Soft-Delete mit Wiederherstellung (Abteilungen)
-- [x] Navigation
-- [x] Audit-Trail
-- [x] Mitgliederverwaltung (Basis)
-- [x] Automatische Mitgliedsnummer-Vergabe
-
-### Phase 2 (✅ Abgeschlossen)
-- [x] Mitglied-Abteilung Zuordnung
-- [x] Sub-Dialog für Abteilungszuordnung
-- [x] Status-Management für Zuordnungen
-- [x] History-Tracking für Zuordnungen
-- [x] **Repository Pattern Migration**
-- [x] **Separation of Concerns: Service vs Repository**
-
-### Phase 3 (In Arbeit)
-- [ ] Suchfunktion für Mitglieder
-- [ ] Filter in Mitgliederliste
-- [ ] Abteilungsansicht: Übersicht aller Mitglieder einer Abteilung
-- [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
-- [ ] Import/Export (CSV, Excel)
-- [ ] Pagination bei vielen Einträgen
-
-### Phase 4 (Geplant)
-- [ ] Beitragsregeln
-- [ ] Beitragssollstellung
-- [ ] Berichte & Statistiken
-- [ ] SEPA-Export
-- [ ] Dashboard mit Kennzahlen
-- [ ] E-Mail-Benachrichtigungen
+Siehe [TODO.md](TODO.md) für die detaillierte Roadmap und offene Aufgaben.
 
 ## Support
 
