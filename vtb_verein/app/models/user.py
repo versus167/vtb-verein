@@ -10,7 +10,7 @@ class User:
     username: str
     email: str
     password_hash: str
-    role: str  # 'admin', 'user', 'readonly'
+    role: str  # 'admin', 'user', 'readonly', 'special'
     active: bool
     last_login: str | None
     version: int
@@ -25,7 +25,8 @@ class User:
         return {
             'admin': 'Administrator - Volle Rechte inkl. Benutzerverwaltung',
             'user': 'Bearbeiter - Kann alle Daten editieren',
-            'readonly': 'Nur Lesen - Kann nur Daten ansehen'
+            'readonly': 'Nur Lesen - Kann nur Daten ansehen',
+            'special': 'Spezielle Funktion - Nur über zugewiesene Bereiche (Abteilungsleiter, Übungsleiter)'
         }
     
     def can_manage_users(self) -> bool:
@@ -38,4 +39,10 @@ class User:
     
     def can_view(self) -> bool:
         """Prüft ob User Daten ansehen darf"""
-        return self.active  # Alle aktiven User können ansehen
+        # Special-Rolle kann ansehen, aber nur in speziellen Bereichen
+        # Die Berechtigung wird dann in den jeweiligen Features geprüft
+        return self.active and self.role != 'special'
+    
+    def has_special_role(self) -> bool:
+        """Prüft ob User eine spezielle Funktion hat (Abteilungsleiter, Übungsleiter)"""
+        return self.role == 'special'
