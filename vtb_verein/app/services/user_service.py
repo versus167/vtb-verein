@@ -2,7 +2,7 @@
 User-Service mit Authentifizierung und Magic-Link-Funktionalität
 """
 import bcrypt
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from app.models.user import User
 from app.db.datastore import VereinsDB
@@ -16,6 +16,10 @@ class UserService:
         self.db = db
         self.user_repo = db.user_repository
         self.token_repo = db.auth_token_repository
+    
+    # ============================================
+    # Authentifizierung
+    # ============================================
     
     def authenticate(self, username: str, password: str) -> Optional[User]:
         """
@@ -43,6 +47,10 @@ class UserService:
             return user
         
         return None
+    
+    # ============================================
+    # Magic-Link Authentication
+    # ============================================
     
     def send_magic_link(self, email: str) -> bool:
         """
@@ -129,8 +137,24 @@ class UserService:
         print(f"✅ Magic-Link-Login erfolgreich für User {user.username}")
         return user
     
-    def create_user(self, username: str, email: str, password: str, 
-                   role: str, created_by: str) -> Optional[User]:
+    # ============================================
+    # User-Management (CRUD)
+    # ============================================
+    
+    def list_all(self) -> List[User]:
+        """Liste alle User"""
+        return self.user_repo.list_all()
+    
+    def get_by_id(self, user_id: int) -> Optional[User]:
+        """User anhand ID laden"""
+        return self.user_repo.get_by_id(user_id)
+    
+    def count_active_admins(self) -> int:
+        """Zähle aktive Administratoren"""
+        return self.user_repo.count_active_admins()
+    
+    def create(self, username: str, email: str, password: str, role: str, 
+               active: bool, created_by: str) -> User:
         """
         Erstellt neuen User
         
@@ -139,24 +163,150 @@ class UserService:
             email: E-Mail-Adresse
             password: Passwort (Klartext, wird gehasht)
             role: Rolle ('admin', 'user', 'special', 'readonly')
+            active: Aktiv-Status
             created_by: Username des Erstellers
             
         Returns:
-            User-Objekt wenn erfolgreich, sonst None
+            Erstellter User
+            
+        Raises:
+            ValueError: Bei ungültigen Daten oder Duplikaten
         """
+        # Validierung
+        if not username or not email or not password:
+            raise ValueError("Username, E-Mail und Passwort dürfen nicht leer sein")
+        
+        if len(password) < 6:
+            raise ValueError("Passwort muss mindestens 6 Zeichen lang sein")
+        
         # Passwort hashen
         password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
-        try:
-            user = self.user_repo.create(
-                username=username,
-                email=email,
-                password_hash=password_hash,
-                role=role,
-                created_by=created_by
-            )
+        # User erstellen
+        return self.user_repo.create(
+            username=username,
+            email=email,
+            password_hash=password_hash,
+            role=role,
+            created_by=created_by,
+            active=active
+        )
+    
+    def update(self, user_id: int, username: str, email: str, role: str,
+               active: bool, updated_by: str, expected_version: int) -> bool:
+        """
+        Aktualisiert User-Daten (ohne Passwort)
+        
+        Args:
+            user_id: ID des Users
+            username: Neuer Username
+            email: Neue E-Mail
+            role: Neue Rolle
+            active: Neuer Aktiv-Status
+            updated_by: Username des Updaters
+            expected_version: Erwartete Version (Optimistic Locking)
             
-            return user
-        except Exception as e:
-            print(f"❌ User-Erstellung fehlgeschlagen: {e}")
-            return None
+        Returns:
+            True wenn erfolgreich
+            
+        Raises:
+            ValueError: Bei Validierungsfehlern oder Versionskonflikten
+        """
+        # Prüfe "letzter Admin" Constraint
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User nicht gefunden")
+        
+        # Wenn aktuell ein aktiver Admin -> inaktiv oder herabgestuft wird
+        if user.role == 'admin' and user.active:
+            will_be_deactivated = (role == 'admin' and not active)
+            will_be_demoted = (role != 'admin')
+            
+            if (will_be_deactivated or will_be_demoted):
+                if self.user_repo.count_active_admins() <= 1:
+                    raise ValueError("Der letzte aktive Administrator kann nicht deaktiviert oder herabgestuft werden")
+        
+        # Update durchführen
+        success = self.user_repo.update(
+            user_id=user_id,
+            username=username,
+            email=email,
+            role=role,
+            active=active,
+            updated_by=updated_by,
+            expected_version=expected_version
+        )
+        
+        if not success:
+            raise ValueError("Update fehlgeschlagen - möglicher Versionskonflikt")
+        
+        return True
+    
+    def change_password(self, user_id: int, new_password: str, updated_by: str) -> bool:
+        """
+        Ändert Passwort eines Users
+        
+        Args:
+            user_id: ID des Users
+            new_password: Neues Passwort (Klartext)
+            updated_by: Username des Updaters
+            
+        Returns:
+            True wenn erfolgreich
+            
+        Raises:
+            ValueError: Bei ungültigem Passwort oder User nicht gefunden
+        """
+        if len(new_password) < 6:
+            raise ValueError("Passwort muss mindestens 6 Zeichen lang sein")
+        
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User nicht gefunden")
+        
+        # Passwort hashen
+        password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        # Update durchführen
+        success = self.user_repo.update_password(
+            user_id=user_id,
+            password_hash=password_hash,
+            updated_by=updated_by,
+            expected_version=user.version
+        )
+        
+        if not success:
+            raise ValueError("Passwort-Änderung fehlgeschlagen")
+        
+        return True
+    
+    def delete(self, user_id: int, deleted_by: str) -> bool:
+        """
+        Löscht User (Soft-Delete)
+        
+        Args:
+            user_id: ID des Users
+            deleted_by: Username des Löschenden
+            
+        Returns:
+            True wenn erfolgreich
+            
+        Raises:
+            ValueError: Wenn letzter aktiver Admin gelöscht werden soll
+        """
+        user = self.user_repo.get_by_id(user_id)
+        if not user:
+            raise ValueError("User nicht gefunden")
+        
+        # Prüfe "letzter Admin" Constraint
+        if user.role == 'admin' and user.active:
+            if self.user_repo.count_active_admins() <= 1:
+                raise ValueError("Der letzte aktive Administrator kann nicht gelöscht werden")
+        
+        # Soft-Delete durchführen
+        success = self.user_repo.mark_user_deleted(user_id, deleted_by)
+        
+        if not success:
+            raise ValueError("Löschen fehlgeschlagen")
+        
+        return True
