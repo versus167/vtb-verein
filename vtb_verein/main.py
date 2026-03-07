@@ -4,6 +4,7 @@ Vereins-Mitgliederverwaltung
 Haupteinstiegspunkt für die Anwendung (unter vtb_verein/)
 """
 import os
+from dotenv import load_dotenv
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
@@ -14,6 +15,9 @@ from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
+
+# .env-Datei laden (muss VOR os.getenv() aufgerufen werden!)
+load_dotenv()
 
 # Konfiguration
 DB_PATH = os.getenv('VTB_DB_PATH', 'verein.db')
