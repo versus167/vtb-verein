@@ -17,6 +17,7 @@ def create_user_profile_page(db: VereinsDB):
         create_navigation()
         user_service = UserService(db)
         current_user = AuthHelper.get_current_user()
+        is_admin = current_user.role == 'admin'
         
         # Rollen-Mapping für Anzeige
         role_labels = {
@@ -33,18 +34,81 @@ def create_user_profile_page(db: VereinsDB):
             with ui.card().classes('q-mb-md'):
                 ui.label('Profil-Informationen').classes('text-h6 q-mb-md')
                 
+                # Hinweis für Non-Admins
+                if not is_admin:
+                    with ui.card().classes('bg-blue-1 q-mb-md'):
+                        ui.label('ℹ️ Hinweis').classes('text-weight-bold text-caption')
+                        ui.label('Username und E-Mail können nur von Administratoren geändert werden.').classes('text-caption')
+                
                 with ui.grid(columns=2).classes('w-full'):
                     ui.label('Benutzername:').classes('text-weight-bold')
                     ui.label(current_user.username)
                     
                     ui.label('E-Mail:').classes('text-weight-bold')
-                    ui.label(current_user.email)
+                    if is_admin:
+                        # Admin kann E-Mail ändern
+                        email_container = ui.row().classes('items-center')
+                        with email_container:
+                            email_label = ui.label(current_user.email)
+                            ui.button(icon='edit', on_click=lambda: show_edit_email_dialog()).props('flat dense size=sm')
+                    else:
+                        # Normaler User sieht nur E-Mail
+                        ui.label(current_user.email)
                     
                     ui.label('Rolle:').classes('text-weight-bold')
                     ui.label(role_labels.get(current_user.role, current_user.role))
                     
                     ui.label('Letzter Login:').classes('text-weight-bold')
                     ui.label(current_user.last_login or 'Noch nie')
+            
+            # E-Mail ändern (nur für Admins)
+            def show_edit_email_dialog():
+                with ui.dialog() as dialog, ui.card():
+                    ui.label('E-Mail-Adresse ändern').classes('text-h6 q-mb-md')
+                    
+                    new_email = ui.input('Neue E-Mail-Adresse', value=current_user.email).props('autofocus')
+                    
+                    error_label = ui.label('').classes('text-negative')
+                    error_label.visible = False
+                    
+                    def update_email():
+                        error_label.visible = False
+                        
+                        if not new_email.value or '@' not in new_email.value:
+                            error_label.text = 'Bitte gültige E-Mail-Adresse eingeben'
+                            error_label.visible = True
+                            return
+                        
+                        try:
+                            user_service.update(
+                                user_id=current_user.id,
+                                username=current_user.username,
+                                email=new_email.value,
+                                role=current_user.role,
+                                active=current_user.active,
+                                updated_by=current_user.username,
+                                expected_version=current_user.version
+                            )
+                            
+                            # User-Objekt in Session aktualisieren
+                            updated_user = user_service.get_by_id(current_user.id)
+                            AuthHelper.set_current_user(updated_user, remember_me=True)
+                            
+                            dialog.close()
+                            ui.notify('E-Mail-Adresse erfolgreich geändert', type='positive')
+                            
+                            # Seite neu laden um geänderte E-Mail anzuzeigen
+                            ui.navigate.to('/profile', reload=True)
+                            
+                        except Exception as e:
+                            error_label.text = f'Fehler: {str(e)}'
+                            error_label.visible = True
+                    
+                    with ui.row().classes('w-full'):
+                        ui.button('Abbrechen', on_click=dialog.close)
+                        ui.button('Speichern', on_click=update_email).props('color=primary')
+                
+                dialog.open()
             
             # Passwort ändern
             with ui.card().classes('q-mb-md'):
