@@ -1,7 +1,7 @@
 # Stage 1: Builder - Dependencies installieren
 FROM python:3.11-slim AS builder
 
-WORKDIR /app
+WORKDIR /build
 
 # System-Dependencies für Builds (minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,8 +16,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Stage 2: Runtime - Produktions-Image
 FROM python:3.11-slim
 
-WORKDIR /app
-
 # Metadata
 LABEL maintainer="VTB Verein"
 LABEL description="VTB Vereinsverwaltung - Docker Image"
@@ -29,6 +27,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 COPY --from=builder /install /usr/local
 
 # Anwendungscode kopieren
+WORKDIR /app
 COPY vtb_verein/ ./vtb_verein/
 COPY .env.example ./
 
@@ -37,6 +36,9 @@ RUN mkdir -p /data && chown -R appuser:appuser /data /app
 
 # Zu non-root User wechseln
 USER appuser
+
+# Working Directory auf vtb_verein setzen (für korrekte Python-Imports)
+WORKDIR /app/vtb_verein
 
 # Default Environment Variables
 ENV VTB_DB_PATH=/data/verein.db \
@@ -52,5 +54,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080').read()" || exit 1
 
-# Startkommando
-CMD ["python", "-m", "vtb_verein.main"]
+# Startkommando (aus /app/vtb_verein)
+CMD ["python", "main.py"]
