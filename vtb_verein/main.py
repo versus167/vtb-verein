@@ -10,6 +10,7 @@ from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
 from app.ui.magic_link_page import create_magic_link_page
 from app.ui.user_management import create_user_management_page
+from app.ui.user_profile import create_user_profile_page
 from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.navigation import create_navigation, set_current_path
@@ -44,6 +45,7 @@ db = VereinsDB(DB_PATH)
 create_login_page(db)
 create_magic_link_page(db)
 create_user_management_page(db)
+create_user_profile_page(db)
 create_abteilung_management_page(db)
 create_mitglied_management_page(db)
 
