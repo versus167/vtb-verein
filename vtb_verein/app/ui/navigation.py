@@ -57,7 +57,7 @@ def create_navigation():
                             ui.separator()
                             
                             # Profil-Link
-                            with ui.item(clickable=True, on_click=lambda: (menu.close(), ui.navigate.to('/profile'))):
+                            with ui.item().props('clickable').on('click', lambda: (menu.close(), ui.navigate.to('/profile'))):
                                 with ui.item_section().props('avatar'):
                                     ui.icon('person')
                                 with ui.item_section():
@@ -71,7 +71,7 @@ def create_navigation():
                                 AuthHelper.logout()
                                 ui.navigate.to('/login')
                             
-                            with ui.item(clickable=True, on_click=handle_logout):
+                            with ui.item().props('clickable').on('click', handle_logout):
                                 with ui.item_section().props('avatar'):
                                     ui.icon('logout')
                                 with ui.item_section():
