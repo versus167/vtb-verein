@@ -129,6 +129,16 @@
   - Ablaufdatum-Tracking
 
 ### Technische Verbesserungen
+- [ ] Docker-Container für Deployment
+  - Dockerfile erstellen (Python + NiceGUI)
+  - Multi-Stage Build für optimale Image-Größe
+  - Volume-Mapping für SQLite-Datenbank
+  - Environment-Variablen für Konfiguration
+  - docker-compose.yml für lokales Testing
+  - Production-ready Image (Health-Checks, Logging)
+  - CI/CD-Integration (GitHub Actions)
+  - Container Registry (Docker Hub / GitHub Packages)
+
 - [ ] Mobile App / Progressive Web App
   - Offline-Fähigkeit
   - Push-Benachrichtigungen
