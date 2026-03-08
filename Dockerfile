@@ -20,9 +20,6 @@ FROM python:3.11-slim
 LABEL maintainer="VTB Verein"
 LABEL description="VTB Vereinsverwaltung - Docker Image"
 
-# Non-root User erstellen
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
 # Python Packages aus Builder-Stage kopieren
 COPY --from=builder /install /usr/local
 
@@ -31,8 +28,12 @@ WORKDIR /app
 COPY vtb_verein/ ./vtb_verein/
 COPY .env.example ./
 
-# Data-Verzeichnis für SQLite erstellen
-RUN mkdir -p /data && chown -R appuser:appuser /data /app
+# Non-root User erstellen
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
+
+# Data-Verzeichnis für SQLite erstellen und Rechte setzen
+RUN mkdir -p /data && \
+    chown -R appuser:appuser /data /app
 
 # Zu non-root User wechseln
 USER appuser
