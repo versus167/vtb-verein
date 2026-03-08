@@ -129,15 +129,15 @@
   - Ablaufdatum-Tracking
 
 ### Technische Verbesserungen
-- [ ] Docker-Container für Deployment
-  - Dockerfile erstellen (Python + NiceGUI)
-  - Multi-Stage Build für optimale Image-Größe
-  - Volume-Mapping für SQLite-Datenbank
-  - Environment-Variablen für Konfiguration
-  - docker-compose.yml für lokales Testing
-  - Production-ready Image (Health-Checks, Logging)
-  - CI/CD-Integration (GitHub Actions)
-  - Container Registry (Docker Hub / GitHub Packages)
+- [ ] Multi-Stage Build für Docker
+  - Optimale Image-Größe
+  - Build-Optimierung
+
+- [ ] CI/CD-Integration
+  - GitHub Actions Pipeline
+  - Automatische Tests
+  - Container Registry Push (Docker Hub / GitHub Packages)
+  - Auto-Deploy auf Tag
 
 - [ ] Mobile App / Progressive Web App
   - Offline-Fähigkeit
@@ -189,6 +189,16 @@
   - [x] Special: 14 Tage
   - [x] Readonly: 7 Tage
   - [x] Standard: 24h (ohne Remember-Me)
+
+### Phase 2.6 - Deployment
+- [x] Docker-Container für Deployment
+  - [x] Dockerfile erstellt (Python + NiceGUI)
+  - [x] Volume-Mapping für SQLite-Datenbank
+  - [x] Environment-Variablen für Konfiguration (.env)
+  - [x] docker-compose.yml für lokales Testing
+  - [x] Production-ready Image (Health-Checks, Logging, Ressourcen-Limits)
+  - [x] README mit Docker-Setup-Anleitung
+  - [x] .dockerignore für optimales Build
 
 ---
 
