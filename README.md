@@ -18,7 +18,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 ✅ **Mitgliederverwaltung**
 - Vollständige Mitgliederverwaltung mit allen relevanten Daten
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
-- Persönliche Daten, Kontakt, Adresse
+- Persönliche Daten, Kontakt, Adresse
 - Vereinsdaten (Eintritt, Austritt, Status)
 - Zahlungsdaten (IBAN, BIC, Zahlungsart)
 - Soft-Delete mit History
@@ -43,12 +43,63 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 
 ## Installation
 
-### Voraussetzungen
+### Option 1: Docker (Empfohlen)
 
-- Python 3.12 oder höher
+**Voraussetzungen:**
+- Docker und Docker Compose installiert
+
+**Schnellstart:**
+
+1. **Repository klonen**
+   ```bash
+   git clone https://github.com/versus167/vtb-verein.git
+   cd vtb-verein
+   ```
+
+2. **Environment-Datei erstellen**
+   ```bash
+   cp .env.example .env
+   # .env bearbeiten und SMTP-Einstellungen konfigurieren
+   ```
+
+3. **Container starten**
+   ```bash
+   docker compose up -d
+   ```
+
+4. **Browser öffnen**
+   ```
+   http://localhost:8080
+   ```
+
+**Docker-Befehle:**
+
+```bash
+# Container stoppen
+docker compose down
+
+# Logs anzeigen
+docker compose logs -f
+
+# Container neu bauen
+docker compose build --no-cache
+
+# Container neu starten
+docker compose restart
+```
+
+**Daten-Persistence:**
+
+Die SQLite-Datenbank wird im `./data` Verzeichnis gespeichert und bleibt bei Container-Updates erhalten.
+
+### Option 2: Manuelle Installation
+
+**Voraussetzungen:**
+
+- Python 3.11 oder höher
 - pip (Python Package Manager)
 
-### Setup
+**Setup:**
 
 1. **Repository klonen**
    ```bash
@@ -130,7 +181,7 @@ Die Anwendung kann über Umgebungsvariablen konfiguriert werden:
 
 ```bash
 # Datenbank
-VTB_DB_PATH=verein.db
+VTB_DB_PATH=verein.db  # Docker: /data/verein.db
 
 # Server
 VTB_HOST=0.0.0.0
@@ -138,6 +189,14 @@ VTB_PORT=8080
 
 # Security
 VTB_STORAGE_SECRET=your-secret-key-here
+
+# SMTP (für Magic-Link-Login)
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+MAIL_FROM=VTB Verein <vereinsverwaltung@gmail.com>
+BASE_URL=http://localhost:8080
 ```
 
 Alternativ: `.env` Datei im Projektverzeichnis anlegen.
@@ -147,11 +206,66 @@ Alternativ: `.env` Datei im Projektverzeichnis anlegen.
 Die Anwendung verwendet SQLite als Datenbank. Die Datenbankdatei wird automatisch beim ersten Start erstellt.
 
 **Datenbank zurücksetzen:**
+
 ```bash
+# Manuell
 rm verein.db
 cd vtb_verein
 python main.py
+
+# Docker
+docker compose down
+rm -rf data/
+mkdir data
+docker compose up -d
 ```
+
+## Docker Production Deployment
+
+### Image bauen
+
+```bash
+# Image bauen
+docker build -t vtb-verein:latest .
+
+# Image mit Tag bauen
+docker build -t vtb-verein:v1.0.0 .
+```
+
+### Container manuell starten
+
+```bash
+docker run -d \
+  --name vtb-verein \
+  -p 8080:8080 \
+  -v $(pwd)/data:/data \
+  -e VTB_DB_PATH=/data/verein.db \
+  -e VTB_STORAGE_SECRET=your-secret-key \
+  --env-file .env \
+  --restart unless-stopped \
+  vtb-verein:latest
+```
+
+### Health Check
+
+Das Docker-Image enthält einen integrierten Health Check:
+
+```bash
+# Container-Status prüfen
+docker ps
+
+# Health-Status anzeigen
+docker inspect --format='{{.State.Health.Status}}' vtb-verein
+```
+
+### Ressourcen-Limits
+
+In `docker-compose.yml` sind bereits Ressourcen-Limits definiert:
+
+- **CPU:** Max 1.0 Core, Reserve 0.25 Core
+- **Memory:** Max 512MB, Reserve 128MB
+
+Passe diese nach Bedarf an.
 
 ## Entwicklung
 
@@ -162,6 +276,9 @@ vtb-verein/
 ├── requirements.txt             # Python-Abhängigkeiten
 ├── README.md                    # Diese Datei
 ├── TODO.md                      # Roadmap und offene Aufgaben
+├── Dockerfile                   # Docker-Image-Definition
+├── docker-compose.yml           # Docker Compose Konfiguration
+├── .dockerignore                # Dateien für Docker-Build ausschließen
 └── vtb_verein/
     ├── main.py                  # Haupteinstiegspunkt
     ├── __init__.py
@@ -340,3 +457,4 @@ Entwickelt mit:
 - [SQLite](https://www.sqlite.org/) - Datenbank
 - [bcrypt](https://github.com/pyca/bcrypt/) - Password Hashing
 - [Quasar Framework](https://quasar.dev/) - UI Components
+- [Docker](https://www.docker.com/) - Containerization
