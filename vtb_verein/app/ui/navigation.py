@@ -47,17 +47,35 @@ def create_navigation():
         
         with ui.row().classes('items-center q-gutter-sm'):
             if user:
-                # User Info Chip
-                with ui.chip(icon='account_circle').props('color=white text-color=primary'):
-                    ui.label(f'{user.username}').classes('text-weight-medium')
-                    ui.label(f'({user.role})').classes('text-caption')
-                
-                # Logout Button
-                def handle_logout():
-                    AuthHelper.logout()
-                    ui.navigate.to('/login')
-                
-                ui.button('Logout', on_click=handle_logout, icon='logout').props('flat').classes('text-white')
+                # User-Menü (Dropdown)
+                with ui.button(icon='account_circle').props('flat round').classes('text-white'):
+                    with ui.menu() as menu:
+                        with ui.column().classes('q-pa-sm'):
+                            # User Info
+                            ui.label(f'{user.username}').classes('text-weight-bold')
+                            ui.label(f'Rolle: {user.role}').classes('text-caption text-grey-7')
+                            ui.separator()
+                            
+                            # Profil-Link
+                            with ui.item().props('clickable').on('click', lambda: (menu.close(), ui.navigate.to('/profile'))):
+                                with ui.item_section().props('avatar'):
+                                    ui.icon('person')
+                                with ui.item_section():
+                                    ui.label('Mein Profil')
+                            
+                            ui.separator()
+                            
+                            # Logout
+                            def handle_logout():
+                                menu.close()
+                                AuthHelper.logout()
+                                ui.navigate.to('/login')
+                            
+                            with ui.item().props('clickable').on('click', handle_logout):
+                                with ui.item_section().props('avatar'):
+                                    ui.icon('logout')
+                                with ui.item_section():
+                                    ui.label('Logout')
 
 def set_current_path(path: str):
     """Setzt den aktuellen Pfad im Storage (für Navigation-Highlighting)"""

@@ -62,6 +62,7 @@ def create_user_management_page(db: VereinsDB):
                 <q-td :props="props">
                     <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
                     <q-btn flat dense icon="vpn_key" @click="$parent.$emit('change_password', props.row)" />
+                    <q-btn flat dense icon="email" @click="$parent.$emit('send_magic_link', props.row)" />
                     <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" 
                            :disable="props.row.username === '{current_user.username}'" />
                 </q-td>
@@ -71,10 +72,14 @@ def create_user_management_page(db: VereinsDB):
                 with ui.dialog() as dialog, ui.card():
                     ui.label('Neuen Benutzer anlegen').classes('text-h6 q-mb-md')
                     
+                    # Info-Box
+                    with ui.card().classes('bg-blue-1 q-mb-md'):
+                        ui.label('ℹ️ Passwort-freie Erstellung').classes('text-weight-bold')
+                        ui.label('Der neue Benutzer erhält automatisch einen Magic-Link per E-Mail und kann sich damit einloggen.').classes('text-caption')
+                        ui.label('Das Passwort kann später vom Benutzer selbst oder von Admins gesetzt werden.').classes('text-caption')
+                    
                     username = ui.input('Benutzername').props('autofocus')
                     email = ui.input('E-Mail')
-                    password = ui.input('Passwort', password=True, password_toggle_button=True)
-                    password_confirm = ui.input('Passwort wiederholen', password=True)
                     
                     role = ui.select(
                         label='Rolle',
@@ -90,18 +95,8 @@ def create_user_management_page(db: VereinsDB):
                     def create_user():
                         error_label.visible = False
                         
-                        if not username.value or not email.value or not password.value:
-                            error_label.text = 'Bitte alle Felder ausfüllen'
-                            error_label.visible = True
-                            return
-                        
-                        if password.value != password_confirm.value:
-                            error_label.text = 'Passwörter stimmen nicht überein'
-                            error_label.visible = True
-                            return
-                        
-                        if len(password.value) < 6:
-                            error_label.text = 'Passwort muss mindestens 6 Zeichen lang sein'
+                        if not username.value or not email.value:
+                            error_label.text = 'Bitte Username und E-Mail ausfüllen'
                             error_label.visible = True
                             return
                         
@@ -109,15 +104,15 @@ def create_user_management_page(db: VereinsDB):
                             user_service.create(
                                 username=username.value,
                                 email=email.value,
-                                password=password.value,
                                 role=role.value,
                                 active=active.value,
-                                created_by=current_user.username
+                                created_by=current_user.username,
+                                send_magic_link=True
                             )
                             table.rows = load_users()
                             table.update()
                             dialog.close()
-                            ui.notify('Benutzer erfolgreich angelegt', type='positive')
+                            ui.notify('Benutzer erfolgreich angelegt. Magic-Link wurde versendet.', type='positive')
                         except Exception as e:
                             error_label.text = f'Fehler: {str(e)}'
                             error_label.visible = True
@@ -258,6 +253,32 @@ def create_user_management_page(db: VereinsDB):
                 
                 dialog.open()
             
+            def show_send_magic_link_dialog(row):
+                user = user_service.get_by_id(row['id'])
+                
+                with ui.dialog() as dialog, ui.card():
+                    ui.label(f'Magic-Link senden').classes('text-h6 q-mb-md')
+                    ui.label(f'Magic-Link an {user.email} senden?')
+                    ui.label('Der Benutzer erhält eine E-Mail mit einem Login-Link, der 7 Tage gültig ist.').classes('text-caption q-mt-sm')
+                    
+                    def send_link():
+                        try:
+                            success = user_service.send_magic_link(user.email)
+                            dialog.close()
+                            if success:
+                                ui.notify('Magic-Link erfolgreich versendet', type='positive')
+                            else:
+                                ui.notify('E-Mail-Versand fehlgeschlagen', type='warning')
+                        except Exception as e:
+                            dialog.close()
+                            ui.notify(f'Fehler: {str(e)}', type='negative')
+                    
+                    with ui.row().classes('w-full'):
+                        ui.button('Abbrechen', on_click=dialog.close).props('color=secondary')
+                        ui.button('Senden', on_click=send_link).props('color=primary')
+                
+                dialog.open()
+            
             def show_delete_dialog(row):
                 user = user_service.get_by_id(row['id'])
                 
@@ -288,6 +309,7 @@ def create_user_management_page(db: VereinsDB):
             
             table.on('edit', lambda e: show_edit_dialog(e.args))
             table.on('change_password', lambda e: show_change_password_dialog(e.args))
+            table.on('send_magic_link', lambda e: show_send_magic_link_dialog(e.args))
             table.on('delete', lambda e: show_delete_dialog(e.args))
             
             ui.button('Neuen Benutzer anlegen', on_click=show_create_dialog, icon='add').props('color=primary')

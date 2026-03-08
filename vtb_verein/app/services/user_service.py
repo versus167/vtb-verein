@@ -40,11 +40,12 @@ class UserService:
         if not user.active:
             return None
         
-        # Passwort prüfen
-        if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            # Last-Login aktualisieren
-            self.user_repo.update_last_login(user.id)
-            return user
+        # Passwort prüfen (nur wenn Passwort gesetzt ist)
+        if user.password_hash:
+            if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+                # Last-Login aktualisieren
+                self.user_repo.update_last_login(user.id)
+                return user
         
         return None
     
@@ -153,18 +154,20 @@ class UserService:
         """Zähle aktive Administratoren"""
         return self.user_repo.count_active_admins()
     
-    def create(self, username: str, email: str, password: str, role: str, 
-               active: bool, created_by: str) -> User:
+    def create(self, username: str, email: str, role: str, 
+               active: bool, created_by: str, password: Optional[str] = None,
+               send_magic_link: bool = True) -> User:
         """
         Erstellt neuen User
         
         Args:
             username: Benutzername
             email: E-Mail-Adresse
-            password: Passwort (Klartext, wird gehasht)
             role: Rolle ('admin', 'user', 'special', 'readonly')
             active: Aktiv-Status
             created_by: Username des Erstellers
+            password: Optionales Passwort (Klartext, wird gehasht). Falls None, wird Dummy-Hash gesetzt
+            send_magic_link: Wenn True, wird automatisch Magic-Link versendet (Standard: True)
             
         Returns:
             Erstellter User
@@ -173,17 +176,20 @@ class UserService:
             ValueError: Bei ungültigen Daten oder Duplikaten
         """
         # Validierung
-        if not username or not email or not password:
-            raise ValueError("Username, E-Mail und Passwort dürfen nicht leer sein")
+        if not username or not email:
+            raise ValueError("Username und E-Mail dürfen nicht leer sein")
         
-        if len(password) < 6:
-            raise ValueError("Passwort muss mindestens 6 Zeichen lang sein")
-        
-        # Passwort hashen
-        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # Passwort-Handling
+        if password:
+            if len(password) < 6:
+                raise ValueError("Passwort muss mindestens 6 Zeichen lang sein")
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        else:
+            # Dummy-Hash für User ohne Passwort (können nur per Magic-Link einloggen)
+            password_hash = bcrypt.hashpw(b'__NO_PASSWORD_SET__', bcrypt.gensalt()).decode('utf-8')
         
         # User erstellen
-        return self.user_repo.create(
+        user = self.user_repo.create(
             username=username,
             email=email,
             password_hash=password_hash,
@@ -191,6 +197,12 @@ class UserService:
             created_by=created_by,
             active=active
         )
+        
+        # Magic-Link automatisch senden (falls E-Mail konfiguriert)
+        if send_magic_link and active:
+            self.send_magic_link(email)
+        
+        return user
     
     def update(self, user_id: int, username: str, email: str, role: str,
                active: bool, updated_by: str, expected_version: int) -> bool:
