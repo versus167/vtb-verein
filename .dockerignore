@@ -1,0 +1,73 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+PIPFILE.lock
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+.tox/
+.nox/
+htmlcov/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database (wird über Volume gemountet)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+logs/
+
+# Documentation Build
+docs/_build/
+
+# Backup files
+*.bak
+*.tmp
+
+# OS
+Thumbs.db

@@ -1,0 +1,49 @@
+services:
+  vtb-verein:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vtb-verein
+    
+    # Environment-Variablen aus .env-Datei laden
+    env_file:
+      - .env
+    
+    # Ports exponieren
+    ports:
+      - "${VTB_PORT:-8080}:8080"
+    
+    # Volumes für persistente Daten
+    volumes:
+      # SQLite-Datenbank persistent speichern
+      - ./data:/data
+      # Logs (optional)
+      - ./logs:/app/logs
+    
+    # Restart-Policy
+    restart: unless-stopped
+    
+    # Health Check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Ressourcen-Limits (optional, anpassen nach Bedarf)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+# Volumes definieren (optional: Named Volumes statt Bind Mounts)
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
