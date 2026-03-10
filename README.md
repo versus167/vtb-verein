@@ -5,7 +5,8 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 ## Features
 
 ✅ **Benutzerverwaltung**
-- Rollenbasierte Zugriffskontrolle (Admin, Bearbeiter, Nur Lesen, Spezielle Funktionen)
+- Rollenbasierte Zugriffskontrolle (Admin, Bearbeiter, Nur Lesen)
+- Feingranulare Permission-Matrix pro User (unabhängig von der Rolle)
 - Passwort-Management mit bcrypt
 - Session-Management
 
@@ -18,7 +19,7 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 ✅ **Mitgliederverwaltung**
 - Vollständige Mitgliederverwaltung mit allen relevanten Daten
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
-- Persönliche Daten, Kontakt, Adresse
+- Persönliche Daten, Kontakt, Adresse
 - Vereinsdaten (Eintritt, Austritt, Status)
 - Zahlungsdaten (IBAN, BIC, Zahlungsart)
 - Soft-Delete mit History
@@ -284,20 +285,22 @@ vtb-verein/
     ├── __init__.py
     └── app/
         ├── auth/                # Authentifizierung
-        │   ├── auth_helper.py
+        │   ├── auth_helper.py   # Session, require_permission-Decorator
         │   └── __init__.py
         ├── db/                  # Datenbank-Layer (Repository Pattern)
         │   ├── __init__.py
-        │   ├── base_repository.py       # Basis-Klasse für Repositories
-        │   ├── database.py              # Connection & Schema-Management
-        │   ├── datastore.py             # VereinsDB Facade (Backward Compat.)
-        │   ├── mitglied_repository.py   # Mitglied-Datenzugriff
-        │   ├── abteilung_repository.py  # Abteilung-Datenzugriff
-        │   └── user_repository.py       # User-Datenzugriff
+        │   ├── base_repository.py         # Basis-Klasse für Repositories
+        │   ├── database.py                # Connection & Schema-Management
+        │   ├── datastore.py               # VereinsDB Facade (Backward Compat.)
+        │   ├── mitglied_repository.py     # Mitglied-Datenzugriff
+        │   ├── abteilung_repository.py    # Abteilung-Datenzugriff
+        │   ├── user_repository.py         # User-Datenzugriff
+        │   └── permission_repository.py   # Permission-Datenzugriff
         ├── models/              # Datenmodelle
         │   ├── abteilung.py
         │   ├── mitglied.py
         │   ├── user.py
+        │   ├── permission.py    # Permission-Konstanten & UserPermission-Modell
         │   └── __init__.py
         ├── services/            # Business-Logik
         │   ├── abteilungen_service.py
@@ -360,7 +363,7 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 
 **Layer-Verantwortlichkeiten:**
 
-1. **UI Layer** (`app/ui/`): 
+1. **UI Layer** (`app/ui/`):
    - NiceGUI-Komponenten
    - User Interaction
    - Keine Business-Logik
@@ -379,6 +382,7 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 
 4. **Models** (`app/models/`):
    - Datenklassen (dataclasses)
+   - Permission-Konstanten (`Permission`-Klasse)
    - Type Safety
 
 **Vorteile:**
@@ -386,6 +390,40 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 - ✅ Testbarkeit (Repositories können gemockt werden)
 - ✅ Wartbarkeit (SQL-Änderungen nur in Repositories)
 - ✅ Wiederverwendbarkeit (Repositories in mehreren Services nutzbar)
+
+### Permission-System
+
+Seit Schema v5 verwendet die Anwendung eine feingranulare **Permission-Matrix** statt rein rollenbasierter Zugriffssteuerung.
+
+**Permissions** haben die Form `ressource.aktion`, z.B.:
+- `mitglieder.read`, `mitglieder.write`, `mitglieder.delete`
+- `abteilungen.read`, `abteilungen.write`, `abteilungen.delete`
+- `beitraege.read`, `beitraege.write`
+- `berichte.read`, `berichte.export`
+- `users.read`, `users.manage`
+- `system.config`
+
+**Rollen** vergeben beim Anlegen eines Users automatisch Default-Permissions:
+- `admin`: alle Permissions
+- `user`: alle außer `users.manage` und `system.config`
+- `readonly`: nur `*.read`
+
+Individuelle Permissions können anschließend pro User angepasst werden (über `PermissionRepository`).
+
+**Zugriffsprüfung in der UI:**
+```python
+from app.auth.auth_helper import AuthHelper, require_permission
+from app.models.permission import Permission
+
+# Imperativ
+if AuthHelper.has_permission(Permission.MITGLIEDER_WRITE):
+    ...
+
+# Als Decorator
+@require_permission(Permission.MITGLIEDER_WRITE)
+def edit_member():
+    ...
+```
 
 ### Datenbank-Schema
 
@@ -414,8 +452,18 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 
 **History/Audit-Trail:**
 - Automatische Versionierung via Database-Triggers
-- Jede Änderung wird in *_history Tabellen protokolliert
+- Jede Änderung wird in `*_history` Tabellen protokolliert
 - Nachvollziehbarkeit aller Änderungen (wer, wann, was)
+
+**Schema-Versionen:**
+
+| Version | Inhalt |
+|---------|--------|
+| 1 | Initiales Schema (mitglied, abteilung, beitrag, users) |
+| 2 | History-Trigger für mitglied; DELETE-Trigger entfernt |
+| 3 | Rolle `special` in users-Tabelle |
+| 4 | `auth_tokens` für Magic-Link-Authentication |
+| 5 | `user_permissions` für Permission-Matrix |
 
 ### Repository Pattern Details
 
@@ -428,6 +476,7 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
 - `MitgliedRepository`: CRUD für Mitglieder, Mitgliedsnummer-Management
 - `AbteilungRepository`: CRUD für Abteilungen, Dependency-Checks
 - `UserRepository`: CRUD für User, Authentication-Queries
+- `PermissionRepository`: CRUD für User-Permissions (grant, revoke, set)
 
 **VereinsDB Facade:**
 - Kombiniert alle Repositories
