@@ -273,6 +273,24 @@ class Database:
                 END;
             """)
 
+            # Trigger für abteilung: DELETE (falls jemals hard delete)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS abteilung_audit_delete
+                AFTER DELETE ON abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO abteilung_history (
+                        id, version, name, kuerzel, beschreibung,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.name, OLD.kuerzel, OLD.beschreibung,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
+                    );
+                END;
+            """)
+
             # ============================================
             # Tabelle 2a: mitglied_abteilung
             # ============================================
@@ -357,6 +375,24 @@ class Database:
                         NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
                         NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # Trigger für mitglied_abteilung: DELETE (falls jemals hard delete)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_delete
+                AFTER DELETE ON mitglied_abteilung
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO mitglied_abteilung_history (
+                        id, version, mitglied_id, abteilung_id, status, von, bis,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.mitglied_id, OLD.abteilung_id, OLD.status, OLD.von, OLD.bis,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
                     );
                 END;
             """)
@@ -486,6 +522,7 @@ class Database:
                 )
             """)
             
+            # Indices für Performance
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
@@ -514,6 +551,7 @@ class Database:
             
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_history_id ON users_history(id)")
 
+            # Trigger für users: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_insert
                 AFTER INSERT ON users
@@ -532,6 +570,7 @@ class Database:
                 END;
             """)
 
+            # Trigger für users: UPDATE (nur wenn Version sich ändert!)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_update
                 AFTER UPDATE ON users
@@ -550,23 +589,54 @@ class Database:
                     );
                 END;
             """)
+            
+            # Trigger für users: DELETE (falls jemals hard delete)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS users_audit_delete
+                AFTER DELETE ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.created_at,
+                        OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
+                    );
+                END;
+            """)
 
             # Erstelle Standard-Admin wenn keine User existieren
             cur.execute("SELECT COUNT(*) FROM users")
             if cur.fetchone()[0] == 0:
                 import bcrypt
                 default_password = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                
                 cur.execute("""
                     INSERT INTO users (username, email, password_hash, role, active, created_by, updated_by)
                     VALUES (?, ?, ?, 'admin', 1, 'SYSTEM', 'SYSTEM')
                 """, ('admin', 'admin@verein.local', default_password))
+                
                 print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
         self._set_schema_version(1)
 
     def _migrate_1_to_2(self):
-        """Migration 1->2: History-Trigger für mitglied hinzufügen, DELETE-Trigger entfernen."""
+        """Migration 1->2: History-Trigger für mitglied hinzufügen, DELETE-Trigger entfernen.
+        
+        Änderungen:
+        1. Fügt fehlende INSERT/UPDATE Trigger für mitglied-Tabelle hinzu
+        2. Entfernt alle DELETE-Trigger (Hard-Delete soll nicht in History landen)
+        """
         with self.cursor() as cur:
+            # ============================================
+            # 1. Trigger für mitglied hinzufügen
+            # ============================================
+            
+            # Trigger für mitglied: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_audit_insert
                 AFTER INSERT ON mitglied
@@ -589,6 +659,8 @@ class Database:
                     );
                 END;
             """)
+
+            # Trigger für mitglied: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_audit_update
                 AFTER UPDATE ON mitglied
@@ -612,16 +684,27 @@ class Database:
                     );
                 END;
             """)
+
+            # ============================================
+            # 2. DELETE-Trigger für alle Tabellen entfernen
+            # ============================================
             # Hard-Delete ist nur für Prune-Funktionen, soll nicht in History
+            
             cur.execute("DROP TRIGGER IF EXISTS mitglied_audit_delete")
             cur.execute("DROP TRIGGER IF EXISTS abteilung_audit_delete")
             cur.execute("DROP TRIGGER IF EXISTS mitglied_abteilung_audit_delete")
             cur.execute("DROP TRIGGER IF EXISTS users_audit_delete")
+
         self._set_schema_version(2)
 
     def _migrate_2_to_3(self):
-        """Migration 2->3: Rolle 'special' zur users-Tabelle hinzufügen."""
+        """Migration 2->3: Rolle 'special' zur users-Tabelle hinzufügen.
+        
+        SQLite unterstützt kein ALTER TABLE ... ALTER CONSTRAINT,
+        daher müssen wir die Tabelle neu erstellen.
+        """
         with self.cursor() as cur:
+            # Temporäre Tabelle mit neuer Constraint erstellen
             cur.execute("""
                 CREATE TABLE users_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -640,14 +723,27 @@ class Database:
                     deleted_by TEXT
                 )
             """)
-            cur.execute("INSERT INTO users_new SELECT * FROM users")
+            
+            # Daten kopieren
+            cur.execute("""
+                INSERT INTO users_new 
+                SELECT * FROM users
+            """)
+            
+            # Alte Tabelle löschen
             cur.execute("DROP TABLE users")
+            
+            # Neue Tabelle umbenennen
             cur.execute("ALTER TABLE users_new RENAME TO users")
+            
+            # Indices neu erstellen
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at)")
+            
+            # Trigger neu erstellen
             cur.execute("""
                 CREATE TRIGGER users_audit_insert
                 AFTER INSERT ON users
@@ -655,14 +751,17 @@ class Database:
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
-                        NEW.active, NEW.last_login, NEW.created_at, NEW.created_by,
-                        NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
+
             cur.execute("""
                 CREATE TRIGGER users_audit_update
                 AFTER UPDATE ON users
@@ -671,19 +770,31 @@ class Database:
                 BEGIN
                     INSERT INTO users_history (
                         id, version, username, email, password_hash, role, active, last_login,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
-                        NEW.active, NEW.last_login, NEW.created_at, NEW.created_by,
-                        NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        NEW.active, NEW.last_login, NEW.created_at,
+                        NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
                     );
                 END;
             """)
-        self._set_schema_version(3)
 
+        self._set_schema_version(3)
+    
     def _migrate_3_to_4(self):
-        """Migration 3->4: auth_tokens Tabelle für Magic-Link-Authentication."""
+        """Migration 3->4: auth_tokens Tabelle für Magic-Link-Authentication.
+        
+        Änderungen:
+        1. Neue auth_tokens Tabelle für Magic-Links und Remember-Me-Tokens
+        2. History-Tabelle für auth_tokens
+        3. Trigger für INSERT/UPDATE (kein DELETE - Cleanup soll nicht getrackt werden)
+        """
         with self.cursor() as cur:
+            # ============================================
+            # Tabelle: auth_tokens
+            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS auth_tokens (
@@ -693,32 +804,44 @@ class Database:
                   token_type    TEXT NOT NULL CHECK(token_type IN ('magic_link', 'remember_me')),
                   expires_at    TEXT NOT NULL,
                   used_at       TEXT,
+                  
                   version       INTEGER NOT NULL DEFAULT 1,
+                  
                   created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  
                   FOREIGN KEY (user_id) REFERENCES users(id)
                 )
                 """
             )
+            
+            # Indices für Performance
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token_type ON auth_tokens(token_type)")
+            
+            # History-Tabelle
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS auth_tokens_history (
                   id            INTEGER NOT NULL,
                   version       INTEGER NOT NULL,
+                  
                   user_id       INTEGER NOT NULL,
                   token         TEXT NOT NULL,
                   token_type    TEXT NOT NULL,
                   expires_at    TEXT NOT NULL,
                   used_at       TEXT,
                   created_at    TEXT NOT NULL,
+                  
                   PRIMARY KEY (id, version)
                 )
                 """
             )
+            
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_history_id ON auth_tokens_history(id)")
+            
+            # Trigger für auth_tokens: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_insert
                 AFTER INSERT ON auth_tokens
@@ -732,6 +855,8 @@ class Database:
                     );
                 END;
             """)
+            
+            # Trigger für auth_tokens: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_update
                 AFTER UPDATE ON auth_tokens
@@ -746,7 +871,9 @@ class Database:
                     );
                 END;
             """)
+            
             # KEIN DELETE-Trigger - Token-Cleanup soll nicht in History landen
+
         self._set_schema_version(4)
 
     def _migrate_4_to_5(self):
@@ -859,7 +986,6 @@ class Database:
             # ============================================
             cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL")
             existing_users = cur.fetchall()
-            now = 'CURRENT_TIMESTAMP'
             for row in existing_users:
                 user_id = row['id']
                 role = row['role']
