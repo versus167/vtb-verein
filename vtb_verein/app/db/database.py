@@ -884,8 +884,38 @@ class Database:
         2. Neue Tabelle user_permissions_history
         3. Trigger für INSERT/UPDATE (kein DELETE - Prune soll nicht getrackt werden)
         4. Standard-Permissions für bestehende Users nach Rolle setzen
+
+        HINWEIS: Die Default-Permissions sind hier bewusst hartcodiert und nicht
+        über Permission.defaults_for_role() importiert. Migrationen müssen unabhängig
+        vom lebenden Model-Code sein und dürfen nicht durch spätere Model-Änderungen
+        beeinflusst werden.
         """
-        from app.models.permission import Permission
+        # Hartcodierte Default-Permissions zum Zeitpunkt dieser Migration (Schema v5).
+        # Änderungen an Permission.defaults_for_role() haben keinen Einfluss auf
+        # bereits migrierte Datenbanken.
+        _DEFAULTS_V5 = {
+            'admin': {
+                'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
+                'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
+                'beitraege.read', 'beitraege.write',
+                'berichte.read', 'berichte.export',
+                'users.read', 'users.manage',
+                'system.config',
+            },
+            'user': {
+                'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
+                'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
+                'beitraege.read', 'beitraege.write',
+                'berichte.read', 'berichte.export',
+                'users.read',
+            },
+            'readonly': {
+                'mitglieder.read',
+                'abteilungen.read',
+                'beitraege.read',
+                'berichte.read',
+            },
+        }
 
         with self.cursor() as cur:
             # ============================================
@@ -990,9 +1020,8 @@ class Database:
                 user_id = row['id']
                 role = row['role']
                 # 'special' auf 'readonly' mappen für Default-Permissions
-                effective_role = role if role in ('admin', 'user', 'readonly') else 'readonly'
-                permissions = Permission.defaults_for_role(effective_role)
-                for perm in permissions:
+                effective_role = role if role in _DEFAULTS_V5 else 'readonly'
+                for perm in _DEFAULTS_V5[effective_role]:
                     cur.execute("""
                         INSERT OR IGNORE INTO user_permissions
                             (user_id, permission, created_by, updated_by)
