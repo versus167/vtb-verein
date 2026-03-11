@@ -50,7 +50,7 @@ def create_user_management_page(db: VereinsDB):
                         'active': '✓' if u.active else '✗',
                         'last_login': u.last_login or 'Noch nie',
                         'version': u.version,
-                        'role_key': u.role,  # Original-Rolle für Vergleich
+                        'role_key': u.role,
                         'is_admin': u.role == 'admin',
                         'is_active': u.active,
                     }
@@ -63,6 +63,8 @@ def create_user_management_page(db: VereinsDB):
                     <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
                     <q-btn flat dense icon="vpn_key" @click="$parent.$emit('change_password', props.row)" />
                     <q-btn flat dense icon="email" @click="$parent.$emit('send_magic_link', props.row)" />
+                    <q-btn flat dense icon="security" @click="$parent.$emit('edit_permissions', props.row)"
+                           title="Permissions verwalten" />
                     <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" 
                            :disable="props.row.username === '{current_user.username}'" />
                 </q-td>
@@ -140,23 +142,15 @@ def create_user_management_page(db: VereinsDB):
                     
                     active_input = ui.checkbox('Aktiv', value=user.active)
                     
-                    # Warnung anzeigen, wenn letzter Admin betroffen ist
                     warning_label = ui.label('')
                     warning_label.classes('text-warning q-mt-sm')
                     warning_label.visible = False
                     
                     def check_admin_warning():
-                        """Prüft, ob der letzte aktive Admin betroffen ist"""
-                        # Nur prüfen, wenn User aktuell ein aktiver Admin ist
                         if row['is_admin'] and row['is_active']:
                             active_admins = user_service.count_active_admins()
-                            
-                            # Prüfe ob Admin inaktiv wird (Rolle bleibt admin, aber Status wird false)
                             will_be_deactivated = (role_input.value == 'admin' and not active_input.value)
-                            
-                            # Prüfe ob Admin herabgestuft wird (Rolle wird geändert, egal ob aktiv)
                             will_be_demoted = (role_input.value != 'admin')
-                            
                             if (will_be_deactivated or will_be_demoted) and active_admins <= 1:
                                 warning_label.text = '⚠️ Achtung: Dies ist der letzte aktive Administrator!'
                                 warning_label.visible = True
@@ -168,7 +162,6 @@ def create_user_management_page(db: VereinsDB):
                             warning_label.visible = False
                             save_button.enable()
                     
-                    # Überwache Änderungen an Rolle und Status
                     active_input.on('update:model-value', check_admin_warning)
                     role_input.on('update:model-value', check_admin_warning)
                     
@@ -177,7 +170,6 @@ def create_user_management_page(db: VereinsDB):
                     
                     def update_user():
                         error_label.visible = False
-                        
                         try:
                             user_service.update(
                                 user_id=user.id,
@@ -219,22 +211,18 @@ def create_user_management_page(db: VereinsDB):
                     
                     def change_password():
                         error_label.visible = False
-                        
                         if not password.value:
                             error_label.text = 'Bitte Passwort eingeben'
                             error_label.visible = True
                             return
-                        
                         if password.value != password_confirm.value:
                             error_label.text = 'Passwörter stimmen nicht überein'
                             error_label.visible = True
                             return
-                        
                         if len(password.value) < 6:
                             error_label.text = 'Passwort muss mindestens 6 Zeichen lang sein'
                             error_label.visible = True
                             return
-                        
                         try:
                             user_service.change_password(
                                 user_id=user.id,
@@ -306,10 +294,14 @@ def create_user_management_page(db: VereinsDB):
                         ui.button('Löschen', on_click=delete_user).props('color=negative')
                 
                 dialog.open()
+
+            def show_edit_permissions(row):
+                ui.navigate.to(f'/users/{row["id"]}/permissions')
             
             table.on('edit', lambda e: show_edit_dialog(e.args))
             table.on('change_password', lambda e: show_change_password_dialog(e.args))
             table.on('send_magic_link', lambda e: show_send_magic_link_dialog(e.args))
+            table.on('edit_permissions', lambda e: show_edit_permissions(e.args))
             table.on('delete', lambda e: show_delete_dialog(e.args))
             
             ui.button('Neuen Benutzer anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
