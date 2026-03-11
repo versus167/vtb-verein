@@ -23,7 +23,7 @@ class PermissionRepository(BaseRepository):
         Returns:
             Set mit Permission-Strings, z.B. {'mitglieder.read', 'beitraege.write'}
         """
-        with self.db.cursor() as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 SELECT permission
@@ -57,7 +57,7 @@ class PermissionRepository(BaseRepository):
         to_add    = permissions - current
         to_remove = current - permissions
 
-        with self.db.cursor() as cur:
+        with self.cursor() as cur:
             # Entfernte Permissions soft-deleten
             for perm in to_remove:
                 cur.execute(
@@ -100,7 +100,7 @@ class PermissionRepository(BaseRepository):
         if permission in current:
             return  # bereits vorhanden, nichts tun
         now = datetime.now().isoformat()
-        with self.db.cursor() as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO user_permissions
@@ -125,7 +125,7 @@ class PermissionRepository(BaseRepository):
             actor:      Ausführender User (Audit)
         """
         now = datetime.now().isoformat()
-        with self.db.cursor() as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE user_permissions
@@ -146,7 +146,7 @@ class PermissionRepository(BaseRepository):
             actor:   Ausführender User (Audit)
         """
         now = datetime.now().isoformat()
-        with self.db.cursor() as cur:
+        with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE user_permissions
