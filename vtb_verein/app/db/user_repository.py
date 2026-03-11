@@ -1,6 +1,7 @@
 '''
 Created on 21.02.2026
 Extended on 07.03.2026 - Magic-Link Authentication
+Extended on 11.03.2026 - Permissions nach User-Load befüllen
 
 User Repository - All database operations for User entity.
 
@@ -11,6 +12,7 @@ import sqlite3
 from typing import Optional, List
 from app.models.user import User
 from app.db.base_repository import BaseRepository
+from app.db.permission_repository import PermissionRepository
 
 
 class UserRepository(BaseRepository):
@@ -26,6 +28,19 @@ class UserRepository(BaseRepository):
     Note: Password hashing and validation logic belongs in the service layer.
     """
     
+    def __init__(self, db_conn):
+        super().__init__(db_conn)
+        self._permission_repo = PermissionRepository(db_conn)
+    
+    def _load_permissions(self, user: User) -> User:
+        """Befüllt user.permissions über den PermissionRepository.
+        
+        Wird nach jedem User-Load aufgerufen, damit Permissions
+        direkt verfügbar sind für has_permission() und @require_permission().
+        """
+        user.permissions = self._permission_repo.get_permissions_for_user(user.id)
+        return user
+    
     def get_by_username(self, username: str) -> Optional[User]:
         """Find User by username (only non-deleted)."""
         with self.cursor() as cur:
@@ -36,7 +51,9 @@ class UserRepository(BaseRepository):
                 (username,)
             )
             row = cur.fetchone()
-            return self._row_to_user(row) if row else None
+            if not row:
+                return None
+            return self._load_permissions(self._row_to_user(row))
     
     def get_by_email(self, email: str) -> Optional[User]:
         """Find User by email (only non-deleted). Used for Magic-Link authentication."""
@@ -48,7 +65,9 @@ class UserRepository(BaseRepository):
                 (email,)
             )
             row = cur.fetchone()
-            return self._row_to_user(row) if row else None
+            if not row:
+                return None
+            return self._load_permissions(self._row_to_user(row))
     
     def get_by_id(self, user_id: int) -> Optional[User]:
         """Find User by ID (only non-deleted)."""
@@ -60,7 +79,9 @@ class UserRepository(BaseRepository):
                 (user_id,)
             )
             row = cur.fetchone()
-            return self._row_to_user(row) if row else None
+            if not row:
+                return None
+            return self._load_permissions(self._row_to_user(row))
     
     def list_all(self) -> List[User]:
         """List all users (only non-deleted)."""
@@ -70,7 +91,7 @@ class UserRepository(BaseRepository):
                           version, created_at, created_by, updated_at, updated_by
                    FROM users WHERE deleted_at IS NULL ORDER BY username"""
             )
-            return [self._row_to_user(row) for row in cur.fetchall()]
+            return [self._load_permissions(self._row_to_user(row)) for row in cur.fetchall()]
     
     def count_active_admins(self) -> int:
         """Count the number of active administrators."""
@@ -93,7 +114,8 @@ class UserRepository(BaseRepository):
             active: Whether user is active
             
         Returns:
-            Created User (History is written automatically via trigger)
+            Created User with default permissions for their role already loaded.
+            (History is written automatically via trigger)
         """
         with self.cursor() as cur:
             cur.execute(
@@ -206,7 +228,7 @@ class UserRepository(BaseRepository):
             return cur.rowcount == 1
     
     def _row_to_user(self, row) -> User:
-        """Convert DB row to User object."""
+        """Convert DB row to User object (ohne Permissions – die lädt _load_permissions)."""
         return User(
             id=row['id'],
             username=row['username'],
