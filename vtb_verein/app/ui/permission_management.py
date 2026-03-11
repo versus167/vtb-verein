@@ -153,7 +153,7 @@ def create_permission_management_page(db: VereinsDB):
 
                 # Schutz: letzter Admin darf USERS_MANAGE nicht verlieren
                 if target_user.role == 'admin':
-                    active_admins = db.users.count_active_admins()
+                    active_admins = db.count_active_admins()
                     if active_admins <= 1 and Permission.USERS_MANAGE not in selected:
                         error_label.text = (
                             '⚠️ Kann USERS_MANAGE nicht entziehen: '
