@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 4  # Version 4: auth_tokens Tabelle für Magic-Link-Authentication
+SCHEMA_VERSION = 5  # Version 5: user_permissions Tabelle für Permission-Matrix
 
 
 class Database:
@@ -97,6 +97,9 @@ class Database:
         if current == 3:
             self._migrate_3_to_4()
             current = 4
+        if current == 4:
+            self._migrate_4_to_5()
+            current = 5
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -872,3 +875,157 @@ class Database:
             # KEIN DELETE-Trigger - Token-Cleanup soll nicht in History landen
 
         self._set_schema_version(4)
+
+    def _migrate_4_to_5(self):
+        """Migration 4->5: user_permissions Tabelle für Permission-Matrix.
+
+        Änderungen:
+        1. Neue Tabelle user_permissions mit Soft-Delete und Versionierung
+        2. Neue Tabelle user_permissions_history
+        3. Trigger für INSERT/UPDATE (kein DELETE - Prune soll nicht getrackt werden)
+        4. Standard-Permissions für bestehende Users nach Rolle setzen
+
+        HINWEIS: Die Default-Permissions sind hier bewusst hartcodiert und nicht
+        über Permission.defaults_for_role() importiert. Migrationen müssen unabhängig
+        vom lebenden Model-Code sein und dürfen nicht durch spätere Model-Änderungen
+        beeinflusst werden.
+        """
+        # Hartcodierte Default-Permissions zum Zeitpunkt dieser Migration (Schema v5).
+        # Änderungen an Permission.defaults_for_role() haben keinen Einfluss auf
+        # bereits migrierte Datenbanken.
+        _DEFAULTS_V5 = {
+            'admin': {
+                'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
+                'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
+                'beitraege.read', 'beitraege.write',
+                'berichte.read', 'berichte.export',
+                'users.read', 'users.manage',
+                'system.config',
+            },
+            'user': {
+                'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
+                'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
+                'beitraege.read', 'beitraege.write',
+                'berichte.read', 'berichte.export',
+                'users.read',
+            },
+            'readonly': {
+                'mitglieder.read',
+                'abteilungen.read',
+                'beitraege.read',
+                'berichte.read',
+            },
+        }
+
+        with self.cursor() as cur:
+            # ============================================
+            # Tabelle: user_permissions
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_permissions (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id     INTEGER NOT NULL,
+                    permission  TEXT NOT NULL,
+
+                    version     INTEGER NOT NULL DEFAULT 1,
+
+                    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by  TEXT NOT NULL,
+                    updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by  TEXT NOT NULL,
+                    deleted_at  TEXT,
+                    deleted_by  TEXT,
+
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    UNIQUE (user_id, permission)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_permission ON user_permissions(permission)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_deleted_at ON user_permissions(deleted_at)")
+
+            # ============================================
+            # Tabelle: user_permissions_history
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_permissions_history (
+                    id          INTEGER NOT NULL,
+                    version     INTEGER NOT NULL,
+
+                    user_id     INTEGER NOT NULL,
+                    permission  TEXT NOT NULL,
+
+                    created_at  TEXT NOT NULL,
+                    created_by  TEXT NOT NULL,
+                    updated_at  TEXT NOT NULL,
+                    updated_by  TEXT NOT NULL,
+                    deleted_at  TEXT,
+                    deleted_by  TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_history_id ON user_permissions_history(id)")
+
+            # ============================================
+            # Trigger: INSERT
+            # ============================================
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS user_permissions_audit_insert
+                AFTER INSERT ON user_permissions
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO user_permissions_history (
+                        id, version, user_id, permission,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.permission,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # ============================================
+            # Trigger: UPDATE (nur bei Versions-Änderung)
+            # ============================================
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS user_permissions_audit_update
+                AFTER UPDATE ON user_permissions
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO user_permissions_history (
+                        id, version, user_id, permission,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.permission,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # KEIN DELETE-Trigger - Prune soll nicht in History landen
+
+            # ============================================
+            # Bestehende Users mit Default-Permissions befüllen
+            # ============================================
+            cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL")
+            existing_users = cur.fetchall()
+            for row in existing_users:
+                user_id = row['id']
+                role = row['role']
+                # 'special' auf 'readonly' mappen für Default-Permissions
+                effective_role = role if role in _DEFAULTS_V5 else 'readonly'
+                for perm in _DEFAULTS_V5[effective_role]:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_permissions
+                            (user_id, permission, created_by, updated_by)
+                        VALUES (?, ?, 'MIGRATION_4_5', 'MIGRATION_4_5')
+                    """, (user_id, perm))
+
+        self._set_schema_version(5)

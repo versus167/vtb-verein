@@ -1,16 +1,17 @@
 """
 User-Modell für die Vereinsverwaltung
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
 
 @dataclass
 class User:
-    """Benutzer-Entität"""
+    """Benutzer-Entität."""
     id: int
     username: str
     email: str
     password_hash: str
-    role: str  # 'admin', 'user', 'readonly', 'special'
+    role: str  # 'admin', 'user', 'readonly'
     active: bool
     last_login: str | None
     version: int
@@ -18,31 +19,35 @@ class User:
     created_by: str
     updated_at: str
     updated_by: str
-    
+    deleted_at: str | None = None
+    deleted_by: str | None = None
+    # Wird nach dem Laden aus der DB befüllt (nicht in users-Tabelle)
+    permissions: set[str] = field(default_factory=set)
+
     @staticmethod
-    def get_available_roles():
-        """Verfügbare Benutzerrollen"""
+    def get_available_roles() -> dict[str, str]:
+        """Verfügbare Benutzerrollen."""
         return {
-            'admin': 'Administrator - Volle Rechte inkl. Benutzerverwaltung',
-            'user': 'Bearbeiter - Kann alle Daten editieren',
-            'readonly': 'Nur Lesen - Kann nur Daten ansehen',
-            'special': 'Spezielle Funktion - Nur über zugewiesene Bereiche (Abteilungsleiter, Übungsleiter)'
+            'admin':    'Administrator – Volle Rechte inkl. Benutzerverwaltung',
+            'user':     'Bearbeiter – Kann alle Inhaltsdaten lesen und schreiben',
+            'readonly': 'Nur Lesen – Kann ausschließlich Daten ansehen',
         }
-    
+
+    def has_permission(self, permission: str) -> bool:
+        """Prüft ob dieser User eine bestimmte Permission hat."""
+        return permission in self.permissions
+
     def can_manage_users(self) -> bool:
-        """Prüft ob User Benutzerverwaltung durchführen darf"""
-        return self.role == 'admin'
-    
+        """Prüft ob User Benutzerverwaltung durchführen darf."""
+        from app.models.permission import Permission
+        return self.has_permission(Permission.USERS_MANAGE)
+
     def can_edit(self) -> bool:
-        """Prüft ob User Daten bearbeiten darf"""
-        return self.role in ['admin', 'user']
-    
+        """Prüft ob User Mitgliedsdaten bearbeiten darf."""
+        from app.models.permission import Permission
+        return self.has_permission(Permission.MITGLIEDER_WRITE)
+
     def can_view(self) -> bool:
-        """Prüft ob User Daten ansehen darf"""
-        # Special-Rolle kann ansehen, aber nur in speziellen Bereichen
-        # Die Berechtigung wird dann in den jeweiligen Features geprüft
-        return self.active and self.role != 'special'
-    
-    def has_special_role(self) -> bool:
-        """Prüft ob User eine spezielle Funktion hat (Abteilungsleiter, Übungsleiter)"""
-        return self.role == 'special'
+        """Prüft ob User Mitgliedsdaten ansehen darf."""
+        from app.models.permission import Permission
+        return self.active and self.has_permission(Permission.MITGLIEDER_READ)

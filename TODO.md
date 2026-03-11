@@ -16,6 +16,13 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
+### Permission-Matrix (UI)
+- [ ] Permission-Verwaltung in der Benutzerverwaltungs-UI
+  - Checkboxen pro Permission pro User
+  - Anzeige der aktuellen Permissions
+  - Speichern über `PermissionRepository.set_permissions_for_user()`
+  - Hinweis wenn User keine Permissions hat
+
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
@@ -172,7 +179,7 @@
 - [x] History-Tracking für Zuordnungen
 - [x] Repository Pattern Migration
 - [x] Separation of Concerns: Service vs Repository
-- [x] Neue Benutzerrolle 'special'
+- [x] Neue Benutzerrolle `special` (in Phase 2.7 durch Permission-Matrix abgelöst)
 
 ### Phase 2.5 - Authentication & Security
 - [x] Magic-Link Authentication per E-Mail
@@ -186,7 +193,6 @@
 - [x] Remember-Me Sessions
   - [x] Rollenbezogene Session-Timeouts
   - [x] Admin/User: 30 Tage (mit Remember-Me)
-  - [x] Special: 14 Tage
   - [x] Readonly: 7 Tage
   - [x] Standard: 24h (ohne Remember-Me)
 
@@ -199,6 +205,19 @@
   - [x] Production-ready Image (Health-Checks, Logging, Ressourcen-Limits)
   - [x] README mit Docker-Setup-Anleitung
   - [x] .dockerignore für optimales Build
+
+### Phase 2.7 - Permission-Matrix (Schema v5)
+- [x] `user_permissions` Tabelle mit Soft-Delete und Versionierung
+- [x] `user_permissions_history` Tabelle + INSERT/UPDATE-Trigger
+- [x] `Permission`-Modell mit Konstanten (`ressource.aktion`-Format)
+- [x] `Permission.defaults_for_role()` für Rollen-Defaults (admin/user/readonly)
+- [x] `PermissionRepository` (get, grant, revoke, set, revoke_all)
+- [x] `User.permissions`-Feld (Set, wird nach Login befüllt)
+- [x] `AuthHelper` auf Permission-Prüfung umgestellt (`has_permission()`)
+- [x] `require_permission()`-Decorator (ersetzt `require_role()`)
+- [x] `require_role()` als Deprecated-Shim erhalten (Backward Compat.)
+- [x] Rolle `special` entfernt; bestehende `special`-User erhalten `readonly`-Defaults
+- [x] Migration befüllt Default-Permissions für alle bestehenden Users
 
 ---
 
