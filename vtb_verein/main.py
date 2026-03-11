@@ -10,6 +10,7 @@ from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
 from app.ui.magic_link_page import create_magic_link_page
 from app.ui.user_management import create_user_management_page
+from app.ui.permission_management import create_permission_management_page
 from app.ui.user_profile import create_user_profile_page
 from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
@@ -32,9 +33,9 @@ print(f"Host: {HOST}:{PORT}")
 
 # E-Mail-Status ausgeben
 if EmailConfig.is_configured():
-    print(f"E-Mail: ✅ Konfiguriert ({EmailConfig.get_smtp_server()})")
+    print(f"E-Mail: \u2705 Konfiguriert ({EmailConfig.get_smtp_server()})")
 else:
-    print("E-Mail: ⚠️  Nicht konfiguriert - Magic-Link-Login nicht verfügbar")
+    print("E-Mail: \u26a0\ufe0f  Nicht konfiguriert - Magic-Link-Login nicht verf\u00fcgbar")
 
 print("=" * 30 + "\n")
 
@@ -45,6 +46,7 @@ db = VereinsDB(DB_PATH)
 create_login_page(db)
 create_magic_link_page(db)
 create_user_management_page(db)
+create_permission_management_page(db)
 create_user_profile_page(db)
 create_abteilung_management_page(db)
 create_mitglied_management_page(db)
@@ -60,7 +62,7 @@ def main_page():
     with ui.column().classes('q-ma-md'):
         ui.label(f'Willkommen, {user.username}!').classes('text-h4')
 
-        ui.label('Was möchten Sie tun?').classes('text-subtitle1 q-mt-md q-mb-md')
+        ui.label('Was m\u00f6chten Sie tun?').classes('text-subtitle1 q-mt-md q-mb-md')
 
         # Dashboard Cards
         with ui.row().classes('q-gutter-md'):
@@ -94,15 +96,15 @@ def main_page():
                     with ui.card_section().classes('text-center'):
                         ui.icon('payments', size='3rem').classes('text-grey')
                         ui.label('Beiträge').classes('text-h6 q-mt-sm text-grey')
-                        ui.label('Bald verfügbar').classes('text-caption text-grey')
+                        ui.label('Bald verf\u00fcgbar').classes('text-caption text-grey')
 
 # Unauthorized-Seite
 @ui.page('/unauthorized')
 def unauthorized():
     with ui.card().classes('absolute-center'):
         ui.label('Keine Berechtigung').classes('text-h5 text-negative')
-        ui.label('Sie haben keine Berechtigung für diese Seite.')
-        ui.button('Zurück zur Startseite', on_click=lambda: ui.navigate.to('/')).props('color=primary')
+        ui.label('Sie haben keine Berechtigung f\u00fcr diese Seite.')
+        ui.button('Zur\u00fcck zur Startseite', on_click=lambda: ui.navigate.to('/')).props('color=primary')
 
 # Multiprocessing-kompatible Main-Guard (wie von NiceGUI empfohlen)
 if __name__ in {'__main__', '__mp_main__'}:
@@ -112,5 +114,5 @@ if __name__ in {'__main__', '__mp_main__'}:
         host=HOST,
         port=PORT,
         title='Vereinsverwaltung',
-        favicon='🏛️',
+        favicon='\U0001f3db\ufe0f',
     )

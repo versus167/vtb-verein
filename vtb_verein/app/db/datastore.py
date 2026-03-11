@@ -2,6 +2,7 @@
 Created on 07.02.2026
 Refactored on 21.02.2026
 Extended on 07.03.2026 - Magic-Link Authentication
+Extended on 11.03.2026 - PermissionRepository hinzugefügt
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -14,6 +15,7 @@ from app.db.database import Database
 from app.db.mitglied_repository import MitgliedRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.user_repository import UserRepository
+from app.db.permission_repository import PermissionRepository
 from app.db.auth_token_repository import AuthTokenRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
@@ -44,12 +46,23 @@ class VereinsDB:
         self._mitglied_repo = MitgliedRepository(self.conn)
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
+        self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
     
     @property
     def user_repository(self) -> UserRepository:
         """Access to UserRepository (for services)."""
         return self._user_repo
+
+    @property
+    def users(self) -> UserRepository:
+        """Kurzform-Zugriff auf UserRepository."""
+        return self._user_repo
+
+    @property
+    def permissions(self) -> PermissionRepository:
+        """Zugriff auf PermissionRepository."""
+        return self._permission_repo
     
     @property
     def auth_token_repository(self) -> AuthTokenRepository:
