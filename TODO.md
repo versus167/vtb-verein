@@ -42,6 +42,7 @@
   - Anfangsbestand für den Zeitraum via `get_bestand_zum_datum_cent()` berechnen
   - Alles in einer Transaktion (atomarer Export)
   - CSV-Datei an den Browser ausliefern (NiceGUI Download)
+  - Nur aktive Buchungen (`deleted_at IS NULL`) werden exportiert und gesperrt
 
 ### Facade (VereinsDB)
 - [ ] Kasse-Repositories in `datastore.py` integrieren
@@ -63,18 +64,32 @@
 
 - [ ] `kassenbuch_page.py` erstellen (Buchungen einer Kasse)
   - Tabellarische Ansicht aller Buchungen (sortiert nach Datum/Belegnummer)
-  - Stornierte Buchungen optional einblenden
+  - Stornierte Buchungen standardmäßig ausgeblendet, per Toggle einblendbar (ausgegraut/durchgestrichen)
   - Neue Buchung anlegen (Dialog)
-  - Buchung bearbeiten (Dialog, gesperrt wenn exportiert)
-  - Buchung stornieren (mit Bestätigung)
+  - Buchung bearbeiten (Dialog, gesperrt wenn exportiert; Belegnummer read-only)
+  - Buchung stornieren (mit Bestätigung, gesperrt wenn exportiert)
   - Laufenden Bestand anzeigen (aus DB, nicht berechnet in Python)
-  - History-Expander pro Buchung (lazy load)
+  - History-Expander pro Buchung (lazy load, nur sichtbar wenn `version > 1`)
+    - Toggle „Änderungshistorie anzeigen" steuert ob Expander-Button gerendert wird
+    - History-Zeilen in gedämpfter Farbe (z.B. Gelb/Grau), gleiche Spalten, read-only
+    - Versionsnummer je History-Zeile (v1, v2, …) zur Orientierung
+  - Exportierte Buchungen mit Schloss-Icon 🔒 kennzeichnen
 
 - [ ] Export-Dialog
   - Zeitraum wählen (Von/Bis)
   - Vorschau: Anzahl betroffener Buchungen + Betragssumme
-  - Startet Export → CSV-Download
+  - Startet Export → CSV-Download (nur aktive, nicht-exportierte Buchungen)
   - Export-Liste anzeigen (Verlauf vergangener Exporte)
+
+- [ ] PDF-Kassenbericht (nicht sperrend)
+  - Flexibler Zeitraum (Von/Bis), unabhängig vom CSV-Export
+  - Enthält: Kassename, Zeitraum, Erstellungsdatum, Anfangsbestand
+  - Tabellarische Buchungsübersicht mit laufendem Bestand je Zeile
+  - Endbestand und Summenspalten (Einnahmen/Ausgaben gesamt)
+  - Optional: Summen nach Kategorie
+  - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
+  - Zeigt aktuellen Stand zum Zeitpunkt der Erstellung (kein Snapshot)
+  - Erfordert `kasse.read`-Permission (keine eigene Export-Permission nötig)
 
 - [ ] Navigation erweitern
   - Menüpunkt "Kassenbuch" in `navigation.py`
