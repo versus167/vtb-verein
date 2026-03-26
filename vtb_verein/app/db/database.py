@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 6  # Version 6: Kassenbuch-Tabellen
+SCHEMA_VERSION = 7  # Version 7: Kassenbuch-Permissions
 
 
 class Database:
@@ -103,6 +103,9 @@ class Database:
         if current == 5:
             self._migrate_5_to_6()
             current = 6
+        if current == 6:
+            self._migrate_6_to_7()
+            current = 7
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -623,7 +626,7 @@ class Database:
                     VALUES (?, ?, ?, 'admin', 1, 'SYSTEM', 'SYSTEM')
                 """, ('admin', 'admin@verein.local', default_password))
                 
-                print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
+                print("\u26a0\ufe0f  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE \u00c4NDERN!")
 
         self._set_schema_version(1)
 
@@ -1304,3 +1307,45 @@ class Database:
             # Kein DELETE-Trigger
 
         self._set_schema_version(6)
+
+    def _migrate_6_to_7(self):
+        """Migration 6->7: Kassenbuch-Permissions für bestehende User.
+
+        Neue Permissions:
+        - kasse.read   – Kassenbuch einsehen
+        - kasse.write  – Buchungen erfassen und bearbeiten
+        - kasse.delete – Buchungen stornieren
+        - kasse.export – CSV-Export durchführen (sperrend)
+
+        Vergabe nach Rolle (hartcodiert, unabhängig vom lebenden Model-Code):
+        - admin:    alle vier Permissions
+        - user:     kasse.read, kasse.write, kasse.delete, kasse.export
+        - readonly: kasse.read
+        - special:  kasse.read
+
+        HINWEIS: Wie bei Migration 4->5 sind die Permissions hier bewusst
+        hartcodiert. Spätere Änderungen an Permission.defaults_for_role()
+        haben keinen Einfluss auf bereits migrierte Datenbanken.
+        """
+        _KASSE_PERMS_V7 = {
+            'admin':    {'kasse.read', 'kasse.write', 'kasse.delete', 'kasse.export'},
+            'user':     {'kasse.read', 'kasse.write', 'kasse.delete', 'kasse.export'},
+            'readonly': {'kasse.read'},
+            'special':  {'kasse.read'},
+        }
+
+        with self.cursor() as cur:
+            cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL")
+            existing_users = cur.fetchall()
+            for row in existing_users:
+                user_id = row['id']
+                role = row['role']
+                perms = _KASSE_PERMS_V7.get(role, {'kasse.read'})
+                for perm in perms:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_permissions
+                            (user_id, permission, created_by, updated_by)
+                        VALUES (?, ?, 'MIGRATION_6_7', 'MIGRATION_6_7')
+                    """, (user_id, perm))
+
+        self._set_schema_version(7)
