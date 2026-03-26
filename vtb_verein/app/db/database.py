@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 5  # Version 5: user_permissions Tabelle für Permission-Matrix
+SCHEMA_VERSION = 6  # Version 6: Kassenbuch-Tabellen
 
 
 class Database:
@@ -100,6 +100,9 @@ class Database:
         if current == 4:
             self._migrate_4_to_5()
             current = 5
+        if current == 5:
+            self._migrate_5_to_6()
+            current = 6
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1029,3 +1032,275 @@ class Database:
                     """, (user_id, perm))
 
         self._set_schema_version(5)
+
+    def _migrate_5_to_6(self):
+        """Migration 5->6: Kassenbuch-Tabellen.
+
+        Neue Tabellen:
+        - kassen: Barkassen mit Anfangsbestand, optionaler Abteilungszuordnung
+        - kassen_history
+        - kassenbuchungen: Beträge in Cent, Belegnummer, Exportsperre
+        - kassenbuchungen_history
+        - kassenbuch_exporte: Revisionssicherer Abschluss eines Zeitraums
+        - kassenbuch_exporte_history
+
+        Trigger: INSERT + UPDATE (kein DELETE – Prune soll nicht getrackt werden)
+        """
+        with self.cursor() as cur:
+
+            # ============================================
+            # Tabelle: kassen
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                    TEXT NOT NULL,
+                    beschreibung            TEXT,
+                    anfangsbestand_cent     INTEGER NOT NULL DEFAULT 0,
+                    abteilung_id            INTEGER,
+
+                    version                 INTEGER NOT NULL DEFAULT 1,
+
+                    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by              TEXT NOT NULL,
+                    updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by              TEXT NOT NULL,
+                    deleted_at              TEXT,
+                    deleted_by              TEXT,
+
+                    FOREIGN KEY (abteilung_id) REFERENCES abteilung(id)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_deleted_at ON kassen(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_abteilung_id ON kassen(abteilung_id)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_history (
+                    id                      INTEGER NOT NULL,
+                    version                 INTEGER NOT NULL,
+
+                    name                    TEXT,
+                    beschreibung            TEXT,
+                    anfangsbestand_cent     INTEGER,
+                    abteilung_id            INTEGER,
+
+                    created_at              TEXT,
+                    created_by              TEXT,
+                    updated_at              TEXT,
+                    updated_by              TEXT,
+                    deleted_at              TEXT,
+                    deleted_by              TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassen_audit_insert
+                AFTER INSERT ON kassen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassen_history (
+                        id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent,
+                        NEW.abteilung_id, NEW.created_at, NEW.created_by, NEW.updated_at,
+                        NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassen_audit_update
+                AFTER UPDATE ON kassen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO kassen_history (
+                        id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent,
+                        NEW.abteilung_id, NEW.created_at, NEW.created_by, NEW.updated_at,
+                        NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # KEIN DELETE-Trigger
+
+            # ============================================
+            # Tabelle: kassenbuchungen
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuchungen (
+                    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kasse_id                    INTEGER NOT NULL,
+                    buchungsdatum               TEXT NOT NULL,
+                    belegnummer                 TEXT NOT NULL,
+                    buchungstext                TEXT NOT NULL,
+                    kategorie                   TEXT NOT NULL,
+                    einnahme_cent               INTEGER NOT NULL DEFAULT 0,
+                    ausgabe_cent                INTEGER NOT NULL DEFAULT 0,
+                    notiz                       TEXT,
+                    exportiert_in_export_id     INTEGER,
+
+                    version                     INTEGER NOT NULL DEFAULT 1,
+
+                    created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by                  TEXT NOT NULL,
+                    updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by                  TEXT NOT NULL,
+                    deleted_at                  TEXT,
+                    deleted_by                  TEXT,
+
+                    FOREIGN KEY (kasse_id) REFERENCES kassen(id),
+                    FOREIGN KEY (exportiert_in_export_id) REFERENCES kassenbuch_exporte(id)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_kasse_id ON kassenbuchungen(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_buchungsdatum ON kassenbuchungen(buchungsdatum)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_deleted_at ON kassenbuchungen(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_export_id ON kassenbuchungen(exportiert_in_export_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_belegnummer ON kassenbuchungen(kasse_id, belegnummer)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuchungen_history (
+                    id                          INTEGER NOT NULL,
+                    version                     INTEGER NOT NULL,
+
+                    kasse_id                    INTEGER,
+                    buchungsdatum               TEXT,
+                    belegnummer                 TEXT,
+                    buchungstext                TEXT,
+                    kategorie                   TEXT,
+                    einnahme_cent               INTEGER,
+                    ausgabe_cent                INTEGER,
+                    notiz                       TEXT,
+                    exportiert_in_export_id     INTEGER,
+
+                    created_at                  TEXT,
+                    created_by                  TEXT,
+                    updated_at                  TEXT,
+                    updated_by                  TEXT,
+                    deleted_at                  TEXT,
+                    deleted_by                  TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_history_id ON kassenbuchungen_history(id)")
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuchungen_audit_insert
+                AFTER INSERT ON kassenbuchungen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassenbuchungen_history (
+                        id, version, kasse_id, buchungsdatum, belegnummer, buchungstext,
+                        kategorie, einnahme_cent, ausgabe_cent, notiz, exportiert_in_export_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchungsdatum, NEW.belegnummer,
+                        NEW.buchungstext, NEW.kategorie, NEW.einnahme_cent, NEW.ausgabe_cent,
+                        NEW.notiz, NEW.exportiert_in_export_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuchungen_audit_update
+                AFTER UPDATE ON kassenbuchungen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO kassenbuchungen_history (
+                        id, version, kasse_id, buchungsdatum, belegnummer, buchungstext,
+                        kategorie, einnahme_cent, ausgabe_cent, notiz, exportiert_in_export_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchungsdatum, NEW.belegnummer,
+                        NEW.buchungstext, NEW.kategorie, NEW.einnahme_cent, NEW.ausgabe_cent,
+                        NEW.notiz, NEW.exportiert_in_export_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # KEIN DELETE-Trigger
+
+            # ============================================
+            # Tabelle: kassenbuch_exporte
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuch_exporte (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kasse_id            INTEGER NOT NULL,
+                    zeitraum_von        TEXT NOT NULL,
+                    zeitraum_bis        TEXT NOT NULL,
+                    exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    exportiert_von      TEXT NOT NULL,
+                    dateiname           TEXT NOT NULL,
+                    anzahl_buchungen    INTEGER NOT NULL,
+
+                    version             INTEGER NOT NULL DEFAULT 1,
+
+                    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by          TEXT NOT NULL,
+                    deleted_at          TEXT,
+                    deleted_by          TEXT,
+
+                    FOREIGN KEY (kasse_id) REFERENCES kassen(id)
+                )
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuch_exporte_kasse_id ON kassenbuch_exporte(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuch_exporte_zeitraum ON kassenbuch_exporte(zeitraum_von, zeitraum_bis)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuch_exporte_history (
+                    id                  INTEGER NOT NULL,
+                    version             INTEGER NOT NULL,
+
+                    kasse_id            INTEGER,
+                    zeitraum_von        TEXT,
+                    zeitraum_bis        TEXT,
+                    exportiert_am       TEXT,
+                    exportiert_von      TEXT,
+                    dateiname           TEXT,
+                    anzahl_buchungen    INTEGER,
+
+                    created_at          TEXT,
+                    created_by          TEXT,
+                    deleted_at          TEXT,
+                    deleted_by          TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuch_exporte_audit_insert
+                AFTER INSERT ON kassenbuch_exporte
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassenbuch_exporte_history (
+                        id, version, kasse_id, zeitraum_von, zeitraum_bis,
+                        exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                        created_at, created_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
+                        NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.anzahl_buchungen,
+                        NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # Kein UPDATE-Trigger (Exporte sind immutable nach dem Erstellen)
+            # Kein DELETE-Trigger
+
+        self._set_schema_version(6)
