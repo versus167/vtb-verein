@@ -3,6 +3,7 @@ Created on 07.02.2026
 Refactored on 21.02.2026
 Extended on 07.03.2026 - Magic-Link Authentication
 Extended on 11.03.2026 - PermissionRepository hinzugefügt
+Extended on 26.03.2026 - Kassenbuch-Repositories und KassenbuchService
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -17,9 +18,13 @@ from app.db.abteilung_repository import AbteilungRepository
 from app.db.user_repository import UserRepository
 from app.db.permission_repository import PermissionRepository
 from app.db.auth_token_repository import AuthTokenRepository
+from app.db.kasse_repository import KasseRepository
+from app.db.kassenbuchung_repository import KassenbuchungRepository
+from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
+from app.services.kassenbuch_service import KassenbuchService
 
 
 class VereinsDB:
@@ -48,6 +53,16 @@ class VereinsDB:
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
+        self._kasse_repo = KasseRepository(self.conn)
+        self._kassenbuchung_repo = KassenbuchungRepository(self.conn)
+        self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
+
+        # Initialize services
+        self._kassenbuch_service = KassenbuchService(
+            kasse_repo=self._kasse_repo,
+            buchung_repo=self._kassenbuchung_repo,
+            export_repo=self._kassenbuch_export_repo,
+        )
     
     @property
     def user_repository(self) -> UserRepository:
@@ -68,6 +83,16 @@ class VereinsDB:
     def auth_token_repository(self) -> AuthTokenRepository:
         """Access to AuthTokenRepository (for services)."""
         return self._auth_token_repo
+
+    @property
+    def kassenbuch(self) -> KassenbuchService:
+        """Zugriff auf KassenbuchService."""
+        return self._kassenbuch_service
+
+    @property
+    def kassen(self) -> KasseRepository:
+        """Direktzugriff auf KasseRepository (für Admin-Operationen)."""
+        return self._kasse_repo
     
     def cursor(self):
         """Provide cursor for custom queries (use sparingly)."""
