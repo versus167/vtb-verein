@@ -626,7 +626,7 @@ class Database:
                     VALUES (?, ?, ?, 'admin', 1, 'SYSTEM', 'SYSTEM')
                 """, ('admin', 'admin@verein.local', default_password))
                 
-                print("\u26a0\ufe0f  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE \u00c4NDERN!")
+                print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
         self._set_schema_version(1)
 
