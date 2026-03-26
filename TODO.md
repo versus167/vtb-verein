@@ -23,6 +23,63 @@
   - Speichern über `PermissionRepository.set_permissions_for_user()`
   - Hinweis wenn User keine Permissions hat
 
+## 📊 Kassenbuch - Phase 3 (nächste Schritte)
+
+### Service-Layer
+- [ ] `kasse_service.py` erstellen
+  - Kasse anlegen/bearbeiten/löschen mit Validierung
+  - Prüfung: Kasse mit Buchungen darf nicht gelöscht werden
+  - Bestand abrufen (delegiert an `KasseRepository.get_bestand_cent()`)
+
+- [ ] `kassenbuchung_service.py` erstellen
+  - Buchung anlegen: Belegnummer automatisch über `get_naechste_belegnummer()` setzen
+  - Buchung bearbeiten: Prüfung ob Buchung exportiert (gesperrt)
+  - Buchung stornieren: Prüfung auf Exportsperre
+  - Validierung: entweder `einnahme_cent > 0` ODER `ausgabe_cent > 0`, nicht beides
+
+- [ ] `kassenbuch_export_service.py` erstellen
+  - Export-Vorgang: `get_nicht_exportierte_buchungen()` → CSV generieren → `create_export()` → `mark_buchungen_exportiert()`
+  - Anfangsbestand für den Zeitraum via `get_bestand_zum_datum_cent()` berechnen
+  - Alles in einer Transaktion (atomarer Export)
+  - CSV-Datei an den Browser ausliefern (NiceGUI Download)
+
+### Facade (VereinsDB)
+- [ ] Kasse-Repositories in `datastore.py` integrieren
+  - `KasseRepository`, `KassenbuchungRepository`, `KassenbuchExportRepository` instanziieren
+  - Property-Zugriffe (`kasse`, `kassenbuchungen`, `kassenbuch_exporte`) hinzufügen
+  - Alternativ: Services direkt mit den Repositories verdrahten (ohne Facade-Umweg)
+
+### Permissions
+- [ ] Kasse-Permissions in `permission.py` ergänzen
+  - `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export`
+  - Default-Permissions pro Rolle: admin = alle, user = read/write/export, readonly = read
+  - Migration `_migrate_6_to_7()` für bestehende User
+
+### UI
+- [ ] `kasse_management.py` erstellen (Kassenverwaltung)
+  - Liste aller Kassen mit aktuellem Bestand
+  - Kasse anlegen/bearbeiten/löschen
+  - Navigation zu Kassenbuchungen der gewählten Kasse
+
+- [ ] `kassenbuch_page.py` erstellen (Buchungen einer Kasse)
+  - Tabellarische Ansicht aller Buchungen (sortiert nach Datum/Belegnummer)
+  - Stornierte Buchungen optional einblenden
+  - Neue Buchung anlegen (Dialog)
+  - Buchung bearbeiten (Dialog, gesperrt wenn exportiert)
+  - Buchung stornieren (mit Bestätigung)
+  - Laufenden Bestand anzeigen (aus DB, nicht berechnet in Python)
+  - History-Expander pro Buchung (lazy load)
+
+- [ ] Export-Dialog
+  - Zeitraum wählen (Von/Bis)
+  - Vorschau: Anzahl betroffener Buchungen + Betragssumme
+  - Startet Export → CSV-Download
+  - Export-Liste anzeigen (Verlauf vergangener Exporte)
+
+- [ ] Navigation erweitern
+  - Menüpunkt "Kassenbuch" in `navigation.py`
+  - Zugang nur mit `kasse.read`-Permission
+
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
@@ -219,10 +276,23 @@
 - [x] Rolle `special` entfernt; bestehende `special`-User erhalten `readonly`-Defaults
 - [x] Migration befüllt Default-Permissions für alle bestehenden Users
 
+### Phase 3.0 - Kassenbuch Grundstruktur (Schema v6)
+- [x] DB-Schema: `kassen`, `kassenbuchungen`, `kassenbuch_exporte`
+- [x] History-Tabellen für alle drei Kassenbuch-Tabellen
+- [x] INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+- [x] Datenmodelle: `Kasse`, `Kassenbuchung`, `KassenbuchExport` (in `models/kasse.py`)
+- [x] `KasseRepository` (CRUD, Soft-Delete, `get_bestand_cent()`, `get_bestand_zum_datum_cent()`)
+- [x] `KassenbuchungRepository` (CRUD, Stornierung, `get_naechste_belegnummer()`, `mark_buchungen_exportiert()`)
+- [x] `KassenbuchExportRepository` (Create, `get_nicht_exportierte_buchungen()`, `ist_buchung_gesperrt()`)
+- [x] Beträge durchgängig in Cent (Integer) – kein Floating Point
+- [x] Optimistic Locking (version-Feld) in allen Repositories
+- [x] `get_bestand_zum_datum_cent()` für Periodenberechnung im Export
+
 ---
 
 **Legende:**
 - 🔥 = Hohe Priorität, nächste Schritte
+- 📊 = Kassenbuch nächste Schritte (Phase 3)
 - 📋 = Mittelfristig, Phase 3
 - 🔮 = Längerfristig, Phase 4
 - 💡 = Ideen, noch nicht priorisiert
