@@ -11,7 +11,7 @@ def create_navigation():
     
     with ui.header().classes('items-center justify-between').style('background: linear-gradient(90deg, #1976d2 0%, #1565c0 100%);'):
         with ui.row().classes('items-center'):
-            ui.label('🏛️ Vereinsverwaltung').classes('text-h5 q-mr-md text-white')
+            ui.label('\U0001f3db\ufe0f Vereinsverwaltung').classes('text-h5 q-mr-md text-white')
             
             with ui.row().classes('q-gutter-xs'):
                 # Home Button
@@ -36,6 +36,14 @@ def create_navigation():
                         mitgl_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         mitgl_btn.props('flat').classes('text-white')
+
+                # Kassenverwaltung (nur Admins)
+                if user and user.can_manage_users():
+                    kasse_btn = ui.button('Kassen', on_click=lambda: ui.navigate.to('/kassen'), icon='account_balance_wallet')
+                    if current_path == '/kassen':
+                        kasse_btn.props('unelevated').classes('bg-blue-10 text-white')
+                    else:
+                        kasse_btn.props('flat').classes('text-white')
                 
                 # Benutzer
                 if user and user.can_manage_users():
