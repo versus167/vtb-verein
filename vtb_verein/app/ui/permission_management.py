@@ -2,7 +2,7 @@
 Permission-Verwaltungs-Seite
 
 Ermöglicht Admins, die Permissions einzelner User granular zu verwalten.
-Die 13 Permissions sind nach Ressource gruppiert in einer Checkbox-Matrix.
+Die Permissions sind nach Ressource gruppiert in einer Checkbox-Matrix.
 """
 from nicegui import ui
 from app.auth.auth_helper import AuthHelper, require_permission
@@ -45,6 +45,16 @@ PERMISSION_GROUPS = [
         'permissions': [
             (Permission.BERICHTE_READ,   'Ansehen'),
             (Permission.BERICHTE_EXPORT, 'Exportieren'),
+        ]
+    },
+    {
+        'label': 'Kassenbuch',
+        'icon': 'account_balance_wallet',
+        'permissions': [
+            (Permission.KASSE_READ,   'Ansehen'),
+            (Permission.KASSE_WRITE,  'Buchen'),
+            (Permission.KASSE_DELETE, 'Stornieren'),
+            (Permission.KASSE_EXPORT, 'Exportieren'),
         ]
     },
     {
