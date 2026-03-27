@@ -16,13 +16,6 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
-### Permission-Matrix (UI)
-- [ ] Permission-Verwaltung in der Benutzerverwaltungs-UI
-  - Checkboxen pro Permission pro User
-  - Anzeige der aktuellen Permissions
-  - Speichern über `PermissionRepository.set_permissions_for_user()`
-  - Hinweis wenn User keine Permissions hat
-
 ## 📊 Kassenbuch - Phase 3 (nächste Schritte)
 
 ### UI
@@ -259,6 +252,12 @@
 - [x] `require_role()` als Deprecated-Shim erhalten (Backward Compat.)
 - [x] Rolle `special` entfernt; bestehende `special`-User erhalten `readonly`-Defaults
 - [x] Migration befüllt Default-Permissions für alle bestehenden Users
+- [x] Permission-Verwaltung in der Benutzerverwaltungs-UI (`permission_management.py`)
+  - [x] Checkbox-Matrix gruppiert nach Ressource
+  - [x] Visueller Hinweis bei Abweichung vom Rollen-Standard (orange)
+  - [x] "Auf Rollen-Standard zurücksetzen"-Button
+  - [x] Schutz: letzter Admin kann USERS_MANAGE nicht verlieren
+  - [x] Kassenbuch-Gruppe (`kasse.read/write/delete/export`) in Matrix integriert
 
 ### Phase 3.0 - Kassenbuch Grundstruktur (Schema v6)
 - [x] DB-Schema: `kassen`, `kassenbuchungen`, `kassenbuch_exporte`
