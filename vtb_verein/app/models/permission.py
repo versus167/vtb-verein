@@ -28,6 +28,12 @@ class Permission:
     BERICHTE_READ     = 'berichte.read'
     BERICHTE_EXPORT   = 'berichte.export'
 
+    # --- Kassenbuch ---
+    KASSE_READ        = 'kasse.read'          # Kassenbuch einsehen
+    KASSE_WRITE       = 'kasse.write'         # Buchungen erfassen und bearbeiten
+    KASSE_DELETE      = 'kasse.delete'        # Buchungen stornieren (Soft-Delete)
+    KASSE_EXPORT      = 'kasse.export'        # CSV-Export durchführen (sperrend)
+
     # --- Benutzerverwaltung ---
     USERS_READ        = 'users.read'
     USERS_MANAGE      = 'users.manage'        # Erstellen, Bearbeiten, Deaktivieren
@@ -54,6 +60,9 @@ class Permission:
 
         Returns:
             Set mit Permission-Strings
+
+        HINWEIS: Für bestehende Datenbanken werden Permissions per Migration vergeben.
+        Diese Methode gilt nur für neu angelegte User.
         """
         if role == 'admin':
             return set(cls.all())
@@ -71,6 +80,10 @@ class Permission:
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
                 cls.USERS_READ,
+                cls.KASSE_READ,
+                cls.KASSE_WRITE,
+                cls.KASSE_DELETE,
+                cls.KASSE_EXPORT,
             }
 
         if role == 'readonly':
@@ -79,6 +92,7 @@ class Permission:
                 cls.ABTEILUNGEN_READ,
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,
+                cls.KASSE_READ,
             }
 
         # Unbekannte Rolle: keine Permissions
