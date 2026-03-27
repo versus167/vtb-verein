@@ -4,6 +4,7 @@ Refactored on 21.02.2026
 Extended on 07.03.2026 - Magic-Link Authentication
 Extended on 11.03.2026 - PermissionRepository hinzugefügt
 Extended on 26.03.2026 - Kassenbuch-Repositories und KassenbuchService
+Extended on 27.03.2026 - KasseBerechtigungRepository (Phase 3.2)
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -21,6 +22,7 @@ from app.db.auth_token_repository import AuthTokenRepository
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
+from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -28,26 +30,13 @@ from app.services.kassenbuch_service import KassenbuchService
 
 
 class VereinsDB:
-    """Data Access Layer Facade - Delegates to specialized repositories.
-    
-    This class provides a unified interface for database access while
-    delegating to specialized repositories internally. This maintains
-    backward compatibility with existing code.
-    
-    Architecture:
-    - Database: Connection and schema management
-    - Repositories: Entity-specific CRUD operations
-    - VereinsDB: Facade that combines all repositories
-    
-    Business logic belongs in the service layer.
-    """
-    
+    """Data Access Layer Facade - Delegates to specialized repositories."""
+
     def __init__(self, path: str):
         self.path = path
         self._database = Database(path)
         self.conn = self._database.conn
-        
-        # Initialize repositories
+
         self._mitglied_repo = MitgliedRepository(self.conn)
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
@@ -56,168 +45,151 @@ class VereinsDB:
         self._kasse_repo = KasseRepository(self.conn)
         self._kassenbuchung_repo = KassenbuchungRepository(self.conn)
         self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
+        self._kasse_berechtigung_repo = KasseBerechtigungRepository(self.conn)
 
-        # Initialize services
         self._kassenbuch_service = KassenbuchService(
             kasse_repo=self._kasse_repo,
             buchung_repo=self._kassenbuchung_repo,
             export_repo=self._kassenbuch_export_repo,
         )
-    
+
     @property
     def user_repository(self) -> UserRepository:
-        """Access to UserRepository (for services)."""
         return self._user_repo
 
     @property
     def users(self) -> UserRepository:
-        """Kurzform-Zugriff auf UserRepository."""
         return self._user_repo
 
     @property
     def permissions(self) -> PermissionRepository:
-        """Zugriff auf PermissionRepository."""
         return self._permission_repo
-    
+
     @property
     def auth_token_repository(self) -> AuthTokenRepository:
-        """Access to AuthTokenRepository (for services)."""
         return self._auth_token_repo
 
     @property
     def kassenbuch(self) -> KassenbuchService:
-        """Zugriff auf KassenbuchService."""
         return self._kassenbuch_service
 
     @property
     def kassen(self) -> KasseRepository:
         """Direktzugriff auf KasseRepository (für Admin-Operationen)."""
         return self._kasse_repo
-    
+
+    @property
+    def kasse_berechtigungen(self) -> KasseBerechtigungRepository:
+        """Zugriff auf KasseBerechtigungRepository."""
+        return self._kasse_berechtigung_repo
+
     def cursor(self):
-        """Provide cursor for custom queries (use sparingly)."""
         return self._database.cursor()
-    
+
     def close(self):
-        """Close the database connection."""
         self._database.close()
-    
+
     # -----------------------------------
-    # Mitglied Operations - Delegate to MitgliedRepository
+    # Mitglied Operations
     # -----------------------------------
-    
+
     def get_next_mitgliedsnummer(self) -> int:
         return self._mitglied_repo.get_next_mitgliedsnummer()
-    
+
     def is_mitgliedsnummer_available(self, nummer: int, exclude_id: int = None) -> bool:
         return self._mitglied_repo.is_mitgliedsnummer_available(nummer, exclude_id)
-    
+
     def get_mitglied(self, id: int) -> Mitglied:
         return self._mitglied_repo.get_mitglied(id)
-    
+
     def list_mitglieder(self) -> list[Mitglied]:
         return self._mitglied_repo.list_mitglieder()
-    
+
     def list_mitglieder_for_standard_view(self) -> list[tuple[Mitglied, bool]]:
-        """List Mitglieder for standard view (active + recently left).
-        
-        Returns:
-            list[tuple[Mitglied, bool]]: List of (member, recently_left) tuples
-        """
         return self._mitglied_repo.list_mitglieder_for_standard_view()
-    
+
     def create_mitglied(self, mitglied: Mitglied, created_by: str) -> Mitglied:
         return self._mitglied_repo.create_mitglied(mitglied, created_by)
-    
+
     def update_mitglied(self, mitglied: Mitglied, updated_by: str) -> bool:
         return self._mitglied_repo.update_mitglied(mitglied, updated_by)
-    
+
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         return self._mitglied_repo.mark_mitglied_deleted(mitglied_id, deleted_by)
-    
+
     # -----------------------------------
-    # Abteilung Operations - Delegate to AbteilungRepository
+    # Abteilung Operations
     # -----------------------------------
-    
+
     def get_abteilung(self, id: int) -> Abteilung:
         return self._abteilung_repo.get_abteilung(id)
-    
+
     def list_abteilungen(self) -> list[Abteilung]:
         return self._abteilung_repo.list_abteilungen()
-    
+
     def list_deleted_abteilungen(self) -> list[dict]:
         return self._abteilung_repo.list_deleted_abteilungen()
-    
+
     def create_abteilung(self, abt: Abteilung, created_by: str) -> Abteilung:
         return self._abteilung_repo.create_abteilung(abt, created_by)
-    
+
     def update_abteilung(self, abt: Abteilung, updated_by: str) -> bool:
         return self._abteilung_repo.update_abteilung(abt, updated_by)
-    
+
     def mark_abteilung_deleted(self, abteilung_id: int, deleted_by: str) -> bool:
         return self._abteilung_repo.mark_abteilung_deleted(abteilung_id, deleted_by)
-    
+
     def restore_abteilung(self, abteilung_id: int, restored_by: str) -> bool:
         return self._abteilung_repo.restore_abteilung(abteilung_id, restored_by)
-    
+
     def has_active_mitglied_abteilung_references(self, abteilung_id: int) -> bool:
         return self._abteilung_repo.has_active_mitglied_abteilung_references(abteilung_id)
-    
+
     def has_active_beitragsregel_references(self, abteilung_id: int) -> bool:
         return self._abteilung_repo.has_active_beitragsregel_references(abteilung_id)
-    
+
     def has_mitglied_abteilung_history(self, abteilung_id: int) -> bool:
         return self._abteilung_repo.has_mitglied_abteilung_history(abteilung_id)
-    
+
     def has_beitragsregel_history(self, abteilung_id: int) -> bool:
         return self._abteilung_repo.has_beitragsregel_history(abteilung_id)
-    
+
     def prune_deleted_abteilungen(self, days_old: int) -> int:
         return self._abteilung_repo.prune_deleted_abteilungen(days_old)
-    
+
     # -----------------------------------
-    # User Operations - Delegate to UserRepository
+    # User Operations
     # -----------------------------------
-    
+
     def get_user_by_username(self, username: str) -> Optional[User]:
-        """Get user by username (for backward compatibility)."""
         return self._user_repo.get_by_username(username)
-    
+
     def get_user_by_email(self, email: str) -> Optional[User]:
-        """Get user by email (for Magic-Link authentication)."""
         return self._user_repo.get_by_email(email)
-    
+
     def get_user_by_id(self, user_id: int) -> Optional[User]:
-        """Get user by ID (for backward compatibility)."""
         return self._user_repo.get_by_id(user_id)
-    
+
     def list_users(self) -> List[User]:
-        """List all users (for backward compatibility)."""
         return self._user_repo.list_all()
-    
+
     def count_active_admins(self) -> int:
-        """Count active administrators (for backward compatibility)."""
         return self._user_repo.count_active_admins()
-    
+
     def create_user(self, username: str, email: str, password_hash: str, role: str,
-                   created_by: str, active: bool = True) -> User:
-        """Create user (for backward compatibility)."""
+                    created_by: str, active: bool = True) -> User:
         return self._user_repo.create(username, email, password_hash, role, created_by, active)
-    
+
     def update_user(self, user_id: int, username: str, email: str, role: str,
-                   active: bool, updated_by: str, expected_version: int) -> bool:
-        """Update user (for backward compatibility)."""
+                    active: bool, updated_by: str, expected_version: int) -> bool:
         return self._user_repo.update(user_id, username, email, role, active, updated_by, expected_version)
-    
+
     def update_user_password(self, user_id: int, password_hash: str, updated_by: str,
-                            expected_version: int) -> bool:
-        """Update user password (for backward compatibility)."""
+                             expected_version: int) -> bool:
         return self._user_repo.update_password(user_id, password_hash, updated_by, expected_version)
-    
+
     def update_last_login(self, user_id: int) -> bool:
-        """Update last login timestamp (for backward compatibility)."""
         return self._user_repo.update_last_login(user_id)
-    
+
     def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
-        """Soft-delete user (for backward compatibility)."""
         return self._user_repo.mark_user_deleted(user_id, deleted_by)
