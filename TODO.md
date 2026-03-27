@@ -18,59 +18,22 @@
 
 ## 📊 Kassenbuch - Phase 3 (nächste Schritte)
 
-### Phase 3.2 - Kassenspezifische Berechtigungen (Schema v8)
+### Phase 3.4 - KassenbuchService Berechtigungs-Integration
 
-> **Architektur-Entscheidung:** Kassen anlegen/konfigurieren/löschen ist eine reine
-> Admin-Funktion (erfordert `users.manage`). Zugriff auf einzelne Kassen wird
-> **kassenspezifisch** über eine eigene Tabelle gesteuert – nicht über globale
-> `kasse.*`-Permissions. Die globalen `kasse.*`-Permissions (Schema v7) werden
-> durch dieses System ersetzt (Variante A: kein doppeltes Berechtigungskonzept).
-
-- [ ] **Schema-Migration v7 → v8**
-  - Neue Tabelle `kasse_berechtigungen`:
-    - `id`, `kasse_id`, `user_id`
-    - `darf_lesen` (INTEGER 0/1)
-    - `darf_schreiben` (INTEGER 0/1) – inkl. Stornieren
-    - `darf_exportieren` (INTEGER 0/1)
-    - Soft-Delete (`deleted_at`, `deleted_by`), Versionierung, Audit-Trigger
-  - Neue Tabelle `kasse_berechtigungen_history` + INSERT/UPDATE-Trigger
-  - Globale `kasse.*`-Permissions aus `user_permissions` entfernen
-    (für alle bestehenden User per Migration bereinigen)
-  - `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export` aus `permission.py` entfernen
-  - `defaults_for_role()` entsprechend anpassen
-  - Beim Anlegen einer neuen Kasse: Admin erhält automatisch alle drei Rechte
-
-- [ ] **Repository: `KasseBerechtigungRepository`**
-  - `get_berechtigungen_fuer_kasse(kasse_id)` – alle Berechtigten einer Kasse
-  - `get_kassen_fuer_user(user_id)` – alle Kassen, auf die ein User Zugriff hat
-  - `set_berechtigung(kasse_id, user_id, darf_lesen, darf_schreiben, darf_exportieren, actor)`
-  - `revoke_berechtigung(kasse_id, user_id, actor)` – Soft-Delete
-  - `hat_lesezugriff(kasse_id, user_id)` / `hat_schreibzugriff(...)` / `hat_exportrecht(...)` – für Service-Checks
+> **Offene Aufgabe:** Der `KassenbuchService` kennt noch keine kassenspezifischen
+> Berechtigungen. Er muss so angepasst werden, dass alle Methoden den `user_id`-
+> Parameter prüfen und bei fehlendem Recht eine Exception werfen.
+> Admins (`users.manage`) sehen weiterhin alle Kassen.
 
 - [ ] **Service-Anpassung: `KassenbuchService`**
-  - Alle Methoden prüfen kassenspezifische Berechtigung des aktuellen Users
-  - `get_kassen_fuer_user(user_id)` als Einstiegspunkt (statt alle Kassen)
-  - Admin (via `users.manage`) sieht und verwaltet alle Kassen ohne Eintrag in `kasse_berechtigungen`
-
-- [ ] **UI: Berechtigungsverwaltung pro Kasse**
-  - In `kasse_management.py`: Button „Berechtigungen“ pro Kasse (nur für Admins sichtbar)
-  - Dialog mit User-Liste + Checkboxen (Lesen / Schreiben / Exportieren)
-  - Warnung wenn Kasse keine Berechtigten hat
-  - Beim Anlegen einer neuen Kasse: direkt Berechtigungen-Dialog öffnen
-
-- [ ] **Permission-UI anpassen**
-  - Kassenbuch-Gruppe aus `permission_management.py` entfernen
-  - (Kassen-Rechte werden künftig nur noch pro Kasse vergeben)
+  - `get_kassen_fuer_user(user_id, is_admin)` als Einstiegspunkt (statt alle Kassen)
+  - Alle schreibenden Methoden: Schreibzugriff prüfen via `KasseBerechtigungRepository`
+  - Export-Methode: Exportrecht prüfen
+  - Admin-Bypass: `users.manage` → immer alle Kassen, alle Rechte
 
 ### UI
-- [ ] `kasse_management.py` erstellen (Kassenverwaltung, nur Admin)
-  - Liste aller Kassen mit aktuellem Bestand
-  - Kasse anlegen/bearbeiten/löschen (nur `users.manage`)
-  - Beim Anlegen: direkt Berechtigungen-Dialog
-  - Navigation zu Kassenbuchungen der gewählten Kasse
-
 - [ ] `kassenbuch_page.py` erstellen (Buchungen einer Kasse)
-  - Nur Kassen anzeigen, auf die der User Lesezugriff hat
+  - Nur Kassen anzeigen, auf die der User Lesezugriff hat (oder Admin)
   - Tabellarische Ansicht aller Buchungen (sortiert nach Datum/Belegnummer)
   - Stornierte Buchungen standardmäßig ausgeblendet, per Toggle einblendbar (ausgegraut/durchgestrichen)
   - Neue Buchung anlegen (Dialog, nur mit Schreibzugriff)
@@ -97,15 +60,15 @@
   - Optional: Summen nach Kategorie
   - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
 
-- [ ] Navigation erweitern
-  - Menüpunkt "Kassenbuch" in `navigation.py`
+- [ ] Navigation: Menüpunkt „Kassenbuch" für normale User
   - Sichtbar wenn User mind. eine Kasse mit Lesezugriff hat (oder Admin)
+  - Führt zu Kassenauswahl-Seite (falls mehrere Kassen zugänglich)
 
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
-  - Eigene Ansicht "Gelöschte Mitglieder"
+  - Eigene Ansicht „Gelöschte Mitglieder"
   - Wiederherstellungs-Button
   - Konsistent mit Abteilungs-Wiederherstellung
 
@@ -113,7 +76,7 @@
   - Nach Status (aktiv, passiv, ausgetreten)
   - Nach Abteilung
   - Nach Zahlungsart
-  - Nach Austrittsdatum (z.B. "Letzte 6 Monate")
+  - Nach Austrittsdatum (z.B. „Letzte 6 Monate")
 
 - [ ] Suchfunktion für Mitglieder
   - Volltextsuche: Name, Mitgliedsnummer, E-Mail
@@ -299,9 +262,9 @@
 - [x] Permission-Verwaltung in der Benutzerverwaltungs-UI (`permission_management.py`)
   - [x] Checkbox-Matrix gruppiert nach Ressource
   - [x] Visueller Hinweis bei Abweichung vom Rollen-Standard (orange)
-  - [x] "Auf Rollen-Standard zurücksetzen"-Button
+  - [x] „Auf Rollen-Standard zurücksetzen"-Button
   - [x] Schutz: letzter Admin kann USERS_MANAGE nicht verlieren
-  - [x] Kassenbuch-Gruppe vorläufig integriert (wird in Phase 3.2 wieder entfernt)
+  - [x] Kassenbuch-Gruppe vorläufig integriert (in Phase 3.2 wieder entfernt)
 
 ### Phase 3.0 - Kassenbuch Grundstruktur (Schema v6)
 - [x] DB-Schema: `kassen`, `kassenbuchungen`, `kassenbuch_exporte`
@@ -316,18 +279,45 @@
 - [x] `get_bestand_zum_datum_cent()` für Periodenberechnung im Export
 
 ### Phase 3.1 - Kassenbuch Service-Layer & Facade (Schema v7)
-- [x] `KassenbuchService` in `kassenbuch_service.py` (Kassen-CRUD, Buchungs-CRUD, CSV-Export, Kassenbericht-Daten)
+- [x] `KassenbuchService` in `kassenbuch_service.py`
   - [x] Buchungssperre (Export-Schutz) via `BuchungGesperrtError`
   - [x] Bestandsprüfung (kein negativer Bestand) via `NegativerBestandError`
   - [x] Belegnummer-Generierung automatisch beim Anlegen
   - [x] Atomarer CSV-Export: Buchungen holen → CSV → Export-Datensatz → Buchungen sperren
-  - [x] `get_kassenbericht_daten()` für PDF-Bericht (Anfangsbestand, laufender Bestand, Kategoriesummen)
-- [x] `KasseRepository`, `KassenbuchungRepository`, `KassenbuchExportRepository` in `datastore.py` integriert
-- [x] `db.kassenbuch`-Property auf `KassenbuchService` in `VereinsDB`
-- [x] Kasse-Permissions in `permission.py` vorläufig ergänzt: `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export`
-  - ⚠️ Werden in Phase 3.2 (Schema v8) durch kassenspezifische Berechtigungen ersetzt
-- [x] `defaults_for_role()` vorläufig um Kasse-Permissions erweitert (wird in 3.2 rückgebaut)
+  - [x] `get_kassenbericht_daten()` für PDF-Bericht
+- [x] Kassenbuch-Repositories in `datastore.py` integriert
+- [x] `db.kassenbuch`-Property auf `KassenbuchService`
+- [x] Kasse-Permissions in `permission.py` vorläufig ergänzt (in 3.2 rückgebaut)
 - [x] Migration `_migrate_6_to_7()`: vorläufige Kasse-Permissions für bestehende User
+
+### Phase 3.2 - Kassenspezifische Berechtigungen (Schema v8)
+- [x] Schema-Migration v7 → v8
+  - [x] Neue Tabelle `kasse_berechtigungen` (darf_lesen / darf_schreiben / darf_exportieren, Soft-Delete, Versionierung)
+  - [x] Neue Tabelle `kasse_berechtigungen_history` + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+  - [x] Globale `kasse.*`-Permissions per Soft-Delete aus `user_permissions` entfernt
+  - [x] Admins erhalten automatisch alle Rechte für bestehende Kassen
+- [x] `KasseBerechtigungRepository` in `kasse_berechtigung_repository.py`
+  - [x] `get_berechtigung()`, `get_berechtigungen_fuer_kasse()`, `get_kassen_ids_fuer_user()`
+  - [x] `hat_lesezugriff()`, `hat_schreibzugriff()`, `hat_exportrecht()`
+  - [x] `set_berechtigung()` (anlegen + aktualisieren + reaktivieren)
+  - [x] `revoke_berechtigung()`, `revoke_alle_berechtigungen_fuer_kasse()`
+- [x] `kasse.*`-Konstanten und `defaults_for_role()`-Einträge aus `permission.py` entfernt
+- [x] `KasseBerechtigungRepository` in `datastore.py` eingebunden (`db.kasse_berechtigungen`)
+- [x] Kassenbuch-Gruppe aus `permission_management.py` entfernt; Info-Hinweis ergänzt
+
+### Phase 3.3 - Kassenverwaltungs-UI (Admin)
+- [x] `kasse_management.py` erstellt
+  - [x] Route `/kassen`: Liste aller Kassen als Cards (Name, Anfangsbestand, Abteilung)
+  - [x] Kasse anlegen (Dialog mit Name, Beschreibung, Anfangsbestand, Abteilung)
+  - [x] Beim Anlegen: Admins automatisch mit allen Rechten eintragen
+  - [x] Kasse bearbeiten (gleicher Dialog, vorausgefüllt)
+  - [x] Kasse löschen (Bestätigungsdialog, Soft-Delete + Berechtigungen entziehen)
+  - [x] Route `/kassen/{id}/berechtigungen`: Berechtigungsmatrix pro Kasse
+  - [x] Berechtigungsmatrix: Nicht-Admin-User × Lesen/Schreiben/Exportieren-Checkboxen
+  - [x] Logik: Schreiben aktivieren setzt Lesen automatisch
+  - [x] Info-Hinweis: Admins haben immer vollen Zugriff
+- [x] `navigation.py`: Menüpunkt „Kassen" (nur Admins, Icon `account_balance_wallet`)
+- [x] `main.py`: `create_kasse_management_page(db)` registriert; Dashboard-Card ergänzt
 
 ---
 
