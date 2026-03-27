@@ -25,37 +25,6 @@
 
 ## 📊 Kassenbuch - Phase 3 (nächste Schritte)
 
-### Service-Layer
-- [ ] `kasse_service.py` erstellen
-  - Kasse anlegen/bearbeiten/löschen mit Validierung
-  - Prüfung: Kasse mit Buchungen darf nicht gelöscht werden
-  - Bestand abrufen (delegiert an `KasseRepository.get_bestand_cent()`)
-
-- [ ] `kassenbuchung_service.py` erstellen
-  - Buchung anlegen: Belegnummer automatisch über `get_naechste_belegnummer()` setzen
-  - Buchung bearbeiten: Prüfung ob Buchung exportiert (gesperrt)
-  - Buchung stornieren: Prüfung auf Exportsperre
-  - Validierung: entweder `einnahme_cent > 0` ODER `ausgabe_cent > 0`, nicht beides
-
-- [ ] `kassenbuch_export_service.py` erstellen
-  - Export-Vorgang: `get_nicht_exportierte_buchungen()` → CSV generieren → `create_export()` → `mark_buchungen_exportiert()`
-  - Anfangsbestand für den Zeitraum via `get_bestand_zum_datum_cent()` berechnen
-  - Alles in einer Transaktion (atomarer Export)
-  - CSV-Datei an den Browser ausliefern (NiceGUI Download)
-  - Nur aktive Buchungen (`deleted_at IS NULL`) werden exportiert und gesperrt
-
-### Facade (VereinsDB)
-- [ ] Kasse-Repositories in `datastore.py` integrieren
-  - `KasseRepository`, `KassenbuchungRepository`, `KassenbuchExportRepository` instanziieren
-  - Property-Zugriffe (`kasse`, `kassenbuchungen`, `kassenbuch_exporte`) hinzufügen
-  - Alternativ: Services direkt mit den Repositories verdrahten (ohne Facade-Umweg)
-
-### Permissions
-- [ ] Kasse-Permissions in `permission.py` ergänzen
-  - `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export`
-  - Default-Permissions pro Rolle: admin = alle, user = read/write/export, readonly = read
-  - Migration `_migrate_6_to_7()` für bestehende User
-
 ### UI
 - [ ] `kasse_management.py` erstellen (Kassenverwaltung)
   - Liste aller Kassen mit aktuellem Bestand
@@ -302,6 +271,19 @@
 - [x] Beträge durchgängig in Cent (Integer) – kein Floating Point
 - [x] Optimistic Locking (version-Feld) in allen Repositories
 - [x] `get_bestand_zum_datum_cent()` für Periodenberechnung im Export
+
+### Phase 3.1 - Kassenbuch Service-Layer & Facade (Schema v7)
+- [x] `KassenbuchService` in `kassenbuch_service.py` (Kassen-CRUD, Buchungs-CRUD, CSV-Export, Kassenbericht-Daten)
+  - [x] Buchungssperre (Export-Schutz) via `BuchungGesperrtError`
+  - [x] Bestandsprüfung (kein negativer Bestand) via `NegativerBestandError`
+  - [x] Belegnummer-Generierung automatisch beim Anlegen
+  - [x] Atomarer CSV-Export: Buchungen holen → CSV → Export-Datensatz → Buchungen sperren
+  - [x] `get_kassenbericht_daten()` für PDF-Bericht (Anfangsbestand, laufender Bestand, Kategoriesummen)
+- [x] `KasseRepository`, `KassenbuchungRepository`, `KassenbuchExportRepository` in `datastore.py` integriert
+- [x] `db.kassenbuch`-Property auf `KassenbuchService` in `VereinsDB`
+- [x] Kasse-Permissions in `permission.py` ergänzt: `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export`
+- [x] `defaults_for_role()` für `user` und `readonly` um Kasse-Permissions erweitert
+- [x] Migration `_migrate_6_to_7()`: Kasse-Permissions für alle bestehenden User vergeben
 
 ---
 
