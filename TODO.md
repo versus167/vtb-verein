@@ -39,10 +39,6 @@
   - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
   - Download als PDF (z.B. via `reportlab` oder `weasyprint`)
 
-- [ ] **Navigation: Kassenbuch-Menuepunkt**
-  - Sichtbar für alle User mit mind. einer Kasse mit Lesezugriff
-  - Aktuell nur als Dashboard-Card vorhanden; nav-Eintrag fehlt noch
-
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
@@ -137,7 +133,7 @@
 - [ ] Dashboard für Übungsleiter
   - Trainingsgruppen-Verwaltung
   - Anwesenheitslisten
-  - Trainingspäne
+  - Trainingspläne
 
 ### Erweiterte Funktionen
 - [ ] Trainingsplan-Management
@@ -318,6 +314,9 @@
   - [x] Buchung stornieren: Bestätigungsdialog, Soft-Delete
   - [x] CSV-Export-Dialog (nur mit Exportrecht)
   - [x] `main.py`: Import + `create_kassenbuch_page(db)` registriert
+- [x] `navigation.py`: Menüpunkt „Kassenbuch“ für berechtigte User + Admins
+  - [x] Sichtbar wenn mind. eine Kasse mit Lesezugriff vorhanden
+  - [x] Aktiv-Highlighting passend zu anderen Menüeinträgen
 
 ---
 
