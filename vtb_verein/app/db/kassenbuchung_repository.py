@@ -107,25 +107,24 @@ class KassenbuchungRepository(BaseRepository):
             )
             return [dict(row) for row in cur.fetchall()]
 
-    def get_naechste_belegnummer(self, kasse_id: int, jahr: int) -> str:
-        """Ermittelt die nächste Belegnummer für eine Kasse im angegebenen Jahr.
+    def get_naechste_belegnummer(self, kasse_id: int) -> str:
+        """Ermittelt die nächste Belegnummer für eine Kasse.
 
-        Format: YYYY-NNN (z.B. '2026-001'). Lücken durch stornierte Buchungen
-        werden NICHT wiederverwendet – die höchste vergebene Nummer +1 wird genutzt.
+        Format: Einfache laufende Ganzzahl als String (z.B. '1', '2', '42').
+        Lücken durch stornierte Buchungen werden NICHT wiederverwendet.
         """
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT MAX(CAST(SUBSTR(belegnummer, 6) AS INTEGER))
+                SELECT MAX(CAST(belegnummer AS INTEGER))
                 FROM kassenbuchungen
                 WHERE kasse_id = ?
-                  AND belegnummer LIKE ?
                 """,
-                (kasse_id, f"{jahr}-%"),
+                (kasse_id,),
             )
             row = cur.fetchone()
             letzte_nr = row[0] if row and row[0] is not None else 0
-            return f"{jahr}-{letzte_nr + 1:03d}"
+            return str(letzte_nr + 1)
 
     # -----------------------------------
     # Write-Operationen

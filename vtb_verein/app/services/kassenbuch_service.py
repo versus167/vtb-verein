@@ -45,7 +45,7 @@ class KassenbuchService:
     Enthält:
     - Buchungssperre (Export-Schutz)
     - Bestandsprüfung (kein negativer Bestand)
-    - Belegnummer-Generierung
+    - Belegnummer-Generierung (einfache laufende Nummer pro Kasse)
     - Export-Logik (CSV)
     - Kassenbericht-Daten für PDF
     - Berechtigungsprüfung (kassenspezifisch, Admin-Bypass)
@@ -145,9 +145,8 @@ class KassenbuchService:
         if user_id is not None:
             self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
 
-        # Belegnummer automatisch vergeben
-        jahr = int(buchung.buchungsdatum[:4])
-        buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id, jahr)
+        # Belegnummer: einfache laufende Nummer pro Kasse
+        buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id)
 
         # Bestandsprüfung: aktueller Bestand - neue Ausgabe >= 0
         if buchung.ausgabe_cent > 0:
