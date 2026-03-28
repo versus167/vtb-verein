@@ -15,7 +15,7 @@ def create_user_management_page(db: VereinsDB):
     @require_role('admin')
     def user_management_page():
         set_current_path('/users')
-        create_navigation()
+        create_navigation(db)
         user_service = UserService(db)
         current_user = AuthHelper.get_current_user()
         
@@ -47,7 +47,7 @@ def create_user_management_page(db: VereinsDB):
                         'username': u.username,
                         'email': u.email,
                         'role': role_labels.get(u.role, u.role),
-                        'active': '✓' if u.active else '✗',
+                        'active': '\u2713' if u.active else '\u2717',
                         'last_login': u.last_login or 'Noch nie',
                         'version': u.version,
                         'role_key': u.role,
@@ -76,7 +76,7 @@ def create_user_management_page(db: VereinsDB):
                     
                     # Info-Box
                     with ui.card().classes('bg-blue-1 q-mb-md'):
-                        ui.label('ℹ️ Passwort-freie Erstellung').classes('text-weight-bold')
+                        ui.label('\u2139\ufe0f Passwort-freie Erstellung').classes('text-weight-bold')
                         ui.label('Der neue Benutzer erhält automatisch einen Magic-Link per E-Mail und kann sich damit einloggen.').classes('text-caption')
                         ui.label('Das Passwort kann später vom Benutzer selbst oder von Admins gesetzt werden.').classes('text-caption')
                     
@@ -152,7 +152,7 @@ def create_user_management_page(db: VereinsDB):
                             will_be_deactivated = (role_input.value == 'admin' and not active_input.value)
                             will_be_demoted = (role_input.value != 'admin')
                             if (will_be_deactivated or will_be_demoted) and active_admins <= 1:
-                                warning_label.text = '⚠️ Achtung: Dies ist der letzte aktive Administrator!'
+                                warning_label.text = '\u26a0\ufe0f Achtung: Dies ist der letzte aktive Administrator!'
                                 warning_label.visible = True
                                 save_button.disable()
                             else:

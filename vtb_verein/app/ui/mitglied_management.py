@@ -28,7 +28,7 @@ def create_mitglied_management_page(db: VereinsDB):
         ''')
         
         set_current_path('/mitglieder')
-        create_navigation()
+        create_navigation(db)
         current_user = AuthHelper.get_current_user()
         
         ui.label('Mitgliederverwaltung').classes('text-h4 q-mb-md q-mt-md q-ml-md')

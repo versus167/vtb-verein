@@ -74,7 +74,7 @@ def create_permission_management_page(db: VereinsDB):
     @require_permission(Permission.USERS_MANAGE)
     def permission_management_page(user_id: int):
         set_current_path('/users')
-        create_navigation()
+        create_navigation(db)
 
         current_user = AuthHelper.get_current_user()
         user_repo    = db.users
@@ -157,7 +157,7 @@ def create_permission_management_page(db: VereinsDB):
                     active_admins = db.count_active_admins()
                     if active_admins <= 1 and Permission.USERS_MANAGE not in selected:
                         error_label.text = (
-                            '⚠️ Kann USERS_MANAGE nicht entziehen: '
+                            '\u26a0\ufe0f Kann USERS_MANAGE nicht entziehen: '
                             'Dies ist der letzte aktive Administrator.'
                         )
                         error_label.visible = True

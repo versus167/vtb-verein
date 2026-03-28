@@ -14,7 +14,7 @@ def create_user_profile_page(db: VereinsDB):
     @require_auth()
     def user_profile_page():
         set_current_path('/profile')
-        create_navigation()
+        create_navigation(db)
         user_service = UserService(db)
         current_user = AuthHelper.get_current_user()
         is_admin = current_user.role == 'admin'
@@ -37,7 +37,7 @@ def create_user_profile_page(db: VereinsDB):
                 # Hinweis für Non-Admins
                 if not is_admin:
                     with ui.card().classes('bg-blue-1 q-mb-md'):
-                        ui.label('ℹ️ Hinweis').classes('text-weight-bold text-caption')
+                        ui.label('\u2139\ufe0f Hinweis').classes('text-weight-bold text-caption')
                         ui.label('Username und E-Mail können nur von Administratoren geändert werden.').classes('text-caption')
                 
                 with ui.grid(columns=2).classes('w-full'):
@@ -116,7 +116,7 @@ def create_user_profile_page(db: VereinsDB):
                 
                 # Info-Text
                 with ui.card().classes('bg-blue-1 q-mb-md'):
-                    ui.label('ℹ️ Hinweis').classes('text-weight-bold')
+                    ui.label('\u2139\ufe0f Hinweis').classes('text-weight-bold')
                     ui.label('Du kannst hier dein Passwort setzen oder ändern.').classes('text-caption')
                     ui.label('Alternativ kannst du dich weiterhin per Magic-Link einloggen.').classes('text-caption')
                 
@@ -159,7 +159,7 @@ def create_user_profile_page(db: VereinsDB):
                         password.value = ''
                         password_confirm.value = ''
                         
-                        success_label.text = '✅ Passwort erfolgreich geändert!'
+                        success_label.text = '\u2705 Passwort erfolgreich geändert!'
                         success_label.visible = True
                         
                     except Exception as e:

@@ -14,7 +14,7 @@ def create_abteilung_management_page(db: VereinsDB):
     @require_role('user')  # user und admin können Abteilungen verwalten
     def abteilung_management_page():
         set_current_path('/abteilungen')
-        create_navigation()
+        create_navigation(db)
         current_user = AuthHelper.get_current_user()
         
         ui.label('Abteilungsverwaltung').classes('text-h4 q-mb-md q-mt-md q-ml-md')

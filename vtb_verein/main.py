@@ -58,7 +58,7 @@ create_kasse_management_page(db)
 @require_auth()
 def main_page():
     set_current_path('/')
-    create_navigation()
+    create_navigation(db)
     user = AuthHelper.get_current_user()
 
     with ui.column().classes('q-ma-md'):
@@ -83,6 +83,16 @@ def main_page():
                         ui.icon('group', size='3rem').classes('text-primary')
                         ui.label('Mitglieder').classes('text-h6 q-mt-sm')
                         ui.label('Mitglieder verwalten').classes('text-caption text-grey')
+
+            # Kassenbuch (berechtigte User und Admins)
+            is_admin = user.can_manage_users()
+            kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=is_admin)
+            if kassen:
+                with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/kassenbuch')):
+                    with ui.card_section().classes('text-center'):
+                        ui.icon('menu_book', size='3rem').classes('text-primary')
+                        ui.label('Kassenbuch').classes('text-h6 q-mt-sm')
+                        ui.label('Buchungen verwalten').classes('text-caption text-grey')
 
             # Kassenverwaltung (Admin)
             if user.can_manage_users():
