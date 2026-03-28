@@ -19,13 +19,6 @@
 ## 📊 Kassenbuch - Phase 3 (noch offen)
 
 ### Kassenbuch-Page Ergänzungen
-- [ ] **History-Expander pro Buchung**
-  - Toggle „Änderungshistorie anzeigen“ steuert ob Expander-Button gerendert wird
-  - Nur sichtbar wenn `version > 1`
-  - Lazy load: `get_history(buchung_id)` erst beim Öffnen aufrufen
-  - History-Zeilen in gedämpfter Farbe (Grau), gleiche Spalten, read-only
-  - Versionsnummer je Zeile (v1, v2, …)
-
 - [ ] **Export-Dialog verbessern**
   - Vorschau: Anzahl betroffener Buchungen + Betragssumme vor dem Export
   - Export-Verlauf anzeigen (Liste vergangener Exporte der Kasse)
@@ -43,7 +36,7 @@
 
 ### Anzeige & Navigation
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
-  - Eigene Ansicht „Gelöschte Mitglieder“
+  - Eigene Ansicht „Gelöschte Mitglieder"
   - Wiederherstellungs-Button
   - Konsistent mit Abteilungs-Wiederherstellung
 
@@ -51,7 +44,7 @@
   - Nach Status (aktiv, passiv, ausgetreten)
   - Nach Abteilung
   - Nach Zahlungsart
-  - Nach Austrittsdatum (z.B. „Letzten 6 Monate“)
+  - Nach Austrittsdatum (z.B. „Letzten 6 Monate")
 
 - [ ] Suchfunktion für Mitglieder
   - Volltextsuche: Name, Mitgliedsnummer, E-Mail
@@ -237,7 +230,7 @@
 - [x] Permission-Verwaltung in der Benutzerverwaltungs-UI (`permission_management.py`)
   - [x] Checkbox-Matrix gruppiert nach Ressource
   - [x] Visueller Hinweis bei Abweichung vom Rollen-Standard (orange)
-  - [x] „Auf Rollen-Standard zurücksetzen“-Button
+  - [x] „Auf Rollen-Standard zurücksetzen"-Button
   - [x] Schutz: letzter Admin kann USERS_MANAGE nicht verlieren
   - [x] Kassenbuch-Gruppe vorläufig integriert (in Phase 3.2 wieder entfernt)
 
@@ -291,7 +284,7 @@
   - [x] Berechtigungsmatrix: Nicht-Admin-User × Lesen/Schreiben/Exportieren-Checkboxen
   - [x] Logik: Schreiben aktivieren setzt Lesen automatisch
   - [x] Info-Hinweis: Admins haben immer vollen Zugriff
-- [x] `navigation.py`: Menüpunkt „Kassen“ (nur Admins, Icon `account_balance_wallet`)
+- [x] `navigation.py`: Menüpunkt „Kassen" (nur Admins, Icon `account_balance_wallet`)
 - [x] `main.py`: `create_kasse_management_page(db)` registriert; Dashboard-Card ergänzt
 
 ### Phase 3.4 - Berechtigungs-Integration & Kassenbuch-Page
@@ -313,8 +306,14 @@
   - [x] Buchung bearbeiten: Dialog lädt Buchung frisch per ID aus DB
   - [x] Buchung stornieren: Bestätigungsdialog, Soft-Delete
   - [x] CSV-Export-Dialog (nur mit Exportrecht)
+  - [x] **History-Expander pro Buchung**
+    - [x] Toggle „Änderungshistorie anzeigen" steuert ob Expander-Button gerendert wird
+    - [x] Nur sichtbar wenn `version > 1`
+    - [x] Lazy load: `get_history(buchung_id)` erst beim Öffnen aufrufen
+    - [x] History-Zeilen in gedämpfter Farbe (Grau), gleiche Spalten, read-only
+    - [x] Versionsnummer je Zeile (v1, v2, …)
   - [x] `main.py`: Import + `create_kassenbuch_page(db)` registriert
-- [x] `navigation.py`: Menüpunkt „Kassenbuch“ für berechtigte User + Admins
+- [x] `navigation.py`: Menüpunkt „Kassenbuch" für berechtigte User + Admins
   - [x] Sichtbar wenn mind. eine Kasse mit Lesezugriff vorhanden
   - [x] Aktiv-Highlighting passend zu anderen Menüeinträgen
 
