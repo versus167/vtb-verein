@@ -11,6 +11,7 @@ from app.models.kasse import Kasse, Kassenbuchung, KassenbuchExport
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
+from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 
 
 class BuchungGesperrtError(Exception):
@@ -23,6 +24,21 @@ class NegativerBestandError(Exception):
     pass
 
 
+class KeinLesezugriffError(Exception):
+    """Wird geworfen wenn der User keinen Lesezugriff auf die Kasse hat."""
+    pass
+
+
+class KeinSchreibzugriffError(Exception):
+    """Wird geworfen wenn der User keinen Schreibzugriff auf die Kasse hat."""
+    pass
+
+
+class KeinExportrechtError(Exception):
+    """Wird geworfen wenn der User kein Exportrecht für die Kasse hat."""
+    pass
+
+
 class KassenbuchService:
     """Service für alle Kassenbuch-Operationen.
 
@@ -32,6 +48,7 @@ class KassenbuchService:
     - Belegnummer-Generierung
     - Export-Logik (CSV)
     - Kassenbericht-Daten für PDF
+    - Berechtigungsprüfung (kassenspezifisch, Admin-Bypass)
     """
 
     def __init__(
@@ -39,13 +56,57 @@ class KassenbuchService:
         kasse_repo: KasseRepository,
         buchung_repo: KassenbuchungRepository,
         export_repo: KassenbuchExportRepository,
+        berechtigung_repo: KasseBerechtigungRepository,
     ):
         self._kasse = kasse_repo
         self._buchung = buchung_repo
         self._export = export_repo
+        self._berechtigung = berechtigung_repo
 
     # -----------------------------------
-    # Kassen-Verwaltung
+    # Berechtigungsprüfung
+    # -----------------------------------
+
+    def get_kassen_fuer_user(self, user_id: int, is_admin: bool) -> list[Kasse]:
+        """Gibt alle Kassen zurück, auf die der User Lesezugriff hat.
+
+        Admins erhalten alle Kassen.
+        """
+        alle_kassen = self._kasse.list_kassen()
+        if is_admin:
+            return alle_kassen
+        berechtigte_ids = set(self._berechtigung.get_kassen_ids_fuer_user(user_id))
+        return [k for k in alle_kassen if k.id in berechtigte_ids]
+
+    def _pruefe_lesezugriff(self, kasse_id: int, user_id: int, is_admin: bool) -> None:
+        """Wirft KeinLesezugriffError wenn kein Lesezugriff."""
+        if is_admin:
+            return
+        if not self._berechtigung.hat_lesezugriff(kasse_id, user_id):
+            raise KeinLesezugriffError(
+                f"Kein Lesezugriff auf Kasse {kasse_id}."
+            )
+
+    def _pruefe_schreibzugriff(self, kasse_id: int, user_id: int, is_admin: bool) -> None:
+        """Wirft KeinSchreibzugriffError wenn kein Schreibzugriff."""
+        if is_admin:
+            return
+        if not self._berechtigung.hat_schreibzugriff(kasse_id, user_id):
+            raise KeinSchreibzugriffError(
+                f"Kein Schreibzugriff auf Kasse {kasse_id}."
+            )
+
+    def _pruefe_exportrecht(self, kasse_id: int, user_id: int, is_admin: bool) -> None:
+        """Wirft KeinExportrechtError wenn kein Exportrecht."""
+        if is_admin:
+            return
+        if not self._berechtigung.hat_exportrecht(kasse_id, user_id):
+            raise KeinExportrechtError(
+                f"Kein Exportrecht für Kasse {kasse_id}."
+            )
+
+    # -----------------------------------
+    # Kassen-Verwaltung (Admin-only)
     # -----------------------------------
 
     def create_kasse(self, kasse: Kasse, created_by: str) -> Kasse:
@@ -72,13 +133,18 @@ class KassenbuchService:
     # -----------------------------------
 
     def create_buchung(
-        self, buchung: Kassenbuchung, created_by: str
+        self, buchung: Kassenbuchung, created_by: str,
+        user_id: int = None, is_admin: bool = False,
     ) -> Kassenbuchung:
         """Erstellt eine neue Buchung inkl. Bestandsprüfung und Belegnummer.
 
         Raises:
+            KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
             NegativerBestandError: Wenn die Buchung zu einem negativen Bestand führen würde.
         """
+        if user_id is not None:
+            self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
+
         # Belegnummer automatisch vergeben
         jahr = int(buchung.buchungsdatum[:4])
         buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id, jahr)
@@ -95,19 +161,23 @@ class KassenbuchService:
         return self._buchung.create_kassenbuchung(buchung, created_by)
 
     def update_buchung(
-        self, buchung: Kassenbuchung, updated_by: str
+        self, buchung: Kassenbuchung, updated_by: str,
+        user_id: int = None, is_admin: bool = False,
     ) -> bool:
         """Aktualisiert eine Buchung.
 
         Raises:
+            KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
             BuchungGesperrtError: Wenn die Buchung bereits exportiert wurde.
             NegativerBestandError: Wenn die Änderung zu einem negativen Bestand führen würde.
         """
+        if user_id is not None:
+            self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
+
         self._pruefe_nicht_gesperrt(buchung.id)
 
         # Bestandsprüfung: simulierter Bestand nach Update
         if buchung.ausgabe_cent > 0:
-            # Aktuellen Bestand ohne diese Buchung berechnen
             alte_buchung = self._buchung.get_kassenbuchung(buchung.id)
             bestand_ohne = (
                 self._kasse.get_bestand_cent(buchung.kasse_id)
@@ -122,12 +192,20 @@ class KassenbuchService:
 
         return self._buchung.update_kassenbuchung(buchung, updated_by)
 
-    def storniere_buchung(self, buchung_id: int, deleted_by: str) -> bool:
+    def storniere_buchung(
+        self, buchung_id: int, deleted_by: str,
+        user_id: int = None, is_admin: bool = False,
+    ) -> bool:
         """Storniert (Soft-Delete) eine Buchung.
 
         Raises:
+            KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
             BuchungGesperrtError: Wenn die Buchung bereits exportiert wurde.
         """
+        if user_id is not None:
+            buchung = self._buchung.get_kassenbuchung(buchung_id)
+            self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
+
         self._pruefe_nicht_gesperrt(buchung_id)
         return self._buchung.mark_kassenbuchung_deleted(buchung_id, deleted_by)
 
@@ -147,14 +225,22 @@ class KassenbuchService:
         kasse_id: int,
         bis_datum: str,
         exported_by: str,
+        user_id: int = None,
+        is_admin: bool = False,
     ) -> tuple[str, bytes]:
         """Exportiert alle nicht-exportierten Buchungen bis bis_datum als CSV.
 
         Die exportierten Buchungen werden danach gesperrt.
 
+        Raises:
+            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
+
         Returns:
             Tuple (dateiname, csv_bytes)
         """
+        if user_id is not None:
+            self._pruefe_exportrecht(kasse_id, user_id, is_admin)
+
         buchungen = self._export.get_nicht_exportierte_buchungen(kasse_id, bis_datum)
         if not buchungen:
             raise ValueError("Keine exportierbaren Buchungen im angegebenen Zeitraum.")
@@ -209,22 +295,20 @@ class KassenbuchService:
         von_datum: str,
         bis_datum: str,
         include_storniert: bool = False,
+        user_id: int = None,
+        is_admin: bool = False,
     ) -> dict:
         """Gibt alle Daten für den PDF-Kassenbericht zurück.
 
-        Berechnet:
-        - Anfangsbestand zum von_datum (Vortag)
-        - Buchungen im Zeitraum mit laufendem Bestand
-        - Endbestand
-        - Summen nach Kategorie
-
-        Der Bericht ist NICHT sperrend – er kann jederzeit neu erstellt werden.
+        Raises:
+            KeinLesezugriffError: Wenn kein Lesezugriff auf die Kasse.
         """
+        if user_id is not None:
+            self._pruefe_lesezugriff(kasse_id, user_id, is_admin)
+
         kasse = self._kasse.get_kasse(kasse_id)
 
         # Anfangsbestand: Bestand am Tag VOR von_datum
-        vortag = str(date.fromisoformat(von_datum).replace(day=1))
-        # Bestand bis Ende des Vortages
         from datetime import timedelta
         vortag = str(date.fromisoformat(von_datum) - timedelta(days=1))
         anfangsbestand_cent = self._kasse.get_bestand_zum_datum_cent(kasse_id, vortag)

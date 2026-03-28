@@ -5,6 +5,7 @@ Extended on 07.03.2026 - Magic-Link Authentication
 Extended on 11.03.2026 - PermissionRepository hinzugefügt
 Extended on 26.03.2026 - Kassenbuch-Repositories und KassenbuchService
 Extended on 27.03.2026 - KasseBerechtigungRepository (Phase 3.2)
+Extended on 28.03.2026 - KasseBerechtigungRepository an KassenbuchService übergeben (Phase 3.4)
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -51,6 +52,7 @@ class VereinsDB:
             kasse_repo=self._kasse_repo,
             buchung_repo=self._kassenbuchung_repo,
             export_repo=self._kassenbuch_export_repo,
+            berechtigung_repo=self._kasse_berechtigung_repo,
         )
 
     @property

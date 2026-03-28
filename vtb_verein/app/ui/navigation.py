@@ -4,15 +4,21 @@ Gemeinsame Navigationsleiste für alle Seiten
 from nicegui import ui, app
 from app.auth.auth_helper import AuthHelper
 
-def create_navigation():
-    """Erstellt die Navigationsleiste mit dynamischen Menüpunkten basierend auf Benutzerrechten"""
+
+def create_navigation(db=None):
+    """Erstellt die Navigationsleiste mit dynamischen Menüpunkten basierend auf Benutzerrechten.
+
+    Args:
+        db: VereinsDB-Instanz. Wird benötigt um kassenspezifische Berechtigungen zu prüfen
+            (Kassenbuch-Button für normale User). Admins sehen den Button immer.
+    """
     user = AuthHelper.get_current_user()
     current_path = app.storage.user.get('current_path', '/')
-    
+
     with ui.header().classes('items-center justify-between').style('background: linear-gradient(90deg, #1976d2 0%, #1565c0 100%);'):
         with ui.row().classes('items-center'):
             ui.label('\U0001f3db\ufe0f Vereinsverwaltung').classes('text-h5 q-mr-md text-white')
-            
+
             with ui.row().classes('q-gutter-xs'):
                 # Home Button
                 home_btn = ui.button('Home', on_click=lambda: ui.navigate.to('/'), icon='home')
@@ -20,7 +26,7 @@ def create_navigation():
                     home_btn.props('unelevated').classes('bg-blue-10 text-white')
                 else:
                     home_btn.props('flat').classes('text-white')
-                
+
                 # Abteilungen
                 if user and user.can_edit():
                     abt_btn = ui.button('Abteilungen', on_click=lambda: ui.navigate.to('/abteilungen'), icon='groups')
@@ -28,7 +34,7 @@ def create_navigation():
                         abt_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         abt_btn.props('flat').classes('text-white')
-                
+
                 # Mitglieder
                 if user and user.can_edit():
                     mitgl_btn = ui.button('Mitglieder', on_click=lambda: ui.navigate.to('/mitglieder'), icon='group')
@@ -37,6 +43,23 @@ def create_navigation():
                     else:
                         mitgl_btn.props('flat').classes('text-white')
 
+                # Kassenbuch für normale User
+                # Sichtbar wenn mind. eine Kasse mit Lesezugriff vorhanden (oder Admin mit db)
+                if user and db is not None:
+                    is_admin = user.can_manage_users()
+                    zeige_kassenbuch = False
+                    if is_admin:
+                        zeige_kassenbuch = len(db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=True)) > 0
+                    else:
+                        zeige_kassenbuch = len(db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=False)) > 0
+
+                    if zeige_kassenbuch:
+                        kb_btn = ui.button('Kassenbuch', on_click=lambda: ui.navigate.to('/kassenbuch'), icon='menu_book')
+                        if current_path == '/kassenbuch':
+                            kb_btn.props('unelevated').classes('bg-blue-10 text-white')
+                        else:
+                            kb_btn.props('flat').classes('text-white')
+
                 # Kassenverwaltung (nur Admins)
                 if user and user.can_manage_users():
                     kasse_btn = ui.button('Kassen', on_click=lambda: ui.navigate.to('/kassen'), icon='account_balance_wallet')
@@ -44,7 +67,7 @@ def create_navigation():
                         kasse_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         kasse_btn.props('flat').classes('text-white')
-                
+
                 # Benutzer
                 if user and user.can_manage_users():
                     user_btn = ui.button('Benutzer', on_click=lambda: ui.navigate.to('/users'), icon='people')
@@ -52,7 +75,7 @@ def create_navigation():
                         user_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         user_btn.props('flat').classes('text-white')
-        
+
         with ui.row().classes('items-center q-gutter-sm'):
             if user:
                 # User-Menü (Dropdown)
@@ -63,27 +86,28 @@ def create_navigation():
                             ui.label(f'{user.username}').classes('text-weight-bold')
                             ui.label(f'Rolle: {user.role}').classes('text-caption text-grey-7')
                             ui.separator()
-                            
+
                             # Profil-Link
                             with ui.item().props('clickable').on('click', lambda: (menu.close(), ui.navigate.to('/profile'))):
                                 with ui.item_section().props('avatar'):
                                     ui.icon('person')
                                 with ui.item_section():
                                     ui.label('Mein Profil')
-                            
+
                             ui.separator()
-                            
+
                             # Logout
                             def handle_logout():
                                 menu.close()
                                 AuthHelper.logout()
                                 ui.navigate.to('/login')
-                            
+
                             with ui.item().props('clickable').on('click', handle_logout):
                                 with ui.item_section().props('avatar'):
                                     ui.icon('logout')
                                 with ui.item_section():
                                     ui.label('Logout')
+
 
 def set_current_path(path: str):
     """Setzt den aktuellen Pfad im Storage (für Navigation-Highlighting)"""
