@@ -16,59 +16,38 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
-## 📊 Kassenbuch - Phase 3 (nächste Schritte)
+## 📊 Kassenbuch - Phase 3 (noch offen)
 
-### Phase 3.4 - KassenbuchService Berechtigungs-Integration
+### Kassenbuch-Page Ergänzungen
+- [ ] **History-Expander pro Buchung**
+  - Toggle „Änderungshistorie anzeigen“ steuert ob Expander-Button gerendert wird
+  - Nur sichtbar wenn `version > 1`
+  - Lazy load: `get_history(buchung_id)` erst beim Öffnen aufrufen
+  - History-Zeilen in gedämpfter Farbe (Grau), gleiche Spalten, read-only
+  - Versionsnummer je Zeile (v1, v2, …)
 
-> **Offene Aufgabe:** Der `KassenbuchService` kennt noch keine kassenspezifischen
-> Berechtigungen. Er muss so angepasst werden, dass alle Methoden den `user_id`-
-> Parameter prüfen und bei fehlendem Recht eine Exception werfen.
-> Admins (`users.manage`) sehen weiterhin alle Kassen.
+- [ ] **Export-Dialog verbessern**
+  - Vorschau: Anzahl betroffener Buchungen + Betragssumme vor dem Export
+  - Export-Verlauf anzeigen (Liste vergangener Exporte der Kasse)
 
-- [ ] **Service-Anpassung: `KassenbuchService`**
-  - `get_kassen_fuer_user(user_id, is_admin)` als Einstiegspunkt (statt alle Kassen)
-  - Alle schreibenden Methoden: Schreibzugriff prüfen via `KasseBerechtigungRepository`
-  - Export-Methode: Exportrecht prüfen
-  - Admin-Bypass: `users.manage` → immer alle Kassen, alle Rechte
-
-### UI
-- [ ] `kassenbuch_page.py` erstellen (Buchungen einer Kasse)
-  - Nur Kassen anzeigen, auf die der User Lesezugriff hat (oder Admin)
-  - Tabellarische Ansicht aller Buchungen (sortiert nach Datum/Belegnummer)
-  - Stornierte Buchungen standardmäßig ausgeblendet, per Toggle einblendbar (ausgegraut/durchgestrichen)
-  - Neue Buchung anlegen (Dialog, nur mit Schreibzugriff)
-  - Buchung bearbeiten (Dialog, gesperrt wenn exportiert; Belegnummer read-only)
-  - Buchung stornieren (mit Bestätigung, gesperrt wenn exportiert, nur mit Schreibzugriff)
-  - Laufenden Bestand anzeigen (aus DB, nicht berechnet in Python)
-  - History-Expander pro Buchung (lazy load, nur sichtbar wenn `version > 1`)
-    - Toggle „Änderungshistorie anzeigen" steuert ob Expander-Button gerendert wird
-    - History-Zeilen in gedämpfter Farbe (z.B. Gelb/Grau), gleiche Spalten, read-only
-    - Versionsnummer je History-Zeile (v1, v2, …) zur Orientierung
-  - Exportierte Buchungen mit Schloss-Icon 🔒 kennzeichnen
-
-- [ ] Export-Dialog (nur mit Exportrecht)
-  - Zeitraum wählen (Von/Bis)
-  - Vorschau: Anzahl betroffener Buchungen + Betragssumme
-  - Startet Export → CSV-Download (nur aktive, nicht-exportierte Buchungen)
-  - Export-Liste anzeigen (Verlauf vergangener Exporte)
-
-- [ ] PDF-Kassenbericht (nicht sperrend, nur mit Lesezugriff)
+- [ ] **PDF-Kassenbericht**
   - Flexibler Zeitraum (Von/Bis), unabhängig vom CSV-Export
   - Enthält: Kassename, Zeitraum, Erstellungsdatum, Anfangsbestand
   - Tabellarische Buchungsübersicht mit laufendem Bestand je Zeile
   - Endbestand und Summenspalten (Einnahmen/Ausgaben gesamt)
   - Optional: Summen nach Kategorie
   - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
+  - Download als PDF (z.B. via `reportlab` oder `weasyprint`)
 
-- [ ] Navigation: Menüpunkt „Kassenbuch" für normale User
-  - Sichtbar wenn User mind. eine Kasse mit Lesezugriff hat (oder Admin)
-  - Führt zu Kassenauswahl-Seite (falls mehrere Kassen zugänglich)
+- [ ] **Navigation: Kassenbuch-Menuepunkt**
+  - Sichtbar für alle User mit mind. einer Kasse mit Lesezugriff
+  - Aktuell nur als Dashboard-Card vorhanden; nav-Eintrag fehlt noch
 
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
-  - Eigene Ansicht „Gelöschte Mitglieder"
+  - Eigene Ansicht „Gelöschte Mitglieder“
   - Wiederherstellungs-Button
   - Konsistent mit Abteilungs-Wiederherstellung
 
@@ -76,7 +55,7 @@
   - Nach Status (aktiv, passiv, ausgetreten)
   - Nach Abteilung
   - Nach Zahlungsart
-  - Nach Austrittsdatum (z.B. „Letzte 6 Monate")
+  - Nach Austrittsdatum (z.B. „Letzten 6 Monate“)
 
 - [ ] Suchfunktion für Mitglieder
   - Volltextsuche: Name, Mitgliedsnummer, E-Mail
@@ -158,7 +137,7 @@
 - [ ] Dashboard für Übungsleiter
   - Trainingsgruppen-Verwaltung
   - Anwesenheitslisten
-  - Trainingspläne
+  - Trainingspäne
 
 ### Erweiterte Funktionen
 - [ ] Trainingsplan-Management
@@ -262,7 +241,7 @@
 - [x] Permission-Verwaltung in der Benutzerverwaltungs-UI (`permission_management.py`)
   - [x] Checkbox-Matrix gruppiert nach Ressource
   - [x] Visueller Hinweis bei Abweichung vom Rollen-Standard (orange)
-  - [x] „Auf Rollen-Standard zurücksetzen"-Button
+  - [x] „Auf Rollen-Standard zurücksetzen“-Button
   - [x] Schutz: letzter Admin kann USERS_MANAGE nicht verlieren
   - [x] Kassenbuch-Gruppe vorläufig integriert (in Phase 3.2 wieder entfernt)
 
@@ -316,8 +295,29 @@
   - [x] Berechtigungsmatrix: Nicht-Admin-User × Lesen/Schreiben/Exportieren-Checkboxen
   - [x] Logik: Schreiben aktivieren setzt Lesen automatisch
   - [x] Info-Hinweis: Admins haben immer vollen Zugriff
-- [x] `navigation.py`: Menüpunkt „Kassen" (nur Admins, Icon `account_balance_wallet`)
+- [x] `navigation.py`: Menüpunkt „Kassen“ (nur Admins, Icon `account_balance_wallet`)
 - [x] `main.py`: `create_kasse_management_page(db)` registriert; Dashboard-Card ergänzt
+
+### Phase 3.4 - Berechtigungs-Integration & Kassenbuch-Page
+- [x] `KassenbuchService`: kassenspezifische Berechtigungsprüfung integriert
+  - [x] `get_kassen_fuer_user(user_id, is_admin)` – nur berechtigte Kassen
+  - [x] `_pruefe_lesezugriff()`, `_pruefe_schreibzugriff()`, `_pruefe_exportrecht()`
+  - [x] Custom Exceptions: `KeinLesezugriffError`, `KeinSchreibzugriffError`, `KeinExportrechtError`
+  - [x] Admin-Bypass in allen Prüfmethoden
+- [x] `KasseBerechtigungRepository` an `KassenbuchService` übergeben
+- [x] `kassenbuch_page.py` erstellt (Route `/kassenbuch`)
+  - [x] Kassen-Auswahl per Tab (nur berechtigte Kassen; Admins sehen alle)
+  - [x] Kassenbestand prominent im Header (grün/rot)
+  - [x] Buchungsliste mit laufendem Bestand (SQL-seitig, kein Python-Loop)
+  - [x] Einnahmen grün, Ausgaben rot
+  - [x] Stornierte Buchungen durchgestrichen + grau; per Checkbox einblendbar
+  - [x] Exportierte Buchungen mit 🔒-Icon, Edit/Storno gesperrt
+  - [x] Datumsfilter (Von/Bis) mit flexibler Eingabe
+  - [x] Neue Buchung anlegen: separate Buttons Einnahme/Ausgabe (nur mit Schreibzugriff)
+  - [x] Buchung bearbeiten: Dialog lädt Buchung frisch per ID aus DB
+  - [x] Buchung stornieren: Bestätigungsdialog, Soft-Delete
+  - [x] CSV-Export-Dialog (nur mit Exportrecht)
+  - [x] `main.py`: Import + `create_kassenbuch_page(db)` registriert
 
 ---
 
