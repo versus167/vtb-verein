@@ -15,6 +15,7 @@ from app.ui.user_profile import create_user_profile_page
 from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.kasse_management import create_kasse_management_page
+from app.ui.kassenbuch_page import create_kassenbuch_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
@@ -52,6 +53,7 @@ create_user_profile_page(db)
 create_abteilung_management_page(db)
 create_mitglied_management_page(db)
 create_kasse_management_page(db)
+create_kassenbuch_page(db)
 
 # Hauptseite (Dashboard)
 @ui.page('/')
