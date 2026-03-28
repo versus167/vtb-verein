@@ -10,6 +10,7 @@ Nicht-Admins sehen diese Seite nicht (requires USERS_MANAGE).
 from nicegui import ui
 from app.auth.auth_helper import AuthHelper, require_permission
 from app.db.datastore import VereinsDB
+from app.models.kasse import Kasse
 from app.models.permission import Permission
 from app.ui.navigation import create_navigation, set_current_path
 
@@ -261,21 +262,19 @@ def _open_kasse_dialog(db, actor, abteilung_repo, refresh, kasse=None):
                 abt_id = abt_select.value  # None oder int
 
                 if is_new:
-                    db.kassen.create_kasse(
+                    neue_kasse = Kasse(
                         name=name,
                         beschreibung=beschreibung_input.value.strip() or None,
                         anfangsbestand_cent=anfang_cent,
                         abteilung_id=abt_id,
-                        created_by=actor,
                     )
+                    gespeicherte_kasse = db.kassen.create_kasse(neue_kasse, created_by=actor)
                     # Admins automatisch berechtigen
-                    from app.models.user import User
-                    neue_kasse = db.kassen.list_kassen()[-1]  # gerade erstellte
                     admins = [u for u in db.users.list_all()
                               if u.role == 'admin' and u.active and u.deleted_at is None]
                     for adm in admins:
                         db.kasse_berechtigungen.set_berechtigung(
-                            kasse_id=neue_kasse.id,
+                            kasse_id=gespeicherte_kasse.id,
                             user_id=adm.id,
                             darf_lesen=True,
                             darf_schreiben=True,
@@ -283,15 +282,11 @@ def _open_kasse_dialog(db, actor, abteilung_repo, refresh, kasse=None):
                             actor=actor,
                         )
                 else:
-                    db.kassen.update_kasse(
-                        kasse_id=kasse.id,
-                        name=name,
-                        beschreibung=beschreibung_input.value.strip() or None,
-                        anfangsbestand_cent=anfang_cent,
-                        abteilung_id=abt_id,
-                        updated_by=actor,
-                        expected_version=kasse.version,
-                    )
+                    kasse.name = name
+                    kasse.beschreibung = beschreibung_input.value.strip() or None
+                    kasse.anfangsbestand_cent = anfang_cent
+                    kasse.abteilung_id = abt_id
+                    db.kassen.update_kasse(kasse, updated_by=actor)
 
                 dialog.close()
                 refresh()
