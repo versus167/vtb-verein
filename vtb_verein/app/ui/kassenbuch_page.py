@@ -159,12 +159,14 @@ def create_kassenbuch_page(db: VereinsDB):
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
 
-                    # on_change schreibt direkt in den State – .value ist bei Buttons
-                    # noch nicht zuverlässig synchronisiert (WebSocket-Timing)
-                    storniert_cb = ui.checkbox(
+                    def on_storniert_change(e):
+                        state['include_storniert'] = e.value
+                        render_content()
+
+                    ui.checkbox(
                         'Stornierte einblenden',
                         value=state['include_storniert'],
-                        on_change=lambda e: state.update({'include_storniert': e.value})
+                        on_change=on_storniert_change
                     )
 
                     def apply_filter():
@@ -172,7 +174,6 @@ def create_kassenbuch_page(db: VereinsDB):
                         bis_raw = bis_input.value.strip()
                         state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
                         state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
-                        # include_storniert wurde bereits per on_change in state geschrieben
                         render_content()
 
                     ui.button('Filter anwenden', on_click=apply_filter, icon='filter_list').props('outline dense')
