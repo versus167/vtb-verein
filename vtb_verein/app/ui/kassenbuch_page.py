@@ -111,7 +111,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 bis_datum=state['bis_datum'],
                 include_storniert=state['include_storniert'],
             )
-            # Laufenden Bestand berechnen
             if state['von_datum']:
                 laufend = db.kassen.get_bestand_zum_datum_cent(
                     state['kasse'].id,
@@ -135,8 +134,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     'bestand': fmt_euro(laufend) if not b.ist_storniert else '—',
                     'storniert': b.ist_storniert,
                     'exportiert': b.ist_exportiert,
-                    'version': b.version,
-                    'raw': b,
                 })
             return rows
 
@@ -178,12 +175,10 @@ def create_kassenbuch_page(db: VereinsDB):
 
                     ui.separator().props('vertical')
 
-                    # Neue Buchung
                     if hat_schreibzugriff():
                         ui.button('Einnahme', on_click=lambda: show_buchung_dialog('einnahme'), icon='add').props('color=positive dense')
                         ui.button('Ausgabe', on_click=lambda: show_buchung_dialog('ausgabe'), icon='remove').props('color=negative dense')
 
-                    # Export
                     if hat_exportrecht():
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
 
@@ -225,7 +220,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         <q-td key="actions" :props="props">
                             <q-btn v-if="!props.row.storniert && !props.row.exportiert"
                                    flat dense icon="edit" size="sm"
-                                   @click="$parent.$emit('edit', props.row)" />
+                                   @click="$parent.$emit('edit', props.row.id)" />
                             <q-btn v-if="!props.row.storniert && !props.row.exportiert"
                                    flat dense icon="block" size="sm" color="negative"
                                    @click="$parent.$emit('stornieren', props.row)" />
@@ -234,7 +229,9 @@ def create_kassenbuch_page(db: VereinsDB):
                 ''')
 
                 if hat_schreibzugriff():
-                    table.on('edit', lambda e: show_buchung_dialog('edit', e.args))
+                    # edit: nur die ID wird übergeben, Buchung wird frisch aus DB geladen
+                    table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
+                    # stornieren: row-dict reicht (nur id + Anzeigefelder gebraucht)
                     table.on('stornieren', lambda e: show_storno_dialog(e.args))
 
                 if not rows:
@@ -244,32 +241,38 @@ def create_kassenbuch_page(db: VereinsDB):
         # Dialog: Buchung anlegen / bearbeiten
         # ------------------------------------------------------------------
 
-        def show_buchung_dialog(modus: str, row: dict = None):
+        def show_buchung_dialog(modus: str, buchung_id: int = None):
             """
             modus: 'einnahme' | 'ausgabe' | 'edit'
+            buchung_id: Nur bei modus='edit' übergeben; Buchung wird frisch aus DB geladen.
             """
             ist_neu = modus in ('einnahme', 'ausgabe')
-            buchung: Kassenbuchung | None = row['raw'] if row else None
+
+            # Buchung aus DB laden (immer frisch, kein 'raw' aus Vue)
+            buchung: Kassenbuchung | None = None
+            if not ist_neu:
+                try:
+                    buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+                except KeyError:
+                    ui.notify('Buchung nicht gefunden', type='negative')
+                    return
 
             titel = {
                 'einnahme': 'Neue Einnahme',
                 'ausgabe': 'Neue Ausgabe',
-                'edit': f'Buchung bearbeiten: {row["belegnummer"]}' if row else 'Buchung bearbeiten',
+                'edit': f'Buchung bearbeiten: {buchung.belegnummer}' if buchung else 'Buchung bearbeiten',
             }[modus]
 
-            if not ist_neu:
-                # Beim Edit: Typ aus vorhandener Buchung ableiten
-                modus_eff = 'einnahme' if buchung.einnahme_cent > 0 else 'ausgabe'
-            else:
-                modus_eff = modus
+            modus_eff = modus if ist_neu else ('einnahme' if buchung.einnahme_cent > 0 else 'ausgabe')
 
             with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
                 ui.label(titel).classes('text-h6 q-mb-md')
 
                 datum_input = ui.input(
                     'Datum *',
-                    value=DateInputHelper.format_date_display(buchung.buchungsdatum) if buchung else
-                          DateInputHelper.format_date_display(date.today().isoformat()),
+                    value=DateInputHelper.format_date_display(
+                        buchung.buchungsdatum if buchung else date.today().isoformat()
+                    ),
                     placeholder='z.B. 28.3.26'
                 ).classes('w-full')
                 datum_state = {
@@ -286,12 +289,12 @@ def create_kassenbuch_page(db: VereinsDB):
                         datum_input.error = 'Ungültiges Datum'
                 datum_input.on('blur', on_datum_blur)
 
-                buchungstext = ui.input(
+                buchungstext_input = ui.input(
                     'Buchungstext *',
                     value=buchung.buchungstext if buchung else ''
                 ).classes('w-full')
 
-                kategorie = ui.select(
+                kategorie_input = ui.select(
                     label='Kategorie *',
                     options=KATEGORIEN,
                     value=buchung.kategorie if buchung else 'Allgemein'
@@ -302,14 +305,13 @@ def create_kassenbuch_page(db: VereinsDB):
                 if buchung:
                     cent = buchung.einnahme_cent if modus_eff == 'einnahme' else buchung.ausgabe_cent
                     init_betrag = f'{cent / 100:.2f}'
-
                 betrag_input = ui.input(
                     betrag_label,
                     value=init_betrag,
                     placeholder='0,00'
                 ).classes('w-full')
 
-                notiz = ui.textarea(
+                notiz_input = ui.textarea(
                     'Notiz',
                     value=buchung.notiz or '' if buchung else ''
                 ).classes('w-full').props('rows=2')
@@ -320,18 +322,16 @@ def create_kassenbuch_page(db: VereinsDB):
                 def save():
                     error_label.visible = False
 
-                    # Datum validieren
                     if not datum_state['value']:
                         error_label.text = 'Bitte gültiges Datum eingeben'
                         error_label.visible = True
                         return
 
-                    if not buchungstext.value.strip():
+                    if not buchungstext_input.value.strip():
                         error_label.text = 'Buchungstext ist erforderlich'
                         error_label.visible = True
                         return
 
-                    # Betrag parsen
                     betrag_str = betrag_input.value.strip().replace(',', '.')
                     try:
                         betrag_euro = float(betrag_str)
@@ -351,11 +351,11 @@ def create_kassenbuch_page(db: VereinsDB):
                             neue_buchung = Kassenbuchung(
                                 kasse_id=state['kasse'].id,
                                 buchungsdatum=datum_state['value'],
-                                buchungstext=buchungstext.value.strip(),
-                                kategorie=kategorie.value,
+                                buchungstext=buchungstext_input.value.strip(),
+                                kategorie=kategorie_input.value,
                                 einnahme_cent=einnahme_cent,
                                 ausgabe_cent=ausgabe_cent,
-                                notiz=notiz.value.strip() or None,
+                                notiz=notiz_input.value.strip() or None,
                             )
                             db.kassenbuch.create_buchung(
                                 neue_buchung,
@@ -366,11 +366,11 @@ def create_kassenbuch_page(db: VereinsDB):
                             ui.notify('Buchung erfolgreich angelegt', type='positive')
                         else:
                             buchung.buchungsdatum = datum_state['value']
-                            buchung.buchungstext = buchungstext.value.strip()
-                            buchung.kategorie = kategorie.value
+                            buchung.buchungstext = buchungstext_input.value.strip()
+                            buchung.kategorie = kategorie_input.value
                             buchung.einnahme_cent = einnahme_cent
                             buchung.ausgabe_cent = ausgabe_cent
-                            buchung.notiz = notiz.value.strip() or None
+                            buchung.notiz = notiz_input.value.strip() or None
                             db.kassenbuch.update_buchung(
                                 buchung,
                                 updated_by=current_user.username,
@@ -406,11 +406,14 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_storno_dialog(row: dict):
-            buchung: Kassenbuchung = row['raw']
+            """row ist das plain dict aus dem Vue-Event (JSON-serialisiert)."""
+            buchung_id = int(row['id'])
+            belegnummer = row.get('belegnummer', '')
+            buchungstext = row.get('buchungstext', '')
 
             with ui.dialog() as dialog, ui.card():
                 ui.label('Buchung stornieren?').classes('text-h6 q-mb-md')
-                ui.label(f'Beleg {row["belegnummer"]}: {row["buchungstext"]}')
+                ui.label(f'Beleg {belegnummer}: {buchungstext}')
                 ui.label('Die Buchung wird als storniert markiert und bleibt in der History.').classes(
                     'text-caption text-grey q-mt-sm'
                 )
@@ -418,7 +421,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 def do_storno():
                     try:
                         db.kassenbuch.storniere_buchung(
-                            buchung.id,
+                            buchung_id,
                             deleted_by=current_user.username,
                             user_id=current_user.id,
                             is_admin=is_admin,
