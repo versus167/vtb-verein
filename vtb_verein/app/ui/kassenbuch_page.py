@@ -158,9 +158,13 @@ def create_kassenbuch_page(db: VereinsDB):
                         value=DateInputHelper.format_date_display(state['bis_datum']) if state['bis_datum'] else '',
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
+
+                    # on_change schreibt direkt in den State – .value ist bei Buttons
+                    # noch nicht zuverlässig synchronisiert (WebSocket-Timing)
                     storniert_cb = ui.checkbox(
                         'Stornierte einblenden',
-                        value=state['include_storniert']
+                        value=state['include_storniert'],
+                        on_change=lambda e: state.update({'include_storniert': e.value})
                     )
 
                     def apply_filter():
@@ -168,7 +172,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         bis_raw = bis_input.value.strip()
                         state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
                         state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
-                        state['include_storniert'] = storniert_cb.value
+                        # include_storniert wurde bereits per on_change in state geschrieben
                         render_content()
 
                     ui.button('Filter anwenden', on_click=apply_filter, icon='filter_list').props('outline dense')
@@ -229,9 +233,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 ''')
 
                 if hat_schreibzugriff():
-                    # edit: nur die ID wird übergeben, Buchung wird frisch aus DB geladen
                     table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
-                    # stornieren: row-dict reicht (nur id + Anzeigefelder gebraucht)
                     table.on('stornieren', lambda e: show_storno_dialog(e.args))
 
                 if not rows:
@@ -248,7 +250,6 @@ def create_kassenbuch_page(db: VereinsDB):
             """
             ist_neu = modus in ('einnahme', 'ausgabe')
 
-            # Buchung aus DB laden (immer frisch, kein 'raw' aus Vue)
             buchung: Kassenbuchung | None = None
             if not ist_neu:
                 try:
