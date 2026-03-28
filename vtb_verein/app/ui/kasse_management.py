@@ -288,12 +288,13 @@ def _open_kasse_dialog(db, actor, abteilung_repo, refresh, kasse=None):
                     kasse.abteilung_id = abt_id
                     db.kassen.update_kasse(kasse, updated_by=actor)
 
-                dialog.close()
-                refresh()
+                # notify VOR close() – sonst ist der Slot-Kontext bereits zerstört
                 ui.notify(
                     'Kasse erstellt' if is_new else 'Kasse aktualisiert',
                     type='positive'
                 )
+                dialog.close()
+                refresh()
             except Exception as exc:
                 error_label.text = f'Fehler: {exc}'
                 error_label.visible = True
@@ -316,9 +317,10 @@ def _confirm_delete(db, kasse, actor, refresh):
         def confirm():
             db.kasse_berechtigungen.revoke_alle_berechtigungen_fuer_kasse(kasse.id, actor)
             db.kassen.mark_kasse_deleted(kasse.id, actor)
+            # notify VOR close() – sonst ist der Slot-Kontext bereits zerstört
+            ui.notify(f'Kasse \u201e{kasse.name}\u201c gelöscht', type='warning')
             dialog.close()
             refresh()
-            ui.notify(f'Kasse \u201e{kasse.name}\u201c gelöscht', type='warning')
 
         with ui.row().classes('q-gutter-sm justify-end full-width'):
             ui.button('Abbrechen', on_click=dialog.close).props('flat')
