@@ -220,76 +220,71 @@ def create_kassenbuch_page(db: VereinsDB):
                 show_history_col = state['show_history']
                 table = ui.table(columns=columns, rows=rows, row_key='id').classes('w-full')
 
-                # body-Slot: History-Expander-Zeilen werden direkt in Vue gerendert,
-                # der Expand-Button ruft via $emit('load_history', id) Python auf.
-                history_expand_slot = r'''
-                    <template v-for="props in props_list" :key="props.row.id">
-                        <q-tr :props="props"
-                              :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
-                            <q-td key="belegnummer" :props="props">
-                                <span>{{ props.row.belegnummer }}</span>
-                                <q-icon v-if="props.row.exportiert" name="lock" size="xs"
-                                        class="q-ml-xs text-grey-5" title="exportiert" />
-                            </q-td>
-                            <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
-                            <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
-                            <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
-                            <q-td key="einnahme" :props="props" class="text-positive text-right">
-                                {{ props.row.einnahme }}
-                            </q-td>
-                            <q-td key="ausgabe" :props="props" class="text-negative text-right">
-                                {{ props.row.ausgabe }}
-                            </q-td>
-                            <q-td key="bestand" :props="props" class="text-right text-weight-bold">
-                                {{ props.row.bestand }}
-                            </q-td>
-                            <q-td key="actions" :props="props">
+                # Der NiceGUI body-Slot bekommt 'props' als einzelnes Objekt pro Zeile
+                # (NICHT props_list). History-Zeilen direkt nach </q-tr> einfügen.
+                body_slot = r'''
+                    <q-tr :props="props"
+                          :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
+                        <q-td key="belegnummer" :props="props">
+                            <span>{{ props.row.belegnummer }}</span>
+                            <q-icon v-if="props.row.exportiert" name="lock" size="xs"
+                                    class="q-ml-xs text-grey-5" title="exportiert" />
+                        </q-td>
+                        <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
+                        <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
+                        <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
+                        <q-td key="einnahme" :props="props" class="text-positive text-right">
+                            {{ props.row.einnahme }}
+                        </q-td>
+                        <q-td key="ausgabe" :props="props" class="text-negative text-right">
+                            {{ props.row.ausgabe }}
+                        </q-td>
+                        <q-td key="bestand" :props="props" class="text-right text-weight-bold">
+                            {{ props.row.bestand }}
+                        </q-td>
+                        <q-td key="actions" :props="props">
                 '''
 
                 if show_history_col:
-                    history_expand_slot += r'''
-                                <q-btn v-if="props.row.version > 1"
-                                       flat dense round
-                                       :icon="props.row._hist_open ? 'expand_less' : 'history'"
-                                       size="sm" color="grey"
-                                       :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
-                                       @click="$parent.$emit('load_history', props.row.id)" />
+                    body_slot += r'''
+                            <q-btn v-if="props.row.version > 1"
+                                   flat dense round
+                                   :icon="props.row._hist_open ? 'expand_less' : 'history'"
+                                   size="sm" color="grey"
+                                   :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
+                                   @click="$parent.$emit('load_history', props.row.id)" />
                     '''
 
-                history_expand_slot += r'''
-                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                       flat dense icon="edit" size="sm"
-                                       @click="$parent.$emit('edit', props.row.id)" />
-                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                       flat dense icon="block" size="sm" color="negative"
-                                       @click="$parent.$emit('stornieren', props.row)" />
-                            </q-td>
+                body_slot += r'''
+                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                   flat dense icon="edit" size="sm"
+                                   @click="$parent.$emit('edit', props.row.id)" />
+                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                   flat dense icon="block" size="sm" color="negative"
+                                   @click="$parent.$emit('stornieren', props.row)" />
+                        </q-td>
+                    </q-tr>
+                '''
+
+                if show_history_col:
+                    body_slot += r'''
+                    <template v-if="props.row._hist_open && props.row._hist_rows">
+                        <q-tr v-for="h in props.row._hist_rows"
+                              :key="'h_' + props.row.id + '_' + h.version"
+                              class="text-grey-6 bg-grey-1">
+                            <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
+                            <q-td class="text-caption">{{ h.datum }}</q-td>
+                            <q-td class="text-caption">{{ h.buchungstext }}</q-td>
+                            <q-td class="text-caption">{{ h.kategorie }}</q-td>
+                            <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
+                            <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
+                            <q-td class="text-caption text-right text-grey-5">—</q-td>
+                            <q-td></q-td>
                         </q-tr>
-                '''
-
-                # History-Unter-Zeilen (werden durch Python nach load_history eingefügt)
-                if show_history_col:
-                    history_expand_slot += r'''
-                        <template v-if="props.row._hist_open && props.row._hist_rows">
-                            <q-tr v-for="h in props.row._hist_rows" :key="'h_' + props.row.id + '_' + h.version"
-                                  class="text-grey-6 bg-grey-1">
-                                <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
-                                <q-td class="text-caption">{{ h.datum }}</q-td>
-                                <q-td class="text-caption">{{ h.buchungstext }}</q-td>
-                                <q-td class="text-caption">{{ h.kategorie }}</q-td>
-                                <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
-                                <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
-                                <q-td class="text-caption text-right text-grey-5">—</q-td>
-                                <q-td></q-td>
-                            </q-tr>
-                        </template>
+                    </template>
                     '''
 
-                history_expand_slot += r'''
-                    </template>
-                '''
-
-                table.add_slot('body', history_expand_slot)
+                table.add_slot('body', body_slot)
 
                 if hat_schreibzugriff():
                     table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
@@ -298,7 +293,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 if show_history_col:
                     def on_load_history(e):
                         buchung_id = int(e.args)
-                        # Lazy load: aus Cache oder DB holen
                         if buchung_id not in history_cache:
                             raw = db.kassenbuch._buchung.get_history(buchung_id)
                             history_cache[buchung_id] = [
@@ -313,8 +307,6 @@ def create_kassenbuch_page(db: VereinsDB):
                                 for h in raw
                             ]
                         hist_rows = history_cache[buchung_id]
-
-                        # Zustand des Expanders in der Table-Row toggeln
                         for row in table.rows:
                             if row['id'] == buchung_id:
                                 row['_hist_open'] = not row.get('_hist_open', False)
