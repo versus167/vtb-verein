@@ -61,7 +61,8 @@ def erstelle_kassenbuch_pdf(
     :param bis_datum: Enddatum (ISO-Format)
     :param buchungen: Liste von Buchungs-Dicts mit Feldern:
                       buchungsdatum, belegnummer, buchungstext, kategorie,
-                      einnahme_cent, ausgabe_cent, ist_storniert
+                      einnahme_cent, ausgabe_cent, ist_storniert,
+                      exportiert_in_export_id (None = noch offen / nicht endgültig)
     :param anfangsbestand_cent: Bestand zum Beginn des Zeitraums (exkl. erster Tag)
     :param erstellt_von: Benutzername des Erstellers (für Footer)
     :return: PDF als bytes
@@ -113,17 +114,13 @@ def erstelle_kassenbuch_pdf(
         textColor=colors.HexColor('#888888'),
         alignment=TA_CENTER,
     )
-    style_right = ParagraphStyle(
-        'KBRight',
+    style_legend = ParagraphStyle(
+        'KBLegend',
         fontName='Helvetica',
-        fontSize=8,
-        alignment=TA_RIGHT,
-    )
-    style_bold_right = ParagraphStyle(
-        'KBBoldRight',
-        fontName='Helvetica-Bold',
-        fontSize=8,
-        alignment=TA_RIGHT,
+        fontSize=7.5,
+        textColor=colors.HexColor('#555555'),
+        spaceBefore=4,
+        spaceAfter=2,
     )
 
     # Farben
@@ -134,6 +131,9 @@ def erstelle_kassenbuch_pdf(
     COL_POSITIVE = colors.HexColor('#1a7a3c')
     COL_NEGATIVE = colors.HexColor('#b01020')
     COL_SUMMARY_BG = colors.HexColor('#eaf0fb')
+    # Endgültig-exportierte Buchungen: dezentes Blau
+    COL_ENDGUELTIG_BG = colors.HexColor('#e8f0fe')
+    COL_ENDGUELTIG_BELEG = colors.HexColor('#1a56a0')
 
     story = []
 
@@ -157,6 +157,7 @@ def erstelle_kassenbuch_pdf(
     # ------------------------------------------------------------------
     aktive_buchungen = [b for b in buchungen if not b.get('ist_storniert', False)]
     stornierte_buchungen = [b for b in buchungen if b.get('ist_storniert', False)]
+    endgueltige_buchungen = [b for b in aktive_buchungen if b.get('exportiert_in_export_id') is not None]
 
     summe_einnahmen = sum(b['einnahme_cent'] for b in aktive_buchungen)
     summe_ausgaben = sum(b['ausgabe_cent'] for b in aktive_buchungen)
@@ -170,8 +171,13 @@ def erstelle_kassenbuch_pdf(
         ['Summe Ausgaben', _fmt_euro(summe_ausgaben)],
         ['Endbestand', _fmt_euro(endbestand)],
     ]
+    extra_rows = 0
     if stornierte_buchungen:
         summary_data.append([f'Davon storniert ({len(stornierte_buchungen)} Buchung(en))', '–'])
+        extra_rows += 1
+    if endgueltige_buchungen:
+        summary_data.append([f'Davon endgültig / exportiert ({len(endgueltige_buchungen)} Buchung(en))', '–'])
+        extra_rows += 1
 
     summary_table = Table(
         summary_data,
@@ -190,7 +196,7 @@ def erstelle_kassenbuch_pdf(
         ('RIGHTPADDING', (0, 0), (-1, -1), 8),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('ROWBACKGROUNDS', (0, 0), (-1, -2), [COL_SUMMARY_BG, colors.white]),
+        ('ROWBACKGROUNDS', (0, 0), (-1, -1 - extra_rows), [COL_SUMMARY_BG, colors.white]),
         ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
         ('LINEABOVE', (0, 3), (-1, 3), 1, colors.HexColor('#4a90d9')),
     ]))
@@ -199,12 +205,14 @@ def erstelle_kassenbuch_pdf(
 
     # ------------------------------------------------------------------
     # Buchungstabelle
+    # 7 Spalten: Datum | Beleg | Buchungstext | Kategorie | Einnahme | Ausgabe | Bestand
     # ------------------------------------------------------------------
     story.append(Paragraph(f'Buchungen ({len(buchungen)} gesamt)', style_section))
 
-    col_widths = [1.5 * cm, 2.3 * cm, 1.5 * cm, 5.8 * cm, 2.8 * cm, 2.0 * cm, 2.0 * cm, 2.5 * cm]
+    # Spaltenbreiten: gesamt ~17 cm nutzbar (A4 - 4 cm Rand)
+    col_widths = [2.3 * cm, 2.5 * cm, 6.0 * cm, 2.8 * cm, 2.0 * cm, 2.0 * cm, 2.5 * cm]
 
-    header_row = ['#', 'Datum', 'Beleg', 'Buchungstext', 'Kategorie', 'Einnahme', 'Ausgabe', 'Bestand']
+    header_row = ['Datum', 'Beleg', 'Buchungstext', 'Kategorie', 'Einnahme', 'Ausgabe', 'Bestand']
 
     table_data = [header_row]
 
@@ -213,6 +221,8 @@ def erstelle_kassenbuch_pdf(
 
     for i, b in enumerate(buchungen, start=1):
         ist_storniert = b.get('ist_storniert', False)
+        ist_endgueltig = b.get('exportiert_in_export_id') is not None
+
         if not ist_storniert:
             laufend += b['einnahme_cent'] - b['ausgabe_cent']
 
@@ -220,25 +230,39 @@ def erstelle_kassenbuch_pdf(
         einnahme_str = _fmt_euro(b['einnahme_cent']) if b['einnahme_cent'] else ''
         ausgabe_str = _fmt_euro(b['ausgabe_cent']) if b['ausgabe_cent'] else ''
         datum_str = _fmt_datum(b['buchungsdatum'])
-        beleg_str = b.get('belegnummer') or ''
+        beleg_str = b.get('belegnummer') or '–'
         text_str = b['buchungstext']
-        if len(text_str) > 40:
-            text_str = text_str[:37] + '...'
+        if len(text_str) > 45:
+            text_str = text_str[:42] + '...'
         kat_str = b.get('kategorie', '')
 
-        row = [str(i), datum_str, beleg_str, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
-        table_data.append(row)
-
         data_row_idx = i  # 0 = header
+
         if ist_storniert:
+            row = [datum_str, beleg_str, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
+            table_data.append(row)
             row_styles.append(('TEXTCOLOR', (0, data_row_idx), (-1, data_row_idx), COL_STORNO))
+        elif ist_endgueltig:
+            # Endgültig exportierte Buchung: blaues Beleg-Kürzel + dezenter blauer Hintergrund
+            beleg_display = f'[✓] {beleg_str}'
+            row = [datum_str, beleg_display, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
+            table_data.append(row)
+            row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), COL_ENDGUELTIG_BG))
+            row_styles.append(('TEXTCOLOR', (1, data_row_idx), (1, data_row_idx), COL_ENDGUELTIG_BELEG))
+            row_styles.append(('FONTNAME', (1, data_row_idx), (1, data_row_idx), 'Helvetica-Bold'))
+            if b['einnahme_cent']:
+                row_styles.append(('TEXTCOLOR', (4, data_row_idx), (4, data_row_idx), COL_POSITIVE))
+            if b['ausgabe_cent']:
+                row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_NEGATIVE))
         else:
+            row = [datum_str, beleg_str, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
+            table_data.append(row)
             bg = COL_STRIPE if i % 2 == 0 else colors.white
             row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), bg))
             if b['einnahme_cent']:
-                row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_POSITIVE))
+                row_styles.append(('TEXTCOLOR', (4, data_row_idx), (4, data_row_idx), COL_POSITIVE))
             if b['ausgabe_cent']:
-                row_styles.append(('TEXTCOLOR', (6, data_row_idx), (6, data_row_idx), COL_NEGATIVE))
+                row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_NEGATIVE))
 
     buch_table = Table(table_data, colWidths=col_widths, repeatRows=1)
 
@@ -258,27 +282,35 @@ def erstelle_kassenbuch_pdf(
         ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
         ('LEFTPADDING', (0, 0), (-1, -1), 4),
         ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-        # Ausrichtung Zahlen
-        ('ALIGN', (5, 0), (7, -1), 'RIGHT'),
-        ('ALIGN', (0, 1), (0, -1), 'CENTER'),
+        # Ausrichtung Zahlen (Einnahme=4, Ausgabe=5, Bestand=6)
+        ('ALIGN', (4, 0), (6, -1), 'RIGHT'),
         # Gitter
         ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
         ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#1a3a5c')),
         # Letzter Saldo fett
-        ('FONTNAME', (7, 1), (7, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (6, 1), (6, -1), 'Helvetica-Bold'),
     ]
 
     buch_table.setStyle(TableStyle(base_style + row_styles))
     story.append(buch_table)
 
     # ------------------------------------------------------------------
-    # Footer (via onFirstPage / onLaterPages)
+    # Legende
+    # ------------------------------------------------------------------
+    story.append(Paragraph(
+        '[✓] Beleg = endgültig / bereits exportiert  ·  '
+        'Grau = storniert (wird im Endbestand nicht berücksichtigt)',
+        style_legend,
+    ))
+
+    # ------------------------------------------------------------------
+    # Footer
     # ------------------------------------------------------------------
     footer_text = (
         f'Kassenbuch "{kasse_name}" · Zeitraum: {_fmt_datum(von_datum)} – {_fmt_datum(bis_datum)} · '
         f'Erstellt: {erstellungsdatum}'
     )
-    story.append(Spacer(1, 0.5 * cm))
+    story.append(Spacer(1, 0.3 * cm))
     story.append(HRFlowable(width='100%', thickness=0.5, color=colors.HexColor('#cccccc'), spaceAfter=4))
     story.append(Paragraph(footer_text, style_footer))
 
