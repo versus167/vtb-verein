@@ -82,6 +82,40 @@ class KassenbuchExportRepository(BaseRepository):
             )
             return KassenbuchExport(**dict(cur.fetchone()))
 
+    def update_dateiname(self, export_id: int, dateiname: str) -> None:
+        """Aktualisiert den Dateinamen eines Exports (direkt nach create, um ID einzubauen)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE kassenbuch_exporte
+                SET dateiname = ?, version = version + 1
+                WHERE id = ?
+                """,
+                (dateiname, export_id),
+            )
+
+    def get_buchungen_fuer_export(
+        self, export_id: int
+    ) -> list[dict]:
+        """Gibt alle Buchungen zurück, die zu einem bestimmten Export gehören.
+
+        Wird für den Re-Export (erneuten Download) alter Exporte genutzt.
+        Stornierte Buchungen werden ebenfalls zurückgegeben, da sie zum
+        damaligen Zeitpunkt Teil des Exports waren.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, buchungsdatum, belegnummer, buchungstext, kategorie,
+                       einnahme_cent, ausgabe_cent
+                FROM kassenbuchungen
+                WHERE exportiert_in_export_id = ?
+                ORDER BY buchungsdatum ASC, id ASC
+                """,
+                (export_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
     def ist_buchung_gesperrt(self, buchung_id: int) -> bool:
         """Prüft ob eine Buchung bereits exportiert (und damit gesperrt) ist."""
         with self.cursor() as cur:

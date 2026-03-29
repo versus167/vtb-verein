@@ -528,7 +528,7 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_export_dialog():
-            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+            with ui.dialog() as dialog, ui.card().style('min-width: 520px'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
                 # Bis-Datum-Eingabe
@@ -586,7 +586,9 @@ def create_kassenbuch_page(db: VereinsDB):
                 error_label = ui.label('').classes('text-negative')
                 error_label.visible = False
 
+                # ----------------------------------------------------------
                 # Export-Verlauf
+                # ----------------------------------------------------------
                 ui.separator().classes('q-mt-md q-mb-sm')
                 ui.label('Bisherige Exporte').classes('text-subtitle2 text-grey-7')
                 exporte = db.kassenbuch._export.list_exporte(state['kasse'].id)
@@ -599,6 +601,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         {'name': 'anzahl', 'label': 'Buchungen', 'field': 'anzahl', 'align': 'right'},
                         {'name': 'exportiert_von', 'label': 'Von', 'field': 'exportiert_von', 'align': 'left'},
                         {'name': 'exportiert_am', 'label': 'Am', 'field': 'exportiert_am', 'align': 'left'},
+                        {'name': 'reexport', 'label': '', 'field': 'reexport', 'align': 'center'},
                     ]
                     verlauf_rows = []
                     for ex in exporte:
@@ -609,17 +612,44 @@ def create_kassenbuch_page(db: VereinsDB):
                             am_str = str(ex.exportiert_am)[:10]
                             am_str = DateInputHelper.format_date_display(am_str)
                         verlauf_rows.append({
+                            'export_id': ex.id,
                             'zeitraum': f'{von_str} – {bis_str}',
                             'dateiname': ex.dateiname,
                             'anzahl': ex.anzahl_buchungen,
                             'exportiert_von': ex.exportiert_von or '',
                             'exportiert_am': am_str,
                         })
-                    ui.table(
+
+                    verlauf_table = ui.table(
                         columns=verlauf_cols,
                         rows=verlauf_rows,
-                        row_key='dateiname'
+                        row_key='export_id'
                     ).classes('w-full').props('dense flat')
+
+                    verlauf_table.add_slot('body-cell-reexport', r'''
+                        <q-td :props="props">
+                            <q-btn flat dense round icon="download" size="sm" color="primary"
+                                   title="Erneut herunterladen"
+                                   @click="$parent.$emit('reexport', props.row.export_id)" />
+                        </q-td>
+                    ''')
+
+                    def on_reexport(e):
+                        export_id = int(e.args)
+                        try:
+                            dateiname, csv_bytes = db.kassenbuch.reexportiere_csv(
+                                export_id=export_id,
+                                user_id=current_user.id,
+                                is_admin=is_admin,
+                            )
+                            ui.notify(f'Download gestartet: {dateiname}', type='positive')
+                            ui.download(csv_bytes, dateiname)
+                        except KeinExportrechtError as e:
+                            ui.notify(str(e), type='negative')
+                        except Exception as e:
+                            ui.notify(f'Fehler beim Re-Export: {e}', type='negative')
+
+                    verlauf_table.on('reexport', on_reexport)
 
                 def do_export():
                     error_label.visible = False

@@ -219,35 +219,18 @@ class KassenbuchService:
     # Export (CSV, sperrend)
     # -----------------------------------
 
-    def exportiere_csv(
-        self,
-        kasse_id: int,
-        bis_datum: str,
-        exported_by: str,
-        user_id: int = None,
-        is_admin: bool = False,
-    ) -> tuple[str, bytes]:
-        """Exportiert alle nicht-exportierten Buchungen bis bis_datum als CSV.
+    @staticmethod
+    def _baue_dateiname(kasse_name: str, export_id: int, von_datum: str, bis_datum: str) -> str:
+        """Erstellt den standardisierten Dateinamen für einen CSV-Export.
 
-        Die exportierten Buchungen werden danach gesperrt.
-
-        Raises:
-            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
-
-        Returns:
-            Tuple (dateiname, csv_bytes)
+        Format: {kassename}-export-{id}-{von}-bis-{bis}.csv
+        Leerzeichen im Kassennamen werden durch Bindestriche ersetzt.
         """
-        if user_id is not None:
-            self._pruefe_exportrecht(kasse_id, user_id, is_admin)
+        name_slug = kasse_name.lower().replace(' ', '-')
+        return f"{name_slug}-export-{export_id}-{von_datum}-bis-{bis_datum}.csv"
 
-        buchungen = self._export.get_nicht_exportierte_buchungen(kasse_id, bis_datum)
-        if not buchungen:
-            raise ValueError("Keine exportierbaren Buchungen im angegebenen Zeitraum.")
-
-        kasse = self._kasse.get_kasse(kasse_id)
-        dateiname = f"kasse-{kasse.name.lower().replace(' ', '-')}-bis-{bis_datum}.csv"
-
-        # CSV erstellen
+    def _baue_csv_bytes(self, buchungen: list[dict]) -> bytes:
+        """Erstellt CSV-Bytes aus einer Liste von Buchungs-Dicts."""
         output = io.StringIO()
         writer = csv.DictWriter(
             output,
@@ -264,25 +247,91 @@ class KassenbuchService:
                 "Einnahme (EUR)": f"{b['einnahme_cent'] / 100:.2f}" if b["einnahme_cent"] else "",
                 "Ausgabe (EUR)": f"{b['ausgabe_cent'] / 100:.2f}" if b["ausgabe_cent"] else "",
             })
+        return output.getvalue().encode("utf-8-sig")  # BOM für Excel
 
-        csv_bytes = output.getvalue().encode("utf-8-sig")  # BOM für Excel
+    def exportiere_csv(
+        self,
+        kasse_id: int,
+        bis_datum: str,
+        exported_by: str,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> tuple[str, bytes]:
+        """Exportiert alle nicht-exportierten Buchungen bis bis_datum als CSV.
 
-        # Export-Datensatz anlegen
+        Die exportierten Buchungen werden danach gesperrt.
+        Der Dateiname enthält Kassenname, Export-ID und Datumsbereich.
+
+        Raises:
+            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
+            ValueError: Wenn keine exportierbaren Buchungen vorhanden.
+
+        Returns:
+            Tuple (dateiname, csv_bytes)
+        """
+        if user_id is not None:
+            self._pruefe_exportrecht(kasse_id, user_id, is_admin)
+
+        buchungen = self._export.get_nicht_exportierte_buchungen(kasse_id, bis_datum)
+        if not buchungen:
+            raise ValueError("Keine exportierbaren Buchungen im angegebenen Zeitraum.")
+
+        kasse = self._kasse.get_kasse(kasse_id)
         von_datum = buchungen[0]["buchungsdatum"]
+
+        # Vorläufiger Dateiname (Export-ID noch unbekannt)
         export = KassenbuchExport(
             kasse_id=kasse_id,
             zeitraum_von=von_datum,
             zeitraum_bis=bis_datum,
-            dateiname=dateiname,
+            dateiname="pending",
             anzahl_buchungen=len(buchungen),
         )
         gespeicherter_export = self._export.create_export(export, exported_by)
+
+        # Dateiname mit echter Export-ID setzen
+        dateiname = self._baue_dateiname(
+            kasse.name, gespeicherter_export.id, von_datum, bis_datum
+        )
+        self._export.update_dateiname(gespeicherter_export.id, dateiname)
+        gespeicherter_export.dateiname = dateiname
+
+        # CSV erstellen
+        csv_bytes = self._baue_csv_bytes(buchungen)
 
         # Buchungen sperren
         buchung_ids = [b["id"] for b in buchungen]
         self._buchung.mark_buchungen_exportiert(buchung_ids, gespeicherter_export.id)
 
         return dateiname, csv_bytes
+
+    def reexportiere_csv(
+        self,
+        export_id: int,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> tuple[str, bytes]:
+        """Erstellt den CSV-Download eines bereits abgeschlossenen Exports erneut.
+
+        Es werden keine neuen Buchungen gesperrt und kein neuer Export-Datensatz
+        angelegt. Der Dateiname des ursprünglichen Exports wird verwendet.
+
+        Raises:
+            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
+            KeyError: Wenn der Export nicht gefunden wurde.
+
+        Returns:
+            Tuple (dateiname, csv_bytes)
+        """
+        gespeicherter_export = self._export.get_export(export_id)
+
+        if user_id is not None:
+            self._pruefe_exportrecht(gespeicherter_export.kasse_id, user_id, is_admin)
+
+        buchungen = self._export.get_buchungen_fuer_export(export_id)
+        csv_bytes = self._baue_csv_bytes(buchungen)
+
+        return gespeicherter_export.dateiname, csv_bytes
 
     # -----------------------------------
     # Kassenbericht-Daten (für PDF)
