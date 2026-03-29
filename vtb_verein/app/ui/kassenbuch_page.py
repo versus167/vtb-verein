@@ -786,6 +786,7 @@ def create_kassenbuch_page(db: VereinsDB):
                                 'einnahme_cent': b.einnahme_cent,
                                 'ausgabe_cent': b.ausgabe_cent,
                                 'ist_storniert': b.ist_storniert,
+                                'exportiert_in_export_id': b.exportiert_in_export_id,
                             }
                             for b in buchungen_raw
                         ]
