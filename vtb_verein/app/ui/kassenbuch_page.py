@@ -15,6 +15,10 @@ from app.services.kassenbuch_service import (
     BuchungGesperrtError, NegativerBestandError,
     KeinSchreibzugriffError, KeinExportrechtError,
 )
+from app.services.kassenbuch_pdf_service import (
+    erstelle_kassenbuch_pdf,
+    letzter_vollstaendiger_monat,
+)
 
 
 KATEGORIEN = [
@@ -203,6 +207,7 @@ def create_kassenbuch_page(db: VereinsDB):
 
                     if hat_exportrecht():
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
+                        ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # ---------- Buchungstabelle ----------
                 columns = [
@@ -220,8 +225,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 show_history_col = state['show_history']
                 table = ui.table(columns=columns, rows=rows, row_key='id').classes('w-full')
 
-                # Der NiceGUI body-Slot bekommt 'props' als einzelnes Objekt pro Zeile
-                # (NICHT props_list). History-Zeilen direkt nach </q-tr> einfügen.
                 body_slot = r'''
                     <q-tr :props="props"
                           :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
@@ -682,6 +685,139 @@ def create_kassenbuch_page(db: VereinsDB):
                 with ui.row().classes('w-full q-mt-md'):
                     ui.button('Abbrechen', on_click=dialog.close)
                     ui.button('Exportieren', on_click=do_export).props('color=primary')
+
+            dialog.open()
+
+        # ------------------------------------------------------------------
+        # Dialog: PDF-Bericht
+        # ------------------------------------------------------------------
+
+        def show_pdf_dialog():
+            """Dialog für PDF-Bericht. Vorbelegt mit letztem kompletten Monat."""
+            von_default, bis_default = letzter_vollstaendiger_monat()
+
+            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+                ui.label('PDF-Bericht').classes('text-h6 q-mb-md')
+
+                ui.label(
+                    'Standardmäßig ist der letzte komplette Monat vorausgewählt. '
+                    'Der Zeitraum kann beliebig angepasst werden.'
+                ).classes('text-caption text-grey-7 q-mb-sm')
+
+                pdf_state = {
+                    'von': von_default,
+                    'bis': bis_default,
+                }
+
+                with ui.row().classes('q-gutter-sm'):
+                    von_input = ui.input(
+                        'Von *',
+                        value=DateInputHelper.format_date_display(von_default),
+                        placeholder='TT.MM.JJJJ'
+                    ).classes('w-36')
+
+                    bis_input = ui.input(
+                        'Bis *',
+                        value=DateInputHelper.format_date_display(bis_default),
+                        placeholder='TT.MM.JJJJ'
+                    ).classes('w-36')
+
+                def on_von_blur(e):
+                    parsed = DateInputHelper.parse_date(von_input.value)
+                    if parsed:
+                        pdf_state['von'] = parsed
+                        von_input.value = DateInputHelper.format_date_display(parsed)
+                        von_input.error = None
+                    else:
+                        von_input.error = 'Ungültiges Datum'
+
+                def on_bis_blur(e):
+                    parsed = DateInputHelper.parse_date(bis_input.value)
+                    if parsed:
+                        pdf_state['bis'] = parsed
+                        bis_input.value = DateInputHelper.format_date_display(parsed)
+                        bis_input.error = None
+                    else:
+                        bis_input.error = 'Ungültiges Datum'
+
+                von_input.on('blur', on_von_blur)
+                bis_input.on('blur', on_bis_blur)
+
+                error_label = ui.label('').classes('text-negative q-mt-sm')
+                error_label.visible = False
+
+                def do_pdf():
+                    error_label.visible = False
+
+                    if not pdf_state['von'] or not pdf_state['bis']:
+                        error_label.text = 'Bitte Von- und Bis-Datum eingeben'
+                        error_label.visible = True
+                        return
+
+                    if pdf_state['von'] > pdf_state['bis']:
+                        error_label.text = 'Von-Datum muss vor dem Bis-Datum liegen'
+                        error_label.visible = True
+                        return
+
+                    try:
+                        buchungen_raw = db.kassenbuch._buchung.list_kassenbuchungen(
+                            kasse_id=state['kasse'].id,
+                            von_datum=pdf_state['von'],
+                            bis_datum=pdf_state['bis'],
+                            include_storniert=True,
+                        )
+
+                        # Anfangsbestand: Bestand am Tag vor dem Von-Datum
+                        from datetime import timedelta
+                        tag_vor_von = str(
+                            date.fromisoformat(pdf_state['von']) - timedelta(days=1)
+                        )
+                        anfangsbestand = db.kassen.get_bestand_zum_datum_cent(
+                            state['kasse'].id,
+                            tag_vor_von,
+                        )
+
+                        buchungen_dicts = [
+                            {
+                                'buchungsdatum': b.buchungsdatum,
+                                'belegnummer': b.belegnummer,
+                                'buchungstext': b.buchungstext,
+                                'kategorie': b.kategorie,
+                                'einnahme_cent': b.einnahme_cent,
+                                'ausgabe_cent': b.ausgabe_cent,
+                                'ist_storniert': b.ist_storniert,
+                            }
+                            for b in buchungen_raw
+                        ]
+
+                        pdf_bytes = erstelle_kassenbuch_pdf(
+                            kasse_name=state['kasse'].name,
+                            von_datum=pdf_state['von'],
+                            bis_datum=pdf_state['bis'],
+                            buchungen=buchungen_dicts,
+                            anfangsbestand_cent=anfangsbestand,
+                            erstellt_von=current_user.username,
+                        )
+
+                        from datetime import date as date_cls
+                        von_fmt = pdf_state['von'].replace('-', '')
+                        bis_fmt = pdf_state['bis'].replace('-', '')
+                        dateiname = (
+                            f"kassenbuch_{state['kasse'].name.replace(' ', '_')}"
+                            f"_{von_fmt}_{bis_fmt}.pdf"
+                        )
+
+                        ui.notify(f'PDF erstellt: {dateiname}', type='positive')
+                        ui.download(pdf_bytes, dateiname)
+                        dialog.close()
+
+                    except Exception as e:
+                        error_label.text = f'Fehler beim PDF-Export: {e}'
+                        error_label.visible = True
+
+                with ui.row().classes('w-full q-mt-md'):
+                    ui.button('Abbrechen', on_click=dialog.close)
+                    ui.button('PDF erstellen', on_click=do_pdf, icon='picture_as_pdf').props('color=deep-orange')
 
             dialog.open()
 
