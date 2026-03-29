@@ -528,13 +528,10 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_export_dialog():
-            with ui.dialog() as dialog, ui.card().style('min-width: 400px'):
+            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
-                ui.label(
-                    'Exportiert alle noch nicht exportierten Buchungen bis zum gewählten Datum.'
-                ).classes('text-caption q-mb-md')
-
+                # Bis-Datum-Eingabe
                 bis_input = ui.input(
                     'Bis-Datum *',
                     value=DateInputHelper.format_date_display(date.today().isoformat()),
@@ -542,18 +539,88 @@ def create_kassenbuch_page(db: VereinsDB):
                 ).classes('w-full')
                 bis_state = {'value': date.today().isoformat()}
 
+                # Vorschau-Bereich
+                vorschau_container = ui.column().classes('w-full q-mt-sm q-mb-sm')
+
+                def lade_vorschau():
+                    vorschau_container.clear()
+                    with vorschau_container:
+                        if not bis_state['value']:
+                            return
+                        buchungen = db.kassenbuch._export.get_nicht_exportierte_buchungen(
+                            state['kasse'].id, bis_state['value']
+                        )
+                        if not buchungen:
+                            ui.label('Keine exportierbaren Buchungen in diesem Zeitraum.').classes(
+                                'text-caption text-grey'
+                            )
+                            return
+                        summe_einnahmen = sum(b['einnahme_cent'] for b in buchungen)
+                        summe_ausgaben = sum(b['ausgabe_cent'] for b in buchungen)
+                        with ui.card().classes('bg-blue-1 q-pa-sm w-full'):
+                            ui.label(f'📋 {len(buchungen)} Buchung(en) werden exportiert').classes(
+                                'text-caption text-weight-bold'
+                            )
+                            with ui.row().classes('q-gutter-md q-mt-xs'):
+                                ui.label(f'Einnahmen: {fmt_euro(summe_einnahmen)}').classes(
+                                    'text-caption text-positive'
+                                )
+                                ui.label(f'Ausgaben: {fmt_euro(summe_ausgaben)}').classes(
+                                    'text-caption text-negative'
+                                )
+
                 def on_bis_blur(e):
                     parsed = DateInputHelper.parse_date(bis_input.value)
                     if parsed:
                         bis_state['value'] = parsed
                         bis_input.value = DateInputHelper.format_date_display(parsed)
                         bis_input.error = None
+                        lade_vorschau()
                     else:
                         bis_input.error = 'Ungültiges Datum'
                 bis_input.on('blur', on_bis_blur)
 
+                # Initiale Vorschau laden
+                lade_vorschau()
+
                 error_label = ui.label('').classes('text-negative')
                 error_label.visible = False
+
+                # Export-Verlauf
+                ui.separator().classes('q-mt-md q-mb-sm')
+                ui.label('Bisherige Exporte').classes('text-subtitle2 text-grey-7')
+                exporte = db.kassenbuch._export.list_exporte(state['kasse'].id)
+                if not exporte:
+                    ui.label('Noch keine Exporte für diese Kasse.').classes('text-caption text-grey')
+                else:
+                    verlauf_cols = [
+                        {'name': 'zeitraum', 'label': 'Zeitraum', 'field': 'zeitraum', 'align': 'left'},
+                        {'name': 'dateiname', 'label': 'Dateiname', 'field': 'dateiname', 'align': 'left'},
+                        {'name': 'anzahl', 'label': 'Buchungen', 'field': 'anzahl', 'align': 'right'},
+                        {'name': 'exportiert_von', 'label': 'Von', 'field': 'exportiert_von', 'align': 'left'},
+                        {'name': 'exportiert_am', 'label': 'Am', 'field': 'exportiert_am', 'align': 'left'},
+                    ]
+                    verlauf_rows = []
+                    for ex in exporte:
+                        von_str = DateInputHelper.format_date_display(ex.zeitraum_von) if ex.zeitraum_von else '?'
+                        bis_str = DateInputHelper.format_date_display(ex.zeitraum_bis) if ex.zeitraum_bis else '?'
+                        am_str = ''
+                        if ex.exportiert_am:
+                            # exportiert_am ist ein ISO-Datetime-String; nur Datum anzeigen
+                            am_str = str(ex.exportiert_am)[:10]
+                            am_str = DateInputHelper.format_date_display(am_str)
+                        verlauf_rows.append({
+                            'zeitraum': f'{von_str} – {bis_str}',
+                            'dateiname': ex.dateiname,
+                            'anzahl': ex.anzahl_buchungen,
+                            'exportiert_von': ex.exportiert_von or '',
+                            'exportiert_am': am_str,
+                        })
+                    ui.table(
+                        columns=verlauf_cols,
+                        rows=verlauf_rows,
+                        row_key='dateiname'
+                    ).classes('w-full').props('dense flat')
 
                 def do_export():
                     error_label.visible = False
@@ -569,9 +636,9 @@ def create_kassenbuch_page(db: VereinsDB):
                             user_id=current_user.id,
                             is_admin=is_admin,
                         )
+                        ui.notify(f'Export erstellt: {dateiname}', type='positive')
                         dialog.close()
                         render_content()
-                        ui.notify(f'Export erstellt: {dateiname}', type='positive')
                         ui.download(csv_bytes, dateiname)
                     except ValueError as e:
                         error_label.text = str(e)
