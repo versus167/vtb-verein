@@ -707,6 +707,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 pdf_state = {
                     'von': von_default,
                     'bis': bis_default,
+                    'include_storniert': False,
                 }
 
                 with ui.row().classes('q-gutter-sm'):
@@ -743,6 +744,15 @@ def create_kassenbuch_page(db: VereinsDB):
                 von_input.on('blur', on_von_blur)
                 bis_input.on('blur', on_bis_blur)
 
+                def on_storniert_pdf_change(e):
+                    pdf_state['include_storniert'] = e.value
+
+                ui.checkbox(
+                    'Stornierte Buchungen mit ausgeben',
+                    value=False,
+                    on_change=on_storniert_pdf_change,
+                ).classes('q-mt-sm')
+
                 error_label = ui.label('').classes('text-negative q-mt-sm')
                 error_label.visible = False
 
@@ -764,7 +774,7 @@ def create_kassenbuch_page(db: VereinsDB):
                             kasse_id=state['kasse'].id,
                             von_datum=pdf_state['von'],
                             bis_datum=pdf_state['bis'],
-                            include_storniert=True,
+                            include_storniert=pdf_state['include_storniert'],
                         )
 
                         # Anfangsbestand: Bestand am Tag vor dem Von-Datum
