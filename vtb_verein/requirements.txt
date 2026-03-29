@@ -9,5 +9,5 @@ bcrypt>=4.0.0
 # Optional: Env Loading
 python-dotenv>=1.0.0
 
-# für PF-Report
+# für PDF-Report
 reportlab>=4.0
