@@ -19,18 +19,15 @@
 ## 📊 Kassenbuch - Phase 3 (noch offen)
 
 ### Kassenbuch-Page Ergänzungen
-- [ ] **Export-Dialog verbessern**
-  - Vorschau: Anzahl betroffener Buchungen + Betragssumme vor dem Export
-  - Export-Verlauf anzeigen (Liste vergangener Exporte der Kasse)
 
 - [ ] **PDF-Kassenbericht**
-  - Flexibler Zeitraum (Von/Bis), unabhängig vom CSV-Export
-  - Enthält: Kassename, Zeitraum, Erstellungsdatum, Anfangsbestand
-  - Tabellarische Buchungsübersicht mit laufendem Bestand je Zeile
-  - Endbestand und Summenspalten (Einnahmen/Ausgaben gesamt)
-  - Optional: Summen nach Kategorie
+ 
   - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
-  - Download als PDF (z.B. via `reportlab` oder `weasyprint`)
+  - Kassenbuch PDF – endgültig-Markierung funktioniert nicht
+    PDF-Service (kassenbuch_pdf_service.py) ist korrekt implementiert – prüft exportiert_in_export_id im Buchungs-Dict
+    Bug-Vermutung: In kassenbuch_page.py wird beim Aufbau der Buchungsliste für den PDF-Service der Key exportiert_in_export_id vermutlich nicht mit übergeben
+    Fix: Im Dict-Aufbau (wo Buchungsobjekte → Dicts umgewandelt werden) prüfen ob 'exportiert_in_export_id': b.exportiert_in_export_id enthalten ist
+    Test: Buchung mit Export-ID im Zeitraum → im PDF muss [✓] vor Belegnummer + hellblauer Hintergrund erscheinen
 
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
