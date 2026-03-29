@@ -18,16 +18,18 @@
 
 ## 📊 Kassenbuch - Phase 3 (noch offen)
 
-### Kassenbuch-Page Ergänzungen
+### Kassenbuch Ergänzungen
 
-- [ ] **PDF-Kassenbericht**
- 
-  - Optional: Stornierte Buchungen einblendbar (mit Vermerk)
-  - Kassenbuch PDF – endgültig-Markierung funktioniert nicht
-    PDF-Service (kassenbuch_pdf_service.py) ist korrekt implementiert – prüft exportiert_in_export_id im Buchungs-Dict
-    Bug-Vermutung: In kassenbuch_page.py wird beim Aufbau der Buchungsliste für den PDF-Service der Key exportiert_in_export_id vermutlich nicht mit übergeben
-    Fix: Im Dict-Aufbau (wo Buchungsobjekte → Dicts umgewandelt werden) prüfen ob 'exportiert_in_export_id': b.exportiert_in_export_id enthalten ist
-    Test: Buchung mit Export-ID im Zeitraum → im PDF muss [✓] vor Belegnummer + hellblauer Hintergrund erscheinen
+
+  - - [ ] **Datumsvalidierung bei Buchungseingabe**
+  - Minimum-Datum = größtes `bis_datum` aller bisherigen Exporte dieser Kasse (falls kein Export: kein Minimum)
+  - Maximum-Datum = heute (`date.today()`)
+  - Regel: `buchung.datum >= letzter_export.bis_datum` und `<= heute`
+  - Service-Layer: neue Exception `DatumAusserhalbBereichError(min_datum, max_datum)` in `KassenbuchService`
+  - Validierung in `create_buchung()` und `update_buchung()` via `_validate_datum()`
+  - UI: Grenzen beim Dialog-Öffnen laden; live-Feedback im `on_datum_change`-Handler
+  - UI: roter Fehlerhinweis unterhalb des Datum-Inputs mit Bereich-Angabe
+  - Gilt für Anlegen und Bearbeiten von Buchungen
 
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
