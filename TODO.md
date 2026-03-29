@@ -219,6 +219,11 @@
 - [x] Rolle `special` entfernt; bestehende `special`-User erhalten `readonly`-Defaults
 - [x] Migration befüllt Default-Permissions für alle bestehenden Users
 
+### Phase 3 - Kassenbuch
+- [x] Kassenbuch-Grundstruktur (Buchungen, Kassenabschluss, Export)
+- [x] Export-Dateiname nach Schema: `{kassename}-export-{id}-{von}-bis-{bis}.csv`
+- [x] Re-Export alter Exporte direkt aus dem Exportverlauf-Dialog
+
 ---
 
 **Legende:**
