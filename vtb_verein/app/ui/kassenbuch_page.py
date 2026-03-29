@@ -507,15 +507,15 @@ def create_kassenbuch_page(db: VereinsDB):
                             user_id=current_user.id,
                             is_admin=is_admin,
                         )
-                        dialog.close()
                         ui.notify('Buchung storniert', type='warning')
+                        dialog.close()
                         render_content()
                     except (BuchungGesperrtError, KeinSchreibzugriffError) as e:
-                        dialog.close()
                         ui.notify(str(e), type='negative')
-                    except Exception as e:
                         dialog.close()
+                    except Exception as e:
                         ui.notify(f'Fehler: {e}', type='negative')
+                        dialog.close()
 
                 with ui.row().classes('w-full q-mt-md'):
                     ui.button('Abbrechen', on_click=dialog.close).props('color=secondary')
@@ -606,7 +606,6 @@ def create_kassenbuch_page(db: VereinsDB):
                         bis_str = DateInputHelper.format_date_display(ex.zeitraum_bis) if ex.zeitraum_bis else '?'
                         am_str = ''
                         if ex.exportiert_am:
-                            # exportiert_am ist ein ISO-Datetime-String; nur Datum anzeigen
                             am_str = str(ex.exportiert_am)[:10]
                             am_str = DateInputHelper.format_date_display(am_str)
                         verlauf_rows.append({
@@ -637,9 +636,9 @@ def create_kassenbuch_page(db: VereinsDB):
                             is_admin=is_admin,
                         )
                         ui.notify(f'Export erstellt: {dateiname}', type='positive')
+                        ui.download(csv_bytes, dateiname)
                         dialog.close()
                         render_content()
-                        ui.download(csv_bytes, dateiname)
                     except ValueError as e:
                         error_label.text = str(e)
                         error_label.visible = True
