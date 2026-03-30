@@ -14,6 +14,8 @@ from app.ui.permission_management import create_permission_management_page
 from app.ui.user_profile import create_user_profile_page
 from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
+from app.ui.kasse_management import create_kasse_management_page
+from app.ui.kassenbuch_page import create_kassenbuch_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
@@ -50,13 +52,15 @@ create_permission_management_page(db)
 create_user_profile_page(db)
 create_abteilung_management_page(db)
 create_mitglied_management_page(db)
+create_kasse_management_page(db)
+create_kassenbuch_page(db)
 
 # Hauptseite (Dashboard)
 @ui.page('/')
 @require_auth()
 def main_page():
     set_current_path('/')
-    create_navigation()
+    create_navigation(db)
     user = AuthHelper.get_current_user()
 
     with ui.column().classes('q-ma-md'):
@@ -82,6 +86,24 @@ def main_page():
                         ui.label('Mitglieder').classes('text-h6 q-mt-sm')
                         ui.label('Mitglieder verwalten').classes('text-caption text-grey')
 
+            # Kassenbuch (berechtigte User und Admins)
+            is_admin = user.can_manage_users()
+            kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=is_admin)
+            if kassen:
+                with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/kassenbuch')):
+                    with ui.card_section().classes('text-center'):
+                        ui.icon('menu_book', size='3rem').classes('text-primary')
+                        ui.label('Kassenbuch').classes('text-h6 q-mt-sm')
+                        ui.label('Buchungen verwalten').classes('text-caption text-grey')
+
+            # Kassenverwaltung (Admin)
+            if user.can_manage_users():
+                with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/kassen')):
+                    with ui.card_section().classes('text-center'):
+                        ui.icon('account_balance_wallet', size='3rem').classes('text-primary')
+                        ui.label('Kassenverwaltung').classes('text-h6 q-mt-sm')
+                        ui.label('Kassen und Berechtigungen').classes('text-caption text-grey')
+
             # Benutzerverwaltung
             if user.can_manage_users():
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/users')):
@@ -90,25 +112,24 @@ def main_page():
                         ui.label('Benutzerverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Benutzer und Rechte verwalten').classes('text-caption text-grey')
 
-            # Platzhalter für zukünftige Module
+            # Platzhalter Beiträge
             if user.can_edit():
                 with ui.card().classes('cursor-pointer').style('min-width: 200px; opacity: 0.5'):
                     with ui.card_section().classes('text-center'):
                         ui.icon('payments', size='3rem').classes('text-grey')
                         ui.label('Beiträge').classes('text-h6 q-mt-sm text-grey')
-                        ui.label('Bald verf\u00fcgbar').classes('text-caption text-grey')
+                        ui.label('Bald verfügbar').classes('text-caption text-grey')
 
 # Unauthorized-Seite
 @ui.page('/unauthorized')
 def unauthorized():
     with ui.card().classes('absolute-center'):
         ui.label('Keine Berechtigung').classes('text-h5 text-negative')
-        ui.label('Sie haben keine Berechtigung f\u00fcr diese Seite.')
-        ui.button('Zur\u00fcck zur Startseite', on_click=lambda: ui.navigate.to('/')).props('color=primary')
+        ui.label('Sie haben keine Berechtigung für diese Seite.')
+        ui.button('Zurück zur Startseite', on_click=lambda: ui.navigate.to('/')).props('color=primary')
 
 # Multiprocessing-kompatible Main-Guard (wie von NiceGUI empfohlen)
 if __name__ in {'__main__', '__mp_main__'}:
-    # Starte die Anwendung
     ui.run(
         storage_secret=STORAGE_SECRET,
         host=HOST,

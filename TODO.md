@@ -16,18 +16,26 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
-### Permission-Matrix (UI)
-- [ ] Permission-Verwaltung in der Benutzerverwaltungs-UI
-  - Checkboxen pro Permission pro User
-  - Anzeige der aktuellen Permissions
-  - Speichern über `PermissionRepository.set_permissions_for_user()`
-  - Hinweis wenn User keine Permissions hat
+## 📊 Kassenbuch - Phase 3 (noch offen)
+
+### Kassenbuch Ergänzungen
+
+
+  - - [ ] **Datumsvalidierung bei Buchungseingabe**
+  - Minimum-Datum = größtes `bis_datum` aller bisherigen Exporte dieser Kasse (falls kein Export: kein Minimum)
+  - Maximum-Datum = heute (`date.today()`)
+  - Regel: `buchung.datum >= letzter_export.bis_datum` und `<= heute`
+  - Service-Layer: neue Exception `DatumAusserhalbBereichError(min_datum, max_datum)` in `KassenbuchService`
+  - Validierung in `create_buchung()` und `update_buchung()` via `_validate_datum()`
+  - UI: Grenzen beim Dialog-Öffnen laden; live-Feedback im `on_datum_change`-Handler
+  - UI: roter Fehlerhinweis unterhalb des Datum-Inputs mit Bereich-Angabe
+  - Gilt für Anlegen und Bearbeiten von Buchungen
 
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
 - [ ] Gelöschte Mitglieder anzeigen/wiederherstellen
-  - Eigene Ansicht "Gelöschte Mitglieder"
+  - Eigene Ansicht „Gelöschte Mitglieder"
   - Wiederherstellungs-Button
   - Konsistent mit Abteilungs-Wiederherstellung
 
@@ -35,7 +43,7 @@
   - Nach Status (aktiv, passiv, ausgetreten)
   - Nach Abteilung
   - Nach Zahlungsart
-  - Nach Austrittsdatum (z.B. "Letzte 6 Monate")
+  - Nach Austrittsdatum (z.B. „Letzten 6 Monate")
 
 - [ ] Suchfunktion für Mitglieder
   - Volltextsuche: Name, Mitgliedsnummer, E-Mail
@@ -218,6 +226,95 @@
 - [x] `require_role()` als Deprecated-Shim erhalten (Backward Compat.)
 - [x] Rolle `special` entfernt; bestehende `special`-User erhalten `readonly`-Defaults
 - [x] Migration befüllt Default-Permissions für alle bestehenden Users
+- [x] Permission-Verwaltung in der Benutzerverwaltungs-UI (`permission_management.py`)
+  - [x] Checkbox-Matrix gruppiert nach Ressource
+  - [x] Visueller Hinweis bei Abweichung vom Rollen-Standard (orange)
+  - [x] „Auf Rollen-Standard zurücksetzen"-Button
+  - [x] Schutz: letzter Admin kann USERS_MANAGE nicht verlieren
+  - [x] Kassenbuch-Gruppe vorläufig integriert (in Phase 3.2 wieder entfernt)
+
+### Phase 3.0 - Kassenbuch Grundstruktur (Schema v6)
+- [x] DB-Schema: `kassen`, `kassenbuchungen`, `kassenbuch_exporte`
+- [x] History-Tabellen für alle drei Kassenbuch-Tabellen
+- [x] INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+- [x] Datenmodelle: `Kasse`, `Kassenbuchung`, `KassenbuchExport` (in `models/kasse.py`)
+- [x] `KasseRepository` (CRUD, Soft-Delete, `get_bestand_cent()`, `get_bestand_zum_datum_cent()`)
+- [x] `KassenbuchungRepository` (CRUD, Stornierung, `get_naechste_belegnummer()`, `mark_buchungen_exportiert()`)
+- [x] `KassenbuchExportRepository` (Create, `get_nicht_exportierte_buchungen()`, `ist_buchung_gesperrt()`)
+- [x] Beträge durchgängig in Cent (Integer) – kein Floating Point
+- [x] Optimistic Locking (version-Feld) in allen Repositories
+- [x] `get_bestand_zum_datum_cent()` für Periodenberechnung im Export
+
+### Phase 3.1 - Kassenbuch Service-Layer & Facade (Schema v7)
+- [x] `KassenbuchService` in `kassenbuch_service.py`
+  - [x] Buchungssperre (Export-Schutz) via `BuchungGesperrtError`
+  - [x] Bestandsprüfung (kein negativer Bestand) via `NegativerBestandError`
+  - [x] Belegnummer-Generierung automatisch beim Anlegen
+  - [x] Atomarer CSV-Export: Buchungen holen → CSV → Export-Datensatz → Buchungen sperren
+  - [x] `get_kassenbericht_daten()` für PDF-Bericht
+- [x] Kassenbuch-Repositories in `datastore.py` integriert
+- [x] `db.kassenbuch`-Property auf `KassenbuchService`
+- [x] Kasse-Permissions in `permission.py` vorläufig ergänzt (in 3.2 rückgebaut)
+- [x] Migration `_migrate_6_to_7()`: vorläufige Kasse-Permissions für bestehende User
+
+### Phase 3.2 - Kassenspezifische Berechtigungen (Schema v8)
+- [x] Schema-Migration v7 → v8
+  - [x] Neue Tabelle `kasse_berechtigungen` (darf_lesen / darf_schreiben / darf_exportieren, Soft-Delete, Versionierung)
+  - [x] Neue Tabelle `kasse_berechtigungen_history` + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+  - [x] Globale `kasse.*`-Permissions per Soft-Delete aus `user_permissions` entfernt
+  - [x] Admins erhalten automatisch alle Rechte für bestehende Kassen
+- [x] `KasseBerechtigungRepository` in `kasse_berechtigung_repository.py`
+  - [x] `get_berechtigung()`, `get_berechtigungen_fuer_kasse()`, `get_kassen_ids_fuer_user()`
+  - [x] `hat_lesezugriff()`, `hat_schreibzugriff()`, `hat_exportrecht()`
+  - [x] `set_berechtigung()` (anlegen + aktualisieren + reaktivieren)
+  - [x] `revoke_berechtigung()`, `revoke_alle_berechtigungen_fuer_kasse()`
+- [x] `kasse.*`-Konstanten und `defaults_for_role()`-Einträge aus `permission.py` entfernt
+- [x] `KasseBerechtigungRepository` in `datastore.py` eingebunden (`db.kasse_berechtigungen`)
+- [x] Kassenbuch-Gruppe aus `permission_management.py` entfernt; Info-Hinweis ergänzt
+
+### Phase 3.3 - Kassenverwaltungs-UI (Admin)
+- [x] `kasse_management.py` erstellt
+  - [x] Route `/kassen`: Liste aller Kassen als Cards (Name, Anfangsbestand, Abteilung)
+  - [x] Kasse anlegen (Dialog mit Name, Beschreibung, Anfangsbestand, Abteilung)
+  - [x] Beim Anlegen: Admins automatisch mit allen Rechten eintragen
+  - [x] Kasse bearbeiten (gleicher Dialog, vorausgefüllt)
+  - [x] Kasse löschen (Bestätigungsdialog, Soft-Delete + Berechtigungen entziehen)
+  - [x] Route `/kassen/{id}/berechtigungen`: Berechtigungsmatrix pro Kasse
+  - [x] Berechtigungsmatrix: Nicht-Admin-User × Lesen/Schreiben/Exportieren-Checkboxen
+  - [x] Logik: Schreiben aktivieren setzt Lesen automatisch
+  - [x] Info-Hinweis: Admins haben immer vollen Zugriff
+- [x] `navigation.py`: Menüpunkt „Kassen" (nur Admins, Icon `account_balance_wallet`)
+- [x] `main.py`: `create_kasse_management_page(db)` registriert; Dashboard-Card ergänzt
+
+### Phase 3.4 - Berechtigungs-Integration & Kassenbuch-Page
+- [x] `KassenbuchService`: kassenspezifische Berechtigungsprüfung integriert
+  - [x] `get_kassen_fuer_user(user_id, is_admin)` – nur berechtigte Kassen
+  - [x] `_pruefe_lesezugriff()`, `_pruefe_schreibzugriff()`, `_pruefe_exportrecht()`
+  - [x] Custom Exceptions: `KeinLesezugriffError`, `KeinSchreibzugriffError`, `KeinExportrechtError`
+  - [x] Admin-Bypass in allen Prüfmethoden
+- [x] `KasseBerechtigungRepository` an `KassenbuchService` übergeben
+- [x] `kassenbuch_page.py` erstellt (Route `/kassenbuch`)
+  - [x] Kassen-Auswahl per Tab (nur berechtigte Kassen; Admins sehen alle)
+  - [x] Kassenbestand prominent im Header (grün/rot)
+  - [x] Buchungsliste mit laufendem Bestand (SQL-seitig, kein Python-Loop)
+  - [x] Einnahmen grün, Ausgaben rot
+  - [x] Stornierte Buchungen durchgestrichen + grau; per Checkbox einblendbar
+  - [x] Exportierte Buchungen mit 🔒-Icon, Edit/Storno gesperrt
+  - [x] Datumsfilter (Von/Bis) mit flexibler Eingabe
+  - [x] Neue Buchung anlegen: separate Buttons Einnahme/Ausgabe (nur mit Schreibzugriff)
+  - [x] Buchung bearbeiten: Dialog lädt Buchung frisch per ID aus DB
+  - [x] Buchung stornieren: Bestätigungsdialog, Soft-Delete
+  - [x] CSV-Export-Dialog (nur mit Exportrecht)
+  - [x] **History-Expander pro Buchung**
+    - [x] Toggle „Änderungshistorie anzeigen" steuert ob Expander-Button gerendert wird
+    - [x] Nur sichtbar wenn `version > 1`
+    - [x] Lazy load: `get_history(buchung_id)` erst beim Öffnen aufrufen
+    - [x] History-Zeilen in gedämpfter Farbe (Grau), gleiche Spalten, read-only
+    - [x] Versionsnummer je Zeile (v1, v2, …)
+  - [x] `main.py`: Import + `create_kassenbuch_page(db)` registriert
+- [x] `navigation.py`: Menüpunkt „Kassenbuch" für berechtigte User + Admins
+  - [x] Sichtbar wenn mind. eine Kasse mit Lesezugriff vorhanden
+  - [x] Aktiv-Highlighting passend zu anderen Menüeinträgen
 
 ### Phase 3 - Kassenbuch
 - [x] Kassenbuch-Grundstruktur (Buchungen, Kassenabschluss, Export)
@@ -228,6 +325,7 @@
 
 **Legende:**
 - 🔥 = Hohe Priorität, nächste Schritte
+- 📊 = Kassenbuch nächste Schritte (Phase 3)
 - 📋 = Mittelfristig, Phase 3
 - 🔮 = Längerfristig, Phase 4
 - 💡 = Ideen, noch nicht priorisiert

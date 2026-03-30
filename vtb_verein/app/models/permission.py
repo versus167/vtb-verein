@@ -3,41 +3,44 @@ Permission-Konstanten für die Vereinsverwaltung.
 
 Jede Permission hat die Form 'ressource.aktion'.
 Rollen werden beim Anlegen eines Users als Default-Permissions vergeben.
+
+HINWEIS: Kassenbuch-Zugriff wird NICHT über globale Permissions geregelt,
+sondern kassenspezifisch über kasse_berechtigungen (siehe KasseBerechtigungRepository).
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 class Permission:
-    """Alle verfügbaren Permissions als Konstanten."""
+    """Alle verfügbaren globalen Permissions als Konstanten."""
 
     # --- Mitglieder ---
     MITGLIEDER_READ   = 'mitglieder.read'
     MITGLIEDER_WRITE  = 'mitglieder.write'
-    MITGLIEDER_DELETE = 'mitglieder.delete'   # Soft-Delete
+    MITGLIEDER_DELETE = 'mitglieder.delete'
 
     # --- Abteilungen ---
-    ABTEILUNGEN_READ  = 'abteilungen.read'
-    ABTEILUNGEN_WRITE = 'abteilungen.write'
+    ABTEILUNGEN_READ   = 'abteilungen.read'
+    ABTEILUNGEN_WRITE  = 'abteilungen.write'
     ABTEILUNGEN_DELETE = 'abteilungen.delete'
 
     # --- Beiträge ---
-    BEITRAEGE_READ    = 'beitraege.read'
-    BEITRAEGE_WRITE   = 'beitraege.write'
+    BEITRAEGE_READ  = 'beitraege.read'
+    BEITRAEGE_WRITE = 'beitraege.write'
 
     # --- Berichte / Export ---
-    BERICHTE_READ     = 'berichte.read'
-    BERICHTE_EXPORT   = 'berichte.export'
+    BERICHTE_READ   = 'berichte.read'
+    BERICHTE_EXPORT = 'berichte.export'
 
     # --- Benutzerverwaltung ---
-    USERS_READ        = 'users.read'
-    USERS_MANAGE      = 'users.manage'        # Erstellen, Bearbeiten, Deaktivieren
+    USERS_READ   = 'users.read'
+    USERS_MANAGE = 'users.manage'
 
     # --- System ---
-    SYSTEM_CONFIG     = 'system.config'       # App-Konfiguration
+    SYSTEM_CONFIG = 'system.config'
 
     @classmethod
     def all(cls) -> list[str]:
-        """Alle definierten Permissions."""
+        """Alle definierten globalen Permissions."""
         return [
             v for k, v in vars(cls).items()
             if not k.startswith('_') and isinstance(v, str)
@@ -46,14 +49,8 @@ class Permission:
     @classmethod
     def defaults_for_role(cls, role: str) -> set[str]:
         """
-        Gibt die Standard-Permissions für eine Rolle zurück.
-        Diese werden beim Anlegen eines Users automatisch gesetzt.
-
-        Args:
-            role: 'admin', 'user' oder 'readonly'
-
-        Returns:
-            Set mit Permission-Strings
+        Standard-Permissions für eine Rolle.
+        Kassenbuch-Zugriff ist hier nicht enthalten – der wird pro Kasse vergeben.
         """
         if role == 'admin':
             return set(cls.all())
@@ -81,7 +78,6 @@ class Permission:
                 cls.BERICHTE_READ,
             }
 
-        # Unbekannte Rolle: keine Permissions
         return set()
 
 

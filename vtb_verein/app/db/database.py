@@ -9,26 +9,19 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 5  # Version 5: user_permissions Tabelle für Permission-Matrix
+SCHEMA_VERSION = 8  # Version 8: Kassenspezifische Berechtigungen
 
 
 class Database:
-    """Manages database connection, schema versioning, and migrations.
-    
-    This class handles:
-    - Database connection lifecycle
-    - Schema version tracking
-    - Schema migrations
-    - Connection configuration
-    """
-    
+    """Manages database connection, schema versioning, and migrations."""
+
     def __init__(self, path: str):
         self.path = path
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self._init_schema_version_table()
         self._migrate_schema_if_needed()
-    
+
     @contextmanager
     def cursor(self):
         """Context manager for cursor with automatic commit/rollback."""
@@ -41,11 +34,11 @@ class Database:
             raise
         finally:
             cur.close()
-    
+
     def close(self):
         """Close the database connection."""
         self.conn.close()
-    
+
     # -----------------------------------
     # Schema-Versionierung
     # -----------------------------------
@@ -100,6 +93,15 @@ class Database:
         if current == 4:
             self._migrate_4_to_5()
             current = 5
+        if current == 5:
+            self._migrate_5_to_6()
+            current = 6
+        if current == 6:
+            self._migrate_6_to_7()
+            current = 7
+        if current == 7:
+            self._migrate_7_to_8()
+            current = 8
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -113,9 +115,6 @@ class Database:
     def _migrate_0_to_1(self):
         """Initiales Schema: Alle Tabellen inkl. Users + History-Trigger + Soft-Delete."""
         with self.cursor() as cur:
-            # ============================================
-            # Tabelle 1: mitglied
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied (
@@ -191,9 +190,6 @@ class Database:
                 """
             )
 
-            # ============================================
-            # Tabelle 2: abteilung
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS abteilung (
@@ -236,7 +232,6 @@ class Database:
                 """
             )
 
-            # Trigger für abteilung: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS abteilung_audit_insert
                 AFTER INSERT ON abteilung
@@ -254,7 +249,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für abteilung: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS abteilung_audit_update
                 AFTER UPDATE ON abteilung
@@ -273,7 +267,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für abteilung: DELETE (falls jemals hard delete)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS abteilung_audit_delete
                 AFTER DELETE ON abteilung
@@ -291,9 +284,6 @@ class Database:
                 END;
             """)
 
-            # ============================================
-            # Tabelle 2a: mitglied_abteilung
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mitglied_abteilung (
@@ -342,7 +332,6 @@ class Database:
                 """
             )
 
-            # Trigger für mitglied_abteilung: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_insert
                 AFTER INSERT ON mitglied_abteilung
@@ -360,7 +349,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für mitglied_abteilung: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_update
                 AFTER UPDATE ON mitglied_abteilung
@@ -379,7 +367,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für mitglied_abteilung: DELETE (falls jemals hard delete)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_abteilung_audit_delete
                 AFTER DELETE ON mitglied_abteilung
@@ -397,9 +384,6 @@ class Database:
                 END;
             """)
 
-            # ============================================
-            # Tabelle 3: beitragsregel
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitragsregel (
@@ -451,9 +435,6 @@ class Database:
                 """
             )
 
-            # ============================================
-            # Tabelle 4: beitrag_sollstellung
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS beitrag_sollstellung (
@@ -500,9 +481,6 @@ class Database:
                 """
             )
 
-            # ============================================
-            # Tabelle 5: users
-            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -521,8 +499,7 @@ class Database:
                     deleted_by TEXT
                 )
             """)
-            
-            # Indices für Performance
+
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
@@ -548,10 +525,9 @@ class Database:
                     PRIMARY KEY (id, version)
                 )
             """)
-            
+
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_history_id ON users_history(id)")
 
-            # Trigger für users: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_insert
                 AFTER INSERT ON users
@@ -570,7 +546,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für users: UPDATE (nur wenn Version sich ändert!)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_update
                 AFTER UPDATE ON users
@@ -589,8 +564,7 @@ class Database:
                     );
                 END;
             """)
-            
-            # Trigger für users: DELETE (falls jemals hard delete)
+
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS users_audit_delete
                 AFTER DELETE ON users
@@ -609,34 +583,21 @@ class Database:
                 END;
             """)
 
-            # Erstelle Standard-Admin wenn keine User existieren
             cur.execute("SELECT COUNT(*) FROM users")
             if cur.fetchone()[0] == 0:
                 import bcrypt
                 default_password = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                
                 cur.execute("""
                     INSERT INTO users (username, email, password_hash, role, active, created_by, updated_by)
                     VALUES (?, ?, ?, 'admin', 1, 'SYSTEM', 'SYSTEM')
                 """, ('admin', 'admin@verein.local', default_password))
-                
                 print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
         self._set_schema_version(1)
 
     def _migrate_1_to_2(self):
-        """Migration 1->2: History-Trigger für mitglied hinzufügen, DELETE-Trigger entfernen.
-        
-        Änderungen:
-        1. Fügt fehlende INSERT/UPDATE Trigger für mitglied-Tabelle hinzu
-        2. Entfernt alle DELETE-Trigger (Hard-Delete soll nicht in History landen)
-        """
+        """Migration 1->2: History-Trigger für mitglied hinzufügen, DELETE-Trigger entfernen."""
         with self.cursor() as cur:
-            # ============================================
-            # 1. Trigger für mitglied hinzufügen
-            # ============================================
-            
-            # Trigger für mitglied: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_audit_insert
                 AFTER INSERT ON mitglied
@@ -660,7 +621,6 @@ class Database:
                 END;
             """)
 
-            # Trigger für mitglied: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS mitglied_audit_update
                 AFTER UPDATE ON mitglied
@@ -685,11 +645,6 @@ class Database:
                 END;
             """)
 
-            # ============================================
-            # 2. DELETE-Trigger für alle Tabellen entfernen
-            # ============================================
-            # Hard-Delete ist nur für Prune-Funktionen, soll nicht in History
-            
             cur.execute("DROP TRIGGER IF EXISTS mitglied_audit_delete")
             cur.execute("DROP TRIGGER IF EXISTS abteilung_audit_delete")
             cur.execute("DROP TRIGGER IF EXISTS mitglied_abteilung_audit_delete")
@@ -698,13 +653,8 @@ class Database:
         self._set_schema_version(2)
 
     def _migrate_2_to_3(self):
-        """Migration 2->3: Rolle 'special' zur users-Tabelle hinzufügen.
-        
-        SQLite unterstützt kein ALTER TABLE ... ALTER CONSTRAINT,
-        daher müssen wir die Tabelle neu erstellen.
-        """
+        """Migration 2->3: Rolle 'special' zur users-Tabelle hinzufügen."""
         with self.cursor() as cur:
-            # Temporäre Tabelle mit neuer Constraint erstellen
             cur.execute("""
                 CREATE TABLE users_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -723,27 +673,14 @@ class Database:
                     deleted_by TEXT
                 )
             """)
-            
-            # Daten kopieren
-            cur.execute("""
-                INSERT INTO users_new 
-                SELECT * FROM users
-            """)
-            
-            # Alte Tabelle löschen
+            cur.execute("INSERT INTO users_new SELECT * FROM users")
             cur.execute("DROP TABLE users")
-            
-            # Neue Tabelle umbenennen
             cur.execute("ALTER TABLE users_new RENAME TO users")
-            
-            # Indices neu erstellen
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_active ON users(active)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at)")
-            
-            # Trigger neu erstellen
             cur.execute("""
                 CREATE TRIGGER users_audit_insert
                 AFTER INSERT ON users
@@ -761,7 +698,6 @@ class Database:
                     );
                 END;
             """)
-
             cur.execute("""
                 CREATE TRIGGER users_audit_update
                 AFTER UPDATE ON users
@@ -780,21 +716,11 @@ class Database:
                     );
                 END;
             """)
-
         self._set_schema_version(3)
-    
+
     def _migrate_3_to_4(self):
-        """Migration 3->4: auth_tokens Tabelle für Magic-Link-Authentication.
-        
-        Änderungen:
-        1. Neue auth_tokens Tabelle für Magic-Links und Remember-Me-Tokens
-        2. History-Tabelle für auth_tokens
-        3. Trigger für INSERT/UPDATE (kein DELETE - Cleanup soll nicht getrackt werden)
-        """
+        """Migration 3->4: auth_tokens Tabelle für Magic-Link-Authentication."""
         with self.cursor() as cur:
-            # ============================================
-            # Tabelle: auth_tokens
-            # ============================================
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS auth_tokens (
@@ -804,44 +730,32 @@ class Database:
                   token_type    TEXT NOT NULL CHECK(token_type IN ('magic_link', 'remember_me')),
                   expires_at    TEXT NOT NULL,
                   used_at       TEXT,
-                  
                   version       INTEGER NOT NULL DEFAULT 1,
-                  
                   created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  
                   FOREIGN KEY (user_id) REFERENCES users(id)
                 )
                 """
             )
-            
-            # Indices für Performance
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens(token)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_id ON auth_tokens(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON auth_tokens(expires_at)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_token_type ON auth_tokens(token_type)")
-            
-            # History-Tabelle
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS auth_tokens_history (
                   id            INTEGER NOT NULL,
                   version       INTEGER NOT NULL,
-                  
                   user_id       INTEGER NOT NULL,
                   token         TEXT NOT NULL,
                   token_type    TEXT NOT NULL,
                   expires_at    TEXT NOT NULL,
                   used_at       TEXT,
                   created_at    TEXT NOT NULL,
-                  
                   PRIMARY KEY (id, version)
                 )
                 """
             )
-            
             cur.execute("CREATE INDEX IF NOT EXISTS idx_auth_tokens_history_id ON auth_tokens_history(id)")
-            
-            # Trigger für auth_tokens: INSERT
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_insert
                 AFTER INSERT ON auth_tokens
@@ -855,8 +769,6 @@ class Database:
                     );
                 END;
             """)
-            
-            # Trigger für auth_tokens: UPDATE (nur wenn Version sich ändert)
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS auth_tokens_audit_update
                 AFTER UPDATE ON auth_tokens
@@ -871,28 +783,10 @@ class Database:
                     );
                 END;
             """)
-            
-            # KEIN DELETE-Trigger - Token-Cleanup soll nicht in History landen
-
         self._set_schema_version(4)
 
     def _migrate_4_to_5(self):
-        """Migration 4->5: user_permissions Tabelle für Permission-Matrix.
-
-        Änderungen:
-        1. Neue Tabelle user_permissions mit Soft-Delete und Versionierung
-        2. Neue Tabelle user_permissions_history
-        3. Trigger für INSERT/UPDATE (kein DELETE - Prune soll nicht getrackt werden)
-        4. Standard-Permissions für bestehende Users nach Rolle setzen
-
-        HINWEIS: Die Default-Permissions sind hier bewusst hartcodiert und nicht
-        über Permission.defaults_for_role() importiert. Migrationen müssen unabhängig
-        vom lebenden Model-Code sein und dürfen nicht durch spätere Model-Änderungen
-        beeinflusst werden.
-        """
-        # Hartcodierte Default-Permissions zum Zeitpunkt dieser Migration (Schema v5).
-        # Änderungen an Permission.defaults_for_role() haben keinen Einfluss auf
-        # bereits migrierte Datenbanken.
+        """Migration 4->5: user_permissions Tabelle für Permission-Matrix."""
         _DEFAULTS_V5 = {
             'admin': {
                 'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
@@ -918,60 +812,41 @@ class Database:
         }
 
         with self.cursor() as cur:
-            # ============================================
-            # Tabelle: user_permissions
-            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS user_permissions (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id     INTEGER NOT NULL,
                     permission  TEXT NOT NULL,
-
                     version     INTEGER NOT NULL DEFAULT 1,
-
                     created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     created_by  TEXT NOT NULL,
                     updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_by  TEXT NOT NULL,
                     deleted_at  TEXT,
                     deleted_by  TEXT,
-
                     FOREIGN KEY (user_id) REFERENCES users(id),
                     UNIQUE (user_id, permission)
                 )
             """)
-
             cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON user_permissions(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_permission ON user_permissions(permission)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_deleted_at ON user_permissions(deleted_at)")
-
-            # ============================================
-            # Tabelle: user_permissions_history
-            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS user_permissions_history (
                     id          INTEGER NOT NULL,
                     version     INTEGER NOT NULL,
-
                     user_id     INTEGER NOT NULL,
                     permission  TEXT NOT NULL,
-
                     created_at  TEXT NOT NULL,
                     created_by  TEXT NOT NULL,
                     updated_at  TEXT NOT NULL,
                     updated_by  TEXT NOT NULL,
                     deleted_at  TEXT,
                     deleted_by  TEXT,
-
                     PRIMARY KEY (id, version)
                 )
             """)
-
             cur.execute("CREATE INDEX IF NOT EXISTS idx_user_permissions_history_id ON user_permissions_history(id)")
-
-            # ============================================
-            # Trigger: INSERT
-            # ============================================
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS user_permissions_audit_insert
                 AFTER INSERT ON user_permissions
@@ -988,10 +863,6 @@ class Database:
                     );
                 END;
             """)
-
-            # ============================================
-            # Trigger: UPDATE (nur bei Versions-Änderung)
-            # ============================================
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS user_permissions_audit_update
                 AFTER UPDATE ON user_permissions
@@ -1009,17 +880,11 @@ class Database:
                     );
                 END;
             """)
-            # KEIN DELETE-Trigger - Prune soll nicht in History landen
-
-            # ============================================
-            # Bestehende Users mit Default-Permissions befüllen
-            # ============================================
             cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL")
             existing_users = cur.fetchall()
             for row in existing_users:
                 user_id = row['id']
                 role = row['role']
-                # 'special' auf 'readonly' mappen für Default-Permissions
                 effective_role = role if role in _DEFAULTS_V5 else 'readonly'
                 for perm in _DEFAULTS_V5[effective_role]:
                     cur.execute("""
@@ -1029,3 +894,387 @@ class Database:
                     """, (user_id, perm))
 
         self._set_schema_version(5)
+
+    def _migrate_5_to_6(self):
+        """Migration 5->6: Kassenbuch-Tabellen."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen (
+                    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                    TEXT NOT NULL,
+                    beschreibung            TEXT,
+                    anfangsbestand_cent     INTEGER NOT NULL DEFAULT 0,
+                    abteilung_id            INTEGER,
+                    version                 INTEGER NOT NULL DEFAULT 1,
+                    created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by              TEXT NOT NULL,
+                    updated_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by              TEXT NOT NULL,
+                    deleted_at              TEXT,
+                    deleted_by              TEXT,
+                    FOREIGN KEY (abteilung_id) REFERENCES abteilung(id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_deleted_at ON kassen(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_abteilung_id ON kassen(abteilung_id)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_history (
+                    id                      INTEGER NOT NULL,
+                    version                 INTEGER NOT NULL,
+                    name                    TEXT,
+                    beschreibung            TEXT,
+                    anfangsbestand_cent     INTEGER,
+                    abteilung_id            INTEGER,
+                    created_at              TEXT,
+                    created_by              TEXT,
+                    updated_at              TEXT,
+                    updated_by              TEXT,
+                    deleted_at              TEXT,
+                    deleted_by              TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassen_audit_insert
+                AFTER INSERT ON kassen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassen_history (
+                        id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent,
+                        NEW.abteilung_id, NEW.created_at, NEW.created_by, NEW.updated_at,
+                        NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassen_audit_update
+                AFTER UPDATE ON kassen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO kassen_history (
+                        id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent,
+                        NEW.abteilung_id, NEW.created_at, NEW.created_by, NEW.updated_at,
+                        NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuchungen (
+                    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kasse_id                    INTEGER NOT NULL,
+                    buchungsdatum               TEXT NOT NULL,
+                    belegnummer                 TEXT NOT NULL,
+                    buchungstext                TEXT NOT NULL,
+                    kategorie                   TEXT NOT NULL,
+                    einnahme_cent               INTEGER NOT NULL DEFAULT 0,
+                    ausgabe_cent                INTEGER NOT NULL DEFAULT 0,
+                    notiz                       TEXT,
+                    exportiert_in_export_id     INTEGER,
+                    version                     INTEGER NOT NULL DEFAULT 1,
+                    created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by                  TEXT NOT NULL,
+                    updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by                  TEXT NOT NULL,
+                    deleted_at                  TEXT,
+                    deleted_by                  TEXT,
+                    FOREIGN KEY (kasse_id) REFERENCES kassen(id),
+                    FOREIGN KEY (exportiert_in_export_id) REFERENCES kassenbuch_exporte(id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_kasse_id ON kassenbuchungen(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_buchungsdatum ON kassenbuchungen(buchungsdatum)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_deleted_at ON kassenbuchungen(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_export_id ON kassenbuchungen(exportiert_in_export_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_belegnummer ON kassenbuchungen(kasse_id, belegnummer)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuchungen_history (
+                    id                          INTEGER NOT NULL,
+                    version                     INTEGER NOT NULL,
+                    kasse_id                    INTEGER,
+                    buchungsdatum               TEXT,
+                    belegnummer                 TEXT,
+                    buchungstext                TEXT,
+                    kategorie                   TEXT,
+                    einnahme_cent               INTEGER,
+                    ausgabe_cent                INTEGER,
+                    notiz                       TEXT,
+                    exportiert_in_export_id     INTEGER,
+                    created_at                  TEXT,
+                    created_by                  TEXT,
+                    updated_at                  TEXT,
+                    updated_by                  TEXT,
+                    deleted_at                  TEXT,
+                    deleted_by                  TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuchungen_history_id ON kassenbuchungen_history(id)")
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuchungen_audit_insert
+                AFTER INSERT ON kassenbuchungen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassenbuchungen_history (
+                        id, version, kasse_id, buchungsdatum, belegnummer, buchungstext,
+                        kategorie, einnahme_cent, ausgabe_cent, notiz, exportiert_in_export_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchungsdatum, NEW.belegnummer,
+                        NEW.buchungstext, NEW.kategorie, NEW.einnahme_cent, NEW.ausgabe_cent,
+                        NEW.notiz, NEW.exportiert_in_export_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuchungen_audit_update
+                AFTER UPDATE ON kassenbuchungen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO kassenbuchungen_history (
+                        id, version, kasse_id, buchungsdatum, belegnummer, buchungstext,
+                        kategorie, einnahme_cent, ausgabe_cent, notiz, exportiert_in_export_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchungsdatum, NEW.belegnummer,
+                        NEW.buchungstext, NEW.kategorie, NEW.einnahme_cent, NEW.ausgabe_cent,
+                        NEW.notiz, NEW.exportiert_in_export_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuch_exporte (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kasse_id            INTEGER NOT NULL,
+                    zeitraum_von        TEXT NOT NULL,
+                    zeitraum_bis        TEXT NOT NULL,
+                    exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    exportiert_von      TEXT NOT NULL,
+                    dateiname           TEXT NOT NULL,
+                    anzahl_buchungen    INTEGER NOT NULL,
+                    version             INTEGER NOT NULL DEFAULT 1,
+                    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by          TEXT NOT NULL,
+                    deleted_at          TEXT,
+                    deleted_by          TEXT,
+                    FOREIGN KEY (kasse_id) REFERENCES kassen(id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuch_exporte_kasse_id ON kassenbuch_exporte(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassenbuch_exporte_zeitraum ON kassenbuch_exporte(zeitraum_von, zeitraum_bis)")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassenbuch_exporte_history (
+                    id                  INTEGER NOT NULL,
+                    version             INTEGER NOT NULL,
+                    kasse_id            INTEGER,
+                    zeitraum_von        TEXT,
+                    zeitraum_bis        TEXT,
+                    exportiert_am       TEXT,
+                    exportiert_von      TEXT,
+                    dateiname           TEXT,
+                    anzahl_buchungen    INTEGER,
+                    created_at          TEXT,
+                    created_by          TEXT,
+                    deleted_at          TEXT,
+                    deleted_by          TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kassenbuch_exporte_audit_insert
+                AFTER INSERT ON kassenbuch_exporte
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kassenbuch_exporte_history (
+                        id, version, kasse_id, zeitraum_von, zeitraum_bis,
+                        exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                        created_at, created_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
+                        NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.anzahl_buchungen,
+                        NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+        self._set_schema_version(6)
+
+    def _migrate_6_to_7(self):
+        """Migration 6->7: Kassenbuch-Permissions für bestehende User (vorläufig, wird in v8 entfernt)."""
+        _KASSE_PERMS_V7 = {
+            'admin':    {'kasse.read', 'kasse.write', 'kasse.delete', 'kasse.export'},
+            'user':     {'kasse.read', 'kasse.write', 'kasse.delete', 'kasse.export'},
+            'readonly': {'kasse.read'},
+            'special':  {'kasse.read'},
+        }
+        with self.cursor() as cur:
+            cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL")
+            existing_users = cur.fetchall()
+            for row in existing_users:
+                user_id = row['id']
+                role = row['role']
+                perms = _KASSE_PERMS_V7.get(role, {'kasse.read'})
+                for perm in perms:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_permissions
+                            (user_id, permission, created_by, updated_by)
+                        VALUES (?, ?, 'MIGRATION_6_7', 'MIGRATION_6_7')
+                    """, (user_id, perm))
+        self._set_schema_version(7)
+
+    def _migrate_7_to_8(self):
+        """Migration 7->8: Kassenspezifische Berechtigungen (kasse_berechtigungen).
+
+        Änderungen:
+        1. Neue Tabelle kasse_berechtigungen mit Soft-Delete und Versionierung
+        2. Neue Tabelle kasse_berechtigungen_history + INSERT/UPDATE-Trigger
+        3. Globale kasse.*-Permissions aus user_permissions entfernen (Soft-Delete)
+        4. Admins erhalten automatisch alle Rechte für bestehende Kassen
+
+        HINWEIS: kasse.*-Permissions werden per Soft-Delete entfernt (deleted_at setzen),
+        nicht per Hard-Delete, damit die History erhalten bleibt.
+        """
+        with self.cursor() as cur:
+            # ============================================
+            # Tabelle: kasse_berechtigungen
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kasse_berechtigungen (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kasse_id        INTEGER NOT NULL,
+                    user_id         INTEGER NOT NULL,
+                    darf_lesen      INTEGER NOT NULL DEFAULT 0,
+                    darf_schreiben  INTEGER NOT NULL DEFAULT 0,
+                    darf_exportieren INTEGER NOT NULL DEFAULT 0,
+
+                    version         INTEGER NOT NULL DEFAULT 1,
+
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+
+                    FOREIGN KEY (kasse_id) REFERENCES kassen(id),
+                    FOREIGN KEY (user_id)  REFERENCES users(id),
+                    UNIQUE (kasse_id, user_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_kasse_id ON kasse_berechtigungen(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_user_id ON kasse_berechtigungen(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_deleted_at ON kasse_berechtigungen(deleted_at)")
+
+            # ============================================
+            # Tabelle: kasse_berechtigungen_history
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kasse_berechtigungen_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+
+                    kasse_id        INTEGER,
+                    user_id         INTEGER,
+                    darf_lesen      INTEGER,
+                    darf_schreiben  INTEGER,
+                    darf_exportieren INTEGER,
+
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_history_id ON kasse_berechtigungen_history(id)")
+
+            # ============================================
+            # Trigger: INSERT
+            # ============================================
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kasse_berechtigungen_audit_insert
+                AFTER INSERT ON kasse_berechtigungen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO kasse_berechtigungen_history (
+                        id, version, kasse_id, user_id,
+                        darf_lesen, darf_schreiben, darf_exportieren,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.user_id,
+                        NEW.darf_lesen, NEW.darf_schreiben, NEW.darf_exportieren,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # ============================================
+            # Trigger: UPDATE (nur bei Versions-Änderung)
+            # ============================================
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS kasse_berechtigungen_audit_update
+                AFTER UPDATE ON kasse_berechtigungen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO kasse_berechtigungen_history (
+                        id, version, kasse_id, user_id,
+                        darf_lesen, darf_schreiben, darf_exportieren,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.user_id,
+                        NEW.darf_lesen, NEW.darf_schreiben, NEW.darf_exportieren,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # KEIN DELETE-Trigger
+
+            # ============================================
+            # Globale kasse.*-Permissions Soft-Delete
+            # ============================================
+            cur.execute("""
+                UPDATE user_permissions
+                SET deleted_at = CURRENT_TIMESTAMP,
+                    deleted_by = 'MIGRATION_7_8',
+                    version    = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'MIGRATION_7_8'
+                WHERE permission IN ('kasse.read', 'kasse.write', 'kasse.delete', 'kasse.export')
+                  AND deleted_at IS NULL
+            """)
+
+            # ============================================
+            # Admins erhalten alle Rechte für bestehende Kassen
+            # ============================================
+            cur.execute("SELECT id FROM kassen WHERE deleted_at IS NULL")
+            kassen = cur.fetchall()
+            cur.execute("SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL AND active = 1")
+            admins = cur.fetchall()
+            for kasse in kassen:
+                for admin in admins:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO kasse_berechtigungen
+                            (kasse_id, user_id, darf_lesen, darf_schreiben, darf_exportieren,
+                             created_by, updated_by)
+                        VALUES (?, ?, 1, 1, 1, 'MIGRATION_7_8', 'MIGRATION_7_8')
+                    """, (kasse['id'], admin['id']))
+
+        self._set_schema_version(8)

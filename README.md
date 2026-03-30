@@ -31,6 +31,15 @@ Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Bei
 - Sub-Dialog zur Verwaltung der Zuordnungen
 - Vollständiger Audit-Trail
 
+✅ **Kassenbuch (Grundstruktur)**
+- Verwaltung mehrerer Barkassen (vereinsweit oder je Abteilung)
+- Kassenbuchungen mit Belegnummer, Kategorie, Einnahme/Ausgabe (in Cent)
+- Stornierung von Buchungen (Soft-Delete)
+- Bestandsberechnung direkt per SQL (kein Python-Loop)
+- Revisionssicherer CSV-Export mit Exportsperre
+- Belegnummer-Vergabe nach Schema `YYYY-NNN`
+- History-Tracking via DB-Trigger
+
 ✅ **Audit-Trail**
 - Vollständige Versionierung aller Änderungen
 - History-Tabellen für jeden Datensatz
@@ -289,18 +298,22 @@ vtb-verein/
         │   └── __init__.py
         ├── db/                  # Datenbank-Layer (Repository Pattern)
         │   ├── __init__.py
-        │   ├── base_repository.py         # Basis-Klasse für Repositories
-        │   ├── database.py                # Connection & Schema-Management
-        │   ├── datastore.py               # VereinsDB Facade (Backward Compat.)
-        │   ├── mitglied_repository.py     # Mitglied-Datenzugriff
-        │   ├── abteilung_repository.py    # Abteilung-Datenzugriff
-        │   ├── user_repository.py         # User-Datenzugriff
-        │   └── permission_repository.py   # Permission-Datenzugriff
+        │   ├── base_repository.py              # Basis-Klasse für Repositories
+        │   ├── database.py                     # Connection & Schema-Management
+        │   ├── datastore.py                    # VereinsDB Facade (Backward Compat.)
+        │   ├── mitglied_repository.py          # Mitglied-Datenzugriff
+        │   ├── abteilung_repository.py         # Abteilung-Datenzugriff
+        │   ├── user_repository.py              # User-Datenzugriff
+        │   ├── permission_repository.py        # Permission-Datenzugriff
+        │   ├── kasse_repository.py             # Kasse CRUD + Bestandsberechnung
+        │   ├── kassenbuchung_repository.py     # Kassenbuchung CRUD + Stornierung
+        │   └── kassenbuch_export_repository.py # Kassenbuch-Export (revisionssicher)
         ├── models/              # Datenmodelle
         │   ├── abteilung.py
         │   ├── mitglied.py
         │   ├── user.py
         │   ├── permission.py    # Permission-Konstanten & UserPermission-Modell
+        │   ├── kasse.py         # Kasse, Kassenbuchung, KassenbuchExport
         │   └── __init__.py
         ├── services/            # Business-Logik
         │   ├── abteilungen_service.py
@@ -369,7 +382,7 @@ Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugrif
    - Keine Business-Logik
 
 2. **Service Layer** (`app/services/`):
-   - Business-Logik (z.B. "Letzter Admin"-Schutz)
+   - Business-Logik (z.B. „Letzter Admin"-Schutz, Export-Sperre-Prüfung)
    - Validierung (z.B. Passwort-Hashing)
    - Orchestrierung mehrerer Repositories
    - **Keine direkten SQL-Queries**
@@ -402,6 +415,7 @@ Seit Schema v5 verwendet die Anwendung eine feingranulare **Permission-Matrix** 
 - `berichte.read`, `berichte.export`
 - `users.read`, `users.manage`
 - `system.config`
+- `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export` *(geplant für nächsten Schritt)*
 
 **Rollen** vergeben beim Anlegen eines Users automatisch Default-Permissions:
 - `admin`: alle Permissions
@@ -425,6 +439,30 @@ def edit_member():
     ...
 ```
 
+### Kassenbuch-Modul
+
+Das Kassenbuch-Modul (Schema v6) verwaltet Barkassen des Vereins oder einzelner Abteilungen.
+
+**Datenmodell:**
+
+| Tabelle | Beschreibung |
+|---------|-------------|
+| `kassen` | Barkassen mit Name, Anfangsbestand (Cent), optionaler Abteilungszuordnung |
+| `kassenbuchungen` | Einzelbuchungen mit Betrag (Cent), Belegnummer, Kategorie, Exportsperre |
+| `kassenbuch_exporte` | Revisionssichere Abschlüsse eines Zeitraums (immutable nach Erstellen) |
+
+**Wichtige Design-Entscheidungen:**
+- Beträge werden immer in **Cent** (Integer) gespeichert – kein Floating Point
+- Belegnummer-Format: `YYYY-NNN` (z.B. `2026-001`), read-only nach Erstellen
+- Stornierte Buchungen bleiben erhalten (Soft-Delete), zählen aber nicht zum Bestand
+- Exportierte Buchungen sind gesperrt – Stornierung nur über Service-Layer möglich
+- Bestandsberechnung via SQL-Aggregation (kein Python-Loop)
+
+**Repositories:**
+- `KasseRepository`: CRUD + `get_bestand_cent()`, `get_bestand_zum_datum_cent()`
+- `KassenbuchungRepository`: CRUD + Stornierung + `get_naechste_belegnummer()` + `mark_buchungen_exportiert()`
+- `KassenbuchExportRepository`: Create + `get_nicht_exportierte_buchungen()` + `ist_buchung_gesperrt()`
+
 ### Datenbank-Schema
 
 **Mitgliedsnummern:**
@@ -442,7 +480,7 @@ def edit_member():
 **Soft-Delete:**
 - Alle Entitäten unterstützen Soft-Delete
 - `deleted_at` und `deleted_by` Felder
-- Wiederherstellung möglich
+- Wiederherstellung möglich (wo sinnvoll)
 - History bleibt erhalten
 
 **Optimistic Locking:**
@@ -452,8 +490,8 @@ def edit_member():
 
 **History/Audit-Trail:**
 - Automatische Versionierung via Database-Triggers
+- Trigger nur für INSERT und UPDATE (kein DELETE – Prune soll nicht getrackt werden)
 - Jede Änderung wird in `*_history` Tabellen protokolliert
-- Nachvollziehbarkeit aller Änderungen (wer, wann, was)
 
 **Schema-Versionen:**
 
@@ -464,6 +502,7 @@ def edit_member():
 | 3 | Rolle `special` in users-Tabelle |
 | 4 | `auth_tokens` für Magic-Link-Authentication |
 | 5 | `user_permissions` für Permission-Matrix |
+| 6 | Kassenbuch-Tabellen (kassen, kassenbuchungen, kassenbuch_exporte) |
 
 ### Repository Pattern Details
 
@@ -477,11 +516,15 @@ def edit_member():
 - `AbteilungRepository`: CRUD für Abteilungen, Dependency-Checks
 - `UserRepository`: CRUD für User, Authentication-Queries
 - `PermissionRepository`: CRUD für User-Permissions (grant, revoke, set)
+- `KasseRepository`: CRUD für Kassen, Bestandsberechnung per SQL
+- `KassenbuchungRepository`: CRUD für Buchungen, Stornierung, Exportsperre
+- `KassenbuchExportRepository`: Revisionssichere Export-Datensätze
 
 **VereinsDB Facade:**
 - Kombiniert alle Repositories
 - Stellt einheitliche Schnittstelle bereit
 - Backward Compatibility für Legacy-Code
+- Kasse-Repositories noch nicht in Facade integriert (nächster Schritt)
 
 ## Roadmap
 
