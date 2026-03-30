@@ -4,7 +4,7 @@ Kassenbuch-Seite
 Zeigt Buchungen der zugänglichen Kassen, ermöglicht Anlegen/Bearbeiten/Stornieren
 und CSV-Export. Berechtigungen werden pro Kasse geprüft (via KassenbuchService).
 """
-from datetime import date
+from datetime import date, timedelta
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.auth.auth_helper import AuthHelper, require_auth
@@ -35,6 +35,11 @@ KATEGORIEN = [
 ]
 
 
+def _default_von_datum() -> str:
+    """Gibt das Datum von heute minus 90 Tagen als ISO-String zurück."""
+    return str(date.today() - timedelta(days=90))
+
+
 def create_kassenbuch_page(db: VereinsDB):
     """Registriert die Kassenbuch-Seite als NiceGUI-Route."""
 
@@ -59,10 +64,10 @@ def create_kassenbuch_page(db: VereinsDB):
 
         ui.label('Kassenbuch').classes('text-h4 q-ma-md')
 
-        # State
+        # State – von_datum startet standardmäßig 90 Tage in der Vergangenheit
         state = {
             'kasse': kassen[0],
-            'von_datum': None,
+            'von_datum': _default_von_datum(),
             'bis_datum': None,
             'include_storniert': False,
             'show_history': False,
@@ -142,10 +147,11 @@ def create_kassenbuch_page(db: VereinsDB):
                     'exportiert': b.ist_exportiert,
                     'version': b.version,
                 })
+            # Neueste Buchung zuerst
+            rows.reverse()
             return rows
 
         def _tag_vor(datum_iso: str) -> str:
-            from datetime import timedelta
             return str(date.fromisoformat(datum_iso) - timedelta(days=1))
 
         def render_content():
@@ -224,7 +230,11 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 rows = load_buchungen()
                 show_history_col = state['show_history']
-                table = ui.table(columns=columns, rows=rows, row_key='id').classes('w-full')
+                table = ui.table(
+                    columns=columns,
+                    rows=rows,
+                    row_key='id',
+                ).classes('w-full').props('sort-by="datum" sort-direction="desc"')
 
                 body_slot = r'''
                     <q-tr :props="props"
@@ -842,7 +852,6 @@ def create_kassenbuch_page(db: VereinsDB):
                         )
 
                         # Anfangsbestand: Bestand am Tag vor dem Von-Datum
-                        from datetime import timedelta
                         tag_vor_von = str(
                             date.fromisoformat(pdf_state['von']) - timedelta(days=1)
                         )
@@ -874,7 +883,6 @@ def create_kassenbuch_page(db: VereinsDB):
                             erstellt_von=current_user.username,
                         )
 
-                        from datetime import date as date_cls
                         von_fmt = pdf_state['von'].replace('-', '')
                         bis_fmt = pdf_state['bis'].replace('-', '')
                         dateiname = (
@@ -902,7 +910,7 @@ def create_kassenbuch_page(db: VereinsDB):
         def on_tab_change(e):
             kasse_id = int(e.value)
             state['kasse'] = next(k for k in kassen if k.id == kasse_id)
-            state['von_datum'] = None
+            state['von_datum'] = _default_von_datum()
             state['bis_datum'] = None
             state['include_storniert'] = False
             state['show_history'] = False
