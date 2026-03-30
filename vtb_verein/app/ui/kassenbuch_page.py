@@ -14,6 +14,7 @@ from app.models.kasse import Kassenbuchung
 from app.services.kassenbuch_service import (
     BuchungGesperrtError, NegativerBestandError,
     KeinSchreibzugriffError, KeinExportrechtError,
+    DatumAusserhalbBereichError,
 )
 from app.services.kassenbuch_pdf_service import (
     erstelle_kassenbuch_pdf,
@@ -349,6 +350,9 @@ def create_kassenbuch_page(db: VereinsDB):
 
             modus_eff = modus if ist_neu else ('einnahme' if buchung.einnahme_cent > 0 else 'ausgabe')
 
+            # Datumsgrenzen beim Dialog-Öffnen laden
+            min_datum_iso, max_datum_iso = db.kassenbuch.get_datum_bereich(state['kasse'].id)
+
             with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
                 ui.label(titel).classes('text-h6 q-mb-md')
 
@@ -363,15 +367,64 @@ def create_kassenbuch_page(db: VereinsDB):
                     'value': buchung.buchungsdatum if buchung else date.today().isoformat()
                 }
 
+                # Fehlerhinweis unter dem Datum-Feld (nur für Datumsfehler)
+                datum_fehler_label = ui.label('').classes('text-negative text-caption q-mt-xs')
+                datum_fehler_label.visible = False
+
+                def _datum_bereich_hinweis() -> str:
+                    """Erstellt den Bereichs-Hinweis-Text für die Fehleranzeige."""
+                    min_fmt = DateInputHelper.format_date_display(min_datum_iso) if min_datum_iso else None
+                    max_fmt = DateInputHelper.format_date_display(max_datum_iso)
+                    if min_fmt:
+                        return f'Erlaubter Bereich: {min_fmt} – {max_fmt}'
+                    return f'Datum darf nicht nach {max_fmt} liegen'
+
+                def _prüfe_datum_live(datum_iso: str | None) -> bool:
+                    """Prüft das Datum gegen die geladenen Grenzen. Gibt True zurück wenn gültig."""
+                    if datum_iso is None:
+                        datum_fehler_label.text = 'Ungültiges Datum'
+                        datum_fehler_label.visible = True
+                        return False
+                    if datum_iso > max_datum_iso:
+                        datum_fehler_label.text = _datum_bereich_hinweis()
+                        datum_fehler_label.visible = True
+                        return False
+                    if min_datum_iso is not None and datum_iso < min_datum_iso:
+                        datum_fehler_label.text = _datum_bereich_hinweis()
+                        datum_fehler_label.visible = True
+                        return False
+                    datum_fehler_label.visible = False
+                    return True
+
+                def on_datum_change(e):
+                    """Live-Feedback bei jeder Änderung des Datum-Inputs."""
+                    parsed = DateInputHelper.parse_date(datum_input.value)
+                    if parsed:
+                        datum_state['value'] = parsed
+                        _prüfe_datum_live(parsed)
+                    else:
+                        datum_state['value'] = None
+                        if datum_input.value.strip():
+                            datum_fehler_label.text = 'Ungültiges Datum'
+                            datum_fehler_label.visible = True
+                        else:
+                            datum_fehler_label.visible = False
+
                 def on_datum_blur(e):
                     parsed = DateInputHelper.parse_date(datum_input.value)
                     if parsed:
                         datum_state['value'] = parsed
                         datum_input.value = DateInputHelper.format_date_display(parsed)
-                        datum_input.error = None
+                        _prüfe_datum_live(parsed)
                     else:
+                        datum_state['value'] = None
                         datum_input.error = 'Ungültiges Datum'
+
+                datum_input.on('update:model-value', on_datum_change)
                 datum_input.on('blur', on_datum_blur)
+
+                # Initiale Live-Prüfung des vorausgefüllten Datums
+                _prüfe_datum_live(datum_state['value'])
 
                 buchungstext_input = ui.input(
                     'Buchungstext *',
@@ -408,6 +461,12 @@ def create_kassenbuch_page(db: VereinsDB):
 
                     if not datum_state['value']:
                         error_label.text = 'Bitte gültiges Datum eingeben'
+                        error_label.visible = True
+                        return
+
+                    # Client-seitige Datumsbereichsprüfung vor dem Service-Call
+                    if not _prüfe_datum_live(datum_state['value']):
+                        error_label.text = _datum_bereich_hinweis()
                         error_label.visible = True
                         return
 
@@ -466,6 +525,11 @@ def create_kassenbuch_page(db: VereinsDB):
                         dialog.close()
                         render_content()
 
+                    except DatumAusserhalbBereichError as e:
+                        datum_fehler_label.text = _datum_bereich_hinweis()
+                        datum_fehler_label.visible = True
+                        error_label.text = str(e)
+                        error_label.visible = True
                     except NegativerBestandError as e:
                         error_label.text = str(e)
                         error_label.visible = True

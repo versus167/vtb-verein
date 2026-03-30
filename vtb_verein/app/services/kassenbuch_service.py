@@ -39,6 +39,27 @@ class KeinExportrechtError(Exception):
     pass
 
 
+class DatumAusserhalbBereichError(Exception):
+    """Wird geworfen wenn das Buchungsdatum außerhalb des erlaubten Bereichs liegt.
+
+    Attributes:
+        min_datum: Frühestes erlaubtes Datum (ISO-String, kann None sein wenn kein Export).
+        max_datum: Spätestes erlaubtes Datum (ISO-String, immer date.today()).
+    """
+
+    def __init__(self, min_datum: str | None, max_datum: str) -> None:
+        self.min_datum = min_datum
+        self.max_datum = max_datum
+        if min_datum:
+            super().__init__(
+                f"Datum muss zwischen {min_datum} und {max_datum} liegen."
+            )
+        else:
+            super().__init__(
+                f"Datum darf nicht nach heute ({max_datum}) liegen."
+            )
+
+
 class KassenbuchService:
     """Service für alle Kassenbuch-Operationen.
 
@@ -49,6 +70,7 @@ class KassenbuchService:
     - Export-Logik (CSV)
     - Kassenbericht-Daten für PDF
     - Berechtigungsprüfung (kassenspezifisch, Admin-Bypass)
+    - Datumsvalidierung (>= letztes Export-bis_datum, <= heute)
     """
 
     def __init__(
@@ -106,6 +128,34 @@ class KassenbuchService:
             )
 
     # -----------------------------------
+    # Datumsvalidierung
+    # -----------------------------------
+
+    def get_datum_bereich(self, kasse_id: int) -> tuple[str | None, str]:
+        """Gibt den erlaubten Datumsbereich für neue/bearbeitete Buchungen zurück.
+
+        Returns:
+            (min_datum, max_datum) als ISO-Strings.
+            min_datum ist None wenn noch kein Export existiert.
+            max_datum ist immer date.today().
+        """
+        max_datum = date.today().isoformat()
+        min_datum = self._export.get_letztes_bis_datum(kasse_id)
+        return min_datum, max_datum
+
+    def _validate_datum(self, buchungsdatum: str, kasse_id: int) -> None:
+        """Validiert das Buchungsdatum gegen den erlaubten Bereich.
+
+        Raises:
+            DatumAusserhalbBereichError: Wenn das Datum außerhalb des erlaubten Bereichs.
+        """
+        min_datum, max_datum = self.get_datum_bereich(kasse_id)
+        if buchungsdatum > max_datum:
+            raise DatumAusserhalbBereichError(min_datum, max_datum)
+        if min_datum is not None and buchungsdatum < min_datum:
+            raise DatumAusserhalbBereichError(min_datum, max_datum)
+
+    # -----------------------------------
     # Kassen-Verwaltung (Admin-only)
     # -----------------------------------
 
@@ -136,14 +186,17 @@ class KassenbuchService:
         self, buchung: Kassenbuchung, created_by: str,
         user_id: int = None, is_admin: bool = False,
     ) -> Kassenbuchung:
-        """Erstellt eine neue Buchung inkl. Bestandsprüfung und Belegnummer.
+        """Erstellt eine neue Buchung inkl. Datumsvalidierung, Bestandsprüfung und Belegnummer.
 
         Raises:
             KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
+            DatumAusserhalbBereichError: Wenn das Datum außerhalb des erlaubten Bereichs liegt.
             NegativerBestandError: Wenn die Buchung zu einem negativen Bestand führen würde.
         """
         if user_id is not None:
             self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
+
+        self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
 
         # Belegnummer: einfache laufende Nummer pro Kasse
         buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id)
@@ -168,12 +221,15 @@ class KassenbuchService:
         Raises:
             KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
             BuchungGesperrtError: Wenn die Buchung bereits exportiert wurde.
+            DatumAusserhalbBereichError: Wenn das Datum außerhalb des erlaubten Bereichs liegt.
             NegativerBestandError: Wenn die Änderung zu einem negativen Bestand führen würde.
         """
         if user_id is not None:
             self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
 
         self._pruefe_nicht_gesperrt(buchung.id)
+
+        self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
 
         # Bestandsprüfung: simulierter Bestand nach Update
         if buchung.ausgabe_cent > 0:
