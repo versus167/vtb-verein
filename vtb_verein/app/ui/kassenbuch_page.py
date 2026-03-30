@@ -167,12 +167,12 @@ def create_kassenbuch_page(db: VereinsDB):
                 # ----------------------------------------------------------
                 # [1] Filter-Accordion
                 # Auf kleinen Screens (lt-sm) zugeklappt; auf Desktop immer
-                # sichtbar via gt-sm:block. Das expansion_item selbst ist nur
-                # auf Mobil sichtbar, der bare filter_row nur auf Desktop.
+                # sichtbar via gt-xs. Das expansion_item selbst ist nur
+                # auf Mobil sichtbar (lt-sm), der bare filter_row nur auf Desktop.
                 # ----------------------------------------------------------
 
-                # Desktop-Filterzeile (nur gt-sm sichtbar)
-                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-sm:flex hidden') as _desktop_filter:
+                # Desktop-Filterzeile (nur gt-xs sichtbar, Quasar-Breakpoint)
+                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-xs') as _desktop_filter:
                     von_input_d = ui.input(
                         'Von',
                         value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
@@ -225,8 +225,8 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
-                # Mobile Filter-Accordion (nur lt-sm sichtbar)
-                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm:block hidden q-mb-sm') as _mobile_filter:
+                # Mobile Filter-Accordion (nur lt-sm sichtbar, Quasar-Breakpoint)
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm q-mb-sm') as _mobile_filter:
                     with ui.column().classes('q-gutter-sm q-pa-sm'):
                         von_input_m = ui.input(
                             'Von',
@@ -280,7 +280,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 if hat_schreibzugriff():
                     with ui.element('q-fab').props(
                         'icon=add direction=up color=primary'
-                    ).classes('lt-sm:block hidden fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
+                    ).classes('lt-sm fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
                         ui.element('q-fab-action').props(
                             'icon=add color=positive label=Einnahme'
                         ).on('click', lambda: show_buchung_dialog('einnahme'))
