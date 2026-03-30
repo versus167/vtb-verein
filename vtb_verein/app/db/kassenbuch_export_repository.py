@@ -53,6 +53,27 @@ class KassenbuchExportRepository(BaseRepository):
             )
             return [KassenbuchExport(**dict(row)) for row in cur.fetchall()]
 
+    def get_letztes_bis_datum(self, kasse_id: int) -> str | None:
+        """Gibt das größte bis_datum aller aktiven Exporte dieser Kasse zurück.
+
+        Wird für die Datumsvalidierung beim Anlegen/Bearbeiten von Buchungen
+        genutzt: Buchungen dürfen nicht vor (bzw. auf) dem letzten Export-Stichtag liegen.
+
+        Returns:
+            ISO-Datumsstring (z.B. '2025-12-31') oder None wenn noch kein Export.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT MAX(zeitraum_bis)
+                FROM kassenbuch_exporte
+                WHERE kasse_id = ? AND deleted_at IS NULL
+                """,
+                (kasse_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
+
     def create_export(self, export: KassenbuchExport, created_by: str) -> KassenbuchExport:
         """Erstellt einen neuen Export-Datensatz. History via Trigger."""
         with self.cursor() as cur:
