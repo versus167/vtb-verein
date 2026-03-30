@@ -96,7 +96,9 @@ def create_kassenbuch_page(db: VereinsDB):
         # Kassen-Header: Tabs + Bestand
         # ------------------------------------------------------------------
         with ui.row().classes('w-full items-center q-px-md q-mb-sm').style('gap: 0'):
-            kasse_tabs = ui.tabs().classes('q-mr-auto')
+            # [5] Scrollable Tabs – props('scrollable') damit bei vielen Kassen
+            # ein horizontales Scroll-Pfeil-Overlay erscheint statt Overflow
+            kasse_tabs = ui.tabs().classes('q-mr-auto').props('scrollable')
             with kasse_tabs:
                 tab_refs = {}
                 for k in kassen:
@@ -162,48 +164,55 @@ def create_kassenbuch_page(db: VereinsDB):
             with content_area:
                 refresh_bestand()
 
-                # ---------- Filterzeile ----------
-                with ui.row().classes('items-center q-gutter-sm q-mb-sm'):
-                    von_input = ui.input(
+                # ----------------------------------------------------------
+                # [1] Filter-Accordion
+                # Auf kleinen Screens (lt-sm) zugeklappt; auf Desktop immer
+                # sichtbar via gt-sm:block. Das expansion_item selbst ist nur
+                # auf Mobil sichtbar, der bare filter_row nur auf Desktop.
+                # ----------------------------------------------------------
+
+                # Desktop-Filterzeile (nur gt-sm sichtbar)
+                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-sm:flex hidden') as _desktop_filter:
+                    von_input_d = ui.input(
                         'Von',
                         value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
-                    bis_input = ui.input(
+                    bis_input_d = ui.input(
                         'Bis',
                         value=DateInputHelper.format_date_display(state['bis_datum']) if state['bis_datum'] else '',
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
 
-                    def on_storniert_change(e):
+                    def on_storniert_change_d(e):
                         state['include_storniert'] = e.value
                         render_content()
 
                     ui.checkbox(
                         'Stornierte einblenden',
                         value=state['include_storniert'],
-                        on_change=on_storniert_change
+                        on_change=on_storniert_change_d
                     )
 
-                    def apply_filter():
-                        von_raw = von_input.value.strip()
-                        bis_raw = bis_input.value.strip()
+                    def apply_filter_d():
+                        von_raw = von_input_d.value.strip()
+                        bis_raw = bis_input_d.value.strip()
                         state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
                         state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
                         render_content()
 
-                    ui.button('Filter anwenden', on_click=apply_filter, icon='filter_list').props('outline dense')
+                    ui.button('Filter anwenden', on_click=apply_filter_d, icon='filter_list').props('outline dense')
 
                     ui.separator().props('vertical')
 
-                    def on_history_toggle(e):
+                    def on_history_toggle_d(e):
                         state['show_history'] = e.value
                         render_content()
 
                     ui.checkbox(
                         'Änderungshistorie anzeigen',
                         value=state['show_history'],
-                        on_change=on_history_toggle,
+                        on_change=on_history_toggle_d,
                     ).props('dense')
 
                     ui.separator().props('vertical')
@@ -215,6 +224,69 @@ def create_kassenbuch_page(db: VereinsDB):
                     if hat_exportrecht():
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
+
+                # Mobile Filter-Accordion (nur lt-sm sichtbar)
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm:block hidden q-mb-sm') as _mobile_filter:
+                    with ui.column().classes('q-gutter-sm q-pa-sm'):
+                        von_input_m = ui.input(
+                            'Von',
+                            value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
+                            placeholder='TT.MM.JJJJ'
+                        ).classes('w-full')
+                        bis_input_m = ui.input(
+                            'Bis',
+                            value=DateInputHelper.format_date_display(state['bis_datum']) if state['bis_datum'] else '',
+                            placeholder='TT.MM.JJJJ'
+                        ).classes('w-full')
+
+                        def on_storniert_change_m(e):
+                            state['include_storniert'] = e.value
+                            render_content()
+
+                        ui.checkbox(
+                            'Stornierte einblenden',
+                            value=state['include_storniert'],
+                            on_change=on_storniert_change_m
+                        )
+
+                        def apply_filter_m():
+                            von_raw = von_input_m.value.strip()
+                            bis_raw = bis_input_m.value.strip()
+                            state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
+                            state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
+                            render_content()
+
+                        ui.button('Filter anwenden', on_click=apply_filter_m, icon='filter_list').props('outline dense').classes('w-full')
+
+                        def on_history_toggle_m(e):
+                            state['show_history'] = e.value
+                            render_content()
+
+                        ui.checkbox(
+                            'Änderungshistorie anzeigen',
+                            value=state['show_history'],
+                            on_change=on_history_toggle_m,
+                        ).props('dense')
+
+                        if hat_exportrecht():
+                            with ui.row().classes('q-gutter-sm'):
+                                ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
+                                ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
+
+                # ----------------------------------------------------------
+                # [3] FAB Speed-Dial (nur Mobil sichtbar; Desktop-Buttons
+                # bleiben in der Filterzeile oben)
+                # ----------------------------------------------------------
+                if hat_schreibzugriff():
+                    with ui.element('q-fab').props(
+                        'icon=add direction=up color=primary'
+                    ).classes('lt-sm:block hidden fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
+                        ui.element('q-fab-action').props(
+                            'icon=add color=positive label=Einnahme'
+                        ).on('click', lambda: show_buchung_dialog('einnahme'))
+                        ui.element('q-fab-action').props(
+                            'icon=remove color=negative label=Ausgabe'
+                        ).on('click', lambda: show_buchung_dialog('ausgabe'))
 
                 # ---------- Buchungstabelle ----------
                 columns = [
@@ -236,37 +308,89 @@ def create_kassenbuch_page(db: VereinsDB):
                     row_key='id',
                 ).classes('w-full').props('sort-by="datum" sort-direction="desc"')
 
+                # ----------------------------------------------------------
+                # [2] Body-Slot: Desktop-Tabellenzeile ODER Mobile-Karte
+                # v-if="$q.screen.lt.sm" schaltet zwischen den Layouts um.
+                # ----------------------------------------------------------
                 body_slot = r'''
-                    <q-tr :props="props"
-                          :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
-                        <q-td key="belegnummer" :props="props">
-                            <span>{{ props.row.belegnummer }}</span>
-                            <q-icon v-if="props.row.exportiert" name="lock" size="xs"
-                                    class="q-ml-xs text-grey-5" title="exportiert" />
-                        </q-td>
-                        <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
-                        <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
-                        <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
-                        <q-td key="einnahme" :props="props" class="text-positive text-right">
-                            {{ props.row.einnahme }}
-                        </q-td>
-                        <q-td key="ausgabe" :props="props" class="text-negative text-right">
-                            {{ props.row.ausgabe }}
-                        </q-td>
-                        <q-td key="bestand" :props="props" class="text-right text-weight-bold">
-                            {{ props.row.bestand }}
-                        </q-td>
-                        <q-td key="actions" :props="props">
+                    <template v-if="$q.screen.lt.sm">
+                        <!-- Mobile Karten-Darstellung -->
+                        <q-tr :props="props" style="display: block; padding: 0;">
+                            <q-td colspan="8" style="padding: 6px 0;">
+                                <q-card flat bordered
+                                    :class="props.row.storniert ? 'text-strike text-grey-5 q-mb-xs' : 'q-mb-xs'"
+                                    style="border-radius: 8px; padding: 8px 12px;">
+                                    <!-- Zeile 1: Datum + Belegnummer -->
+                                    <div class="row items-center q-mb-xs">
+                                        <span class="text-caption text-grey-6">{{ props.row.datum }}</span>
+                                        <span v-if="props.row.belegnummer" class="text-caption text-grey-6 q-ml-sm">
+                                            · {{ props.row.belegnummer }}
+                                        </span>
+                                        <q-icon v-if="props.row.exportiert" name="lock" size="xs"
+                                                class="q-ml-xs text-grey-5" title="exportiert" />
+                                        <q-space />
+                                        <!-- Aktions-Buttons rechts in Zeile 1 -->
+                                        <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                               flat dense icon="edit" size="xs"
+                                               @click="$parent.$emit('edit', props.row.id)" />
+                                        <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                               flat dense icon="block" size="xs" color="negative"
+                                               @click="$parent.$emit('stornieren', props.row)" />
+                                    </div>
+                                    <!-- Zeile 2: Buchungstext -->
+                                    <div class="text-body2 text-weight-bold q-mb-xs">{{ props.row.buchungstext }}</div>
+                                    <!-- Zeile 3: Kategorie | Betrag | Kontostand -->
+                                    <div class="row items-center">
+                                        <span class="text-caption text-grey-7">{{ props.row.kategorie }}</span>
+                                        <q-space />
+                                        <span v-if="props.row.einnahme"
+                                              class="text-caption text-positive text-weight-medium q-mr-sm">
+                                            +{{ props.row.einnahme }}
+                                        </span>
+                                        <span v-if="props.row.ausgabe"
+                                              class="text-caption text-negative text-weight-medium q-mr-sm">
+                                            -{{ props.row.ausgabe }}
+                                        </span>
+                                        <span class="text-caption text-weight-bold">
+                                            {{ props.row.bestand }}
+                                        </span>
+                                    </div>
+                                </q-card>
+                            </q-td>
+                        </q-tr>
+                    </template>
+                    <template v-else>
+                        <!-- Desktop Tabellenzeile -->
+                        <q-tr :props="props"
+                              :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
+                            <q-td key="belegnummer" :props="props">
+                                <span>{{ props.row.belegnummer }}</span>
+                                <q-icon v-if="props.row.exportiert" name="lock" size="xs"
+                                        class="q-ml-xs text-grey-5" title="exportiert" />
+                            </q-td>
+                            <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
+                            <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
+                            <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
+                            <q-td key="einnahme" :props="props" class="text-positive text-right">
+                                {{ props.row.einnahme }}
+                            </q-td>
+                            <q-td key="ausgabe" :props="props" class="text-negative text-right">
+                                {{ props.row.ausgabe }}
+                            </q-td>
+                            <q-td key="bestand" :props="props" class="text-right text-weight-bold">
+                                {{ props.row.bestand }}
+                            </q-td>
+                            <q-td key="actions" :props="props">
                 '''
 
                 if show_history_col:
                     body_slot += r'''
-                            <q-btn v-if="props.row.version > 1"
-                                   flat dense round
-                                   :icon="props.row._hist_open ? 'expand_less' : 'history'"
-                                   size="sm" color="grey"
-                                   :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
-                                   @click="$parent.$emit('load_history', props.row.id)" />
+                                <q-btn v-if="props.row.version > 1"
+                                       flat dense round
+                                       :icon="props.row._hist_open ? 'expand_less' : 'history'"
+                                       size="sm" color="grey"
+                                       :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
+                                       @click="$parent.$emit('load_history', props.row.id)" />
                     '''
 
                 body_slot += r'''
@@ -276,13 +400,14 @@ def create_kassenbuch_page(db: VereinsDB):
                             <q-btn v-if="!props.row.storniert && !props.row.exportiert"
                                    flat dense icon="block" size="sm" color="negative"
                                    @click="$parent.$emit('stornieren', props.row)" />
-                        </q-td>
-                    </q-tr>
+                            </q-td>
+                        </q-tr>
+                    </template>
                 '''
 
                 if show_history_col:
                     body_slot += r'''
-                    <template v-if="props.row._hist_open && props.row._hist_rows">
+                    <template v-if="!$q.screen.lt.sm && props.row._hist_open && props.row._hist_rows">
                         <q-tr v-for="h in props.row._hist_rows"
                               :key="'h_' + props.row.id + '_' + h.version"
                               class="text-grey-6 bg-grey-1">
@@ -363,7 +488,8 @@ def create_kassenbuch_page(db: VereinsDB):
             # Datumsgrenzen beim Dialog-Öffnen laden
             min_datum_iso, max_datum_iso = db.kassenbuch.get_datum_bereich(state['kasse'].id)
 
-            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+            # [4] Dialog-Breite: min(480px, 95vw) für Mobile-Kompatibilität
+            with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label(titel).classes('text-h6 q-mb-md')
 
                 datum_input = ui.input(
@@ -605,7 +731,8 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_export_dialog():
-            with ui.dialog() as dialog, ui.card().style('min-width: 520px'):
+            # [4] Dialog-Breite: min(520px, 95vw)
+            with ui.dialog() as dialog, ui.card().style('min-width: min(520px, 95vw)'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
                 # Bis-Datum-Eingabe
@@ -770,7 +897,8 @@ def create_kassenbuch_page(db: VereinsDB):
             """Dialog für PDF-Bericht. Vorbelegt mit letztem kompletten Monat."""
             von_default, bis_default = letzter_vollstaendiger_monat()
 
-            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+            # [4] Dialog-Breite: min(480px, 95vw)
+            with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label('PDF-Bericht').classes('text-h6 q-mb-md')
 
                 ui.label(
