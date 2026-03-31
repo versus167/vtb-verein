@@ -100,16 +100,17 @@ def main_page():
                         ui.label('Kassenbuch').classes('text-h6 q-mt-sm')
                         ui.label('Buchungen verwalten').classes('text-caption text-grey')
 
-            # Kassenverwaltung – nur Admins (USERS_MANAGE)
-            if user.can_manage_users():
+            # Kassenverwaltung – nur echte Admins (USERS_MANAGE)
+            if user.has_permission(Permission.USERS_MANAGE):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/kassen')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('account_balance_wallet', size='3rem').classes('text-primary')
                         ui.label('Kassenverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Kassen und Berechtigungen').classes('text-caption text-grey')
 
-            # Benutzerverwaltung – nur Admins (USERS_MANAGE)
-            if user.can_manage_users():
+            # Benutzerverwaltung – sichtbar ab USERS_READ (ansehen reicht)
+            # USERS_MANAGE-User sehen die Kachel ebenfalls, da MANAGE ⊇ READ.
+            if user.has_permission(Permission.USERS_READ):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/users')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('people', size='3rem').classes('text-primary')
