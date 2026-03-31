@@ -115,8 +115,11 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
         # Inhaltsbereich (wird bei Tab-Wechsel neu gerendert)
         # Desktop bekommt seitliches Padding, Mobil keins (Liste geht bis zum Rand)
+        # align-items: stretch sorgt dafür, dass Kinder die volle Breite bekommen
         # ------------------------------------------------------------------
-        content_area = ui.column().classes('w-full gt-xs:q-px-md')
+        content_area = ui.column().classes('w-full gt-xs:q-px-md').style(
+            'width: 100%; align-items: stretch;'
+        )
 
         def refresh_bestand():
             cent = db.kassen.get_bestand_cent(state['kasse'].id)
@@ -229,7 +232,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # Mobile Filter-Accordion (nur lt-sm sichtbar)
-                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm q-mb-sm q-px-sm') as _mobile_filter:
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('lt-sm q-mb-sm').style('width: 100%;') as _mobile_filter:
                     with ui.column().classes('q-gutter-sm q-pa-sm'):
                         von_input_m = ui.input(
                             'Von',
@@ -305,12 +308,14 @@ def create_kassenbuch_page(db: VereinsDB):
                   .kasse-day-header {
                     display: flex;
                     align-items: center;
+                    width: 100%;
                     padding: 4px 12px;
                     background: #2c2c2c;
                     color: #ffffff;
                     font-size: 13px;
                     font-weight: 600;
                     letter-spacing: 0.01em;
+                    box-sizing: border-box;
                   }
                   .kasse-day-saldo {
                     margin-left: auto;
@@ -322,11 +327,13 @@ def create_kassenbuch_page(db: VereinsDB):
                   .kasse-buchung-zeile {
                     display: flex;
                     align-items: center;
+                    width: 100%;
                     min-height: 48px;
                     padding: 6px 12px;
                     border-bottom: 1px solid #f0f0f0;
                     gap: 8px;
                     background: #ffffff;
+                    box-sizing: border-box;
                   }
                   .kasse-buchung-zeile.storniert {
                     background: #fafafa;
@@ -398,7 +405,9 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 schreibzugriff = hat_schreibzugriff()
 
-                with ui.column().classes('w-full lt-sm').style('gap: 0; overflow: hidden; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;'):
+                with ui.element('div').classes('lt-sm').style(
+                    'width: 100%; display: block; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;'
+                ):
                     if not rows:
                         with ui.element('div').classes('kasse-buchung-zeile'):
                             ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 14px;')
@@ -440,7 +449,7 @@ def create_kassenbuch_page(db: VereinsDB):
 
                                 if kann_bearbeiten:
                                     # q-slide-item: Swipe-Rechts = Bearbeiten, Swipe-Links = Stornieren
-                                    slide = ui.element('q-slide-item').style('display: block;')
+                                    slide = ui.element('q-slide-item').style('display: block; width: 100%;')
 
                                     # Swipe-Rechts-Slot (Bearbeiten)
                                     slide.add_slot('right', f'''
