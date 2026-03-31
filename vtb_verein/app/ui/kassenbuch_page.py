@@ -158,6 +158,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     'storniert': b.ist_storniert,
                     'exportiert': b.ist_exportiert,
                     'version': b.version,
+                    'erfasst_von': b.created_by or '',
                 })
             # Neueste Buchung zuerst
             rows.reverse()
@@ -441,6 +442,8 @@ def create_kassenbuch_page(db: VereinsDB):
                                 if row['belegnummer']:
                                     meta_parts.append(f"#{row['belegnummer']}")
                                 meta_parts.append(row['kategorie'])
+                                if row['erfasst_von']:
+                                    meta_parts.append(row['erfasst_von'])
                                 if exportiert:
                                     meta_parts.append('🔒')
                                 meta_str = '  ·  '.join(meta_parts)
@@ -506,6 +509,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     {'name': 'einnahme', 'label': 'Einnahme', 'field': 'einnahme', 'align': 'right'},
                     {'name': 'ausgabe', 'label': 'Ausgabe', 'field': 'ausgabe', 'align': 'right'},
                     {'name': 'bestand', 'label': 'Bestand', 'field': 'bestand', 'align': 'right'},
+                    {'name': 'erfasst_von', 'label': 'Erfasst von', 'field': 'erfasst_von', 'align': 'left'},
                     {'name': 'actions', 'label': '', 'field': 'actions', 'align': 'center'},
                 ]
 
@@ -535,6 +539,9 @@ def create_kassenbuch_page(db: VereinsDB):
                             </q-td>
                             <q-td key="bestand" :props="props" class="text-right text-weight-bold">
                                 {{ props.row.bestand }}
+                            </q-td>
+                            <q-td key="erfasst_von" :props="props" class="text-grey-6 text-caption">
+                                {{ props.row.erfasst_von }}
                             </q-td>
                             <q-td key="actions" :props="props">
                     '''
@@ -573,6 +580,7 @@ def create_kassenbuch_page(db: VereinsDB):
                                 <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
                                 <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
                                 <q-td class="text-caption text-right text-grey-5">—</q-td>
+                                <q-td class="text-caption text-grey-5">{{ h.erfasst_von }}</q-td>
                                 <q-td></q-td>
                             </q-tr>
                         </template>
@@ -597,6 +605,7 @@ def create_kassenbuch_page(db: VereinsDB):
                                         'kategorie': h['kategorie'],
                                         'einnahme': fmt_euro(h['einnahme_cent']) if h['einnahme_cent'] else '',
                                         'ausgabe': fmt_euro(h['ausgabe_cent']) if h['ausgabe_cent'] else '',
+                                        'erfasst_von': h.get('created_by') or '',
                                     }
                                     for h in raw
                                 ]
