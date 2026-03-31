@@ -84,6 +84,14 @@ def create_kassenbuch_page(db: VereinsDB):
 
         ui.label('Kassenbuch').classes('text-h4 q-ma-md')
 
+        # Floating Home-Button (nur Mobil, links unten)
+        ui.button(
+            icon='home',
+            on_click=lambda: ui.navigate.to('/')
+        ).props('fab color=primary').classes('lt-sm fixed').style(
+            'bottom: 16px; left: 16px; z-index: 2000;'
+        )
+
         # State – von_datum startet standardmäßig 90 Tage in der Vergangenheit
         state = {
             'kasse': kassen[0],
@@ -116,8 +124,6 @@ def create_kassenbuch_page(db: VereinsDB):
         # Kassen-Header: Tabs + Bestand
         # ------------------------------------------------------------------
         with ui.row().classes('w-full items-center q-px-md q-mb-sm').style('gap: 0'):
-            # [5] Scrollable Tabs – props('scrollable') damit bei vielen Kassen
-            # ein horizontales Scroll-Pfeil-Overlay erscheint statt Overflow
             kasse_tabs = ui.tabs().classes('q-mr-auto').props('scrollable')
             with kasse_tabs:
                 tab_refs = {}
@@ -178,7 +184,6 @@ def create_kassenbuch_page(db: VereinsDB):
 
         def render_content():
             content_area.clear()
-            # Cache für bereits geladene History-Daten (buchung_id -> list[dict])
             history_cache: dict[int, list[dict]] = {}
 
             with content_area:
@@ -186,12 +191,9 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 # ----------------------------------------------------------
                 # [1] Filter-Accordion
-                # Auf kleinen Screens (lt-sm) zugeklappt; auf Desktop immer
-                # sichtbar via gt-xs. Das expansion_item selbst ist nur
-                # auf Mobil sichtbar (lt-sm), der bare filter_row nur auf Desktop.
                 # ----------------------------------------------------------
 
-                # Desktop-Filterzeile (nur gt-xs sichtbar, Quasar-Breakpoint)
+                # Desktop-Filterzeile (nur gt-xs sichtbar)
                 with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-xs') as _desktop_filter:
                     von_input_d = ui.input(
                         'Von',
@@ -245,7 +247,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
-                # Mobile Filter-Accordion (nur lt-sm sichtbar, Quasar-Breakpoint)
+                # Mobile Filter-Accordion (nur lt-sm sichtbar)
                 with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm q-mb-sm') as _mobile_filter:
                     with ui.column().classes('q-gutter-sm q-pa-sm'):
                         von_input_m = ui.input(
@@ -294,13 +296,12 @@ def create_kassenbuch_page(db: VereinsDB):
                                 ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # ----------------------------------------------------------
-                # [3] FAB Speed-Dial (nur Mobil sichtbar; Desktop-Buttons
-                # bleiben in der Filterzeile oben)
+                # [3] FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil)
                 # ----------------------------------------------------------
                 if hat_schreibzugriff():
                     with ui.element('q-fab').props(
                         'icon=add direction=up color=primary'
-                    ).classes('lt-sm fixed').style('bottom: 72px; right: 16px; z-index: 2000;'):
+                    ).classes('lt-sm fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
                         ui.element('q-fab-action').props(
                             'icon=add color=positive label=Einnahme'
                         ).on('click', lambda: show_buchung_dialog('einnahme'))
@@ -330,9 +331,6 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 # ----------------------------------------------------------
                 # [2] Body-Slot: Desktop-Tabellenzeile ODER Mobile-Karte
-                # Auf Mobil: q-tr + einzelne q-td die volle Breite einnimmt,
-                # darin die Karte als normales div (kein colspan-Trick nötig,
-                # da thead via CSS ausgeblendet und tr/td als block dargestellt).
                 # ----------------------------------------------------------
                 body_slot = r'''
                     <template v-if="$q.screen.lt.sm">
@@ -487,10 +485,6 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_buchung_dialog(modus: str, buchung_id: int = None):
-            """
-            modus: 'einnahme' | 'ausgabe' | 'edit'
-            buchung_id: Nur bei modus='edit' übergeben; Buchung wird frisch aus DB geladen.
-            """
             ist_neu = modus in ('einnahme', 'ausgabe')
 
             buchung: Kassenbuchung | None = None
@@ -509,10 +503,8 @@ def create_kassenbuch_page(db: VereinsDB):
 
             modus_eff = modus if ist_neu else ('einnahme' if buchung.einnahme_cent > 0 else 'ausgabe')
 
-            # Datumsgrenzen beim Dialog-Öffnen laden
             min_datum_iso, max_datum_iso = db.kassenbuch.get_datum_bereich(state['kasse'].id)
 
-            # [4] Dialog-Breite: min(480px, 95vw) für Mobile-Kompatibilität
             with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label(titel).classes('text-h6 q-mb-md')
 
@@ -527,12 +519,10 @@ def create_kassenbuch_page(db: VereinsDB):
                     'value': buchung.buchungsdatum if buchung else date.today().isoformat()
                 }
 
-                # Fehlerhinweis unter dem Datum-Feld (nur für Datumsfehler)
                 datum_fehler_label = ui.label('').classes('text-negative text-caption q-mt-xs')
                 datum_fehler_label.visible = False
 
                 def _datum_bereich_hinweis() -> str:
-                    """Erstellt den Bereichs-Hinweis-Text für die Fehleranzeige."""
                     min_fmt = DateInputHelper.format_date_display(min_datum_iso) if min_datum_iso else None
                     max_fmt = DateInputHelper.format_date_display(max_datum_iso)
                     if min_fmt:
@@ -540,7 +530,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     return f'Datum darf nicht nach {max_fmt} liegen'
 
                 def _prüfe_datum_live(datum_iso: str | None) -> bool:
-                    """Prüft das Datum gegen die geladenen Grenzen. Gibt True zurück wenn gültig."""
                     if datum_iso is None:
                         datum_fehler_label.text = 'Ungültiges Datum'
                         datum_fehler_label.visible = True
@@ -557,7 +546,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     return True
 
                 def on_datum_change(e):
-                    """Live-Feedback bei jeder Änderung des Datum-Inputs."""
                     parsed = DateInputHelper.parse_date(datum_input.value)
                     if parsed:
                         datum_state['value'] = parsed
@@ -582,8 +570,6 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 datum_input.on('update:model-value', on_datum_change)
                 datum_input.on('blur', on_datum_blur)
-
-                # Initiale Live-Prüfung des vorausgefüllten Datums
                 _prüfe_datum_live(datum_state['value'])
 
                 buchungstext_input = ui.input(
@@ -624,7 +610,6 @@ def create_kassenbuch_page(db: VereinsDB):
                         error_label.visible = True
                         return
 
-                    # Client-seitige Datumsbereichsprüfung vor dem Service-Call
                     if not _prüfe_datum_live(datum_state['value']):
                         error_label.text = _datum_bereich_hinweis()
                         error_label.visible = True
@@ -714,7 +699,6 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_storno_dialog(row: dict):
-            """row ist das plain dict aus dem Vue-Event (JSON-serialisiert)."""
             buchung_id = int(row['id'])
             belegnummer = row.get('belegnummer', '')
             buchungstext = row.get('buchungstext', '')
@@ -755,11 +739,9 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_export_dialog():
-            # [4] Dialog-Breite: min(520px, 95vw)
             with ui.dialog() as dialog, ui.card().style('min-width: min(520px, 95vw)'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
-                # Bis-Datum-Eingabe
                 bis_input = ui.input(
                     'Bis-Datum *',
                     value=DateInputHelper.format_date_display(date.today().isoformat()),
@@ -767,7 +749,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 ).classes('w-full')
                 bis_state = {'value': date.today().isoformat()}
 
-                # Vorschau-Bereich
                 vorschau_container = ui.column().classes('w-full q-mt-sm q-mb-sm')
 
                 def lade_vorschau():
@@ -808,15 +789,11 @@ def create_kassenbuch_page(db: VereinsDB):
                         bis_input.error = 'Ungültiges Datum'
                 bis_input.on('blur', on_bis_blur)
 
-                # Initiale Vorschau laden
                 lade_vorschau()
 
                 error_label = ui.label('').classes('text-negative')
                 error_label.visible = False
 
-                # ----------------------------------------------------------
-                # Export-Verlauf
-                # ----------------------------------------------------------
                 ui.separator().classes('q-mt-md q-mb-sm')
                 ui.label('Bisherige Exporte').classes('text-subtitle2 text-grey-7')
                 exporte = db.kassenbuch._export.list_exporte(state['kasse'].id)
@@ -918,10 +895,8 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_pdf_dialog():
-            """Dialog für PDF-Bericht. Vorbelegt mit letztem kompletten Monat."""
             von_default, bis_default = letzter_vollstaendiger_monat()
 
-            # [4] Dialog-Breite: min(480px, 95vw)
             with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label('PDF-Bericht').classes('text-h6 q-mb-md')
 
@@ -1003,7 +978,6 @@ def create_kassenbuch_page(db: VereinsDB):
                             include_storniert=pdf_state['include_storniert'],
                         )
 
-                        # Anfangsbestand: Bestand am Tag vor dem Von-Datum
                         tag_vor_von = str(
                             date.fromisoformat(pdf_state['von']) - timedelta(days=1)
                         )

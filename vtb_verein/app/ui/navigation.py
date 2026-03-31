@@ -15,7 +15,10 @@ def create_navigation(db=None):
     user = AuthHelper.get_current_user()
     current_path = app.storage.user.get('current_path', '/')
 
-    with ui.header().classes('items-center justify-between').style('background: linear-gradient(90deg, #1976d2 0%, #1565c0 100%);'):
+    # gt-xs: Navigation nur auf Screens >= sm (600px) sichtbar
+    # Auf Mobil (lt-sm) wird sie komplett ausgeblendet – stattdessen
+    # gibt es auf relevanten Seiten einen floating Home-Button.
+    with ui.header().classes('items-center justify-between gt-xs').style('background: linear-gradient(90deg, #1976d2 0%, #1565c0 100%);'):
         with ui.row().classes('items-center'):
             ui.label('\U0001f3db\ufe0f Vereinsverwaltung').classes('text-h5 q-mr-md text-white')
 
@@ -44,7 +47,6 @@ def create_navigation(db=None):
                         mitgl_btn.props('flat').classes('text-white')
 
                 # Kassenbuch für normale User
-                # Sichtbar wenn mind. eine Kasse mit Lesezugriff vorhanden (oder Admin mit db)
                 if user and db is not None:
                     is_admin = user.can_manage_users()
                     zeige_kassenbuch = False
@@ -78,16 +80,13 @@ def create_navigation(db=None):
 
         with ui.row().classes('items-center q-gutter-sm'):
             if user:
-                # User-Menü (Dropdown)
                 with ui.button(icon='account_circle').props('flat round').classes('text-white'):
                     with ui.menu() as menu:
                         with ui.column().classes('q-pa-sm'):
-                            # User Info
                             ui.label(f'{user.username}').classes('text-weight-bold')
                             ui.label(f'Rolle: {user.role}').classes('text-caption text-grey-7')
                             ui.separator()
 
-                            # Profil-Link
                             with ui.item().props('clickable').on('click', lambda: (menu.close(), ui.navigate.to('/profile'))):
                                 with ui.item_section().props('avatar'):
                                     ui.icon('person')
@@ -96,7 +95,6 @@ def create_navigation(db=None):
 
                             ui.separator()
 
-                            # Logout
                             def handle_logout():
                                 menu.close()
                                 AuthHelper.logout()
