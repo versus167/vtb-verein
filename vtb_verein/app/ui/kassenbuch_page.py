@@ -64,6 +64,14 @@ def create_kassenbuch_page(db: VereinsDB):
 
         ui.label('Kassenbuch').classes('text-h4 q-ma-md')
 
+        # Floating Home-Button (nur Mobil, links unten)
+        ui.button(
+            icon='home',
+            on_click=lambda: ui.navigate.to('/')
+        ).props('fab color=primary').classes('lt-sm fixed').style(
+            'bottom: 16px; left: 16px; z-index: 2000;'
+        )
+
         # State – von_datum startet standardmäßig 90 Tage in der Vergangenheit
         state = {
             'kasse': kassen[0],
@@ -96,7 +104,7 @@ def create_kassenbuch_page(db: VereinsDB):
         # Kassen-Header: Tabs + Bestand
         # ------------------------------------------------------------------
         with ui.row().classes('w-full items-center q-px-md q-mb-sm').style('gap: 0'):
-            kasse_tabs = ui.tabs().classes('q-mr-auto')
+            kasse_tabs = ui.tabs().classes('q-mr-auto').props('scrollable')
             with kasse_tabs:
                 tab_refs = {}
                 for k in kassen:
@@ -106,8 +114,12 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Inhaltsbereich (wird bei Tab-Wechsel neu gerendert)
+        # Desktop bekommt seitliches Padding, Mobil keins (Liste geht bis zum Rand)
+        # align-items: stretch sorgt dafür, dass Kinder die volle Breite bekommen
         # ------------------------------------------------------------------
-        content_area = ui.column().classes('w-full q-px-md')
+        content_area = ui.column().classes('w-full gt-xs:q-px-md').style(
+            'width: 100%; align-items: stretch;'
+        )
 
         def refresh_bestand():
             cent = db.kassen.get_bestand_cent(state['kasse'].id)
@@ -156,54 +168,57 @@ def create_kassenbuch_page(db: VereinsDB):
 
         def render_content():
             content_area.clear()
-            # Cache für bereits geladene History-Daten (buchung_id -> list[dict])
             history_cache: dict[int, list[dict]] = {}
 
             with content_area:
                 refresh_bestand()
 
-                # ---------- Filterzeile ----------
-                with ui.row().classes('items-center q-gutter-sm q-mb-sm'):
-                    von_input = ui.input(
+                # ----------------------------------------------------------
+                # [1] Filter-Accordion
+                # ----------------------------------------------------------
+
+                # Desktop-Filterzeile (nur gt-xs sichtbar)
+                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-xs') as _desktop_filter:
+                    von_input_d = ui.input(
                         'Von',
                         value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
-                    bis_input = ui.input(
+                    bis_input_d = ui.input(
                         'Bis',
                         value=DateInputHelper.format_date_display(state['bis_datum']) if state['bis_datum'] else '',
                         placeholder='TT.MM.JJJJ'
                     ).classes('w-32')
 
-                    def on_storniert_change(e):
+                    def on_storniert_change_d(e):
                         state['include_storniert'] = e.value
                         render_content()
 
                     ui.checkbox(
                         'Stornierte einblenden',
                         value=state['include_storniert'],
-                        on_change=on_storniert_change
+                        on_change=on_storniert_change_d
                     )
 
-                    def apply_filter():
-                        von_raw = von_input.value.strip()
-                        bis_raw = bis_input.value.strip()
+                    def apply_filter_d():
+                        von_raw = von_input_d.value.strip()
+                        bis_raw = bis_input_d.value.strip()
                         state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
                         state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
                         render_content()
 
-                    ui.button('Filter anwenden', on_click=apply_filter, icon='filter_list').props('outline dense')
+                    ui.button('Filter anwenden', on_click=apply_filter_d, icon='filter_list').props('outline dense')
 
                     ui.separator().props('vertical')
 
-                    def on_history_toggle(e):
+                    def on_history_toggle_d(e):
                         state['show_history'] = e.value
                         render_content()
 
                     ui.checkbox(
                         'Änderungshistorie anzeigen',
                         value=state['show_history'],
-                        on_change=on_history_toggle,
+                        on_change=on_history_toggle_d,
                     ).props('dense')
 
                     ui.separator().props('vertical')
@@ -216,7 +231,273 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
-                # ---------- Buchungstabelle ----------
+                # Mobile Filter-Accordion (nur lt-sm sichtbar)
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('lt-sm q-mb-sm').style('width: 100%;') as _mobile_filter:
+                    with ui.column().classes('q-gutter-sm q-pa-sm'):
+                        von_input_m = ui.input(
+                            'Von',
+                            value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
+                            placeholder='TT.MM.JJJJ'
+                        ).classes('w-full')
+                        bis_input_m = ui.input(
+                            'Bis',
+                            value=DateInputHelper.format_date_display(state['bis_datum']) if state['bis_datum'] else '',
+                            placeholder='TT.MM.JJJJ'
+                        ).classes('w-full')
+
+                        def on_storniert_change_m(e):
+                            state['include_storniert'] = e.value
+                            render_content()
+
+                        ui.checkbox(
+                            'Stornierte einblenden',
+                            value=state['include_storniert'],
+                            on_change=on_storniert_change_m
+                        )
+
+                        def apply_filter_m():
+                            von_raw = von_input_m.value.strip()
+                            bis_raw = bis_input_m.value.strip()
+                            state['von_datum'] = DateInputHelper.parse_date(von_raw) if von_raw else None
+                            state['bis_datum'] = DateInputHelper.parse_date(bis_raw) if bis_raw else None
+                            render_content()
+
+                        ui.button('Filter anwenden', on_click=apply_filter_m, icon='filter_list').props('outline dense').classes('w-full')
+
+                        def on_history_toggle_m(e):
+                            state['show_history'] = e.value
+                            render_content()
+
+                        ui.checkbox(
+                            'Änderungshistorie anzeigen',
+                            value=state['show_history'],
+                            on_change=on_history_toggle_m,
+                        ).props('dense')
+
+                        if hat_exportrecht():
+                            with ui.row().classes('q-gutter-sm'):
+                                ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
+                                ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
+
+                # ----------------------------------------------------------
+                # FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil)
+                # ----------------------------------------------------------
+                if hat_schreibzugriff():
+                    with ui.element('q-fab').props(
+                        'icon=add direction=up color=primary'
+                    ).classes('lt-sm fixed').style('bottom: 80px; right: 16px; z-index: 2000;'):
+                        ui.element('q-fab-action').props(
+                            'icon=add color=positive label=Einnahme'
+                        ).on('click', lambda: show_buchung_dialog('einnahme'))
+                        ui.element('q-fab-action').props(
+                            'icon=remove color=negative label=Ausgabe'
+                        ).on('click', lambda: show_buchung_dialog('ausgabe'))
+
+                rows = load_buchungen()
+                show_history_col = state['show_history']
+
+                # ----------------------------------------------------------
+                # [2a] Mobile Buchungsliste – Swipe-Zeilen mit Tagesgruppen
+                # Swipe-Links  → Stornieren (rot)
+                # Swipe-Rechts → Bearbeiten (blau)
+                # ----------------------------------------------------------
+
+                # CSS einmalig injizieren (idempotent durch id)
+                ui.add_head_html('''
+                <style id="kasse-mobile-list-style">
+                  .kasse-day-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    width: 100%;
+                    padding: 4px 12px;
+                    background: #2c2c2c;
+                    color: #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    letter-spacing: 0.01em;
+                    box-sizing: border-box;
+                  }
+                  .kasse-day-saldo {
+                    font-size: 13px;
+                    font-weight: 700;
+                    text-align: right;
+                  }
+                  .kasse-day-saldo.positiv { color: #69f0ae; }
+                  .kasse-day-saldo.negativ { color: #ff5252; }
+                  .kasse-buchung-zeile {
+                    display: flex;
+                    align-items: center;
+                    width: 100%;
+                    min-height: 48px;
+                    padding: 6px 12px;
+                    border-bottom: 1px solid #f0f0f0;
+                    gap: 8px;
+                    background: #ffffff;
+                    box-sizing: border-box;
+                  }
+                  .kasse-buchung-zeile.storniert {
+                    background: #fafafa;
+                    opacity: 0.6;
+                  }
+                  .kasse-buchung-text {
+                    flex: 1;
+                    min-width: 0;
+                    overflow: hidden;
+                  }
+                  .kasse-buchung-title {
+                    font-size: 14px;
+                    font-weight: 500;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    line-height: 1.3;
+                  }
+                  .kasse-buchung-title.storniert {
+                    text-decoration: line-through;
+                    color: #9e9e9e;
+                  }
+                  .kasse-buchung-sub {
+                    font-size: 11px;
+                    color: #9e9e9e;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    line-height: 1.2;
+                  }
+                  .kasse-buchung-betrag {
+                    text-align: right;
+                    white-space: nowrap;
+                    flex-shrink: 0;
+                  }
+                  .kasse-buchung-betrag .betrag {
+                    font-size: 14px;
+                    font-weight: 600;
+                    display: block;
+                    line-height: 1.3;
+                  }
+                  .kasse-buchung-betrag .positiv { color: #2e7d32; }
+                  .kasse-buchung-betrag .negativ { color: #c62828; }
+                  .kasse-slide-left {
+                    background: #d32f2f;
+                    color: white;
+                    display: flex;
+                    align-items: center;
+                    padding: 0 20px;
+                    font-size: 13px;
+                    gap: 6px;
+                  }
+                  .kasse-slide-right {
+                    background: #1565c0;
+                    color: white;
+                    display: flex;
+                    align-items: center;
+                    padding: 0 20px;
+                    font-size: 13px;
+                    gap: 6px;
+                  }
+                </style>
+                ''')
+
+                # Buchungen nach Datum gruppieren (Reihenfolge bereits neueste zuerst)
+                gruppen: dict[str, list[dict]] = {}
+                for row in rows:
+                    gruppen.setdefault(row['datum'], []).append(row)
+
+                schreibzugriff = hat_schreibzugriff()
+
+                with ui.element('div').classes('lt-sm').style(
+                    'width: 100%; display: block; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;'
+                ):
+                    if not rows:
+                        with ui.element('div').classes('kasse-buchung-zeile'):
+                            ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 14px;')
+                    else:
+                        for datum, gruppe in gruppen.items():
+                            # Tagessaldo = Bestand der ersten (neuesten) nicht-stornierten Buchung des Tages
+                            tages_bestand = next(
+                                (r['bestand'] for r in gruppe if r['bestand'] != '—'),
+                                gruppe[0]['bestand']
+                            )
+                            saldo_positiv = not tages_bestand.startswith('-') and tages_bestand != '—'
+                            saldo_cls = 'positiv' if saldo_positiv else 'negativ'
+
+                            # Tages-Trennzeile
+                            with ui.element('div').classes('kasse-day-header'):
+                                ui.html(f'<span>{datum}</span>')
+                                ui.html(f'<span class="kasse-day-saldo {saldo_cls}">{tages_bestand}</span>')
+
+                            # Buchungszeilen des Tages
+                            for row in gruppe:
+                                row_id = row['id']
+                                storniert = row['storniert']
+                                exportiert = row['exportiert']
+                                kann_bearbeiten = schreibzugriff and not storniert and not exportiert
+
+                                betrag_txt = f"+{row['einnahme']}" if row['einnahme'] else f"-{row['ausgabe']}"
+                                betrag_cls = 'positiv' if row['einnahme'] else 'negativ'
+
+                                meta_parts = []
+                                if row['belegnummer']:
+                                    meta_parts.append(f"#{row['belegnummer']}")
+                                meta_parts.append(row['kategorie'])
+                                if exportiert:
+                                    meta_parts.append('🔒')
+                                meta_str = '  ·  '.join(meta_parts)
+
+                                title_cls = 'kasse-buchung-title storniert' if storniert else 'kasse-buchung-title'
+                                zeile_cls = 'kasse-buchung-zeile storniert' if storniert else 'kasse-buchung-zeile'
+
+                                if kann_bearbeiten:
+                                    # q-slide-item: Swipe-Rechts = Bearbeiten, Swipe-Links = Stornieren
+                                    slide = ui.element('q-slide-item').style('display: block; width: 100%;')
+
+                                    # Swipe-Rechts-Slot (Bearbeiten)
+                                    slide.add_slot('right', f'''
+                                        <div class="kasse-slide-right">
+                                            <q-icon name="edit" />
+                                            <span>Bearbeiten</span>
+                                        </div>
+                                    ''')
+
+                                    # Swipe-Links-Slot (Stornieren)
+                                    slide.add_slot('left', f'''
+                                        <div class="kasse-slide-left">
+                                            <q-icon name="block" />
+                                            <span>Stornieren</span>
+                                        </div>
+                                    ''')
+
+                                    with slide:
+                                        with ui.element('div').classes(zeile_cls):
+                                            with ui.element('div').classes('kasse-buchung-text'):
+                                                ui.html(f'<div class="{title_cls}">{row["buchungstext"]}</div>')
+                                                ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
+                                            with ui.element('div').classes('kasse-buchung-betrag'):
+                                                ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+
+                                    # Swipe-Events auf q-slide-item
+                                    slide.on('right', lambda rid=row_id, s=slide: (
+                                        s.run_method('reset'),
+                                        show_buchung_dialog('edit', buchung_id=rid),
+                                    ))
+                                    slide.on('left', lambda r=row, s=slide: (
+                                        s.run_method('reset'),
+                                        show_storno_dialog(r),
+                                    ))
+
+                                else:
+                                    # Kein Swipe für stornierte / exportierte Buchungen
+                                    with ui.element('div').classes(zeile_cls):
+                                        with ui.element('div').classes('kasse-buchung-text'):
+                                            ui.html(f'<div class="{title_cls}">{row["buchungstext"]}</div>')
+                                            ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
+                                        with ui.element('div').classes('kasse-buchung-betrag'):
+                                            ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+
+                # ----------------------------------------------------------
+                # [2b] Desktop Buchungstabelle – q-table (gt-xs)
+                # ----------------------------------------------------------
                 columns = [
                     {'name': 'belegnummer', 'label': 'Beleg', 'field': 'belegnummer', 'align': 'left', 'sortable': True},
                     {'name': 'datum', 'label': 'Datum', 'field': 'datum', 'align': 'left', 'sortable': True},
@@ -228,120 +509,115 @@ def create_kassenbuch_page(db: VereinsDB):
                     {'name': 'actions', 'label': '', 'field': 'actions', 'align': 'center'},
                 ]
 
-                rows = load_buchungen()
-                show_history_col = state['show_history']
-                table = ui.table(
-                    columns=columns,
-                    rows=rows,
-                    row_key='id',
-                ).classes('w-full').props('sort-by="datum" sort-direction="desc"')
+                with ui.element('div').classes('gt-xs w-full'):
+                    table = ui.table(
+                        columns=columns,
+                        rows=rows,
+                        row_key='id',
+                    ).classes('w-full')
 
-                body_slot = r'''
-                    <q-tr :props="props"
-                          :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
-                        <q-td key="belegnummer" :props="props">
-                            <span>{{ props.row.belegnummer }}</span>
-                            <q-icon v-if="props.row.exportiert" name="lock" size="xs"
-                                    class="q-ml-xs text-grey-5" title="exportiert" />
-                        </q-td>
-                        <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
-                        <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
-                        <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
-                        <q-td key="einnahme" :props="props" class="text-positive text-right">
-                            {{ props.row.einnahme }}
-                        </q-td>
-                        <q-td key="ausgabe" :props="props" class="text-negative text-right">
-                            {{ props.row.ausgabe }}
-                        </q-td>
-                        <q-td key="bestand" :props="props" class="text-right text-weight-bold">
-                            {{ props.row.bestand }}
-                        </q-td>
-                        <q-td key="actions" :props="props">
-                '''
-
-                if show_history_col:
-                    body_slot += r'''
-                            <q-btn v-if="props.row.version > 1"
-                                   flat dense round
-                                   :icon="props.row._hist_open ? 'expand_less' : 'history'"
-                                   size="sm" color="grey"
-                                   :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
-                                   @click="$parent.$emit('load_history', props.row.id)" />
+                    body_slot = r'''
+                        <q-tr :props="props"
+                              :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
+                            <q-td key="belegnummer" :props="props">
+                                <span>{{ props.row.belegnummer }}</span>
+                                <q-icon v-if="props.row.exportiert" name="lock" size="xs"
+                                        class="q-ml-xs text-grey-5" title="exportiert" />
+                            </q-td>
+                            <q-td key="datum" :props="props">{{ props.row.datum }}</q-td>
+                            <q-td key="buchungstext" :props="props">{{ props.row.buchungstext }}</q-td>
+                            <q-td key="kategorie" :props="props">{{ props.row.kategorie }}</q-td>
+                            <q-td key="einnahme" :props="props" class="text-positive text-right">
+                                {{ props.row.einnahme }}
+                            </q-td>
+                            <q-td key="ausgabe" :props="props" class="text-negative text-right">
+                                {{ props.row.ausgabe }}
+                            </q-td>
+                            <q-td key="bestand" :props="props" class="text-right text-weight-bold">
+                                {{ props.row.bestand }}
+                            </q-td>
+                            <q-td key="actions" :props="props">
                     '''
 
-                body_slot += r'''
-                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                   flat dense icon="edit" size="sm"
-                                   @click="$parent.$emit('edit', props.row.id)" />
-                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                   flat dense icon="block" size="sm" color="negative"
-                                   @click="$parent.$emit('stornieren', props.row)" />
-                        </q-td>
-                    </q-tr>
-                '''
+                    if show_history_col:
+                        body_slot += r'''
+                                    <q-btn v-if="props.row.version > 1"
+                                           flat dense round
+                                           :icon="props.row._hist_open ? 'expand_less' : 'history'"
+                                           size="sm" color="grey"
+                                           :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
+                                           @click="$parent.$emit('load_history', props.row.id)" />
+                        '''
 
-                if show_history_col:
                     body_slot += r'''
-                    <template v-if="props.row._hist_open && props.row._hist_rows">
-                        <q-tr v-for="h in props.row._hist_rows"
-                              :key="'h_' + props.row.id + '_' + h.version"
-                              class="text-grey-6 bg-grey-1">
-                            <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
-                            <q-td class="text-caption">{{ h.datum }}</q-td>
-                            <q-td class="text-caption">{{ h.buchungstext }}</q-td>
-                            <q-td class="text-caption">{{ h.kategorie }}</q-td>
-                            <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
-                            <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
-                            <q-td class="text-caption text-right text-grey-5">—</q-td>
-                            <q-td></q-td>
+                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                       flat dense icon="edit" size="sm"
+                                       @click="$parent.$emit('edit', props.row.id)" />
+                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                       flat dense icon="block" size="sm" color="negative"
+                                       @click="$parent.$emit('stornieren', props.row)" />
+                            </q-td>
                         </q-tr>
-                    </template>
                     '''
 
-                table.add_slot('body', body_slot)
+                    if show_history_col:
+                        body_slot += r'''
+                        <template v-if="props.row._hist_open && props.row._hist_rows">
+                            <q-tr v-for="h in props.row._hist_rows"
+                                  :key="'h_' + props.row.id + '_' + h.version"
+                                  class="text-grey-6 bg-grey-1">
+                                <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
+                                <q-td class="text-caption">{{ h.datum }}</q-td>
+                                <q-td class="text-caption">{{ h.buchungstext }}</q-td>
+                                <q-td class="text-caption">{{ h.kategorie }}</q-td>
+                                <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
+                                <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
+                                <q-td class="text-caption text-right text-grey-5">—</q-td>
+                                <q-td></q-td>
+                            </q-tr>
+                        </template>
+                        '''
 
-                if hat_schreibzugriff():
-                    table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
-                    table.on('stornieren', lambda e: show_storno_dialog(e.args))
+                    table.add_slot('body', body_slot)
 
-                if show_history_col:
-                    def on_load_history(e):
-                        buchung_id = int(e.args)
-                        if buchung_id not in history_cache:
-                            raw = db.kassenbuch._buchung.get_history(buchung_id)
-                            history_cache[buchung_id] = [
-                                {
-                                    'version': h['version'],
-                                    'datum': DateInputHelper.format_date_display(h['buchungsdatum']),
-                                    'buchungstext': h['buchungstext'],
-                                    'kategorie': h['kategorie'],
-                                    'einnahme': fmt_euro(h['einnahme_cent']) if h['einnahme_cent'] else '',
-                                    'ausgabe': fmt_euro(h['ausgabe_cent']) if h['ausgabe_cent'] else '',
-                                }
-                                for h in raw
-                            ]
-                        hist_rows = history_cache[buchung_id]
-                        for row in table.rows:
-                            if row['id'] == buchung_id:
-                                row['_hist_open'] = not row.get('_hist_open', False)
-                                row['_hist_rows'] = hist_rows
-                                break
-                        table.update()
+                    if hat_schreibzugriff():
+                        table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
+                        table.on('stornieren', lambda e: show_storno_dialog(e.args))
 
-                    table.on('load_history', on_load_history)
+                    if show_history_col:
+                        def on_load_history(e):
+                            buchung_id = int(e.args)
+                            if buchung_id not in history_cache:
+                                raw = db.kassenbuch._buchung.get_history(buchung_id)
+                                history_cache[buchung_id] = [
+                                    {
+                                        'version': h['version'],
+                                        'datum': DateInputHelper.format_date_display(h['buchungsdatum']),
+                                        'buchungstext': h['buchungstext'],
+                                        'kategorie': h['kategorie'],
+                                        'einnahme': fmt_euro(h['einnahme_cent']) if h['einnahme_cent'] else '',
+                                        'ausgabe': fmt_euro(h['ausgabe_cent']) if h['ausgabe_cent'] else '',
+                                    }
+                                    for h in raw
+                                ]
+                            hist_rows = history_cache[buchung_id]
+                            for row in table.rows:
+                                if row['id'] == buchung_id:
+                                    row['_hist_open'] = not row.get('_hist_open', False)
+                                    row['_hist_rows'] = hist_rows
+                                    break
+                            table.update()
 
-                if not rows:
-                    ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md')
+                        table.on('load_history', on_load_history)
+
+                    if not rows:
+                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md gt-xs')
 
         # ------------------------------------------------------------------
         # Dialog: Buchung anlegen / bearbeiten
         # ------------------------------------------------------------------
 
         def show_buchung_dialog(modus: str, buchung_id: int = None):
-            """
-            modus: 'einnahme' | 'ausgabe' | 'edit'
-            buchung_id: Nur bei modus='edit' übergeben; Buchung wird frisch aus DB geladen.
-            """
             ist_neu = modus in ('einnahme', 'ausgabe')
 
             buchung: Kassenbuchung | None = None
@@ -360,10 +636,9 @@ def create_kassenbuch_page(db: VereinsDB):
 
             modus_eff = modus if ist_neu else ('einnahme' if buchung.einnahme_cent > 0 else 'ausgabe')
 
-            # Datumsgrenzen beim Dialog-Öffnen laden
             min_datum_iso, max_datum_iso = db.kassenbuch.get_datum_bereich(state['kasse'].id)
 
-            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+            with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label(titel).classes('text-h6 q-mb-md')
 
                 datum_input = ui.input(
@@ -377,12 +652,10 @@ def create_kassenbuch_page(db: VereinsDB):
                     'value': buchung.buchungsdatum if buchung else date.today().isoformat()
                 }
 
-                # Fehlerhinweis unter dem Datum-Feld (nur für Datumsfehler)
                 datum_fehler_label = ui.label('').classes('text-negative text-caption q-mt-xs')
                 datum_fehler_label.visible = False
 
                 def _datum_bereich_hinweis() -> str:
-                    """Erstellt den Bereichs-Hinweis-Text für die Fehleranzeige."""
                     min_fmt = DateInputHelper.format_date_display(min_datum_iso) if min_datum_iso else None
                     max_fmt = DateInputHelper.format_date_display(max_datum_iso)
                     if min_fmt:
@@ -390,7 +663,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     return f'Datum darf nicht nach {max_fmt} liegen'
 
                 def _prüfe_datum_live(datum_iso: str | None) -> bool:
-                    """Prüft das Datum gegen die geladenen Grenzen. Gibt True zurück wenn gültig."""
                     if datum_iso is None:
                         datum_fehler_label.text = 'Ungültiges Datum'
                         datum_fehler_label.visible = True
@@ -407,7 +679,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     return True
 
                 def on_datum_change(e):
-                    """Live-Feedback bei jeder Änderung des Datum-Inputs."""
                     parsed = DateInputHelper.parse_date(datum_input.value)
                     if parsed:
                         datum_state['value'] = parsed
@@ -432,8 +703,6 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 datum_input.on('update:model-value', on_datum_change)
                 datum_input.on('blur', on_datum_blur)
-
-                # Initiale Live-Prüfung des vorausgefüllten Datums
                 _prüfe_datum_live(datum_state['value'])
 
                 buchungstext_input = ui.input(
@@ -474,7 +743,6 @@ def create_kassenbuch_page(db: VereinsDB):
                         error_label.visible = True
                         return
 
-                    # Client-seitige Datumsbereichsprüfung vor dem Service-Call
                     if not _prüfe_datum_live(datum_state['value']):
                         error_label.text = _datum_bereich_hinweis()
                         error_label.visible = True
@@ -564,7 +832,6 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_storno_dialog(row: dict):
-            """row ist das plain dict aus dem Vue-Event (JSON-serialisiert)."""
             buchung_id = int(row['id'])
             belegnummer = row.get('belegnummer', '')
             buchungstext = row.get('buchungstext', '')
@@ -605,10 +872,9 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_export_dialog():
-            with ui.dialog() as dialog, ui.card().style('min-width: 520px'):
+            with ui.dialog() as dialog, ui.card().style('min-width: min(520px, 95vw)'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
-                # Bis-Datum-Eingabe
                 bis_input = ui.input(
                     'Bis-Datum *',
                     value=DateInputHelper.format_date_display(date.today().isoformat()),
@@ -616,7 +882,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 ).classes('w-full')
                 bis_state = {'value': date.today().isoformat()}
 
-                # Vorschau-Bereich
                 vorschau_container = ui.column().classes('w-full q-mt-sm q-mb-sm')
 
                 def lade_vorschau():
@@ -657,15 +922,11 @@ def create_kassenbuch_page(db: VereinsDB):
                         bis_input.error = 'Ungültiges Datum'
                 bis_input.on('blur', on_bis_blur)
 
-                # Initiale Vorschau laden
                 lade_vorschau()
 
                 error_label = ui.label('').classes('text-negative')
                 error_label.visible = False
 
-                # ----------------------------------------------------------
-                # Export-Verlauf
-                # ----------------------------------------------------------
                 ui.separator().classes('q-mt-md q-mb-sm')
                 ui.label('Bisherige Exporte').classes('text-subtitle2 text-grey-7')
                 exporte = db.kassenbuch._export.list_exporte(state['kasse'].id)
@@ -767,10 +1028,9 @@ def create_kassenbuch_page(db: VereinsDB):
         # ------------------------------------------------------------------
 
         def show_pdf_dialog():
-            """Dialog für PDF-Bericht. Vorbelegt mit letztem kompletten Monat."""
             von_default, bis_default = letzter_vollstaendiger_monat()
 
-            with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
+            with ui.dialog() as dialog, ui.card().style('min-width: min(480px, 95vw)'):
                 ui.label('PDF-Bericht').classes('text-h6 q-mb-md')
 
                 ui.label(
@@ -851,7 +1111,6 @@ def create_kassenbuch_page(db: VereinsDB):
                             include_storniert=pdf_state['include_storniert'],
                         )
 
-                        # Anfangsbestand: Bestand am Tag vor dem Von-Datum
                         tag_vor_von = str(
                             date.fromisoformat(pdf_state['von']) - timedelta(days=1)
                         )
