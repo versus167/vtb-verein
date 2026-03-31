@@ -314,13 +314,13 @@ def create_kassenbuch_page(db: VereinsDB):
                     padding: 4px 12px;
                     background: #2c2c2c;
                     color: #ffffff;
-                    font-size: 13px;
+                    font-size: 14px;
                     font-weight: 600;
                     letter-spacing: 0.01em;
                     box-sizing: border-box;
                   }
                   .kasse-day-saldo {
-                    font-size: 13px;
+                    font-size: 14px;
                     font-weight: 700;
                     text-align: right;
                   }
@@ -330,8 +330,8 @@ def create_kassenbuch_page(db: VereinsDB):
                     display: flex;
                     align-items: center;
                     width: 100%;
-                    min-height: 48px;
-                    padding: 6px 12px;
+                    min-height: 52px;
+                    padding: 8px 12px;
                     border-bottom: 1px solid #f0f0f0;
                     gap: 8px;
                     background: #ffffff;
@@ -347,7 +347,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     overflow: hidden;
                   }
                   .kasse-buchung-title {
-                    font-size: 14px;
+                    font-size: 15px;
                     font-weight: 500;
                     white-space: nowrap;
                     overflow: hidden;
@@ -359,7 +359,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     color: #9e9e9e;
                   }
                   .kasse-buchung-sub {
-                    font-size: 11px;
+                    font-size: 12px;
                     color: #9e9e9e;
                     white-space: nowrap;
                     overflow: hidden;
@@ -372,7 +372,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     flex-shrink: 0;
                   }
                   .kasse-buchung-betrag .betrag {
-                    font-size: 14px;
+                    font-size: 15px;
                     font-weight: 600;
                     display: block;
                     line-height: 1.3;
@@ -412,7 +412,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 ):
                     if not rows:
                         with ui.element('div').classes('kasse-buchung-zeile'):
-                            ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 14px;')
+                            ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 15px;')
                     else:
                         for datum, gruppe in gruppen.items():
                             # Tagessaldo = Bestand der ersten (neuesten) nicht-stornierten Buchung des Tages
