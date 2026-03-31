@@ -49,26 +49,6 @@ def create_kassenbuch_page(db: VereinsDB):
         set_current_path('/kassenbuch')
         create_navigation(db)
 
-        # Mobiles CSS: q-table auf kleinen Screens als Karten-Liste
-        ui.add_head_html('''
-        <style>
-        @media (max-width: 599px) {
-            .mobile-karten-table thead { display: none !important; }
-            .mobile-karten-table .q-table__middle { overflow-x: hidden !important; }
-            .mobile-karten-table tbody tr { display: block !important; width: 100% !important; }
-            .mobile-karten-table tbody td {
-                display: block !important;
-                width: 100% !important;
-                max-width: 100% !important;
-                padding: 4px 0 !important;
-                border: none !important;
-            }
-            .mobile-karten-table tbody td:before { display: none !important; }
-            .mobile-karten-table .q-table { width: 100% !important; table-layout: fixed !important; }
-        }
-        </style>
-        ''')
-
         current_user = AuthHelper.get_current_user()
         is_admin = current_user.can_manage_users()
 
@@ -296,12 +276,12 @@ def create_kassenbuch_page(db: VereinsDB):
                                 ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # ----------------------------------------------------------
-                # [3] FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil)
+                # FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil)
                 # ----------------------------------------------------------
                 if hat_schreibzugriff():
                     with ui.element('q-fab').props(
                         'icon=add direction=up color=primary'
-                    ).classes('lt-sm fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
+                    ).classes('lt-sm fixed').style('bottom: 80px; right: 16px; z-index: 2000;'):
                         ui.element('q-fab-action').props(
                             'icon=add color=positive label=Einnahme'
                         ).on('click', lambda: show_buchung_dialog('einnahme'))
@@ -309,7 +289,59 @@ def create_kassenbuch_page(db: VereinsDB):
                             'icon=remove color=negative label=Ausgabe'
                         ).on('click', lambda: show_buchung_dialog('ausgabe'))
 
-                # ---------- Buchungstabelle ----------
+                rows = load_buchungen()
+                show_history_col = state['show_history']
+
+                # ----------------------------------------------------------
+                # [2a] Mobile Buchungsliste – native NiceGUI-Karten (lt-sm)
+                # ----------------------------------------------------------
+                with ui.column().classes('w-full lt-sm q-gutter-xs'):
+                    if not rows:
+                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md')
+                    for row in rows:
+                        row_id = row['id']
+                        storniert = row['storniert']
+                        exportiert = row['exportiert']
+                        text_class = 'text-strike text-grey-5' if storniert else ''
+
+                        with ui.card().classes(f'w-full q-pa-sm {text_class}').style(
+                            'border: 1px solid #e0e0e0; border-radius: 8px;'
+                        ):
+                            # Zeile 1: Datum · Beleg + Lock + Aktions-Buttons
+                            with ui.row().classes('items-center w-full').style('gap: 4px;'):
+                                meta = row['datum']
+                                if row['belegnummer']:
+                                    meta += f" · {row['belegnummer']}"
+                                ui.label(meta).classes('text-caption text-grey-7')
+                                if exportiert:
+                                    ui.icon('lock', size='xs').classes('text-grey-4')
+                                ui.space()
+                                if not storniert and not exportiert:
+                                    ui.button(
+                                        icon='edit',
+                                        on_click=lambda rid=row_id: show_buchung_dialog('edit', buchung_id=rid)
+                                    ).props('flat dense round size=xs')
+                                    ui.button(
+                                        icon='block',
+                                        on_click=lambda r=row: show_storno_dialog(r)
+                                    ).props('flat dense round size=xs color=negative')
+
+                            # Zeile 2: Buchungstext
+                            ui.label(row['buchungstext']).classes('text-weight-bold')
+
+                            # Zeile 3: Kategorie | Betrag | Bestand
+                            with ui.row().classes('items-center w-full').style('gap: 4px;'):
+                                ui.label(row['kategorie']).classes('text-caption text-grey-7')
+                                ui.space()
+                                if row['einnahme']:
+                                    ui.label(f"+{row['einnahme']}").classes('text-positive text-weight-medium')
+                                if row['ausgabe']:
+                                    ui.label(f"-{row['ausgabe']}").classes('text-negative text-weight-medium')
+                                ui.label(row['bestand']).classes('text-weight-bold')
+
+                # ----------------------------------------------------------
+                # [2b] Desktop Buchungstabelle – q-table (gt-xs)
+                # ----------------------------------------------------------
                 columns = [
                     {'name': 'belegnummer', 'label': 'Beleg', 'field': 'belegnummer', 'align': 'left', 'sortable': True},
                     {'name': 'datum', 'label': 'Datum', 'field': 'datum', 'align': 'left', 'sortable': True},
@@ -321,68 +353,14 @@ def create_kassenbuch_page(db: VereinsDB):
                     {'name': 'actions', 'label': '', 'field': 'actions', 'align': 'center'},
                 ]
 
-                rows = load_buchungen()
-                show_history_col = state['show_history']
-                table = ui.table(
-                    columns=columns,
-                    rows=rows,
-                    row_key='id',
-                ).classes('w-full mobile-karten-table')
+                with ui.element('div').classes('gt-xs w-full'):
+                    table = ui.table(
+                        columns=columns,
+                        rows=rows,
+                        row_key='id',
+                    ).classes('w-full')
 
-                # ----------------------------------------------------------
-                # [2] Body-Slot: Desktop-Tabellenzeile ODER Mobile-Karte
-                # ----------------------------------------------------------
-                body_slot = r'''
-                    <template v-if="$q.screen.lt.sm">
-                        <!-- Mobile: einzelne Zeile, volle Breite -->
-                        <q-tr :props="props">
-                            <q-td style="padding: 3px 0; border: none;">
-                                <div :class="props.row.storniert ? 'text-strike text-grey-5' : ''"
-                                     style="background: white; border: 1px solid #e0e0e0; border-radius: 8px;
-                                            padding: 10px 12px; margin-bottom: 4px;">
-                                    <!-- Zeile 1: Datum · Belegnummer + Lock-Icon + Aktions-Buttons -->
-                                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                                        <span style="font-size: 12px; color: #757575;">{{ props.row.datum }}</span>
-                                        <span v-if="props.row.belegnummer"
-                                              style="font-size: 12px; color: #757575; margin-left: 6px;">
-                                            · {{ props.row.belegnummer }}
-                                        </span>
-                                        <q-icon v-if="props.row.exportiert" name="lock" size="xs"
-                                                style="margin-left: 4px; color: #bdbdbd;" title="exportiert" />
-                                        <span style="flex: 1;"></span>
-                                        <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                               flat dense icon="edit" size="xs"
-                                               @click="$parent.$emit('edit', props.row.id)" />
-                                        <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                               flat dense icon="block" size="xs" color="negative"
-                                               @click="$parent.$emit('stornieren', props.row)" />
-                                    </div>
-                                    <!-- Zeile 2: Buchungstext fett -->
-                                    <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">
-                                        {{ props.row.buchungstext }}
-                                    </div>
-                                    <!-- Zeile 3: Kategorie links | Betrag + Bestand rechts -->
-                                    <div style="display: flex; align-items: center;">
-                                        <span style="font-size: 12px; color: #757575;">{{ props.row.kategorie }}</span>
-                                        <span style="flex: 1;"></span>
-                                        <span v-if="props.row.einnahme"
-                                              style="font-size: 13px; font-weight: 500; color: #388e3c; margin-right: 8px;">
-                                            +{{ props.row.einnahme }}
-                                        </span>
-                                        <span v-if="props.row.ausgabe"
-                                              style="font-size: 13px; font-weight: 500; color: #d32f2f; margin-right: 8px;">
-                                            -{{ props.row.ausgabe }}
-                                        </span>
-                                        <span style="font-size: 13px; font-weight: 700;">
-                                            {{ props.row.bestand }}
-                                        </span>
-                                    </div>
-                                </div>
-                            </q-td>
-                        </q-tr>
-                    </template>
-                    <template v-else>
-                        <!-- Desktop Tabellenzeile -->
+                    body_slot = r'''
                         <q-tr :props="props"
                               :class="props.row.storniert ? 'text-strike text-grey-5' : ''">
                             <q-td key="belegnummer" :props="props">
@@ -403,82 +381,81 @@ def create_kassenbuch_page(db: VereinsDB):
                                 {{ props.row.bestand }}
                             </q-td>
                             <q-td key="actions" :props="props">
-                '''
-
-                if show_history_col:
-                    body_slot += r'''
-                                <q-btn v-if="props.row.version > 1"
-                                       flat dense round
-                                       :icon="props.row._hist_open ? 'expand_less' : 'history'"
-                                       size="sm" color="grey"
-                                       :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
-                                       @click="$parent.$emit('load_history', props.row.id)" />
                     '''
 
-                body_slot += r'''
-                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                   flat dense icon="edit" size="sm"
-                                   @click="$parent.$emit('edit', props.row.id)" />
-                            <q-btn v-if="!props.row.storniert && !props.row.exportiert"
-                                   flat dense icon="block" size="sm" color="negative"
-                                   @click="$parent.$emit('stornieren', props.row)" />
+                    if show_history_col:
+                        body_slot += r'''
+                                    <q-btn v-if="props.row.version > 1"
+                                           flat dense round
+                                           :icon="props.row._hist_open ? 'expand_less' : 'history'"
+                                           size="sm" color="grey"
+                                           :title="props.row._hist_open ? 'Historie schließen' : 'Änderungshistorie'"
+                                           @click="$parent.$emit('load_history', props.row.id)" />
+                        '''
+
+                    body_slot += r'''
+                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                       flat dense icon="edit" size="sm"
+                                       @click="$parent.$emit('edit', props.row.id)" />
+                                <q-btn v-if="!props.row.storniert && !props.row.exportiert"
+                                       flat dense icon="block" size="sm" color="negative"
+                                       @click="$parent.$emit('stornieren', props.row)" />
                             </q-td>
                         </q-tr>
-                    </template>
-                '''
-
-                if show_history_col:
-                    body_slot += r'''
-                    <template v-if="!$q.screen.lt.sm && props.row._hist_open && props.row._hist_rows">
-                        <q-tr v-for="h in props.row._hist_rows"
-                              :key="'h_' + props.row.id + '_' + h.version"
-                              class="text-grey-6 bg-grey-1">
-                            <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
-                            <q-td class="text-caption">{{ h.datum }}</q-td>
-                            <q-td class="text-caption">{{ h.buchungstext }}</q-td>
-                            <q-td class="text-caption">{{ h.kategorie }}</q-td>
-                            <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
-                            <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
-                            <q-td class="text-caption text-right text-grey-5">—</q-td>
-                            <q-td></q-td>
-                        </q-tr>
-                    </template>
                     '''
 
-                table.add_slot('body', body_slot)
+                    if show_history_col:
+                        body_slot += r'''
+                        <template v-if="props.row._hist_open && props.row._hist_rows">
+                            <q-tr v-for="h in props.row._hist_rows"
+                                  :key="'h_' + props.row.id + '_' + h.version"
+                                  class="text-grey-6 bg-grey-1">
+                                <q-td class="text-caption text-grey">v{{ h.version }}</q-td>
+                                <q-td class="text-caption">{{ h.datum }}</q-td>
+                                <q-td class="text-caption">{{ h.buchungstext }}</q-td>
+                                <q-td class="text-caption">{{ h.kategorie }}</q-td>
+                                <q-td class="text-caption text-right">{{ h.einnahme }}</q-td>
+                                <q-td class="text-caption text-right">{{ h.ausgabe }}</q-td>
+                                <q-td class="text-caption text-right text-grey-5">—</q-td>
+                                <q-td></q-td>
+                            </q-tr>
+                        </template>
+                        '''
 
-                if hat_schreibzugriff():
-                    table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
-                    table.on('stornieren', lambda e: show_storno_dialog(e.args))
+                    table.add_slot('body', body_slot)
 
-                if show_history_col:
-                    def on_load_history(e):
-                        buchung_id = int(e.args)
-                        if buchung_id not in history_cache:
-                            raw = db.kassenbuch._buchung.get_history(buchung_id)
-                            history_cache[buchung_id] = [
-                                {
-                                    'version': h['version'],
-                                    'datum': DateInputHelper.format_date_display(h['buchungsdatum']),
-                                    'buchungstext': h['buchungstext'],
-                                    'kategorie': h['kategorie'],
-                                    'einnahme': fmt_euro(h['einnahme_cent']) if h['einnahme_cent'] else '',
-                                    'ausgabe': fmt_euro(h['ausgabe_cent']) if h['ausgabe_cent'] else '',
-                                }
-                                for h in raw
-                            ]
-                        hist_rows = history_cache[buchung_id]
-                        for row in table.rows:
-                            if row['id'] == buchung_id:
-                                row['_hist_open'] = not row.get('_hist_open', False)
-                                row['_hist_rows'] = hist_rows
-                                break
-                        table.update()
+                    if hat_schreibzugriff():
+                        table.on('edit', lambda e: show_buchung_dialog('edit', buchung_id=int(e.args)))
+                        table.on('stornieren', lambda e: show_storno_dialog(e.args))
 
-                    table.on('load_history', on_load_history)
+                    if show_history_col:
+                        def on_load_history(e):
+                            buchung_id = int(e.args)
+                            if buchung_id not in history_cache:
+                                raw = db.kassenbuch._buchung.get_history(buchung_id)
+                                history_cache[buchung_id] = [
+                                    {
+                                        'version': h['version'],
+                                        'datum': DateInputHelper.format_date_display(h['buchungsdatum']),
+                                        'buchungstext': h['buchungstext'],
+                                        'kategorie': h['kategorie'],
+                                        'einnahme': fmt_euro(h['einnahme_cent']) if h['einnahme_cent'] else '',
+                                        'ausgabe': fmt_euro(h['ausgabe_cent']) if h['ausgabe_cent'] else '',
+                                    }
+                                    for h in raw
+                                ]
+                            hist_rows = history_cache[buchung_id]
+                            for row in table.rows:
+                                if row['id'] == buchung_id:
+                                    row['_hist_open'] = not row.get('_hist_open', False)
+                                    row['_hist_rows'] = hist_rows
+                                    break
+                            table.update()
 
-                if not rows:
-                    ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md')
+                        table.on('load_history', on_load_history)
+
+                    if not rows:
+                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md gt-xs')
 
         # ------------------------------------------------------------------
         # Dialog: Buchung anlegen / bearbeiten
