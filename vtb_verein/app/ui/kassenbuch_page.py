@@ -293,51 +293,204 @@ def create_kassenbuch_page(db: VereinsDB):
                 show_history_col = state['show_history']
 
                 # ----------------------------------------------------------
-                # [2a] Mobile Buchungsliste – native NiceGUI-Karten (lt-sm)
+                # [2a] Mobile Buchungsliste – Swipe-Zeilen mit Tagesgruppen
+                # Swipe-Links  → Stornieren (rot)
+                # Swipe-Rechts → Bearbeiten (blau)
                 # ----------------------------------------------------------
-                with ui.column().classes('w-full lt-sm q-gutter-xs'):
+
+                # CSS einmalig injizieren (idempotent durch id)
+                ui.add_head_html('''
+                <style id="kasse-mobile-list-style">
+                  .kasse-day-header {
+                    display: flex;
+                    align-items: center;
+                    padding: 4px 12px;
+                    background: #2c2c2c;
+                    color: #ffffff;
+                    font-size: 13px;
+                    font-weight: 600;
+                    letter-spacing: 0.01em;
+                  }
+                  .kasse-day-saldo {
+                    margin-left: auto;
+                    font-size: 13px;
+                    font-weight: 700;
+                  }
+                  .kasse-day-saldo.positiv { color: #69f0ae; }
+                  .kasse-day-saldo.negativ { color: #ff5252; }
+                  .kasse-buchung-zeile {
+                    display: flex;
+                    align-items: center;
+                    min-height: 48px;
+                    padding: 6px 12px;
+                    border-bottom: 1px solid #f0f0f0;
+                    gap: 8px;
+                    background: #ffffff;
+                  }
+                  .kasse-buchung-zeile.storniert {
+                    background: #fafafa;
+                    opacity: 0.6;
+                  }
+                  .kasse-buchung-text {
+                    flex: 1;
+                    min-width: 0;
+                    overflow: hidden;
+                  }
+                  .kasse-buchung-title {
+                    font-size: 14px;
+                    font-weight: 500;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    line-height: 1.3;
+                  }
+                  .kasse-buchung-title.storniert {
+                    text-decoration: line-through;
+                    color: #9e9e9e;
+                  }
+                  .kasse-buchung-sub {
+                    font-size: 11px;
+                    color: #9e9e9e;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    line-height: 1.2;
+                  }
+                  .kasse-buchung-betrag {
+                    text-align: right;
+                    white-space: nowrap;
+                    flex-shrink: 0;
+                  }
+                  .kasse-buchung-betrag .betrag {
+                    font-size: 14px;
+                    font-weight: 600;
+                    display: block;
+                    line-height: 1.3;
+                  }
+                  .kasse-buchung-betrag .bestand {
+                    font-size: 11px;
+                    color: #757575;
+                    display: block;
+                    line-height: 1.2;
+                  }
+                  .kasse-buchung-betrag .positiv { color: #2e7d32; }
+                  .kasse-buchung-betrag .negativ { color: #c62828; }
+                  .kasse-slide-left {
+                    background: #d32f2f;
+                    color: white;
+                    display: flex;
+                    align-items: center;
+                    padding: 0 20px;
+                    font-size: 13px;
+                    gap: 6px;
+                  }
+                  .kasse-slide-right {
+                    background: #1565c0;
+                    color: white;
+                    display: flex;
+                    align-items: center;
+                    padding: 0 20px;
+                    font-size: 13px;
+                    gap: 6px;
+                  }
+                </style>
+                ''')
+
+                # Buchungen nach Datum gruppieren (Reihenfolge bereits neueste zuerst)
+                gruppen: dict[str, list[dict]] = {}
+                for row in rows:
+                    gruppen.setdefault(row['datum'], []).append(row)
+
+                schreibzugriff = hat_schreibzugriff()
+
+                with ui.column().classes('w-full lt-sm').style('gap: 0; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0;'):
                     if not rows:
-                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md')
-                    for row in rows:
-                        row_id = row['id']
-                        storniert = row['storniert']
-                        exportiert = row['exportiert']
-                        text_class = 'text-strike text-grey-5' if storniert else ''
+                        with ui.element('div').classes('kasse-buchung-zeile'):
+                            ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 14px;')
+                    else:
+                        for datum, gruppe in gruppen.items():
+                            # Tagessaldo = Bestand der ersten (neuesten) nicht-stornierten Buchung des Tages
+                            tages_bestand = next(
+                                (r['bestand'] for r in gruppe if r['bestand'] != '—'),
+                                gruppe[0]['bestand']
+                            )
+                            saldo_positiv = not tages_bestand.startswith('-') and tages_bestand != '—'
+                            saldo_cls = 'positiv' if saldo_positiv else 'negativ'
 
-                        with ui.card().classes(f'w-full q-pa-sm {text_class}').style(
-                            'border: 1px solid #e0e0e0; border-radius: 8px;'
-                        ):
-                            # Zeile 1: Datum · Beleg + Lock + Aktions-Buttons
-                            with ui.row().classes('items-center w-full').style('gap: 4px;'):
-                                meta = row['datum']
+                            # Tages-Trennzeile
+                            with ui.element('div').classes('kasse-day-header'):
+                                ui.html(f'<span>{datum}</span>')
+                                ui.html(f'<span class="kasse-day-saldo {saldo_cls}">Saldo&nbsp;&nbsp;{tages_bestand}</span>')
+
+                            # Buchungszeilen des Tages
+                            for row in gruppe:
+                                row_id = row['id']
+                                storniert = row['storniert']
+                                exportiert = row['exportiert']
+                                kann_bearbeiten = schreibzugriff and not storniert and not exportiert
+
+                                betrag_txt = f"+{row['einnahme']}" if row['einnahme'] else f"-{row['ausgabe']}"
+                                betrag_cls = 'positiv' if row['einnahme'] else 'negativ'
+
+                                meta_parts = []
                                 if row['belegnummer']:
-                                    meta += f" · {row['belegnummer']}"
-                                ui.label(meta).classes('text-caption text-grey-7')
+                                    meta_parts.append(f"#{row['belegnummer']}")
+                                meta_parts.append(row['kategorie'])
                                 if exportiert:
-                                    ui.icon('lock', size='xs').classes('text-grey-4')
-                                ui.space()
-                                if not storniert and not exportiert:
-                                    ui.button(
-                                        icon='edit',
-                                        on_click=lambda rid=row_id: show_buchung_dialog('edit', buchung_id=rid)
-                                    ).props('flat dense round size=xs')
-                                    ui.button(
-                                        icon='block',
-                                        on_click=lambda r=row: show_storno_dialog(r)
-                                    ).props('flat dense round size=xs color=negative')
+                                    meta_parts.append('🔒')
+                                meta_str = '  ·  '.join(meta_parts)
 
-                            # Zeile 2: Buchungstext
-                            ui.label(row['buchungstext']).classes('text-weight-bold')
+                                title_cls = 'kasse-buchung-title storniert' if storniert else 'kasse-buchung-title'
+                                zeile_cls = 'kasse-buchung-zeile storniert' if storniert else 'kasse-buchung-zeile'
 
-                            # Zeile 3: Kategorie | Betrag | Bestand
-                            with ui.row().classes('items-center w-full').style('gap: 4px;'):
-                                ui.label(row['kategorie']).classes('text-caption text-grey-7')
-                                ui.space()
-                                if row['einnahme']:
-                                    ui.label(f"+{row['einnahme']}").classes('text-positive text-weight-medium')
-                                if row['ausgabe']:
-                                    ui.label(f"-{row['ausgabe']}").classes('text-negative text-weight-medium')
-                                ui.label(row['bestand']).classes('text-weight-bold')
+                                if kann_bearbeiten:
+                                    # q-slide-item: Swipe-Rechts = Bearbeiten, Swipe-Links = Stornieren
+                                    slide = ui.element('q-slide-item').style('display: block;')
+
+                                    # Swipe-Rechts-Slot (Bearbeiten)
+                                    slide.add_slot('right', f'''
+                                        <div class="kasse-slide-right">
+                                            <q-icon name="edit" />
+                                            <span>Bearbeiten</span>
+                                        </div>
+                                    ''')
+
+                                    # Swipe-Links-Slot (Stornieren)
+                                    slide.add_slot('left', f'''
+                                        <div class="kasse-slide-left">
+                                            <q-icon name="block" />
+                                            <span>Stornieren</span>
+                                        </div>
+                                    ''')
+
+                                    with slide:
+                                        with ui.element('div').classes(zeile_cls):
+                                            with ui.element('div').classes('kasse-buchung-text'):
+                                                ui.html(f'<div class="{title_cls}">{row["buchungstext"]}</div>')
+                                                ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
+                                            with ui.element('div').classes('kasse-buchung-betrag'):
+                                                ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+                                                ui.html(f'<span class="bestand">{row["bestand"]}</span>')
+
+                                    # Swipe-Events auf q-slide-item
+                                    slide.on('right', lambda rid=row_id, s=slide: (
+                                        s.run_method('reset'),
+                                        show_buchung_dialog('edit', buchung_id=rid),
+                                    ))
+                                    slide.on('left', lambda r=row, s=slide: (
+                                        s.run_method('reset'),
+                                        show_storno_dialog(r),
+                                    ))
+
+                                else:
+                                    # Kein Swipe für stornierte / exportierte Buchungen
+                                    with ui.element('div').classes(zeile_cls):
+                                        with ui.element('div').classes('kasse-buchung-text'):
+                                            ui.html(f'<div class="{title_cls}">{row["buchungstext"]}</div>')
+                                            ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
+                                        with ui.element('div').classes('kasse-buchung-betrag'):
+                                            ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+                                            ui.html(f'<span class="bestand">{row["bestand"]}</span>')
 
                 # ----------------------------------------------------------
                 # [2b] Desktop Buchungstabelle – q-table (gt-xs)
