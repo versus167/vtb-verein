@@ -19,6 +19,7 @@ from app.ui.kassenbuch_page import create_kassenbuch_page
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
+from app.models.permission import Permission
 
 # .env-Datei laden (muss VOR os.getenv() aufgerufen werden!)
 load_dotenv()
@@ -61,7 +62,9 @@ create_kassenbuch_page(db)
 def main_page():
     set_current_path('/')
     create_navigation(db)
-    user = AuthHelper.get_current_user()
+    # Permissions bei jedem Seitenaufruf frisch aus der DB laden,
+    # damit Admin-Änderungen sofort wirksam sind (ohne Re-Login).
+    user = AuthHelper.refresh_permissions(db.permissions)
 
     with ui.column().classes('q-ma-md'):
         ui.label(f'Willkommen, {user.username}!').classes('text-h4')
@@ -70,23 +73,24 @@ def main_page():
 
         # Dashboard Cards
         with ui.row().classes('q-gutter-md'):
-            # Abteilungen
-            if user.can_edit():
+            # Abteilungen – sichtbar ab ABTEILUNGEN_READ
+            if user.has_permission(Permission.ABTEILUNGEN_READ):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/abteilungen')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('groups', size='3rem').classes('text-primary')
                         ui.label('Abteilungen').classes('text-h6 q-mt-sm')
                         ui.label('Abteilungen verwalten').classes('text-caption text-grey')
 
-            # Mitgliederverwaltung
-            if user.can_edit():
+            # Mitgliederverwaltung – sichtbar ab MITGLIEDER_READ
+            if user.has_permission(Permission.MITGLIEDER_READ):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/mitglieder')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('group', size='3rem').classes('text-primary')
                         ui.label('Mitglieder').classes('text-h6 q-mt-sm')
                         ui.label('Mitglieder verwalten').classes('text-caption text-grey')
 
-            # Kassenbuch (berechtigte User und Admins)
+            # Kassenbuch – sichtbar wenn User mind. einer Kasse zugewiesen ist
+            # (kassenspezifische Berechtigung, nicht über globale Permissions)
             is_admin = user.can_manage_users()
             kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=is_admin)
             if kassen:
@@ -96,24 +100,25 @@ def main_page():
                         ui.label('Kassenbuch').classes('text-h6 q-mt-sm')
                         ui.label('Buchungen verwalten').classes('text-caption text-grey')
 
-            # Kassenverwaltung (Admin)
-            if user.can_manage_users():
+            # Kassenverwaltung – nur echte Admins (USERS_MANAGE)
+            if user.has_permission(Permission.USERS_MANAGE):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/kassen')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('account_balance_wallet', size='3rem').classes('text-primary')
                         ui.label('Kassenverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Kassen und Berechtigungen').classes('text-caption text-grey')
 
-            # Benutzerverwaltung
-            if user.can_manage_users():
+            # Benutzerverwaltung – sichtbar ab USERS_READ (ansehen reicht)
+            # USERS_MANAGE-User sehen die Kachel ebenfalls, da MANAGE ⊇ READ.
+            if user.has_permission(Permission.USERS_READ):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/users')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('people', size='3rem').classes('text-primary')
                         ui.label('Benutzerverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Benutzer und Rechte verwalten').classes('text-caption text-grey')
 
-            # Platzhalter Beiträge
-            if user.can_edit():
+            # Beiträge (Platzhalter) – sichtbar ab BEITRAEGE_READ
+            if user.has_permission(Permission.BEITRAEGE_READ):
                 with ui.card().classes('cursor-pointer').style('min-width: 200px; opacity: 0.5'):
                     with ui.card_section().classes('text-center'):
                         ui.icon('payments', size='3rem').classes('text-grey')
