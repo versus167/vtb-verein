@@ -49,6 +49,26 @@ def create_kassenbuch_page(db: VereinsDB):
         set_current_path('/kassenbuch')
         create_navigation(db)
 
+        # Mobiles CSS: q-table auf kleinen Screens als Karten-Liste
+        ui.add_head_html('''
+        <style>
+        @media (max-width: 599px) {
+            .mobile-karten-table thead { display: none !important; }
+            .mobile-karten-table .q-table__middle { overflow-x: hidden !important; }
+            .mobile-karten-table tbody tr { display: block !important; width: 100% !important; }
+            .mobile-karten-table tbody td {
+                display: block !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 4px 0 !important;
+                border: none !important;
+            }
+            .mobile-karten-table tbody td:before { display: none !important; }
+            .mobile-karten-table .q-table { width: 100% !important; table-layout: fixed !important; }
+        }
+        </style>
+        ''')
+
         current_user = AuthHelper.get_current_user()
         is_admin = current_user.can_manage_users()
 
@@ -306,30 +326,32 @@ def create_kassenbuch_page(db: VereinsDB):
                     columns=columns,
                     rows=rows,
                     row_key='id',
-                ).classes('w-full').props('sort-by="datum" sort-direction="desc" :hide-header="$q.screen.lt.sm"')
+                ).classes('w-full mobile-karten-table')
 
                 # ----------------------------------------------------------
                 # [2] Body-Slot: Desktop-Tabellenzeile ODER Mobile-Karte
-                # v-if="$q.screen.lt.sm" schaltet zwischen den Layouts um.
+                # Auf Mobil: q-tr + einzelne q-td die volle Breite einnimmt,
+                # darin die Karte als normales div (kein colspan-Trick nötig,
+                # da thead via CSS ausgeblendet und tr/td als block dargestellt).
                 # ----------------------------------------------------------
                 body_slot = r'''
                     <template v-if="$q.screen.lt.sm">
-                        <!-- Mobile Karten-Darstellung -->
-                        <q-tr :props="props" style="display: block; padding: 0;">
-                            <q-td colspan="8" style="padding: 6px 0;">
-                                <q-card flat bordered
-                                    :class="props.row.storniert ? 'text-strike text-grey-5 q-mb-xs' : 'q-mb-xs'"
-                                    style="border-radius: 8px; padding: 8px 12px;">
-                                    <!-- Zeile 1: Datum + Belegnummer -->
-                                    <div class="row items-center q-mb-xs">
-                                        <span class="text-caption text-grey-6">{{ props.row.datum }}</span>
-                                        <span v-if="props.row.belegnummer" class="text-caption text-grey-6 q-ml-sm">
+                        <!-- Mobile: einzelne Zeile, volle Breite -->
+                        <q-tr :props="props">
+                            <q-td style="padding: 3px 0; border: none;">
+                                <div :class="props.row.storniert ? 'text-strike text-grey-5' : ''"
+                                     style="background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+                                            padding: 10px 12px; margin-bottom: 4px;">
+                                    <!-- Zeile 1: Datum · Belegnummer + Lock-Icon + Aktions-Buttons -->
+                                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                                        <span style="font-size: 12px; color: #757575;">{{ props.row.datum }}</span>
+                                        <span v-if="props.row.belegnummer"
+                                              style="font-size: 12px; color: #757575; margin-left: 6px;">
                                             · {{ props.row.belegnummer }}
                                         </span>
                                         <q-icon v-if="props.row.exportiert" name="lock" size="xs"
-                                                class="q-ml-xs text-grey-5" title="exportiert" />
-                                        <q-space />
-                                        <!-- Aktions-Buttons rechts in Zeile 1 -->
+                                                style="margin-left: 4px; color: #bdbdbd;" title="exportiert" />
+                                        <span style="flex: 1;"></span>
                                         <q-btn v-if="!props.row.storniert && !props.row.exportiert"
                                                flat dense icon="edit" size="xs"
                                                @click="$parent.$emit('edit', props.row.id)" />
@@ -337,25 +359,27 @@ def create_kassenbuch_page(db: VereinsDB):
                                                flat dense icon="block" size="xs" color="negative"
                                                @click="$parent.$emit('stornieren', props.row)" />
                                     </div>
-                                    <!-- Zeile 2: Buchungstext -->
-                                    <div class="text-body2 text-weight-bold q-mb-xs">{{ props.row.buchungstext }}</div>
-                                    <!-- Zeile 3: Kategorie | Betrag | Kontostand -->
-                                    <div class="row items-center">
-                                        <span class="text-caption text-grey-7">{{ props.row.kategorie }}</span>
-                                        <q-space />
+                                    <!-- Zeile 2: Buchungstext fett -->
+                                    <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">
+                                        {{ props.row.buchungstext }}
+                                    </div>
+                                    <!-- Zeile 3: Kategorie links | Betrag + Bestand rechts -->
+                                    <div style="display: flex; align-items: center;">
+                                        <span style="font-size: 12px; color: #757575;">{{ props.row.kategorie }}</span>
+                                        <span style="flex: 1;"></span>
                                         <span v-if="props.row.einnahme"
-                                              class="text-caption text-positive text-weight-medium q-mr-sm">
+                                              style="font-size: 13px; font-weight: 500; color: #388e3c; margin-right: 8px;">
                                             +{{ props.row.einnahme }}
                                         </span>
                                         <span v-if="props.row.ausgabe"
-                                              class="text-caption text-negative text-weight-medium q-mr-sm">
+                                              style="font-size: 13px; font-weight: 500; color: #d32f2f; margin-right: 8px;">
                                             -{{ props.row.ausgabe }}
                                         </span>
-                                        <span class="text-caption text-weight-bold">
+                                        <span style="font-size: 13px; font-weight: 700;">
                                             {{ props.row.bestand }}
                                         </span>
                                     </div>
-                                </q-card>
+                                </div>
                             </q-td>
                         </q-tr>
                     </template>
