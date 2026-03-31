@@ -114,8 +114,9 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Inhaltsbereich (wird bei Tab-Wechsel neu gerendert)
+        # Desktop bekommt seitliches Padding, Mobil keins (Liste geht bis zum Rand)
         # ------------------------------------------------------------------
-        content_area = ui.column().classes('w-full q-px-md')
+        content_area = ui.column().classes('w-full gt-xs:q-px-md')
 
         def refresh_bestand():
             cent = db.kassen.get_bestand_cent(state['kasse'].id)
@@ -228,7 +229,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # Mobile Filter-Accordion (nur lt-sm sichtbar)
-                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm q-mb-sm') as _mobile_filter:
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('w-full lt-sm q-mb-sm q-px-sm') as _mobile_filter:
                     with ui.column().classes('q-gutter-sm q-pa-sm'):
                         von_input_m = ui.input(
                             'Von',
@@ -367,12 +368,6 @@ def create_kassenbuch_page(db: VereinsDB):
                     display: block;
                     line-height: 1.3;
                   }
-                  .kasse-buchung-betrag .bestand {
-                    font-size: 11px;
-                    color: #757575;
-                    display: block;
-                    line-height: 1.2;
-                  }
                   .kasse-buchung-betrag .positiv { color: #2e7d32; }
                   .kasse-buchung-betrag .negativ { color: #c62828; }
                   .kasse-slide-left {
@@ -403,7 +398,7 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 schreibzugriff = hat_schreibzugriff()
 
-                with ui.column().classes('w-full lt-sm').style('gap: 0; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0;'):
+                with ui.column().classes('w-full lt-sm').style('gap: 0; overflow: hidden; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;'):
                     if not rows:
                         with ui.element('div').classes('kasse-buchung-zeile'):
                             ui.label('Keine Buchungen vorhanden.').style('color: #9e9e9e; font-size: 14px;')
@@ -470,7 +465,6 @@ def create_kassenbuch_page(db: VereinsDB):
                                                 ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
                                             with ui.element('div').classes('kasse-buchung-betrag'):
                                                 ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
-                                                ui.html(f'<span class="bestand">{row["bestand"]}</span>')
 
                                     # Swipe-Events auf q-slide-item
                                     slide.on('right', lambda rid=row_id, s=slide: (
@@ -490,7 +484,6 @@ def create_kassenbuch_page(db: VereinsDB):
                                             ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
                                         with ui.element('div').classes('kasse-buchung-betrag'):
                                             ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
-                                            ui.html(f'<span class="bestand">{row["bestand"]}</span>')
 
                 # ----------------------------------------------------------
                 # [2b] Desktop Buchungstabelle – q-table (gt-xs)
