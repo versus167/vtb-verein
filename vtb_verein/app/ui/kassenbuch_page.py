@@ -308,6 +308,7 @@ def create_kassenbuch_page(db: VereinsDB):
                   .kasse-day-header {
                     display: flex;
                     align-items: center;
+                    justify-content: space-between;
                     width: 100%;
                     padding: 4px 12px;
                     background: #2c2c2c;
@@ -318,9 +319,9 @@ def create_kassenbuch_page(db: VereinsDB):
                     box-sizing: border-box;
                   }
                   .kasse-day-saldo {
-                    margin-left: auto;
                     font-size: 13px;
                     font-weight: 700;
+                    text-align: right;
                   }
                   .kasse-day-saldo.positiv { color: #69f0ae; }
                   .kasse-day-saldo.negativ { color: #ff5252; }
@@ -424,7 +425,7 @@ def create_kassenbuch_page(db: VereinsDB):
                             # Tages-Trennzeile
                             with ui.element('div').classes('kasse-day-header'):
                                 ui.html(f'<span>{datum}</span>')
-                                ui.html(f'<span class="kasse-day-saldo {saldo_cls}">Saldo&nbsp;&nbsp;{tages_bestand}</span>')
+                                ui.html(f'<span class="kasse-day-saldo {saldo_cls}">{tages_bestand}</span>')
 
                             # Buchungszeilen des Tages
                             for row in gruppe:
