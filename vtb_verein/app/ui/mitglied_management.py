@@ -5,7 +5,8 @@ from typing import Optional
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.models.mitglied import Mitglied
-from app.auth.auth_helper import AuthHelper, require_role
+from app.models.permission import Permission
+from app.auth.auth_helper import AuthHelper, require_permission
 from app.ui.navigation import create_navigation, set_current_path
 from app.ui.date_input_helper import DateInputHelper
 
@@ -13,7 +14,7 @@ def create_mitglied_management_page(db: VereinsDB):
     """Erstellt die Mitgliederverwaltungs-Seite"""
     
     @ui.page('/mitglieder')
-    @require_role('user')
+    @require_permission(Permission.MITGLIEDER_READ)
     def mitglied_management_page():
         # CSS für Hervorhebung kürzlich ausgetretener Mitglieder
         ui.add_head_html('''
@@ -30,6 +31,9 @@ def create_mitglied_management_page(db: VereinsDB):
         set_current_path('/mitglieder')
         create_navigation(db)
         current_user = AuthHelper.get_current_user()
+        
+        can_write = current_user.has_permission(Permission.MITGLIEDER_WRITE)
+        can_delete = current_user.has_permission(Permission.MITGLIEDER_DELETE)
         
         ui.label('Mitgliederverwaltung').classes('text-h4 q-mb-md q-mt-md q-ml-md')
         
@@ -66,16 +70,23 @@ def create_mitglied_management_page(db: VereinsDB):
         with ui.card().classes('w-full q-ma-md'):
             table = ui.table(columns=columns, rows=load_mitglieder(), row_key='id').classes('w-full')
             
-            # Add custom body slot with row class binding
-            table.add_slot('body', '''
+            # Aktions-Buttons im body-slot abhängig von Permissions rendern
+            action_btns = ''
+            if can_write:
+                action_btns += '<q-btn flat dense icon="edit" @click="$parent.$emit(\'edit\', props.row)" />'
+            if can_delete:
+                action_btns += '<q-btn flat dense icon="delete" @click="$parent.$emit(\'delete\', props.row)" />'
+            if not action_btns:
+                action_btns = '<span class="text-grey text-caption">–</span>'
+
+            table.add_slot('body', f'''
                 <q-tr :props="props" :class="props.row.recently_left ? 'recently-left-member' : ''">
                     <q-td v-for="col in props.cols" :key="col.name" :props="props">
                         <template v-if="col.name === 'actions'">
-                            <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
-                            <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
+                            {action_btns}
                         </template>
                         <template v-else>
-                            {{ col.value }}
+                            {{{{ col.value }}}}
                         </template>
                     </q-td>
                 </q-tr>
@@ -98,7 +109,6 @@ def create_mitglied_management_page(db: VereinsDB):
                         placeholder='z.B. 21.2.26, 210226, 21/2/2026'
                     ).classes('flex-grow')
                     
-                    # Validation on blur
                     def validate_and_format(e):
                         if not input_field.value or not input_field.value.strip():
                             state['value'] = None
@@ -115,7 +125,6 @@ def create_mitglied_management_page(db: VereinsDB):
                     
                     input_field.on('blur', validate_and_format)
                     
-                    # Date picker button
                     def open_picker():
                         with ui.dialog() as dialog, ui.card():
                             ui.label(label).classes('text-subtitle1 q-mb-md')
@@ -142,23 +151,19 @@ def create_mitglied_management_page(db: VereinsDB):
                 with ui.dialog() as dialog, ui.card().style('min-width: 700px; max-height: 80vh; overflow-y: auto'):
                     ui.label('Neues Mitglied anlegen').classes('text-h6 q-mb-md')
                     
-                    # Mitgliedsdaten
                     ui.label('Mitgliedsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     next_nummer = db.get_next_mitgliedsnummer()
                     mitgliedsnummer = ui.number('Mitgliedsnummer', value=next_nummer, format='%.0f').props('autofocus')
                     
-                    # Persönliche Daten
                     ui.label('Persönliche Daten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     vorname = ui.input('Vorname *').classes('w-full')
                     nachname = ui.input('Nachname *').classes('w-full')
                     geburtsdatum_input, geburtsdatum_state = create_date_input('Geburtsdatum')
                     
-                    # Kontaktdaten
                     ui.label('Kontakt').classes('text-subtitle2 q-mt-md q-mb-sm')
                     email = ui.input('E-Mail')
                     telefon = ui.input('Telefon')
                     
-                    # Adresse
                     ui.label('Adresse').classes('text-subtitle2 q-mt-md q-mb-sm')
                     strasse = ui.input('Straße')
                     with ui.row().classes('w-full'):
@@ -166,12 +171,10 @@ def create_mitglied_management_page(db: VereinsDB):
                         ort = ui.input('Ort').classes('w-3/4')
                     land = ui.input('Land', value='Deutschland')
                     
-                    # Vereinsdaten
                     ui.label('Vereinsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     eintrittsdatum_input, eintrittsdatum_state = create_date_input('Eintrittsdatum')
                     austrittsdatum_input, austrittsdatum_state = create_date_input('Austrittsdatum')
                     
-                    # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
                     zahlungsart = ui.select(
                         label='Zahlungsart *',
@@ -189,7 +192,6 @@ def create_mitglied_management_page(db: VereinsDB):
                     def create_mitglied():
                         error_label.visible = False
                         
-                        # Validierung
                         if not vorname.value or not nachname.value:
                             error_label.text = 'Vorname und Nachname sind Pflichtfelder'
                             error_label.visible = True
@@ -200,7 +202,6 @@ def create_mitglied_management_page(db: VereinsDB):
                             error_label.visible = True
                             return
                         
-                        # Prüfe Mitgliedsnummer
                         nummer = int(mitgliedsnummer.value) if mitgliedsnummer.value else None
                         if nummer and not db.is_mitgliedsnummer_available(nummer):
                             error_label.text = f'Mitgliedsnummer {nummer} ist bereits vergeben'
@@ -249,22 +250,18 @@ def create_mitglied_management_page(db: VereinsDB):
                 with ui.dialog() as dialog, ui.card().style('min-width: 700px; max-height: 80vh; overflow-y: auto'):
                     ui.label(f'Mitglied bearbeiten: {m.vorname} {m.nachname}').classes('text-h6 q-mb-md')
                     
-                    # Mitgliedsdaten
                     ui.label('Mitgliedsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     mitgliedsnummer = ui.number('Mitgliedsnummer', value=m.mitgliedsnummer, format='%.0f')
                     
-                    # Persönliche Daten
                     ui.label('Persönliche Daten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     vorname = ui.input('Vorname *', value=m.vorname)
                     nachname = ui.input('Nachname *', value=m.nachname)
                     geburtsdatum_input, geburtsdatum_state = create_date_input('Geburtsdatum', m.geburtsdatum)
                     
-                    # Kontaktdaten
                     ui.label('Kontakt').classes('text-subtitle2 q-mt-md q-mb-sm')
                     email = ui.input('E-Mail', value=m.email or '')
                     telefon = ui.input('Telefon', value=m.telefon or '')
                     
-                    # Adresse
                     ui.label('Adresse').classes('text-subtitle2 q-mt-md q-mb-sm')
                     strasse = ui.input('Straße', value=m.strasse or '')
                     with ui.row().classes('w-full'):
@@ -272,12 +269,10 @@ def create_mitglied_management_page(db: VereinsDB):
                         ort = ui.input('Ort', value=m.ort or '').classes('w-3/4')
                     land = ui.input('Land', value=m.land or '')
                     
-                    # Vereinsdaten
                     ui.label('Vereinsdaten').classes('text-subtitle2 q-mt-md q-mb-sm')
                     eintrittsdatum_input, eintrittsdatum_state = create_date_input('Eintrittsdatum', m.eintrittsdatum)
                     austrittsdatum_input, austrittsdatum_state = create_date_input('Austrittsdatum', m.austrittsdatum)
                     
-                    # Zahlungsdaten
                     ui.label('Zahlung').classes('text-subtitle2 q-mt-md q-mb-sm')
                     zahlungsart = ui.select(
                         label='Zahlungsart *',
@@ -295,7 +290,6 @@ def create_mitglied_management_page(db: VereinsDB):
                     def update_mitglied():
                         error_label.visible = False
                         
-                        # Validierung
                         if not vorname.value or not nachname.value:
                             error_label.text = 'Vorname und Nachname sind Pflichtfelder'
                             error_label.visible = True
@@ -306,7 +300,6 @@ def create_mitglied_management_page(db: VereinsDB):
                             error_label.visible = True
                             return
                         
-                        # Prüfe Mitgliedsnummer
                         nummer = int(mitgliedsnummer.value) if mitgliedsnummer.value else None
                         if nummer and not db.is_mitgliedsnummer_available(nummer, exclude_id=m.id):
                             error_label.text = f'Mitgliedsnummer {nummer} ist bereits vergeben'
@@ -380,7 +373,10 @@ def create_mitglied_management_page(db: VereinsDB):
                 
                 dialog.open()
             
-            table.on('edit', lambda e: show_edit_dialog(e.args))
-            table.on('delete', lambda e: show_delete_dialog(e.args))
+            if can_write:
+                table.on('edit', lambda e: show_edit_dialog(e.args))
+            if can_delete:
+                table.on('delete', lambda e: show_delete_dialog(e.args))
             
-            ui.button('Neues Mitglied anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
+            if can_write:
+                ui.button('Neues Mitglied anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
