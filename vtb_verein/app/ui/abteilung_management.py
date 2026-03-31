@@ -4,18 +4,22 @@ Abteilungsverwaltungs-Seite
 from nicegui import ui
 from app.db.datastore import VereinsDB
 from app.models.abteilung import Abteilung
-from app.auth.auth_helper import AuthHelper, require_role
+from app.models.permission import Permission
+from app.auth.auth_helper import AuthHelper, require_permission
 from app.ui.navigation import create_navigation, set_current_path
 
 def create_abteilung_management_page(db: VereinsDB):
     """Erstellt die Abteilungsverwaltungs-Seite"""
     
     @ui.page('/abteilungen')
-    @require_role('user')  # user und admin können Abteilungen verwalten
+    @require_permission(Permission.ABTEILUNGEN_READ)
     def abteilung_management_page():
         set_current_path('/abteilungen')
         create_navigation(db)
         current_user = AuthHelper.get_current_user()
+        
+        can_write = current_user.has_permission(Permission.ABTEILUNGEN_WRITE)
+        can_delete = current_user.has_permission(Permission.ABTEILUNGEN_DELETE)
         
         ui.label('Abteilungsverwaltung').classes('text-h4 q-mb-md q-mt-md q-ml-md')
         
@@ -41,10 +45,16 @@ def create_abteilung_management_page(db: VereinsDB):
         
         with ui.card().classes('w-full q-ma-md'):
             table = ui.table(columns=columns, rows=load_abteilungen(), row_key='id').classes('w-full')
-            table.add_slot('body-cell-actions', '''
+
+            # Aktions-Buttons nur rendern wenn berechtigt
+            edit_btn = 'q-btn flat dense icon="edit" @click="$parent.$emit(\'edit\', props.row)"' if can_write else ''
+            delete_btn = 'q-btn flat dense icon="delete" @click="$parent.$emit(\'delete\', props.row)"' if can_delete else ''
+
+            table.add_slot('body-cell-actions', f'''
                 <q-td :props="props">
-                    <q-btn flat dense icon="edit" @click="$parent.$emit('edit', props.row)" />
-                    <q-btn flat dense icon="delete" @click="$parent.$emit('delete', props.row)" />
+                    {'<' + edit_btn + ' />' if can_write else ''}
+                    {'<' + delete_btn + ' />' if can_delete else ''}
+                    <span v-if="!{str(can_write).lower()} && !{str(can_delete).lower()}" class="text-grey text-caption">–</span>
                 </q-td>
             ''')
             
@@ -142,8 +152,8 @@ def create_abteilung_management_page(db: VereinsDB):
                     ui.label(f'Soll die Abteilung "{abt.name}" wirklich gelöscht werden?')
                     
                     # Prüfen ob Löschung möglich
-                    can_delete = db.can_delete_abteilung(abt.id)
-                    if not can_delete:
+                    can_delete_abt = db.can_delete_abteilung(abt.id)
+                    if not can_delete_abt:
                         ui.label('Diese Abteilung kann nicht gelöscht werden, da sie noch verwendet wird.').classes('text-warning q-mt-sm')
                     else:
                         ui.label('Gelöschte Abteilungen können später wiederhergestellt werden.').classes('text-caption q-mt-sm')
@@ -165,7 +175,7 @@ def create_abteilung_management_page(db: VereinsDB):
                     
                     with ui.row().classes('w-full'):
                         ui.button('Abbrechen', on_click=dialog.close).props('color=secondary')
-                        if can_delete:
+                        if can_delete_abt:
                             ui.button('Löschen', on_click=delete_abteilung).props('color=negative')
                 
                 dialog.open()
@@ -188,7 +198,7 @@ def create_abteilung_management_page(db: VereinsDB):
                             'name': d['name'],
                             'kuerzel': d['kuerzel'] or '',
                             'beschreibung': d['beschreibung'] or '',
-                            'deleted_at': d['deleted_at'][:19] if d['deleted_at'] else '',  # Format timestamp
+                            'deleted_at': d['deleted_at'][:19] if d['deleted_at'] else '',
                             'deleted_by': d['deleted_by'] or '',
                         }
                         for d in deleted
@@ -227,7 +237,6 @@ def create_abteilung_management_page(db: VereinsDB):
                                     try:
                                         success = db.restore_abteilung(row['id'], restored_by=current_user.username)
                                         if success:
-                                            # Update beide Tabellen
                                             table.rows = load_abteilungen()
                                             table.update()
                                             deleted_table.rows = load_deleted_abteilungen()
@@ -236,7 +245,6 @@ def create_abteilung_management_page(db: VereinsDB):
                                             restore_dialog.close()
                                             ui.notify('Abteilung erfolgreich wiederhergestellt', type='positive')
                                             
-                                            # Schließe den gelöschte-Abteilungen-Dialog wenn leer
                                             if not deleted_table.rows:
                                                 deleted_dialog.close()
                                         else:
@@ -259,10 +267,13 @@ def create_abteilung_management_page(db: VereinsDB):
                 
                 deleted_dialog.open()
             
-            table.on('edit', lambda e: show_edit_dialog(e.args))
-            table.on('delete', lambda e: show_delete_dialog(e.args))
+            if can_write:
+                table.on('edit', lambda e: show_edit_dialog(e.args))
+            if can_delete:
+                table.on('delete', lambda e: show_delete_dialog(e.args))
             
             # Button-Leiste
             with ui.row().classes('q-mt-md'):
-                ui.button('Neue Abteilung anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
+                if can_write:
+                    ui.button('Neue Abteilung anlegen', on_click=show_create_dialog, icon='add').props('color=primary')
                 ui.button('Gelöschte Abteilungen anzeigen', on_click=show_deleted_abteilungen_dialog, icon='delete_sweep').props('color=secondary outline')
