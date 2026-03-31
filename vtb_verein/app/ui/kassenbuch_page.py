@@ -280,7 +280,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 if hat_schreibzugriff():
                     with ui.element('q-fab').props(
                         'icon=add direction=up color=primary'
-                    ).classes('lt-sm fixed').style('bottom: 16px; right: 16px; z-index: 2000;'):
+                    ).classes('lt-sm fixed').style('bottom: 72px; right: 16px; z-index: 2000;'):
                         ui.element('q-fab-action').props(
                             'icon=add color=positive label=Einnahme'
                         ).on('click', lambda: show_buchung_dialog('einnahme'))
@@ -306,7 +306,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     columns=columns,
                     rows=rows,
                     row_key='id',
-                ).classes('w-full').props('sort-by="datum" sort-direction="desc"')
+                ).classes('w-full').props('sort-by="datum" sort-direction="desc" :hide-header="$q.screen.lt.sm"')
 
                 # ----------------------------------------------------------
                 # [2] Body-Slot: Desktop-Tabellenzeile ODER Mobile-Karte
