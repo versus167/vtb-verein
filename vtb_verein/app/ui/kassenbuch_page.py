@@ -64,11 +64,11 @@ def create_kassenbuch_page(db: VereinsDB):
 
         ui.label('Kassenbuch').classes('text-h4 q-ma-md')
 
-        # Floating Home-Button (nur Mobil, links unten)
+        # Floating Home-Button (nur Mobil+Tablet, links unten)
         ui.button(
             icon='home',
             on_click=lambda: ui.navigate.to('/')
-        ).props('fab color=primary').classes('lt-sm fixed').style(
+        ).props('fab color=primary').classes('lt-md fixed').style(
             'bottom: 16px; left: 16px; z-index: 2000;'
         )
 
@@ -114,10 +114,10 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Inhaltsbereich (wird bei Tab-Wechsel neu gerendert)
-        # Desktop bekommt seitliches Padding, Mobil keins (Liste geht bis zum Rand)
+        # Desktop bekommt seitliches Padding, Mobil/Tablet keins (Liste geht bis zum Rand)
         # align-items: stretch sorgt dafür, dass Kinder die volle Breite bekommen
         # ------------------------------------------------------------------
-        content_area = ui.column().classes('w-full gt-xs:q-px-md').style(
+        content_area = ui.column().classes('w-full gt-sm:q-px-md').style(
             'width: 100%; align-items: stretch;'
         )
 
@@ -178,8 +178,8 @@ def create_kassenbuch_page(db: VereinsDB):
                 # [1] Filter-Accordion
                 # ----------------------------------------------------------
 
-                # Desktop-Filterzeile (nur gt-xs sichtbar)
-                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-xs') as _desktop_filter:
+                # Desktop-Filterzeile (nur gt-sm sichtbar)
+                with ui.row().classes('items-center q-gutter-sm q-mb-sm gt-sm') as _desktop_filter:
                     von_input_d = ui.input(
                         'Von',
                         value=DateInputHelper.format_date_display(state['von_datum']) if state['von_datum'] else '',
@@ -232,8 +232,8 @@ def create_kassenbuch_page(db: VereinsDB):
                         ui.button('CSV-Export', on_click=show_export_dialog, icon='download').props('color=primary dense outline')
                         ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
-                # Mobile Filter-Accordion (nur lt-sm sichtbar)
-                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('lt-sm q-mb-sm').style('width: 100%;') as _mobile_filter:
+                # Mobile/Tablet Filter-Accordion (nur lt-md sichtbar)
+                with ui.expansion('Filter & Aktionen', icon='filter_list').classes('lt-md q-mb-sm').style('width: 100%;') as _mobile_filter:
                     with ui.column().classes('q-gutter-sm q-pa-sm'):
                         von_input_m = ui.input(
                             'Von',
@@ -281,12 +281,12 @@ def create_kassenbuch_page(db: VereinsDB):
                                 ui.button('PDF-Bericht', on_click=show_pdf_dialog, icon='picture_as_pdf').props('color=deep-orange dense outline')
 
                 # ----------------------------------------------------------
-                # FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil)
+                # FAB Speed-Dial – Einnahme/Ausgabe (rechts unten, nur Mobil+Tablet)
                 # ----------------------------------------------------------
                 if hat_schreibzugriff():
                     with ui.element('q-fab').props(
                         'icon=add direction=up color=primary'
-                    ).classes('lt-sm fixed').style('bottom: 80px; right: 16px; z-index: 2000;'):
+                    ).classes('lt-md fixed').style('bottom: 80px; right: 16px; z-index: 2000;'):
                         ui.element('q-fab-action').props(
                             'icon=add color=positive label=Einnahme'
                         ).on('click', lambda: show_buchung_dialog('einnahme'))
@@ -298,7 +298,7 @@ def create_kassenbuch_page(db: VereinsDB):
                 show_history_col = state['show_history']
 
                 # ----------------------------------------------------------
-                # [2a] Mobile Buchungsliste – Swipe-Zeilen mit Tagesgruppen
+                # [2a] Mobile/Tablet Buchungsliste – Swipe-Zeilen mit Tagesgruppen
                 # Swipe-Links  → Stornieren (rot)
                 # Swipe-Rechts → Bearbeiten (blau)
                 # ----------------------------------------------------------
@@ -407,7 +407,7 @@ def create_kassenbuch_page(db: VereinsDB):
 
                 schreibzugriff = hat_schreibzugriff()
 
-                with ui.element('div').classes('lt-sm').style(
+                with ui.element('div').classes('lt-md').style(
                     'width: 100%; display: block; border-top: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;'
                 ):
                     if not rows:
@@ -499,7 +499,7 @@ def create_kassenbuch_page(db: VereinsDB):
                                             ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
 
                 # ----------------------------------------------------------
-                # [2b] Desktop Buchungstabelle – q-table (gt-xs)
+                # [2b] Desktop Buchungstabelle – q-table (gt-sm)
                 # ----------------------------------------------------------
                 columns = [
                     {'name': 'belegnummer', 'label': 'Beleg', 'field': 'belegnummer', 'align': 'left', 'sortable': True},
@@ -513,7 +513,7 @@ def create_kassenbuch_page(db: VereinsDB):
                     {'name': 'actions', 'label': '', 'field': 'actions', 'align': 'center'},
                 ]
 
-                with ui.element('div').classes('gt-xs w-full'):
+                with ui.element('div').classes('gt-sm w-full'):
                     table = ui.table(
                         columns=columns,
                         rows=rows,
@@ -620,7 +620,7 @@ def create_kassenbuch_page(db: VereinsDB):
                         table.on('load_history', on_load_history)
 
                     if not rows:
-                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md gt-xs')
+                        ui.label('Keine Buchungen vorhanden.').classes('text-grey q-mt-md gt-sm')
 
         # ------------------------------------------------------------------
         # Dialog: Buchung anlegen / bearbeiten
