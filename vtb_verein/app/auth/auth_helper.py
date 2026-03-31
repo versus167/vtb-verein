@@ -32,6 +32,38 @@ class AuthHelper:
         return User(**user_dict)
 
     @staticmethod
+    def refresh_permissions(permission_repo) -> Optional[User]:
+        """
+        Lädt die Permissions des aktuellen Users frisch aus der DB und
+        schreibt sie zurück in den Session-Storage.
+
+        Sollte bei jedem @ui.page-Seitenaufruf aufgerufen werden, damit
+        Berechtigungsänderungen durch Admins sofort wirksam werden –
+        ohne dass der User sich neu einloggen muss.
+
+        Args:
+            permission_repo: PermissionRepository-Instanz (z.B. db.permissions)
+
+        Returns:
+            Aktualisiertes User-Objekt oder None wenn kein User eingeloggt.
+        """
+        user = AuthHelper.get_current_user()
+        if user is None:
+            return None
+
+        fresh_permissions = permission_repo.get_permissions_for_user(user.id)
+        user.permissions = fresh_permissions
+
+        # Aktualisierten User zurück in den Storage schreiben
+        user_dict = {
+            k: (list(v) if isinstance(v, set) else v)
+            for k, v in user.__dict__.items()
+        }
+        app.storage.user['current_user'] = user_dict
+
+        return user
+
+    @staticmethod
     def set_current_user(user: User, remember_me: bool = False):
         """
         Setzt den aktuell eingeloggten User mit rollenbezogener Session-Dauer.
