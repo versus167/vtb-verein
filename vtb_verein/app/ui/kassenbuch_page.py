@@ -101,6 +101,107 @@ def create_kassenbuch_page(db: VereinsDB):
             return b is not None and b.darf_exportieren
 
         # ------------------------------------------------------------------
+        # Mobile-Liste CSS – einmalig beim Seitenaufbau injizieren
+        # WICHTIG: ui.add_head_html() darf NICHT in render_content() stehen,
+        # da render_content() bei jedem Tab-Wechsel erneut aufgerufen wird.
+        # ------------------------------------------------------------------
+        ui.add_head_html('''
+        <style id="kasse-mobile-list-style">
+          .kasse-day-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 6px 14px;
+            background: #2c2c2c;
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            box-sizing: border-box;
+          }
+          .kasse-day-saldo {
+            font-size: 15px;
+            font-weight: 700;
+            text-align: right;
+          }
+          .kasse-day-saldo.positiv { color: #69f0ae; }
+          .kasse-day-saldo.negativ { color: #ff5252; }
+          .kasse-buchung-zeile {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            min-height: 62px;
+            padding: 10px 14px;
+            border-bottom: 1px solid #f0f0f0;
+            gap: 10px;
+            background: #ffffff;
+            box-sizing: border-box;
+          }
+          .kasse-buchung-zeile.storniert {
+            background: #fafafa;
+            opacity: 0.6;
+          }
+          .kasse-buchung-text {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+          }
+          .kasse-buchung-title {
+            font-size: 17px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.3;
+          }
+          .kasse-buchung-title.storniert {
+            text-decoration: line-through;
+            color: #9e9e9e;
+          }
+          .kasse-buchung-sub {
+            font-size: 13px;
+            color: #9e9e9e;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.3;
+          }
+          .kasse-buchung-betrag {
+            text-align: right;
+            white-space: nowrap;
+            flex-shrink: 0;
+          }
+          .kasse-buchung-betrag .betrag {
+            font-size: 17px;
+            font-weight: 600;
+            display: block;
+            line-height: 1.3;
+          }
+          .kasse-buchung-betrag .positiv { color: #2e7d32; }
+          .kasse-buchung-betrag .negativ { color: #c62828; }
+          .kasse-slide-left {
+            background: #d32f2f;
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 13px;
+            gap: 6px;
+          }
+          .kasse-slide-right {
+            background: #1565c0;
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            font-size: 13px;
+            gap: 6px;
+          }
+        </style>
+        ''')
+
+        # ------------------------------------------------------------------
         # Kassen-Header: Tabs + Bestand
         # ------------------------------------------------------------------
         with ui.row().classes('w-full items-center q-px-md q-mb-sm').style('gap: 0'):
@@ -302,103 +403,6 @@ def create_kassenbuch_page(db: VereinsDB):
                 # Swipe-Links  → Stornieren (rot)
                 # Swipe-Rechts → Bearbeiten (blau)
                 # ----------------------------------------------------------
-
-                # CSS einmalig injizieren (idempotent durch id)
-                ui.add_head_html('''
-                <style id="kasse-mobile-list-style">
-                  .kasse-day-header {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    width: 100%;
-                    padding: 6px 14px;
-                    background: #2c2c2c;
-                    color: #ffffff;
-                    font-size: 15px;
-                    font-weight: 600;
-                    letter-spacing: 0.01em;
-                    box-sizing: border-box;
-                  }
-                  .kasse-day-saldo {
-                    font-size: 15px;
-                    font-weight: 700;
-                    text-align: right;
-                  }
-                  .kasse-day-saldo.positiv { color: #69f0ae; }
-                  .kasse-day-saldo.negativ { color: #ff5252; }
-                  .kasse-buchung-zeile {
-                    display: flex;
-                    align-items: center;
-                    width: 100%;
-                    min-height: 62px;
-                    padding: 10px 14px;
-                    border-bottom: 1px solid #f0f0f0;
-                    gap: 10px;
-                    background: #ffffff;
-                    box-sizing: border-box;
-                  }
-                  .kasse-buchung-zeile.storniert {
-                    background: #fafafa;
-                    opacity: 0.6;
-                  }
-                  .kasse-buchung-text {
-                    flex: 1;
-                    min-width: 0;
-                    overflow: hidden;
-                  }
-                  .kasse-buchung-title {
-                    font-size: 17px;
-                    font-weight: 500;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    line-height: 1.3;
-                  }
-                  .kasse-buchung-title.storniert {
-                    text-decoration: line-through;
-                    color: #9e9e9e;
-                  }
-                  .kasse-buchung-sub {
-                    font-size: 13px;
-                    color: #9e9e9e;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    line-height: 1.3;
-                  }
-                  .kasse-buchung-betrag {
-                    text-align: right;
-                    white-space: nowrap;
-                    flex-shrink: 0;
-                  }
-                  .kasse-buchung-betrag .betrag {
-                    font-size: 17px;
-                    font-weight: 600;
-                    display: block;
-                    line-height: 1.3;
-                  }
-                  .kasse-buchung-betrag .positiv { color: #2e7d32; }
-                  .kasse-buchung-betrag .negativ { color: #c62828; }
-                  .kasse-slide-left {
-                    background: #d32f2f;
-                    color: white;
-                    display: flex;
-                    align-items: center;
-                    padding: 0 20px;
-                    font-size: 13px;
-                    gap: 6px;
-                  }
-                  .kasse-slide-right {
-                    background: #1565c0;
-                    color: white;
-                    display: flex;
-                    align-items: center;
-                    padding: 0 20px;
-                    font-size: 13px;
-                    gap: 6px;
-                  }
-                </style>
-                ''')
 
                 # Buchungen nach Datum gruppieren (Reihenfolge bereits neueste zuerst)
                 gruppen: dict[str, list[dict]] = {}
@@ -1174,6 +1178,11 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Tab-Wechsel
+        # BUGFIX: Event-Name korrigiert von 'update:model-value' auf
+        # 'update:modelValue' – NiceGUI/Vue erwartet camelCase für v-model-Events.
+        # Mit dem Bindestrich-Format wurde der Event nie empfangen, daher
+        # blieb state['kasse'] immer auf kassen[0] und render_content() wurde
+        # beim Tab-Wechsel nie aufgerufen.
         # ------------------------------------------------------------------
         def on_tab_change(e):
             kasse_id = int(e.value)
@@ -1184,7 +1193,7 @@ def create_kassenbuch_page(db: VereinsDB):
             state['show_history'] = False
             render_content()
 
-        kasse_tabs.on('update:model-value', on_tab_change)
+        kasse_tabs.on('update:modelValue', on_tab_change)
         kasse_tabs.set_value(str(kassen[0].id))
 
         # Initiales Rendering
