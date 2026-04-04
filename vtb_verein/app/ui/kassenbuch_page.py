@@ -40,6 +40,16 @@ def _default_von_datum() -> str:
     return str(date.today() - timedelta(days=90))
 
 
+def _letzter_tag_vormonat() -> str:
+    """Gibt den letzten Tag des Vormonats als ISO-String zurück.
+
+    Beispiel: Heute 04.04.2026 → '2026-03-31'
+    """
+    heute = date.today()
+    erster_diesen_monat = heute.replace(day=1)
+    return str(erster_diesen_monat - timedelta(days=1))
+
+
 def create_kassenbuch_page(db: VereinsDB):
     """Registriert die Kassenbuch-Seite als NiceGUI-Route."""
 
@@ -882,18 +892,22 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Dialog: CSV-Export
+        # Bis-Datum wird standardmäßig auf den letzten Tag des Vormonats gesetzt,
+        # da Exporte typischerweise monatsweise erfolgen.
         # ------------------------------------------------------------------
 
         def show_export_dialog():
+            export_bis_default = _letzter_tag_vormonat()
+
             with ui.dialog() as dialog, ui.card().style('min-width: min(520px, 95vw)'):
                 ui.label('CSV-Export').classes('text-h6 q-mb-md')
 
                 bis_input = ui.input(
                     'Bis-Datum *',
-                    value=DateInputHelper.format_date_display(date.today().isoformat()),
+                    value=DateInputHelper.format_date_display(export_bis_default),
                     placeholder='TT.MM.JJJJ'
                 ).classes('w-full')
-                bis_state = {'value': date.today().isoformat()}
+                bis_state = {'value': export_bis_default}
 
                 vorschau_container = ui.column().classes('w-full q-mt-sm q-mb-sm')
 
