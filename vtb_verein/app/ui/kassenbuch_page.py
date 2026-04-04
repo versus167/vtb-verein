@@ -1178,14 +1178,18 @@ def create_kassenbuch_page(db: VereinsDB):
 
         # ------------------------------------------------------------------
         # Tab-Wechsel
-        # BUGFIX: Event-Name korrigiert von 'update:model-value' auf
+        # BUGFIX 1: Event-Name korrigiert von 'update:model-value' auf
         # 'update:modelValue' – NiceGUI/Vue erwartet camelCase für v-model-Events.
         # Mit dem Bindestrich-Format wurde der Event nie empfangen, daher
         # blieb state['kasse'] immer auf kassen[0] und render_content() wurde
         # beim Tab-Wechsel nie aufgerufen.
+        #
+        # BUGFIX 2: e.value → e.args
+        # .on()-Events liefern GenericEventArguments mit dem Wert in e.args.
+        # e.value existiert nur bei ValueChangeEventArguments (on_change=...).
         # ------------------------------------------------------------------
         def on_tab_change(e):
-            kasse_id = int(e.value)
+            kasse_id = int(e.args)
             state['kasse'] = next(k for k in kassen if k.id == kasse_id)
             state['von_datum'] = _default_von_datum()
             state['bis_datum'] = None
