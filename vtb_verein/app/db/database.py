@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 8  # Version 8: Kassenspezifische Berechtigungen
+SCHEMA_VERSION = 9  # Version 9: Ticket-System
 
 
 class Database:
@@ -102,6 +102,9 @@ class Database:
         if current == 7:
             self._migrate_7_to_8()
             current = 8
+        if current == 8:
+            self._migrate_8_to_9()
+            current = 9
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1145,9 +1148,6 @@ class Database:
         nicht per Hard-Delete, damit die History erhalten bleibt.
         """
         with self.cursor() as cur:
-            # ============================================
-            # Tabelle: kasse_berechtigungen
-            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS kasse_berechtigungen (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1175,9 +1175,6 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_user_id ON kasse_berechtigungen(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_deleted_at ON kasse_berechtigungen(deleted_at)")
 
-            # ============================================
-            # Tabelle: kasse_berechtigungen_history
-            # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS kasse_berechtigungen_history (
                     id              INTEGER NOT NULL,
@@ -1201,9 +1198,6 @@ class Database:
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_kasse_berechtigungen_history_id ON kasse_berechtigungen_history(id)")
 
-            # ============================================
-            # Trigger: INSERT
-            # ============================================
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS kasse_berechtigungen_audit_insert
                 AFTER INSERT ON kasse_berechtigungen
@@ -1223,9 +1217,6 @@ class Database:
                 END;
             """)
 
-            # ============================================
-            # Trigger: UPDATE (nur bei Versions-Änderung)
-            # ============================================
             cur.execute("""
                 CREATE TRIGGER IF NOT EXISTS kasse_berechtigungen_audit_update
                 AFTER UPDATE ON kasse_berechtigungen
@@ -1245,11 +1236,7 @@ class Database:
                     );
                 END;
             """)
-            # KEIN DELETE-Trigger
 
-            # ============================================
-            # Globale kasse.*-Permissions Soft-Delete
-            # ============================================
             cur.execute("""
                 UPDATE user_permissions
                 SET deleted_at = CURRENT_TIMESTAMP,
@@ -1261,9 +1248,6 @@ class Database:
                   AND deleted_at IS NULL
             """)
 
-            # ============================================
-            # Admins erhalten alle Rechte für bestehende Kassen
-            # ============================================
             cur.execute("SELECT id FROM kassen WHERE deleted_at IS NULL")
             kassen = cur.fetchall()
             cur.execute("SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL AND active = 1")
@@ -1278,3 +1262,418 @@ class Database:
                     """, (kasse['id'], admin['id']))
 
         self._set_schema_version(8)
+
+    def _migrate_8_to_9(self):
+        """Migration 8->9: Ticket-System.
+
+        Neue Tabellen:
+        - ticket_bereiche      (Ortsbereiche: Platz 1, Kabinen, ...)
+        - ticket_kategorien    (Schadensarten: Schaden, Sicherheit, ...)
+        - tickets              (Haupttabelle)
+        - ticket_kommentare    (öffentlich + intern)
+        - ticket_anhaenge      (Datei-Referenzen, stored_name = att_{id:06d}.ext)
+        - ticket_teilnehmer    (Beobachter/Helfer, keine History nötig)
+
+        History-Trigger: tickets + ticket_kommentare (INSERT + UPDATE, kein DELETE)
+        Keine History für ticket_anhaenge und ticket_teilnehmer.
+        """
+        with self.cursor() as cur:
+
+            # ============================================
+            # ticket_bereiche
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_bereiche (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name            TEXT NOT NULL,
+                    beschreibung    TEXT,
+                    version         INTEGER NOT NULL DEFAULT 1,
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_bereiche_deleted_at ON ticket_bereiche(deleted_at)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_bereiche_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+                    name            TEXT,
+                    beschreibung    TEXT,
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_bereiche_audit_insert
+                AFTER INSERT ON ticket_bereiche
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO ticket_bereiche_history (
+                        id, version, name, beschreibung,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_bereiche_audit_update
+                AFTER UPDATE ON ticket_bereiche
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO ticket_bereiche_history (
+                        id, version, name, beschreibung,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            -- Kein DELETE-Trigger
+
+            # ============================================
+            # ticket_kategorien
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_kategorien (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name            TEXT NOT NULL,
+                    icon            TEXT,
+                    version         INTEGER NOT NULL DEFAULT 1,
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_kategorien_deleted_at ON ticket_kategorien(deleted_at)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_kategorien_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+                    name            TEXT,
+                    icon            TEXT,
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_kategorien_audit_insert
+                AFTER INSERT ON ticket_kategorien
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO ticket_kategorien_history (
+                        id, version, name, icon,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.icon,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_kategorien_audit_update
+                AFTER UPDATE ON ticket_kategorien
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO ticket_kategorien_history (
+                        id, version, name, icon,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.icon,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            # ============================================
+            # tickets (Haupttabelle)
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    titel           TEXT NOT NULL,
+                    beschreibung    TEXT NOT NULL,
+                    status          TEXT NOT NULL DEFAULT 'offen'
+                                    CHECK(status IN (
+                                        'offen', 'in_pruefung', 'eingeplant',
+                                        'rueckfrage', 'erledigt', 'abgelehnt'
+                                    )),
+                    prioritaet      TEXT NOT NULL DEFAULT 'normal'
+                                    CHECK(prioritaet IN ('niedrig', 'normal', 'hoch', 'sicherheit')),
+                    bereich_id      INTEGER REFERENCES ticket_bereiche(id),
+                    kategorie_id    INTEGER REFERENCES ticket_kategorien(id),
+                    gemeldet_von    INTEGER NOT NULL REFERENCES users(id),
+                    zugewiesen_an   INTEGER REFERENCES users(id),
+                    faellig_am      TEXT,
+                    geschlossen_am  TEXT,
+                    geschlossen_von INTEGER REFERENCES users(id),
+                    version         INTEGER NOT NULL DEFAULT 1,
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_prioritaet ON tickets(prioritaet)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_bereich_id ON tickets(bereich_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_kategorie_id ON tickets(kategorie_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_gemeldet_von ON tickets(gemeldet_von)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_zugewiesen_an ON tickets(zugewiesen_an)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_deleted_at ON tickets(deleted_at)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+                    titel           TEXT,
+                    beschreibung    TEXT,
+                    status          TEXT,
+                    prioritaet      TEXT,
+                    bereich_id      INTEGER,
+                    kategorie_id    INTEGER,
+                    gemeldet_von    INTEGER,
+                    zugewiesen_an   INTEGER,
+                    faellig_am      TEXT,
+                    geschlossen_am  TEXT,
+                    geschlossen_von INTEGER,
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_history_id ON tickets_history(id)")
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS tickets_audit_insert
+                AFTER INSERT ON tickets
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO tickets_history (
+                        id, version, titel, beschreibung, status, prioritaet,
+                        bereich_id, kategorie_id, gemeldet_von, zugewiesen_an,
+                        faellig_am, geschlossen_am, geschlossen_von,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.titel, NEW.beschreibung, NEW.status, NEW.prioritaet,
+                        NEW.bereich_id, NEW.kategorie_id, NEW.gemeldet_von, NEW.zugewiesen_an,
+                        NEW.faellig_am, NEW.geschlossen_am, NEW.geschlossen_von,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS tickets_audit_update
+                AFTER UPDATE ON tickets
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO tickets_history (
+                        id, version, titel, beschreibung, status, prioritaet,
+                        bereich_id, kategorie_id, gemeldet_von, zugewiesen_an,
+                        faellig_am, geschlossen_am, geschlossen_von,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.titel, NEW.beschreibung, NEW.status, NEW.prioritaet,
+                        NEW.bereich_id, NEW.kategorie_id, NEW.gemeldet_von, NEW.zugewiesen_an,
+                        NEW.faellig_am, NEW.geschlossen_am, NEW.geschlossen_von,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            -- Kein DELETE-Trigger
+
+            # ============================================
+            # ticket_kommentare
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_kommentare (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id       INTEGER NOT NULL REFERENCES tickets(id),
+                    autor_id        INTEGER NOT NULL REFERENCES users(id),
+                    inhalt          TEXT NOT NULL,
+                    sichtbarkeit    TEXT NOT NULL DEFAULT 'oeffentlich'
+                                    CHECK(sichtbarkeit IN ('oeffentlich', 'intern')),
+                    version         INTEGER NOT NULL DEFAULT 1,
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_kommentare_ticket_id ON ticket_kommentare(ticket_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_kommentare_autor_id ON ticket_kommentare(autor_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_kommentare_deleted_at ON ticket_kommentare(deleted_at)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_kommentare_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+                    ticket_id       INTEGER,
+                    autor_id        INTEGER,
+                    inhalt          TEXT,
+                    sichtbarkeit    TEXT,
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_kommentare_history_id ON ticket_kommentare_history(id)")
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_kommentare_audit_insert
+                AFTER INSERT ON ticket_kommentare
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO ticket_kommentare_history (
+                        id, version, ticket_id, autor_id, inhalt, sichtbarkeit,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.ticket_id, NEW.autor_id, NEW.inhalt, NEW.sichtbarkeit,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_kommentare_audit_update
+                AFTER UPDATE ON ticket_kommentare
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO ticket_kommentare_history (
+                        id, version, ticket_id, autor_id, inhalt, sichtbarkeit,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.ticket_id, NEW.autor_id, NEW.inhalt, NEW.sichtbarkeit,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            -- Kein DELETE-Trigger
+
+            # ============================================
+            # ticket_anhaenge
+            # Kein History-Tracking: Anhänge werden nur hochgeladen
+            # oder soft-deleted, nie inhaltlich verändert.
+            # stored_name-Befüllung: UPDATE nach INSERT (id bekannt).
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_anhaenge (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticket_id       INTEGER NOT NULL REFERENCES tickets(id),
+                    kommentar_id    INTEGER REFERENCES ticket_kommentare(id),
+                    original_name   TEXT NOT NULL,
+                    stored_name     TEXT UNIQUE,
+                    mime_type       TEXT NOT NULL,
+                    dateigroesse    INTEGER NOT NULL,
+                    hochgeladen_von INTEGER NOT NULL REFERENCES users(id),
+                    hochgeladen_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_anhaenge_ticket_id ON ticket_anhaenge(ticket_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_anhaenge_kommentar_id ON ticket_anhaenge(kommentar_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_anhaenge_deleted_at ON ticket_anhaenge(deleted_at)")
+
+            # ============================================
+            # ticket_teilnehmer
+            # Einfache Join-Tabelle, kein History-Tracking nötig.
+            # ============================================
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
+                    ticket_id       INTEGER NOT NULL REFERENCES tickets(id),
+                    user_id         INTEGER NOT NULL REFERENCES users(id),
+                    hinzugefuegt_von INTEGER NOT NULL REFERENCES users(id),
+                    hinzugefuegt_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticket_id, user_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_teilnehmer_ticket_id ON ticket_teilnehmer(ticket_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_teilnehmer_user_id ON ticket_teilnehmer(user_id)")
+
+            # ============================================
+            # Stammdaten: Bereiche und Kategorien
+            # ============================================
+            stammbereiche = [
+                ('Platz 1', 'Hauptspielfeld'),
+                ('Platz 2', 'Nebenspielfeld'),
+                ('Kabinen', 'Umkleiden und Sanitäranlagen'),
+                ('Vereinsheim', 'Clubhaus und Gastraum'),
+                ('Außenanlage', 'Zäune, Wege, Parkplatz'),
+                ('Sonstiges', None),
+            ]
+            for name, beschreibung in stammbereiche:
+                cur.execute("""
+                    INSERT INTO ticket_bereiche (name, beschreibung, created_by, updated_by)
+                    VALUES (?, ?, 'MIGRATION_8_9', 'MIGRATION_8_9')
+                """, (name, beschreibung))
+
+            stammkategorien = [
+                ('Schaden', 'wrench'),
+                ('Sicherheit', 'shield-alert'),
+                ('Ausstattung', 'package'),
+                ('Reinigung', 'sparkles'),
+                ('IT / Technik', 'monitor'),
+                ('Sonstiges', 'circle-help'),
+            ]
+            for name, icon in stammkategorien:
+                cur.execute("""
+                    INSERT INTO ticket_kategorien (name, icon, created_by, updated_by)
+                    VALUES (?, ?, 'MIGRATION_8_9', 'MIGRATION_8_9')
+                """, (name, icon))
+
+        self._set_schema_version(9)
