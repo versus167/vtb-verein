@@ -6,6 +6,7 @@ Extended on 11.03.2026 - PermissionRepository hinzugefügt
 Extended on 26.03.2026 - Kassenbuch-Repositories und KassenbuchService
 Extended on 27.03.2026 - KasseBerechtigungRepository (Phase 3.2)
 Extended on 28.03.2026 - KasseBerechtigungRepository an KassenbuchService übergeben (Phase 3.4)
+Extended on 05.04.2026 - Ticket-System Repositories und TicketService (Phase 4.1)
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -24,10 +25,17 @@ from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
+from app.db.ticket_repository import TicketRepository
+from app.db.ticket_kommentar_repository import TicketKommentarRepository
+from app.db.ticket_anhang_repository import TicketAnhangRepository
+from app.db.ticket_bereich_repository import TicketBereichRepository
+from app.db.ticket_kategorie_repository import TicketKategorieRepository
+from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
 from app.services.kassenbuch_service import KassenbuchService
+from app.services.ticket_service import TicketService
 
 
 class VereinsDB:
@@ -53,6 +61,22 @@ class VereinsDB:
             buchung_repo=self._kassenbuchung_repo,
             export_repo=self._kassenbuch_export_repo,
             berechtigung_repo=self._kasse_berechtigung_repo,
+        )
+
+        self._ticket_repo = TicketRepository(self.conn)
+        self._ticket_kommentar_repo = TicketKommentarRepository(self.conn)
+        self._ticket_anhang_repo = TicketAnhangRepository(self.conn)
+        self._ticket_bereich_repo = TicketBereichRepository(self.conn)
+        self._ticket_kategorie_repo = TicketKategorieRepository(self.conn)
+        self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
+
+        self._ticket_service = TicketService(
+            ticket_repo=self._ticket_repo,
+            kommentar_repo=self._ticket_kommentar_repo,
+            anhang_repo=self._ticket_anhang_repo,
+            bereich_repo=self._ticket_bereich_repo,
+            kategorie_repo=self._ticket_kategorie_repo,
+            teilnehmer_repo=self._ticket_teilnehmer_repo,
         )
 
     @property
@@ -84,6 +108,21 @@ class VereinsDB:
     def kasse_berechtigungen(self) -> KasseBerechtigungRepository:
         """Zugriff auf KasseBerechtigungRepository."""
         return self._kasse_berechtigung_repo
+
+    @property
+    def tickets(self) -> TicketService:
+        """Zugriff auf TicketService (Business-Logik + alle Ticket-Repos)."""
+        return self._ticket_service
+
+    @property
+    def ticket_bereiche(self) -> TicketBereichRepository:
+        """Direktzugriff auf TicketBereichRepository."""
+        return self._ticket_bereich_repo
+
+    @property
+    def ticket_kategorien(self) -> TicketKategorieRepository:
+        """Direktzugriff auf TicketKategorieRepository."""
+        return self._ticket_kategorie_repo
 
     def cursor(self):
         return self._database.cursor()
