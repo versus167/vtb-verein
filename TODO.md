@@ -16,6 +16,54 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
+## 🎫 Ticket-System (Phase 4)
+
+### Phase 4.0 - Ticket-System Grundstruktur (Schema)
+- [x] DB-Schema entworfen und implementiert
+  - [x] `ticket_bereiche` (Platz, Kabinen, Gebäude, ...)
+  - [x] `ticket_kategorien` (Schaden, Sicherheit, Ausstattung, ...)
+  - [x] `tickets` (Haupttabelle mit Status, Priorität, Zuweisung, Soft-Delete)
+  - [x] `ticket_kommentare` (öffentlich & intern, Soft-Delete)
+  - [x] `ticket_anhaenge` (Foto-Upload, lfd. Nummer als stored_name, original_name)
+  - [x] `ticket_teilnehmer` (explizite Beobachter/Helfer)
+  - [x] History-Tabellen für `tickets` und `ticket_kommentare`
+  - [x] INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+  - [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt
+
+### Phase 4.1 - Ticket-System Repository & Service
+- [ ] Datenmodelle: `Ticket`, `TicketKommentar`, `TicketAnhang`, `TicketBereich`, `TicketKategorie`
+- [ ] `TicketRepository` (CRUD, Soft-Delete, Statuswechsel, Zuweisung)
+- [ ] `TicketKommentarRepository` (CRUD, Soft-Delete, Sichtbarkeit intern/öffentlich)
+- [ ] `TicketAnhangRepository` (Upload, Soft-Delete, stored_name-Generierung)
+- [ ] `TicketBereichRepository` und `TicketKategorieRepository`
+- [ ] `TicketService` mit Business-Logik
+  - [ ] Statusübergänge validieren (offen → in_pruefung → erledigt etc.)
+  - [ ] Berechtigungsprüfung (wer darf was sehen/bearbeiten)
+  - [ ] Dateiupload-Handling (stored_name = `att_{id:06d}.{ext}`)
+- [ ] Repositories in `datastore.py` / Facade einbinden
+
+### Phase 4.2 - Ticket-Berechtigungen
+- [ ] Rollen-Konzept festlegen
+  - Wer darf Tickets erstellen? (alle eingeloggten User?)
+  - Wer darf Tickets zuweisen/schließen? (Admin, bestimmte Rolle?)
+  - Wer sieht interne Kommentare?
+- [ ] Permission-Konstanten in `permission.py` ergänzen
+- [ ] Migration für bestehende User
+
+### Phase 4.3 - Ticket-UI
+- [ ] Ticket-Übersicht (Liste mit Filter nach Status, Bereich, Priorität, Zuweisung)
+- [ ] Ticket erstellen (Dialog: Titel, Beschreibung, Bereich, Kategorie, Priorität, Anhänge)
+- [ ] Ticket-Detailseite
+  - [ ] Statuswechsel-Button (je nach Berechtigung)
+  - [ ] Zuweisung ändern
+  - [ ] Kommentare (öffentlich/intern)
+  - [ ] Anhänge anzeigen & hochladen
+  - [ ] History-Expander
+- [ ] Bereiche & Kategorien verwalten (Admin)
+- [ ] Navigation & Dashboard-Card ergänzen
+
+---
+
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
@@ -306,10 +354,21 @@
 - [x] Export-Dateiname nach Schema: `{kassename}-export-{id}-{von}-bis-{bis}.csv`
 - [x] Re-Export alter Exporte direkt aus dem Exportverlauf-Dialog
 
+### Phase 4.0 - Ticket-System Grundstruktur (Schema)
+- [x] DB-Schema entworfen und implementiert
+  - [x] `ticket_bereiche`, `ticket_kategorien`
+  - [x] `tickets` mit Status, Priorität, Zuweisung, Soft-Delete, Versionierung
+  - [x] `ticket_kommentare` (öffentlich & intern, Soft-Delete)
+  - [x] `ticket_anhaenge` (id, original_name, stored_name, mime_type, file_size)
+  - [x] `ticket_teilnehmer` (Beobachter/Helfer)
+  - [x] History-Tabellen + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+- [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt (SyntaxError)
+
 ---
 
 **Legende:**
 - 🔥 = Hohe Priorität, nächste Schritte
+- 🎫 = Ticket-System (Phase 4)
 - 📊 = Kassenbuch nächste Schritte (Phase 3)
 - 📋 = Mittelfristig, Phase 3
 - 🔮 = Längerfristig, Phase 4
