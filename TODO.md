@@ -16,6 +16,85 @@
   - Feld `uebungsleiter_id` in Abteilung-Tabelle
   - Eigene Berechtigung/Dashboard später
 
+## 🎫 Phase 4 - Ticketsystem
+
+### Datenbank & Schema
+- [ ] DB-Schema Ticketsystem anlegen
+  - Tabelle `ticket_areas` (Bereiche: Platz, Kabinen, Gebäude, …)
+  - Tabelle `ticket_categories` (Kategorien: Schaden, Sicherheit, Ausstattung, …)
+  - Tabelle `tickets` (id, title, description, status, priority, area_id, category_id, reported_by, assigned_to, due_date, closed_at, closed_by, version, created_at, deleted_at, deleted_by)
+  - Tabelle `ticket_comments` (id, ticket_id, author_id, body, visibility `public|internal`, version, created_at, deleted_at, deleted_by)
+  - Tabelle `ticket_attachments` (id, ticket_id, comment_id, original_name, stored_name, mime_type, file_size, uploaded_by, uploaded_at, deleted_at, deleted_by)
+  - Tabelle `ticket_participants` (ticket_id, member_id, added_by, added_at)
+  - History-Tabellen: `tickets_history`, `ticket_comments_history`
+  - INSERT/UPDATE-Trigger für `tickets` und `ticket_comments` (kein DELETE-Trigger)
+  - Keine History-Trigger für `ticket_attachments` und `ticket_participants`
+
+- [ ] Dateiablage für Anhänge definieren
+  - Speicherverzeichnis konfigurierbar (z. B. über `.env`)
+  - `stored_name` nach Schema: `att_{id:06d}.{ext}` (ID-basiert, zweistufig: INSERT → UPDATE)
+  - Soft-Delete in DB, physische Datei bleibt erhalten (Prune-Funktion für später)
+
+### Repositories & Service
+- [ ] `TicketAreaRepository` (CRUD, Soft-Delete, `get_all_active()`)
+- [ ] `TicketCategoryRepository` (CRUD, Soft-Delete, `get_all_active()`)
+- [ ] `TicketRepository`
+  - `create()`, `update()`, `mark_ticket_deleted()`
+  - `get_by_id()`, `get_for_user()` (gefiltert nach Rolle/Bereich)
+  - `get_all_for_admin()`, `get_by_area()`
+  - Optimistic Locking (version)
+- [ ] `TicketCommentRepository`
+  - `create()`, `update()`, `mark_comment_deleted()`
+  - `get_for_ticket(ticket_id, visibility_filter)` – interne Kommentare nur für Platzwart+
+- [ ] `TicketAttachmentRepository`
+  - `create()`, `mark_attachment_deleted()`
+  - `get_for_ticket()`, `get_for_comment()`
+- [ ] `TicketParticipantRepository`
+  - `add_participant()`, `remove_participant()`, `get_participants(ticket_id)`
+- [ ] `TicketService` (Business-Logik)
+  - Berechtigungsprüfung (Rolle + Bereichs-Scope)
+  - Status-Übergänge validieren (offen → in_pruefung → eingeplant → erledigt etc.)
+  - Anhang-Upload: Datei speichern + DB-Eintrag anlegen
+  - Interne Kommentare nur für Platzwart/Bereichsleiter/Admin sichtbar
+  - Custom Exceptions: `KeinZugriffError`, `UngueltigerStatusError`
+
+### Berechtigungskonzept
+- [ ] Ticket-Berechtigungen in Permission-Matrix integrieren
+  - Neue Permissions: `tickets.lesen`, `tickets.erstellen`, `tickets.bearbeiten`, `tickets.verwalten`
+  - Rollen-Defaults: Mitglied → erstellen+eigene lesen; Platzwart → Bereich lesen+bearbeiten; Admin → alles
+- [ ] Bereichs-Scope für Platzwarte
+  - Zuordnung Platzwart ↔ `ticket_area` (eigene Tabelle oder über `user_permissions` mit area_id)
+  - Platzwart sieht nur Tickets seiner zugewiesenen Bereiche
+
+### UI
+- [ ] Ticket erstellen (Mitglied-Sicht)
+  - Formular: Titel, Beschreibung, Kategorie, Bereich, Priorität
+  - Anhänge hochladen (Fotos, max. Dateigröße prüfen)
+  - Bestätigung nach Anlage
+- [ ] Meine Tickets (Mitglied-Sicht)
+  - Liste eigener Tickets mit Status-Badge
+  - Detail-Ansicht: öffentliche Kommentare, Anhänge, Status-Verlauf
+  - Eigenen öffentlichen Kommentar ergänzen
+- [ ] Ticket-Übersicht (Platzwart-Sicht)
+  - Gefiltert auf eigene Bereiche
+  - Status ändern, Ticket übernehmen/zuweisen
+  - Interne und öffentliche Kommentare schreiben
+  - Anhänge anzeigen / herunterladen
+- [ ] Ticket-Verwaltung (Admin-Sicht)
+  - Alle Tickets systemweit
+  - Filter: Bereich, Kategorie, Status, Priorität, Zeitraum
+  - Eskalation, Bereichswechsel, Abschluss
+  - Bereiche und Kategorien konfigurieren
+- [ ] Navigation & Dashboard-Card
+  - Menüpunkt „Tickets" rollenabhängig sichtbar
+  - Dashboard-Card mit offenen Tickets (Mitglied: eigene; Platzwart: Bereich; Admin: alle)
+
+### Technisches
+- [ ] Migration `schema_vX` für Ticketsystem-Tabellen
+- [ ] `datastore.py`: Ticket-Repositories und Service einbinden
+- [ ] `main.py`: Ticket-Seiten registrieren
+- [ ] Datei-Serving: Route für Anhänge mit Zugriffsprüfung (nicht öffentlich zugänglich)
+
 ## 📋 Phase 3 - Mitgliederverwaltung Erweiterungen
 
 ### Anzeige & Navigation
@@ -310,6 +389,7 @@
 
 **Legende:**
 - 🔥 = Hohe Priorität, nächste Schritte
+- 🎫 = Ticketsystem (Phase 4)
 - 📊 = Kassenbuch nächste Schritte (Phase 3)
 - 📋 = Mittelfristig, Phase 3
 - 🔮 = Längerfristig, Phase 4
