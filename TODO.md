@@ -18,30 +18,6 @@
 
 ## 🎫 Ticket-System (Phase 4)
 
-### Phase 4.0 - Ticket-System Grundstruktur (Schema)
-- [x] DB-Schema entworfen und implementiert
-  - [x] `ticket_bereiche` (Platz, Kabinen, Gebäude, ...)
-  - [x] `ticket_kategorien` (Schaden, Sicherheit, Ausstattung, ...)
-  - [x] `tickets` (Haupttabelle mit Status, Priorität, Zuweisung, Soft-Delete)
-  - [x] `ticket_kommentare` (öffentlich & intern, Soft-Delete)
-  - [x] `ticket_anhaenge` (Foto-Upload, lfd. Nummer als stored_name, original_name)
-  - [x] `ticket_teilnehmer` (explizite Beobachter/Helfer)
-  - [x] History-Tabellen für `tickets` und `ticket_kommentare`
-  - [x] INSERT/UPDATE-Trigger (kein DELETE-Trigger)
-  - [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt
-
-### Phase 4.1 - Ticket-System Repository & Service
-- [ ] Datenmodelle: `Ticket`, `TicketKommentar`, `TicketAnhang`, `TicketBereich`, `TicketKategorie`
-- [ ] `TicketRepository` (CRUD, Soft-Delete, Statuswechsel, Zuweisung)
-- [ ] `TicketKommentarRepository` (CRUD, Soft-Delete, Sichtbarkeit intern/öffentlich)
-- [ ] `TicketAnhangRepository` (Upload, Soft-Delete, stored_name-Generierung)
-- [ ] `TicketBereichRepository` und `TicketKategorieRepository`
-- [ ] `TicketService` mit Business-Logik
-  - [ ] Statusübergänge validieren (offen → in_pruefung → erledigt etc.)
-  - [ ] Berechtigungsprüfung (wer darf was sehen/bearbeiten)
-  - [ ] Dateiupload-Handling (stored_name = `att_{id:06d}.{ext}`)
-- [ ] Repositories in `datastore.py` / Facade einbinden
-
 ### Phase 4.2 - Ticket-Berechtigungen
 - [ ] Rollen-Konzept festlegen
   - Wer darf Tickets erstellen? (alle eingeloggten User?)
@@ -363,6 +339,23 @@
   - [x] `ticket_teilnehmer` (Beobachter/Helfer)
   - [x] History-Tabellen + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
 - [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt (SyntaxError)
+
+### Phase 4.1 - Ticket-System Repository & Service
+- [x] Datenmodelle in `models/ticket.py`
+  - [x] `TicketStatus`, `TicketPrioritaet` (Konstanten-Klassen mit `.LABELS`)
+  - [x] `Ticket`, `TicketKommentar`, `TicketAnhang`, `TicketBereich`, `TicketKategorie`, `TicketTeilnehmer`
+- [x] `TicketRepository` (CRUD, Soft-Delete, Optimistic Locking, `get_history()`)
+- [x] `TicketKommentarRepository` (CRUD, Soft-Delete, `include_internal`-Flag, `get_history()`)
+- [x] `TicketAnhangRepository` (Upload, Soft-Delete, `stored_name = att_{id:06d}.{ext}` via INSERT→UPDATE)
+- [x] `TicketBereichRepository` und `TicketKategorieRepository` (CRUD + Soft-Delete)
+- [x] `TicketTeilnehmerRepository` (`add`, `remove`, `is_teilnehmer`, `list_by_ticket`)
+- [x] `TicketService` mit Business-Logik
+  - [x] Statusübergänge validiert via `UngueltigerStatusWechselError`
+  - [x] `change_status()` setzt `closed_at` automatisch bei Status `erledigt`
+  - [x] Custom Exceptions: `TicketNichtGefundenError`, `UngueltigerStatusWechselError`
+- [x] Alle Repositories und `TicketService` in `datastore.py` eingebunden
+  - [x] Property `db.tickets` → `TicketService`
+  - [x] Properties `db.ticket_bereiche`, `db.ticket_kategorien`
 
 ---
 
