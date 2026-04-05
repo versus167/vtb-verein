@@ -1270,12 +1270,12 @@ class Database:
         - ticket_bereiche      (Ortsbereiche: Platz 1, Kabinen, ...)
         - ticket_kategorien    (Schadensarten: Schaden, Sicherheit, ...)
         - tickets              (Haupttabelle)
-        - ticket_kommentare    (öffentlich + intern)
+        - ticket_kommentare    (oeffentlich + intern)
         - ticket_anhaenge      (Datei-Referenzen, stored_name = att_{id:06d}.ext)
-        - ticket_teilnehmer    (Beobachter/Helfer, keine History nötig)
+        - ticket_teilnehmer    (Beobachter/Helfer, keine History noetig)
 
         History-Trigger: tickets + ticket_kommentare (INSERT + UPDATE, kein DELETE)
-        Keine History für ticket_anhaenge und ticket_teilnehmer.
+        Keine History fuer ticket_anhaenge und ticket_teilnehmer.
         """
         with self.cursor() as cur:
 
@@ -1347,7 +1347,7 @@ class Database:
                     );
                 END;
             """)
-            -- Kein DELETE-Trigger
+            # Kein DELETE-Trigger fuer ticket_bereiche
 
             # ============================================
             # ticket_kategorien
@@ -1524,7 +1524,7 @@ class Database:
                     );
                 END;
             """)
-            -- Kein DELETE-Trigger
+            # Kein DELETE-Trigger fuer tickets
 
             # ============================================
             # ticket_kommentare
@@ -1602,13 +1602,13 @@ class Database:
                     );
                 END;
             """)
-            -- Kein DELETE-Trigger
+            # Kein DELETE-Trigger fuer ticket_kommentare
 
             # ============================================
             # ticket_anhaenge
-            # Kein History-Tracking: Anhänge werden nur hochgeladen
-            # oder soft-deleted, nie inhaltlich verändert.
-            # stored_name-Befüllung: UPDATE nach INSERT (id bekannt).
+            # Kein History-Tracking: Anhaenge werden nur hochgeladen
+            # oder soft-deleted, nie inhaltlich veraendert.
+            # stored_name-Befuellung: UPDATE nach INSERT (id bekannt).
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_anhaenge (
@@ -1631,12 +1631,12 @@ class Database:
 
             # ============================================
             # ticket_teilnehmer
-            # Einfache Join-Tabelle, kein History-Tracking nötig.
+            # Einfache Join-Tabelle, kein History-Tracking noetig.
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
-                    ticket_id       INTEGER NOT NULL REFERENCES tickets(id),
-                    user_id         INTEGER NOT NULL REFERENCES users(id),
+                    ticket_id        INTEGER NOT NULL REFERENCES tickets(id),
+                    user_id          INTEGER NOT NULL REFERENCES users(id),
                     hinzugefuegt_von INTEGER NOT NULL REFERENCES users(id),
                     hinzugefuegt_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticket_id, user_id)
@@ -1651,9 +1651,9 @@ class Database:
             stammbereiche = [
                 ('Platz 1', 'Hauptspielfeld'),
                 ('Platz 2', 'Nebenspielfeld'),
-                ('Kabinen', 'Umkleiden und Sanitäranlagen'),
+                ('Kabinen', 'Umkleiden und Sanitaranlagen'),
                 ('Vereinsheim', 'Clubhaus und Gastraum'),
-                ('Außenanlage', 'Zäune, Wege, Parkplatz'),
+                ('Aussenanlage', 'Zaeune, Wege, Parkplatz'),
                 ('Sonstiges', None),
             ]
             for name, beschreibung in stammbereiche:
