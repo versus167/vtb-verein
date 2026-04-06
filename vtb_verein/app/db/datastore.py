@@ -7,6 +7,7 @@ Extended on 26.03.2026 - Kassenbuch-Repositories und KassenbuchService
 Extended on 27.03.2026 - KasseBerechtigungRepository (Phase 3.2)
 Extended on 28.03.2026 - KasseBerechtigungRepository an KassenbuchService übergeben (Phase 3.4)
 Extended on 05.04.2026 - Ticket-System Repositories und TicketService (Phase 4.1)
+Extended on 06.04.2026 - TicketBereichBerechtigungRepository (Phase 4.2)
 
 VereinsDB Facade - Maintains backward compatibility while delegating to repositories.
 
@@ -31,6 +32,7 @@ from app.db.ticket_anhang_repository import TicketAnhangRepository
 from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
+from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -69,6 +71,7 @@ class VereinsDB:
         self._ticket_bereich_repo = TicketBereichRepository(self.conn)
         self._ticket_kategorie_repo = TicketKategorieRepository(self.conn)
         self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
+        self._ticket_bereich_berechtigung_repo = TicketBereichBerechtigungRepository(self.conn)
 
         self._ticket_service = TicketService(
             ticket_repo=self._ticket_repo,
@@ -77,6 +80,7 @@ class VereinsDB:
             bereich_repo=self._ticket_bereich_repo,
             kategorie_repo=self._ticket_kategorie_repo,
             teilnehmer_repo=self._ticket_teilnehmer_repo,
+            berechtigung_repo=self._ticket_bereich_berechtigung_repo,
         )
 
     @property
@@ -123,6 +127,11 @@ class VereinsDB:
     def ticket_kategorien(self) -> TicketKategorieRepository:
         """Direktzugriff auf TicketKategorieRepository."""
         return self._ticket_kategorie_repo
+
+    @property
+    def ticket_bereich_berechtigungen(self) -> TicketBereichBerechtigungRepository:
+        """Zugriff auf TicketBereichBerechtigungRepository."""
+        return self._ticket_bereich_berechtigung_repo
 
     def cursor(self):
         return self._database.cursor()
