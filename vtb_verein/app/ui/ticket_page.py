@@ -13,7 +13,7 @@ Permission-Logik:
   - darf_bearbeiten        → Status ändern, Kommentare hinzufügen
   - darf_schliessen        → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_CREATE         → Neues Ticket erstellen
-  - TICKETS_ASSIGN         → Ticket zuweisen
+  - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission, KEINE Voraussetzung für darf_bearbeiten)
   - TICKETS_DELETE         → Ticket soft-löschen
   - TICKETS_INTERN_READ    → Interne Kommentare sehen
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
@@ -80,10 +80,14 @@ def _lesbare_bereich_ids(db: VereinsDB, user) -> set[int] | None:
 
 
 def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
+    """Prüft ob der User Tickets in diesem Bereich bearbeiten/kommentieren darf.
+
+    Keine globale Permission-Guard nötig – darf_bearbeiten im Bereich ist
+    die alleinige Kontrolle für normale User. TICKETS_ASSIGN ist eine
+    separate Permission (Zuweisung) und hat hier nichts zu suchen.
+    """
     if _is_admin(user):
         return True
-    if not AuthHelper.has_permission(Permission.TICKETS_ASSIGN):
-        return False
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(bereich_id, user.id)
 
 
@@ -721,7 +725,7 @@ def _open_bereich_dialog(db: VereinsDB, actor: str, refresh, bereich: TicketBere
 
 def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, refresh):
     with ui.dialog() as dialog, ui.card():
-        ui.label(f'Bereich „{bereich.name}“ löschen?').classes('text-h6')
+        ui.label(f'Bereich „{bereich.name}" löschen?').classes('text-h6')
         ui.label(
             'Alle Berechtigungen für diesen Bereich werden ebenfalls entfernt.'
         ).classes('text-caption text-grey-7 q-mb-md')
@@ -731,7 +735,7 @@ def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, r
                 bereich.id, actor
             )
             db.tickets.mark_bereich_deleted(bereich.id, actor)
-            ui.notify(f'Bereich „{bereich.name}“ gelöscht.', type='warning')
+            ui.notify(f'Bereich „{bereich.name}" gelöscht.', type='warning')
             dialog.close()
             refresh()
 
@@ -785,11 +789,11 @@ def _open_kategorie_dialog(db: VereinsDB, actor: str, refresh, kategorie: Ticket
 
 def _confirm_kategorie_delete(db: VereinsDB, kategorie: TicketKategorie, actor: str, refresh):
     with ui.dialog() as dialog, ui.card():
-        ui.label(f'Kategorie „{kategorie.name}“ löschen?').classes('text-h6')
+        ui.label(f'Kategorie „{kategorie.name}" löschen?').classes('text-h6')
 
         def confirm():
             db.tickets.mark_kategorie_deleted(kategorie.id, actor)
-            ui.notify(f'Kategorie „{kategorie.name}“ gelöscht.', type='warning')
+            ui.notify(f'Kategorie „{kategorie.name}" gelöscht.', type='warning')
             dialog.close()
             refresh()
 
