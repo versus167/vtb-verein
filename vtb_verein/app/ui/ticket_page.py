@@ -10,12 +10,13 @@ Seiten:
 Permission-Logik:
   - Globales TICKETS_READ  → Zugang zur Ticket-Seite überhaupt
   - darf_lesen (Bereich)   → Tickets dieses Bereichs sehen (Admins immer)
-  - darf_bearbeiten        → Status ändern, Kommentare hinzufügen
+  - darf_bearbeiten        → Status ändern, Kommentare hinzufügen (inkl. interne)
   - darf_schliessen        → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_CREATE         → Neues Ticket erstellen
   - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission, KEINE Voraussetzung für darf_bearbeiten)
   - TICKETS_DELETE         → Ticket soft-löschen
-  - TICKETS_INTERN_READ    → Interne Kommentare sehen
+  - TICKETS_INTERN_READ    → Interne Kommentare sehen/schreiben (global, über alle Bereiche)
+                             Alternativ: auch wer darf_bearbeiten im Bereich hat, erhält dieses Recht automatisch
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
 
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
@@ -224,7 +225,6 @@ def create_ticket_pages(db: VereinsDB):
 
         user = AuthHelper.get_current_user()
         actor = user.username
-        intern_sichtbar = AuthHelper.has_permission(Permission.TICKETS_INTERN_READ)
 
         try:
             ticket = db.tickets.get_ticket(ticket_id)
@@ -246,6 +246,14 @@ def create_ticket_pages(db: VereinsDB):
         kann_bearbeiten = _kann_bearbeiten(db, ticket.bereich_id, user)
         kann_schliessen = _kann_schliessen(db, ticket.bereich_id, user)
         darf_loeschen   = AuthHelper.has_permission(Permission.TICKETS_DELETE)
+
+        # Interne Kommentare sehen/schreiben:
+        # - globale TICKETS_INTERN_READ-Permission (alle Bereiche), ODER
+        # - bereichsspezifisches darf_bearbeiten (nur für diesen Bereich)
+        intern_sichtbar = (
+            AuthHelper.has_permission(Permission.TICKETS_INTERN_READ)
+            or kann_bearbeiten
+        )
 
         bereiche   = {b.id: b for b in db.tickets.get_bereiche()}
         kategorien = {k.id: k for k in db.tickets.get_kategorien()}
@@ -587,8 +595,8 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
                     status=TicketStatus.OFFEN,
                     bereich_id=bereich_id,
                     kategorie_id=kat_select.value,
-                    gemeldet_von=user.id,        # Feldname aus Model
-                    zugewiesen_an=assign_select.value,  # Feldname aus Model
+                    gemeldet_von=user.id,
+                    zugewiesen_an=assign_select.value,
                 )
                 db.tickets.create_ticket(neues_ticket, created_by=actor)
                 ui.notify('Ticket erstellt.', type='positive')
@@ -620,7 +628,6 @@ def _open_ticket_bearbeiten_dialog(
 
         assign_options = {None: '(nicht zugewiesen)'}
         assign_options.update({uid: u.username for uid, u in alle_user.items()})
-        # Feldname: zugewiesen_an
         assign_select = ui.select(
             assign_options, label='Zuweisen an', value=ticket.zugewiesen_an
         ).classes('full-width')
@@ -640,7 +647,6 @@ def _open_ticket_bearbeiten_dialog(
         def save():
             error_label.visible = False
             try:
-                # Feldname: zugewiesen_an
                 if assign_select.value != ticket.zugewiesen_an:
                     ticket.zugewiesen_an = assign_select.value
                     db.tickets.update_ticket(ticket, updated_by=actor)
