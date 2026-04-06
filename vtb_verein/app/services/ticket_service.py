@@ -2,6 +2,7 @@
 TicketService - Business-Logik für das Ticket-System
 
 Phase 4.1 - Ticket-System Repository & Service
+Phase 4.2 - berechtigung_repo hinzugefügt
 '''
 
 from datetime import datetime
@@ -16,6 +17,7 @@ from app.db.ticket_anhang_repository import TicketAnhangRepository
 from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
+from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 
 
 class TicketNichtGefundenError(Exception):
@@ -47,6 +49,7 @@ class TicketService:
         bereich_repo: TicketBereichRepository,
         kategorie_repo: TicketKategorieRepository,
         teilnehmer_repo: TicketTeilnehmerRepository,
+        berechtigung_repo: TicketBereichBerechtigungRepository,
     ):
         self._ticket_repo = ticket_repo
         self._kommentar_repo = kommentar_repo
@@ -54,6 +57,7 @@ class TicketService:
         self._bereich_repo = bereich_repo
         self._kategorie_repo = kategorie_repo
         self._teilnehmer_repo = teilnehmer_repo
+        self._berechtigung_repo = berechtigung_repo
 
     # -----------------------------------
     # Tickets
@@ -182,3 +186,13 @@ class TicketService:
 
     def mark_kategorie_deleted(self, id: int, deleted_by: str) -> bool:
         return self._kategorie_repo.mark_deleted(id, deleted_by)
+
+    # -----------------------------------
+    # Bereichsberechtigungen
+    # -----------------------------------
+
+    def get_berechtigungen_fuer_bereich(self, bereich_id: int) -> list[dict]:
+        return self._berechtigung_repo.list_by_bereich(bereich_id)
+
+    def get_berechtigungen_fuer_user(self, user_id: int) -> list[dict]:
+        return self._berechtigung_repo.list_by_user(user_id)
