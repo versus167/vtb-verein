@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 9  # Version 9: Ticket-System
+SCHEMA_VERSION = 10  # Version 10: Ticket-Permissions
 
 
 class Database:
@@ -105,6 +105,9 @@ class Database:
         if current == 8:
             self._migrate_8_to_9()
             current = 9
+        if current == 9:
+            self._migrate_9_to_10()
+            current = 10
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1606,9 +1609,6 @@ class Database:
 
             # ============================================
             # ticket_anhaenge
-            # Kein History-Tracking: Anhaenge werden nur hochgeladen
-            # oder soft-deleted, nie inhaltlich veraendert.
-            # stored_name-Befuellung: UPDATE nach INSERT (id bekannt).
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_anhaenge (
@@ -1631,7 +1631,6 @@ class Database:
 
             # ============================================
             # ticket_teilnehmer
-            # Einfache Join-Tabelle, kein History-Tracking noetig.
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
@@ -1677,3 +1676,51 @@ class Database:
                 """, (name, icon))
 
         self._set_schema_version(9)
+
+    def _migrate_9_to_10(self):
+        """Migration 9->10: Ticket-Permissions für bestehende User verteilen.
+
+        Vergabe gemäß Rolle:
+        - admin   → alle 7 Ticket-Permissions
+        - user    → tickets.read, tickets.create
+        - readonly→ tickets.read
+        - special → tickets.read
+
+        Verwendet INSERT OR IGNORE, damit bereits vorhandene Einträge
+        (z.B. manuell vorab vergeben) nicht doppelt angelegt werden.
+        """
+        _TICKET_PERMS_V10 = {
+            'admin': {
+                'tickets.read',
+                'tickets.create',
+                'tickets.assign',
+                'tickets.close',
+                'tickets.delete',
+                'tickets.intern_read',
+                'tickets.bereiche_verwalten',
+            },
+            'user': {
+                'tickets.read',
+                'tickets.create',
+            },
+            'readonly': {
+                'tickets.read',
+            },
+            'special': {
+                'tickets.read',
+            },
+        }
+        with self.cursor() as cur:
+            cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL AND active = 1")
+            existing_users = cur.fetchall()
+            for row in existing_users:
+                user_id = row['id']
+                role = row['role']
+                perms = _TICKET_PERMS_V10.get(role, {'tickets.read'})
+                for perm in perms:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_permissions
+                            (user_id, permission, created_by, updated_by)
+                        VALUES (?, ?, 'MIGRATION_9_10', 'MIGRATION_9_10')
+                    """, (user_id, perm))
+        self._set_schema_version(10)
