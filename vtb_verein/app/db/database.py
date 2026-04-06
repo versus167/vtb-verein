@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 9  # Version 9: Ticket-System
+SCHEMA_VERSION = 11  # Version 11: Ticket-Bereich-Berechtigungen
 
 
 class Database:
@@ -105,6 +105,12 @@ class Database:
         if current == 8:
             self._migrate_8_to_9()
             current = 9
+        if current == 9:
+            self._migrate_9_to_10()
+            current = 10
+        if current == 10:
+            self._migrate_10_to_11()
+            current = 11
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1606,9 +1612,6 @@ class Database:
 
             # ============================================
             # ticket_anhaenge
-            # Kein History-Tracking: Anhaenge werden nur hochgeladen
-            # oder soft-deleted, nie inhaltlich veraendert.
-            # stored_name-Befuellung: UPDATE nach INSERT (id bekannt).
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_anhaenge (
@@ -1631,7 +1634,6 @@ class Database:
 
             # ============================================
             # ticket_teilnehmer
-            # Einfache Join-Tabelle, kein History-Tracking noetig.
             # ============================================
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
@@ -1677,3 +1679,174 @@ class Database:
                 """, (name, icon))
 
         self._set_schema_version(9)
+
+    def _migrate_9_to_10(self):
+        """Migration 9->10: Ticket-Permissions für bestehende User verteilen.
+
+        Vergabe gemäß Rolle:
+        - admin   → alle 7 Ticket-Permissions
+        - user    → tickets.read, tickets.create
+        - readonly→ tickets.read
+        - special → tickets.read
+
+        Verwendet INSERT OR IGNORE, damit bereits vorhandene Einträge
+        (z.B. manuell vorab vergeben) nicht doppelt angelegt werden.
+        """
+        _TICKET_PERMS_V10 = {
+            'admin': {
+                'tickets.read',
+                'tickets.create',
+                'tickets.assign',
+                'tickets.close',
+                'tickets.delete',
+                'tickets.intern_read',
+                'tickets.bereiche_verwalten',
+            },
+            'user': {
+                'tickets.read',
+                'tickets.create',
+            },
+            'readonly': {
+                'tickets.read',
+            },
+            'special': {
+                'tickets.read',
+            },
+        }
+        with self.cursor() as cur:
+            cur.execute("SELECT id, role FROM users WHERE deleted_at IS NULL AND active = 1")
+            existing_users = cur.fetchall()
+            for row in existing_users:
+                user_id = row['id']
+                role = row['role']
+                perms = _TICKET_PERMS_V10.get(role, {'tickets.read'})
+                for perm in perms:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_permissions
+                            (user_id, permission, created_by, updated_by)
+                        VALUES (?, ?, 'MIGRATION_9_10', 'MIGRATION_9_10')
+                    """, (user_id, perm))
+        self._set_schema_version(10)
+
+    def _migrate_10_to_11(self):
+        """Migration 10->11: Bereichsspezifische Ticket-Berechtigungen (ticket_bereich_berechtigungen).
+
+        Änderungen:
+        1. Neue Tabelle ticket_bereich_berechtigungen mit Soft-Delete und Versionierung
+        2. Neue Tabelle ticket_bereich_berechtigungen_history + INSERT/UPDATE-Trigger
+        3. Admins erhalten automatisch alle Rechte für alle bestehenden Bereiche
+
+        Felder:
+        - darf_lesen      → Tickets in diesem Bereich sehen
+        - darf_bearbeiten → Status ändern, zuweisen, interne Kommentare schreiben
+        - darf_schliessen → Ticket eskalieren / abschließen
+
+        Keine globalen Permissions werden entfernt – die Bereichsberechtigungen
+        ergänzen die globalen tickets.*-Permissions (AND-Verknüpfung).
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_bereich_berechtigungen (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bereich_id      INTEGER NOT NULL,
+                    user_id         INTEGER NOT NULL,
+                    darf_lesen      INTEGER NOT NULL DEFAULT 0,
+                    darf_bearbeiten INTEGER NOT NULL DEFAULT 0,
+                    darf_schliessen INTEGER NOT NULL DEFAULT 0,
+
+                    version         INTEGER NOT NULL DEFAULT 1,
+
+                    created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_by      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_by      TEXT NOT NULL,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+
+                    FOREIGN KEY (bereich_id) REFERENCES ticket_bereiche(id),
+                    FOREIGN KEY (user_id)    REFERENCES users(id),
+                    UNIQUE (bereich_id, user_id)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_bereich_berechtigungen_bereich_id ON ticket_bereich_berechtigungen(bereich_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_bereich_berechtigungen_user_id ON ticket_bereich_berechtigungen(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_bereich_berechtigungen_deleted_at ON ticket_bereich_berechtigungen(deleted_at)")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_bereich_berechtigungen_history (
+                    id              INTEGER NOT NULL,
+                    version         INTEGER NOT NULL,
+
+                    bereich_id      INTEGER,
+                    user_id         INTEGER,
+                    darf_lesen      INTEGER,
+                    darf_bearbeiten INTEGER,
+                    darf_schliessen INTEGER,
+
+                    created_at      TEXT,
+                    created_by      TEXT,
+                    updated_at      TEXT,
+                    updated_by      TEXT,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT,
+
+                    PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_bereich_berechtigungen_history_id ON ticket_bereich_berechtigungen_history(id)")
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_bereich_berechtigungen_audit_insert
+                AFTER INSERT ON ticket_bereich_berechtigungen
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO ticket_bereich_berechtigungen_history (
+                        id, version, bereich_id, user_id,
+                        darf_lesen, darf_bearbeiten, darf_schliessen,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.bereich_id, NEW.user_id,
+                        NEW.darf_lesen, NEW.darf_bearbeiten, NEW.darf_schliessen,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER IF NOT EXISTS ticket_bereich_berechtigungen_audit_update
+                AFTER UPDATE ON ticket_bereich_berechtigungen
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO ticket_bereich_berechtigungen_history (
+                        id, version, bereich_id, user_id,
+                        darf_lesen, darf_bearbeiten, darf_schliessen,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.bereich_id, NEW.user_id,
+                        NEW.darf_lesen, NEW.darf_bearbeiten, NEW.darf_schliessen,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+            # Kein DELETE-Trigger – Prune soll nicht getrackt werden
+
+            # Admins erhalten automatisch volle Rechte für alle bestehenden Bereiche
+            cur.execute("SELECT id FROM ticket_bereiche WHERE deleted_at IS NULL")
+            bereiche = cur.fetchall()
+            cur.execute("SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL AND active = 1")
+            admins = cur.fetchall()
+            for bereich in bereiche:
+                for admin in admins:
+                    cur.execute("""
+                        INSERT OR IGNORE INTO ticket_bereich_berechtigungen
+                            (bereich_id, user_id, darf_lesen, darf_bearbeiten, darf_schliessen,
+                             created_by, updated_by)
+                        VALUES (?, ?, 1, 1, 1, 'MIGRATION_10_11', 'MIGRATION_10_11')
+                    """, (bereich['id'], admin['id']))
+
+        self._set_schema_version(11)

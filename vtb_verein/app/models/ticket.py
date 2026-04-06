@@ -1,10 +1,7 @@
 '''
 Ticket-System Datenmodelle
 
-Phase 4.1 - Ticket-System Repository & Service
-
 @author: volker
-@created: AI Assistant
 '''
 
 from dataclasses import dataclass, field
@@ -30,6 +27,8 @@ class TicketStatus:
         ABGELEHNT: 'Abgelehnt',
     }
 
+    ABGESCHLOSSEN = {ERLEDIGT, ABGELEHNT}
+
 
 class TicketPrioritaet:
     NIEDRIG = 'niedrig'
@@ -51,7 +50,7 @@ class TicketPrioritaet:
 class TicketBereich:
     id: Optional[int] = field(default=None)
     name: str = field(default='')
-    description: Optional[str] = field(default=None)
+    beschreibung: Optional[str] = field(default=None)
     version: int = field(default=1)
     created_at: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
@@ -71,17 +70,17 @@ class TicketKategorie:
 @dataclass
 class Ticket:
     id: Optional[int] = field(default=None)
-    title: str = field(default='')
-    description: str = field(default='')
+    titel: str = field(default='')
+    beschreibung: str = field(default='')
     status: str = field(default=TicketStatus.OFFEN)
-    priority: str = field(default=TicketPrioritaet.NORMAL)
-    area_id: Optional[int] = field(default=None)
-    category_id: Optional[int] = field(default=None)
-    reported_by: Optional[int] = field(default=None)
-    assigned_to: Optional[int] = field(default=None)
-    due_date: Optional[str] = field(default=None)
-    closed_at: Optional[str] = field(default=None)
-    closed_by: Optional[int] = field(default=None)
+    prioritaet: str = field(default=TicketPrioritaet.NORMAL)
+    bereich_id: Optional[int] = field(default=None)
+    kategorie_id: Optional[int] = field(default=None)
+    gemeldet_von: Optional[int] = field(default=None)
+    zugewiesen_an: Optional[int] = field(default=None)
+    faellig_am: Optional[str] = field(default=None)
+    geschlossen_am: Optional[str] = field(default=None)
+    geschlossen_von: Optional[int] = field(default=None)
     version: int = field(default=1)
     created_at: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
@@ -92,9 +91,9 @@ class Ticket:
 class TicketKommentar:
     id: Optional[int] = field(default=None)
     ticket_id: Optional[int] = field(default=None)
-    author_id: Optional[int] = field(default=None)
-    body: str = field(default='')
-    visibility: str = field(default='public')
+    autor_id: Optional[int] = field(default=None)
+    inhalt: str = field(default='')
+    sichtbarkeit: str = field(default='oeffentlich')
     version: int = field(default=1)
     created_at: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
@@ -105,13 +104,13 @@ class TicketKommentar:
 class TicketAnhang:
     id: Optional[int] = field(default=None)
     ticket_id: Optional[int] = field(default=None)
-    comment_id: Optional[int] = field(default=None)
+    kommentar_id: Optional[int] = field(default=None)
     original_name: str = field(default='')
     stored_name: str = field(default='')
     mime_type: str = field(default='')
-    file_size: int = field(default=0)
-    uploaded_by: Optional[int] = field(default=None)
-    uploaded_at: Optional[str] = field(default=None)
+    dateigroesse: int = field(default=0)
+    hochgeladen_von: Optional[int] = field(default=None)
+    hochgeladen_am: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
     deleted_by: Optional[str] = field(default=None)
 
@@ -119,6 +118,6 @@ class TicketAnhang:
 @dataclass
 class TicketTeilnehmer:
     ticket_id: Optional[int] = field(default=None)
-    member_id: Optional[int] = field(default=None)
-    added_by: Optional[int] = field(default=None)
-    added_at: Optional[str] = field(default=None)
+    user_id: Optional[int] = field(default=None)
+    hinzugefuegt_von: Optional[int] = field(default=None)
+    hinzugefuegt_am: Optional[str] = field(default=None)

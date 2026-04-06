@@ -2,6 +2,10 @@
 TicketKommentarRepository - CRUD für ticket_kommentare
 
 Phase 4.1 - Ticket-System Repository & Service
+fix     - englische Spaltennamen -> deutsche Spaltennamen gemäß DB-Schema
+            author_id -> autor_id
+            body      -> inhalt
+            visibility-> sichtbarkeit
 '''
 
 from typing import Optional
@@ -14,7 +18,7 @@ class TicketKommentarRepository:
         self.conn = conn
 
     _SELECT = (
-        "SELECT id, ticket_id, author_id, body, visibility, version, "
+        "SELECT id, ticket_id, autor_id, inhalt, sichtbarkeit, version, "
         "created_at, deleted_at, deleted_by FROM ticket_kommentare"
     )
 
@@ -33,7 +37,8 @@ class TicketKommentarRepository:
             )
         else:
             cursor = self.conn.execute(
-                self._SELECT + " WHERE ticket_id = ? AND visibility = 'public' AND deleted_at IS NULL "
+                self._SELECT +
+                " WHERE ticket_id = ? AND sichtbarkeit = 'oeffentlich' AND deleted_at IS NULL "
                 "ORDER BY created_at ASC",
                 (ticket_id,)
             )
@@ -41,18 +46,23 @@ class TicketKommentarRepository:
 
     def create(self, kommentar: TicketKommentar, created_by: str) -> TicketKommentar:
         cursor = self.conn.execute(
-            "INSERT INTO ticket_kommentare (ticket_id, author_id, body, visibility) "
-            "VALUES (?, ?, ?, ?)",
-            (kommentar.ticket_id, kommentar.author_id, kommentar.body, kommentar.visibility)
+            "INSERT INTO ticket_kommentare "
+            "(ticket_id, autor_id, inhalt, sichtbarkeit, created_by, updated_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                kommentar.ticket_id, kommentar.autor_id, kommentar.inhalt,
+                kommentar.sichtbarkeit, created_by, created_by
+            )
         )
         self.conn.commit()
         return self.get(cursor.lastrowid)
 
     def update(self, kommentar: TicketKommentar, updated_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE ticket_kommentare SET body = ?, visibility = ?, version = version + 1 "
+            "UPDATE ticket_kommentare SET inhalt = ?, sichtbarkeit = ?, "
+            "updated_at = CURRENT_TIMESTAMP, updated_by = ?, version = version + 1 "
             "WHERE id = ? AND version = ? AND deleted_at IS NULL",
-            (kommentar.body, kommentar.visibility, kommentar.id, kommentar.version)
+            (kommentar.inhalt, kommentar.sichtbarkeit, updated_by, kommentar.id, kommentar.version)
         )
         self.conn.commit()
         return cursor.rowcount > 0
@@ -60,28 +70,29 @@ class TicketKommentarRepository:
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         cursor = self.conn.execute(
             "UPDATE ticket_kommentare SET deleted_at = datetime('now'), deleted_by = ?, "
-            "version = version + 1 WHERE id = ? AND deleted_at IS NULL",
-            (deleted_by, id)
+            "updated_at = CURRENT_TIMESTAMP, updated_by = ?, version = version + 1 "
+            "WHERE id = ? AND deleted_at IS NULL",
+            (deleted_by, deleted_by, id)
         )
         self.conn.commit()
         return cursor.rowcount > 0
 
     def get_history(self, kommentar_id: int) -> list[dict]:
         cursor = self.conn.execute(
-            "SELECT history_id, id, ticket_id, body, visibility, deleted_at, deleted_by, "
-            "version, changed_at "
+            "SELECT id, version, ticket_id, autor_id, inhalt, sichtbarkeit, "
+            "deleted_at, deleted_by, created_at "
             "FROM ticket_kommentare_history WHERE id = ? ORDER BY version ASC",
             (kommentar_id,)
         )
         cols = [
-            'history_id', 'id', 'ticket_id', 'body', 'visibility',
-            'deleted_at', 'deleted_by', 'version', 'changed_at'
+            'id', 'version', 'ticket_id', 'autor_id', 'inhalt', 'sichtbarkeit',
+            'deleted_at', 'deleted_by', 'created_at'
         ]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
     def _map(self, row) -> TicketKommentar:
         return TicketKommentar(
-            id=row[0], ticket_id=row[1], author_id=row[2], body=row[3],
-            visibility=row[4], version=row[5], created_at=row[6],
+            id=row[0], ticket_id=row[1], autor_id=row[2], inhalt=row[3],
+            sichtbarkeit=row[4], version=row[5], created_at=row[6],
             deleted_at=row[7], deleted_by=row[8]
         )

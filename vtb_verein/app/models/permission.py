@@ -38,6 +38,22 @@ class Permission:
     # --- System ---
     SYSTEM_CONFIG = 'system.config'
 
+    # --- Tickets ---
+    # Grundzugriff: Tickets lesen (eigene + zugewiesene)
+    TICKETS_READ             = 'tickets.read'
+    # Neues Ticket erstellen
+    TICKETS_CREATE           = 'tickets.create'
+    # Ticket einem anderen User zuweisen
+    TICKETS_ASSIGN           = 'tickets.assign'
+    # Ticket schließen / wieder öffnen
+    TICKETS_CLOSE            = 'tickets.close'
+    # Ticket soft-deleten
+    TICKETS_DELETE           = 'tickets.delete'
+    # Interne (nicht-öffentliche) Kommentare lesen
+    TICKETS_INTERN_READ      = 'tickets.intern_read'
+    # Ticket-Bereiche und Ticket-Kategorien verwalten (anlegen, umbenennen, löschen)
+    TICKETS_BEREICHE_VERWALTEN = 'tickets.bereiche_verwalten'
+
     @classmethod
     def all(cls) -> list[str]:
         """Alle definierten globalen Permissions."""
@@ -68,6 +84,9 @@ class Permission:
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
                 cls.USERS_READ,
+                # Tickets: lesen + erstellen für alle eingeloggten User
+                cls.TICKETS_READ,
+                cls.TICKETS_CREATE,
             }
 
         if role == 'readonly':
@@ -76,6 +95,8 @@ class Permission:
                 cls.ABTEILUNGEN_READ,
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,
+                # readonly darf Tickets nur lesen
+                cls.TICKETS_READ,
             }
 
         return set()

@@ -18,14 +18,6 @@
 
 ## 🎫 Ticket-System (Phase 4)
 
-### Phase 4.2 - Ticket-Berechtigungen
-- [ ] Rollen-Konzept festlegen
-  - Wer darf Tickets erstellen? (alle eingeloggten User?)
-  - Wer darf Tickets zuweisen/schließen? (Admin, bestimmte Rolle?)
-  - Wer sieht interne Kommentare?
-- [ ] Permission-Konstanten in `permission.py` ergänzen
-- [ ] Migration für bestehende User
-
 ### Phase 4.3 - Ticket-UI
 - [ ] Ticket-Übersicht (Liste mit Filter nach Status, Bereich, Priorität, Zuweisung)
 - [ ] Ticket erstellen (Dialog: Titel, Beschreibung, Bereich, Kategorie, Priorität, Anhänge)
@@ -356,6 +348,30 @@
 - [x] Alle Repositories und `TicketService` in `datastore.py` eingebunden
   - [x] Property `db.tickets` → `TicketService`
   - [x] Properties `db.ticket_bereiche`, `db.ticket_kategorien`
+
+### Phase 4.2 - Ticket-Berechtigungen (Schema v9/v10)
+- [x] Globale Ticket-Permissions in `permission.py`
+  - [x] `TICKETS_READ`, `TICKETS_CREATE`, `TICKETS_ASSIGN`, `TICKETS_CLOSE`, `TICKETS_DELETE`
+  - [x] `TICKETS_INTERN_READ`, `TICKETS_BEREICHE_VERWALTEN`
+  - [x] `defaults_for_role()` für alle Rollen ergänzt
+- [x] Migration v9 → v10: globale Ticket-Permissions für bestehende User
+- [x] Bereichsspezifische Tabelle `ticket_bereich_berechtigungen` (Schema v10 → v11)
+  - [x] Felder: `darf_lesen`, `darf_bearbeiten`, `darf_schliessen` (Soft-Delete, Versionierung)
+  - [x] `ticket_bereich_berechtigungen_history` + INSERT/UPDATE-Trigger
+  - [x] Admins erhalten automatisch alle Rechte für bestehende Bereiche
+- [x] `TicketBereichBerechtigungRepository` in `ticket_bereich_berechtigung_repository.py`
+  - [x] `get_berechtigung()`, `get_berechtigungen_fuer_bereich()`, `get_bereich_ids_fuer_user()`
+  - [x] `user_darf_lesen()`, `user_darf_bearbeiten()`, `user_darf_schliessen()`
+  - [x] `set_berechtigung()` (anlegen + aktualisieren + reaktivieren)
+  - [x] `revoke_berechtigung()`, `revoke_alle_berechtigungen_fuer_bereich()`
+- [x] `TicketBereichBerechtigungRepository` in `datastore.py` eingebunden (`db.ticket_bereich_berechtigungen`)
+- [x] Berechtigungs-UI unter `/tickets/{bereich_id}/berechtigungen`
+  - [x] Berechtigungsmatrix: Nicht-Admin-User × Lesen/Bearbeiten/Schließen-Checkboxen
+  - [x] Info-Hinweis: Admins haben immer vollen Zugriff
+- [x] Permission-Guards in `TicketService` auf bereichsspezifische Prüfung umgestellt
+  - [x] `TICKETS_ASSIGN`-Guard aus `_kann_bearbeiten()` entfernt
+  - [x] `TICKETS_CLOSE`-Guard aus `_kann_schliessen()` entfernt (nicht in UI vergebar)
+  - [x] Interne Kommentare: `darf_bearbeiten` im Bereich ODER globale `TICKETS_INTERN_READ`
 
 ---
 
