@@ -13,15 +13,19 @@ Permission-Logik:
   - darf_bearbeiten        → Status ändern, Kommentare hinzufügen (inkl. interne)
   - darf_schliessen        → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_CREATE         → Neues Ticket erstellen
-  - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission, KEINE Voraussetzung für darf_bearbeiten)
+  - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission)
   - TICKETS_DELETE         → Ticket soft-löschen
-  - TICKETS_INTERN_READ    → Interne Kommentare sehen/schreiben (global, über alle Bereiche)
-                             Alternativ: auch wer darf_bearbeiten im Bereich hat, erhält dieses Recht automatisch
+  - TICKETS_INTERN_READ    → Interne Kommentare global (alle Bereiche);
+                             alternativ: darf_bearbeiten im Bereich reicht auch
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
 
+HINWEIS: TICKETS_CLOSE und TICKETS_ASSIGN sind als globale Permissions
+definiert, werden aber NICHT als Guard in _kann_schliessen/_kann_bearbeiten
+verwendet. Die Bereichs-Tabelle (darf_schliessen, darf_bearbeiten) ist
+die alleinige Kontrolle für normale User. Admins haben immer vollen Zugriff.
+
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
-Routen (/tickets/{ticket_id}) registriert werden, da FastAPI/NiceGUI
-Routen in Registrierungsreihenfolge matcht.
+Routen (/tickets/{ticket_id}) registriert werden.
 
 Feldnamen-Referenz (Ticket-Model):
   - gemeldet_von  (nicht reporter_id)
@@ -81,11 +85,8 @@ def _lesbare_bereich_ids(db: VereinsDB, user) -> set[int] | None:
 
 
 def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Prüft ob der User Tickets in diesem Bereich bearbeiten/kommentieren darf.
-
-    Keine globale Permission-Guard nötig – darf_bearbeiten im Bereich ist
-    die alleinige Kontrolle für normale User. TICKETS_ASSIGN ist eine
-    separate Permission (Zuweisung) und hat hier nichts zu suchen.
+    """Bereichsspezifisches darf_bearbeiten ist die alleinige Kontrolle.
+    Admins haben immer Zugriff.
     """
     if _is_admin(user):
         return True
@@ -93,10 +94,12 @@ def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
 
 
 def _kann_schliessen(db: VereinsDB, bereich_id: int, user) -> bool:
+    """Bereichsspezifisches darf_schliessen ist die alleinige Kontrolle.
+    Keine globale TICKETS_CLOSE-Guard – die ist in der UI nicht vergebar.
+    Admins haben immer Zugriff.
+    """
     if _is_admin(user):
         return True
-    if not AuthHelper.has_permission(Permission.TICKETS_CLOSE):
-        return False
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(bereich_id, user.id)
 
 
@@ -110,11 +113,6 @@ def _status_badge(status: str):
 # ---------------------------------------------------------------------------
 
 def create_ticket_pages(db: VereinsDB):
-    """Registriert alle Ticket-Seiten.
-
-    WICHTIG: Reihenfolge der Registrierung ist entscheidend!
-    Statische Routen (/tickets/admin) vor parametrisierten (/tickets/{ticket_id}).
-    """
 
     # -------------------------------------------------------------------
     # /tickets  – Ticketliste
@@ -126,7 +124,6 @@ def create_ticket_pages(db: VereinsDB):
         create_navigation()
 
         user = AuthHelper.get_current_user()
-        actor = user.username
         lesbare_ids = _lesbare_bereich_ids(db, user)
         darf_erstellen = AuthHelper.has_permission(Permission.TICKETS_CREATE)
         darf_verwalten = AuthHelper.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN)
@@ -247,9 +244,6 @@ def create_ticket_pages(db: VereinsDB):
         kann_schliessen = _kann_schliessen(db, ticket.bereich_id, user)
         darf_loeschen   = AuthHelper.has_permission(Permission.TICKETS_DELETE)
 
-        # Interne Kommentare sehen/schreiben:
-        # - globale TICKETS_INTERN_READ-Permission (alle Bereiche), ODER
-        # - bereichsspezifisches darf_bearbeiten (nur für diesen Bereich)
         intern_sichtbar = (
             AuthHelper.has_permission(Permission.TICKETS_INTERN_READ)
             or kann_bearbeiten
@@ -279,7 +273,6 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label(f'Bereich: {bereich_name}')
                     if ticket.kategorie_id and ticket.kategorie_id in kategorien:
                         ui.label(f'Kategorie: {kategorien[ticket.kategorie_id].name}')
-                    # Feldname: zugewiesen_an
                     if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user:
                         ui.label(f'Zugewiesen: {alle_user[ticket.zugewiesen_an].username}')
                     ui.label(f'Erstellt: {ticket.created_at[:10] if ticket.created_at else "—"}')
@@ -310,13 +303,11 @@ def create_ticket_pages(db: VereinsDB):
             else:
                 with ui.column().classes('full-width q-gutter-sm q-mb-md'):
                     for k in kommentare:
-                        # Feldname: autor_id
                         autor = alle_user[k.autor_id].username if k.autor_id in alle_user else str(k.autor_id)
                         with ui.card().classes('full-width'):
                             with ui.row().classes('items-center justify-between q-pa-xs'):
                                 with ui.row().classes('items-center q-gutter-xs'):
                                     ui.label(autor).classes('text-weight-bold text-caption')
-                                    # sichtbarkeit ist ein String: 'intern' | 'oeffentlich'
                                     if k.sichtbarkeit == SICHTBARKEIT_INTERN:
                                         ui.badge('intern', color='orange')
                                 ui.label(k.created_at[:16] if k.created_at else '').classes('text-caption text-grey-6')
@@ -335,7 +326,6 @@ def create_ticket_pages(db: VereinsDB):
                         if not text:
                             ui.notify('Kommentar darf nicht leer sein.', type='warning')
                             return
-                        # sichtbarkeit als String, nicht bool
                         sichtbarkeit = SICHTBARKEIT_INTERN if (intern_cb and intern_cb.value) else SICHTBARKEIT_PUBLIK
                         k = TicketKommentar(
                             id=0,
@@ -543,7 +533,6 @@ def _render_kategorien(db: VereinsDB, actor: str, container, refresh):
 # ---------------------------------------------------------------------------
 
 def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refresh):
-    """Dialog: Neues Ticket erstellen."""
     actor = user.username
     bereiche = db.tickets.get_bereiche()
     if lesbare_ids is not None:
@@ -558,7 +547,7 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
     with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
         ui.label('Neues Ticket').classes('text-h6 q-mb-md')
 
-        titel_input       = ui.input('Titel *').classes('full-width')
+        titel_input        = ui.input('Titel *').classes('full-width')
         beschreibung_input = ui.textarea('Beschreibung').classes('full-width')
 
         bereich_options = {b.id: b.name for b in bereiche}
@@ -617,9 +606,8 @@ def _open_ticket_bearbeiten_dialog(
     db: VereinsDB, ticket: Ticket, user, alle_user: dict,
     bereiche: dict, kategorien: dict, kann_schliessen: bool, refresh
 ):
-    """Dialog: Ticket-Status / Zuweisung bearbeiten."""
     actor = user.username
-    erlaubte_status = STATUS_UEBERGAENGE.get(ticket.status, [])
+    erlaubte_status = list(STATUS_UEBERGAENGE.get(ticket.status, []))
     if not kann_schliessen:
         erlaubte_status = [s for s in erlaubte_status if s not in SCHLIESS_STATUS]
 
@@ -692,7 +680,7 @@ def _open_bereich_dialog(db: VereinsDB, actor: str, refresh, bereich: TicketBere
     is_new = bereich is None
     with ui.dialog() as dialog, ui.card().style('min-width: 360px'):
         ui.label('Neuer Bereich' if is_new else 'Bereich bearbeiten').classes('text-h6 q-mb-md')
-        name_input  = ui.input('Name *', value='' if is_new else bereich.name).classes('full-width')
+        name_input   = ui.input('Name *', value='' if is_new else bereich.name).classes('full-width')
         beschr_input = ui.input(
             'Beschreibung', value='' if is_new else (bereich.beschreibung or '')
         ).classes('full-width')
@@ -756,7 +744,7 @@ def _open_kategorie_dialog(db: VereinsDB, actor: str, refresh, kategorie: Ticket
     is_new = kategorie is None
     with ui.dialog() as dialog, ui.card().style('min-width: 360px'):
         ui.label('Neue Kategorie' if is_new else 'Kategorie bearbeiten').classes('text-h6 q-mb-md')
-        name_input  = ui.input('Name *', value='' if is_new else kategorie.name).classes('full-width')
+        name_input   = ui.input('Name *', value='' if is_new else kategorie.name).classes('full-width')
         beschr_input = ui.input(
             'Beschreibung', value='' if is_new else (kategorie.beschreibung or '')
         ).classes('full-width')
