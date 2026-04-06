@@ -3,6 +3,7 @@ Gemeinsame Navigationsleiste für alle Seiten
 """
 from nicegui import ui, app
 from app.auth.auth_helper import AuthHelper
+from app.models.permission import Permission
 
 
 def create_navigation(db=None):
@@ -69,6 +70,14 @@ def create_navigation(db=None):
                         kasse_btn.props('unelevated').classes('bg-blue-10 text-white')
                     else:
                         kasse_btn.props('flat').classes('text-white')
+
+                # Tickets – sichtbar ab TICKETS_READ
+                if user and user.has_permission(Permission.TICKETS_READ):
+                    tickets_btn = ui.button('Tickets', on_click=lambda: ui.navigate.to('/tickets'), icon='confirmation_number')
+                    if current_path == '/tickets':
+                        tickets_btn.props('unelevated').classes('bg-blue-10 text-white')
+                    else:
+                        tickets_btn.props('flat').classes('text-white')
 
                 # Benutzer
                 if user and user.can_manage_users():
