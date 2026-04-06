@@ -3,6 +3,9 @@ TicketService - Business-Logik für das Ticket-System
 
 Phase 4.1 - Ticket-System Repository & Service
 Phase 4.2 - berechtigung_repo hinzugefügt
+fix     - list_by_assigned → list_by_zugewiesen
+        - list_by_reporter → list_by_gemeldet
+        - closed_at → geschlossen_am
 '''
 
 from datetime import datetime
@@ -78,9 +81,9 @@ class TicketService:
         if status:
             tickets = self._ticket_repo.list_by_status(status)
         elif assigned_to:
-            tickets = self._ticket_repo.list_by_assigned(assigned_to)
+            tickets = self._ticket_repo.list_by_zugewiesen(assigned_to)
         elif reporter:
-            tickets = self._ticket_repo.list_by_reporter(reporter)
+            tickets = self._ticket_repo.list_by_gemeldet(reporter)
         else:
             tickets = self._ticket_repo.list_all()
         return tickets
@@ -92,7 +95,7 @@ class TicketService:
         return self._ticket_repo.update(ticket, updated_by)
 
     def change_status(self, ticket_id: int, new_status: str, changed_by: str, version: int) -> bool:
-        """Statuswechsel mit Übergangsprüfung. Setzt closed_at/closed_by bei 'erledigt'."""
+        """Statuswechsel mit Übergangsprüfung. Setzt geschlossen_am/geschlossen_von bei 'erledigt'."""
         ticket = self.get_ticket(ticket_id)
         erlaubt = STATUS_UEBERGAENGE.get(ticket.status, [])
         if new_status not in erlaubt:
@@ -102,7 +105,7 @@ class TicketService:
         ticket.status = new_status
         ticket.version = version
         if new_status == TicketStatus.ERLEDIGT:
-            ticket.closed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ticket.geschlossen_am = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return self._ticket_repo.update(ticket, changed_by)
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
