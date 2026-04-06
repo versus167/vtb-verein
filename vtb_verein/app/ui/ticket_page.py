@@ -21,6 +21,13 @@ Permission-Logik:
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
 Routen (/tickets/{ticket_id}) registriert werden, da FastAPI/NiceGUI
 Routen in Registrierungsreihenfolge matcht.
+
+Feldnamen-Referenz (Ticket-Model):
+  - gemeldet_von  (nicht reporter_id)
+  - zugewiesen_an (nicht assigned_to)
+  Kommentar-Model:
+  - autor_id      (nicht created_by_id)
+  - sichtbarkeit  'intern' | 'oeffentlich' (nicht ist_intern bool)
 """
 from nicegui import ui
 from app.auth.auth_helper import AuthHelper, require_permission
@@ -55,6 +62,9 @@ STATUS_UEBERGAENGE = {
 }
 
 SCHLIESS_STATUS = {TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT}
+
+SICHTBARKEIT_INTERN   = 'intern'
+SICHTBARKEIT_PUBLIK   = 'oeffentlich'
 
 
 def _is_admin(user) -> bool:
@@ -122,7 +132,6 @@ def create_ticket_pages(db: VereinsDB):
                 _render_ticket_liste(db, user, lesbare_ids, liste_container)
 
         with ui.column().classes('q-ma-md full-width'):
-            # Kopfzeile
             with ui.row().classes('items-center justify-between full-width q-mb-md'):
                 ui.label('Tickets').classes('text-h5')
                 with ui.row().classes('q-gutter-sm'):
@@ -139,7 +148,6 @@ def create_ticket_pages(db: VereinsDB):
                             on_click=lambda: _open_ticket_dialog(db, user, lesbare_ids, refresh)
                         ).props('color=primary')
 
-            # Listenbereich
             liste_container = ui.column().classes('full-width')
             _render_ticket_liste(db, user, lesbare_ids, liste_container)
 
@@ -168,7 +176,6 @@ def create_ticket_pages(db: VereinsDB):
 
             with ui.tab_panels(tabs, value=tab_bereiche).classes('full-width'):
 
-                # --- Tab: Bereiche ---
                 with ui.tab_panel(tab_bereiche):
                     bereiche_container = ui.column().classes('full-width')
 
@@ -179,14 +186,12 @@ def create_ticket_pages(db: VereinsDB):
 
                     with ui.row().classes('justify-end full-width q-mb-sm'):
                         ui.button(
-                            'Neuer Bereich',
-                            icon='add',
+                            'Neuer Bereich', icon='add',
                             on_click=lambda: _open_bereich_dialog(db, actor, refresh_bereiche)
                         ).props('color=primary')
 
                     _render_bereiche(db, actor, bereiche_container, refresh_bereiche)
 
-                # --- Tab: Kategorien ---
                 with ui.tab_panel(tab_kategorien):
                     kat_container = ui.column().classes('full-width')
 
@@ -197,8 +202,7 @@ def create_ticket_pages(db: VereinsDB):
 
                     with ui.row().classes('justify-end full-width q-mb-sm'):
                         ui.button(
-                            'Neue Kategorie',
-                            icon='add',
+                            'Neue Kategorie', icon='add',
                             on_click=lambda: _open_kategorie_dialog(db, actor, refresh_kat)
                         ).props('color=primary')
 
@@ -227,7 +231,6 @@ def create_ticket_pages(db: VereinsDB):
                           on_click=lambda: ui.navigate.to('/tickets'))
             return
 
-        # Zugriffprüfung: darf User diesen Bereich lesen?
         lesbare_ids = _lesbare_bereich_ids(db, user)
         if lesbare_ids is not None and ticket.bereich_id not in lesbare_ids:
             with ui.column().classes('q-ma-md'):
@@ -240,22 +243,20 @@ def create_ticket_pages(db: VereinsDB):
         kann_schliessen = _kann_schliessen(db, ticket.bereich_id, user)
         darf_loeschen   = AuthHelper.has_permission(Permission.TICKETS_DELETE)
 
-        bereiche = {b.id: b for b in db.tickets.get_bereiche()}
+        bereiche   = {b.id: b for b in db.tickets.get_bereiche()}
         kategorien = {k.id: k for k in db.tickets.get_kategorien()}
-        alle_user = {u.id: u for u in db.users.list_all() if u.active and u.deleted_at is None}
+        alle_user  = {u.id: u for u in db.users.list_all() if u.active and u.deleted_at is None}
 
         def page_refresh():
             ui.navigate.to(f'/tickets/{ticket_id}')
 
         with ui.column().classes('q-ma-md full-width'):
-            # Zurück + Titel
             with ui.row().classes('items-center q-mb-sm'):
                 ui.button(icon='arrow_back',
                           on_click=lambda: ui.navigate.to('/tickets')).props('flat round')
                 ui.label(f'Ticket #{ticket.id}').classes('text-h5')
                 _status_badge(ticket.status)
 
-            # Meta-Info
             with ui.card().classes('full-width q-mb-md'):
                 ui.label(ticket.titel).classes('text-subtitle1 text-weight-bold')
                 if ticket.beschreibung:
@@ -266,17 +267,16 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label(f'Bereich: {bereich_name}')
                     if ticket.kategorie_id and ticket.kategorie_id in kategorien:
                         ui.label(f'Kategorie: {kategorien[ticket.kategorie_id].name}')
-                    if ticket.assigned_to and ticket.assigned_to in alle_user:
-                        ui.label(f'Zugewiesen: {alle_user[ticket.assigned_to].username}')
+                    # Feldname: zugewiesen_an
+                    if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user:
+                        ui.label(f'Zugewiesen: {alle_user[ticket.zugewiesen_an].username}')
                     ui.label(f'Erstellt: {ticket.created_at[:10] if ticket.created_at else "—"}')
 
-            # Aktionen
             if kann_bearbeiten or kann_schliessen or darf_loeschen:
                 with ui.row().classes('q-gutter-sm q-mb-md'):
                     if kann_bearbeiten:
                         ui.button(
-                            'Bearbeiten',
-                            icon='edit',
+                            'Bearbeiten', icon='edit',
                             on_click=lambda: _open_ticket_bearbeiten_dialog(
                                 db, ticket, user, alle_user, bereiche, kategorien,
                                 kann_schliessen, page_refresh
@@ -284,12 +284,12 @@ def create_ticket_pages(db: VereinsDB):
                         ).props('flat color=primary')
                     if darf_loeschen and ticket.status not in {TicketStatus.ERLEDIGT}:
                         ui.button(
-                            'Löschen',
-                            icon='delete',
-                            on_click=lambda: _confirm_ticket_delete(db, ticket, actor, lambda: ui.navigate.to('/tickets'))
+                            'Löschen', icon='delete',
+                            on_click=lambda: _confirm_ticket_delete(
+                                db, ticket, actor, lambda: ui.navigate.to('/tickets')
+                            )
                         ).props('flat color=negative')
 
-            # Kommentare
             ui.label('Kommentare').classes('text-h6 q-mb-sm')
 
             kommentare = db.tickets.get_kommentare(ticket_id, include_internal=intern_sichtbar)
@@ -298,17 +298,18 @@ def create_ticket_pages(db: VereinsDB):
             else:
                 with ui.column().classes('full-width q-gutter-sm q-mb-md'):
                     for k in kommentare:
-                        autor = alle_user[k.created_by_id].username if k.created_by_id in alle_user else str(k.created_by_id)
+                        # Feldname: autor_id
+                        autor = alle_user[k.autor_id].username if k.autor_id in alle_user else str(k.autor_id)
                         with ui.card().classes('full-width'):
                             with ui.row().classes('items-center justify-between q-pa-xs'):
                                 with ui.row().classes('items-center q-gutter-xs'):
                                     ui.label(autor).classes('text-weight-bold text-caption')
-                                    if k.ist_intern:
+                                    # sichtbarkeit ist ein String: 'intern' | 'oeffentlich'
+                                    if k.sichtbarkeit == SICHTBARKEIT_INTERN:
                                         ui.badge('intern', color='orange')
                                 ui.label(k.created_at[:16] if k.created_at else '').classes('text-caption text-grey-6')
                             ui.label(k.inhalt).classes('q-pa-xs')
 
-            # Neuer Kommentar
             if kann_bearbeiten:
                 with ui.card().classes('full-width q-mt-sm'):
                     ui.label('Kommentar hinzufügen').classes('text-subtitle2 q-mb-sm')
@@ -322,13 +323,14 @@ def create_ticket_pages(db: VereinsDB):
                         if not text:
                             ui.notify('Kommentar darf nicht leer sein.', type='warning')
                             return
-                        ist_intern = intern_cb.value if intern_cb else False
+                        # sichtbarkeit als String, nicht bool
+                        sichtbarkeit = SICHTBARKEIT_INTERN if (intern_cb and intern_cb.value) else SICHTBARKEIT_PUBLIK
                         k = TicketKommentar(
                             id=0,
                             ticket_id=ticket_id,
                             inhalt=text,
-                            ist_intern=ist_intern,
-                            created_by_id=user.id,
+                            sichtbarkeit=sichtbarkeit,
+                            autor_id=user.id,
                         )
                         db.tickets.add_kommentar(k, created_by=actor)
                         ui.notify('Kommentar gespeichert.', type='positive')
@@ -377,7 +379,6 @@ def create_ticket_pages(db: VereinsDB):
             cbs: dict[int, dict[str, ui.checkbox]] = {}
 
             with ui.card().classes('full-width'):
-                # Kopf
                 with ui.row().classes('items-center q-pa-sm bg-grey-2 full-width'):
                     ui.label('Benutzer').classes('text-weight-bold').style('min-width:200px')
                     ui.label('Rolle').classes('text-weight-bold').style('min-width:100px')
@@ -400,7 +401,6 @@ def create_ticket_pages(db: VereinsDB):
                         cb_b = ui.checkbox('', value=bearbeiten).style('min-width:110px')
                         cb_s = ui.checkbox('', value=schliessen).style('min-width:110px')
 
-                        # Bearbeiten impliziert Lesen, Schließen impliziert Bearbeiten
                         def on_bearbeiten(val, uid=u.id):
                             if val and not cbs[uid]['lesen'].value:
                                 cbs[uid]['lesen'].set_value(True)
@@ -452,11 +452,9 @@ def create_ticket_pages(db: VereinsDB):
 # ---------------------------------------------------------------------------
 
 def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, container):
-    """Rendert die Ticketliste gefiltert nach Bereichsberechtigungen."""
     alle_tickets = db.tickets.list_tickets()
     bereiche = {b.id: b for b in db.tickets.get_bereiche()}
 
-    # Filtern: None = Admin (alles), sonst nur lesbare Bereiche
     if lesbare_ids is not None:
         alle_tickets = [t for t in alle_tickets if t.bereich_id in lesbare_ids]
 
@@ -481,7 +479,6 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
 
 
 def _render_bereiche(db: VereinsDB, actor: str, container, refresh):
-    """Rendert die Bereichsliste im Admin-Tab."""
     bereiche = db.tickets.get_bereiche()
     if not bereiche:
         with container:
@@ -494,8 +491,7 @@ def _render_bereiche(db: VereinsDB, actor: str, container, refresh):
                     ui.label(b.name).classes('text-subtitle2')
                     with ui.row().classes('q-gutter-xs'):
                         ui.button(
-                            'Berechtigungen',
-                            icon='lock',
+                            'Berechtigungen', icon='lock',
                             on_click=lambda bid=b.id: ui.navigate.to(f'/tickets/{bid}/berechtigungen')
                         ).props('flat color=primary size=sm')
                         ui.button(
@@ -509,7 +505,6 @@ def _render_bereiche(db: VereinsDB, actor: str, container, refresh):
 
 
 def _render_kategorien(db: VereinsDB, actor: str, container, refresh):
-    """Rendert die Kategorienliste im Admin-Tab."""
     kategorien = db.tickets.get_kategorien()
     if not kategorien:
         with container:
@@ -539,7 +534,6 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
     """Dialog: Neues Ticket erstellen."""
     actor = user.username
     bereiche = db.tickets.get_bereiche()
-    # Nur Bereiche anbieten, die der User lesen (und damit auch erstellen) darf
     if lesbare_ids is not None:
         bereiche = [b for b in bereiche if b.id in lesbare_ids]
     kategorien = db.tickets.get_kategorien()
@@ -552,11 +546,11 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
     with ui.dialog() as dialog, ui.card().style('min-width: 480px'):
         ui.label('Neues Ticket').classes('text-h6 q-mb-md')
 
-        titel_input = ui.input('Titel *').classes('full-width')
+        titel_input       = ui.input('Titel *').classes('full-width')
         beschreibung_input = ui.textarea('Beschreibung').classes('full-width')
 
         bereich_options = {b.id: b.name for b in bereiche}
-        bereich_select = ui.select(bereich_options, label='Bereich *').classes('full-width')
+        bereich_select  = ui.select(bereich_options, label='Bereich *').classes('full-width')
 
         kat_options = {None: '(keine Kategorie)'}
         kat_options.update({k.id: k.name for k in kategorien})
@@ -585,12 +579,12 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
                 neues_ticket = Ticket(
                     id=0,
                     titel=titel,
-                    beschreibung=beschreibung_input.value.strip() or None,
+                    beschreibung=beschreibung_input.value.strip() or '',
                     status=TicketStatus.OFFEN,
                     bereich_id=bereich_id,
                     kategorie_id=kat_select.value,
-                    reporter_id=user.id,
-                    assigned_to=assign_select.value,
+                    gemeldet_von=user.id,        # Feldname aus Model
+                    zugewiesen_an=assign_select.value,  # Feldname aus Model
                 )
                 db.tickets.create_ticket(neues_ticket, created_by=actor)
                 ui.notify('Ticket erstellt.', type='positive')
@@ -614,7 +608,6 @@ def _open_ticket_bearbeiten_dialog(
     """Dialog: Ticket-Status / Zuweisung bearbeiten."""
     actor = user.username
     erlaubte_status = STATUS_UEBERGAENGE.get(ticket.status, [])
-    # Schließ-Status nur wenn darf_schliessen
     if not kann_schliessen:
         erlaubte_status = [s for s in erlaubte_status if s not in SCHLIESS_STATUS]
 
@@ -623,8 +616,9 @@ def _open_ticket_bearbeiten_dialog(
 
         assign_options = {None: '(nicht zugewiesen)'}
         assign_options.update({uid: u.username for uid, u in alle_user.items()})
+        # Feldname: zugewiesen_an
         assign_select = ui.select(
-            assign_options, label='Zuweisen an', value=ticket.assigned_to
+            assign_options, label='Zuweisen an', value=ticket.zugewiesen_an
         ).classes('full-width')
 
         status_select = None
@@ -642,12 +636,11 @@ def _open_ticket_bearbeiten_dialog(
         def save():
             error_label.visible = False
             try:
-                # Zuweisung
-                if assign_select.value != ticket.assigned_to:
-                    ticket.assigned_to = assign_select.value
+                # Feldname: zugewiesen_an
+                if assign_select.value != ticket.zugewiesen_an:
+                    ticket.zugewiesen_an = assign_select.value
                     db.tickets.update_ticket(ticket, updated_by=actor)
 
-                # Statuswechsel
                 if status_select and status_select.value:
                     db.tickets.change_status(
                         ticket.id, status_select.value, actor, ticket.version
@@ -668,7 +661,6 @@ def _open_ticket_bearbeiten_dialog(
 
 
 def _confirm_ticket_delete(db: VereinsDB, ticket: Ticket, actor: str, refresh):
-    """Bestätigungsdialog: Ticket soft-löschen."""
     with ui.dialog() as dialog, ui.card():
         ui.label(f'Ticket #{ticket.id} löschen?').classes('text-h6')
         ui.label('Das Ticket bleibt in der History erhalten.').classes('text-caption text-grey-7 q-mb-md')
@@ -687,11 +679,10 @@ def _confirm_ticket_delete(db: VereinsDB, ticket: Ticket, actor: str, refresh):
 
 
 def _open_bereich_dialog(db: VereinsDB, actor: str, refresh, bereich: TicketBereich = None):
-    """Dialog: Bereich anlegen / umbenennen."""
     is_new = bereich is None
     with ui.dialog() as dialog, ui.card().style('min-width: 360px'):
         ui.label('Neuer Bereich' if is_new else 'Bereich bearbeiten').classes('text-h6 q-mb-md')
-        name_input = ui.input('Name *', value='' if is_new else bereich.name).classes('full-width')
+        name_input  = ui.input('Name *', value='' if is_new else bereich.name).classes('full-width')
         beschr_input = ui.input(
             'Beschreibung', value='' if is_new else (bereich.beschreibung or '')
         ).classes('full-width')
@@ -729,7 +720,6 @@ def _open_bereich_dialog(db: VereinsDB, actor: str, refresh, bereich: TicketBere
 
 
 def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, refresh):
-    """Bestätigungsdialog: Bereich soft-löschen."""
     with ui.dialog() as dialog, ui.card():
         ui.label(f'Bereich „{bereich.name}“ löschen?').classes('text-h6')
         ui.label(
@@ -753,11 +743,10 @@ def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, r
 
 
 def _open_kategorie_dialog(db: VereinsDB, actor: str, refresh, kategorie: TicketKategorie = None):
-    """Dialog: Kategorie anlegen / umbenennen."""
     is_new = kategorie is None
     with ui.dialog() as dialog, ui.card().style('min-width: 360px'):
         ui.label('Neue Kategorie' if is_new else 'Kategorie bearbeiten').classes('text-h6 q-mb-md')
-        name_input = ui.input('Name *', value='' if is_new else kategorie.name).classes('full-width')
+        name_input  = ui.input('Name *', value='' if is_new else kategorie.name).classes('full-width')
         beschr_input = ui.input(
             'Beschreibung', value='' if is_new else (kategorie.beschreibung or '')
         ).classes('full-width')
@@ -795,7 +784,6 @@ def _open_kategorie_dialog(db: VereinsDB, actor: str, refresh, kategorie: Ticket
 
 
 def _confirm_kategorie_delete(db: VereinsDB, kategorie: TicketKategorie, actor: str, refresh):
-    """Bestätigungsdialog: Kategorie soft-löschen."""
     with ui.dialog() as dialog, ui.card():
         ui.label(f'Kategorie „{kategorie.name}“ löschen?').classes('text-h6')
 
