@@ -16,6 +16,7 @@ from app.ui.abteilung_management import create_abteilung_management_page
 from app.ui.mitglied_management import create_mitglied_management_page
 from app.ui.kasse_management import create_kasse_management_page
 from app.ui.kassenbuch_page import create_kassenbuch_page
+from app.ui.ticket_page import create_ticket_pages
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
@@ -55,6 +56,7 @@ create_abteilung_management_page(db)
 create_mitglied_management_page(db)
 create_kasse_management_page(db)
 create_kassenbuch_page(db)
+create_ticket_pages(db)
 
 # Hauptseite (Dashboard)
 @ui.page('/')
@@ -107,6 +109,14 @@ def main_page():
                         ui.icon('account_balance_wallet', size='3rem').classes('text-primary')
                         ui.label('Kassenverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Kassen und Berechtigungen').classes('text-caption text-grey')
+
+            # Tickets – sichtbar ab TICKETS_READ
+            if user.has_permission(Permission.TICKETS_READ):
+                with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/tickets')):
+                    with ui.card_section().classes('text-center'):
+                        ui.icon('confirmation_number', size='3rem').classes('text-primary')
+                        ui.label('Tickets').classes('text-h6 q-mt-sm')
+                        ui.label('Anfragen und Aufgaben').classes('text-caption text-grey')
 
             # Benutzerverwaltung – sichtbar ab USERS_READ (ansehen reicht)
             # USERS_MANAGE-User sehen die Kachel ebenfalls, da MANAGE ⊇ READ.
