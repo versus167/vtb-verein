@@ -17,6 +17,10 @@ Permission-Logik:
   - TICKETS_DELETE         → Ticket soft-löschen
   - TICKETS_INTERN_READ    → Interne Kommentare sehen
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
+
+WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
+Routen (/tickets/{ticket_id}) registriert werden, da FastAPI/NiceGUI
+Routen in Registrierungsreihenfolge matcht.
 """
 from nicegui import ui
 from app.auth.auth_helper import AuthHelper, require_permission
@@ -91,7 +95,11 @@ def _status_badge(status: str):
 # ---------------------------------------------------------------------------
 
 def create_ticket_pages(db: VereinsDB):
-    """Registriert alle Ticket-Seiten."""
+    """Registriert alle Ticket-Seiten.
+
+    WICHTIG: Reihenfolge der Registrierung ist entscheidend!
+    Statische Routen (/tickets/admin) vor parametrisierten (/tickets/{ticket_id}).
+    """
 
     # -------------------------------------------------------------------
     # /tickets  – Ticketliste
@@ -136,7 +144,69 @@ def create_ticket_pages(db: VereinsDB):
             _render_ticket_liste(db, user, lesbare_ids, liste_container)
 
     # -------------------------------------------------------------------
+    # /tickets/admin  – Bereiche, Kategorien, Berechtigungen verwalten
+    # MUSS vor /tickets/{ticket_id} registriert werden!
+    # -------------------------------------------------------------------
+    @ui.page('/tickets/admin')
+    @require_permission(Permission.TICKETS_BEREICHE_VERWALTEN)
+    def tickets_admin_page():
+        set_current_path('/tickets')
+        create_navigation()
+
+        user = AuthHelper.get_current_user()
+        actor = user.username
+
+        with ui.column().classes('q-ma-md full-width'):
+            with ui.row().classes('items-center q-mb-md'):
+                ui.button(icon='arrow_back',
+                          on_click=lambda: ui.navigate.to('/tickets')).props('flat round')
+                ui.label('Ticket-Verwaltung').classes('text-h5')
+
+            with ui.tabs().classes('q-mb-md') as tabs:
+                tab_bereiche   = ui.tab('Bereiche',   icon='folder')
+                tab_kategorien = ui.tab('Kategorien', icon='label')
+
+            with ui.tab_panels(tabs, value=tab_bereiche).classes('full-width'):
+
+                # --- Tab: Bereiche ---
+                with ui.tab_panel(tab_bereiche):
+                    bereiche_container = ui.column().classes('full-width')
+
+                    def refresh_bereiche():
+                        bereiche_container.clear()
+                        with bereiche_container:
+                            _render_bereiche(db, actor, bereiche_container, refresh_bereiche)
+
+                    with ui.row().classes('justify-end full-width q-mb-sm'):
+                        ui.button(
+                            'Neuer Bereich',
+                            icon='add',
+                            on_click=lambda: _open_bereich_dialog(db, actor, refresh_bereiche)
+                        ).props('color=primary')
+
+                    _render_bereiche(db, actor, bereiche_container, refresh_bereiche)
+
+                # --- Tab: Kategorien ---
+                with ui.tab_panel(tab_kategorien):
+                    kat_container = ui.column().classes('full-width')
+
+                    def refresh_kat():
+                        kat_container.clear()
+                        with kat_container:
+                            _render_kategorien(db, actor, kat_container, refresh_kat)
+
+                    with ui.row().classes('justify-end full-width q-mb-sm'):
+                        ui.button(
+                            'Neue Kategorie',
+                            icon='add',
+                            on_click=lambda: _open_kategorie_dialog(db, actor, refresh_kat)
+                        ).props('color=primary')
+
+                    _render_kategorien(db, actor, kat_container, refresh_kat)
+
+    # -------------------------------------------------------------------
     # /tickets/{ticket_id}  – Ticket-Detail
+    # MUSS nach /tickets/admin registriert werden!
     # -------------------------------------------------------------------
     @ui.page('/tickets/{ticket_id}')
     @require_permission(Permission.TICKETS_READ)
@@ -157,7 +227,7 @@ def create_ticket_pages(db: VereinsDB):
                           on_click=lambda: ui.navigate.to('/tickets'))
             return
 
-        # Zugriffsprüfung: darf User diesen Bereich lesen?
+        # Zugriffprüfung: darf User diesen Bereich lesen?
         lesbare_ids = _lesbare_bereich_ids(db, user)
         if lesbare_ids is not None and ticket.bereich_id not in lesbare_ids:
             with ui.column().classes('q-ma-md'):
@@ -265,66 +335,6 @@ def create_ticket_pages(db: VereinsDB):
                         page_refresh()
 
                     ui.button('Kommentar speichern', icon='send', on_click=add_kommentar).props('color=primary q-mt-sm')
-
-    # -------------------------------------------------------------------
-    # /tickets/admin  – Bereiche, Kategorien, Berechtigungen verwalten
-    # -------------------------------------------------------------------
-    @ui.page('/tickets/admin')
-    @require_permission(Permission.TICKETS_BEREICHE_VERWALTEN)
-    def tickets_admin_page():
-        set_current_path('/tickets')
-        create_navigation()
-
-        user = AuthHelper.get_current_user()
-        actor = user.username
-
-        with ui.column().classes('q-ma-md full-width'):
-            with ui.row().classes('items-center q-mb-md'):
-                ui.button(icon='arrow_back',
-                          on_click=lambda: ui.navigate.to('/tickets')).props('flat round')
-                ui.label('Ticket-Verwaltung').classes('text-h5')
-
-            with ui.tabs().classes('q-mb-md') as tabs:
-                tab_bereiche   = ui.tab('Bereiche',   icon='folder')
-                tab_kategorien = ui.tab('Kategorien', icon='label')
-
-            with ui.tab_panels(tabs, value=tab_bereiche).classes('full-width'):
-
-                # --- Tab: Bereiche ---
-                with ui.tab_panel(tab_bereiche):
-                    bereiche_container = ui.column().classes('full-width')
-
-                    def refresh_bereiche():
-                        bereiche_container.clear()
-                        with bereiche_container:
-                            _render_bereiche(db, actor, bereiche_container, refresh_bereiche)
-
-                    with ui.row().classes('justify-end full-width q-mb-sm'):
-                        ui.button(
-                            'Neuer Bereich',
-                            icon='add',
-                            on_click=lambda: _open_bereich_dialog(db, actor, refresh_bereiche)
-                        ).props('color=primary')
-
-                    _render_bereiche(db, actor, bereiche_container, refresh_bereiche)
-
-                # --- Tab: Kategorien ---
-                with ui.tab_panel(tab_kategorien):
-                    kat_container = ui.column().classes('full-width')
-
-                    def refresh_kat():
-                        kat_container.clear()
-                        with kat_container:
-                            _render_kategorien(db, actor, kat_container, refresh_kat)
-
-                    with ui.row().classes('justify-end full-width q-mb-sm'):
-                        ui.button(
-                            'Neue Kategorie',
-                            icon='add',
-                            on_click=lambda: _open_kategorie_dialog(db, actor, refresh_kat)
-                        ).props('color=primary')
-
-                    _render_kategorien(db, actor, kat_container, refresh_kat)
 
     # -------------------------------------------------------------------
     # /tickets/{bereich_id}/berechtigungen  – Bereichsberechtigungen
@@ -721,7 +731,7 @@ def _open_bereich_dialog(db: VereinsDB, actor: str, refresh, bereich: TicketBere
 def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, refresh):
     """Bestätigungsdialog: Bereich soft-löschen."""
     with ui.dialog() as dialog, ui.card():
-        ui.label(f'Bereich \u201e{bereich.name}\u201c löschen?').classes('text-h6')
+        ui.label(f'Bereich „{bereich.name}“ löschen?').classes('text-h6')
         ui.label(
             'Alle Berechtigungen für diesen Bereich werden ebenfalls entfernt.'
         ).classes('text-caption text-grey-7 q-mb-md')
@@ -731,7 +741,7 @@ def _confirm_bereich_delete(db: VereinsDB, bereich: TicketBereich, actor: str, r
                 bereich.id, actor
             )
             db.tickets.mark_bereich_deleted(bereich.id, actor)
-            ui.notify(f'Bereich \u201e{bereich.name}\u201c gelöscht.', type='warning')
+            ui.notify(f'Bereich „{bereich.name}“ gelöscht.', type='warning')
             dialog.close()
             refresh()
 
@@ -787,11 +797,11 @@ def _open_kategorie_dialog(db: VereinsDB, actor: str, refresh, kategorie: Ticket
 def _confirm_kategorie_delete(db: VereinsDB, kategorie: TicketKategorie, actor: str, refresh):
     """Bestätigungsdialog: Kategorie soft-löschen."""
     with ui.dialog() as dialog, ui.card():
-        ui.label(f'Kategorie \u201e{kategorie.name}\u201c löschen?').classes('text-h6')
+        ui.label(f'Kategorie „{kategorie.name}“ löschen?').classes('text-h6')
 
         def confirm():
             db.tickets.mark_kategorie_deleted(kategorie.id, actor)
-            ui.notify(f'Kategorie \u201e{kategorie.name}\u201c gelöscht.', type='warning')
+            ui.notify(f'Kategorie „{kategorie.name}“ gelöscht.', type='warning')
             dialog.close()
             refresh()
 
