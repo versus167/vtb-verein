@@ -39,7 +39,7 @@ from app.auth.auth_helper import AuthHelper, require_permission
 from app.db.datastore import VereinsDB
 from app.models.permission import Permission
 from app.models.ticket import (
-    Ticket, TicketKommentar, TicketBereich, TicketKategorie, TicketStatus
+    Ticket, TicketKommentar, TicketBereich, TicketKategorie, TicketStatus, TicketPrioritaet
 )
 from app.ui.navigation import create_navigation, set_current_path
 
@@ -128,10 +128,18 @@ def create_ticket_pages(db: VereinsDB):
         darf_erstellen = AuthHelper.has_permission(Permission.TICKETS_CREATE)
         darf_verwalten = AuthHelper.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN)
 
+        # Filter-State
+        filter_state = {
+            'status': None,
+            'bereich': None,
+            'prioritaet': None,
+            'zuweisung': None,
+        }
+
         def refresh():
             liste_container.clear()
             with liste_container:
-                _render_ticket_liste(db, user, lesbare_ids, liste_container)
+                _render_ticket_liste(db, user, lesbare_ids, liste_container, filter_state)
 
         with ui.column().classes('q-ma-md full-width'):
             with ui.row().classes('items-center justify-between full-width q-mb-md'):
@@ -150,8 +158,70 @@ def create_ticket_pages(db: VereinsDB):
                             on_click=lambda: _open_ticket_dialog(db, user, lesbare_ids, refresh)
                         ).props('color=primary')
 
+            # Filterleiste
+            with ui.card().classes('full-width q-mb-md'):
+                with ui.column().classes('full-width q-pa-sm'):
+                    ui.label('Filter').classes('text-subtitle2')
+                    with ui.row().classes('full-width q-gutter-sm q-mt-sm'):
+                        # Status-Filter
+                        status_options = {None: 'Alle Status'}
+                        status_options.update({s: STATUS_LABELS[s][0] for s in TicketStatus.ALL})
+                        ui.select(
+                            status_options,
+                            label='Status',
+                            value=filter_state['status'],
+                            on_change=lambda e: [filter_state.update({'status': e.value}), refresh()]
+                        ).classes('col')
+
+                        # Bereich-Filter
+                        bereiche = db.tickets.get_bereiche()
+                        if lesbare_ids is not None:
+                            bereiche = [b for b in bereiche if b.id in lesbare_ids]
+                        bereich_options = {None: 'Alle Bereiche'}
+                        bereich_options.update({b.id: b.name for b in bereiche})
+                        ui.select(
+                            bereich_options,
+                            label='Bereich',
+                            value=filter_state['bereich'],
+                            on_change=lambda e: [filter_state.update({'bereich': e.value}), refresh()]
+                        ).classes('col')
+
+                        # Priorität-Filter
+                        prioritaet_options = {None: 'Alle Prioritäten'}
+                        prioritaet_options.update({p: TicketPrioritaet.LABELS[p] for p in TicketPrioritaet.ALL})
+                        ui.select(
+                            prioritaet_options,
+                            label='Priorität',
+                            value=filter_state['prioritaet'],
+                            on_change=lambda e: [filter_state.update({'prioritaet': e.value}), refresh()]
+                        ).classes('col')
+
+                        # Zuweisung-Filter
+                        alle_user = [u for u in db.users.list_all() if u.active and u.deleted_at is None]
+                        zuweisung_options = {None: 'Alle Zuweisungen'}
+                        zuweisung_options.update({u.id: u.username for u in alle_user})
+                        ui.select(
+                            zuweisung_options,
+                            label='Zugewiesen an',
+                            value=filter_state['zuweisung'],
+                            on_change=lambda e: [filter_state.update({'zuweisung': e.value}), refresh()]
+                        ).classes('col')
+
+                    with ui.row().classes('justify-end q-mt-sm'):
+                        ui.button(
+                            'Filter zurücksetzen',
+                            icon='refresh',
+                            on_click=lambda: [
+                                filter_state.update({'status': None}),
+                                filter_state.update({'bereich': None}),
+                                filter_state.update({'prioritaet': None}),
+                                filter_state.update({'zuweisung': None}),
+                                refresh()
+                            ]
+                        ).props('flat color=secondary size=sm')
+
             liste_container = ui.column().classes('full-width')
-            _render_ticket_liste(db, user, lesbare_ids, liste_container)
+            _render_ticket_liste(db, user, lesbare_ids, liste_container, filter_state)
 
     # -------------------------------------------------------------------
     # /tickets/admin  – Bereiche, Kategorien, Berechtigungen verwalten
@@ -453,21 +523,35 @@ def create_ticket_pages(db: VereinsDB):
 # Render-Helfer
 # ---------------------------------------------------------------------------
 
-def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, container):
+def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, container, filter_state: dict):
     alle_tickets = db.tickets.list_tickets()
     bereiche = {b.id: b for b in db.tickets.get_bereiche()}
+    alle_user = {u.id: u for u in db.users.list_all() if u.active and u.deleted_at is None}
 
     if lesbare_ids is not None:
         alle_tickets = [t for t in alle_tickets if t.bereich_id in lesbare_ids]
 
-    if not alle_tickets:
+    # Filter anwenden
+    gefilterte_tickets = alle_tickets
+    if filter_state['status']:
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.status == filter_state['status']]
+    if filter_state['bereich']:
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.bereich_id == filter_state['bereich']]
+    if filter_state['prioritaet']:
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.prioritaet == filter_state['prioritaet']]
+    if filter_state['zuweisung']:
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.zugewiesen_an == filter_state['zuweisung']]
+
+    if not gefilterte_tickets:
         with container:
-            ui.label('Keine Tickets vorhanden.').classes('text-grey q-mt-md')
+            ui.label('Keine Tickets gefunden.').classes('text-grey q-mt-md')
         return
 
     with container:
-        for ticket in alle_tickets:
+        for ticket in gefilterte_tickets:
             bereich_name = bereiche[ticket.bereich_id].name if ticket.bereich_id in bereiche else '—'
+            zugewiesen_an = alle_user[ticket.zugewiesen_an].username if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user else '—'
+            
             with ui.card().classes('full-width q-mb-sm cursor-pointer').on(
                 'click', lambda t=ticket: ui.navigate.to(f'/tickets/{t.id}')
             ):
@@ -477,6 +561,8 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
                             ui.label(f'#{ticket.id}').classes('text-caption text-grey-6')
                             ui.label(ticket.titel).classes('text-subtitle2 text-weight-bold')
                         ui.label(f'Bereich: {bereich_name}').classes('text-caption text-grey-7')
+                        if ticket.zugewiesen_an:
+                            ui.label(f'Zugewiesen: {zugewiesen_an}').classes('text-caption text-grey-7')
                     _status_badge(ticket.status)
 
 
