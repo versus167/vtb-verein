@@ -21,12 +21,15 @@
 ### Phase 4.3 - Ticket-UI
 - [x] Ticket-Übersicht (Liste mit Filter nach Status, Bereich, Priorität, Zuweisung)
 - [ ] Ticket erstellen (Dialog: Titel, Beschreibung, Bereich, Kategorie, Priorität, Anhänge)
+  - [x] Basis-Dialog (Titel, Beschreibung, Bereich, Kategorie, Zuweisung)
+  - [ ] Priorität-Feld hinzufügen
+  - [ ] Datei-Upload für Anhänge
 - [ ] Ticket-Detailseite
   - [x] Statuswechsel-Button (je nach Berechtigung)
   - [x] Zuweisung ändern
   - [x] Kommentare (öffentlich/intern)
   - [ ] Anhänge anzeigen & hochladen
-  - [ ] History-Expander
+  - [ ] History-Expander (lazy load)
 - [x] Bereiche & Kategorien verwalten (Admin)
 - [x] Navigation & Dashboard-Card ergänzen
 
