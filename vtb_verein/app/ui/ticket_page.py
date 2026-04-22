@@ -343,6 +343,7 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label(f'Bereich: {bereich_name}')
                     if ticket.kategorie_id and ticket.kategorie_id in kategorien:
                         ui.label(f'Kategorie: {kategorien[ticket.kategorie_id].name}')
+                    ui.label(f'Priorität: {TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)}')
                     if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user:
                         ui.label(f'Zugewiesen: {alle_user[ticket.zugewiesen_an].username}')
                     ui.label(f'Erstellt: {ticket.created_at[:10] if ticket.created_at else "—"}')
@@ -563,6 +564,7 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
                         ui.label(f'Bereich: {bereich_name}').classes('text-caption text-grey-7')
                         if ticket.zugewiesen_an:
                             ui.label(f'Zugewiesen: {zugewiesen_an}').classes('text-caption text-grey-7')
+                        ui.label(f'Priorität: {TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)}').classes('text-caption text-grey-8')
                     _status_badge(ticket.status)
 
 
@@ -643,6 +645,11 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
         kat_options.update({k.id: k.name for k in kategorien})
         kat_select = ui.select(kat_options, label='Kategorie', value=None).classes('full-width')
 
+        prioritaet_options = {p: TicketPrioritaet.LABELS[p] for p in TicketPrioritaet.ALL}
+        prioritaet_select = ui.select(
+            prioritaet_options, label='Priorität', value=TicketPrioritaet.NORMAL
+        ).classes('full-width')
+
         assign_options = {None: '(nicht zugewiesen)'}
         assign_options.update({u.id: u.username for u in alle_user})
         assign_select = ui.select(assign_options, label='Zuweisen an', value=None).classes('full-width')
@@ -668,6 +675,7 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
                     titel=titel,
                     beschreibung=beschreibung_input.value.strip() or '',
                     status=TicketStatus.OFFEN,
+                    prioritaet=prioritaet_select.value,
                     bereich_id=bereich_id,
                     kategorie_id=kat_select.value,
                     gemeldet_von=user.id,
