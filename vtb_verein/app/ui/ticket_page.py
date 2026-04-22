@@ -10,19 +10,17 @@ Seiten:
 Permission-Logik:
   - Globales TICKETS_READ  → Zugang zur Ticket-Seite überhaupt
   - darf_lesen (Bereich)   → Tickets dieses Bereichs sehen (Admins immer)
-  - darf_bearbeiten        → Status ändern, Kommentare hinzufügen (inkl. interne)
-  - darf_schliessen        → Status auf 'erledigt' / 'abgelehnt' setzen
+  - TICKETS_EDIT ODER darf_bearbeiten (Bereich) → Status ändern, Kommentare hinzufügen (inkl. interne)
+  - TICKETS_CLOSE ODER darf_schliessen (Bereich) → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_CREATE         → Neues Ticket erstellen
   - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission)
   - TICKETS_DELETE         → Ticket soft-löschen
   - TICKETS_INTERN_READ    → Interne Kommentare global (alle Bereiche);
-                             alternativ: darf_bearbeiten im Bereich reicht auch
+                             alternativ: TICKETS_EDIT oder darf_bearbeiten im Bereich reicht auch
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
 
-HINWEIS: TICKETS_CLOSE und TICKETS_ASSIGN sind als globale Permissions
-definiert, werden aber NICHT als Guard in _kann_schliessen/_kann_bearbeiten
-verwendet. Die Bereichs-Tabelle (darf_schliessen, darf_bearbeiten) ist
-die alleinige Kontrolle für normale User. Admins haben immer vollen Zugriff.
+HINWEIS: Globale Permissions (TICKETS_EDIT, TICKETS_CLOSE) erlauben Bearbeitung in allen Bereichen,
+in denen der User lesenden Zugriff hat. Bereichsspezifische Rechte sind weiterhin möglich.
 
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
 Routen (/tickets/{ticket_id}) registriert werden.
@@ -58,8 +56,8 @@ STATUS_LABELS: dict[str, tuple[str, str]] = {
 }
 
 STATUS_UEBERGAENGE = {
-    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
-    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ABGELEHNT],
+    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
+    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
     TicketStatus.EINGEPLANT:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT],
     TicketStatus.RUECKFRAGE:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
     TicketStatus.ERLEDIGT:    [],
@@ -85,20 +83,23 @@ def _lesbare_bereich_ids(db: VereinsDB, user) -> set[int] | None:
 
 
 def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Bereichsspezifisches darf_bearbeiten ist die alleinige Kontrolle.
+    """Globale TICKETS_EDIT ODER bereichsspezifisches darf_bearbeiten.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
+        return True
+    if AuthHelper.has_permission(Permission.TICKETS_EDIT):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(bereich_id, user.id)
 
 
 def _kann_schliessen(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Bereichsspezifisches darf_schliessen ist die alleinige Kontrolle.
-    Keine globale TICKETS_CLOSE-Guard – die ist in der UI nicht vergebar.
+    """Globale TICKETS_CLOSE ODER bereichsspezifisches darf_schliessen.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
+        return True
+    if AuthHelper.has_permission(Permission.TICKETS_CLOSE):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(bereich_id, user.id)
 
@@ -130,7 +131,7 @@ def create_ticket_pages(db: VereinsDB):
 
         # Filter-State
         filter_state = {
-            'status': None,
+            'status': 'aktiv',
             'bereich': None,
             'prioritaet': None,
             'zuweisung': None,
@@ -164,7 +165,7 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label('Filter').classes('text-subtitle2')
                     with ui.row().classes('full-width q-gutter-sm q-mt-sm'):
                         # Status-Filter
-                        status_options = {None: 'Alle Status'}
+                        status_options = {None: 'Alle Status', 'aktiv': 'Aktive Tickets'}
                         status_options.update({s: STATUS_LABELS[s][0] for s in TicketStatus.ALL})
                         ui.select(
                             status_options,
@@ -212,7 +213,7 @@ def create_ticket_pages(db: VereinsDB):
                             'Filter zurücksetzen',
                             icon='refresh',
                             on_click=lambda: [
-                                filter_state.update({'status': None}),
+                                filter_state.update({'status': 'aktiv'}),
                                 filter_state.update({'bereich': None}),
                                 filter_state.update({'prioritaet': None}),
                                 filter_state.update({'zuweisung': None}),
@@ -343,6 +344,7 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label(f'Bereich: {bereich_name}')
                     if ticket.kategorie_id and ticket.kategorie_id in kategorien:
                         ui.label(f'Kategorie: {kategorien[ticket.kategorie_id].name}')
+                    ui.label(f'Priorität: {TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)}')
                     if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user:
                         ui.label(f'Zugewiesen: {alle_user[ticket.zugewiesen_an].username}')
                     ui.label(f'Erstellt: {ticket.created_at[:10] if ticket.created_at else "—"}')
@@ -533,7 +535,9 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
 
     # Filter anwenden
     gefilterte_tickets = alle_tickets
-    if filter_state['status']:
+    if filter_state['status'] == 'aktiv':
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.status not in SCHLIESS_STATUS]
+    elif filter_state['status']:
         gefilterte_tickets = [t for t in gefilterte_tickets if t.status == filter_state['status']]
     if filter_state['bereich']:
         gefilterte_tickets = [t for t in gefilterte_tickets if t.bereich_id == filter_state['bereich']]
@@ -563,6 +567,7 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
                         ui.label(f'Bereich: {bereich_name}').classes('text-caption text-grey-7')
                         if ticket.zugewiesen_an:
                             ui.label(f'Zugewiesen: {zugewiesen_an}').classes('text-caption text-grey-7')
+                        ui.label(f'Priorität: {TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)}').classes('text-caption text-grey-8')
                     _status_badge(ticket.status)
 
 
@@ -643,6 +648,11 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
         kat_options.update({k.id: k.name for k in kategorien})
         kat_select = ui.select(kat_options, label='Kategorie', value=None).classes('full-width')
 
+        prioritaet_options = {p: TicketPrioritaet.LABELS[p] for p in TicketPrioritaet.ALL}
+        prioritaet_select = ui.select(
+            prioritaet_options, label='Priorität', value=TicketPrioritaet.NORMAL
+        ).classes('full-width')
+
         assign_options = {None: '(nicht zugewiesen)'}
         assign_options.update({u.id: u.username for u in alle_user})
         assign_select = ui.select(assign_options, label='Zuweisen an', value=None).classes('full-width')
@@ -668,6 +678,7 @@ def _open_ticket_dialog(db: VereinsDB, user, lesbare_ids: set[int] | None, refre
                     titel=titel,
                     beschreibung=beschreibung_input.value.strip() or '',
                     status=TicketStatus.OFFEN,
+                    prioritaet=prioritaet_select.value,
                     bereich_id=bereich_id,
                     kategorie_id=kat_select.value,
                     gemeldet_von=user.id,
@@ -694,7 +705,7 @@ def _open_ticket_bearbeiten_dialog(
 ):
     actor = user.username
     erlaubte_status = list(STATUS_UEBERGAENGE.get(ticket.status, []))
-    if not kann_schliessen:
+    if not kann_schliessen and not _is_admin(user):
         erlaubte_status = [s for s in erlaubte_status if s not in SCHLIESS_STATUS]
 
     with ui.dialog() as dialog, ui.card().style('min-width: 420px'):

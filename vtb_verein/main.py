@@ -118,9 +118,8 @@ def main_page():
                         ui.label('Tickets').classes('text-h6 q-mt-sm')
                         ui.label('Anfragen und Aufgaben').classes('text-caption text-grey')
 
-            # Benutzerverwaltung – sichtbar ab USERS_READ (ansehen reicht)
-            # USERS_MANAGE-User sehen die Kachel ebenfalls, da MANAGE ⊇ READ.
-            if user.has_permission(Permission.USERS_READ):
+            # Benutzerverwaltung – nur echte Admins (USERS_MANAGE)
+            if user.has_permission(Permission.USERS_MANAGE):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/users')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('people', size='3rem').classes('text-primary')

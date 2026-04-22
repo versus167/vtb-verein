@@ -198,6 +198,12 @@ class UserService:
             active=active
         )
         
+        # Default-Permissions für die Rolle setzen
+        from app.models.permission import Permission
+        default_permissions = Permission.defaults_for_role(role)
+        if default_permissions:
+            self.db.permissions.set_permissions_for_user(user.id, default_permissions, created_by)
+        
         # Magic-Link automatisch senden (falls E-Mail konfiguriert)
         if send_magic_link and active:
             self.send_magic_link(email)
