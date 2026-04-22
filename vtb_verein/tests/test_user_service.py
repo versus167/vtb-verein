@@ -62,8 +62,12 @@ class TestLastAdminProtection:
         with pytest.raises(ValueError) as exc_info:
             user_service.update(
                 user_id=admin.id,
+                username=admin.username,
+                email=admin.email,
                 role="user",
-                updated_by="system"
+                active=admin.active,
+                updated_by="system",
+                expected_version=admin.version
             )
         
         assert "letzte aktive Administrator" in str(exc_info.value)
@@ -97,8 +101,12 @@ class TestLastAdminProtection:
         with pytest.raises(ValueError) as exc_info:
             user_service.update(
                 user_id=admin.id,
+                username=admin.username,
+                email=admin.email,
+                role=admin.role,
                 active=False,
-                updated_by="system"
+                updated_by="system",
+                expected_version=admin.version
             )
         
         assert "letzte aktive Administrator" in str(exc_info.value)
@@ -138,11 +146,19 @@ class TestLastAdminProtection:
         assert user_service.count_active_admins() == 2
         
         # Act: Ändere Rolle von admin2 zu user
-        updated_admin2 = user_service.update(
+        success = user_service.update(
             user_id=admin2.id,
+            username=admin2.username,
+            email=admin2.email,
             role="user",
-            updated_by="system"
+            active=admin2.active,
+            updated_by="system",
+            expected_version=admin2.version
         )
+        assert success is True
+        
+        # Hole aktualisiertes Objekt
+        updated_admin2 = user_service.get_by_id(admin2.id)
         
         # Assert: Änderung sollte erfolgreich sein
         assert updated_admin2.role == "user"
@@ -182,11 +198,19 @@ class TestLastAdminProtection:
         assert user_service.count_active_admins() == 2
         
         # Act: Deaktiviere admin2
-        updated_admin2 = user_service.update(
+        success = user_service.update(
             user_id=admin2.id,
+            username=admin2.username,
+            email=admin2.email,
+            role=admin2.role,
             active=False,
-            updated_by="system"
+            updated_by="system",
+            expected_version=admin2.version
         )
+        assert success is True
+        
+        # Hole aktualisiertes Objekt
+        updated_admin2 = user_service.get_by_id(admin2.id)
         
         # Assert: Änderung sollte erfolgreich sein
         assert updated_admin2.role == "admin"
@@ -220,9 +244,12 @@ class TestLastAdminProtection:
         with pytest.raises(ValueError) as exc_info:
             user_service.update(
                 user_id=admin.id,
+                username=admin.username,
+                email=admin.email,
                 role="user",
                 active=False,
-                updated_by="system"
+                updated_by="system",
+                expected_version=admin.version
             )
         
         assert "letzte aktive Administrator" in str(exc_info.value)
@@ -260,11 +287,19 @@ class TestLastAdminProtection:
         assert user_service.count_active_admins() == 1
         
         # Act: Ändere normalen User (sollte erlaubt sein)
-        updated_user = user_service.update(
+        success = user_service.update(
             user_id=normal_user.id,
+            username=normal_user.username,
+            email=normal_user.email,
+            role=normal_user.role,
             active=False,
-            updated_by="system"
+            updated_by="system",
+            expected_version=normal_user.version
         )
+        assert success is True
+        
+        # Hole aktualisiertes Objekt
+        updated_user = user_service.get_by_id(normal_user.id)
         
         # Assert: Änderung sollte erfolgreich sein
         assert updated_user.active is False
@@ -297,11 +332,19 @@ class TestLastAdminProtection:
         assert user_service.count_active_admins() == 1
         
         # Act: Ändere inaktiven Admin (sollte erlaubt sein)
-        updated_admin = user_service.update(
+        success = user_service.update(
             user_id=inactive_admin.id,
+            username=inactive_admin.username,
+            email=inactive_admin.email,
             role="user",
-            updated_by="system"
+            active=inactive_admin.active,
+            updated_by="system",
+            expected_version=inactive_admin.version
         )
+        assert success is True
+        
+        # Hole aktualisiertes Objekt
+        updated_admin = user_service.get_by_id(inactive_admin.id)
         
         # Assert: Änderung sollte erfolgreich sein
         assert updated_admin.role == "user"

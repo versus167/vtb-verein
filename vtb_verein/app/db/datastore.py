@@ -15,7 +15,10 @@ VereinsDB Facade - Maintains backward compatibility while delegating to reposito
 @refactored: AI Assistant
 '''
 
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.kassenbuch_service import KassenbuchService
 from app.db.database import Database
 from app.db.mitglied_repository import MitgliedRepository
 from app.db.abteilung_repository import AbteilungRepository
@@ -36,7 +39,6 @@ from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtig
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
-from app.services.kassenbuch_service import KassenbuchService
 from app.services.ticket_service import TicketService
 
 
@@ -44,6 +46,7 @@ class VereinsDB:
     """Data Access Layer Facade - Delegates to specialized repositories."""
 
     def __init__(self, path: str):
+        from app.services.kassenbuch_service import KassenbuchService
         self.path = path
         self._database = Database(path)
         self.conn = self._database.conn
@@ -100,7 +103,7 @@ class VereinsDB:
         return self._auth_token_repo
 
     @property
-    def kassenbuch(self) -> KassenbuchService:
+    def kassenbuch(self) -> "KassenbuchService":
         return self._kassenbuch_service
 
     @property

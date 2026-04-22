@@ -90,7 +90,7 @@ class TestDateInputHelper:
         
         # 50-99 → 1950-1999
         assert DateInputHelper.parse_date('01.01.50') == '1950-01-01'
-        assert DateInputHelper.parse_date('01.01.99') == '1999-12-31'
+        assert DateInputHelper.parse_date('01.01.99') == '1999-01-01'
     
     def test_leap_year(self):
         """Test: Schaltjahre"""
