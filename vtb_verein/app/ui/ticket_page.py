@@ -131,7 +131,7 @@ def create_ticket_pages(db: VereinsDB):
 
         # Filter-State
         filter_state = {
-            'status': None,
+            'status': 'aktiv',
             'bereich': None,
             'prioritaet': None,
             'zuweisung': None,
@@ -165,7 +165,7 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label('Filter').classes('text-subtitle2')
                     with ui.row().classes('full-width q-gutter-sm q-mt-sm'):
                         # Status-Filter
-                        status_options = {None: 'Alle Status'}
+                        status_options = {None: 'Alle Status', 'aktiv': 'Aktive Tickets'}
                         status_options.update({s: STATUS_LABELS[s][0] for s in TicketStatus.ALL})
                         ui.select(
                             status_options,
@@ -213,7 +213,7 @@ def create_ticket_pages(db: VereinsDB):
                             'Filter zurücksetzen',
                             icon='refresh',
                             on_click=lambda: [
-                                filter_state.update({'status': None}),
+                                filter_state.update({'status': 'aktiv'}),
                                 filter_state.update({'bereich': None}),
                                 filter_state.update({'prioritaet': None}),
                                 filter_state.update({'zuweisung': None}),
@@ -535,7 +535,9 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
 
     # Filter anwenden
     gefilterte_tickets = alle_tickets
-    if filter_state['status']:
+    if filter_state['status'] == 'aktiv':
+        gefilterte_tickets = [t for t in gefilterte_tickets if t.status not in SCHLIESS_STATUS]
+    elif filter_state['status']:
         gefilterte_tickets = [t for t in gefilterte_tickets if t.status == filter_state['status']]
     if filter_state['bereich']:
         gefilterte_tickets = [t for t in gefilterte_tickets if t.bereich_id == filter_state['bereich']]
