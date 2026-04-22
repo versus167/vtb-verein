@@ -8,18 +8,21 @@ Repository: https://github.com/versus167/vtb-verein
 
 ## Datenbank-Prinzipien (WICHTIG - immer beachten!)
 
+**Aktuell: SQLite** (schneller Einstieg). Mögliche zukünftige Migration zu PostgreSQL.
+
 ### Soft-Delete
 - Wir verwenden **ausschließlich** Soft-Delete über `deleted_at` und `deleted_by`
 - Repository-Methoden heißen `mark_*_deleted()`, nicht `delete_*()`
 - Hard-Delete ist nur für zukünftige Prune-Funktionen vorgesehen
-- Prune-Operationen sollen bewusst NICHT in der History landen
+- **Prune-Operationen**: Noch nicht implementiert (TODO: Später für Datenbank-Cleanup) 
 
 ### History-Tracking
 - Jede Haupttabelle hat eine entsprechende `*_history` Tabelle
-- History wird über DB-Trigger automatisch geschrieben
-- **Trigger nur für INSERT und UPDATE** (bei Version-Änderung)
-- **Keine DELETE-Trigger** - Prune soll nicht getrackt werden
-- Bei Soft-Delete wird der letzte Stand mit `deleted_at` in History geschrieben
+- History wird über **SQLite-Trigger in `database.py`** automatisch geschrieben
+- **INSERT-Trigger**: Jeder neue Record wird sofort in die History geschrieben
+- **UPDATE-Trigger**: Nur wenn `version != old.version`, wird in History geschrieben
+- **DELETE-Trigger**: Schreibt den finalen Stand in History (für echte Deletes, nicht Soft-Delete)
+- Bei Soft-Delete (via `mark_*_deleted()`) wird der letzte Stand mit `deleted_at`/`deleted_by` in History geschrieben
 
 ### Versionierung
 - Jede Entität hat ein `version` Feld (Optimistic Locking)
@@ -58,6 +61,6 @@ Repository: https://github.com/versus167/vtb-verein
 - Relative Datumsberechnungen mit SQLite-Funktionen: `date('now', '-6 months')`
 - Berechnete Flags direkt im SQL (Performance)
 
-API nutzt Service-Layer, nicht direkt UI-Code
+
 
 Erinnere mich, wenn in einem Thread eine Anweisung/Regel auftritt, die vlt. hier in die Instruction passt, dass ich das hier ändere!
