@@ -43,6 +43,8 @@ class Permission:
     TICKETS_READ             = 'tickets.read'
     # Neues Ticket erstellen
     TICKETS_CREATE           = 'tickets.create'
+    # Ticket bearbeiten (Status ändern, Kommentare hinzufügen)
+    TICKETS_EDIT             = 'tickets.edit'
     # Ticket einem anderen User zuweisen
     TICKETS_ASSIGN           = 'tickets.assign'
     # Ticket schließen / wieder öffnen
@@ -83,10 +85,12 @@ class Permission:
                 cls.BEITRAEGE_WRITE,
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
-                cls.USERS_READ,
-                # Tickets: lesen + erstellen für alle eingeloggten User
+                # cls.USERS_READ,  # Entfernt, da nicht verwendet
+                # Tickets: lesen + erstellen + bearbeiten + schließen für alle eingeloggten User
                 cls.TICKETS_READ,
                 cls.TICKETS_CREATE,
+                cls.TICKETS_EDIT,
+                cls.TICKETS_CLOSE,
             }
 
         if role == 'readonly':

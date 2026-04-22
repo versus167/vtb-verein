@@ -33,8 +33,8 @@ class UngueltigerStatusWechselError(Exception):
 
 # Erlaubte Statusübergänge
 STATUS_UEBERGAENGE: dict[str, list[str]] = {
-    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
-    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ABGELEHNT],
+    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
+    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
     TicketStatus.EINGEPLANT:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT],
     TicketStatus.RUECKFRAGE:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
     TicketStatus.ERLEDIGT:    [],

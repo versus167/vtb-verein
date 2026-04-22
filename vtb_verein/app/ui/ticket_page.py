@@ -10,19 +10,17 @@ Seiten:
 Permission-Logik:
   - Globales TICKETS_READ  → Zugang zur Ticket-Seite überhaupt
   - darf_lesen (Bereich)   → Tickets dieses Bereichs sehen (Admins immer)
-  - darf_bearbeiten        → Status ändern, Kommentare hinzufügen (inkl. interne)
-  - darf_schliessen        → Status auf 'erledigt' / 'abgelehnt' setzen
+  - TICKETS_EDIT ODER darf_bearbeiten (Bereich) → Status ändern, Kommentare hinzufügen (inkl. interne)
+  - TICKETS_CLOSE ODER darf_schliessen (Bereich) → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_CREATE         → Neues Ticket erstellen
   - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission)
   - TICKETS_DELETE         → Ticket soft-löschen
   - TICKETS_INTERN_READ    → Interne Kommentare global (alle Bereiche);
-                             alternativ: darf_bearbeiten im Bereich reicht auch
+                             alternativ: TICKETS_EDIT oder darf_bearbeiten im Bereich reicht auch
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
 
-HINWEIS: TICKETS_CLOSE und TICKETS_ASSIGN sind als globale Permissions
-definiert, werden aber NICHT als Guard in _kann_schliessen/_kann_bearbeiten
-verwendet. Die Bereichs-Tabelle (darf_schliessen, darf_bearbeiten) ist
-die alleinige Kontrolle für normale User. Admins haben immer vollen Zugriff.
+HINWEIS: Globale Permissions (TICKETS_EDIT, TICKETS_CLOSE) erlauben Bearbeitung in allen Bereichen,
+in denen der User lesenden Zugriff hat. Bereichsspezifische Rechte sind weiterhin möglich.
 
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
 Routen (/tickets/{ticket_id}) registriert werden.
@@ -58,8 +56,8 @@ STATUS_LABELS: dict[str, tuple[str, str]] = {
 }
 
 STATUS_UEBERGAENGE = {
-    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
-    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ABGELEHNT],
+    TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
+    TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
     TicketStatus.EINGEPLANT:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT],
     TicketStatus.RUECKFRAGE:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
     TicketStatus.ERLEDIGT:    [],
@@ -85,20 +83,23 @@ def _lesbare_bereich_ids(db: VereinsDB, user) -> set[int] | None:
 
 
 def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Bereichsspezifisches darf_bearbeiten ist die alleinige Kontrolle.
+    """Globale TICKETS_EDIT ODER bereichsspezifisches darf_bearbeiten.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
+        return True
+    if AuthHelper.has_permission(Permission.TICKETS_EDIT):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(bereich_id, user.id)
 
 
 def _kann_schliessen(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Bereichsspezifisches darf_schliessen ist die alleinige Kontrolle.
-    Keine globale TICKETS_CLOSE-Guard – die ist in der UI nicht vergebar.
+    """Globale TICKETS_CLOSE ODER bereichsspezifisches darf_schliessen.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
+        return True
+    if AuthHelper.has_permission(Permission.TICKETS_CLOSE):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(bereich_id, user.id)
 
@@ -702,7 +703,7 @@ def _open_ticket_bearbeiten_dialog(
 ):
     actor = user.username
     erlaubte_status = list(STATUS_UEBERGAENGE.get(ticket.status, []))
-    if not kann_schliessen:
+    if not kann_schliessen and not _is_admin(user):
         erlaubte_status = [s for s in erlaubte_status if s not in SCHLIESS_STATUS]
 
     with ui.dialog() as dialog, ui.card().style('min-width: 420px'):

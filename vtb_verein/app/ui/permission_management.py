@@ -53,7 +53,6 @@ PERMISSION_GROUPS = [
         'label': 'Benutzerverwaltung',
         'icon': 'manage_accounts',
         'permissions': [
-            (Permission.USERS_READ,   'Ansehen'),
             (Permission.USERS_MANAGE, 'Verwalten'),
         ]
     },
@@ -62,6 +61,20 @@ PERMISSION_GROUPS = [
         'icon': 'settings',
         'permissions': [
             (Permission.SYSTEM_CONFIG, 'Konfiguration'),
+        ]
+    },
+    {
+        'label': 'Tickets',
+        'icon': 'confirmation_number',
+        'permissions': [
+            (Permission.TICKETS_READ,             'Ansehen'),
+            (Permission.TICKETS_CREATE,           'Erstellen'),
+            (Permission.TICKETS_EDIT,             'Bearbeiten'),
+            (Permission.TICKETS_ASSIGN,           'Zuweisen'),
+            (Permission.TICKETS_CLOSE,            'Schließen'),
+            (Permission.TICKETS_DELETE,           'Löschen'),
+            (Permission.TICKETS_INTERN_READ,      'Interne Kommentare lesen'),
+            (Permission.TICKETS_BEREICHE_VERWALTEN, 'Bereiche verwalten'),
         ]
     },
 ]

@@ -14,6 +14,10 @@ def create_navigation(db=None):
             (Kassenbuch-Button für normale User). Admins sehen den Button immer.
     """
     user = AuthHelper.get_current_user()
+    if user and db:
+        # Permissions frisch aus DB laden, damit Änderungen durch Admins sofort wirksam werden
+        AuthHelper.refresh_permissions(db.permissions)
+        user = AuthHelper.get_current_user()  # Aktualisierten User holen
     current_path = app.storage.user.get('current_path', '/')
 
     # gt-xs: Navigation nur auf Screens >= sm (600px) sichtbar
@@ -71,8 +75,12 @@ def create_navigation(db=None):
                     else:
                         kasse_btn.props('flat').classes('text-white')
 
-                # Tickets – sichtbar ab TICKETS_READ
-                if user and user.has_permission(Permission.TICKETS_READ):
+                # Tickets – sichtbar ab TICKETS_READ oder wenn User bereichsspezifische Rechte hat
+                show_tickets = user and (
+                    user.has_permission(Permission.TICKETS_READ) or
+                    (db is not None and len(db.ticket_bereich_berechtigungen.get_lesbare_bereich_ids(user.id)) > 0)
+                )
+                if show_tickets:
                     tickets_btn = ui.button('Tickets', on_click=lambda: ui.navigate.to('/tickets'), icon='confirmation_number')
                     if current_path == '/tickets':
                         tickets_btn.props('unelevated').classes('bg-blue-10 text-white')
