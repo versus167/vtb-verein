@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 12  # Version 12: Vereinfachte Ticket-Permissions (TICKETS_ACCESS)
+SCHEMA_VERSION = 13  # Version 13: Multi-Channel Notifications (Telegram, Matrix)
 
 
 class Database:
@@ -114,6 +114,9 @@ class Database:
         if current == 11:
             self._migrate_11_to_12()
             current = 12
+        if current == 12:
+            self._migrate_12_to_13()
+            current = 13
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1877,3 +1880,88 @@ class Database:
             """)
 
         self._set_schema_version(12)
+
+    def _migrate_12_to_13(self):
+        """Migration 12->13: Multi-Channel Notifications (Telegram, Matrix).
+        
+        Erweitert users-Tabelle um:
+        - telegram_id: Telegram-Benutzer-ID oder @username
+        - matrix_id: Matrix-Benutzer-ID (z.B. @user:matrix.org)
+        - preferred_contact: Bevorzugter Kommunikationskanal (email, telegram, matrix)
+        """
+        with self.cursor() as cur:
+            # Neue Spalten zur users-Tabelle hinzufügen
+            cur.execute("ALTER TABLE users ADD COLUMN telegram_id TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN matrix_id TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN preferred_contact TEXT DEFAULT 'email'")
+            
+            # Neue Spalten zur users_history-Tabelle hinzufügen
+            cur.execute("ALTER TABLE users_history ADD COLUMN telegram_id TEXT")
+            cur.execute("ALTER TABLE users_history ADD COLUMN matrix_id TEXT")
+            cur.execute("ALTER TABLE users_history ADD COLUMN preferred_contact TEXT")
+            
+            # Alte Trigger löschen (um sie neu zu erstellen)
+            cur.execute("DROP TRIGGER IF EXISTS users_audit_insert")
+            cur.execute("DROP TRIGGER IF EXISTS users_audit_update")
+            cur.execute("DROP TRIGGER IF EXISTS users_audit_delete")
+            
+            # Neue Trigger mit zusätzlichen Feldern erstellen
+            cur.execute("""
+                CREATE TRIGGER users_audit_insert
+                AFTER INSERT ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        telegram_id, matrix_id, preferred_contact,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER users_audit_update
+                AFTER UPDATE ON users
+                FOR EACH ROW
+                WHEN NEW.version != OLD.version
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        telegram_id, matrix_id, preferred_contact,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END;
+            """)
+
+            cur.execute("""
+                CREATE TRIGGER users_audit_delete
+                AFTER DELETE ON users
+                FOR EACH ROW
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login,
+                        telegram_id, matrix_id, preferred_contact,
+                        created_at, created_by, updated_at, updated_by,
+                        deleted_at, deleted_by
+                    ) VALUES (
+                        OLD.id, OLD.version, OLD.username, OLD.email, OLD.password_hash, OLD.role,
+                        OLD.active, OLD.last_login, OLD.telegram_id, OLD.matrix_id, OLD.preferred_contact,
+                        OLD.created_at, OLD.created_by, OLD.updated_at, OLD.updated_by,
+                        OLD.deleted_at, OLD.deleted_by
+                    );
+                END;
+            """)
+
+        self._set_schema_version(13)

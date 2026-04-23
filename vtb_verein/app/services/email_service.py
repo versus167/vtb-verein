@@ -156,3 +156,27 @@ VTB Vereinsverwaltung
         except Exception as e:
             print(f"❌ E-Mail-Fehler: {e}")
             return False
+    
+    @staticmethod
+    def send_text_email(recipient_email: str, subject: str, body: str) -> bool:
+        """
+        Sendet einfache Text-E-Mail (für Benachrichtigungen, etc.)
+        
+        Args:
+            recipient_email: E-Mail-Adresse des Empfängers
+            subject: Betreff
+            body: E-Mail-Text
+            
+        Returns:
+            True wenn erfolgreich, False bei Fehler
+        """
+        if not EmailConfig.is_configured():
+            print("⚠️  E-Mail-Konfiguration fehlt. Bitte .env-Datei prüfen.")
+            return False
+        
+        return EmailService._send_email(
+            to=recipient_email,
+            subject=subject,
+            text_body=body,
+            html_body=None
+        )

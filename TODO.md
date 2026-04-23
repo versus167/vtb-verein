@@ -119,16 +119,18 @@
   - E-Mail-Templates konfigurierbar
 
 - [ ] Multi-Channel Benachrichtigungen (Email, Telegram, Matrix)
-  - **Phase 1: DB-Schema & Service-Architektur**
-    - [ ] Migration: `users` um Felder ergänzen
-      - `telegram_id` (TEXT, NULL – z.B. "@username" oder Chat-ID)
-      - `matrix_id` (TEXT, NULL – z.B. "@user:matrix.org")
-      - `preferred_contact` (TEXT, DEFAULT 'email' – 'email'|'telegram'|'matrix')
-    - [ ] `TelegramService` erstellen (`python-telegram-bot`)
-    - [ ] `MatrixService` erstellen (matrix-client oder HTTP-Requests)
-    - [ ] `NotificationService` als Abstraktions-Layer
-      - Delegiert basierend auf `user.preferred_contact`
-      - Fallback-Logik (z.B. Telegram → Email bei Fehler)
+  - **Phase 1: DB-Schema & Service-Architektur** ✅ COMPLETED
+    - [x] Migration: `users` um Felder ergänzen
+      - [x] `telegram_id` (TEXT, NULL – z.B. "@username" oder Chat-ID)
+      - [x] `matrix_id` (TEXT, NULL – z.B. "@user:matrix.org")
+      - [x] `preferred_contact` (TEXT, DEFAULT 'email' – 'email'|'telegram'|'matrix')
+    - [x] `TelegramService` erstellen (`python-telegram-bot`)
+    - [x] `MatrixService` erstellen (matrix-client oder HTTP-Requests)
+    - [x] `NotificationService` als Abstraktions-Layer
+      - [x] Delegiert basierend auf `user.preferred_contact`
+      - [x] Fallback-Logik (z.B. Telegram → Email bei Fehler)
+    - [x] UserRepository um neue Methoden erweitern (`update_contact_preferences`)
+    - [x] Tests für alle Services
   - **Phase 2: UI Integration**
     - [ ] User-Profile: Kontaktkonfiguration
       - Telegram-ID eingeben und validieren
