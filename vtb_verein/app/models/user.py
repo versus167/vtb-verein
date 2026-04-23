@@ -21,6 +21,12 @@ class User:
     updated_by: str
     deleted_at: str | None = None
     deleted_by: str | None = None
+    
+    # Multi-Channel Notifications (Phase 1)
+    telegram_id: str | None = None              # Telegram @username oder Chat-ID
+    matrix_id: str | None = None                # Matrix-ID (z.B. @user:matrix.org)
+    preferred_contact: str = 'email'             # 'email', 'telegram', 'matrix'
+    
     # Wird nach dem Laden aus der DB befüllt (nicht in users-Tabelle)
     permissions: set[str] = field(default_factory=set)
 

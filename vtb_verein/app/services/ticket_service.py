@@ -21,6 +21,7 @@ from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
+from app.db.user_repository import UserRepository
 
 
 class TicketNichtGefundenError(Exception):
@@ -53,6 +54,7 @@ class TicketService:
         kategorie_repo: TicketKategorieRepository,
         teilnehmer_repo: TicketTeilnehmerRepository,
         berechtigung_repo: TicketBereichBerechtigungRepository,
+        user_repo: UserRepository,
     ):
         self._ticket_repo = ticket_repo
         self._kommentar_repo = kommentar_repo
@@ -61,6 +63,46 @@ class TicketService:
         self._kategorie_repo = kategorie_repo
         self._teilnehmer_repo = teilnehmer_repo
         self._berechtigung_repo = berechtigung_repo
+        self._user_repo = user_repo
+
+    # -----------------------------------
+    # Benachrichtigungen (intern)
+    # -----------------------------------
+
+    def _notify(self, user_ids: list[int], exclude_user_id: Optional[int], title: str, message: str) -> None:
+        """Lädt User-Objekte und sendet Benachrichtigungen; überspringt den auslösenden User."""
+        from app.services.notification_service import NotificationService
+        seen: set[int] = set()
+        for uid in user_ids:
+            if uid is None or uid in seen or uid == exclude_user_id:
+                continue
+            seen.add(uid)
+            user = self._user_repo.get_by_id(uid)
+            if user and user.active:
+                NotificationService.send_notification(user, title, message)
+
+    def _bereich_user_ids(self, bereich_id: Optional[int]) -> list[int]:
+        """User-IDs mit bearbeiten- oder schliessen-Recht im Bereich."""
+        if not bereich_id:
+            return []
+        return self._berechtigung_repo.list_user_ids_bearbeiten_oder_schliessen(bereich_id)
+
+    def _ticket_empfaenger(self, ticket: Ticket) -> list[int]:
+        """Ersteller + Zugewiesener + Teilnehmer + Bereich-User (bearbeiten/schliessen)."""
+        ids = []
+        if ticket.gemeldet_von:
+            ids.append(ticket.gemeldet_von)
+        if ticket.zugewiesen_an:
+            ids.append(ticket.zugewiesen_an)
+        for t in self._teilnehmer_repo.list_by_ticket(ticket.id):
+            ids.append(t.user_id)
+        ids += self._bereich_user_ids(ticket.bereich_id)
+        return ids
+
+    def _actor_id(self, username: str) -> Optional[int]:
+        """Konvertiert Username-String in User-ID für Ausschluss-Logik."""
+        user = self._user_repo.get_by_username(username)
+        return user.id if user else None
 
     # -----------------------------------
     # Tickets
@@ -89,10 +131,22 @@ class TicketService:
         return tickets
 
     def create_ticket(self, ticket: Ticket, created_by: str) -> Ticket:
-        return self._ticket_repo.create(ticket, created_by)
+        created = self._ticket_repo.create(ticket, created_by)
+        bereich_ids = self._bereich_user_ids(created.bereich_id)
+        empfaenger = list({*bereich_ids, *([ created.zugewiesen_an] if created.zugewiesen_an else [])})
+        self._notify(empfaenger, self._actor_id(created_by),
+                     f"🎫 Neues Ticket #{created.id}",
+                     f"{created.titel or ''}\n\nErstellt von: {created_by}")
+        return created
 
     def update_ticket(self, ticket: Ticket, updated_by: str) -> bool:
-        return self._ticket_repo.update(ticket, updated_by)
+        old = self._ticket_repo.get(ticket.id)
+        result = self._ticket_repo.update(ticket, updated_by)
+        if result and old and old.zugewiesen_an != ticket.zugewiesen_an and ticket.zugewiesen_an:
+            self._notify([ticket.zugewiesen_an], self._actor_id(updated_by),
+                         f"🎫 Ticket #{ticket.id} zugewiesen",
+                         f"Dir wurde Ticket \"{ticket.titel}\" zugewiesen.\n\nZugewiesen von: {updated_by}")
+        return result
 
     def change_status(self, ticket_id: int, new_status: str, changed_by: str, version: int) -> bool:
         """Statuswechsel mit Übergangsprüfung. Setzt geschlossen_am/geschlossen_von bei 'erledigt'."""
@@ -106,7 +160,12 @@ class TicketService:
         ticket.version = version
         if new_status == TicketStatus.ERLEDIGT:
             ticket.geschlossen_am = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return self._ticket_repo.update(ticket, changed_by)
+        result = self._ticket_repo.update(ticket, changed_by)
+        if result:
+            self._notify(self._ticket_empfaenger(ticket), self._actor_id(changed_by),
+                         f"🎫 Ticket #{ticket_id} → {new_status}",
+                         f"Status von \"{ticket.titel}\" wurde auf \"{new_status}\" geändert.\n\nGeändert von: {changed_by}")
+        return result
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
         return self._ticket_repo.mark_deleted(ticket_id, deleted_by)
@@ -119,7 +178,19 @@ class TicketService:
     # -----------------------------------
 
     def add_kommentar(self, kommentar: TicketKommentar, created_by: str) -> TicketKommentar:
-        return self._kommentar_repo.create(kommentar, created_by)
+        created = self._kommentar_repo.create(kommentar, created_by)
+        ticket = self._ticket_repo.get(kommentar.ticket_id)
+        if ticket:
+            if kommentar.sichtbarkeit == 'intern':
+                # Interner Kommentar: nur Zugewiesener + Teilnehmer
+                empfaenger = [ticket.zugewiesen_an] if ticket.zugewiesen_an else []
+                empfaenger += [t.user_id for t in self._teilnehmer_repo.list_by_ticket(ticket.id)]
+            else:
+                empfaenger = self._ticket_empfaenger(ticket)
+            self._notify(empfaenger, self._actor_id(created_by),
+                         f"🎫 Neuer Kommentar zu Ticket #{ticket.id}",
+                         f"\"{ticket.titel}\"\n\nVon: {created_by}\n\n{kommentar.inhalt[:200]}")
+        return created
 
     def update_kommentar(self, kommentar: TicketKommentar, updated_by: str) -> bool:
         return self._kommentar_repo.update(kommentar, updated_by)

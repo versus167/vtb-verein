@@ -118,6 +118,34 @@
   - Benachrichtigung an Abteilungsleiter
   - E-Mail-Templates konfigurierbar
 
+- [ ] Multi-Channel Benachrichtigungen (Email, Telegram, Matrix)
+  - **Phase 1: DB-Schema & Service-Architektur** ✅ COMPLETED
+    - [x] Migration: `users` um Felder ergänzen
+      - [x] `telegram_id` (TEXT, NULL – z.B. "@username" oder Chat-ID)
+      - [x] `matrix_id` (TEXT, NULL – z.B. "@user:matrix.org")
+      - [x] `preferred_contact` (TEXT, DEFAULT 'email' – 'email'|'telegram'|'matrix')
+    - [x] `TelegramService` erstellen (`python-telegram-bot`)
+    - [x] `MatrixService` erstellen (matrix-client oder HTTP-Requests)
+    - [x] `NotificationService` als Abstraktions-Layer
+      - [x] Delegiert basierend auf `user.preferred_contact`
+      - [x] Fallback-Logik (z.B. Telegram → Email bei Fehler)
+    - [x] UserRepository um neue Methoden erweitern (`update_contact_preferences`)
+    - [x] Tests für alle Services
+  - **Phase 2: UI Integration** ✅ COMPLETED
+    - [x] User-Profile: Kontaktkonfiguration
+      - [x] Telegram-ID eingeben und validieren
+      - [x] Matrix-ID eingeben und validieren
+      - [x] Bevorzugten Kanal auswählen
+      - [x] Test-Nachricht versenden
+    - [x] UserService.update_contact_preferences() Methode
+    - [x] Validierung mit TelegramService/MatrixService
+    - [x] Tests für UserService Methode
+  - **Phase 3: Automatisierte Benachrichtigungen**
+    - [ ] Willkommens-Mail → multi-channel
+    - [ ] Beitrags-Erinnerungen → multi-channel
+    - [x] Ticket-Update-Benachrichtigungen
+    - [ ] Abteilungs-Ankündigungen
+
 ## 💡 Ideen / Backlog
 
 ### Spezielle Features für Rollen
@@ -333,6 +361,7 @@
   - [x] `ticket_anhaenge` (id, original_name, stored_name, mime_type, file_size)
   - [x] `ticket_teilnehmer` (Beobachter/Helfer)
   - [x] History-Tabellen + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+- [ ] Benachrichtigungssystem für Tickets einplanen (z. B. E-Mail oder interne Alerts)
 - [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt (SyntaxError)
 
 ### Phase 4.1 - Ticket-System Repository & Service

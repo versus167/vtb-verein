@@ -11,3 +11,8 @@ python-dotenv>=1.0.0
 
 # für PDF-Report
 reportlab>=4.0
+
+# Multi-Channel Notifications (Phase 1)
+python-telegram-bot>=21.0  # Für Telegram-Benachrichtigungen
+requests>=2.30.0           # Für Matrix-Benachrichtigungen (HTTP-Requests)
+

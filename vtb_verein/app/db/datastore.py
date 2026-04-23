@@ -84,6 +84,7 @@ class VereinsDB:
             kategorie_repo=self._ticket_kategorie_repo,
             teilnehmer_repo=self._ticket_teilnehmer_repo,
             berechtigung_repo=self._ticket_bereich_berechtigung_repo,
+            user_repo=self._user_repo,
         )
 
     @property
