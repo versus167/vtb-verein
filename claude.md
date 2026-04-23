@@ -38,6 +38,7 @@ Repository: https://github.com/versus167/vtb-verein
 ## Änderungen und Pull Requests
 - Alle Änderungen nur per Pull Request auf die `master`-Branch
 - Niemals direkt auf `master` committen
+- Achtung: Nicht direkt auf dem `master`-branch arbeiten und committen! Immer einen Entwicklungsbranch verwenden. - - Vor dem Tätigwerden checken, ob das passt!
 
 ## NiceGUI-spezifische Regeln
 - `ui.add_head_html()` immer INNERHALB der @ui.page-Funktion
@@ -60,7 +61,6 @@ Repository: https://github.com/versus167/vtb-verein
 ## SQL-Datumsberechnungen
 - Relative Datumsberechnungen mit SQLite-Funktionen: `date('now', '-6 months')`
 - Berechnete Flags direkt im SQL (Performance)
-
 
 
 Erinnere mich, wenn in einem Thread eine Anweisung/Regel auftritt, die vlt. hier in die Instruction passt, dass ich das hier ändere!
