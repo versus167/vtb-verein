@@ -39,11 +39,9 @@ class Permission:
     SYSTEM_CONFIG = 'system.config'
 
     # --- Tickets ---
-    # Grundzugriff: Tickets lesen (eigene + zugewiesene)
-    TICKETS_READ             = 'tickets.read'
-    # Neues Ticket erstellen
-    TICKETS_CREATE           = 'tickets.create'
-    # Ticket bearbeiten (Status ändern, Kommentare hinzufügen)
+    # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben
+    TICKETS_ACCESS           = 'tickets.access'
+    # Ticket bearbeiten (Status ändern, interne Kommentare hinzufügen)
     TICKETS_EDIT             = 'tickets.edit'
     # Ticket einem anderen User zuweisen
     TICKETS_ASSIGN           = 'tickets.assign'
@@ -55,6 +53,10 @@ class Permission:
     TICKETS_INTERN_READ      = 'tickets.intern_read'
     # Ticket-Bereiche und Ticket-Kategorien verwalten (anlegen, umbenennen, löschen)
     TICKETS_BEREICHE_VERWALTEN = 'tickets.bereiche_verwalten'
+
+    # Legacy - für Migration (werden später entfernt)
+    TICKETS_READ             = 'tickets.read'
+    TICKETS_CREATE           = 'tickets.create'
 
     @classmethod
     def all(cls) -> list[str]:
@@ -86,11 +88,8 @@ class Permission:
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
                 # cls.USERS_READ,  # Entfernt, da nicht verwendet
-                # Tickets: lesen + erstellen + bearbeiten + schließen für alle eingeloggten User
-                cls.TICKETS_READ,
-                cls.TICKETS_CREATE,
-                cls.TICKETS_EDIT,
-                cls.TICKETS_CLOSE,
+                # Tickets: voller Zugang für alle eingeloggten User
+                cls.TICKETS_ACCESS,
             }
 
         if role == 'readonly':
@@ -100,7 +99,7 @@ class Permission:
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,
                 # readonly darf Tickets nur lesen
-                cls.TICKETS_READ,
+                cls.TICKETS_ACCESS,
             }
 
         return set()

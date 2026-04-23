@@ -110,8 +110,8 @@ def main_page():
                         ui.label('Kassenverwaltung').classes('text-h6 q-mt-sm')
                         ui.label('Kassen und Berechtigungen').classes('text-caption text-grey')
 
-            # Tickets – sichtbar ab TICKETS_READ
-            if user.has_permission(Permission.TICKETS_READ):
+            # Tickets – sichtbar ab TICKETS_ACCESS
+            if user.has_permission(Permission.TICKETS_ACCESS):
                 with ui.card().classes('cursor-pointer hover-shadow').style('min-width: 200px').on('click', lambda: ui.navigate.to('/tickets')):
                     with ui.card_section().classes('text-center'):
                         ui.icon('confirmation_number', size='3rem').classes('text-primary')

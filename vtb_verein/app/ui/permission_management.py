@@ -67,13 +67,7 @@ PERMISSION_GROUPS = [
         'label': 'Tickets',
         'icon': 'confirmation_number',
         'permissions': [
-            (Permission.TICKETS_READ,             'Ansehen'),
-            (Permission.TICKETS_CREATE,           'Erstellen'),
-            (Permission.TICKETS_EDIT,             'Bearbeiten'),
-            (Permission.TICKETS_ASSIGN,           'Zuweisen'),
-            (Permission.TICKETS_CLOSE,            'Schließen'),
-            (Permission.TICKETS_DELETE,           'Löschen'),
-            (Permission.TICKETS_INTERN_READ,      'Interne Kommentare lesen'),
+            (Permission.TICKETS_ACCESS,           'Zugang'),
             (Permission.TICKETS_BEREICHE_VERWALTEN, 'Bereiche verwalten'),
         ]
     },

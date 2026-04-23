@@ -8,19 +8,17 @@ Seiten:
   /tickets/{bereich_id}/berechtigungen - Pro-Bereich-Berechtigungen (analog Kasse)
 
 Permission-Logik:
-  - Globales TICKETS_READ  → Zugang zur Ticket-Seite überhaupt
-  - darf_lesen (Bereich)   → Tickets dieses Bereichs sehen (Admins immer)
-  - TICKETS_EDIT ODER darf_bearbeiten (Bereich) → Status ändern, Kommentare hinzufügen (inkl. interne)
-  - TICKETS_CLOSE ODER darf_schliessen (Bereich) → Status auf 'erledigt' / 'abgelehnt' setzen
-  - TICKETS_CREATE         → Neues Ticket erstellen
+  - Globales TICKETS_ACCESS → Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben
+  - darf_bearbeiten (Bereich) → Status ändern, interne Kommentare hinzufügen
+  - darf_schliessen (Bereich) → Status auf 'erledigt' / 'abgelehnt' setzen
   - TICKETS_ASSIGN         → Ticket zuweisen (eigenständige Permission)
   - TICKETS_DELETE         → Ticket soft-löschen
   - TICKETS_INTERN_READ    → Interne Kommentare global (alle Bereiche);
-                             alternativ: TICKETS_EDIT oder darf_bearbeiten im Bereich reicht auch
+                             alternativ: darf_bearbeiten im Bereich reicht auch
   - TICKETS_BEREICHE_VERWALTEN → Admin-Tab: Bereiche / Kategorien / Berechtigungen
 
-HINWEIS: Globale Permissions (TICKETS_EDIT, TICKETS_CLOSE) erlauben Bearbeitung in allen Bereichen,
-in denen der User lesenden Zugriff hat. Bereichsspezifische Rechte sind weiterhin möglich.
+HINWEIS: Admins haben automatisch alle Rechte. Normale User können Tickets sehen und öffentliche Kommentare schreiben,
+Bearbeitung und Schließung erfolgt nur über bereichsspezifische Rechte.
 
 WICHTIG: Statische Routen (/tickets/admin) müssen vor parametrisierten
 Routen (/tickets/{ticket_id}) registriert werden.
@@ -83,23 +81,19 @@ def _lesbare_bereich_ids(db: VereinsDB, user) -> set[int] | None:
 
 
 def _kann_bearbeiten(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Globale TICKETS_EDIT ODER bereichsspezifisches darf_bearbeiten.
+    """Bereichsspezifisches darf_bearbeiten.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
-        return True
-    if AuthHelper.has_permission(Permission.TICKETS_EDIT):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(bereich_id, user.id)
 
 
 def _kann_schliessen(db: VereinsDB, bereich_id: int, user) -> bool:
-    """Globale TICKETS_CLOSE ODER bereichsspezifisches darf_schliessen.
+    """Bereichsspezifisches darf_schliessen.
     Admins haben immer Zugriff.
     """
     if _is_admin(user):
-        return True
-    if AuthHelper.has_permission(Permission.TICKETS_CLOSE):
         return True
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(bereich_id, user.id)
 
@@ -119,14 +113,14 @@ def create_ticket_pages(db: VereinsDB):
     # /tickets  – Ticketliste
     # -------------------------------------------------------------------
     @ui.page('/tickets')
-    @require_permission(Permission.TICKETS_READ)
+    @require_permission(Permission.TICKETS_ACCESS)
     def tickets_page():
         set_current_path('/tickets')
         create_navigation()
 
         user = AuthHelper.get_current_user()
         lesbare_ids = _lesbare_bereich_ids(db, user)
-        darf_erstellen = AuthHelper.has_permission(Permission.TICKETS_CREATE)
+        darf_erstellen = AuthHelper.has_permission(Permission.TICKETS_ACCESS)  # Erstellt wird durch TICKETS_ACCESS abgedeckt
         darf_verwalten = AuthHelper.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN)
 
         # Filter-State
@@ -165,9 +159,9 @@ def create_ticket_pages(db: VereinsDB):
                     ui.label('Filter').classes('text-subtitle2')
                     with ui.row().classes('full-width q-gutter-sm q-mt-sm'):
                         # Status-Filter
-                        status_options = {None: 'Alle Status', 'aktiv': 'Aktive Tickets'}
+                        status_options = {None: 'Alle Stati', 'aktiv': 'Aktive Tickets'}
                         status_options.update({s: STATUS_LABELS[s][0] for s in TicketStatus.ALL})
-                        ui.select(
+                        status_select = ui.select(
                             status_options,
                             label='Status',
                             value=filter_state['status'],
@@ -180,7 +174,7 @@ def create_ticket_pages(db: VereinsDB):
                             bereiche = [b for b in bereiche if b.id in lesbare_ids]
                         bereich_options = {None: 'Alle Bereiche'}
                         bereich_options.update({b.id: b.name for b in bereiche})
-                        ui.select(
+                        bereich_select = ui.select(
                             bereich_options,
                             label='Bereich',
                             value=filter_state['bereich'],
@@ -190,7 +184,7 @@ def create_ticket_pages(db: VereinsDB):
                         # Priorität-Filter
                         prioritaet_options = {None: 'Alle Prioritäten'}
                         prioritaet_options.update({p: TicketPrioritaet.LABELS[p] for p in TicketPrioritaet.ALL})
-                        ui.select(
+                        prioritaet_select = ui.select(
                             prioritaet_options,
                             label='Priorität',
                             value=filter_state['prioritaet'],
@@ -201,7 +195,7 @@ def create_ticket_pages(db: VereinsDB):
                         alle_user = [u for u in db.users.list_all() if u.active and u.deleted_at is None]
                         zuweisung_options = {None: 'Alle Zuweisungen'}
                         zuweisung_options.update({u.id: u.username for u in alle_user})
-                        ui.select(
+                        zuweisung_select = ui.select(
                             zuweisung_options,
                             label='Zugewiesen an',
                             value=filter_state['zuweisung'],
@@ -217,6 +211,10 @@ def create_ticket_pages(db: VereinsDB):
                                 filter_state.update({'bereich': None}),
                                 filter_state.update({'prioritaet': None}),
                                 filter_state.update({'zuweisung': None}),
+                                status_select.set_value('aktiv'),
+                                bereich_select.set_value(None),
+                                prioritaet_select.set_value(None),
+                                zuweisung_select.set_value(None),
                                 refresh()
                             ]
                         ).props('flat color=secondary size=sm')
@@ -286,7 +284,7 @@ def create_ticket_pages(db: VereinsDB):
     # MUSS nach /tickets/admin registriert werden!
     # -------------------------------------------------------------------
     @ui.page('/tickets/{ticket_id}')
-    @require_permission(Permission.TICKETS_READ)
+    @require_permission(Permission.TICKETS_ACCESS)
     def ticket_detail_page(ticket_id: int):
         set_current_path('/tickets')
         create_navigation()
@@ -385,7 +383,7 @@ def create_ticket_pages(db: VereinsDB):
                                 ui.label(k.created_at[:16] if k.created_at else '').classes('text-caption text-grey-6')
                             ui.label(k.inhalt).classes('q-pa-xs')
 
-            if kann_bearbeiten:
+            if AuthHelper.has_permission(Permission.TICKETS_ACCESS):
                 with ui.card().classes('full-width q-mt-sm'):
                     ui.label('Kommentar hinzufügen').classes('text-subtitle2 q-mb-sm')
                     inhalt_input = ui.textarea('Kommentar').classes('full-width')
@@ -397,6 +395,10 @@ def create_ticket_pages(db: VereinsDB):
                         text = inhalt_input.value.strip()
                         if not text:
                             ui.notify('Kommentar darf nicht leer sein.', type='warning')
+                            return
+                        # Interne Kommentare nur für berechtigte User erlauben
+                        if intern_cb and intern_cb.value and not intern_sichtbar:
+                            ui.notify('Keine Berechtigung für interne Kommentare.', type='warning')
                             return
                         sichtbarkeit = SICHTBARKEIT_INTERN if (intern_cb and intern_cb.value) else SICHTBARKEIT_PUBLIK
                         k = TicketKommentar(

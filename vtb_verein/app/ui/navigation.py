@@ -75,9 +75,9 @@ def create_navigation(db=None):
                     else:
                         kasse_btn.props('flat').classes('text-white')
 
-                # Tickets – sichtbar ab TICKETS_READ oder wenn User bereichsspezifische Rechte hat
+                # Tickets – sichtbar ab TICKETS_ACCESS oder wenn User bereichsspezifische Rechte hat
                 show_tickets = user and (
-                    user.has_permission(Permission.TICKETS_READ) or
+                    user.has_permission(Permission.TICKETS_ACCESS) or
                     (db is not None and len(db.ticket_bereich_berechtigungen.get_lesbare_bereich_ids(user.id)) > 0)
                 )
                 if show_tickets:

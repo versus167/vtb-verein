@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 11  # Version 11: Ticket-Bereich-Berechtigungen
+SCHEMA_VERSION = 12  # Version 12: Vereinfachte Ticket-Permissions (TICKETS_ACCESS)
 
 
 class Database:
@@ -111,6 +111,9 @@ class Database:
         if current == 10:
             self._migrate_10_to_11()
             current = 11
+        if current == 11:
+            self._migrate_11_to_12()
+            current = 12
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1850,3 +1853,27 @@ class Database:
                     """, (bereich['id'], admin['id']))
 
         self._set_schema_version(11)
+
+    def _migrate_11_to_12(self):
+        """Migration 11->12: Vereinfachte Ticket-Permissions.
+
+        Ersetzt tickets.read und tickets.create durch tickets.access für alle User.
+        Entfernt die alten globalen Ticket-Permissions (edit, close, etc.) aus user_permissions,
+        da diese jetzt nur noch bereichsspezifisch vergeben werden.
+        """
+        with self.cursor() as cur:
+            # User mit tickets.read oder tickets.create bekommen tickets.access
+            cur.execute("""
+                INSERT OR IGNORE INTO user_permissions (user_id, permission)
+                SELECT DISTINCT user_id, 'tickets.access'
+                FROM user_permissions
+                WHERE permission IN ('tickets.read', 'tickets.create')
+            """)
+
+            # Alte globale Ticket-Permissions entfernen
+            cur.execute("""
+                DELETE FROM user_permissions
+                WHERE permission IN ('tickets.read', 'tickets.create', 'tickets.edit', 'tickets.close', 'tickets.assign', 'tickets.delete', 'tickets.intern_read')
+            """)
+
+        self._set_schema_version(12)
