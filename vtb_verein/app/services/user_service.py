@@ -328,3 +328,66 @@ class UserService:
             raise ValueError("Löschen fehlgeschlagen")
         
         return True
+    
+    def update_contact_preferences(self, user_id: int, telegram_id: str | None,
+                                   matrix_id: str | None, preferred_contact: str,
+                                   updated_by: str, expected_version: int) -> User:
+        """
+        Aktualisiert Multi-Channel Notification Kontaktpräferenzen
+        
+        Args:
+            user_id: ID des Users
+            telegram_id: Telegram @username oder Chat-ID (optional)
+            matrix_id: Matrix User-ID (optional)
+            preferred_contact: Bevorzugter Kanal ('email', 'telegram', 'matrix')
+            updated_by: Username des Updaters
+            expected_version: Expected version for optimistic locking
+            
+        Returns:
+            Updated User object
+            
+        Raises:
+            ValueError: Bei Validierungsfehler oder optimistic locking Fehler
+        """
+        # Validiere preferred_contact
+        valid_channels = ['email', 'telegram', 'matrix']
+        if preferred_contact not in valid_channels:
+            raise ValueError(f"preferred_contact muss einer sein von: {', '.join(valid_channels)}")
+        
+        # Validiere Telegram-ID wenn gesetzt
+        if telegram_id:
+            from app.services.telegram_service import TelegramService
+            if not TelegramService.verify_telegram_id(telegram_id):
+                raise ValueError("Ungültige Telegram-ID. Muss numerisch sein (min 9 Ziffern) oder @username Format")
+        
+        # Validiere Matrix-ID wenn gesetzt
+        if matrix_id:
+            from app.services.matrix_service import MatrixService
+            if not MatrixService.verify_matrix_id(matrix_id):
+                raise ValueError("Ungültige Matrix-ID. Format muss @local:domain.tld sein")
+        
+        # Prüfe dass bevorzugter Kanal auch konfiguriert ist (außer Email)
+        if preferred_contact == 'telegram' and not telegram_id:
+            raise ValueError("Telegram-ID erforderlich wenn Telegram als bevorzugter Kanal gewählt")
+        if preferred_contact == 'matrix' and not matrix_id:
+            raise ValueError("Matrix-ID erforderlich wenn Matrix als bevorzugter Kanal gewählt")
+        
+        # Update durchführen
+        success = self.user_repo.update_contact_preferences(
+            user_id=user_id,
+            telegram_id=telegram_id,
+            matrix_id=matrix_id,
+            preferred_contact=preferred_contact,
+            updated_by=updated_by,
+            expected_version=expected_version
+        )
+        
+        if not success:
+            raise ValueError("Update fehlgeschlagen - Version-Konflikt oder User nicht gefunden")
+        
+        # Updated User returnen
+        updated_user = self.user_repo.get_by_id(user_id)
+        if not updated_user:
+            raise ValueError("User nach Update nicht gefunden")
+        
+        return updated_user

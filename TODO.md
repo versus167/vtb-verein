@@ -131,13 +131,15 @@
       - [x] Fallback-Logik (z.B. Telegram → Email bei Fehler)
     - [x] UserRepository um neue Methoden erweitern (`update_contact_preferences`)
     - [x] Tests für alle Services
-  - **Phase 2: UI Integration**
-    - [ ] User-Profile: Kontaktkonfiguration
-      - Telegram-ID eingeben und validieren
-      - Matrix-ID eingeben und validieren
-      - Bevorzugten Kanal auswählen
-      - Test-Nachricht versenden
-    - [ ] Abteilungsleiter-Benachrichtigungen über konfigurierten Kanal
+  - **Phase 2: UI Integration** ✅ COMPLETED
+    - [x] User-Profile: Kontaktkonfiguration
+      - [x] Telegram-ID eingeben und validieren
+      - [x] Matrix-ID eingeben und validieren
+      - [x] Bevorzugten Kanal auswählen
+      - [x] Test-Nachricht versenden
+    - [x] UserService.update_contact_preferences() Methode
+    - [x] Validierung mit TelegramService/MatrixService
+    - [x] Tests für UserService Methode
   - **Phase 3: Automatisierte Benachrichtigungen**
     - [ ] Willkommens-Mail → multi-channel
     - [ ] Beitrags-Erinnerungen → multi-channel
