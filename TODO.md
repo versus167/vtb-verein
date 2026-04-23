@@ -118,6 +118,30 @@
   - Benachrichtigung an Abteilungsleiter
   - E-Mail-Templates konfigurierbar
 
+- [ ] Multi-Channel Benachrichtigungen (Email, Telegram, Matrix)
+  - **Phase 1: DB-Schema & Service-Architektur**
+    - [ ] Migration: `users` um Felder ergänzen
+      - `telegram_id` (TEXT, NULL – z.B. "@username" oder Chat-ID)
+      - `matrix_id` (TEXT, NULL – z.B. "@user:matrix.org")
+      - `preferred_contact` (TEXT, DEFAULT 'email' – 'email'|'telegram'|'matrix')
+    - [ ] `TelegramService` erstellen (`python-telegram-bot`)
+    - [ ] `MatrixService` erstellen (matrix-client oder HTTP-Requests)
+    - [ ] `NotificationService` als Abstraktions-Layer
+      - Delegiert basierend auf `user.preferred_contact`
+      - Fallback-Logik (z.B. Telegram → Email bei Fehler)
+  - **Phase 2: UI Integration**
+    - [ ] User-Profile: Kontaktkonfiguration
+      - Telegram-ID eingeben und validieren
+      - Matrix-ID eingeben und validieren
+      - Bevorzugten Kanal auswählen
+      - Test-Nachricht versenden
+    - [ ] Abteilungsleiter-Benachrichtigungen über konfigurierten Kanal
+  - **Phase 3: Automatisierte Benachrichtigungen**
+    - [ ] Willkommens-Mail → multi-channel
+    - [ ] Beitrags-Erinnerungen → multi-channel
+    - [ ] Ticket-Update-Benachrichtigungen
+    - [ ] Abteilungs-Ankündigungen
+
 ## 💡 Ideen / Backlog
 
 ### Spezielle Features für Rollen
