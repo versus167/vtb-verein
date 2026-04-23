@@ -333,6 +333,7 @@
   - [x] `ticket_anhaenge` (id, original_name, stored_name, mime_type, file_size)
   - [x] `ticket_teilnehmer` (Beobachter/Helfer)
   - [x] History-Tabellen + INSERT/UPDATE-Trigger (kein DELETE-Trigger)
+- [ ] Benachrichtigungssystem für Tickets einplanen (z. B. E-Mail oder interne Alerts)
 - [x] Bugfix: SQL-Kommentare (`--`) in Python-Code durch `#` ersetzt (SyntaxError)
 
 ### Phase 4.1 - Ticket-System Repository & Service
