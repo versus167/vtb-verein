@@ -1,99 +1,131 @@
 """
 Matrix-Service für Multi-Channel Notifications
 
-Verwendet matrix-client (HTTP-Requests) oder nio für Matrix-Kommunikation.
+Verwendet die Matrix Client-Server API v3 via HTTP-Requests.
 Server-URL und Bot-Token müssen in Umgebungsvariablen gesetzt sein.
 """
 from typing import Optional
 import os
 import logging
-import json
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class MatrixService:
     """Service für Matrix (Element.io) Benachrichtigungen"""
-    
-    # Konfiguration aus Umgebungvariablen
-    HOMESERVER_URL = os.getenv('MATRIX_HOMESERVER_URL', '')  # z.B. https://matrix.org
-    BOT_USER_ID = os.getenv('MATRIX_BOT_USER_ID', '')          # z.B. @bot:matrix.org
-    BOT_TOKEN = os.getenv('MATRIX_BOT_TOKEN', '')              # Access Token / Device ID
-    
+
     @staticmethod
     def is_configured() -> bool:
         """Prüft ob Matrix-Service konfiguriert ist"""
         return bool(
-            MatrixService.HOMESERVER_URL and 
-            MatrixService.BOT_USER_ID and 
-            MatrixService.BOT_TOKEN
+            os.getenv('MATRIX_HOMESERVER_URL') and
+            os.getenv('MATRIX_BOT_USER_ID') and
+            os.getenv('MATRIX_BOT_TOKEN')
         )
-    
+
+    @staticmethod
+    def _headers() -> dict:
+        return {"Authorization": f"Bearer {os.getenv('MATRIX_BOT_TOKEN', '')}"}
+
+    @staticmethod
+    def _get_or_create_dm_room(import_requests, user_id: str) -> Optional[str]:
+        """
+        Gibt Room-ID für DM mit user_id zurück.
+        Sucht zuerst in m.direct account data des Bots, erstellt nur wenn nötig.
+        """
+        base = os.getenv('MATRIX_HOMESERVER_URL', '')
+        bot_user = os.getenv('MATRIX_BOT_USER_ID', '')
+        headers = MatrixService._headers()
+
+        # 1. Bekannte DM-Rooms aus account_data des Bots lesen
+        r = import_requests.get(
+            f"{base}/_matrix/client/v3/user/{bot_user}/account_data/m.direct",
+            headers=headers,
+            timeout=10
+        )
+        dm_map: dict = r.json() if r.status_code == 200 else {}
+
+        # 2. Bestehenden, noch gejointen Room wiederverwenden
+        candidate_rooms = dm_map.get(user_id, [])
+        if candidate_rooms:
+            joined_r = import_requests.get(
+                f"{base}/_matrix/client/v3/joined_rooms",
+                headers=headers,
+                timeout=10
+            )
+            joined = set(joined_r.json().get("joined_rooms", [])) if joined_r.status_code == 200 else set()
+            for room_id in candidate_rooms:
+                if room_id in joined:
+                    return room_id
+
+        # 3. Neuen DM-Room erstellen
+        create_r = import_requests.post(
+            f"{base}/_matrix/client/v3/createRoom",
+            json={"invite": [user_id], "is_direct": True, "preset": "trusted_private_chat"},
+            headers=headers,
+            timeout=10
+        )
+        if create_r.status_code != 200:
+            logger.error(f"❌ Matrix Room-Erstellung fehlgeschlagen: {create_r.text}")
+            return None
+
+        new_room_id = create_r.json().get("room_id")
+        if not new_room_id:
+            return None
+
+        # 4. Neuen Room in m.direct speichern damit spätere Aufrufe ihn wiederfinden
+        dm_map.setdefault(user_id, []).append(new_room_id)
+        import_requests.put(
+            f"{base}/_matrix/client/v3/user/{bot_user}/account_data/m.direct",
+            json=dm_map,
+            headers=headers,
+            timeout=10
+        )
+
+        return new_room_id
+
     @staticmethod
     def send_message(user_id: str, message: str) -> bool:
         """
         Sendet Nachricht an Matrix-User.
-        
-        Erstellt einen Direct Message Room, falls noch nicht vorhanden.
-        
+
+        Verwendet einen bestehenden DM-Room wenn vorhanden, erstellt sonst einen neuen.
+
         Args:
             user_id: Matrix User-ID (z.B. @user:matrix.org)
-            message: Nachricht-Text (Markdown-formatiert möglich)
-            
+            message: Nachricht-Text
+
         Returns:
             True wenn erfolgreich, False bei Fehler
         """
         if not MatrixService.is_configured():
             logger.warning("❌ Matrix nicht konfiguriert (Umgebungsvariablen fehlen)")
             return False
-        
+
         try:
-            # Lazy import: Nur laden wenn wirklich benötigt
             import requests
-            
-            # 1. Room erstellen oder finden für Direct Message
-            room_create_payload = {
-                "invite": [user_id],
-                "is_direct": True,
-                "room_alias_name": None
-            }
-            
-            room_response = requests.post(
-                f"{MatrixService.HOMESERVER_URL}/_matrix/client/r0/createRoom",
-                json=room_create_payload,
-                params={"access_token": MatrixService.BOT_TOKEN},
-                timeout=10
-            )
-            
-            if room_response.status_code not in [200, 409]:  # 409 = room exists
-                logger.error(f"❌ Matrix Room-Erstellung fehlgeschlagen: {room_response.text}")
-                return False
-            
-            room_id = room_response.json().get('room_id')
+
+            room_id = MatrixService._get_or_create_dm_room(requests, user_id)
             if not room_id:
-                logger.error(f"❌ Keine Room-ID in Matrix-Response: {room_response.text}")
                 return False
-            
-            # 2. Nachricht in Room posten
-            message_payload = {
-                "msgtype": "m.text",
-                "body": message
-            }
-            
-            msg_response = requests.post(
-                f"{MatrixService.HOMESERVER_URL}/_matrix/client/r0/rooms/{room_id}/send/m.room.message",
-                json=message_payload,
-                params={"access_token": MatrixService.BOT_TOKEN},
+
+            # Eindeutige Transaktions-ID verhindert Duplikate bei Retry
+            txn_id = f"vtb_{int(time.time() * 1000)}"
+            msg_r = requests.put(
+                f"{os.getenv('MATRIX_HOMESERVER_URL', '')}/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn_id}",
+                json={"msgtype": "m.text", "body": message},
+                headers=MatrixService._headers(),
                 timeout=10
             )
-            
-            if msg_response.status_code != 200:
-                logger.error(f"❌ Matrix Nachricht-Versand fehlgeschlagen: {msg_response.text}")
+
+            if msg_r.status_code != 200:
+                logger.error(f"❌ Matrix Nachricht-Versand fehlgeschlagen: {msg_r.text}")
                 return False
-            
+
             logger.info(f"✅ Matrix-Nachricht an {user_id} versendet")
             return True
-            
+
         except Exception as e:
             logger.error(f"❌ Fehler beim Matrix-Versand an {user_id}: {str(e)}")
             return False

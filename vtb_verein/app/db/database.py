@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 13  # Version 13: Multi-Channel Notifications (Telegram, Matrix)
+SCHEMA_VERSION = 14  # Version 14: UNIQUE-Constraints für telegram_id und matrix_id
 
 
 class Database:
@@ -117,6 +117,9 @@ class Database:
         if current == 12:
             self._migrate_12_to_13()
             current = 13
+        if current == 13:
+            self._migrate_13_to_14()
+            current = 14
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1965,3 +1968,15 @@ class Database:
             """)
 
         self._set_schema_version(13)
+
+    def _migrate_13_to_14(self):
+        """Migration 13->14: UNIQUE-Constraints für telegram_id und matrix_id.
+
+        NULL-Werte sind von UNIQUE ausgenommen (SQLite-Standard),
+        d.h. mehrere User dürfen NULL haben — nur befüllte IDs müssen eindeutig sein.
+        """
+        with self.cursor() as cur:
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id ON users (telegram_id) WHERE telegram_id IS NOT NULL")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id   ON users (matrix_id)   WHERE matrix_id   IS NOT NULL")
+
+        self._set_schema_version(14)

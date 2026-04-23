@@ -143,7 +143,7 @@
   - **Phase 3: Automatisierte Benachrichtigungen**
     - [ ] Willkommens-Mail → multi-channel
     - [ ] Beitrags-Erinnerungen → multi-channel
-    - [ ] Ticket-Update-Benachrichtigungen
+    - [x] Ticket-Update-Benachrichtigungen
     - [ ] Abteilungs-Ankündigungen
 
 ## 💡 Ideen / Backlog

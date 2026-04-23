@@ -1,10 +1,9 @@
 """
 Telegram-Service für Multi-Channel Notifications
 
-Verwendet python-telegram-bot Bibliothek zum Versand von Telegram-Nachrichten.
+Verwendet die Telegram Bot HTTP-API direkt via requests.
 Bot-Token muss in Umgebungsvariable TELEGRAM_BOT_TOKEN gesetzt sein.
 """
-from typing import Optional
 import os
 import logging
 
@@ -13,48 +12,45 @@ logger = logging.getLogger(__name__)
 
 class TelegramService:
     """Service für Telegram-Benachrichtigungen"""
-    
-    # Bot-Token aus Umgebungsvariable laden
-    BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
-    
+
     @staticmethod
     def is_configured() -> bool:
         """Prüft ob Telegram-Service konfiguriert ist (BOT_TOKEN vorhanden)"""
-        return bool(TelegramService.BOT_TOKEN)
-    
+        return bool(os.getenv('TELEGRAM_BOT_TOKEN'))
+
     @staticmethod
     def send_message(chat_id: str | int, message: str) -> bool:
         """
-        Sendet Nachricht an Telegram-Chat
-        
+        Sendet Nachricht an Telegram-Chat via Bot HTTP-API.
+
         Args:
             chat_id: Telegram Chat-ID oder @username
-            message: Nachricht-Text (Markdown-formatiert möglich)
-            
+            message: Nachricht-Text (Markdown V1 formatiert möglich)
+
         Returns:
             True wenn erfolgreich, False bei Fehler
         """
         if not TelegramService.is_configured():
             logger.warning("❌ Telegram nicht konfiguriert (TELEGRAM_BOT_TOKEN fehlt)")
             return False
-        
+
         try:
-            # Lazy import: Nur laden wenn wirklich benötigt
-            from telegram import Bot
-            from telegram.error import TelegramError
-            
-            bot = Bot(token=TelegramService.BOT_TOKEN)
-            bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode='Markdown'
+            import requests
+
+            token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            response = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+                timeout=10
             )
+
+            if response.status_code != 200:
+                logger.error(f"❌ Telegram-Fehler an {chat_id}: {response.text}")
+                return False
+
             logger.info(f"✅ Telegram-Nachricht an {chat_id} versendet")
             return True
-            
-        except TelegramError as e:
-            logger.error(f"❌ Telegram-Fehler an {chat_id}: {str(e)}")
-            return False
+
         except Exception as e:
             logger.error(f"❌ Unerwarteter Fehler beim Telegram-Versand: {str(e)}")
             return False

@@ -6,6 +6,7 @@ Testet:
 - MatrixService: Matrix-ID Validierung
 - NotificationService: Delegierung nach preferred_contact
 """
+import os
 import pytest
 from unittest.mock import patch, MagicMock, call
 from app.models.user import User
@@ -16,15 +17,16 @@ from app.services.notification_service import NotificationService
 
 class TestTelegramService:
     """Tests für TelegramService"""
-    
+
     def test_is_configured_without_token(self):
         """Prüft dass is_configured False ohne BOT_TOKEN zurückgibt"""
-        with patch.object(TelegramService, 'BOT_TOKEN', ''):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop('TELEGRAM_BOT_TOKEN', None)
             assert TelegramService.is_configured() is False
-    
+
     def test_is_configured_with_token(self):
         """Prüft dass is_configured True mit BOT_TOKEN zurückgibt"""
-        with patch.object(TelegramService, 'BOT_TOKEN', 'test_token_123'):
+        with patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_token_123'}):
             assert TelegramService.is_configured() is True
     
     def test_verify_telegram_id_numeric_chat_id(self):
@@ -59,17 +61,18 @@ class TestTelegramService:
     def test_send_message_success(self, mock_send):
         """Prüft erfolgreichen Nachrichtenversand"""
         mock_send.return_value = True
-        
-        with patch.object(TelegramService, 'BOT_TOKEN', 'test_token'):
+
+        with patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'test_token'}):
             result = TelegramService.send_message('123456789', 'Test message')
-        
+
         assert result is True
-    
+
     def test_send_message_not_configured(self):
         """Prüft dass Versand fehlschlägt wenn nicht konfiguriert"""
-        with patch.object(TelegramService, 'BOT_TOKEN', ''):
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop('TELEGRAM_BOT_TOKEN', None)
             result = TelegramService.send_message('123456789', 'Test')
-        
+
         assert result is False
 
 
@@ -78,18 +81,17 @@ class TestMatrixService:
     
     def test_is_configured_incomplete(self):
         """Prüft dass is_configured False zurückgibt wenn Konfiguration unvollständig"""
-        with patch.multiple(MatrixService,
-                           HOMESERVER_URL='https://matrix.org',
-                           BOT_USER_ID='',
-                           BOT_TOKEN='token'):
+        with patch.dict(os.environ, {'MATRIX_HOMESERVER_URL': 'https://matrix.org', 'MATRIX_BOT_TOKEN': 'token'}):
+            os.environ.pop('MATRIX_BOT_USER_ID', None)
             assert MatrixService.is_configured() is False
-    
+
     def test_is_configured_complete(self):
         """Prüft dass is_configured True zurückgibt wenn vollständig konfiguriert"""
-        with patch.multiple(MatrixService,
-                           HOMESERVER_URL='https://matrix.org',
-                           BOT_USER_ID='@bot:matrix.org',
-                           BOT_TOKEN='token123'):
+        with patch.dict(os.environ, {
+            'MATRIX_HOMESERVER_URL': 'https://matrix.org',
+            'MATRIX_BOT_USER_ID': '@bot:matrix.org',
+            'MATRIX_BOT_TOKEN': 'token123',
+        }):
             assert MatrixService.is_configured() is True
     
     def test_verify_matrix_id_valid_format(self):
@@ -119,21 +121,18 @@ class TestMatrixService:
     
     def test_send_message_success(self):
         """Prüft erfolgreichen Nachrichtenversand"""
-        # Mit den Lazy-Imports können wir extern mocken
-        with patch.multiple(MatrixService,
-                           HOMESERVER_URL='https://matrix.org',
-                           BOT_USER_ID='@bot:matrix.org',
-                           BOT_TOKEN='token'):
-            # ist_configured muss True sein damit die Logik weiterlaufen kann
-            result = MatrixService.is_configured()
-            assert result is True
-    
+        with patch.dict(os.environ, {
+            'MATRIX_HOMESERVER_URL': 'https://matrix.org',
+            'MATRIX_BOT_USER_ID': '@bot:matrix.org',
+            'MATRIX_BOT_TOKEN': 'token',
+        }):
+            assert MatrixService.is_configured() is True
+
     def test_send_message_not_configured(self):
         """Prüft dass Versand fehlschlägt wenn nicht konfiguriert"""
-        with patch.multiple(MatrixService,
-                           HOMESERVER_URL='',
-                           BOT_USER_ID='',
-                           BOT_TOKEN=''):
+        with patch.dict(os.environ, {}, clear=True):
+            for key in ('MATRIX_HOMESERVER_URL', 'MATRIX_BOT_USER_ID', 'MATRIX_BOT_TOKEN'):
+                os.environ.pop(key, None)
             result = MatrixService.is_configured()
             assert result is False
 

@@ -248,7 +248,7 @@ def create_user_profile_page(db: VereinsDB):
                         success_label.visible = True
                         
                         # Seite aktualisieren um neue Werte anzuzeigen
-                        ui.timer(1.0, lambda: ui.navigate.to('/profile', reload=True), once=True)
+                        ui.timer(1.0, lambda: ui.navigate.to('/profile'), once=True)
                         
                     except ValueError as e:
                         error_label.text = f'❌ {str(e)}'

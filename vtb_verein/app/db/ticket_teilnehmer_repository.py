@@ -14,8 +14,8 @@ class TicketTeilnehmerRepository:
 
     def list_by_ticket(self, ticket_id: int) -> list[TicketTeilnehmer]:
         cursor = self.conn.execute(
-            "SELECT ticket_id, member_id, added_by, added_at "
-            "FROM ticket_teilnehmer WHERE ticket_id = ? ORDER BY added_at ASC",
+            "SELECT ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am "
+            "FROM ticket_teilnehmer WHERE ticket_id = ? ORDER BY hinzugefuegt_am ASC",
             (ticket_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
@@ -23,7 +23,7 @@ class TicketTeilnehmerRepository:
     def add(self, ticket_id: int, member_id: int, added_by: int) -> bool:
         try:
             self.conn.execute(
-                "INSERT INTO ticket_teilnehmer (ticket_id, member_id, added_by) VALUES (?, ?, ?)",
+                "INSERT INTO ticket_teilnehmer (ticket_id, user_id, hinzugefuegt_von) VALUES (?, ?, ?)",
                 (ticket_id, member_id, added_by)
             )
             self.conn.commit()
@@ -33,7 +33,7 @@ class TicketTeilnehmerRepository:
 
     def remove(self, ticket_id: int, member_id: int) -> bool:
         cursor = self.conn.execute(
-            "DELETE FROM ticket_teilnehmer WHERE ticket_id = ? AND member_id = ?",
+            "DELETE FROM ticket_teilnehmer WHERE ticket_id = ? AND user_id = ?",
             (ticket_id, member_id)
         )
         self.conn.commit()
@@ -41,13 +41,13 @@ class TicketTeilnehmerRepository:
 
     def is_teilnehmer(self, ticket_id: int, member_id: int) -> bool:
         cursor = self.conn.execute(
-            "SELECT 1 FROM ticket_teilnehmer WHERE ticket_id = ? AND member_id = ?",
+            "SELECT 1 FROM ticket_teilnehmer WHERE ticket_id = ? AND user_id = ?",
             (ticket_id, member_id)
         )
         return cursor.fetchone() is not None
 
     def _map(self, row) -> TicketTeilnehmer:
         return TicketTeilnehmer(
-            ticket_id=row[0], member_id=row[1],
-            added_by=row[2], added_at=row[3]
+            ticket_id=row[0], user_id=row[1],
+            hinzugefuegt_von=row[2], hinzugefuegt_am=row[3]
         )

@@ -121,6 +121,19 @@ class TicketBereichBerechtigungRepository:
         )
         return [row[0] for row in cur.fetchall()]
 
+    def list_user_ids_bearbeiten_oder_schliessen(self, bereich_id: int) -> list[int]:
+        """User-IDs mit darf_bearbeiten=1 oder darf_schliessen=1 für einen Bereich."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT user_id FROM ticket_bereich_berechtigungen
+            WHERE bereich_id = ? AND deleted_at IS NULL
+              AND (darf_bearbeiten = 1 OR darf_schliessen = 1)
+            """,
+            (bereich_id,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # Schreiben
     # ------------------------------------------------------------------

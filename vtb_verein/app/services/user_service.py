@@ -373,15 +373,25 @@ class UserService:
             raise ValueError("Matrix-ID erforderlich wenn Matrix als bevorzugter Kanal gewählt")
         
         # Update durchführen
-        success = self.user_repo.update_contact_preferences(
-            user_id=user_id,
-            telegram_id=telegram_id,
-            matrix_id=matrix_id,
-            preferred_contact=preferred_contact,
-            updated_by=updated_by,
-            expected_version=expected_version
-        )
-        
+        try:
+            success = self.user_repo.update_contact_preferences(
+                user_id=user_id,
+                telegram_id=telegram_id,
+                matrix_id=matrix_id,
+                preferred_contact=preferred_contact,
+                updated_by=updated_by,
+                expected_version=expected_version
+            )
+        except Exception as e:
+            import sqlite3
+            if isinstance(e, sqlite3.IntegrityError) or 'UNIQUE' in str(e).upper():
+                if telegram_id and 'telegram_id' in str(e):
+                    raise ValueError("Diese Telegram-ID ist bereits einem anderen Benutzer zugeordnet")
+                if matrix_id and 'matrix_id' in str(e):
+                    raise ValueError("Diese Matrix-ID ist bereits einem anderen Benutzer zugeordnet")
+                raise ValueError("Diese Kontaktadresse wird bereits verwendet")
+            raise
+
         if not success:
             raise ValueError("Update fehlgeschlagen - Version-Konflikt oder User nicht gefunden")
         
