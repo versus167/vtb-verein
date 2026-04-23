@@ -20,6 +20,7 @@ from app.ui.ticket_page import create_ticket_pages
 from app.ui.navigation import create_navigation, set_current_path
 from app.auth.auth_helper import AuthHelper, require_auth
 from app.config.email_config import EmailConfig
+from app.config.app_info import get_app_version
 from app.models.permission import Permission
 
 # .env-Datei laden (muss VOR os.getenv() aufgerufen werden!)
@@ -32,6 +33,7 @@ HOST = os.getenv('VTB_HOST', '0.0.0.0')
 PORT = int(os.getenv('VTB_PORT', '8080'))
 
 print("\n=== Vereinsverwaltung ===")
+print(f"Version: {get_app_version()}")
 print(f"Datenbank: {DB_PATH}")
 print(f"Host: {HOST}:{PORT}")
 
@@ -133,6 +135,8 @@ def main_page():
                         ui.icon('payments', size='3rem').classes('text-grey')
                         ui.label('Beiträge').classes('text-h6 q-mt-sm text-grey')
                         ui.label('Bald verfügbar').classes('text-caption text-grey')
+
+        ui.label(f'Version {get_app_version()}').classes('text-caption text-grey q-mt-lg')
 
 # Unauthorized-Seite
 @ui.page('/unauthorized')
