@@ -17,8 +17,8 @@ class TicketAnhangRepository:
         self.conn = conn
 
     _SELECT = (
-        "SELECT id, ticket_id, comment_id, original_name, stored_name, "
-        "mime_type, file_size, uploaded_by, uploaded_at, deleted_at, deleted_by "
+        "SELECT id, ticket_id, kommentar_id, original_name, stored_name, "
+        "mime_type, dateigroesse, hochgeladen_von, hochgeladen_am, deleted_at, deleted_by "
         "FROM ticket_anhaenge"
     )
 
@@ -31,14 +31,14 @@ class TicketAnhangRepository:
 
     def list_by_ticket(self, ticket_id: int) -> list[TicketAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE ticket_id = ? AND deleted_at IS NULL ORDER BY uploaded_at ASC",
+            self._SELECT + " WHERE ticket_id = ? AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
             (ticket_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
 
     def list_by_comment(self, comment_id: int) -> list[TicketAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE comment_id = ? AND deleted_at IS NULL ORDER BY uploaded_at ASC",
+            self._SELECT + " WHERE kommentar_id = ? AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
             (comment_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
@@ -48,11 +48,11 @@ class TicketAnhangRepository:
         ext = os.path.splitext(anhang.original_name)[1].lower()
         cursor = self.conn.execute(
             "INSERT INTO ticket_anhaenge "
-            "(ticket_id, comment_id, original_name, stored_name, mime_type, file_size, uploaded_by) "
+            "(ticket_id, kommentar_id, original_name, stored_name, mime_type, dateigroesse, hochgeladen_von) "
             "VALUES (?, ?, ?, '', ?, ?, ?)",
             (
-                anhang.ticket_id, anhang.comment_id, anhang.original_name,
-                anhang.mime_type, anhang.file_size, anhang.uploaded_by
+                anhang.ticket_id, anhang.kommentar_id, anhang.original_name,
+                anhang.mime_type, anhang.dateigroesse, anhang.hochgeladen_von
             )
         )
         new_id = cursor.lastrowid
@@ -75,9 +75,9 @@ class TicketAnhangRepository:
 
     def _map(self, row) -> TicketAnhang:
         return TicketAnhang(
-            id=row[0], ticket_id=row[1], comment_id=row[2],
+            id=row[0], ticket_id=row[1], kommentar_id=row[2],
             original_name=row[3], stored_name=row[4],
-            mime_type=row[5], file_size=row[6],
-            uploaded_by=row[7], uploaded_at=row[8],
+            mime_type=row[5], dateigroesse=row[6],
+            hochgeladen_von=row[7], hochgeladen_am=row[8],
             deleted_at=row[9], deleted_by=row[10]
         )

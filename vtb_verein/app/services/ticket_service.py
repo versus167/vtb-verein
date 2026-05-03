@@ -8,8 +8,9 @@ fix     - list_by_assigned → list_by_zugewiesen
         - closed_at → geschlossen_am
 '''
 
+import io
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from app.models.ticket import (
     Ticket, TicketKommentar, TicketAnhang, TicketBereich, TicketKategorie,
     TicketStatus, TicketTeilnehmer
@@ -22,6 +23,9 @@ from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.db.user_repository import UserRepository
+
+if TYPE_CHECKING:
+    from app.services.anhang_service import AnhangService
 
 
 class TicketNichtGefundenError(Exception):
@@ -55,6 +59,7 @@ class TicketService:
         teilnehmer_repo: TicketTeilnehmerRepository,
         berechtigung_repo: TicketBereichBerechtigungRepository,
         user_repo: UserRepository,
+        anhang_service: "AnhangService | None" = None,
     ):
         self._ticket_repo = ticket_repo
         self._kommentar_repo = kommentar_repo
@@ -64,6 +69,7 @@ class TicketService:
         self._teilnehmer_repo = teilnehmer_repo
         self._berechtigung_repo = berechtigung_repo
         self._user_repo = user_repo
+        self._anhang_service = anhang_service
 
     # -----------------------------------
     # Benachrichtigungen (intern)
@@ -208,8 +214,50 @@ class TicketService:
     # Anhänge
     # -----------------------------------
 
-    def add_anhang(self, anhang: TicketAnhang) -> TicketAnhang:
-        return self._anhang_repo.create(anhang)
+    def add_anhang(
+        self,
+        ticket_id: int,
+        kommentar_id: int | None,
+        original_name: str,
+        mime_type: str,
+        inhalt: bytes | io.BytesIO,
+        hochgeladen_von: int,
+    ) -> TicketAnhang:
+        """
+        Legt Anhang an (DB-Record + Datei auf Disk).
+
+        Ablauf:
+          1. Validierung (MIME-Typ, Größe)
+          2. DB-Record anlegen → stored_name ergibt sich aus der Auto-Increment-ID
+          3. Datei unter stored_name schreiben
+          Falls Schritt 3 fehlschlägt: DB-Record soft-löschen + IOError weiterwerfen.
+        """
+        from app.services.anhang_service import AnhangService
+        if self._anhang_service is None:
+            raise RuntimeError("AnhangService nicht konfiguriert.")
+
+        data = inhalt.read() if isinstance(inhalt, io.BytesIO) else inhalt
+        dateigroesse = len(data)
+
+        self._anhang_service.validiere(mime_type, dateigroesse)
+
+        anhang = TicketAnhang(
+            ticket_id=ticket_id,
+            kommentar_id=kommentar_id,
+            original_name=original_name,
+            mime_type=mime_type,
+            dateigroesse=dateigroesse,
+            hochgeladen_von=hochgeladen_von,
+        )
+        db_anhang = self._anhang_repo.create(anhang)
+
+        try:
+            self._anhang_service.schreibe(db_anhang.stored_name, data)
+        except Exception as exc:
+            self._anhang_repo.mark_deleted(db_anhang.id, deleted_by='SYSTEM_FEHLER')
+            raise IOError(f"Datei konnte nicht gespeichert werden: {exc}") from exc
+
+        return db_anhang
 
     def mark_anhang_deleted(self, id: int, deleted_by: str) -> bool:
         return self._anhang_repo.mark_deleted(id, deleted_by)

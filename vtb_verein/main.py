@@ -3,9 +3,13 @@
 Vereins-Mitgliederverwaltung
 Haupteinstiegspunkt für die Anwendung (unter vtb_verein/)
 """
+import json
 import os
+from pathlib import Path
 from dotenv import load_dotenv
-from nicegui import ui
+from nicegui import ui, app as nicegui_app
+from fastapi import Request
+from fastapi.responses import FileResponse, Response
 from app.db.datastore import VereinsDB
 from app.ui.login_page import create_login_page
 from app.ui.magic_link_page import create_magic_link_page
@@ -28,6 +32,7 @@ load_dotenv()
 
 # Konfiguration
 DB_PATH = os.getenv('VTB_DB_PATH', 'verein.db')
+UPLOAD_PATH = os.getenv('VTB_UPLOAD_PATH', 'uploads/')
 STORAGE_SECRET = os.getenv('VTB_STORAGE_SECRET', 'CHANGE_ME_IN_PRODUCTION')
 HOST = os.getenv('VTB_HOST', '0.0.0.0')
 PORT = int(os.getenv('VTB_PORT', '8080'))
@@ -35,6 +40,7 @@ PORT = int(os.getenv('VTB_PORT', '8080'))
 print("\n=== Vereinsverwaltung ===")
 print(f"Version: {get_app_version()}")
 print(f"Datenbank: {DB_PATH}")
+print(f"Uploads:   {UPLOAD_PATH}")
 print(f"Host: {HOST}:{PORT}")
 
 # E-Mail-Status ausgeben
@@ -46,7 +52,43 @@ else:
 print("=" * 30 + "\n")
 
 # Datenbank initialisieren
-db = VereinsDB(DB_PATH)
+db = VereinsDB(DB_PATH, upload_path=UPLOAD_PATH)
+
+_EXT_TO_MIME = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.pdf': 'application/pdf',
+}
+_NICEGUI_STORAGE_PATH = Path(os.environ.get('NICEGUI_STORAGE_PATH', '.nicegui')).resolve()
+
+
+@nicegui_app.get('/uploads/{stored_name}')
+async def download_anhang(stored_name: str, request: Request) -> Response:
+    """Geschützter Download-Endpunkt für Anhänge. Prüft NiceGUI-Session."""
+    if '/' in stored_name or '\\' in stored_name or '..' in stored_name:
+        return Response(status_code=400, content='Ungültiger Dateiname')
+
+    session_id = request.session.get('id')
+    if not session_id:
+        return Response(status_code=401, content='Nicht authentifiziert')
+
+    storage_file = _NICEGUI_STORAGE_PATH / f'storage-user-{session_id}.json'
+    try:
+        session_data = json.loads(storage_file.read_text(encoding='utf-8'))
+        if not session_data.get('authenticated'):
+            return Response(status_code=401, content='Nicht authentifiziert')
+    except Exception:
+        return Response(status_code=401, content='Nicht authentifiziert')
+
+    file_path = Path(UPLOAD_PATH) / stored_name
+    if not file_path.is_file():
+        return Response(status_code=404, content='Datei nicht gefunden')
+
+    media_type = _EXT_TO_MIME.get(file_path.suffix.lower(), 'application/octet-stream')
+    headers = {'Content-Disposition': f'inline; filename="{stored_name}"'} \
+        if media_type.startswith('image/') else \
+        {'Content-Disposition': f'attachment; filename="{stored_name}"'}
+    return FileResponse(str(file_path), media_type=media_type, headers=headers)
 
 # Seiten registrieren
 create_login_page(db)

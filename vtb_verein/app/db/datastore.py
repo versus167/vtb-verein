@@ -15,6 +15,7 @@ VereinsDB Facade - Maintains backward compatibility while delegating to reposito
 @refactored: AI Assistant
 '''
 
+import os
 from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,12 +41,13 @@ from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
 from app.services.ticket_service import TicketService
+from app.services.anhang_service import AnhangService
 
 
 class VereinsDB:
     """Data Access Layer Facade - Delegates to specialized repositories."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, upload_path: str = 'uploads/'):
         from app.services.kassenbuch_service import KassenbuchService
         self.path = path
         self._database = Database(path)
@@ -76,6 +78,11 @@ class VereinsDB:
         self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
         self._ticket_bereich_berechtigung_repo = TicketBereichBerechtigungRepository(self.conn)
 
+        self._anhang_service = AnhangService(
+            upload_path=upload_path,
+            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '10')),
+        )
+
         self._ticket_service = TicketService(
             ticket_repo=self._ticket_repo,
             kommentar_repo=self._ticket_kommentar_repo,
@@ -85,6 +92,7 @@ class VereinsDB:
             teilnehmer_repo=self._ticket_teilnehmer_repo,
             berechtigung_repo=self._ticket_bereich_berechtigung_repo,
             user_repo=self._user_repo,
+            anhang_service=self._anhang_service,
         )
 
     @property
@@ -116,6 +124,10 @@ class VereinsDB:
     def kasse_berechtigungen(self) -> KasseBerechtigungRepository:
         """Zugriff auf KasseBerechtigungRepository."""
         return self._kasse_berechtigung_repo
+
+    @property
+    def anhang_service(self) -> AnhangService:
+        return self._anhang_service
 
     @property
     def tickets(self) -> TicketService:
