@@ -25,7 +25,7 @@ class TicketRepository:
         "SELECT id, titel, beschreibung, status, prioritaet, "
         "bereich_id, kategorie_id, gemeldet_von, zugewiesen_an, "
         "faellig_am, geschlossen_am, geschlossen_von, "
-        "version, created_at, deleted_at, deleted_by FROM tickets"
+        "version, created_at, updated_at, deleted_at, deleted_by FROM tickets"
     )
 
     def get(self, id: int) -> Optional[Ticket]:
@@ -134,12 +134,37 @@ class TicketRepository:
         ]
         return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
+    def list_all_with_counts(self) -> list[Ticket]:
+        cursor = self.conn.execute(
+            "SELECT t.id, t.titel, t.beschreibung, t.status, t.prioritaet, "
+            "t.bereich_id, t.kategorie_id, t.gemeldet_von, t.zugewiesen_an, "
+            "t.faellig_am, t.geschlossen_am, t.geschlossen_von, "
+            "t.version, t.created_at, t.updated_at, t.deleted_at, t.deleted_by, "
+            "(SELECT COUNT(*) FROM ticket_kommentare k "
+            " WHERE k.ticket_id = t.id AND k.deleted_at IS NULL) AS kommentar_count, "
+            "(SELECT COUNT(*) FROM ticket_anhaenge a "
+            " WHERE a.ticket_id = t.id AND a.deleted_at IS NULL) AS anhang_count "
+            "FROM tickets t WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC"
+        )
+        return [self._map_ticket_with_counts(row) for row in cursor.fetchall()]
+
     def _map_ticket(self, row) -> Ticket:
         return Ticket(
             id=row[0], titel=row[1], beschreibung=row[2], status=row[3], prioritaet=row[4],
             bereich_id=row[5], kategorie_id=row[6], gemeldet_von=row[7], zugewiesen_an=row[8],
             faellig_am=row[9], geschlossen_am=row[10], geschlossen_von=row[11],
-            version=row[12], created_at=row[13], deleted_at=row[14], deleted_by=row[15]
+            version=row[12], created_at=row[13], updated_at=row[14],
+            deleted_at=row[15], deleted_by=row[16]
+        )
+
+    def _map_ticket_with_counts(self, row) -> Ticket:
+        return Ticket(
+            id=row[0], titel=row[1], beschreibung=row[2], status=row[3], prioritaet=row[4],
+            bereich_id=row[5], kategorie_id=row[6], gemeldet_von=row[7], zugewiesen_an=row[8],
+            faellig_am=row[9], geschlossen_am=row[10], geschlossen_von=row[11],
+            version=row[12], created_at=row[13], updated_at=row[14],
+            deleted_at=row[15], deleted_by=row[16],
+            kommentar_count=row[17], anhang_count=row[18]
         )
 
     # ------------------------------------------------------------------
