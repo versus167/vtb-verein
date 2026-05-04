@@ -136,6 +136,9 @@ class TicketService:
             tickets = self._ticket_repo.list_all()
         return tickets
 
+    def list_tickets_with_counts(self) -> list[Ticket]:
+        return self._ticket_repo.list_all_with_counts()
+
     def create_ticket(self, ticket: Ticket, created_by: str) -> Ticket:
         created = self._ticket_repo.create(ticket, created_by)
         bereich_ids = self._bereich_user_ids(created.bereich_id)

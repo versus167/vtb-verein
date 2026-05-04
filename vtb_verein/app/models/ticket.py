@@ -83,8 +83,11 @@ class Ticket:
     geschlossen_von: Optional[int] = field(default=None)
     version: int = field(default=1)
     created_at: Optional[str] = field(default=None)
+    updated_at: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
     deleted_by: Optional[str] = field(default=None)
+    kommentar_count: Optional[int] = field(default=None)
+    anhang_count: Optional[int] = field(default=None)
 
 
 @dataclass

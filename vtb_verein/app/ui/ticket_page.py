@@ -38,6 +38,7 @@ from app.models.ticket import (
     Ticket, TicketKommentar, TicketBereich, TicketKategorie, TicketStatus, TicketPrioritaet
 )
 from app.ui.navigation import create_navigation, set_current_path
+from app.ui.date_input_helper import DateInputHelper
 
 
 # ---------------------------------------------------------------------------
@@ -633,8 +634,14 @@ def create_ticket_pages(db: VereinsDB):
 # Render-Helfer
 # ---------------------------------------------------------------------------
 
+def _fmt_datum(ts: str | None) -> str:
+    if not ts:
+        return '—'
+    return DateInputHelper.format_date_display(ts[:10])
+
+
 def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, container, filter_state: dict):
-    alle_tickets = db.tickets.list_tickets()
+    alle_tickets = db.tickets.list_tickets_with_counts()
     bereiche = {b.id: b for b in db.tickets.get_bereiche()}
     alle_user = {u.id: u for u in db.users.list_all() if u.active and u.deleted_at is None}
 
@@ -663,19 +670,32 @@ def _render_ticket_liste(db: VereinsDB, user, lesbare_ids: set[int] | None, cont
         for ticket in gefilterte_tickets:
             bereich_name = bereiche[ticket.bereich_id].name if ticket.bereich_id in bereiche else '—'
             zugewiesen_an = alle_user[ticket.zugewiesen_an].username if ticket.zugewiesen_an and ticket.zugewiesen_an in alle_user else '—'
-            
-            with ui.card().classes('full-width q-mb-sm cursor-pointer').on(
+            kommentare = ticket.kommentar_count or 0
+            anhaenge = ticket.anhang_count or 0
+            erstellt = _fmt_datum(ticket.created_at)
+            geaendert = _fmt_datum(ticket.updated_at)
+
+            with ui.card().classes('full-width q-mb-xs cursor-pointer').on(
                 'click', lambda t=ticket: ui.navigate.to(f'/tickets/{t.id}')
             ):
-                with ui.row().classes('items-center justify-between full-width q-pa-sm'):
-                    with ui.column().classes('col'):
-                        with ui.row().classes('items-center q-gutter-xs'):
+                with ui.row().classes('items-center justify-between full-width q-px-sm q-py-xs'):
+                    with ui.column().classes('col').style('gap: 2px'):
+                        with ui.row().classes('items-center no-wrap').style('gap: 6px'):
                             ui.label(f'#{ticket.id}').classes('text-caption text-grey-6')
                             ui.label(ticket.titel).classes('text-subtitle2 text-weight-bold')
-                        ui.label(f'Bereich: {bereich_name}').classes('text-caption text-grey-7')
+                        info_parts = [bereich_name, TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)]
                         if ticket.zugewiesen_an:
-                            ui.label(f'Zugewiesen: {zugewiesen_an}').classes('text-caption text-grey-7')
-                        ui.label(f'Priorität: {TicketPrioritaet.LABELS.get(ticket.prioritaet, ticket.prioritaet)}').classes('text-caption text-grey-8')
+                            info_parts.append(f'→ {zugewiesen_an}')
+                        ui.label('  ·  '.join(info_parts)).classes('text-caption text-grey-7')
+                        datum_text = f'Erstellt {erstellt}'
+                        if geaendert != erstellt:
+                            datum_text += f'  ·  Geändert {geaendert}'
+                        with ui.row().classes('items-center').style('gap: 4px'):
+                            ui.icon('chat_bubble_outline', size='xs').classes('text-grey-5')
+                            ui.label(str(kommentare)).classes('text-caption text-grey-6')
+                            ui.icon('attach_file', size='xs').classes('text-grey-5')
+                            ui.label(str(anhaenge)).classes('text-caption text-grey-6')
+                            ui.label(f'·  {datum_text}').classes('text-caption text-grey-5')
                     _status_badge(ticket.status)
 
 
@@ -819,6 +839,8 @@ def _open_ticket_bearbeiten_dialog(
     with ui.dialog() as dialog, ui.card().style('min-width: 420px'):
         ui.label(f'Ticket #{ticket.id} bearbeiten').classes('text-h6 q-mb-md')
 
+        titel_input = ui.input(label='Titel', value=ticket.titel).classes('full-width')
+
         assign_options = {None: '(nicht zugewiesen)'}
         assign_options.update({uid: u.username for uid, u in alle_user.items()})
         assign_select = ui.select(
@@ -839,8 +861,16 @@ def _open_ticket_bearbeiten_dialog(
 
         def save():
             error_label.visible = False
+            neuer_titel = titel_input.value.strip()
+            if not neuer_titel:
+                error_label.text = 'Titel darf nicht leer sein.'
+                error_label.visible = True
+                return
             try:
-                if assign_select.value != ticket.zugewiesen_an:
+                titel_geaendert = neuer_titel != ticket.titel
+                zuweisung_geaendert = assign_select.value != ticket.zugewiesen_an
+                if titel_geaendert or zuweisung_geaendert:
+                    ticket.titel = neuer_titel
                     ticket.zugewiesen_an = assign_select.value
                     db.tickets.update_ticket(ticket, updated_by=actor)
 
