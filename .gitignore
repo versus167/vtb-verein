@@ -13,6 +13,9 @@ venv/
 # SQLite database
 verein.db
 
+# Upload-Verzeichnis (Datei-Anhänge)
+vtb_verein/uploads/
+
 # NiceGUI cache
 .nicegui/
 .gitignore

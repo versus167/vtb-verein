@@ -68,6 +68,101 @@ SICHTBARKEIT_INTERN   = 'intern'
 SICHTBARKEIT_PUBLIK   = 'oeffentlich'
 
 
+def _render_anhaenge(
+    anhaenge: list,
+    kann_loeschen: bool,
+    actor: str,
+    db: 'VereinsDB',
+    refresh,
+) -> None:
+    ui.label('Anhänge').classes('text-h6 q-mb-sm q-mt-md')
+    if not anhaenge:
+        ui.label('Keine Anhänge.').classes('text-grey q-mb-md')
+        return
+
+    with ui.row().classes('q-gutter-sm q-mb-md flex-wrap'):
+        for a in anhaenge:
+            is_bild = a.mime_type.startswith('image/')
+            with ui.card().classes('q-pa-xs').style('max-width: 200px'):
+                if is_bild:
+                    ui.image(f'/uploads/{a.stored_name}').style(
+                        'width: 180px; height: 140px; object-fit: cover; cursor: pointer'
+                    ).on('click', lambda s=a.stored_name: ui.navigate.to(f'/uploads/{s}', new_tab=True))
+                else:
+                    with ui.row().classes('items-center q-pa-sm q-gutter-xs').style('width: 180px'):
+                        ui.icon('picture_as_pdf', size='2rem').classes('text-negative')
+                        ui.link(
+                            a.original_name, f'/uploads/{a.stored_name}', new_tab=True
+                        ).classes('text-caption').style('word-break: break-all; max-width: 130px')
+
+                with ui.row().classes('items-center justify-between q-pt-xs q-px-xs'):
+                    groesse = f'{a.dateigroesse // 1024} KB' if a.dateigroesse >= 1024 else f'{a.dateigroesse} B'
+                    ui.label(groesse).classes('text-caption text-grey-6')
+                    if kann_loeschen:
+                        def _on_delete(aid=a.id):
+                            _confirm_anhang_loeschen(db, aid, actor, refresh)
+                        ui.button(icon='delete', on_click=_on_delete).props(
+                            'flat round dense color=negative size=xs'
+                        )
+
+
+def _confirm_anhang_loeschen(db: 'VereinsDB', anhang_id: int, actor: str, refresh) -> None:
+    with ui.dialog() as dialog, ui.card():
+        ui.label('Anhang löschen?').classes('text-h6')
+        ui.label('Der Anhang wird unwiderruflich als gelöscht markiert.').classes('text-caption text-grey-7 q-mb-md')
+
+        def _confirm():
+            db.tickets.mark_anhang_deleted(anhang_id, actor)
+            ui.notify('Anhang gelöscht.', type='warning')
+            dialog.close()
+            refresh()
+
+        with ui.row().classes('q-gutter-sm justify-end full-width'):
+            ui.button('Abbrechen', on_click=dialog.close).props('flat')
+            ui.button('Löschen', icon='delete', on_click=_confirm).props('color=negative')
+    dialog.open()
+
+
+def _render_upload_widget(ticket_id: int, db: 'VereinsDB', user, refresh) -> None:
+    from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
+    import os as _os
+    max_mb = int(_os.getenv('VTB_MAX_UPLOAD_MB', '10'))
+
+    with ui.card().classes('full-width q-mt-sm'):
+        ui.label('Anhang hinzufügen').classes('text-subtitle2 q-mb-sm')
+
+        async def handle_upload(e):
+            try:
+                data = await e.file.read()
+                db.tickets.add_anhang(
+                    ticket_id=ticket_id,
+                    kommentar_id=None,
+                    original_name=e.file.name,
+                    mime_type=e.file.content_type,
+                    inhalt=data,
+                    hochgeladen_von=user.id,
+                )
+                ui.notify(f'Anhang „{e.file.name}" gespeichert.', type='positive')
+                refresh()
+            except DateitypNichtErlaubtError as exc:
+                ui.notify(str(exc), type='warning')
+            except DateiZuGrossError as exc:
+                ui.notify(str(exc), type='warning')
+            except Exception as exc:
+                ui.notify(f'Fehler beim Hochladen: {exc}', type='negative')
+
+        ui.upload(
+            label='Foto oder PDF auswählen',
+            on_upload=handle_upload,
+            max_file_size=max_mb * 1024 * 1024,
+            auto_upload=True,
+            multiple=True,
+        ).props('accept="image/*,.pdf"').classes('full-width')
+        ui.label(
+            f'Erlaubt: JPEG, PNG, GIF, WebP, PDF – max. {max_mb} MB'
+        ).classes('text-caption text-grey-6 q-mt-xs')
+
+
 def _is_admin(user) -> bool:
     return user.role == 'admin'
 
@@ -365,7 +460,18 @@ def create_ticket_pages(db: VereinsDB):
                             )
                         ).props('flat color=negative')
 
-            ui.label('Kommentare').classes('text-h6 q-mb-sm')
+            anhaenge = db.tickets.get_anhaenge(ticket_id)
+            _render_anhaenge(
+                anhaenge=anhaenge,
+                kann_loeschen=kann_bearbeiten,
+                actor=actor,
+                db=db,
+                refresh=page_refresh,
+            )
+            if AuthHelper.has_permission(Permission.TICKETS_ACCESS):
+                _render_upload_widget(ticket_id=ticket_id, db=db, user=user, refresh=page_refresh)
+
+            ui.label('Kommentare').classes('text-h6 q-mb-sm q-mt-lg')
 
             kommentare = db.tickets.get_kommentare(ticket_id, include_internal=intern_sichtbar)
             if not kommentare:
