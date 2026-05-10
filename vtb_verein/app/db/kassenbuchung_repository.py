@@ -33,7 +33,9 @@ class KassenbuchungRepository(BaseRepository):
                        kategorie, einnahme_cent, ausgabe_cent, notiz,
                        exportiert_in_export_id,
                        version, created_at, created_by, updated_at, updated_by,
-                       deleted_at, deleted_by
+                       deleted_at, deleted_by,
+                       (SELECT COUNT(*) FROM kassenbuchung_anhaenge
+                        WHERE buchung_id = kassenbuchungen.id AND deleted_at IS NULL) AS anhang_count
                 FROM kassenbuchungen
                 WHERE id = ?
                 """,
@@ -77,7 +79,9 @@ class KassenbuchungRepository(BaseRepository):
                        kategorie, einnahme_cent, ausgabe_cent, notiz,
                        exportiert_in_export_id,
                        version, created_at, created_by, updated_at, updated_by,
-                       deleted_at, deleted_by
+                       deleted_at, deleted_by,
+                       (SELECT COUNT(*) FROM kassenbuchung_anhaenge
+                        WHERE buchung_id = kassenbuchungen.id AND deleted_at IS NULL) AS anhang_count
                 FROM kassenbuchungen
                 WHERE {where}
                 ORDER BY buchungsdatum ASC, id ASC

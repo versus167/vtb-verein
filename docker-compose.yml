@@ -17,6 +17,8 @@ services:
     volumes:
       # SQLite-Datenbank persistent speichern
       - ./data:/data
+      # Datei-Anhänge (Ticket-Belege, Kassenbuch-Belege)
+      - ./uploads:/app/uploads
       # Logs (optional)
       - ./logs:/app/logs
     
@@ -44,6 +46,8 @@ services:
 # Volumes definieren (optional: Named Volumes statt Bind Mounts)
 volumes:
   data:
+    driver: local
+  uploads:
     driver: local
   logs:
     driver: local

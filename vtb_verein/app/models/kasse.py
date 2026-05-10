@@ -50,6 +50,7 @@ class Kassenbuchung:
     updated_by: Optional[str] = None
     deleted_at: Optional[str] = None
     deleted_by: Optional[str] = None
+    anhang_count: Optional[int] = None
 
     @property
     def ist_exportiert(self) -> bool:
@@ -66,6 +67,21 @@ class Kassenbuchung:
     @property
     def ausgabe_euro(self) -> float:
         return self.ausgabe_cent / 100
+
+
+@dataclass
+class KassenbuchungAnhang:
+    """Foto oder PDF-Beleg, der einer Kassenbuchung zugeordnet ist."""
+    id: Optional[int] = None
+    buchung_id: Optional[int] = None
+    original_name: str = ''
+    stored_name: str = ''
+    mime_type: str = ''
+    dateigroesse: int = 0
+    hochgeladen_von: Optional[int] = None
+    hochgeladen_am: Optional[str] = None
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 
 
 @dataclass

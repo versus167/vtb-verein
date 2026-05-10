@@ -7,11 +7,13 @@ Kassenbuch Service – Business-Logik für das Kassenbuch.
 import csv
 import io
 from datetime import date
-from app.models.kasse import Kasse, Kassenbuchung, KassenbuchExport
+from app.models.kasse import Kasse, Kassenbuchung, KassenbuchExport, KassenbuchungAnhang
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
+from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
+from app.services.anhang_service import AnhangService, DateitypNichtErlaubtError, DateiZuGrossError
 
 
 class BuchungGesperrtError(Exception):
@@ -79,11 +81,15 @@ class KassenbuchService:
         buchung_repo: KassenbuchungRepository,
         export_repo: KassenbuchExportRepository,
         berechtigung_repo: KasseBerechtigungRepository,
+        anhang_repo: KassenbuchungAnhangRepository | None = None,
+        anhang_service: AnhangService | None = None,
     ):
         self._kasse = kasse_repo
         self._buchung = buchung_repo
         self._export = export_repo
         self._berechtigung = berechtigung_repo
+        self._anhang_repo = anhang_repo
+        self._anhang_service = anhang_service
 
     # -----------------------------------
     # Berechtigungsprüfung
@@ -452,3 +458,43 @@ class KassenbuchService:
             "buchungen": buchungen_mit_bestand,
             "kategorien": kategorien,
         }
+
+    # -----------------------------------
+    # Anhang-Operationen
+    # -----------------------------------
+
+    def add_anhang(
+        self,
+        buchung_id: int,
+        original_name: str,
+        mime_type: str,
+        inhalt: bytes,
+        hochgeladen_von: int,
+    ) -> KassenbuchungAnhang:
+        """Speichert einen Datei-Anhang für eine Kassenbuchung.
+
+        Raises:
+            DateitypNichtErlaubtError: Wenn der MIME-Typ nicht erlaubt ist.
+            DateiZuGrossError: Wenn die Datei die Maximalgröße überschreitet.
+            IOError: Wenn das Schreiben auf die Festplatte fehlschlägt.
+        """
+        self._anhang_service.validiere(mime_type, len(inhalt))
+        db_anhang = self._anhang_repo.create(KassenbuchungAnhang(
+            buchung_id=buchung_id,
+            original_name=original_name,
+            mime_type=mime_type,
+            dateigroesse=len(inhalt),
+            hochgeladen_von=hochgeladen_von,
+        ))
+        try:
+            self._anhang_service.schreibe(db_anhang.stored_name, inhalt)
+        except IOError:
+            self._anhang_repo.mark_deleted(db_anhang.id, 'SYSTEM_FEHLER')
+            raise
+        return db_anhang
+
+    def get_anhaenge(self, buchung_id: int) -> list[KassenbuchungAnhang]:
+        return self._anhang_repo.list_by_buchung(buchung_id)
+
+    def mark_anhang_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._anhang_repo.mark_deleted(id, deleted_by)
