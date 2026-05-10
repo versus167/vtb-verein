@@ -101,3 +101,50 @@ class AnhangService:
         if not pfad.is_file():
             return None
         return pfad.read_bytes()
+
+    def bild_zu_pdf(self, inhalt: bytes, max_dimension: int = 1800) -> bytes:
+        """Konvertiert ein Bild zu einem komprimierten A4-PDF.
+
+        Das Bild wird auf max_dimension Pixel (längste Seite) skaliert,
+        als JPEG mit Qualität 80 komprimiert und mittig auf einer A4-Seite eingebettet.
+        """
+        from PIL import Image, ImageOps
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(inhalt))).convert('RGB')
+
+        ratio = min(1.0, max_dimension / max(img.width, img.height))
+        if ratio < 1.0:
+            img = img.resize(
+                (int(img.width * ratio), int(img.height * ratio)),
+                Image.LANCZOS,
+            )
+
+        jpeg_buf = io.BytesIO()
+        img.save(jpeg_buf, format='JPEG', quality=80, optimize=True)
+        jpeg_buf.seek(0)
+
+        page_w, page_h = A4
+        margin = 20  # Punkte
+        max_w = page_w - 2 * margin
+        max_h = page_h - 2 * margin
+
+        img_ratio = img.width / img.height
+        if img_ratio > max_w / max_h:
+            draw_w = max_w
+            draw_h = draw_w / img_ratio
+        else:
+            draw_h = max_h
+            draw_w = draw_h * img_ratio
+
+        x = (page_w - draw_w) / 2
+        y = (page_h - draw_h) / 2
+
+        pdf_buf = io.BytesIO()
+        c = canvas.Canvas(pdf_buf, pagesize=A4)
+        c.drawImage(ImageReader(jpeg_buf), x, y, draw_w, draw_h)
+        c.save()
+
+        return pdf_buf.getvalue()

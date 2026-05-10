@@ -231,6 +231,8 @@ def erstelle_kassenbuch_pdf(
         ausgabe_str = _fmt_euro(b['ausgabe_cent']) if b['ausgabe_cent'] else ''
         datum_str = _fmt_datum(b['buchungsdatum'])
         beleg_str = b.get('belegnummer') or '–'
+        hat_anhang = b.get('anhang_count', 0) > 0
+        anhang_suffix = ' ◆' if hat_anhang else ''
         text_str = b['buchungstext']
         if len(text_str) > 45:
             text_str = text_str[:42] + '...'
@@ -239,12 +241,12 @@ def erstelle_kassenbuch_pdf(
         data_row_idx = i  # 0 = header
 
         if ist_storniert:
-            row = [datum_str, beleg_str, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
+            row = [datum_str, f'{beleg_str}{anhang_suffix}', text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
             table_data.append(row)
             row_styles.append(('TEXTCOLOR', (0, data_row_idx), (-1, data_row_idx), COL_STORNO))
         elif ist_endgueltig:
             # Endgültig exportierte Buchung: blaues Beleg-Kürzel + dezenter blauer Hintergrund
-            beleg_display = f'[✓] {beleg_str}'
+            beleg_display = f'[✓] {beleg_str}{anhang_suffix}'
             row = [datum_str, beleg_display, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
             table_data.append(row)
             row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), COL_ENDGUELTIG_BG))
@@ -255,7 +257,7 @@ def erstelle_kassenbuch_pdf(
             if b['ausgabe_cent']:
                 row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_NEGATIVE))
         else:
-            row = [datum_str, beleg_str, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
+            row = [datum_str, f'{beleg_str}{anhang_suffix}', text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
             table_data.append(row)
             bg = COL_STRIPE if i % 2 == 0 else colors.white
             row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), bg))
@@ -299,6 +301,7 @@ def erstelle_kassenbuch_pdf(
     # ------------------------------------------------------------------
     story.append(Paragraph(
         '[✓] Beleg = endgültig / bereits exportiert  ·  '
+        '◆ = Anhänge vorhanden  ·  '
         'Grau = storniert (wird im Endbestand nicht berücksichtigt)',
         style_legend,
     ))

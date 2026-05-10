@@ -30,6 +30,7 @@ from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
+from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
 from app.db.ticket_repository import TicketRepository
 from app.db.ticket_kommentar_repository import TicketKommentarRepository
 from app.db.ticket_anhang_repository import TicketAnhangRepository
@@ -62,12 +63,20 @@ class VereinsDB:
         self._kassenbuchung_repo = KassenbuchungRepository(self.conn)
         self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
         self._kasse_berechtigung_repo = KasseBerechtigungRepository(self.conn)
+        self._kassenbuchung_anhang_repo = KassenbuchungAnhangRepository(self.conn)
+
+        self._anhang_service = AnhangService(
+            upload_path=upload_path,
+            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '10')),
+        )
 
         self._kassenbuch_service = KassenbuchService(
             kasse_repo=self._kasse_repo,
             buchung_repo=self._kassenbuchung_repo,
             export_repo=self._kassenbuch_export_repo,
             berechtigung_repo=self._kasse_berechtigung_repo,
+            anhang_repo=self._kassenbuchung_anhang_repo,
+            anhang_service=self._anhang_service,
         )
 
         self._ticket_repo = TicketRepository(self.conn)
@@ -77,11 +86,6 @@ class VereinsDB:
         self._ticket_kategorie_repo = TicketKategorieRepository(self.conn)
         self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
         self._ticket_bereich_berechtigung_repo = TicketBereichBerechtigungRepository(self.conn)
-
-        self._anhang_service = AnhangService(
-            upload_path=upload_path,
-            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '10')),
-        )
 
         self._ticket_service = TicketService(
             ticket_repo=self._ticket_repo,

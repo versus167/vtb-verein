@@ -9,7 +9,7 @@ Database connection and schema management.
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 14  # Version 14: UNIQUE-Constraints für telegram_id und matrix_id
+SCHEMA_VERSION = 15  # Version 15: kassenbuchung_anhaenge Tabelle
 
 
 class Database:
@@ -120,6 +120,9 @@ class Database:
         if current == 13:
             self._migrate_13_to_14()
             current = 14
+        if current == 14:
+            self._migrate_14_to_15()
+            current = 15
 
         if current != SCHEMA_VERSION:
             raise RuntimeError(
@@ -1980,3 +1983,30 @@ class Database:
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id   ON users (matrix_id)   WHERE matrix_id   IS NOT NULL")
 
         self._set_schema_version(14)
+
+    def _migrate_14_to_15(self):
+        """Migration 14->15: kassenbuchung_anhaenge — Belegfotos und PDFs für Buchungen."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE kassenbuchung_anhaenge (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    buchung_id      INTEGER NOT NULL REFERENCES kassenbuchungen(id),
+                    original_name   TEXT NOT NULL,
+                    stored_name     TEXT UNIQUE,
+                    mime_type       TEXT NOT NULL,
+                    dateigroesse    INTEGER NOT NULL,
+                    hochgeladen_von INTEGER NOT NULL REFERENCES users(id),
+                    hochgeladen_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at      TEXT,
+                    deleted_by      TEXT
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX idx_kassenbuchung_anhaenge_buchung_id "
+                "ON kassenbuchung_anhaenge(buchung_id)"
+            )
+            cur.execute(
+                "CREATE INDEX idx_kassenbuchung_anhaenge_deleted_at "
+                "ON kassenbuchung_anhaenge(deleted_at)"
+            )
+        self._set_schema_version(15)
