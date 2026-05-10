@@ -9,8 +9,9 @@ bcrypt>=4.0.0
 # Optional: Env Loading
 python-dotenv>=1.0.0
 
-# für PDF-Report
+# für PDF-Report und Bild-Konvertierung
 reportlab>=4.0
+Pillow>=10.0
 
 # Multi-Channel Notifications (Phase 1)
 python-telegram-bot>=21.0  # Für Telegram-Benachrichtigungen

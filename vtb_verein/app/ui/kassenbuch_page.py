@@ -285,6 +285,82 @@ def create_kassenbuch_page(db: VereinsDB):
         def _tag_vor(datum_iso: str) -> str:
             return str(date.fromisoformat(datum_iso) - timedelta(days=1))
 
+        def show_anhaenge_mobil_dialog(buchung_id: int, kann_verwalten: bool):
+            """Anhang-Dialog für Mobile — zeigt Anhänge + Upload-Widget."""
+            with ui.dialog() as dialog, ui.card().style('min-width: min(380px, 95vw)'):
+                ui.label('Anhänge').classes('text-h6 q-mb-sm')
+                container = ui.column().classes('w-full')
+
+                def render_liste():
+                    container.clear()
+                    anhaenge = db.kassenbuch.get_anhaenge(buchung_id)
+                    with container:
+                        if not anhaenge:
+                            ui.label('Keine Anhänge vorhanden.').classes('text-caption text-grey')
+                        for a in anhaenge:
+                            with ui.row().classes('items-center w-full q-mb-xs'):
+                                ui.icon('description').classes('text-grey-6 q-mr-xs')
+                                ui.link(
+                                    a.original_name,
+                                    f'/uploads/{a.stored_name}',
+                                    new_tab=True,
+                                ).classes('flex-1 text-caption')
+                                if kann_verwalten:
+                                    def _loeschen(aid=a.id):
+                                        with ui.dialog() as cdialog, ui.card():
+                                            ui.label('Anhang löschen?').classes('text-h6')
+                                            ui.label(
+                                                'Der Anhang wird als gelöscht markiert.'
+                                            ).classes('text-caption text-grey-7 q-mb-md')
+                                            with ui.row():
+                                                ui.button('Abbrechen', on_click=cdialog.close).props('flat')
+                                                def _go(a=aid):
+                                                    db.kassenbuch.mark_anhang_deleted(a, current_user.username)
+                                                    ui.notify('Anhang gelöscht.', type='warning')
+                                                    cdialog.close()
+                                                    render_liste()
+                                                ui.button('Löschen', on_click=_go).props('color=negative')
+                                        cdialog.open()
+                                    ui.button(
+                                        icon='delete', on_click=_loeschen
+                                    ).props('flat dense round size=xs color=negative')
+
+                render_liste()
+
+                if kann_verwalten:
+                    ui.separator().classes('q-my-sm')
+                    max_mb = int(os.environ.get('VTB_MAX_UPLOAD_MB', '10'))
+
+                    async def handle_upload(ev):
+                        data = await ev.file.read()
+                        try:
+                            db.kassenbuch.add_anhang(
+                                buchung_id=buchung_id,
+                                original_name=ev.file.name,
+                                mime_type=ev.file.content_type,
+                                inhalt=data,
+                                hochgeladen_von=current_user.id,
+                            )
+                            ui.notify(f'„{ev.file.name}" gespeichert.', type='positive')
+                            render_liste()
+                        except DateitypNichtErlaubtError:
+                            ui.notify('Dateityp nicht erlaubt (nur Bilder und PDF).', type='warning')
+                        except DateiZuGrossError:
+                            ui.notify(f'Datei zu groß (max. {max_mb} MB).', type='warning')
+                        except Exception:
+                            ui.notify('Fehler beim Speichern.', type='negative')
+
+                    ui.upload(
+                        label='Anhang hinzufügen',
+                        on_upload=handle_upload,
+                        max_file_size=max_mb * 1024 * 1024,
+                        auto_upload=True,
+                        multiple=True,
+                    ).props('accept="image/*,.pdf"').classes('w-full')
+
+                ui.button('Schließen', on_click=dialog.close).props('flat').classes('q-mt-sm')
+            dialog.open()
+
         def render_content():
             content_area.clear()
             history_cache: dict[int, list[dict]] = {}
@@ -500,6 +576,10 @@ def create_kassenbuch_page(db: VereinsDB):
                                                 ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
                                             with ui.element('div').classes('kasse-buchung-betrag'):
                                                 ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+                                                if row['anhang_count'] > 0 or row['kann_anhaenge_verwalten']:
+                                                    ui.button(on_click=lambda rid=row_id, kv=row['kann_anhaenge_verwalten']: show_anhaenge_mobil_dialog(rid, kv)).props(
+                                                        f'icon=attach_file flat dense round size=xs color={"primary" if row["anhang_count"] > 0 else "grey"}'
+                                                    )
 
                                     # Swipe-Events auf q-slide-item
                                     slide.on('right', lambda rid=row_id, s=slide: (
@@ -519,6 +599,10 @@ def create_kassenbuch_page(db: VereinsDB):
                                             ui.html(f'<div class="kasse-buchung-sub">{meta_str}</div>')
                                         with ui.element('div').classes('kasse-buchung-betrag'):
                                             ui.html(f'<span class="betrag {betrag_cls}">{betrag_txt}</span>')
+                                            if row['anhang_count'] > 0 or row['kann_anhaenge_verwalten']:
+                                                ui.button(on_click=lambda rid=row_id, kv=row['kann_anhaenge_verwalten']: show_anhaenge_mobil_dialog(rid, kv)).props(
+                                                    f'icon=attach_file flat dense round size=xs color={"primary" if row["anhang_count"] > 0 else "grey"}'
+                                                )
 
                 # ----------------------------------------------------------
                 # [2b] Desktop Buchungstabelle – q-table (gt-sm)
@@ -1298,6 +1382,7 @@ def create_kassenbuch_page(db: VereinsDB):
                                 'ausgabe_cent': b.ausgabe_cent,
                                 'ist_storniert': b.ist_storniert,
                                 'exportiert_in_export_id': b.exportiert_in_export_id,
+                                'anhang_count': b.anhang_count or 0,
                             }
                             for b in buchungen_raw
                         ]

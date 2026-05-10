@@ -6,6 +6,7 @@ Kassenbuch Service – Business-Logik für das Kassenbuch.
 
 import csv
 import io
+import os
 from datetime import date
 from app.models.kasse import Kasse, Kassenbuchung, KassenbuchExport, KassenbuchungAnhang
 from app.db.kasse_repository import KasseRepository
@@ -473,11 +474,18 @@ class KassenbuchService:
     ) -> KassenbuchungAnhang:
         """Speichert einen Datei-Anhang für eine Kassenbuchung.
 
+        Bilder werden automatisch zu komprimierten A4-PDFs konvertiert.
+
         Raises:
             DateitypNichtErlaubtError: Wenn der MIME-Typ nicht erlaubt ist.
             DateiZuGrossError: Wenn die Datei die Maximalgröße überschreitet.
             IOError: Wenn das Schreiben auf die Festplatte fehlschlägt.
         """
+        if mime_type.startswith('image/'):
+            inhalt = self._anhang_service.bild_zu_pdf(inhalt)
+            original_name = os.path.splitext(original_name)[0] + '.pdf'
+            mime_type = 'application/pdf'
+
         self._anhang_service.validiere(mime_type, len(inhalt))
         db_anhang = self._anhang_repo.create(KassenbuchungAnhang(
             buchung_id=buchung_id,
