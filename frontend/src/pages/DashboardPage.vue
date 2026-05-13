@@ -5,6 +5,18 @@
 
     <div class="row q-gutter-md">
       <q-card
+        v-if="auth.hasPermission('abteilungen.read')"
+        class="col-auto cursor-pointer dashboard-card"
+        @click="router.push({ name: 'abteilungen' })"
+      >
+        <q-card-section class="text-center" style="min-width: 160px">
+          <q-icon name="account_tree" size="3rem" color="primary" />
+          <div class="text-h6 q-mt-sm">Abteilungen</div>
+          <div class="text-caption text-grey">Abteilungen verwalten</div>
+        </q-card-section>
+      </q-card>
+
+      <q-card
         v-if="auth.hasPermission('mitglieder.read')"
         class="col-auto cursor-pointer dashboard-card"
         @click="router.push({ name: 'mitglieder' })"

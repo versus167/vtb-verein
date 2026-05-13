@@ -39,6 +39,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('abteilungen.read')"
+            clickable
+            :to="{ name: 'abteilungen' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="account_tree" /></q-item-section>
+            <q-item-section>Abteilungen</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('mitglieder.read')"
             clickable
             :to="{ name: 'mitglieder' }"
