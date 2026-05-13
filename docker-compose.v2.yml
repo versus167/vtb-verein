@@ -1,0 +1,34 @@
+services:
+  vtb-verein-v2:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vtb-verein-v2
+
+    env_file:
+      - .env
+
+    ports:
+      - "${VTB_PORT:-8000}:8000"
+
+    volumes:
+      - ./data:/data
+      - ./uploads:/app/uploads
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M

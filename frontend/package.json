@@ -1,0 +1,34 @@
+{
+  "name": "vtb-verein-frontend",
+  "version": "2.0.0",
+  "description": "VTB Vereinsverwaltung - Frontend",
+  "productName": "Vereinsverwaltung",
+  "author": "Volker Süß",
+  "private": true,
+  "scripts": {
+    "dev": "quasar dev",
+    "build": "quasar build",
+    "lint": "eslint --ext .js,.vue ./src",
+    "format": "prettier --write \"**/*.{js,vue,scss,html,json}\""
+  },
+  "dependencies": {
+    "quasar": "^2.16.0",
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "@quasar/app-vite": "^1.9.0",
+    "@quasar/extras": "^1.16.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.26.0",
+    "prettier": "^3.3.0",
+    "vite": "^5.0.0",
+    "autoprefixer": "^10.4.0"
+  },
+  "engines": {
+    "node": "^18 || ^20",
+    "npm": ">= 9"
+  }
+}
