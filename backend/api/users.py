@@ -1,0 +1,233 @@
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel
+from typing import Optional
+from app.models.permission import Permission
+from app.services.user_service import UserService
+from ..core.deps import CurrentUser, DB
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+PERMISSION_GROUPS = [
+    {
+        'label': 'Mitglieder', 'icon': 'people',
+        'permissions': [
+            (Permission.MITGLIEDER_READ,   'Ansehen'),
+            (Permission.MITGLIEDER_WRITE,  'Bearbeiten'),
+            (Permission.MITGLIEDER_DELETE, 'Löschen'),
+        ],
+    },
+    {
+        'label': 'Abteilungen', 'icon': 'account_tree',
+        'permissions': [
+            (Permission.ABTEILUNGEN_READ,   'Ansehen'),
+            (Permission.ABTEILUNGEN_WRITE,  'Bearbeiten'),
+            (Permission.ABTEILUNGEN_DELETE, 'Löschen'),
+        ],
+    },
+    {
+        'label': 'Beiträge', 'icon': 'euro',
+        'permissions': [
+            (Permission.BEITRAEGE_READ,  'Ansehen'),
+            (Permission.BEITRAEGE_WRITE, 'Bearbeiten'),
+        ],
+    },
+    {
+        'label': 'Berichte', 'icon': 'bar_chart',
+        'permissions': [
+            (Permission.BERICHTE_READ,   'Ansehen'),
+            (Permission.BERICHTE_EXPORT, 'Exportieren'),
+        ],
+    },
+    {
+        'label': 'Benutzerverwaltung', 'icon': 'manage_accounts',
+        'permissions': [
+            (Permission.USERS_MANAGE, 'Verwalten'),
+        ],
+    },
+    {
+        'label': 'System', 'icon': 'settings',
+        'permissions': [
+            (Permission.SYSTEM_CONFIG, 'Konfiguration'),
+        ],
+    },
+    {
+        'label': 'Tickets', 'icon': 'confirmation_number',
+        'permissions': [
+            (Permission.TICKETS_ACCESS,             'Zugang'),
+            (Permission.TICKETS_BEREICHE_VERWALTEN, 'Bereiche verwalten'),
+        ],
+    },
+]
+
+
+def _require_manage(user):
+    if not user.has_permission(Permission.USERS_MANAGE):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung")
+
+
+def _user_to_dict(u):
+    return {
+        'id':         u.id,
+        'username':   u.username,
+        'email':      u.email,
+        'role':       u.role,
+        'active':     u.active,
+        'last_login': u.last_login,
+        'version':    u.version,
+    }
+
+
+# --- Schemas ---
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    role: str
+    active: bool = True
+    password: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    username: str
+    email: str
+    role: str
+    active: bool
+    expected_version: int
+
+
+class PasswordChange(BaseModel):
+    new_password: str
+
+
+class PermissionsUpdate(BaseModel):
+    permissions: list[str]
+
+
+# --- Endpoints ---
+
+@router.get("/")
+def list_users(user: CurrentUser, db: DB):
+    _require_manage(user)
+    service = UserService(db)
+    return [_user_to_dict(u) for u in service.list_all()]
+
+
+@router.get("/permission-groups")
+def get_permission_groups(user: CurrentUser):
+    _require_manage(user)
+    return [
+        {
+            'label': g['label'],
+            'icon':  g['icon'],
+            'permissions': [
+                {'key': key, 'label': label}
+                for key, label in g['permissions']
+            ],
+        }
+        for g in PERMISSION_GROUPS
+    ]
+
+
+@router.get("/{user_id}")
+def get_user(user_id: int, user: CurrentUser, db: DB):
+    _require_manage(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    return _user_to_dict(target)
+
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
+def create_user(data: UserCreate, user: CurrentUser, db: DB):
+    _require_manage(user)
+    service = UserService(db)
+    try:
+        created = service.create(
+            username=data.username,
+            email=data.email,
+            role=data.role,
+            active=data.active,
+            created_by=user.username,
+            password=data.password,
+            send_magic_link=False,
+        )
+        return _user_to_dict(created)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/{user_id}")
+def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
+    _require_manage(user)
+    service = UserService(db)
+    try:
+        service.update(
+            user_id=user_id,
+            username=data.username,
+            email=data.email,
+            role=data.role,
+            active=data.active,
+            updated_by=user.username,
+            expected_version=data.expected_version,
+        )
+        return _user_to_dict(db.get_user_by_id(user_id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{user_id}/password")
+def change_password(user_id: int, data: PasswordChange, user: CurrentUser, db: DB):
+    _require_manage(user)
+    service = UserService(db)
+    try:
+        service.change_password(user_id, data.new_password, updated_by=user.username)
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, user: CurrentUser, db: DB):
+    _require_manage(user)
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="Eigenen Account nicht löschbar")
+    service = UserService(db)
+    try:
+        service.delete(user_id, deleted_by=user.username)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{user_id}/permissions")
+def get_permissions(user_id: int, user: CurrentUser, db: DB):
+    _require_manage(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    current = list(db.permissions.get_permissions_for_user(user_id))
+    defaults = list(Permission.defaults_for_role(target.role))
+    return {
+        'user':     _user_to_dict(target),
+        'current':  current,
+        'defaults': defaults,
+    }
+
+
+@router.put("/{user_id}/permissions")
+def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db: DB):
+    _require_manage(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    if target.role == 'admin' and Permission.USERS_MANAGE not in data.permissions:
+        if db.count_active_admins() <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Kann USERS_MANAGE nicht entziehen: letzter aktiver Administrator",
+            )
+    db.permissions.set_permissions_for_user(
+        user_id=user_id,
+        permissions=set(data.permissions),
+        actor=user.username,
+    )
+    return {"ok": True}

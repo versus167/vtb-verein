@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from backend.core.config import settings
 from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
+from backend.api.users import router as users_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -36,6 +37,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(mitglieder_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
 
 
 @app.get("/api/health")

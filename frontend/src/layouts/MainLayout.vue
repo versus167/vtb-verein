@@ -43,6 +43,16 @@
             <q-item-section avatar><q-icon name="group" /></q-item-section>
             <q-item-section>Mitglieder</q-item-section>
           </q-item>
+
+          <q-item
+            v-if="auth.hasPermission('users.manage')"
+            clickable
+            :to="{ name: 'users' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="manage_accounts" /></q-item-section>
+            <q-item-section>Benutzerverwaltung</q-item-section>
+          </q-item>
         </q-list>
       </q-scroll-area>
     </q-drawer>

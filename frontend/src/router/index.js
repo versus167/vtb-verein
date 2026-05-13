@@ -23,6 +23,18 @@ const routes = [
         component: () => import('pages/MitgliederPage.vue'),
         meta: { permission: 'mitglieder.read' },
       },
+      {
+        path: 'users',
+        name: 'users',
+        component: () => import('pages/UsersPage.vue'),
+        meta: { permission: 'users.manage' },
+      },
+      {
+        path: 'users/:id/permissions',
+        name: 'user-permissions',
+        component: () => import('pages/UserPermissionsPage.vue'),
+        meta: { permission: 'users.manage' },
+      },
     ],
   },
   {
