@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from app.services.user_service import UserService
-from ..core.db import get_db
+from ..core.db import get_db, get_db as _get_db
 from ..core.security import create_access_token
-from ..core.deps import CurrentUser
+from ..core.deps import CurrentUser, DB
 from ..core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -26,6 +26,7 @@ class UserInfo(BaseModel):
     email: str
     role: str
     permissions: list[str]
+    last_login: str | None = None
 
 
 @router.post("/login", response_model=Token)
@@ -52,12 +53,29 @@ def login(
     )
 
 
+class OwnPasswordChange(BaseModel):
+    new_password: str
+
+
 @router.get("/me", response_model=UserInfo)
-def get_me(user: CurrentUser):
+def get_me(user: CurrentUser, db: DB):
+    # Frisch laden damit last_login etc. aktuell ist
+    fresh = db.get_user_by_id(user.id)
     return UserInfo(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        role=user.role,
-        permissions=list(user.permissions),
+        id=fresh.id,
+        username=fresh.username,
+        email=fresh.email,
+        role=fresh.role,
+        permissions=list(fresh.permissions),
+        last_login=fresh.last_login,
     )
+
+
+@router.post("/me/password")
+def change_own_password(data: OwnPasswordChange, user: CurrentUser, db: DB):
+    service = UserService(db)
+    try:
+        service.change_password(user.id, data.new_password, updated_by=user.username)
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

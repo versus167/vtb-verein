@@ -14,6 +14,10 @@
                 </q-item-section>
               </q-item>
               <q-separator />
+              <q-item clickable v-close-popup :to="{ name: 'profile' }">
+                <q-item-section avatar><q-icon name="person" /></q-item-section>
+                <q-item-section>Mein Profil</q-item-section>
+              </q-item>
               <q-item clickable v-close-popup @click="onLogout">
                 <q-item-section avatar><q-icon name="logout" /></q-item-section>
                 <q-item-section>Abmelden</q-item-section>
