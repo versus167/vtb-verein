@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${VTB_PG_PASSWORD}
       POSTGRES_DB: ${VTB_PG_DB}
     volumes:
-      - pg_data:/var/lib/postgresql
+      - ./pg_data:/var/lib/postgresql
     ports:
       - "5432:5432"
     healthcheck:
@@ -56,5 +56,3 @@ services:
           cpus: '0.25'
           memory: 128M
 
-volumes:
-  pg_data:

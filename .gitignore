@@ -27,6 +27,9 @@ vtb_verein/.nicegui/
 .pydevproject
 vtb_verein/.settings/
 
+# PostgreSQL Daten (Docker Bind-Mount)
+pg_data/
+
 # Frontend Build-Artefakte
 frontend/node_modules/
 frontend/.quasar/
