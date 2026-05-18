@@ -16,7 +16,7 @@ class TicketKategorieRepository:
     def get(self, id: int) -> Optional[TicketKategorie]:
         cursor = self.conn.execute(
             "SELECT id, name, icon, version, deleted_at, deleted_by "
-            "FROM ticket_kategorien WHERE id = ?",
+            "FROM ticket_kategorien WHERE id = %s",
             (id,)
         )
         row = cursor.fetchone()
@@ -37,16 +37,16 @@ class TicketKategorieRepository:
 
     def create(self, kategorie: TicketKategorie, created_by: str) -> TicketKategorie:
         cursor = self.conn.execute(
-            "INSERT INTO ticket_kategorien (name, icon) VALUES (?, ?)",
+            "INSERT INTO ticket_kategorien (name, icon) VALUES (%s, %s) RETURNING id",
             (kategorie.name, kategorie.icon)
         )
         self.conn.commit()
-        return self.get(cursor.lastrowid)
+        return self.get(cursor.fetchone()['id'])
 
     def update(self, kategorie: TicketKategorie, updated_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE ticket_kategorien SET name = ?, icon = ?, version = version + 1 "
-            "WHERE id = ? AND version = ? AND deleted_at IS NULL",
+            "UPDATE ticket_kategorien SET name = %s, icon = %s, version = version + 1 "
+            "WHERE id = %s AND version = %s AND deleted_at IS NULL",
             (kategorie.name, kategorie.icon, kategorie.id, kategorie.version)
         )
         self.conn.commit()
@@ -54,8 +54,8 @@ class TicketKategorieRepository:
 
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE ticket_kategorien SET deleted_at = datetime('now'), deleted_by = ?, version = version + 1 "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE ticket_kategorien SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, version = version + 1 "
+            "WHERE id = %s AND deleted_at IS NULL",
             (deleted_by, id)
         )
         self.conn.commit()
@@ -63,6 +63,6 @@ class TicketKategorieRepository:
 
     def _map(self, row) -> TicketKategorie:
         return TicketKategorie(
-            id=row[0], name=row[1], icon=row[2],
-            version=row[3], deleted_at=row[4], deleted_by=row[5]
+            id=row['id'], name=row['name'], icon=row['icon'],
+            version=row['version'], deleted_at=row['deleted_at'], deleted_by=row['deleted_by']
         )

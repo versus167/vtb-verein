@@ -37,7 +37,7 @@ class AuthTokenRepository:
                 """
                 INSERT INTO auth_tokens (
                     user_id, token, token_type, expires_at
-                ) VALUES (?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s)
                 """,
                 (user_id, token, token_type, expires_at.isoformat())
             )
@@ -59,7 +59,7 @@ class AuthTokenRepository:
                 """
                 SELECT id, user_id, token_type, expires_at, used_at
                 FROM auth_tokens
-                WHERE token = ?
+                WHERE token = %s
                 """,
                 (token,)
             )
@@ -73,11 +73,11 @@ class AuthTokenRepository:
             expires_at = datetime.fromisoformat(row['expires_at'])
             used_at = row['used_at']
             
-            # Token bereits verwendet?
+            # Token bereits verwendet%s
             if used_at:
                 return None
             
-            # Token abgelaufen?
+            # Token abgelaufen%s
             if datetime.now() > expires_at:
                 return None
             
@@ -86,7 +86,7 @@ class AuthTokenRepository:
                 """
                 UPDATE auth_tokens
                 SET used_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (token_id,)
             )
@@ -125,7 +125,7 @@ class AuthTokenRepository:
                 cur.execute(
                     """
                     DELETE FROM auth_tokens
-                    WHERE user_id = ? AND token_type = ?
+                    WHERE user_id = %s AND token_type = %s
                     """,
                     (user_id, token_type)
                 )
@@ -133,7 +133,7 @@ class AuthTokenRepository:
                 cur.execute(
                     """
                     DELETE FROM auth_tokens
-                    WHERE user_id = ?
+                    WHERE user_id = %s
                     """,
                     (user_id,)
                 )

@@ -7,5 +7,7 @@ _db: VereinsDB | None = None
 def get_db() -> VereinsDB:
     global _db
     if _db is None:
-        _db = VereinsDB(settings.DB_PATH, upload_path=settings.UPLOAD_PATH)
+        if not settings.DATABASE_URL:
+            raise RuntimeError("VTB_DATABASE_URL ist nicht gesetzt. Bitte .env prüfen.")
+        _db = VereinsDB(settings.DATABASE_URL, upload_path=settings.UPLOAD_PATH)
     return _db

@@ -22,14 +22,14 @@ class KassenbuchungAnhangRepository:
 
     def get(self, id: int) -> Optional[KassenbuchungAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE id = ?", (id,)
+            self._SELECT + " WHERE id = %s", (id,)
         )
         row = cursor.fetchone()
         return self._map(row) if row else None
 
     def list_by_buchung(self, buchung_id: int) -> list[KassenbuchungAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE buchung_id = ? AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
+            self._SELECT + " WHERE buchung_id = %s AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
             (buchung_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
@@ -40,16 +40,16 @@ class KassenbuchungAnhangRepository:
         cursor = self.conn.execute(
             "INSERT INTO kassenbuchung_anhaenge "
             "(buchung_id, original_name, stored_name, mime_type, dateigroesse, hochgeladen_von) "
-            "VALUES (?, ?, '', ?, ?, ?)",
+            "VALUES (%s, %s, '', %s, %s, %s) RETURNING id",
             (
                 anhang.buchung_id, anhang.original_name,
                 anhang.mime_type, anhang.dateigroesse, anhang.hochgeladen_von
             )
         )
-        new_id = cursor.lastrowid
+        new_id = cursor.fetchone()['id']
         stored_name = f"kabu_{new_id:06d}{ext}"
         self.conn.execute(
-            "UPDATE kassenbuchung_anhaenge SET stored_name = ? WHERE id = ?",
+            "UPDATE kassenbuchung_anhaenge SET stored_name = %s WHERE id = %s",
             (stored_name, new_id)
         )
         self.conn.commit()
@@ -57,8 +57,8 @@ class KassenbuchungAnhangRepository:
 
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE kassenbuchung_anhaenge SET deleted_at = datetime('now'), deleted_by = ? "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE kassenbuchung_anhaenge SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s "
+            "WHERE id = %s AND deleted_at IS NULL",
             (deleted_by, id)
         )
         self.conn.commit()
@@ -66,9 +66,9 @@ class KassenbuchungAnhangRepository:
 
     def _map(self, row) -> KassenbuchungAnhang:
         return KassenbuchungAnhang(
-            id=row[0], buchung_id=row[1],
-            original_name=row[2], stored_name=row[3],
-            mime_type=row[4], dateigroesse=row[5],
-            hochgeladen_von=row[6], hochgeladen_am=row[7],
-            deleted_at=row[8], deleted_by=row[9]
+            id=row['id'], buchung_id=row['buchung_id'],
+            original_name=row['original_name'], stored_name=row['stored_name'],
+            mime_type=row['mime_type'], dateigroesse=row['dateigroesse'],
+            hochgeladen_von=row['hochgeladen_von'], hochgeladen_am=row['hochgeladen_am'],
+            deleted_at=row['deleted_at'], deleted_by=row['deleted_by']
         )

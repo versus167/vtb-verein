@@ -8,7 +8,7 @@ User Repository - All database operations for User entity.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from typing import Optional, List
 from app.models.user import User
 from app.db.base_repository import BaseRepository
@@ -48,7 +48,7 @@ class UserRepository(BaseRepository):
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
                           telegram_id, matrix_id, preferred_contact
-                   FROM users WHERE username = ? AND deleted_at IS NULL""",
+                   FROM users WHERE username = %s AND deleted_at IS NULL""",
                 (username,)
             )
             row = cur.fetchone()
@@ -63,7 +63,7 @@ class UserRepository(BaseRepository):
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
                           telegram_id, matrix_id, preferred_contact
-                   FROM users WHERE email = ? AND deleted_at IS NULL""",
+                   FROM users WHERE email = %s AND deleted_at IS NULL""",
                 (email,)
             )
             row = cur.fetchone()
@@ -78,7 +78,7 @@ class UserRepository(BaseRepository):
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
                           telegram_id, matrix_id, preferred_contact
-                   FROM users WHERE id = ? AND deleted_at IS NULL""",
+                   FROM users WHERE id = %s AND deleted_at IS NULL""",
                 (user_id,)
             )
             row = cur.fetchone()
@@ -103,7 +103,7 @@ class UserRepository(BaseRepository):
             cur.execute(
                 "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1 AND deleted_at IS NULL"
             )
-            return cur.fetchone()[0]
+            return cur.fetchone()['count']
     
     def create(self, username: str, email: str, password_hash: str, role: str,
                created_by: str, active: bool = True) -> User:
@@ -124,13 +124,14 @@ class UserRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO users (username, email, password_hash, role, active, 
+                INSERT INTO users (username, email, password_hash, role, active,
                                    version, created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
+                RETURNING id
                 """,
-                (username, email, password_hash, role, active, created_by, created_by)
+                (username, email, password_hash, role, int(active), created_by, created_by)
             )
-            user_id = cur.lastrowid
+            user_id = cur.fetchone()['id']
         
         return self.get_by_id(user_id)
     
@@ -155,11 +156,11 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE users 
-                SET username = ?, email = ?, role = ?, active = ?,
-                    version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                SET username = %s, email = %s, role = %s, active = %s,
+                    version = version + 1, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
-                (username, email, role, active, updated_by, user_id, expected_version)
+                (username, email, role, int(active), updated_by, user_id, expected_version)
             )
             return cur.rowcount == 1
     
@@ -183,9 +184,9 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE users
-                SET telegram_id = ?, matrix_id = ?, preferred_contact = ?,
-                    version = version + 1, updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                SET telegram_id = %s, matrix_id = %s, preferred_contact = %s,
+                    version = version + 1, updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (telegram_id, matrix_id, preferred_contact, updated_by, user_id, expected_version)
             )
@@ -209,9 +210,9 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE users 
-                SET password_hash = ?, version = version + 1, 
-                    updated_by = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                SET password_hash = %s, version = version + 1, 
+                    updated_by = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (password_hash, updated_by, user_id, expected_version)
             )
@@ -228,7 +229,7 @@ class UserRepository(BaseRepository):
         """
         with self.cursor() as cur:
             cur.execute(
-                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL",
+                "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = %s AND deleted_at IS NULL",
                 (user_id,)
             )
             return cur.rowcount == 1
@@ -251,9 +252,9 @@ class UserRepository(BaseRepository):
                 """
                 UPDATE users
                 SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
+                    deleted_by = %s,
                     version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (deleted_by, user_id)
             )

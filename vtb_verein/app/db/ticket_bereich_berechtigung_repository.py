@@ -8,13 +8,13 @@ Analog zu kasse_berechtigung_repository.py.
 '''
 
 from typing import Optional
-import sqlite3
+from psycopg import Connection as PgConnection
 
 
 class TicketBereichBerechtigungRepository:
     """Verwaltet bereichsspezifische Ticket-Berechtigungen (ticket_bereich_berechtigungen)."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: PgConnection):
         self._conn = conn
 
     # ------------------------------------------------------------------
@@ -30,7 +30,7 @@ class TicketBereichBerechtigungRepository:
                    darf_lesen, darf_bearbeiten, darf_schliessen,
                    version, created_at, created_by, updated_at, updated_by
             FROM ticket_bereich_berechtigungen
-            WHERE bereich_id = ? AND user_id = ? AND deleted_at IS NULL
+            WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
             """,
             (bereich_id, user_id),
         )
@@ -50,7 +50,7 @@ class TicketBereichBerechtigungRepository:
                    u.username, u.email
             FROM ticket_bereich_berechtigungen tbb
             JOIN users u ON u.id = tbb.user_id
-            WHERE tbb.bereich_id = ? AND tbb.deleted_at IS NULL
+            WHERE tbb.bereich_id = %s AND tbb.deleted_at IS NULL
             ORDER BY u.username
             """,
             (bereich_id,),
@@ -68,7 +68,7 @@ class TicketBereichBerechtigungRepository:
                    tb.name AS bereich_name
             FROM ticket_bereich_berechtigungen tbb
             JOIN ticket_bereiche tb ON tb.id = tbb.bereich_id
-            WHERE tbb.user_id = ? AND tbb.deleted_at IS NULL
+            WHERE tbb.user_id = %s AND tbb.deleted_at IS NULL
             ORDER BY tb.name
             """,
             (user_id,),
@@ -115,11 +115,11 @@ class TicketBereichBerechtigungRepository:
         cur.execute(
             """
             SELECT bereich_id FROM ticket_bereich_berechtigungen
-            WHERE user_id = ? AND darf_lesen = 1 AND deleted_at IS NULL
+            WHERE user_id = %s AND darf_lesen = 1 AND deleted_at IS NULL
             """,
             (user_id,),
         )
-        return [row[0] for row in cur.fetchall()]
+        return [row['bereich_id'] for row in cur.fetchall()]
 
     def list_user_ids_bearbeiten_oder_schliessen(self, bereich_id: int) -> list[int]:
         """User-IDs mit darf_bearbeiten=1 oder darf_schliessen=1 für einen Bereich."""
@@ -127,12 +127,12 @@ class TicketBereichBerechtigungRepository:
         cur.execute(
             """
             SELECT DISTINCT user_id FROM ticket_bereich_berechtigungen
-            WHERE bereich_id = ? AND deleted_at IS NULL
+            WHERE bereich_id = %s AND deleted_at IS NULL
               AND (darf_bearbeiten = 1 OR darf_schliessen = 1)
             """,
             (bereich_id,),
         )
-        return [row[0] for row in cur.fetchall()]
+        return [row['user_id'] for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # Schreiben
@@ -167,7 +167,7 @@ class TicketBereichBerechtigungRepository:
                 INSERT INTO ticket_bereich_berechtigungen
                     (bereich_id, user_id, darf_lesen, darf_bearbeiten, darf_schliessen,
                      created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     bereich_id, user_id,
@@ -180,13 +180,13 @@ class TicketBereichBerechtigungRepository:
             cur.execute(
                 """
                 UPDATE ticket_bereich_berechtigungen
-                SET darf_lesen      = ?,
-                    darf_bearbeiten = ?,
-                    darf_schliessen = ?,
+                SET darf_lesen      = %s,
+                    darf_bearbeiten = %s,
+                    darf_schliessen = %s,
                     updated_at      = CURRENT_TIMESTAMP,
-                    updated_by      = ?,
+                    updated_by      = %s,
                     version         = version + 1
-                WHERE bereich_id = ? AND user_id = ? AND deleted_at IS NULL
+                WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
                 """,
                 (
                     int(darf_lesen), int(darf_bearbeiten), int(darf_schliessen),
@@ -204,11 +204,11 @@ class TicketBereichBerechtigungRepository:
             """
             UPDATE ticket_bereich_berechtigungen
             SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = ?,
+                deleted_by = %s,
                 version    = version + 1,
                 updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE bereich_id = ? AND user_id = ? AND deleted_at IS NULL
+                updated_by = %s
+            WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
             """,
             (deleted_by, deleted_by, bereich_id, user_id),
         )
@@ -224,11 +224,11 @@ class TicketBereichBerechtigungRepository:
             """
             UPDATE ticket_bereich_berechtigungen
             SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = ?,
+                deleted_by = %s,
                 version    = version + 1,
                 updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE bereich_id = ? AND deleted_at IS NULL
+                updated_by = %s
+            WHERE bereich_id = %s AND deleted_at IS NULL
             """,
             (deleted_by, deleted_by, bereich_id),
         )

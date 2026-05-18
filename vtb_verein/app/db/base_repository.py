@@ -7,24 +7,19 @@ Base Repository with common database operations.
 '''
 
 from contextlib import contextmanager
-import sqlite3
 from typing import Generator
+
+import psycopg
 
 
 class BaseRepository:
-    """Base class for all repositories providing common database operations.
-    
-    Each repository gets a connection and provides:
-    - Context manager for cursor handling
-    - Common query helpers
-    - Transaction management
-    """
-    
-    def __init__(self, conn: sqlite3.Connection):
+    """Base class for all repositories providing common database operations."""
+
+    def __init__(self, conn: psycopg.Connection):
         self.conn = conn
-    
+
     @contextmanager
-    def cursor(self) -> Generator[sqlite3.Cursor, None, None]:
+    def cursor(self) -> Generator[psycopg.Cursor, None, None]:
         """Context manager for cursor with automatic commit/rollback."""
         cur = self.conn.cursor()
         try:

@@ -1,18 +1,41 @@
 services:
+  db:
+    image: postgres:16
+    container_name: vtb-pg
+    environment:
+      POSTGRES_USER: vtb
+      POSTGRES_PASSWORD: vtb
+      POSTGRES_DB: verein
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vtb -d verein"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   vtb-verein-v2:
     build:
       context: .
       dockerfile: backend/Dockerfile
     container_name: vtb-verein-v2
+    depends_on:
+      db:
+        condition: service_healthy
 
     env_file:
       - .env
+
+    environment:
+      VTB_DATABASE_URL: postgresql://vtb:vtb@db:5432/verein
 
     ports:
       - "${VTB_PORT:-8000}:8000"
 
     volumes:
-      - ./data:/data
       - ./uploads:/app/uploads
 
     restart: unless-stopped
@@ -32,3 +55,6 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+
+volumes:
+  pg_data:

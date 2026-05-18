@@ -6,7 +6,7 @@ Mitglied Repository - All database operations for Mitglied entity.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from app.models.mitglied import Mitglied
 from app.db.base_repository import BaseRepository
 
@@ -29,7 +29,7 @@ class MitgliedRepository(BaseRepository):
         """
         with self.cursor() as cur:
             cur.execute("SELECT MAX(mitgliedsnummer) FROM mitglied")
-            result = cur.fetchone()[0]
+            result = cur.fetchone()['max']
             return (result + 1) if result is not None else 1
     
     def is_mitgliedsnummer_available(self, nummer: int, exclude_id: int = None) -> bool:
@@ -45,12 +45,12 @@ class MitgliedRepository(BaseRepository):
         with self.cursor() as cur:
             if exclude_id:
                 cur.execute(
-                    "SELECT 1 FROM mitglied WHERE mitgliedsnummer = ? AND id != ? LIMIT 1",
+                    "SELECT 1 FROM mitglied WHERE mitgliedsnummer = %s AND id != %s LIMIT 1",
                     (nummer, exclude_id)
                 )
             else:
                 cur.execute(
-                    "SELECT 1 FROM mitglied WHERE mitgliedsnummer = ? LIMIT 1",
+                    "SELECT 1 FROM mitglied WHERE mitgliedsnummer = %s LIMIT 1",
                     (nummer,)
                 )
             return cur.fetchone() is None
@@ -66,7 +66,7 @@ class MitgliedRepository(BaseRepository):
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                        version, created_at, created_by, updated_at, updated_by
                 FROM mitglied
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (id,),
             )
@@ -113,7 +113,7 @@ class MitgliedRepository(BaseRepository):
                        version, created_at, created_by, updated_at, updated_by,
                        CASE 
                            WHEN austrittsdatum IS NOT NULL 
-                                AND austrittsdatum >= date('now', '-6 months')
+                                AND austrittsdatum >= CURRENT_DATE - INTERVAL '6 months'
                            THEN 1
                            ELSE 0
                        END as recently_left
@@ -121,7 +121,7 @@ class MitgliedRepository(BaseRepository):
                 WHERE deleted_at IS NULL
                   AND (
                       austrittsdatum IS NULL
-                      OR austrittsdatum >= date('now', '-6 months')
+                      OR austrittsdatum >= CURRENT_DATE - INTERVAL '6 months'
                   )
                 ORDER BY nachname, vorname
                 """
@@ -153,7 +153,8 @@ class MitgliedRepository(BaseRepository):
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                     created_by, updated_at, updated_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
                 """,
                 (
                     mitglied.mitgliedsnummer, mitglied.vorname, mitglied.nachname, mitglied.geburtsdatum,
@@ -163,7 +164,7 @@ class MitgliedRepository(BaseRepository):
                     created_by, created_by
                 ),
             )
-            mitglied.id = cur.lastrowid
+            mitglied.id = cur.fetchone()['id']
             
             # Fetch complete created record
             cur.execute(
@@ -174,7 +175,7 @@ class MitgliedRepository(BaseRepository):
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                        version, created_at, created_by, updated_at, updated_by
                 FROM mitglied
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (mitglied.id,),
             )
@@ -191,14 +192,14 @@ class MitgliedRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE mitglied
-                SET mitgliedsnummer = ?, vorname = ?, nachname = ?, geburtsdatum = ?,
-                    strasse = ?, plz = ?, ort = ?, land = ?, email = ?, telefon = ?,
-                    eintrittsdatum = ?, austrittsdatum = ?, status = ?,
-                    zahlungsart = ?, iban = ?, bic = ?, kontoinhaber = ?, abgerechnet_bis = ?,
+                SET mitgliedsnummer = %s, vorname = %s, nachname = %s, geburtsdatum = %s,
+                    strasse = %s, plz = %s, ort = %s, land = %s, email = %s, telefon = %s,
+                    eintrittsdatum = %s, austrittsdatum = %s, status = %s,
+                    zahlungsart = %s, iban = %s, bic = %s, kontoinhaber = %s, abgerechnet_bis = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (
                     mitglied.mitgliedsnummer, mitglied.vorname, mitglied.nachname, mitglied.geburtsdatum,
@@ -216,7 +217,7 @@ class MitgliedRepository(BaseRepository):
                 """
                 SELECT version, updated_at
                 FROM mitglied
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (mitglied.id,),
             )
@@ -239,9 +240,9 @@ class MitgliedRepository(BaseRepository):
                 """
                 UPDATE mitglied
                 SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
+                    deleted_by = %s,
                     version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (deleted_by, mitglied_id)
             )

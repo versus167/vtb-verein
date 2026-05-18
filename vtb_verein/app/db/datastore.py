@@ -48,10 +48,9 @@ from app.services.anhang_service import AnhangService
 class VereinsDB:
     """Data Access Layer Facade - Delegates to specialized repositories."""
 
-    def __init__(self, path: str, upload_path: str = 'uploads/'):
+    def __init__(self, database_url: str, upload_path: str = 'uploads/'):
         from app.services.kassenbuch_service import KassenbuchService
-        self.path = path
-        self._database = Database(path)
+        self._database = Database(database_url)
         self.conn = self._database.conn
 
         self._mitglied_repo = MitgliedRepository(self.conn)

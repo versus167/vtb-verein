@@ -8,7 +8,7 @@ class Settings:
     SECRET_KEY: str = os.getenv("VTB_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("VTB_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h
-    DB_PATH: str = os.getenv("VTB_DB_PATH", str(_ROOT / "vtb_verein" / "verein.db"))
+    DATABASE_URL: str = os.getenv("VTB_DATABASE_URL", "")
     UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", str(_ROOT / "vtb_verein" / "uploads"))
     HOST: str = os.getenv("VTB_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("VTB_PORT", "8000"))
