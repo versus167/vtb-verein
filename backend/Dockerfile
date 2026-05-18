@@ -1,9 +1,9 @@
 # Stage 1: Frontend bauen
-FROM node:20-slim AS frontend-builder
+FROM node:22-slim AS frontend-builder
 
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY frontend/ ./
 RUN npx quasar build
 
@@ -34,7 +34,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
 RUN mkdir -p /data /app/uploads && chown -R appuser:appuser /data /app
 USER appuser
 
-ENV VTB_DB_PATH=/data/verein.db \
+ENV PYTHONPATH=/app/vtb_verein \
     VTB_HOST=0.0.0.0 \
     VTB_PORT=8000 \
     PYTHONUNBUFFERED=1 \
