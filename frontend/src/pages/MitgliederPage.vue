@@ -42,12 +42,22 @@
           <q-btn
             flat dense round icon="edit" color="primary" size="sm"
             @click="openEditDialog(props.row)"
-          />
+          >
+            <q-tooltip>Bearbeiten</q-tooltip>
+          </q-btn>
+          <q-btn
+            flat dense round icon="group" color="secondary" size="sm"
+            @click="openAbteilungenDialog(props.row)"
+          >
+            <q-tooltip>Abteilungen</q-tooltip>
+          </q-btn>
           <q-btn
             v-if="auth.hasPermission('mitglieder.delete')"
             flat dense round icon="delete" color="negative" size="sm"
             @click="confirmDelete(props.row)"
-          />
+          >
+            <q-tooltip>Löschen</q-tooltip>
+          </q-btn>
         </q-td>
       </template>
     </q-table>
@@ -96,6 +106,109 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Abteilungen-Zuordnungs-Dialog -->
+    <q-dialog v-model="abteilungenDialogOpen" persistent>
+      <q-card style="min-width: 560px; max-width: 700px">
+        <q-card-section class="row items-center">
+          <div class="text-h6 col">
+            Abteilungen –
+            <span class="text-weight-regular">{{ aktivMitglied?.vorname }} {{ aktivMitglied?.nachname }}</span>
+          </div>
+          <q-btn
+            v-if="auth.hasPermission('mitglieder.write')"
+            label="Hinzufügen"
+            icon="add"
+            color="primary"
+            unelevated
+            size="sm"
+            @click="openZuordnungForm(null)"
+          />
+        </q-card-section>
+        <q-separator />
+
+        <q-card-section style="max-height: 50vh; overflow-y: auto">
+          <q-inner-loading :showing="abteilungenLoading" />
+          <div v-if="!abteilungenLoading && zuordnungen.length === 0" class="text-grey text-center q-py-md">
+            Keine Abteilungszuordnungen vorhanden
+          </div>
+          <q-list separator>
+            <q-item v-for="z in zuordnungen" :key="z.id">
+              <q-item-section>
+                <q-item-label>
+                  {{ z.abteilung_name }}
+                  <q-badge class="q-ml-sm" :color="statusColor(z.status)">{{ z.status }}</q-badge>
+                </q-item-label>
+                <q-item-label caption>
+                  <span v-if="z.von">ab {{ z.von }}</span>
+                  <span v-if="z.von && z.bis"> · </span>
+                  <span v-if="z.bis">bis {{ z.bis }}</span>
+                  <span v-if="!z.von && !z.bis">Kein Zeitraum angegeben</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="q-gutter-xs">
+                  <q-btn
+                    v-if="auth.hasPermission('mitglieder.write')"
+                    flat dense round icon="edit" color="primary" size="sm"
+                    @click="openZuordnungForm(z)"
+                  />
+                  <q-btn
+                    v-if="auth.hasPermission('mitglieder.delete')"
+                    flat dense round icon="delete" color="negative" size="sm"
+                    @click="confirmDeleteZuordnung(z)"
+                  />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Schließen" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Zuordnung anlegen / bearbeiten -->
+    <q-dialog v-model="zuordnungFormOpen" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="text-h6">
+          {{ editingZuordnungId ? 'Zuordnung bearbeiten' : 'Neue Zuordnung' }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-select
+            v-if="!editingZuordnungId"
+            v-model="zuordnungForm.abteilung_id"
+            label="Abteilung *"
+            outlined
+            :options="abteilungOptions"
+            option-value="id"
+            option-label="name"
+            emit-value
+            map-options
+            :rules="[(v) => !!v || 'Pflichtfeld']"
+          />
+          <q-select
+            v-model="zuordnungForm.status"
+            label="Status *"
+            outlined
+            :options="statusOptionen"
+          />
+          <div class="row q-gutter-sm">
+            <q-input v-model="zuordnungForm.von" label="Von" outlined mask="####-##-##" placeholder="JJJJ-MM-TT" class="col" clearable />
+            <q-input v-model="zuordnungForm.bis" label="Bis" outlined mask="####-##-##" placeholder="JJJJ-MM-TT" class="col" clearable />
+          </div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="zuordnungSaving" @click="onSaveZuordnung" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -115,6 +228,24 @@ const dialogOpen = ref(false)
 const saving = ref(false)
 const editingId = ref(null)
 
+// Abteilungen-Dialog
+const abteilungenDialogOpen = ref(false)
+const abteilungenLoading = ref(false)
+const aktivMitglied = ref(null)
+const zuordnungen = ref([])
+const abteilungOptions = ref([])
+
+// Zuordnung-Formular
+const zuordnungFormOpen = ref(false)
+const zuordnungSaving = ref(false)
+const editingZuordnungId = ref(null)
+const editingZuordnungVersion = ref(null)
+
+const statusOptionen = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+
+const emptyZuordnungForm = () => ({ abteilung_id: null, status: 'aktiv', von: null, bis: null })
+const zuordnungForm = ref(emptyZuordnungForm())
+
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
@@ -133,12 +264,16 @@ const columns = [
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
 
+function statusColor(s) {
+  return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber-8' }[s] ?? 'grey'
+}
+
 async function loadMitglieder() {
   loading.value = true
   try {
     const { data } = await api.get('/api/mitglieder/')
     mitglieder.value = data
-  } catch (e) {
+  } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden' })
   } finally {
     loading.value = false
@@ -186,7 +321,87 @@ function confirmDelete(row) {
       await api.delete(`/api/mitglieder/${row.id}`)
       $q.notify({ type: 'positive', message: 'Gelöscht' })
       await loadMitglieder()
-    } catch (e) {
+    } catch {
+      $q.notify({ type: 'negative', message: 'Fehler beim Löschen' })
+    }
+  })
+}
+
+// --- Abteilungen-Dialog ---
+
+async function openAbteilungenDialog(mitglied) {
+  aktivMitglied.value = mitglied
+  abteilungenDialogOpen.value = true
+  await loadZuordnungen()
+  await loadAbteilungOptions()
+}
+
+async function loadZuordnungen() {
+  abteilungenLoading.value = true
+  try {
+    const { data } = await api.get(`/api/mitglieder/${aktivMitglied.value.id}/abteilungen`)
+    zuordnungen.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Fehler beim Laden der Zuordnungen' })
+  } finally {
+    abteilungenLoading.value = false
+  }
+}
+
+async function loadAbteilungOptions() {
+  try {
+    const { data } = await api.get('/api/abteilungen/')
+    abteilungOptions.value = data
+  } catch { /* ignore */ }
+}
+
+function openZuordnungForm(zuordnung) {
+  if (zuordnung) {
+    editingZuordnungId.value = zuordnung.id
+    editingZuordnungVersion.value = zuordnung.version
+    zuordnungForm.value = { abteilung_id: zuordnung.abteilung_id, status: zuordnung.status, von: zuordnung.von, bis: zuordnung.bis }
+  } else {
+    editingZuordnungId.value = null
+    editingZuordnungVersion.value = null
+    zuordnungForm.value = emptyZuordnungForm()
+  }
+  zuordnungFormOpen.value = true
+}
+
+async function onSaveZuordnung() {
+  zuordnungSaving.value = true
+  try {
+    const mitgliedId = aktivMitglied.value.id
+    if (editingZuordnungId.value) {
+      await api.put(`/api/mitglieder/${mitgliedId}/abteilungen/${editingZuordnungId.value}`, {
+        ...zuordnungForm.value,
+        expected_version: editingZuordnungVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${mitgliedId}/abteilungen`, zuordnungForm.value)
+    }
+    $q.notify({ type: 'positive', message: 'Gespeichert' })
+    zuordnungFormOpen.value = false
+    await loadZuordnungen()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
+  } finally {
+    zuordnungSaving.value = false
+  }
+}
+
+function confirmDeleteZuordnung(zuordnung) {
+  $q.dialog({
+    title: 'Zuordnung entfernen',
+    message: `Zuordnung zu „${zuordnung.abteilung_name}" wirklich entfernen?`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/mitglieder/${aktivMitglied.value.id}/abteilungen/${zuordnung.id}`)
+      $q.notify({ type: 'positive', message: 'Zuordnung entfernt' })
+      await loadZuordnungen()
+    } catch {
       $q.notify({ type: 'negative', message: 'Fehler beim Löschen' })
     }
   })
