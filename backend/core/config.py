@@ -16,5 +16,14 @@ class Settings:
         "VTB_FRONTEND_ORIGINS", "http://localhost:9000,http://localhost:8080"
     ).split(",")
 
+    # SMTP / Magic-Link
+    SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    MAIL_FROM: str = os.getenv("MAIL_FROM", "noreply@vtb-verein.de")
+    BASE_URL: str = os.getenv("BASE_URL", "http://localhost:9000")
+
 
 settings = Settings()

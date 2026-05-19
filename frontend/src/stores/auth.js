@@ -13,11 +13,20 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
-    async login(username, password) {
+    async login(username, password, rememberMe = false) {
       const form = new URLSearchParams()
       form.append('username', username)
       form.append('password', password)
-      const { data } = await api.post('/api/auth/login', form)
+      const { data } = await api.post(`/api/auth/login?remember_me=${rememberMe}`, form)
+      this._applyToken(data)
+    },
+
+    async loginWithMagicToken(token) {
+      const { data } = await api.post('/api/auth/magic-link/validate', { token })
+      this._applyToken(data)
+    },
+
+    _applyToken(data) {
       this.token = data.access_token
       this.user = { username: data.username, role: data.role, permissions: data.permissions }
       localStorage.setItem('vtb_token', this.token)

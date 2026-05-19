@@ -8,6 +8,11 @@ const routes = [
     component: () => import('pages/LoginPage.vue'),
   },
   {
+    path: '/auth/magic-link',
+    name: 'magic-link',
+    component: () => import('pages/MagicLinkPage.vue'),
+  },
+  {
     path: '/',
     component: () => import('layouts/MainLayout.vue'),
     meta: { requiresAuth: true },
