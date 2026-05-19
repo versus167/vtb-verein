@@ -52,7 +52,7 @@ export default configure(function (/* ctx */) {
     animations: [],
 
     pwa: {
-      workboxMode: 'generateSW',
+      workboxMode: 'GenerateSW',
       injectPwaMetaTags: true,
       swFilename: 'sw.js',
       manifestFilename: 'manifest.json',

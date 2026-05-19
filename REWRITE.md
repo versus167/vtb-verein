@@ -58,7 +58,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 1 | ~~Abteilungen~~ | — | ✅ fertig |
 | 2 | ~~PostgreSQL-Migration~~ | — | ✅ fertig |
 | 3 | ~~Mitglied-Abteilung-Zuordnung~~ | — | ✅ fertig |
-| 4 | PWA aktivieren | klein | `quasar.config.js` auf PWA-Modus, manifest, Icons |
+| 4 | ~~PWA aktivieren~~ | — | ✅ fertig |
 | 5 | Kassenbuch | groß | Mehrere Kassen, Buchungen, CSV/PDF-Export, kassenspez. Berechtigungen, Anhänge |
 | 6 | Tickets | groß | Bereiche, Kategorien, Kommentare, Anhänge, Benachrichtigungen |
 

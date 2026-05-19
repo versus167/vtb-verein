@@ -5,7 +5,7 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npx quasar build
+RUN npx quasar build --mode pwa
 
 # Stage 2: Python Backend
 FROM python:3.12-slim
@@ -27,7 +27,7 @@ COPY vtb_verein/ ./vtb_verein/
 COPY backend/ ./backend/
 
 # Frontend-Build aus Stage 1 kopieren
-COPY --from=frontend-builder /frontend/dist/spa/ ./frontend_dist/
+COPY --from=frontend-builder /frontend/dist/pwa/ ./frontend_dist/
 
 # Non-root User
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
