@@ -145,6 +145,7 @@ class KasseRepository(BaseRepository):
                        ON b.kasse_id = k.id
                       AND b.deleted_at IS NULL
                 WHERE k.id = %s AND k.deleted_at IS NULL
+                GROUP BY k.id, k.anfangsbestand_cent
                 """,
                 (kasse_id,),
             )
@@ -170,6 +171,7 @@ class KasseRepository(BaseRepository):
                       AND b.deleted_at IS NULL
                       AND b.buchungsdatum <= %s
                 WHERE k.id = %s AND k.deleted_at IS NULL
+                GROUP BY k.id, k.anfangsbestand_cent
                 """,
                 (bis_datum, kasse_id),
             )

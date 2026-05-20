@@ -34,7 +34,7 @@ class Kassenbuchung:
     kasse_id: int
     buchungsdatum: str          # ISO-Format: YYYY-MM-DD
     buchungstext: str
-    kategorie: str
+    kategorie: str = ''
     einnahme_cent: int = 0      # immer >= 0; 0 = keine Einnahme
     ausgabe_cent: int = 0       # immer >= 0; 0 = keine Ausgabe
 

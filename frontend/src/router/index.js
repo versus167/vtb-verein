@@ -51,6 +51,22 @@ const routes = [
         component: () => import('pages/UserPermissionsPage.vue'),
         meta: { permission: 'users.manage' },
       },
+      {
+        path: 'kassenbuch',
+        name: 'kassenbuch',
+        component: () => import('pages/KassenbuchPage.vue'),
+      },
+      {
+        path: 'kassenbuch/:kasseId',
+        name: 'kassenbuch-detail',
+        component: () => import('pages/KassenbuchDetailPage.vue'),
+      },
+      {
+        path: 'kassenverwaltung',
+        name: 'kassenverwaltung',
+        component: () => import('pages/KassenverwaltungPage.vue'),
+        meta: { adminOnly: true },
+      },
     ],
   },
   {

@@ -50,6 +50,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 - [x] Benutzerverwaltung (CRUD + Berechtigungs-Matrix)
 - [x] Quasar SPA: Login, Dashboard, Navigation, alle obigen Seiten
 - [x] PostgreSQL-Migration (psycopg3, PL/pgSQL-Trigger, Alembic)
+- [x] Kassenbuch (Kassen-CRUD, Buchungen, CSV-Export, kassenspez. Berechtigungen)
 
 ### Roadmap (in dieser Reihenfolge)
 
@@ -59,7 +60,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 2 | ~~PostgreSQL-Migration~~ | — | ✅ fertig |
 | 3 | ~~Mitglied-Abteilung-Zuordnung~~ | — | ✅ fertig |
 | 4 | ~~PWA aktivieren~~ | — | ✅ fertig |
-| 5 | Kassenbuch | groß | Mehrere Kassen, Buchungen, CSV/PDF-Export, kassenspez. Berechtigungen, Anhänge |
+| 5 | ~~Kassenbuch~~ | — | ✅ fertig (Anhänge + PDF-Export zurückgestellt) |
 | 6 | Tickets | groß | Bereiche, Kategorien, Kommentare, Anhänge, Benachrichtigungen |
 
 ---
@@ -79,6 +80,18 @@ API-Dokumentation: http://localhost:8000/api/docs
 ./venv/bin/alembic upgrade head                  # Migration ausführen
 ./venv/bin/alembic current                       # aktuelle Version prüfen
 ```
+
+---
+
+## Kassenbuch (✅ abgeschlossen 2026-05-20)
+
+- **Backend**: `backend/api/kassenbuch.py` — FastAPI-Router mit Prefix `/api/kassen/`
+- **Berechtigungen**: kassenspezifisch via `kasse_berechtigungen`-Tabelle (kein globales Permission-Flag); Admins haben immer vollen Zugriff
+- **Seiten**: `KassenbuchPage.vue` (Kacheln für alle Nutzer), `KassenverwaltungPage.vue` (Admin: CRUD + Berechtigungen), `KassenbuchDetailPage.vue` (Journal + Export)
+- **Journal**: Neueste Buchung oben, laufender Bestand rückwärts vom Gesamtbestand berechnet (kein Extra-API-Aufruf)
+- **Bestandsprüfung**: am Buchungsdatum (`get_bestand_zum_datum_cent`), nicht am aktuellen Gesamtbestand — verhindert Negativbuchungen in der Vergangenheit
+- **CSV-Export**: sperrt Buchungen (`exportiert_in_export_id`), Re-Download alter Exporte möglich
+- **Zurückgestellt**: Buchungs-Anhänge (Belegfotos), PDF-Kassenbericht
 
 ---
 

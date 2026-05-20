@@ -13,5 +13,8 @@ export default boot(({ router }) => {
     if (to.name === 'login' && auth.isAuthenticated) {
       return { name: 'dashboard' }
     }
+    if (to.meta.adminOnly && auth.user?.role !== 'admin') {
+      return { name: 'dashboard' }
+    }
   })
 })

@@ -59,6 +59,25 @@
           </q-item>
 
           <q-item
+            clickable
+            :to="{ name: 'kassenbuch' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="account_balance_wallet" /></q-item-section>
+            <q-item-section>Kassenbuch</q-item-section>
+          </q-item>
+
+          <q-item
+            v-if="auth.user?.role === 'admin'"
+            clickable
+            :to="{ name: 'kassenverwaltung' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="manage_history" /></q-item-section>
+            <q-item-section>Kassenverwaltung</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('users.manage')"
             clickable
             :to="{ name: 'users' }"
