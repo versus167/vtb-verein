@@ -27,16 +27,39 @@
           <div class="text-caption text-grey">Mitglieder verwalten</div>
         </q-card-section>
       </q-card>
+
+      <q-card
+        v-if="hatKassenZugriff"
+        class="col-auto cursor-pointer dashboard-card"
+        @click="router.push({ name: 'kassenbuch' })"
+      >
+        <q-card-section class="text-center" style="min-width: 160px">
+          <q-icon name="account_balance_wallet" size="3rem" color="primary" />
+          <div class="text-h6 q-mt-sm">Kassenbuch</div>
+          <div class="text-caption text-grey">Buchungen & Berichte</div>
+        </q-card-section>
+      </q-card>
     </div>
   </q-page>
 </template>
 
 <script setup>
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
+import { api } from 'src/boot/axios'
 
 const router = useRouter()
 const auth = useAuthStore()
+
+const hatKassenZugriff = ref(false)
+
+onMounted(async () => {
+  try {
+    const { data } = await api.get('/api/kassen/')
+    hatKassenZugriff.value = data.length > 0
+  } catch { /* ignorieren */ }
+})
 </script>
 
 <style scoped>
