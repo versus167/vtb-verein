@@ -17,7 +17,7 @@ from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
 from app.models.ticket import (
-    Ticket, TicketBereich, TicketKategorie,
+    Ticket, TicketBereich, TicketKategorie, TicketKommentar,
     TicketStatus, TicketPrioritaet,
 )
 from app.services.ticket_service import TicketNichtGefundenError, UngueltigerStatusWechselError
@@ -47,6 +47,11 @@ class TicketUpdate(TicketWrite):
 class StatusChange(BaseModel):
     status: str
     expected_version: int
+
+
+class KommentarWrite(BaseModel):
+    inhalt: str
+    sichtbarkeit: str = 'oeffentlich'
 
 
 class BereichWrite(BaseModel):
@@ -342,3 +347,49 @@ def delete_anhang(ticket_id: int, anhang_id: int, user: CurrentUser, db: DB):
     ok = db.tickets.mark_anhang_deleted(anhang_id, deleted_by=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Anhang {anhang_id} nicht gefunden.")
+
+
+# ---------------------------------------------------------------------------
+# Kommentare
+# ---------------------------------------------------------------------------
+
+def _enrich_kommentar(k: TicketKommentar, db) -> dict:
+    d = asdict(k)
+    author = db.get_user_by_id(k.autor_id) if k.autor_id else None
+    d['autor_username'] = author.username if author else f'User {k.autor_id}'
+    return d
+
+
+@router.get("/{ticket_id}/kommentare")
+def list_kommentare(ticket_id: int, user: CurrentUser, db: DB):
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
+    include_internal = user.role == "admin" or _can_write(ticket, user, db)
+    kommentare = db.tickets.get_kommentare(ticket_id, include_internal=include_internal)
+    return [_enrich_kommentar(k, db) for k in kommentare]
+
+
+@router.post("/{ticket_id}/kommentare", status_code=201)
+def create_kommentar(ticket_id: int, data: KommentarWrite, user: CurrentUser, db: DB):
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf dieses Ticket.")
+    kommentar = TicketKommentar(
+        ticket_id=ticket_id,
+        autor_id=user.id,
+        inhalt=data.inhalt,
+        sichtbarkeit=data.sichtbarkeit,
+    )
+    created = db.tickets.add_kommentar(kommentar, created_by=user.username)
+    return _enrich_kommentar(created, db)
+
+
+@router.delete("/{ticket_id}/kommentare/{kommentar_id}", status_code=204)
+def delete_kommentar(ticket_id: int, kommentar_id: int, user: CurrentUser, db: DB):
+    kommentar = db.tickets._kommentar_repo.get(kommentar_id)
+    if not kommentar or kommentar.ticket_id != ticket_id:
+        raise HTTPException(status_code=404, detail="Kommentar nicht gefunden.")
+    if kommentar.autor_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Nur eigene Kommentare können gelöscht werden.")
+    db.tickets.mark_kommentar_deleted(kommentar_id, deleted_by=user.username)

@@ -39,6 +39,17 @@
           <div class="text-caption text-grey">Buchungen & Berichte</div>
         </q-card-section>
       </q-card>
+
+      <q-card
+        class="col-auto cursor-pointer dashboard-card"
+        @click="router.push({ name: 'tickets' })"
+      >
+        <q-card-section class="text-center" style="min-width: 160px">
+          <q-icon name="confirmation_number" size="3rem" color="primary" />
+          <div class="text-h6 q-mt-sm">Tickets</div>
+          <div class="text-caption text-grey">Anfragen & Aufgaben</div>
+        </q-card-section>
+      </q-card>
     </div>
   </q-page>
 </template>
