@@ -56,6 +56,14 @@
         :round="$q.screen.lt.sm"
         @click="openExportDialog"
       />
+      <q-btn
+        icon="picture_as_pdf"
+        :label="$q.screen.gt.xs ? 'PDF-Bericht' : undefined"
+        color="secondary"
+        outline
+        :round="$q.screen.lt.sm"
+        @click="openPdfDialog"
+      />
     </div>
 
     <!-- Filter (Desktop: immer sichtbar; Mobile: einklappbar) -->
@@ -334,6 +342,35 @@
       </q-card>
     </q-dialog>
 
+    <!-- PDF-Bericht-Dialog -->
+    <q-dialog
+      v-model="pdfDialog"
+      persistent
+      :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+    >
+      <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 420px'">
+        <q-card-section class="text-h6">PDF-Kassenbericht</q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="pdfVon" type="date" label="Von *" outlined :max="pdfBis || today" />
+          <q-input v-model="pdfBis" type="date" label="Bis *" outlined :min="pdfVon" :max="today" />
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn
+            label="PDF erstellen"
+            icon="picture_as_pdf"
+            color="secondary"
+            unelevated
+            :loading="pdfLoading"
+            :disable="!pdfVon || !pdfBis"
+            @click="doPdfDownload"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Anhang-Dialog -->
     <q-dialog
       v-model="anhangDialogOpen"
@@ -402,8 +439,8 @@ const filterAktiv = computed(() => !!filterBis.value || showStorniert.value)
 const datumMin = ref(null)
 const datumMax = ref('')
 
-const kannSchreiben = computed(() => isAdmin.value || true)
-const kannExportieren = computed(() => isAdmin.value || true)
+const kannSchreiben = computed(() => isAdmin.value || !!kasse.value?.darf_schreiben)
+const kannExportieren = computed(() => isAdmin.value || !!kasse.value?.darf_exportieren)
 
 const buchungDialogOpen = ref(false)
 const buchungSaving = ref(false)
@@ -416,6 +453,11 @@ const buchungForm = ref(emptyBuchungForm())
 const exportDialog = ref(false)
 const exportLoading = ref(false)
 const exportBisDatum = ref(today)
+
+const pdfDialog = ref(false)
+const pdfLoading = ref(false)
+const pdfVon = ref(vor90Tagen)
+const pdfBis = ref(today)
 
 const anhangDialogOpen = ref(false)
 const anhangBuchung = ref(null)
@@ -603,7 +645,8 @@ function confirmStornieren(buchung) {
 }
 
 function openExportDialog() {
-  exportBisDatum.value = today
+  const heute = new Date()
+  exportBisDatum.value = isoDate(new Date(heute.getFullYear(), heute.getMonth(), 0))
   exportDialog.value = true
   loadExporte()
 }
@@ -683,6 +726,50 @@ function onAnhangDeleted(anhangId) {
   anhaenge.value = anhaenge.value.filter(a => a.id !== anhangId)
   const b = buchungen.value.find(b => b.id === anhangBuchung.value?.id)
   if (b && b.anhang_count > 0) b.anhang_count--
+}
+
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function openPdfDialog() {
+  const heute = new Date()
+  const letzterVormonat = new Date(heute.getFullYear(), heute.getMonth(), 0)
+  pdfBis.value = isoDate(letzterVormonat)
+
+  if (exporte.value.length > 0) {
+    const letzterExport = [...exporte.value].sort((a, b) =>
+      b.zeitraum_bis.localeCompare(a.zeitraum_bis)
+    )[0]
+    const tagNach = new Date(letzterExport.zeitraum_bis)
+    tagNach.setDate(tagNach.getDate() + 1)
+    pdfVon.value = isoDate(tagNach)
+  } else {
+    pdfVon.value = isoDate(new Date(letzterVormonat.getFullYear(), letzterVormonat.getMonth(), 1))
+  }
+
+  pdfDialog.value = true
+}
+
+async function doPdfDownload() {
+  pdfLoading.value = true
+  try {
+    const { data } = await api.get(`/api/kassen/${kasseId.value}/bericht.pdf`, {
+      params: { von: pdfVon.value, bis: pdfBis.value },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `kassenbuch_${pdfVon.value}_${pdfBis.value}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
+    pdfDialog.value = false
+  } catch {
+    $q.notify({ type: 'negative', message: 'PDF konnte nicht erstellt werden.' })
+  } finally {
+    pdfLoading.value = false
+  }
 }
 
 onMounted(loadAll)

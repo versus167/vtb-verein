@@ -58,6 +58,8 @@ API-Dokumentation: http://localhost:8000/api/docs
 - [x] Anhänge (Kassenbuch + Tickets): Upload, Download, Soft-Delete; `AnhangPanel.vue` geteilt
 - [x] Tickets (Grundgerüst): Bereiche, Kategorien, CRUD, Statuswechsel, Anhänge
 - [x] Mobile-Optimierung Kassenbuch: Karten-Liste, Bottom-Sheet-Dialoge, einklappbarer Filter
+- [x] Kassenbuch PDF-Bericht: Zeitraumauswahl, reportlab, Zusammenfassung + Buchungstabelle
+- [x] Kassenbuch Berechtigungen: `darf_schreiben`/`darf_exportieren` korrekt aus DB gelesen und in UI ausgewertet
 
 ### Roadmap (in dieser Reihenfolge)
 
@@ -70,7 +72,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 5 | ~~Kassenbuch~~ | — | ✅ fertig inkl. Anhänge |
 | 6 | ~~Anhänge (Kassenbuch + Tickets)~~ | — | ✅ fertig |
 | 7 | Tickets (vollständig) | mittel | Kommentare, Benachrichtigungen, Mobile-UI |
-| 8 | Kassenbuch PDF-Bericht | klein | PDF-Export via reportlab (Service bereits vorhanden) |
+| 8 | ~~Kassenbuch PDF-Bericht~~ | — | ✅ fertig |
 | 9 | Mobile-Feinschliff | laufend | Tickets-Seite, Navigation |
 
 ---
@@ -93,14 +95,15 @@ API-Dokumentation: http://localhost:8000/api/docs
 
 ---
 
-## Kassenbuch (✅ abgeschlossen 2026-05-20)
+## Kassenbuch (✅ abgeschlossen 2026-05-29)
 
 - **Backend**: `backend/api/kassenbuch.py` — FastAPI-Router mit Prefix `/api/kassen/`
-- **Berechtigungen**: kassenspezifisch via `kasse_berechtigungen`-Tabelle; Admins haben immer vollen Zugriff
-- **Seiten**: `KassenbuchPage.vue` (Kacheln), `KassenverwaltungPage.vue` (Admin: CRUD + Berechtigungen), `KassenbuchDetailPage.vue` (Journal + Export + Anhänge)
+- **Berechtigungen**: kassenspezifisch via `kasse_berechtigungen`-Tabelle; Admins haben immer vollen Zugriff; `darf_schreiben`/`darf_exportieren` werden in `list_kassen` mitgeliefert und in der UI ausgewertet (Buttons ausgeblendet)
+- **Seiten**: `KassenbuchPage.vue` (Kacheln), `KassenverwaltungPage.vue` (Admin: CRUD + Berechtigungen), `KassenbuchDetailPage.vue` (Journal + Export + Anhänge + PDF)
 - **Journal**: Neueste Buchung oben, laufender Bestand rückwärts vom Gesamtbestand berechnet
 - **Bestandsprüfung**: am Buchungsdatum (`get_bestand_zum_datum_cent`) — verhindert Negativbuchungen in der Vergangenheit
-- **CSV-Export**: sperrt Buchungen (`exportiert_in_export_id`), Re-Download alter Exporte möglich
+- **CSV-Export**: sperrt Buchungen (`exportiert_in_export_id`), Re-Download alter Exporte möglich; Bis-Datum vorbelegt mit letztem Monatsletzten
+- **PDF-Bericht**: `GET /api/kassen/{id}/bericht.pdf?von=…&bis=…`; reportlab; Zusammenfassung + Buchungstabelle (stornierte grau, exportierte blau); Von/Bis-Dialog vorbelegt mit Tag-nach-letztem-Export bis letzten Monatsletzten
 - **Mobile**: Karten-Liste statt Tabelle auf kleinen Screens, Bottom-Sheet-Dialoge, Filter einklappbar
 
 ---

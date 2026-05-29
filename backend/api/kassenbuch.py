@@ -8,7 +8,7 @@ Berechtigungsmodell:
 """
 
 from dataclasses import asdict
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, field_validator
 from typing import Optional
 
@@ -23,6 +23,7 @@ from app.services.kassenbuch_service import (
     DatumAusserhalbBereichError,
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
+from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
 
 router = APIRouter(prefix="/kassen", tags=["kassenbuch"])
 
@@ -117,11 +118,21 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
 def list_kassen(user: CurrentUser, db: DB):
     """Alle Kassen, auf die der User Zugriff hat. Admins sehen alle."""
     from app.models.kasse import Kasse
-    kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=(user.role == "admin"))
+    is_admin = user.role == "admin"
+    kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=is_admin)
     result = []
     for k in kassen:
         d = asdict(k)
         d["bestand_cent"] = db.kassen.get_bestand_cent(k.id)
+        if is_admin:
+            d["darf_lesen"] = True
+            d["darf_schreiben"] = True
+            d["darf_exportieren"] = True
+        else:
+            b = db.kasse_berechtigungen.get_berechtigung(k.id, user.id)
+            d["darf_lesen"] = bool(b and b.darf_lesen)
+            d["darf_schreiben"] = bool(b and b.darf_schreiben)
+            d["darf_exportieren"] = bool(b and b.darf_exportieren)
         result.append(d)
     return result
 
@@ -348,6 +359,53 @@ def redownload_export(kasse_id: int, export_id: int, user: CurrentUser, db: DB):
     return Response(
         content=csv_bytes,
         media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# PDF-Kassenbericht
+# ---------------------------------------------------------------------------
+
+@router.get("/{kasse_id}/bericht.pdf")
+def kassenbuch_pdf_bericht(
+    kasse_id: int,
+    user: CurrentUser,
+    db: DB,
+    von: str = Query(..., description="Startdatum ISO (YYYY-MM-DD)"),
+    bis: str = Query(..., description="Enddatum ISO (YYYY-MM-DD)"),
+):
+    try:
+        bericht_daten = db.kassenbuch.get_kassenbericht_daten(
+            kasse_id,
+            von_datum=von,
+            bis_datum=bis,
+            include_storniert=True,
+            user_id=user.id,
+            is_admin=(user.role == "admin"),
+        )
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Kasse nicht gefunden.")
+
+    buchungen_pdf = [
+        {**asdict(e["buchung"]), "ist_storniert": e["buchung"].ist_storniert}
+        for e in bericht_daten["buchungen"]
+    ]
+    pdf_bytes = erstelle_kassenbuch_pdf(
+        kasse_name=bericht_daten["kasse"].name,
+        von_datum=von,
+        bis_datum=bis,
+        buchungen=buchungen_pdf,
+        anfangsbestand_cent=bericht_daten["anfangsbestand_cent"],
+        erstellt_von=user.username,
+    )
+    kasse_slug = bericht_daten["kasse"].name.lower().replace(" ", "_")
+    dateiname = f"kassenbuch_{kasse_slug}_{von}_{bis}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
     )
 
