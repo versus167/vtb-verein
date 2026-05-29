@@ -67,6 +67,11 @@ const routes = [
         component: () => import('pages/KassenverwaltungPage.vue'),
         meta: { adminOnly: true },
       },
+      {
+        path: 'tickets',
+        name: 'tickets',
+        component: () => import('pages/TicketsPage.vue'),
+      },
     ],
   },
   {

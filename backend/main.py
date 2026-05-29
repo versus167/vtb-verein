@@ -19,6 +19,8 @@ from backend.api.users import router as users_router
 from backend.api.abteilungen import router as abteilungen_router
 from backend.api.mitglied_abteilungen import router as mitglied_abteilungen_router
 from backend.api.kassenbuch import router as kassenbuch_router
+from backend.api.tickets import router as tickets_router
+from backend.api.uploads import router as uploads_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -44,6 +46,8 @@ app.include_router(users_router, prefix="/api")
 app.include_router(abteilungen_router, prefix="/api")
 app.include_router(mitglied_abteilungen_router, prefix="/api")
 app.include_router(kassenbuch_router, prefix="/api")
+app.include_router(tickets_router, prefix="/api")
+app.include_router(uploads_router, prefix="/api")
 
 
 @app.get("/api/health")

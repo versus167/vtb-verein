@@ -9,46 +9,144 @@
       </div>
       <div class="text-right">
         <div class="text-h6" :class="bestandCent < 0 ? 'text-negative' : 'text-positive'">
-          Bestand: {{ formatEuro(bestandCent) }}
+          {{ formatEuro(bestandCent) }}
         </div>
+        <div class="text-caption text-grey">Bestand</div>
       </div>
     </div>
 
-    <!-- Filter + Aktions-Leiste -->
-    <div class="row q-gutter-sm q-mb-md items-center">
-      <q-input v-model="filterVon" type="date" label="Von" outlined dense style="width: 160px" />
-      <q-input v-model="filterBis" type="date" label="Bis" outlined dense style="width: 160px" />
-      <q-checkbox v-model="showStorniert" label="Stornierte einblenden" />
-      <q-btn label="Filter anwenden" outline color="primary" dense @click="applyFilter" />
+    <!-- Aktions-Leiste -->
+    <div class="row q-gutter-sm q-mb-sm items-center">
+      <q-btn
+        v-if="$q.screen.lt.sm"
+        flat round dense icon="filter_list"
+        :color="filterAktiv ? 'primary' : 'grey'"
+        @click="filterOpen = !filterOpen"
+      >
+        <q-badge v-if="filterAktiv" color="primary" floating />
+        <q-tooltip>Filter</q-tooltip>
+      </q-btn>
+
       <q-space />
-      <q-btn
-        v-if="kannSchreiben"
-        label="Einnahme"
-        icon="add"
-        color="positive"
-        unelevated
-        @click="openCreateDialog('einnahme')"
-      />
-      <q-btn
-        v-if="kannSchreiben"
-        label="Ausgabe"
-        icon="remove"
-        color="negative"
-        unelevated
-        @click="openCreateDialog('ausgabe')"
-      />
+
+      <template v-if="kannSchreiben">
+        <q-btn
+          icon="add"
+          :label="$q.screen.gt.xs ? 'Einnahme' : undefined"
+          color="positive"
+          unelevated
+          :round="$q.screen.lt.sm"
+          @click="openCreateDialog('einnahme')"
+        />
+        <q-btn
+          icon="remove"
+          :label="$q.screen.gt.xs ? 'Ausgabe' : undefined"
+          color="negative"
+          unelevated
+          :round="$q.screen.lt.sm"
+          @click="openCreateDialog('ausgabe')"
+        />
+      </template>
       <q-btn
         v-if="kannExportieren"
-        label="CSV-Export"
         icon="download"
+        :label="$q.screen.gt.xs ? 'CSV-Export' : undefined"
         color="primary"
         outline
+        :round="$q.screen.lt.sm"
         @click="openExportDialog"
       />
     </div>
 
-    <!-- Journal-Tabelle -->
+    <!-- Filter (Desktop: immer sichtbar; Mobile: einklappbar) -->
+    <q-slide-transition>
+      <div v-show="$q.screen.gt.xs || filterOpen" class="row q-gutter-sm q-mb-md items-center">
+        <q-input v-model="filterVon" type="date" label="Von" outlined dense style="width: 150px" />
+        <q-input v-model="filterBis" type="date" label="Bis" outlined dense style="width: 150px" />
+        <q-checkbox v-model="showStorniert" label="Stornierte" />
+        <q-btn label="Anwenden" outline color="primary" dense @click="applyFilter" />
+      </div>
+    </q-slide-transition>
+
+    <!-- ── Mobile: Karten-Liste ── -->
+    <template v-if="$q.screen.lt.sm">
+      <div v-if="loading" class="row justify-center q-py-xl">
+        <q-spinner size="40px" color="primary" />
+      </div>
+      <div v-else-if="buchungenMitBestand.length === 0" class="text-center text-grey q-py-xl">
+        Keine Buchungen im gewählten Zeitraum.
+      </div>
+      <q-card
+        v-for="b in buchungenMitBestand"
+        :key="b.id"
+        flat bordered
+        class="q-mb-sm"
+        :class="b.deleted_at ? 'bg-grey-1' : ''"
+      >
+        <q-card-section class="q-py-sm q-px-md">
+          <!-- Beleg + Datum -->
+          <div class="row items-center q-mb-xs">
+            <span class="text-caption text-grey col">
+              {{ b.belegnummer }}
+              <q-icon v-if="b.exportiert_in_export_id" name="lock" size="xs" color="grey" class="q-ml-xs">
+                <q-tooltip>Exportiert – nicht mehr änderbar</q-tooltip>
+              </q-icon>
+            </span>
+            <span class="text-caption text-grey">{{ b.buchungsdatum }}</span>
+          </div>
+
+          <!-- Buchungstext + Kategorie -->
+          <div class="text-body2" :class="b.deleted_at ? 'text-grey text-strike' : ''">
+            {{ b.buchungstext }}
+          </div>
+          <div v-if="b.kategorie" class="text-caption text-grey q-mb-xs">{{ b.kategorie }}</div>
+
+          <!-- Betrag + laufender Bestand -->
+          <div class="row items-end q-mt-xs">
+            <div class="col" />
+            <div class="text-right">
+              <div
+                v-if="b.einnahme_cent > 0"
+                class="text-subtitle1 text-weight-bold"
+                :class="b.deleted_at ? 'text-grey text-strike' : 'text-positive'"
+              >+ {{ formatEuro(b.einnahme_cent) }}</div>
+              <div
+                v-if="b.ausgabe_cent > 0"
+                class="text-subtitle1 text-weight-bold"
+                :class="b.deleted_at ? 'text-grey text-strike' : 'text-negative'"
+              >− {{ formatEuro(b.ausgabe_cent) }}</div>
+              <div v-if="b.laufender_bestand_cent !== null" class="text-caption text-grey">
+                Bestand {{ formatEuro(b.laufender_bestand_cent) }}
+              </div>
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-separator />
+
+        <!-- Aktions-Zeile -->
+        <q-card-actions class="q-px-sm q-py-xs">
+          <q-btn
+            flat round icon="attach_file" color="grey" size="md"
+            @click="openAnhangDialog(b)"
+          >
+            <q-badge v-if="b.anhang_count > 0" color="primary" floating>{{ b.anhang_count }}</q-badge>
+            <q-tooltip>Anhänge</q-tooltip>
+          </q-btn>
+          <q-space />
+          <template v-if="kannSchreiben && !b.deleted_at && !b.exportiert_in_export_id">
+            <q-btn flat round icon="edit" color="primary" size="md" @click="openEditDialog(b)" />
+            <q-btn flat round icon="block" color="negative" size="md" @click="confirmStornieren(b)">
+              <q-tooltip>Stornieren</q-tooltip>
+            </q-btn>
+          </template>
+        </q-card-actions>
+      </q-card>
+    </template>
+
+    <!-- ── Desktop: Tabelle ── -->
     <q-table
+      v-else
       :rows="buchungenMitBestand"
       :columns="columns"
       row-key="id"
@@ -101,6 +199,15 @@
 
       <template #body-cell-actions="props">
         <q-td :props="props" class="q-gutter-xs" style="white-space: nowrap">
+          <q-btn
+            flat dense round icon="attach_file" color="grey" size="sm"
+            @click="openAnhangDialog(props.row)"
+          >
+            <q-badge v-if="props.row.anhang_count > 0" color="primary" floating>
+              {{ props.row.anhang_count }}
+            </q-badge>
+            <q-tooltip>Anhänge</q-tooltip>
+          </q-btn>
           <template v-if="kannSchreiben && !props.row.deleted_at && !props.row.exportiert_in_export_id">
             <q-btn flat dense round icon="edit" color="primary" size="sm"
               @click="openEditDialog(props.row)" />
@@ -114,8 +221,12 @@
     </q-table>
 
     <!-- Buchung anlegen / bearbeiten -->
-    <q-dialog v-model="buchungDialogOpen" persistent>
-      <q-card style="min-width: 460px">
+    <q-dialog
+      v-model="buchungDialogOpen"
+      persistent
+      :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+    >
+      <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 460px'">
         <q-card-section class="text-h6">
           {{ editingBuchungId ? 'Buchung bearbeiten' : (buchungTyp === 'einnahme' ? 'Neue Einnahme' : 'Neue Ausgabe') }}
         </q-card-section>
@@ -145,6 +256,7 @@
             type="number"
             step="0.01"
             min="0"
+            inputmode="decimal"
           />
           <q-input v-model="buchungForm.notiz" label="Notiz" outlined type="textarea" rows="2" />
         </q-card-section>
@@ -163,8 +275,12 @@
     </q-dialog>
 
     <!-- Export-Dialog -->
-    <q-dialog v-model="exportDialog" persistent>
-      <q-card style="min-width: 520px; max-width: 680px">
+    <q-dialog
+      v-model="exportDialog"
+      persistent
+      :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+    >
+      <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 520px; max-width: 680px'">
         <q-card-section class="text-h6">CSV-Export</q-card-section>
         <q-separator />
         <q-card-section class="q-gutter-sm">
@@ -217,6 +333,33 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Anhang-Dialog -->
+    <q-dialog
+      v-model="anhangDialogOpen"
+      :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+    >
+      <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 460px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Anhänge</div>
+          <div v-if="anhangBuchung" class="text-caption text-grey q-ml-sm">
+            {{ anhangBuchung.belegnummer }} · {{ anhangBuchung.buchungstext }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <anhang-panel
+            :anhaenge="anhaenge"
+            :upload-url="`/api/kassen/${kasseId}/buchungen/${anhangBuchung?.id}/anhaenge`"
+            :can-upload="kannSchreiben && !!anhangBuchung && !anhangBuchung.deleted_at && !anhangBuchung.exportiert_in_export_id"
+            :can-delete="kannSchreiben"
+            @uploaded="onAnhangUploaded"
+            @deleted="onAnhangDeleted"
+          />
+        </q-card-section>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -226,6 +369,7 @@ import { useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import AnhangPanel from 'src/components/AnhangPanel.vue'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -251,6 +395,9 @@ const vor90Tagen = (() => {
 const filterVon = ref(vor90Tagen)
 const filterBis = ref('')
 const showStorniert = ref(false)
+const filterOpen = ref(false)
+
+const filterAktiv = computed(() => !!filterBis.value || showStorniert.value)
 
 const datumMin = ref(null)
 const datumMax = ref('')
@@ -269,6 +416,10 @@ const buchungForm = ref(emptyBuchungForm())
 const exportDialog = ref(false)
 const exportLoading = ref(false)
 const exportBisDatum = ref(today)
+
+const anhangDialogOpen = ref(false)
+const anhangBuchung = ref(null)
+const anhaenge = ref([])
 
 // Laufenden Bestand je Buchung berechnen.
 // Strategie: rückwärts vom bekannten Gesamtbestand (bestandCent) — kein Extra-API-Aufruf nötig,
@@ -296,7 +447,7 @@ const columns = [
   { name: 'ausgabe', label: 'Ausgabe', field: 'ausgabe_cent', align: 'right' },
   { name: 'bestand', label: 'Bestand', field: 'laufender_bestand_cent', align: 'right' },
   { name: 'created_by', label: 'Erfasst von', field: 'created_by', align: 'left' },
-  { name: 'actions', label: '', field: 'actions', align: 'right', style: 'width: 80px' },
+  { name: 'actions', label: '', field: 'actions', align: 'right', style: 'width: 120px' },
 ]
 
 const exportColumns = [
@@ -319,6 +470,7 @@ function emptyBuchungForm() {
 }
 
 async function applyFilter() {
+  filterOpen.value = false
   await Promise.all([loadBuchungen(), loadBestand()])
 }
 
@@ -507,6 +659,30 @@ async function redownload(exportObj) {
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Download.' })
   }
+}
+
+async function openAnhangDialog(buchung) {
+  anhangBuchung.value = buchung
+  anhaenge.value = []
+  anhangDialogOpen.value = true
+  try {
+    const { data } = await api.get(`/api/kassen/${kasseId.value}/buchungen/${buchung.id}/anhaenge`)
+    anhaenge.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Anhänge konnten nicht geladen werden.' })
+  }
+}
+
+function onAnhangUploaded(newAnhang) {
+  anhaenge.value = [...anhaenge.value, newAnhang]
+  const b = buchungen.value.find(b => b.id === anhangBuchung.value?.id)
+  if (b) b.anhang_count = (b.anhang_count || 0) + 1
+}
+
+function onAnhangDeleted(anhangId) {
+  anhaenge.value = anhaenge.value.filter(a => a.id !== anhangId)
+  const b = buchungen.value.find(b => b.id === anhangBuchung.value?.id)
+  if (b && b.anhang_count > 0) b.anhang_count--
 }
 
 onMounted(loadAll)

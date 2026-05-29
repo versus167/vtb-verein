@@ -8,7 +8,7 @@ Berechtigungsmodell:
 """
 
 from dataclasses import asdict
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, field_validator
 from typing import Optional
 
@@ -22,6 +22,7 @@ from app.services.kassenbuch_service import (
     KeinExportrechtError,
     DatumAusserhalbBereichError,
 )
+from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 
 router = APIRouter(prefix="/kassen", tags=["kassenbuch"])
 
@@ -405,3 +406,73 @@ def revoke_berechtigung(kasse_id: int, user_id: int, user: CurrentUser, db: DB):
     ok = db.kasse_berechtigungen.revoke_berechtigung(kasse_id, user_id, actor=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail="Berechtigung nicht gefunden.")
+
+
+# ---------------------------------------------------------------------------
+# Anhänge (Belegfotos)
+# ---------------------------------------------------------------------------
+
+@router.get("/{kasse_id}/buchungen/{buchung_id}/anhaenge")
+def list_anhaenge(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB):
+    try:
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Buchung {buchung_id} nicht gefunden.")
+    if buchung.kasse_id != kasse_id:
+        raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
+    return [asdict(a) for a in db.kassenbuch.get_anhaenge(buchung_id)]
+
+
+@router.post("/{kasse_id}/buchungen/{buchung_id}/anhaenge", status_code=201)
+async def upload_anhang(
+    kasse_id: int,
+    buchung_id: int,
+    user: CurrentUser,
+    db: DB,
+    file: UploadFile = File(...),
+):
+    try:
+        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+    except KeinSchreibzugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Buchung {buchung_id} nicht gefunden.")
+    if buchung.kasse_id != kasse_id:
+        raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
+
+    inhalt = await file.read()
+    try:
+        anhang = db.kassenbuch.add_anhang(
+            buchung_id=buchung_id,
+            original_name=file.filename or "upload",
+            mime_type=file.content_type or "application/octet-stream",
+            inhalt=inhalt,
+            hochgeladen_von=user.id,
+        )
+    except DateitypNichtErlaubtError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except DateiZuGrossError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except IOError as exc:
+        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {exc}")
+    return asdict(anhang)
+
+
+@router.delete("/{kasse_id}/buchungen/{buchung_id}/anhaenge/{anhang_id}", status_code=204)
+def delete_anhang(kasse_id: int, buchung_id: int, anhang_id: int, user: CurrentUser, db: DB):
+    try:
+        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+    except KeinSchreibzugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Buchung {buchung_id} nicht gefunden.")
+    if buchung.kasse_id != kasse_id:
+        raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
+    ok = db.kassenbuch.mark_anhang_deleted(anhang_id, deleted_by=user.username)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Anhang {anhang_id} nicht gefunden.")

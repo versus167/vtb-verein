@@ -68,6 +68,15 @@
           </q-item>
 
           <q-item
+            clickable
+            :to="{ name: 'tickets' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="confirmation_number" /></q-item-section>
+            <q-item-section>Tickets</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.user?.role === 'admin'"
             clickable
             :to="{ name: 'kassenverwaltung' }"

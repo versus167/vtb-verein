@@ -11,11 +11,15 @@ REST-Backend (FastAPI) und mobilfähigem SPA-Frontend (Vue 3 + Quasar).
 │   ├── main.py         Einstiegspunkt, CORS, Router-Registrierung
 │   ├── core/           config.py · security.py · db.py · deps.py
 │   ├── api/            Ein Router pro Domain
+│   │   ├── kassenbuch.py
+│   │   ├── tickets.py
+│   │   └── uploads.py  Auth-geschützter Datei-Download
 │   └── Dockerfile      Multi-Stage: Quasar bauen + Python laufen lassen
 ├── frontend/           Vue 3 + Quasar SPA
 │   ├── src/
 │   │   ├── boot/       pinia.js · axios.js · auth.js
 │   │   ├── stores/     auth.js (Pinia)
+│   │   ├── components/ AnhangPanel.vue (geteilt)
 │   │   ├── layouts/    MainLayout.vue
 │   │   └── pages/      Eine Seite pro Modul
 │   └── quasar.config.js
@@ -51,6 +55,9 @@ API-Dokumentation: http://localhost:8000/api/docs
 - [x] Quasar SPA: Login, Dashboard, Navigation, alle obigen Seiten
 - [x] PostgreSQL-Migration (psycopg3, PL/pgSQL-Trigger, Alembic)
 - [x] Kassenbuch (Kassen-CRUD, Buchungen, CSV-Export, kassenspez. Berechtigungen)
+- [x] Anhänge (Kassenbuch + Tickets): Upload, Download, Soft-Delete; `AnhangPanel.vue` geteilt
+- [x] Tickets (Grundgerüst): Bereiche, Kategorien, CRUD, Statuswechsel, Anhänge
+- [x] Mobile-Optimierung Kassenbuch: Karten-Liste, Bottom-Sheet-Dialoge, einklappbarer Filter
 
 ### Roadmap (in dieser Reihenfolge)
 
@@ -60,8 +67,11 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 2 | ~~PostgreSQL-Migration~~ | — | ✅ fertig |
 | 3 | ~~Mitglied-Abteilung-Zuordnung~~ | — | ✅ fertig |
 | 4 | ~~PWA aktivieren~~ | — | ✅ fertig |
-| 5 | ~~Kassenbuch~~ | — | ✅ fertig (Anhänge + PDF-Export zurückgestellt) |
-| 6 | Tickets | groß | Bereiche, Kategorien, Kommentare, Anhänge, Benachrichtigungen |
+| 5 | ~~Kassenbuch~~ | — | ✅ fertig inkl. Anhänge |
+| 6 | ~~Anhänge (Kassenbuch + Tickets)~~ | — | ✅ fertig |
+| 7 | Tickets (vollständig) | mittel | Kommentare, Benachrichtigungen, Mobile-UI |
+| 8 | Kassenbuch PDF-Bericht | klein | PDF-Export via reportlab (Service bereits vorhanden) |
+| 9 | Mobile-Feinschliff | laufend | Tickets-Seite, Navigation |
 
 ---
 
@@ -86,12 +96,46 @@ API-Dokumentation: http://localhost:8000/api/docs
 ## Kassenbuch (✅ abgeschlossen 2026-05-20)
 
 - **Backend**: `backend/api/kassenbuch.py` — FastAPI-Router mit Prefix `/api/kassen/`
-- **Berechtigungen**: kassenspezifisch via `kasse_berechtigungen`-Tabelle (kein globales Permission-Flag); Admins haben immer vollen Zugriff
-- **Seiten**: `KassenbuchPage.vue` (Kacheln für alle Nutzer), `KassenverwaltungPage.vue` (Admin: CRUD + Berechtigungen), `KassenbuchDetailPage.vue` (Journal + Export)
-- **Journal**: Neueste Buchung oben, laufender Bestand rückwärts vom Gesamtbestand berechnet (kein Extra-API-Aufruf)
-- **Bestandsprüfung**: am Buchungsdatum (`get_bestand_zum_datum_cent`), nicht am aktuellen Gesamtbestand — verhindert Negativbuchungen in der Vergangenheit
+- **Berechtigungen**: kassenspezifisch via `kasse_berechtigungen`-Tabelle; Admins haben immer vollen Zugriff
+- **Seiten**: `KassenbuchPage.vue` (Kacheln), `KassenverwaltungPage.vue` (Admin: CRUD + Berechtigungen), `KassenbuchDetailPage.vue` (Journal + Export + Anhänge)
+- **Journal**: Neueste Buchung oben, laufender Bestand rückwärts vom Gesamtbestand berechnet
+- **Bestandsprüfung**: am Buchungsdatum (`get_bestand_zum_datum_cent`) — verhindert Negativbuchungen in der Vergangenheit
 - **CSV-Export**: sperrt Buchungen (`exportiert_in_export_id`), Re-Download alter Exporte möglich
-- **Zurückgestellt**: Buchungs-Anhänge (Belegfotos), PDF-Kassenbericht
+- **Mobile**: Karten-Liste statt Tabelle auf kleinen Screens, Bottom-Sheet-Dialoge, Filter einklappbar
+
+---
+
+## Anhänge (✅ abgeschlossen 2026-05-27)
+
+### Prinzip
+Domain-isolierte Anhänge: Kassenbuch und Tickets haben jeweils eigene DB-Tabelle
+(`kassenbuchung_anhaenge`, `ticket_anhaenge`) und eigene Datei-Präfixe (`kabu_`, `att_`).
+Kein zentrales Attachment-Storage. Bilder werden serverseitig automatisch zu PDF konvertiert.
+
+### Backend
+- `backend/api/uploads.py` — `GET /api/uploads/{stored_name}`: JWT-Auth, Path-Traversal-Schutz, Bilder inline / PDFs als Attachment
+- Kassenbuch-Anhang-Endpoints in `backend/api/kassenbuch.py`:
+  - `GET /api/kassen/{id}/buchungen/{id}/anhaenge`
+  - `POST /api/kassen/{id}/buchungen/{id}/anhaenge` (multipart)
+  - `DELETE /api/kassen/{id}/buchungen/{id}/anhaenge/{id}`
+- Ticket-Anhang-Endpoints analog in `backend/api/tickets.py`
+
+### Frontend
+- `frontend/src/components/AnhangPanel.vue` — geteilte Komponente für Upload, Galerie, Soft-Delete
+  - Download via Axios (nicht `<a href>`), damit der Bearer-Token mitgeschickt wird
+  - Props: `anhaenge`, `uploadUrl`, `canUpload`, `canDelete`
+  - Events: `uploaded`, `deleted`
+
+---
+
+## Tickets (Grundgerüst ✅ 2026-05-27, vollständig ausstehend)
+
+- **Backend**: `backend/api/tickets.py` — Prefix `/api/tickets/`
+- **Entitäten**: Bereiche, Kategorien, Tickets, Anhänge
+- **Statuswechsel**: `PATCH /api/tickets/{id}/status` mit Übergangsprüfung
+- **Berechtigungen**: `ticket_bereich_berechtigungen` (darf_lesen / darf_bearbeiten / darf_schliessen); eigene Tickets immer sichtbar
+- **Frontend**: `TicketsPage.vue` — Liste mit Filter, Erstellen-Dialog, Detail-Dialog mit Statuswechsel + AnhangPanel
+- **Noch offen**: Kommentar-Thread, Benachrichtigungen (E-Mail/Telegram/Matrix), Mobile-Feinschliff, Teilnehmer-Verwaltung
 
 ---
 
@@ -100,6 +144,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 - Branch: `rewrite_test`
 - Commits: Deutsch, beschreibend
 - API-Präfix: `/api/`
-- Berechtigungen: immer per `user.has_permission(Permission.XYZ)` prüfen
+- Berechtigungen: domainspezifisch (Kassen: `kasse_berechtigungen`, Tickets: `ticket_bereich_berechtigungen`)
 - Soft-Delete: `mark_*_deleted()` — niemals echtes DELETE
 - Versionierung: `expected_version` bei allen PUT-Requests mitschicken
+- Datei-Downloads: immer via Axios (nicht `<a href>`), damit JWT-Token übertragen wird
