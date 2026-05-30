@@ -205,6 +205,7 @@ async function onChangePassword() {
     await api.post('/api/auth/me/password', { new_password: pw1.value })
     pw1.value = ''
     pw2.value = ''
+    await load()
     $q.notify({ type: 'positive', message: 'Passwort erfolgreich geändert' })
   } catch (e) {
     pwError.value = e.response?.data?.detail || 'Fehler beim Ändern'
