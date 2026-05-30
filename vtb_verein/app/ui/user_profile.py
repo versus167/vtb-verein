@@ -168,131 +168,98 @@ def create_user_profile_page(db: VereinsDB):
                 
                 ui.button('Passwort ändern', on_click=change_password, icon='vpn_key').props('color=primary')
             
-            # Multi-Channel Notifications (Phase 2)
+            # Benachrichtigungskanäle
             with ui.card().classes('q-mb-md'):
                 ui.label('Benachrichtigungskanäle').classes('text-h6 q-mb-md')
-                
-                # Info-Text
+
                 with ui.card().classes('bg-blue-1 q-mb-md'):
-                    ui.label('📢 Benachrichtigungskanäle konfigurieren').classes('text-weight-bold')
-                    ui.label('Wähle deine bevorzugten Kanäle für Benachrichtigungen aus.').classes('text-caption')
-                    ui.label('Wenn dein bevorzugter Kanal nicht verfügbar ist, wird automatisch auf E-Mail ausgewichen.').classes('text-caption')
-                
+                    ui.label('Benachrichtigungen').classes('text-weight-bold')
+                    ui.label('E-Mail wird immer verwendet. Matrix kann zusätzlich konfiguriert werden.').classes('text-caption')
+
                 with ui.grid(columns=2).classes('w-full gap-md'):
-                    # Telegram
-                    ui.label('Telegram:').classes('text-weight-bold col-span-2')
-                    telegram_input = ui.input(
-                        'Telegram @username oder Chat-ID',
-                        value=current_user.telegram_id or ''
-                    ).classes('col-span-2').props('outlined')
-                    telegram_help = ui.label('z.B. @myusername oder 123456789').classes('text-caption text-grey col-span-2')
-                    
-                    # Matrix
-                    ui.label('Matrix:').classes('text-weight-bold col-span-2')
+                    ui.label('E-Mail:').classes('text-weight-bold col-span-2')
+                    ui.label(current_user.email).classes('col-span-2 text-grey')
+
+                    ui.label('Matrix-ID (optional):').classes('text-weight-bold col-span-2')
                     matrix_input = ui.input(
                         'Matrix-ID',
                         value=current_user.matrix_id or ''
                     ).classes('col-span-2').props('outlined')
-                    matrix_help = ui.label('z.B. @user:matrix.org').classes('text-caption text-grey col-span-2')
-                    
-                    # Bevorzugter Kanal
+                    ui.label('z.B. @user:matrix.org').classes('text-caption text-grey col-span-2')
+
                     ui.label('Bevorzugter Kanal:').classes('text-weight-bold col-span-2')
+                    current_channel = current_user.preferred_contact if current_user.preferred_contact in ('email', 'matrix') else 'email'
                     channel_select = ui.select(
-                        options=['email', 'telegram', 'matrix'],
-                        value=current_user.preferred_contact,
+                        options={'email': 'E-Mail', 'matrix': 'Matrix'},
+                        value=current_channel,
                         label='Kanal wählen'
                     ).classes('col-span-2').props('outlined')
-                
-                # Error/Success Messages
+
                 error_label = ui.label('').classes('text-negative')
                 error_label.visible = False
-                
+
                 success_label = ui.label('').classes('text-positive')
                 success_label.visible = False
-                
-                # Buttons
+
                 def save_contact_preferences():
                     error_label.visible = False
                     success_label.visible = False
-                    
-                    telegram_val = telegram_input.value.strip() if telegram_input.value else None
+
                     matrix_val = matrix_input.value.strip() if matrix_input.value else None
                     channel_val = channel_select.value
-                    
+
                     try:
-                        # Validierung: Wenn Telegram/Matrix als bevorzugter Kanal, dann erforderlich
-                        if channel_val == 'telegram' and not telegram_val:
-                            error_label.text = '❌ Telegram-ID erforderlich wenn Telegram als Kanal gewählt'
-                            error_label.visible = True
-                            return
-                        
-                        if channel_val == 'matrix' and not matrix_val:
-                            error_label.text = '❌ Matrix-ID erforderlich wenn Matrix als Kanal gewählt'
-                            error_label.visible = True
-                            return
-                        
-                        # Update durchführen
                         updated_user = user_service.update_contact_preferences(
                             user_id=current_user.id,
-                            telegram_id=telegram_val,
                             matrix_id=matrix_val,
                             preferred_contact=channel_val,
                             updated_by=current_user.username,
                             expected_version=current_user.version
                         )
-                        
-                        # User in Session aktualisieren
+
                         AuthHelper.set_current_user(updated_user, remember_me=True)
-                        
-                        success_label.text = '✅ Benachrichtigungseinstellungen gespeichert!'
+
+                        success_label.text = 'Benachrichtigungseinstellungen gespeichert!'
                         success_label.visible = True
-                        
-                        # Seite aktualisieren um neue Werte anzuzeigen
+
                         ui.timer(1.0, lambda: ui.navigate.to('/profile'), once=True)
-                        
+
                     except ValueError as e:
-                        error_label.text = f'❌ {str(e)}'
+                        error_label.text = f'Fehler: {str(e)}'
                         error_label.visible = True
                     except Exception as e:
-                        error_label.text = f'❌ Fehler: {str(e)}'
+                        error_label.text = f'Fehler: {str(e)}'
                         error_label.visible = True
-                
+
                 def send_test_message():
                     error_label.visible = False
                     success_label.visible = False
-                    
-                    channel_val = channel_select.value
-                    
-                    if channel_val == 'telegram' and not current_user.telegram_id:
-                        error_label.text = '❌ Keine Telegram-ID konfiguriert'
+
+                    if channel_select.value == 'matrix' and not current_user.matrix_id:
+                        error_label.text = 'Keine Matrix-ID konfiguriert – bitte zuerst speichern'
                         error_label.visible = True
                         return
-                    
-                    if channel_val == 'matrix' and not current_user.matrix_id:
-                        error_label.text = '❌ Keine Matrix-ID konfiguriert'
-                        error_label.visible = True
-                        return
-                    
+
                     try:
                         from app.services.notification_service import NotificationService
-                        
+
                         result = NotificationService.send_notification(
                             current_user,
-                            title='🧪 Test-Nachricht',
+                            title='Test-Nachricht',
                             message='Dies ist eine Test-Benachrichtigung von der VTB-Vereinsverwaltung.'
                         )
-                        
+
                         if result:
-                            success_label.text = '✅ Test-Nachricht versendet!'
+                            success_label.text = 'Test-Nachricht versendet!'
                             success_label.visible = True
                         else:
-                            error_label.text = '❌ Test-Nachricht konnte nicht versendet werden'
+                            error_label.text = 'Test-Nachricht konnte nicht versendet werden'
                             error_label.visible = True
-                            
+
                     except Exception as e:
-                        error_label.text = f'❌ Fehler beim Test-Versand: {str(e)}'
+                        error_label.text = f'Fehler beim Test-Versand: {str(e)}'
                         error_label.visible = True
-                
+
                 with ui.row().classes('w-full gap-md'):
                     ui.button('Speichern', on_click=save_contact_preferences).props('color=primary')
-                    ui.button('Test-Nachricht', on_click=send_test_message).props('color=primary outline')
+                    ui.button('Test-Nachricht senden', on_click=send_test_message).props('color=primary outline')

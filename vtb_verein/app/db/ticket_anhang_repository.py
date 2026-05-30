@@ -24,21 +24,21 @@ class TicketAnhangRepository:
 
     def get(self, id: int) -> Optional[TicketAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE id = ?", (id,)
+            self._SELECT + " WHERE id = %s", (id,)
         )
         row = cursor.fetchone()
         return self._map(row) if row else None
 
     def list_by_ticket(self, ticket_id: int) -> list[TicketAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE ticket_id = ? AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
+            self._SELECT + " WHERE ticket_id = %s AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
             (ticket_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
 
     def list_by_comment(self, comment_id: int) -> list[TicketAnhang]:
         cursor = self.conn.execute(
-            self._SELECT + " WHERE kommentar_id = ? AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
+            self._SELECT + " WHERE kommentar_id = %s AND deleted_at IS NULL ORDER BY hochgeladen_am ASC",
             (comment_id,)
         )
         return [self._map(row) for row in cursor.fetchall()]
@@ -49,16 +49,16 @@ class TicketAnhangRepository:
         cursor = self.conn.execute(
             "INSERT INTO ticket_anhaenge "
             "(ticket_id, kommentar_id, original_name, stored_name, mime_type, dateigroesse, hochgeladen_von) "
-            "VALUES (?, ?, ?, '', ?, ?, ?)",
+            "VALUES (%s, %s, %s, '', %s, %s, %s) RETURNING id",
             (
                 anhang.ticket_id, anhang.kommentar_id, anhang.original_name,
                 anhang.mime_type, anhang.dateigroesse, anhang.hochgeladen_von
             )
         )
-        new_id = cursor.lastrowid
+        new_id = cursor.fetchone()['id']
         stored_name = f"att_{new_id:06d}{ext}"
         self.conn.execute(
-            "UPDATE ticket_anhaenge SET stored_name = ? WHERE id = ?",
+            "UPDATE ticket_anhaenge SET stored_name = %s WHERE id = %s",
             (stored_name, new_id)
         )
         self.conn.commit()
@@ -66,8 +66,8 @@ class TicketAnhangRepository:
 
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE ticket_anhaenge SET deleted_at = datetime('now'), deleted_by = ? "
-            "WHERE id = ? AND deleted_at IS NULL",
+            "UPDATE ticket_anhaenge SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s "
+            "WHERE id = %s AND deleted_at IS NULL",
             (deleted_by, id)
         )
         self.conn.commit()
@@ -75,9 +75,9 @@ class TicketAnhangRepository:
 
     def _map(self, row) -> TicketAnhang:
         return TicketAnhang(
-            id=row[0], ticket_id=row[1], kommentar_id=row[2],
-            original_name=row[3], stored_name=row[4],
-            mime_type=row[5], dateigroesse=row[6],
-            hochgeladen_von=row[7], hochgeladen_am=row[8],
-            deleted_at=row[9], deleted_by=row[10]
+            id=row['id'], ticket_id=row['ticket_id'], kommentar_id=row['kommentar_id'],
+            original_name=row['original_name'], stored_name=row['stored_name'],
+            mime_type=row['mime_type'], dateigroesse=row['dateigroesse'],
+            hochgeladen_von=row['hochgeladen_von'], hochgeladen_am=row['hochgeladen_am'],
+            deleted_at=row['deleted_at'], deleted_by=row['deleted_by']
         )

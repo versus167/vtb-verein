@@ -4,7 +4,7 @@ Kassenbuch Export Repository – Datenbankoperationen für Kassenbuch-Exporte.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from app.models.kasse import KassenbuchExport
 from app.db.base_repository import BaseRepository
 
@@ -27,7 +27,7 @@ class KassenbuchExportRepository(BaseRepository):
                        version, created_at, created_by,
                        deleted_at, deleted_by
                 FROM kassenbuch_exporte
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (export_id,),
             )
@@ -46,7 +46,7 @@ class KassenbuchExportRepository(BaseRepository):
                        version, created_at, created_by,
                        deleted_at, deleted_by
                 FROM kassenbuch_exporte
-                WHERE kasse_id = ? AND deleted_at IS NULL
+                WHERE kasse_id = %s AND deleted_at IS NULL
                 ORDER BY zeitraum_bis DESC
                 """,
                 (kasse_id,),
@@ -67,12 +67,12 @@ class KassenbuchExportRepository(BaseRepository):
                 """
                 SELECT MAX(zeitraum_bis)
                 FROM kassenbuch_exporte
-                WHERE kasse_id = ? AND deleted_at IS NULL
+                WHERE kasse_id = %s AND deleted_at IS NULL
                 """,
                 (kasse_id,),
             )
             row = cur.fetchone()
-            return row[0] if row and row[0] else None
+            return row['max'] if row and row['max'] else None
 
     def create_export(self, export: KassenbuchExport, created_by: str) -> KassenbuchExport:
         """Erstellt einen neuen Export-Datensatz. History via Trigger."""
@@ -83,21 +83,22 @@ class KassenbuchExportRepository(BaseRepository):
                     kasse_id, zeitraum_von, zeitraum_bis,
                     exportiert_am, exportiert_von,
                     dateiname, anzahl_buchungen, created_by
-                ) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (
                     export.kasse_id, export.zeitraum_von, export.zeitraum_bis,
                     created_by, export.dateiname, export.anzahl_buchungen, created_by,
                 ),
             )
-            export_id = cur.lastrowid
+            export_id = cur.fetchone()['id']
             cur.execute(
                 """
                 SELECT id, kasse_id, zeitraum_von, zeitraum_bis,
                        exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
                        version, created_at, created_by,
                        deleted_at, deleted_by
-                FROM kassenbuch_exporte WHERE id = ?
+                FROM kassenbuch_exporte WHERE id = %s
                 """,
                 (export_id,),
             )
@@ -109,8 +110,8 @@ class KassenbuchExportRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE kassenbuch_exporte
-                SET dateiname = ?, version = version + 1
-                WHERE id = ?
+                SET dateiname = %s, version = version + 1
+                WHERE id = %s
                 """,
                 (dateiname, export_id),
             )
@@ -130,7 +131,7 @@ class KassenbuchExportRepository(BaseRepository):
                 SELECT id, buchungsdatum, belegnummer, buchungstext, kategorie,
                        einnahme_cent, ausgabe_cent
                 FROM kassenbuchungen
-                WHERE exportiert_in_export_id = ?
+                WHERE exportiert_in_export_id = %s
                 ORDER BY buchungsdatum ASC, id ASC
                 """,
                 (export_id,),
@@ -143,7 +144,7 @@ class KassenbuchExportRepository(BaseRepository):
             cur.execute(
                 """
                 SELECT 1 FROM kassenbuchungen
-                WHERE id = ? AND exportiert_in_export_id IS NOT NULL
+                WHERE id = %s AND exportiert_in_export_id IS NOT NULL
                 """,
                 (buchung_id,),
             )
@@ -162,10 +163,10 @@ class KassenbuchExportRepository(BaseRepository):
                 SELECT id, buchungsdatum, belegnummer, buchungstext, kategorie,
                        einnahme_cent, ausgabe_cent
                 FROM kassenbuchungen
-                WHERE kasse_id = ?
+                WHERE kasse_id = %s
                   AND deleted_at IS NULL
                   AND exportiert_in_export_id IS NULL
-                  AND buchungsdatum <= ?
+                  AND buchungsdatum <= %s
                 ORDER BY buchungsdatum ASC, id ASC
                 """,
                 (kasse_id, bis_datum),

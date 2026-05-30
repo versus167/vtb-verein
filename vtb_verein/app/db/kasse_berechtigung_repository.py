@@ -6,7 +6,7 @@ Admins (users.manage) umgehen diese Tabelle und haben immer vollen Zugriff.
 """
 from __future__ import annotations
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from dataclasses import dataclass
 from typing import Optional
 
@@ -32,7 +32,7 @@ class KasseBerechtigung:
 class KasseBerechtigungRepository:
     """Repository für kassenspezifische Berechtigungen."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: PgConnection):
         self._conn = conn
 
     # ------------------------------------------------------------------
@@ -44,7 +44,7 @@ class KasseBerechtigungRepository:
         cur = self._conn.execute(
             """
             SELECT * FROM kasse_berechtigungen
-            WHERE kasse_id = ? AND deleted_at IS NULL
+            WHERE kasse_id = %s AND deleted_at IS NULL
             ORDER BY user_id
             """,
             (kasse_id,),
@@ -56,7 +56,7 @@ class KasseBerechtigungRepository:
         cur = self._conn.execute(
             """
             SELECT * FROM kasse_berechtigungen
-            WHERE kasse_id = ? AND user_id = ? AND deleted_at IS NULL
+            WHERE kasse_id = %s AND user_id = %s AND deleted_at IS NULL
             """,
             (kasse_id, user_id),
         )
@@ -68,7 +68,7 @@ class KasseBerechtigungRepository:
         cur = self._conn.execute(
             """
             SELECT kasse_id FROM kasse_berechtigungen
-            WHERE user_id = ? AND darf_lesen = 1 AND deleted_at IS NULL
+            WHERE user_id = %s AND darf_lesen = 1 AND deleted_at IS NULL
             """,
             (user_id,),
         )
@@ -106,7 +106,7 @@ class KasseBerechtigungRepository:
         cur = self._conn.execute(
             """
             SELECT * FROM kasse_berechtigungen
-            WHERE kasse_id = ? AND user_id = ?
+            WHERE kasse_id = %s AND user_id = %s
             """,
             (kasse_id, user_id),
         )
@@ -118,7 +118,7 @@ class KasseBerechtigungRepository:
                 INSERT INTO kasse_berechtigungen
                     (kasse_id, user_id, darf_lesen, darf_schreiben, darf_exportieren,
                      created_by, updated_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (kasse_id, user_id,
                  int(darf_lesen), int(darf_schreiben), int(darf_exportieren),
@@ -128,15 +128,15 @@ class KasseBerechtigungRepository:
             self._conn.execute(
                 """
                 UPDATE kasse_berechtigungen
-                SET darf_lesen      = ?,
-                    darf_schreiben  = ?,
-                    darf_exportieren = ?,
+                SET darf_lesen      = %s,
+                    darf_schreiben  = %s,
+                    darf_exportieren = %s,
                     deleted_at      = NULL,
                     deleted_by      = NULL,
                     updated_at      = CURRENT_TIMESTAMP,
-                    updated_by      = ?,
+                    updated_by      = %s,
                     version         = version + 1
-                WHERE kasse_id = ? AND user_id = ?
+                WHERE kasse_id = %s AND user_id = %s
                 """,
                 (int(darf_lesen), int(darf_schreiben), int(darf_exportieren),
                  actor, kasse_id, user_id),
@@ -150,11 +150,11 @@ class KasseBerechtigungRepository:
             """
             UPDATE kasse_berechtigungen
             SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = ?,
+                deleted_by = %s,
                 updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?,
+                updated_by = %s,
                 version    = version + 1
-            WHERE kasse_id = ? AND user_id = ? AND deleted_at IS NULL
+            WHERE kasse_id = %s AND user_id = %s AND deleted_at IS NULL
             """,
             (actor, actor, kasse_id, user_id),
         )
@@ -167,11 +167,11 @@ class KasseBerechtigungRepository:
             """
             UPDATE kasse_berechtigungen
             SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = ?,
+                deleted_by = %s,
                 updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?,
+                updated_by = %s,
                 version    = version + 1
-            WHERE kasse_id = ? AND deleted_at IS NULL
+            WHERE kasse_id = %s AND deleted_at IS NULL
             """,
             (actor, actor, kasse_id),
         )
@@ -183,7 +183,7 @@ class KasseBerechtigungRepository:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _row_to_obj(row: sqlite3.Row) -> KasseBerechtigung:
+    def _row_to_obj(row: dict) -> KasseBerechtigung:
         return KasseBerechtigung(
             id=row['id'],
             kasse_id=row['kasse_id'],

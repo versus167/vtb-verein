@@ -6,7 +6,7 @@ Abteilung Repository - All database operations for Abteilung entity.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from app.models.abteilung import Abteilung
 from app.db.base_repository import BaseRepository
 
@@ -29,7 +29,7 @@ class AbteilungRepository(BaseRepository):
                 SELECT id, name, kuerzel, beschreibung,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (id,),
             )
@@ -79,18 +79,19 @@ class AbteilungRepository(BaseRepository):
             cur.execute(
                 """
                 INSERT INTO abteilung (name, kuerzel, beschreibung, created_by, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
                 """,
                 (abt.name, abt.kuerzel, abt.beschreibung, created_by, created_by),
             )
-            abt.id = cur.lastrowid
+            abt.id = cur.fetchone()['id']
     
             cur.execute(
                 """
                 SELECT id, name, kuerzel, beschreibung,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (abt.id,),
             )
@@ -107,11 +108,11 @@ class AbteilungRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE abteilung
-                SET name = ?, kuerzel = ?, beschreibung = ?,
+                SET name = %s, kuerzel = %s, beschreibung = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (abt.name, abt.kuerzel, abt.beschreibung,
                  updated_by, abt.id, abt.version),
@@ -125,7 +126,7 @@ class AbteilungRepository(BaseRepository):
                 SELECT id, name, kuerzel, beschreibung,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (abt.id,),
             )
@@ -150,9 +151,9 @@ class AbteilungRepository(BaseRepository):
                 """
                 UPDATE abteilung
                 SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
+                    deleted_by = %s,
                     version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (deleted_by, abteilung_id)
             )
@@ -175,8 +176,8 @@ class AbteilungRepository(BaseRepository):
                     deleted_by = NULL,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND deleted_at IS NOT NULL
+                    updated_by = %s
+                WHERE id = %s AND deleted_at IS NOT NULL
                 """,
                 (restored_by, abteilung_id)
             )
@@ -190,7 +191,7 @@ class AbteilungRepository(BaseRepository):
         """Check if there are active (non-deleted) mitglied_abteilung references."""
         with self.cursor() as cur:
             cur.execute(
-                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
+                'SELECT 1 FROM mitglied_abteilung WHERE abteilung_id = %s AND deleted_at IS NULL LIMIT 1',
                 (abteilung_id,),
             )
             return cur.fetchone() is not None
@@ -199,7 +200,7 @@ class AbteilungRepository(BaseRepository):
         """Check if there are active (non-deleted) beitragsregel references."""
         with self.cursor() as cur:
             cur.execute(
-                'SELECT 1 FROM beitragsregel WHERE abteilung_id = ? AND deleted_at IS NULL LIMIT 1',
+                'SELECT 1 FROM beitragsregel WHERE abteilung_id = %s AND deleted_at IS NULL LIMIT 1',
                 (abteilung_id,),
             )
             return cur.fetchone() is not None
@@ -208,7 +209,7 @@ class AbteilungRepository(BaseRepository):
         """Check if there are any mitglied_abteilung_history entries."""
         with self.cursor() as cur:
             cur.execute(
-                'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = ? LIMIT 1',
+                'SELECT 1 FROM mitglied_abteilung_history WHERE abteilung_id = %s LIMIT 1',
                 (abteilung_id,),
             )
             return cur.fetchone() is not None
@@ -217,7 +218,7 @@ class AbteilungRepository(BaseRepository):
         """Check if there are any beitragsregel_history entries."""
         with self.cursor() as cur:
             cur.execute(
-                'SELECT 1 FROM beitragsregel_history WHERE abteilung_id = ? LIMIT 1',
+                'SELECT 1 FROM beitragsregel_history WHERE abteilung_id = %s LIMIT 1',
                 (abteilung_id,),
             )
             return cur.fetchone() is not None

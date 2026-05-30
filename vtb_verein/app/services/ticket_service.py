@@ -139,18 +139,25 @@ class TicketService:
     def list_tickets_with_counts(self) -> list[Ticket]:
         return self._ticket_repo.list_all_with_counts()
 
-    def create_ticket(self, ticket: Ticket, created_by: str) -> Ticket:
+    def create_ticket(self, ticket: Ticket, created_by: str, notify: bool = True) -> Ticket:
         created = self._ticket_repo.create(ticket, created_by)
-        bereich_ids = self._bereich_user_ids(created.bereich_id)
-        empfaenger = list({*bereich_ids, *([ created.zugewiesen_an] if created.zugewiesen_an else [])})
-        self._notify(empfaenger, self._actor_id(created_by),
-                     f"🎫 Neues Ticket #{created.id}",
-                     f"{created.titel or ''}\n\nErstellt von: {created_by}")
+        if notify:
+            bereich_ids = self._bereich_user_ids(created.bereich_id)
+            empfaenger = list({*bereich_ids, *([ created.zugewiesen_an] if created.zugewiesen_an else [])})
+            self._notify(empfaenger, self._actor_id(created_by),
+                         f"🎫 Neues Ticket #{created.id}",
+                         f"{created.titel or ''}\n\nErstellt von: {created_by}")
         return created
 
-    def update_ticket(self, ticket: Ticket, updated_by: str) -> bool:
+    def update_ticket(self, ticket: Ticket, updated_by: str, notify_as_new: bool = False) -> bool:
         old = self._ticket_repo.get(ticket.id)
         result = self._ticket_repo.update(ticket, updated_by)
+        if result and notify_as_new:
+            bereich_ids = self._bereich_user_ids(ticket.bereich_id)
+            empfaenger = list({*bereich_ids, *([ ticket.zugewiesen_an] if ticket.zugewiesen_an else [])})
+            self._notify(empfaenger, self._actor_id(updated_by),
+                         f"🎫 Neues Ticket #{ticket.id}",
+                         f"{ticket.titel or ''}\n\nErstellt von: {updated_by}")
         if result and old and old.zugewiesen_an != ticket.zugewiesen_an and ticket.zugewiesen_an:
             self._notify([ticket.zugewiesen_an], self._actor_id(updated_by),
                          f"🎫 Ticket #{ticket.id} zugewiesen",

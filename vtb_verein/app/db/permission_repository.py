@@ -5,7 +5,7 @@ Repository für User-Permissions.
 Verwaltet die user_permissions-Tabelle nach dem Repository-Pattern.
 Alle Schreiboperationen erfolgen mit Soft-Delete und Versionierung.
 """
-import sqlite3
+from psycopg import Connection as PgConnection
 from datetime import datetime
 from app.db.base_repository import BaseRepository
 from app.models.permission import Permission, UserPermission
@@ -20,7 +20,7 @@ class PermissionRepository(BaseRepository):
                 """
                 SELECT permission
                 FROM user_permissions
-                WHERE user_id = ? AND deleted_at IS NULL
+                WHERE user_id = %s AND deleted_at IS NULL
                 """,
                 (user_id,),
             )
@@ -44,10 +44,10 @@ class PermissionRepository(BaseRepository):
                 cur.execute(
                     """
                     UPDATE user_permissions
-                    SET deleted_at = ?, deleted_by = ?,
-                        updated_at = ?, updated_by = ?,
+                    SET deleted_at = %s, deleted_by = %s,
+                        updated_at = %s, updated_by = %s,
                         version = version + 1
-                    WHERE user_id = ? AND permission = ? AND deleted_at IS NULL
+                    WHERE user_id = %s AND permission = %s AND deleted_at IS NULL
                     """,
                     (now, actor, now, actor, user_id, perm),
                 )
@@ -57,7 +57,7 @@ class PermissionRepository(BaseRepository):
                 cur.execute(
                     """
                     SELECT id FROM user_permissions
-                    WHERE user_id = ? AND permission = ?
+                    WHERE user_id = %s AND permission = %s
                     """,
                     (user_id, perm),
                 )
@@ -68,9 +68,9 @@ class PermissionRepository(BaseRepository):
                         """
                         UPDATE user_permissions
                         SET deleted_at = NULL, deleted_by = NULL,
-                            updated_at = ?, updated_by = ?,
+                            updated_at = %s, updated_by = %s,
                             version = version + 1
-                        WHERE user_id = ? AND permission = ?
+                        WHERE user_id = %s AND permission = %s
                         """,
                         (now, actor, user_id, perm),
                     )
@@ -79,7 +79,7 @@ class PermissionRepository(BaseRepository):
                         """
                         INSERT INTO user_permissions
                             (user_id, permission, created_at, created_by, updated_at, updated_by)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         """,
                         (user_id, perm, now, actor, now, actor),
                     )
@@ -99,7 +99,7 @@ class PermissionRepository(BaseRepository):
             cur.execute(
                 """
                 SELECT id FROM user_permissions
-                WHERE user_id = ? AND permission = ?
+                WHERE user_id = %s AND permission = %s
                 """,
                 (user_id, permission),
             )
@@ -110,9 +110,9 @@ class PermissionRepository(BaseRepository):
                     """
                     UPDATE user_permissions
                     SET deleted_at = NULL, deleted_by = NULL,
-                        updated_at = ?, updated_by = ?,
+                        updated_at = %s, updated_by = %s,
                         version = version + 1
-                    WHERE user_id = ? AND permission = ?
+                    WHERE user_id = %s AND permission = %s
                     """,
                     (now, actor, user_id, permission),
                 )
@@ -121,7 +121,7 @@ class PermissionRepository(BaseRepository):
                     """
                     INSERT INTO user_permissions
                         (user_id, permission, created_at, created_by, updated_at, updated_by)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (user_id, permission, now, actor, now, actor),
                 )
@@ -138,10 +138,10 @@ class PermissionRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE user_permissions
-                SET deleted_at = ?, deleted_by = ?,
-                    updated_at = ?, updated_by = ?,
+                SET deleted_at = %s, deleted_by = %s,
+                    updated_at = %s, updated_by = %s,
                     version = version + 1
-                WHERE user_id = ? AND permission = ? AND deleted_at IS NULL
+                WHERE user_id = %s AND permission = %s AND deleted_at IS NULL
                 """,
                 (now, actor, now, actor, user_id, permission),
             )
@@ -153,10 +153,10 @@ class PermissionRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE user_permissions
-                SET deleted_at = ?, deleted_by = ?,
-                    updated_at = ?, updated_by = ?,
+                SET deleted_at = %s, deleted_by = %s,
+                    updated_at = %s, updated_by = %s,
                     version = version + 1
-                WHERE user_id = ? AND deleted_at IS NULL
+                WHERE user_id = %s AND deleted_at IS NULL
                 """,
                 (now, actor, now, actor, user_id),
             )

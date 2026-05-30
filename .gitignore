@@ -1,41 +1,36 @@
-# Git ignore file for vtb-verein
-
 # Python
+venv/
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
+.pytest_cache/
 
-# Virtual environments
-venv/
+# Umgebungsvariablen (Secrets)
 .env
 
-# SQLite database
-verein.db
+# Datenbank
+*.db
+*.db-journal
 
-# Upload-Verzeichnis (Datei-Anhänge)
+# Uploads
 vtb_verein/uploads/
+uploads/
 
-# NiceGUI cache
+# NiceGUI (alter Stack)
 .nicegui/
-.gitignore
-vtb_verein/.nicegui/storage-user-de0f00ff-8c9b-4eec-9e74-3e448c8fa52c.json
-vtb_verein/.nicegui/storage-user-ff14ff85-fb5c-4d7d-902a-6287390f4a6f.json
+vtb_verein/.nicegui/
+
+# IDE / PyDev
 .project
 .pydevproject
-.nicegui/storage-user-3ec33848-42fb-45ba-80c5-eca9cae8f0d7.json
-.nicegui/storage-user-93990006-db45-4683-83f0-245c5c613061.json
-vtb_verein/.nicegui/storage-user-1a6c0fe6-bfb9-4e52-ab0a-f71df546b6c0.json
-vtb_verein/.nicegui/storage-user-3ec33848-42fb-45ba-80c5-eca9cae8f0d7.json
-vtb_verein/.nicegui/storage-user-07ae4597-febe-48c8-985e-12dc1319cfd3.json
-vtb_verein/.nicegui/storage-user-85bf111d-91b3-403f-8479-204201f9f6ae.json
-vtb_verein/.nicegui/storage-user-4277e174-eeb8-433a-97cb-cacc5d6f0a7e.json
-vtb_verein/.nicegui/storage-user-a4e35dff-c85f-47eb-b25d-cb2b4c1854b0.json
-vtb_verein/.nicegui/storage-user-b922bbfc-adcf-40e1-a395-2f096ca7cab3.json
-vtb_verein/.nicegui/storage-user-d2e9c6a4-c8d3-4354-9676-37866198e8dc.json
-vtb_verein/.nicegui/storage-user-d7e2e060-fa19-4e4e-81b7-c83f026e7ff6.json
-vtb_verein/.nicegui/storage-user-e759bfb3-0144-4421-a3da-38ad8089d787.json
-vtb_verein/.nicegui/storage-user-e921ff21-04c7-4daa-8c07-707724faf2bd.json
-vtb_verein/.nicegui/storage-user-ec5ec549-aa34-4b1b-8ddd-495005eaa5e8.json
-vtb_verein/.nicegui/storage-user-fc68707e-1bf7-40f2-83b2-7c948af3c00b.json
-vtb_verein/.nicegui/storage-user-fe5ec535-74cc-4dfe-a95b-a54b5179ee36.json
+vtb_verein/.settings/
+
+# PostgreSQL Daten (Docker Bind-Mount)
+pg_data/
+
+# Frontend Build-Artefakte
+frontend/node_modules/
+frontend/.quasar/
+frontend/dist/

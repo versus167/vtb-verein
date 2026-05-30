@@ -4,7 +4,7 @@ Kasse Repository – Datenbankoperationen für Kassen.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from app.models.kasse import Kasse
 from app.db.base_repository import BaseRepository
 
@@ -27,7 +27,7 @@ class KasseRepository(BaseRepository):
                 SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (kasse_id,),
             )
@@ -57,17 +57,18 @@ class KasseRepository(BaseRepository):
                 """
                 INSERT INTO kassen (name, beschreibung, anfangsbestand_cent, abteilung_id,
                                     created_by, updated_at, updated_by)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
                 """,
                 (kasse.name, kasse.beschreibung, kasse.anfangsbestand_cent,
                  kasse.abteilung_id, created_by, created_by),
             )
-            kasse_id = cur.lastrowid
+            kasse_id = cur.fetchone()['id']
             cur.execute(
                 """
                 SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id,
                        version, created_at, created_by, updated_at, updated_by
-                FROM kassen WHERE id = ?
+                FROM kassen WHERE id = %s
                 """,
                 (kasse_id,),
             )
@@ -83,18 +84,18 @@ class KasseRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE kassen
-                SET name = ?, beschreibung = ?, anfangsbestand_cent = ?, abteilung_id = ?,
+                SET name = %s, beschreibung = %s, anfangsbestand_cent = %s, abteilung_id = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (kasse.name, kasse.beschreibung, kasse.anfangsbestand_cent,
                  kasse.abteilung_id, updated_by, kasse.id, kasse.version),
             )
             if cur.rowcount == 0:
                 return False
-            cur.execute("SELECT version, updated_at FROM kassen WHERE id = ?", (kasse.id,))
+            cur.execute("SELECT version, updated_at FROM kassen WHERE id = %s", (kasse.id,))
             row = dict(cur.fetchone())
             kasse.version = row["version"]
             kasse.updated_at = row["updated_at"]
@@ -114,9 +115,9 @@ class KasseRepository(BaseRepository):
                 """
                 UPDATE kassen
                 SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
+                    deleted_by = %s,
                     version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (deleted_by, kasse_id),
             )
@@ -143,14 +144,15 @@ class KasseRepository(BaseRepository):
                 LEFT JOIN kassenbuchungen b
                        ON b.kasse_id = k.id
                       AND b.deleted_at IS NULL
-                WHERE k.id = ? AND k.deleted_at IS NULL
+                WHERE k.id = %s AND k.deleted_at IS NULL
+                GROUP BY k.id, k.anfangsbestand_cent
                 """,
                 (kasse_id,),
             )
             row = cur.fetchone()
             if row is None:
                 raise KeyError(f"Kasse {kasse_id} nicht gefunden")
-            return row[0] or 0
+            return row['bestand_cent'] or 0
 
     def get_bestand_zum_datum_cent(self, kasse_id: int, bis_datum: str) -> int:
         """Berechnet den Kassenbestand bis einschließlich einem bestimmten Datum.
@@ -167,15 +169,16 @@ class KasseRepository(BaseRepository):
                 LEFT JOIN kassenbuchungen b
                        ON b.kasse_id = k.id
                       AND b.deleted_at IS NULL
-                      AND b.buchungsdatum <= ?
-                WHERE k.id = ? AND k.deleted_at IS NULL
+                      AND b.buchungsdatum <= %s
+                WHERE k.id = %s AND k.deleted_at IS NULL
+                GROUP BY k.id, k.anfangsbestand_cent
                 """,
                 (bis_datum, kasse_id),
             )
             row = cur.fetchone()
             if row is None:
                 raise KeyError(f"Kasse {kasse_id} nicht gefunden")
-            return row[0] or 0
+            return row['bestand_cent'] or 0
 
     # -----------------------------------
     # Future: Prune Operations

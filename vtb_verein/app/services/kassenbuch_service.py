@@ -208,13 +208,15 @@ class KassenbuchService:
         # Belegnummer: einfache laufende Nummer pro Kasse
         buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id)
 
-        # Bestandsprüfung: aktueller Bestand - neue Ausgabe >= 0
+        # Bestandsprüfung: Bestand AM BUCHUNGSDATUM - neue Ausgabe >= 0
+        # (nicht der aktuelle Gesamtbestand, damit Vergangenheitsbuchungen korrekt geprüft werden)
         if buchung.ausgabe_cent > 0:
-            aktuell = self._kasse.get_bestand_cent(buchung.kasse_id)
+            aktuell = self._kasse.get_bestand_zum_datum_cent(buchung.kasse_id, buchung.buchungsdatum)
             if aktuell - buchung.ausgabe_cent < 0:
                 raise NegativerBestandError(
-                    f"Ausgabe von {buchung.ausgabe_cent / 100:.2f} € würde zu negativem Bestand führen. "
-                    f"Aktueller Bestand: {aktuell / 100:.2f} €"
+                    f"Ausgabe von {buchung.ausgabe_cent / 100:.2f} € würde zu negativem Bestand "
+                    f"am {buchung.buchungsdatum} führen. "
+                    f"Bestand an diesem Tag: {aktuell / 100:.2f} €"
                 )
 
         return self._buchung.create_kassenbuchung(buchung, created_by)
@@ -238,18 +240,16 @@ class KassenbuchService:
 
         self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
 
-        # Bestandsprüfung: simulierter Bestand nach Update
+        # Bestandsprüfung: simulierter Bestand nach Update, geprüft am Buchungsdatum
         if buchung.ausgabe_cent > 0:
             alte_buchung = self._buchung.get_kassenbuchung(buchung.id)
-            bestand_ohne = (
-                self._kasse.get_bestand_cent(buchung.kasse_id)
-                + alte_buchung.ausgabe_cent
-                - alte_buchung.einnahme_cent
-            )
-            neuer_bestand = bestand_ohne + buchung.einnahme_cent - buchung.ausgabe_cent
+            # Bestand am Buchungsdatum ohne den Effekt der alten Buchung
+            bestand_am_datum = self._kasse.get_bestand_zum_datum_cent(buchung.kasse_id, buchung.buchungsdatum)
+            bestand_ohne_alte = bestand_am_datum + alte_buchung.ausgabe_cent - alte_buchung.einnahme_cent
+            neuer_bestand = bestand_ohne_alte + buchung.einnahme_cent - buchung.ausgabe_cent
             if neuer_bestand < 0:
                 raise NegativerBestandError(
-                    f"Geänderter Betrag würde zu negativem Bestand führen."
+                    f"Geänderter Betrag würde zu negativem Bestand am {buchung.buchungsdatum} führen."
                 )
 
         return self._buchung.update_kassenbuchung(buchung, updated_by)

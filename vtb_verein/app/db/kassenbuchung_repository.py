@@ -4,7 +4,7 @@ Kassenbuchung Repository – Datenbankoperationen für Kassenbuchungen.
 @author: AI Assistant
 '''
 
-import sqlite3
+from psycopg import Connection as PgConnection
 from app.models.kasse import Kassenbuchung
 from app.db.base_repository import BaseRepository
 
@@ -37,7 +37,7 @@ class KassenbuchungRepository(BaseRepository):
                        (SELECT COUNT(*) FROM kassenbuchung_anhaenge
                         WHERE buchung_id = kassenbuchungen.id AND deleted_at IS NULL) AS anhang_count
                 FROM kassenbuchungen
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (buchung_id,),
             )
@@ -58,16 +58,16 @@ class KassenbuchungRepository(BaseRepository):
         Args:
             include_storniert: Wenn True, werden auch soft-deleted Buchungen zurückgegeben.
         """
-        conditions = ["kasse_id = ?"]
+        conditions = ["kasse_id = %s"]
         params: list = [kasse_id]
 
         if not include_storniert:
             conditions.append("deleted_at IS NULL")
         if von_datum:
-            conditions.append("buchungsdatum >= ?")
+            conditions.append("buchungsdatum >= %s")
             params.append(von_datum)
         if bis_datum:
-            conditions.append("buchungsdatum <= ?")
+            conditions.append("buchungsdatum <= %s")
             params.append(bis_datum)
 
         where = " AND ".join(conditions)
@@ -104,7 +104,7 @@ class KassenbuchungRepository(BaseRepository):
                        created_at, created_by, updated_at, updated_by,
                        deleted_at, deleted_by
                 FROM kassenbuchungen_history
-                WHERE id = ?
+                WHERE id = %s
                 ORDER BY version ASC
                 """,
                 (buchung_id,),
@@ -122,12 +122,12 @@ class KassenbuchungRepository(BaseRepository):
                 """
                 SELECT MAX(CAST(belegnummer AS INTEGER))
                 FROM kassenbuchungen
-                WHERE kasse_id = ?
+                WHERE kasse_id = %s
                 """,
                 (kasse_id,),
             )
             row = cur.fetchone()
-            letzte_nr = row[0] if row and row[0] is not None else 0
+            letzte_nr = row['max'] if row and row['max'] is not None else 0
             return str(letzte_nr + 1)
 
     # -----------------------------------
@@ -143,7 +143,8 @@ class KassenbuchungRepository(BaseRepository):
                     kasse_id, buchungsdatum, belegnummer, buchungstext,
                     kategorie, einnahme_cent, ausgabe_cent, notiz,
                     created_by, updated_at, updated_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
                 """,
                 (
                     buchung.kasse_id, buchung.buchungsdatum, buchung.belegnummer,
@@ -152,7 +153,7 @@ class KassenbuchungRepository(BaseRepository):
                     buchung.notiz, created_by, created_by,
                 ),
             )
-            buchung_id = cur.lastrowid
+            buchung_id = cur.fetchone()['id']
             cur.execute(
                 """
                 SELECT id, kasse_id, buchungsdatum, belegnummer, buchungstext,
@@ -160,7 +161,7 @@ class KassenbuchungRepository(BaseRepository):
                        exportiert_in_export_id,
                        version, created_at, created_by, updated_at, updated_by,
                        deleted_at, deleted_by
-                FROM kassenbuchungen WHERE id = ?
+                FROM kassenbuchungen WHERE id = %s
                 """,
                 (buchung_id,),
             )
@@ -178,12 +179,12 @@ class KassenbuchungRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE kassenbuchungen
-                SET buchungsdatum = ?, buchungstext = ?, kategorie = ?,
-                    einnahme_cent = ?, ausgabe_cent = ?, notiz = ?,
+                SET buchungsdatum = %s, buchungstext = %s, kategorie = %s,
+                    einnahme_cent = %s, ausgabe_cent = %s, notiz = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
-                    updated_by = ?
-                WHERE id = ? AND version = ? AND deleted_at IS NULL
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (
                     buchung.buchungsdatum, buchung.buchungstext, buchung.kategorie,
@@ -193,7 +194,7 @@ class KassenbuchungRepository(BaseRepository):
             )
             if cur.rowcount == 0:
                 return False
-            cur.execute("SELECT version, updated_at FROM kassenbuchungen WHERE id = ?", (buchung.id,))
+            cur.execute("SELECT version, updated_at FROM kassenbuchungen WHERE id = %s", (buchung.id,))
             row = dict(cur.fetchone())
             buchung.version = row["version"]
             buchung.updated_at = row["updated_at"]
@@ -213,9 +214,9 @@ class KassenbuchungRepository(BaseRepository):
                 """
                 UPDATE kassenbuchungen
                 SET deleted_at = CURRENT_TIMESTAMP,
-                    deleted_by = ?,
+                    deleted_by = %s,
                     version = version + 1
-                WHERE id = ? AND deleted_at IS NULL
+                WHERE id = %s AND deleted_at IS NULL
                 """,
                 (deleted_by, buchung_id),
             )
@@ -231,12 +232,12 @@ class KassenbuchungRepository(BaseRepository):
         """
         if not buchung_ids:
             return 0
-        placeholders = ",".join("?" * len(buchung_ids))
+        placeholders = ",".join("%s" * len(buchung_ids))
         with self.cursor() as cur:
             cur.execute(
                 f"""
                 UPDATE kassenbuchungen
-                SET exportiert_in_export_id = ?,
+                SET exportiert_in_export_id = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id IN ({placeholders})

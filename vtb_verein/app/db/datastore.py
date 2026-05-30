@@ -38,6 +38,7 @@ from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
+from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -48,14 +49,14 @@ from app.services.anhang_service import AnhangService
 class VereinsDB:
     """Data Access Layer Facade - Delegates to specialized repositories."""
 
-    def __init__(self, path: str, upload_path: str = 'uploads/'):
+    def __init__(self, database_url: str, upload_path: str = 'uploads/'):
         from app.services.kassenbuch_service import KassenbuchService
-        self.path = path
-        self._database = Database(path)
+        self._database = Database(database_url)
         self.conn = self._database.conn
 
         self._mitglied_repo = MitgliedRepository(self.conn)
         self._abteilung_repo = AbteilungRepository(self.conn)
+        self._mitglied_abteilung_repo = MitgliedAbteilungRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
@@ -226,6 +227,36 @@ class VereinsDB:
 
     def prune_deleted_abteilungen(self, days_old: int) -> int:
         return self._abteilung_repo.prune_deleted_abteilungen(days_old)
+
+    # -----------------------------------
+    # Mitglied-Abteilung-Zuordnung
+    # -----------------------------------
+
+    def list_mitglied_abteilungen(self, mitglied_id: int) -> list[MitgliedAbteilung]:
+        return self._mitglied_abteilung_repo.list_for_mitglied(mitglied_id)
+
+    def get_mitglied_abteilung(self, id: int) -> Optional[MitgliedAbteilung]:
+        return self._mitglied_abteilung_repo.get(id)
+
+    def create_mitglied_abteilung(self, mitglied_id: int, abteilung_id: int, status: str,
+                                   von: Optional[str], bis: Optional[str],
+                                   created_by: str) -> MitgliedAbteilung:
+        return self._mitglied_abteilung_repo.create(
+            mitglied_id, abteilung_id, status, von, bis, created_by
+        )
+
+    def update_mitglied_abteilung(self, id: int, status: str, von: Optional[str],
+                                   bis: Optional[str], updated_by: str,
+                                   expected_version: int) -> bool:
+        return self._mitglied_abteilung_repo.update(
+            id, status, von, bis, updated_by, expected_version
+        )
+
+    def mark_mitglied_abteilung_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._mitglied_abteilung_repo.mark_deleted(id, deleted_by)
+
+    def mitglied_abteilung_exists_active(self, mitglied_id: int, abteilung_id: int) -> bool:
+        return self._mitglied_abteilung_repo.exists_active(mitglied_id, abteilung_id)
 
     # -----------------------------------
     # User Operations
