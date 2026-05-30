@@ -56,8 +56,9 @@ API-Dokumentation: http://localhost:8000/api/docs
 - [x] PostgreSQL-Migration (psycopg3, PL/pgSQL-Trigger, Alembic)
 - [x] Kassenbuch (Kassen-CRUD, Buchungen, CSV-Export, kassenspez. Berechtigungen)
 - [x] Anhänge (Kassenbuch + Tickets): Upload, Download, Soft-Delete; `AnhangPanel.vue` geteilt
-- [x] Tickets (Grundgerüst): Bereiche, Kategorien, CRUD, Statuswechsel, Anhänge
+- [x] Tickets (vollständig): Bereiche, Kategorien, CRUD, Statuswechsel, Anhänge, Kommentare, Berechtigungen, Mobile
 - [x] Mobile-Optimierung Kassenbuch: Karten-Liste, Bottom-Sheet-Dialoge, einklappbarer Filter
+- [x] Mobile-Optimierung Tickets: Karten-Liste mit Status-Farbe + Prioritäts-Akzent
 - [x] Kassenbuch PDF-Bericht: Zeitraumauswahl, reportlab, Zusammenfassung + Buchungstabelle
 - [x] Kassenbuch Berechtigungen: `darf_schreiben`/`darf_exportieren` korrekt aus DB gelesen und in UI ausgewertet
 
@@ -71,10 +72,10 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 4 | ~~PWA aktivieren~~ | — | ✅ fertig |
 | 5 | ~~Kassenbuch~~ | — | ✅ fertig inkl. Anhänge |
 | 6 | ~~Anhänge (Kassenbuch + Tickets)~~ | — | ✅ fertig |
-| 7 | Tickets (vollständig) | mittel | Kommentare, Mobile-Feinschliff |
+| 7 | ~~Tickets (vollständig)~~ | — | ✅ fertig |
 | 8 | ~~Kassenbuch PDF-Bericht~~ | — | ✅ fertig |
 | 9 | ~~Benachrichtigungen (E-Mail + Matrix)~~ | — | ✅ fertig |
-| 10 | Mobile-Feinschliff | laufend | Tickets-Seite, Navigation |
+| 10 | ~~Mobile-Feinschliff~~ | — | ✅ fertig (Kassenbuch + Tickets) |
 
 ---
 
@@ -132,14 +133,17 @@ Kein zentrales Attachment-Storage. Bilder werden serverseitig automatisch zu PDF
 
 ---
 
-## Tickets (Grundgerüst ✅ 2026-05-27, vollständig ausstehend)
+## Tickets (✅ abgeschlossen 2026-05-30)
 
 - **Backend**: `backend/api/tickets.py` — Prefix `/api/tickets/`
-- **Entitäten**: Bereiche, Kategorien, Tickets, Anhänge
-- **Statuswechsel**: `PATCH /api/tickets/{id}/status` mit Übergangsprüfung
-- **Berechtigungen**: `ticket_bereich_berechtigungen` (darf_lesen / darf_bearbeiten / darf_schliessen); eigene Tickets immer sichtbar
-- **Frontend**: `TicketsPage.vue` — Liste mit Filter, Erstellen-Dialog, Detail-Dialog mit Statuswechsel + AnhangPanel
-- **Noch offen**: Kommentar-Thread, Mobile-Feinschliff, Teilnehmer-Verwaltung
+- **Entitäten**: Bereiche, Kategorien, Tickets, Kommentare, Anhänge
+- **Sichtbarkeit**: Alle eingeloggten User sehen alle Tickets; kein bereichsbasierter Leseschutz
+- **Kommentare**: Alle User können Kommentare zu offenen Tickets schreiben; interne Kommentare nur mit Bearbeitungsrecht im Bereich; geschlossene Tickets (erledigt/abgelehnt) sind gesperrt
+- **Statuswechsel**: `PATCH /api/tickets/{id}/status` mit Übergangsprüfung; Bearbeitungsrecht im Bereich erforderlich
+- **Berechtigungen**: `ticket_bereich_berechtigungen` (darf_bearbeiten / darf_schliessen); Bearbeitungsrecht bestimmt auch die „Nur meine"-Zuständigkeit
+- **`zugewiesen_an`**: DB-Spalte bleibt, aus UI und API entfernt; Zuständigkeit läuft über Bereichsberechtigungen
+- **Frontend**: `TicketsPage.vue` — Filter (Bereich, Status, Nur meine, Abgeschlossene), Erstellen-Dialog, Detail-Dialog mit Inline-Edit, Statuswechsel, Kommentar-Thread, AnhangPanel
+- **Mobile**: Karten-Liste mit dezenter Status-Hintergrundfarbe, farbigem Prioritäts-Akzent (linker Rand), Ersteller-Anzeige
 
 ---
 
@@ -149,7 +153,7 @@ Kein zentrales Attachment-Storage. Bilder werden serverseitig automatisch zu PDF
 - **Fallback**: Matrix → E-Mail wenn Matrix-Versand fehlschlägt
 - **User-Konfiguration**: Profil-Seite (`/profile`) — Matrix-ID hinterlegen, bevorzugten Kanal wählen, Test-Nachricht senden
 - **Backend**: `PATCH /api/auth/me/contact`, `POST /api/auth/me/contact/test`; `GET /api/auth/me` liefert `matrix_id` + `preferred_contact`
-- **Ticket-Benachrichtigungen** (aktiv): Erstellen, Zuweisen, Statuswechsel, Kommentar
+- **Ticket-Benachrichtigungen** (aktiv): Erstellen, Statuswechsel, Kommentar
 - **Willkommens-Mail**: beim User-Anlegen ohne Magic-Link (z.B. wenn Admin direkt Passwort setzt)
 - **Noch nicht verdrahtet**: Mitglied-Ereignisse, Kassenbuch-Vorgänge (bewusst zurückgestellt)
 

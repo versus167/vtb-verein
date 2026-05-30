@@ -36,7 +36,6 @@ class TicketWrite(BaseModel):
     prioritaet: str = TicketPrioritaet.NORMAL
     bereich_id: Optional[int] = None
     kategorie_id: Optional[int] = None
-    zugewiesen_an: Optional[int] = None
     faellig_am: Optional[str] = None
 
 
@@ -320,7 +319,6 @@ def list_tickets(
     db: DB,
     bereich_id: Optional[int] = None,
     status: Optional[str] = None,
-    zugewiesen_an: Optional[int] = None,
     gemeldet_von: Optional[int] = None,
 ):
     tickets = db.tickets.list_tickets_with_counts()
@@ -330,8 +328,6 @@ def list_tickets(
         tickets = [t for t in tickets if t.bereich_id == bereich_id]
     if status:
         tickets = [t for t in tickets if t.status == status]
-    if zugewiesen_an is not None:
-        tickets = [t for t in tickets if t.zugewiesen_an == zugewiesen_an]
     if gemeldet_von is not None:
         tickets = [t for t in tickets if t.gemeldet_von == gemeldet_von]
 
@@ -360,7 +356,6 @@ def create_ticket(data: TicketWrite, user: CurrentUser, db: DB, draft: bool = Fa
         bereich_id=data.bereich_id,
         kategorie_id=data.kategorie_id,
         gemeldet_von=user.id,
-        zugewiesen_an=data.zugewiesen_an,
         faellig_am=data.faellig_am,
     )
     created = db.tickets.create_ticket(ticket, created_by=user.username, notify=not draft)
@@ -385,7 +380,6 @@ def update_ticket(ticket_id: int, data: TicketUpdate, user: CurrentUser, db: DB)
     ticket.prioritaet = data.prioritaet
     ticket.bereich_id = data.bereich_id
     ticket.kategorie_id = data.kategorie_id
-    ticket.zugewiesen_an = data.zugewiesen_an
     ticket.faellig_am = data.faellig_am
     ticket.version = data.expected_version
     ok = db.tickets.update_ticket(ticket, updated_by=user.username, notify_as_new=data.notify_as_new)

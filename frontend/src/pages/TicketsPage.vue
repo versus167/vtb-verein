@@ -48,22 +48,31 @@
       <q-card
         v-for="t in filteredTickets"
         :key="t.id"
-        flat bordered
-        class="q-mb-sm cursor-pointer"
+        elevated
+        :class="`q-mb-md cursor-pointer ${statusBgClass(t.status)}`"
+        :style="`border-radius: 14px; overflow: hidden; border-left: 5px solid ${prioritaetBorderColor(t.prioritaet)}`"
         @click="openDetailDialog(t)"
       >
-        <q-card-section class="q-py-sm q-px-md">
-          <div class="row items-center q-mb-xs">
-            <q-icon :name="prioritaetIcon(t.prioritaet)" :color="prioritaetColor(t.prioritaet)" size="xs" class="q-mr-xs" />
-            <span class="text-caption text-grey col">#{{ t.id }}</span>
-            <q-chip dense :color="statusColor(t.status)" text-color="white" :label="statusLabel(t.status)" size="xs" />
+        <q-card-section class="q-py-md q-px-md">
+          <div class="row items-center q-mb-sm no-wrap">
+            <span class="text-caption text-grey-5 col">#{{ t.id }}</span>
+            <q-chip dense :color="statusColor(t.status)" text-color="white" :label="statusLabel(t.status)" />
           </div>
-          <div class="text-body2 text-weight-medium">{{ t.titel }}</div>
-          <div v-if="t.bereich_name" class="text-caption text-grey">{{ t.bereich_name }}</div>
-          <div class="row q-mt-xs text-caption text-grey q-gutter-sm">
-            <span v-if="t.kommentar_count > 0"><q-icon name="chat_bubble_outline" size="xs" /> {{ t.kommentar_count }}</span>
-            <span v-if="t.anhang_count > 0"><q-icon name="attach_file" size="xs" /> {{ t.anhang_count }}</span>
-            <span class="col text-right">{{ formatDate(t.created_at) }}</span>
+          <div class="text-subtitle1 text-weight-bold q-mb-xs" style="line-height: 1.3">{{ t.titel }}</div>
+          <div v-if="t.bereich_name" class="row items-center q-mb-sm">
+            <q-icon name="folder_open" size="xs" color="grey-5" class="q-mr-xs" />
+            <span class="text-body2 text-grey-7">{{ t.bereich_name }}</span>
+          </div>
+          <div class="row items-center text-caption text-grey-6 q-mt-xs">
+            <q-icon name="person_outline" size="xs" class="q-mr-xs" />
+            <span class="col">{{ t.gemeldet_von_username }}</span>
+            <span v-if="t.kommentar_count > 0" class="q-mr-sm">
+              <q-icon name="chat_bubble_outline" size="xs" /> {{ t.kommentar_count }}
+            </span>
+            <span v-if="t.anhang_count > 0" class="q-mr-sm">
+              <q-icon name="attach_file" size="xs" /> {{ t.anhang_count }}
+            </span>
+            <span>{{ formatDate(t.created_at) }}</span>
           </div>
         </q-card-section>
       </q-card>
@@ -215,15 +224,6 @@
                     outlined dense
                     clearable
                     class="col"
-                  />
-                  <q-select
-                    v-if="isAdmin"
-                    v-model="detailForm.zugewiesen_an"
-                    :options="userOptions"
-                    label="Zugewiesen an"
-                    outlined dense clearable
-                    class="col"
-                    emit-value map-options
                   />
                 </div>
                 <div class="row justify-end q-mb-md">
@@ -431,7 +431,7 @@ const detailFormDirty = computed(() => {
     detailForm.value.kategorie_id !== t.kategorie_id ||
     detailForm.value.prioritaet !== t.prioritaet ||
     detailForm.value.faellig_am !== (t.faellig_am || '') ||
-    detailForm.value.zugewiesen_an !== t.zugewiesen_an
+    false
   )
 })
 
@@ -515,7 +515,10 @@ const filteredTickets = computed(() => {
   if (!filterMitAbgeschlossenen.value) result = result.filter(t => !isAbgeschlossen(t))
   if (filterBereich.value) result = result.filter(t => t.bereich_id === filterBereich.value)
   if (filterStatus.value)  result = result.filter(t => t.status === filterStatus.value)
-  if (filterNurMeine.value) result = result.filter(t => t.gemeldet_von === currentUserId.value)
+  if (filterNurMeine.value) result = result.filter(t =>
+    t.gemeldet_von === currentUserId.value ||
+    !!_bereichFlags(t).darf_bearbeiten
+  )
   return result
 })
 
@@ -543,6 +546,8 @@ function erlaubteStatus(t) {
 function prioritaetIcon(p)  { return { niedrig: 'keyboard_arrow_down', normal: 'remove', hoch: 'keyboard_arrow_up', sicherheit: 'warning' }[p] ?? 'remove' }
 function prioritaetColor(p) { return { niedrig: 'grey', normal: 'primary', hoch: 'orange', sicherheit: 'negative' }[p] ?? 'grey' }
 function prioritaetLabel(p) { return { niedrig: 'Niedrig', normal: 'Normal', hoch: 'Hoch', sicherheit: 'Sicherheit' }[p] ?? p }
+function prioritaetBorderColor(p) { return { niedrig: '#9e9e9e', normal: 'var(--q-primary)', hoch: '#ef6c00', sicherheit: 'var(--q-negative)' }[p] ?? '#9e9e9e' }
+function statusBgClass(s) { return { offen: 'bg-blue-1', in_pruefung: 'bg-orange-1', eingeplant: 'bg-purple-1', rueckfrage: 'bg-amber-1', erledigt: 'bg-green-1', abgelehnt: 'bg-red-1' }[s] ?? '' }
 
 function formatDate(iso) {
   if (!iso) return '—'
@@ -555,7 +560,7 @@ function formatDateTime(iso) {
 }
 
 function emptyCreateForm() {
-  return { titel: '', beschreibung: '', bereich_id: null, kategorie_id: null, prioritaet: 'normal', faellig_am: '', zugewiesen_an: null }
+  return { titel: '', beschreibung: '', bereich_id: null, kategorie_id: null, prioritaet: 'normal', faellig_am: '' }
 }
 
 function syncDetailForm(ticket) {
@@ -566,7 +571,6 @@ function syncDetailForm(ticket) {
     kategorie_id:  ticket.kategorie_id,
     prioritaet:    ticket.prioritaet,
     faellig_am:    ticket.faellig_am || '',
-    zugewiesen_an: ticket.zugewiesen_an,
   }
 }
 
