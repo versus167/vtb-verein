@@ -47,7 +47,7 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
-                          telegram_id, matrix_id, preferred_contact
+                          matrix_id, preferred_contact
                    FROM users WHERE username = %s AND deleted_at IS NULL""",
                 (username,)
             )
@@ -62,7 +62,7 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
-                          telegram_id, matrix_id, preferred_contact
+                          matrix_id, preferred_contact
                    FROM users WHERE email = %s AND deleted_at IS NULL""",
                 (email,)
             )
@@ -77,7 +77,7 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
-                          telegram_id, matrix_id, preferred_contact
+                          matrix_id, preferred_contact
                    FROM users WHERE id = %s AND deleted_at IS NULL""",
                 (user_id,)
             )
@@ -92,7 +92,7 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
-                          telegram_id, matrix_id, preferred_contact
+                          matrix_id, preferred_contact
                    FROM users WHERE deleted_at IS NULL ORDER BY username"""
             )
             return [self._load_permissions(self._row_to_user(row)) for row in cur.fetchall()]
@@ -164,19 +164,18 @@ class UserRepository(BaseRepository):
             )
             return cur.rowcount == 1
     
-    def update_contact_preferences(self, user_id: int, telegram_id: str | None,
-                                   matrix_id: str | None, preferred_contact: str,
-                                   updated_by: str, expected_version: int) -> bool:
-        """Update user contact preferences for multi-channel notifications.
-        
+    def update_contact_preferences(self, user_id: int, matrix_id: str | None,
+                                   preferred_contact: str, updated_by: str,
+                                   expected_version: int) -> bool:
+        """Update user contact preferences for notifications.
+
         Args:
             user_id: ID of user to update
-            telegram_id: Telegram @username or Chat-ID (optional)
             matrix_id: Matrix ID like @user:matrix.org (optional)
-            preferred_contact: Preferred channel ('email', 'telegram', 'matrix')
+            preferred_contact: Preferred channel ('email', 'matrix')
             updated_by: Username of updater
             expected_version: Expected version for optimistic locking
-            
+
         Returns:
             bool: True if update successful, False if version conflict or not found
         """
@@ -184,11 +183,11 @@ class UserRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE users
-                SET telegram_id = %s, matrix_id = %s, preferred_contact = %s,
+                SET matrix_id = %s, preferred_contact = %s,
                     version = version + 1, updated_by = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
-                (telegram_id, matrix_id, preferred_contact, updated_by, user_id, expected_version)
+                (matrix_id, preferred_contact, updated_by, user_id, expected_version)
             )
             return cur.rowcount == 1
     
@@ -275,7 +274,6 @@ class UserRepository(BaseRepository):
             created_by=row['created_by'],
             updated_at=row['updated_at'],
             updated_by=row['updated_by'],
-            telegram_id=row['telegram_id'],
             matrix_id=row['matrix_id'],
             preferred_contact=row['preferred_contact']
         )

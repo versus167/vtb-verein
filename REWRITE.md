@@ -71,9 +71,10 @@ API-Dokumentation: http://localhost:8000/api/docs
 | 4 | ~~PWA aktivieren~~ | — | ✅ fertig |
 | 5 | ~~Kassenbuch~~ | — | ✅ fertig inkl. Anhänge |
 | 6 | ~~Anhänge (Kassenbuch + Tickets)~~ | — | ✅ fertig |
-| 7 | Tickets (vollständig) | mittel | Kommentare, Benachrichtigungen, Mobile-UI |
+| 7 | Tickets (vollständig) | mittel | Kommentare, Mobile-Feinschliff |
 | 8 | ~~Kassenbuch PDF-Bericht~~ | — | ✅ fertig |
-| 9 | Mobile-Feinschliff | laufend | Tickets-Seite, Navigation |
+| 9 | ~~Benachrichtigungen (E-Mail + Matrix)~~ | — | ✅ fertig |
+| 10 | Mobile-Feinschliff | laufend | Tickets-Seite, Navigation |
 
 ---
 
@@ -138,7 +139,19 @@ Kein zentrales Attachment-Storage. Bilder werden serverseitig automatisch zu PDF
 - **Statuswechsel**: `PATCH /api/tickets/{id}/status` mit Übergangsprüfung
 - **Berechtigungen**: `ticket_bereich_berechtigungen` (darf_lesen / darf_bearbeiten / darf_schliessen); eigene Tickets immer sichtbar
 - **Frontend**: `TicketsPage.vue` — Liste mit Filter, Erstellen-Dialog, Detail-Dialog mit Statuswechsel + AnhangPanel
-- **Noch offen**: Kommentar-Thread, Benachrichtigungen (E-Mail/Telegram/Matrix), Mobile-Feinschliff, Teilnehmer-Verwaltung
+- **Noch offen**: Kommentar-Thread, Mobile-Feinschliff, Teilnehmer-Verwaltung
+
+---
+
+## Benachrichtigungen (✅ abgeschlossen 2026-05-30)
+
+- **Kanäle**: E-Mail (immer aktiv) + Matrix (optional); Telegram entfernt
+- **Fallback**: Matrix → E-Mail wenn Matrix-Versand fehlschlägt
+- **User-Konfiguration**: Profil-Seite (`/profile`) — Matrix-ID hinterlegen, bevorzugten Kanal wählen, Test-Nachricht senden
+- **Backend**: `PATCH /api/auth/me/contact`, `POST /api/auth/me/contact/test`; `GET /api/auth/me` liefert `matrix_id` + `preferred_contact`
+- **Ticket-Benachrichtigungen** (aktiv): Erstellen, Zuweisen, Statuswechsel, Kommentar
+- **Willkommens-Mail**: beim User-Anlegen ohne Magic-Link (z.B. wenn Admin direkt Passwort setzt)
+- **Noch nicht verdrahtet**: Mitglied-Ereignisse, Kassenbuch-Vorgänge (bewusst zurückgestellt)
 
 ---
 

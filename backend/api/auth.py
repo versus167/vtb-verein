@@ -30,6 +30,9 @@ class UserInfo(BaseModel):
     role: str
     permissions: list[str]
     last_login: str | None = None
+    version: int = 1
+    matrix_id: str | None = None
+    preferred_contact: str = 'email'
 
 
 @router.post("/login", response_model=Token)
@@ -61,7 +64,6 @@ class OwnPasswordChange(BaseModel):
 
 @router.get("/me", response_model=UserInfo)
 def get_me(user: CurrentUser, db: DB):
-    # Frisch laden damit last_login etc. aktuell ist
     fresh = db.get_user_by_id(user.id)
     return UserInfo(
         id=fresh.id,
@@ -70,7 +72,46 @@ def get_me(user: CurrentUser, db: DB):
         role=fresh.role,
         permissions=list(fresh.permissions),
         last_login=fresh.last_login,
+        version=fresh.version,
+        matrix_id=fresh.matrix_id,
+        preferred_contact=fresh.preferred_contact,
     )
+
+
+class ContactPreferencesUpdate(BaseModel):
+    matrix_id: str | None = None
+    preferred_contact: str
+    expected_version: int
+
+
+@router.patch("/me/contact")
+def update_contact_preferences(data: ContactPreferencesUpdate, user: CurrentUser, db: DB):
+    service = UserService(db)
+    try:
+        service.update_contact_preferences(
+            user_id=user.id,
+            matrix_id=data.matrix_id or None,
+            preferred_contact=data.preferred_contact,
+            updated_by=user.username,
+            expected_version=data.expected_version,
+        )
+        return {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/me/contact/test")
+def send_test_notification(user: CurrentUser, db: DB):
+    from app.services.notification_service import NotificationService
+    fresh = db.get_user_by_id(user.id)
+    result = NotificationService.send_notification(
+        fresh,
+        title="Test-Nachricht",
+        message="Dies ist eine Test-Benachrichtigung von der VTB-Vereinsverwaltung.",
+    )
+    if not result:
+        raise HTTPException(status_code=500, detail="Nachricht konnte nicht versendet werden")
+    return {"ok": True}
 
 
 @router.post("/me/password")

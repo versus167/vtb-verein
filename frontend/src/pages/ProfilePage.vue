@@ -91,6 +91,67 @@
         </q-card>
       </div>
 
+      <!-- Benachrichtigungen -->
+      <div class="col-12">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Benachrichtigungen</div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              E-Mail wird immer verwendet. Matrix kann zusätzlich konfiguriert werden.
+            </div>
+
+            <div class="q-gutter-sm" style="max-width: 360px">
+              <q-input
+                :model-value="me?.email"
+                label="E-Mail"
+                outlined
+                dense
+                readonly
+                disable
+              />
+
+              <q-input
+                v-model="matrixId"
+                label="Matrix-ID (optional)"
+                outlined
+                dense
+                hint="z.B. @user:matrix.org"
+                clearable
+              />
+
+              <q-select
+                v-model="preferredContact"
+                :options="contactOptions"
+                label="Bevorzugter Kanal"
+                outlined
+                dense
+                emit-value
+                map-options
+              />
+
+              <div v-if="contactError" class="text-negative text-caption">{{ contactError }}</div>
+
+              <div class="row q-gutter-sm">
+                <q-btn
+                  label="Speichern"
+                  color="primary"
+                  unelevated
+                  :loading="savingContact"
+                  @click="onSaveContact"
+                />
+                <q-btn
+                  label="Test-Nachricht"
+                  color="primary"
+                  outline
+                  :loading="sendingTest"
+                  @click="onSendTest"
+                />
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
     </div>
   </q-page>
 </template>
@@ -113,9 +174,24 @@ const showPw = ref(false)
 const pwError = ref('')
 const saving = ref(false)
 
+const matrixId = ref('')
+const preferredContact = ref('email')
+const contactError = ref('')
+const savingContact = ref(false)
+const sendingTest = ref(false)
+
+const contactOptions = [
+  { label: 'E-Mail', value: 'email' },
+  { label: 'Matrix', value: 'matrix' },
+]
+
 async function load() {
   const { data } = await api.get('/api/auth/me')
   me.value = data
+  matrixId.value = data.matrix_id ?? ''
+  preferredContact.value = ['email', 'matrix'].includes(data.preferred_contact)
+    ? data.preferred_contact
+    : 'email'
 }
 
 async function onChangePassword() {
@@ -134,6 +210,36 @@ async function onChangePassword() {
     pwError.value = e.response?.data?.detail || 'Fehler beim Ändern'
   } finally {
     saving.value = false
+  }
+}
+
+async function onSaveContact() {
+  contactError.value = ''
+  savingContact.value = true
+  try {
+    await api.patch('/api/auth/me/contact', {
+      matrix_id: matrixId.value || null,
+      preferred_contact: preferredContact.value,
+      expected_version: me.value.version,
+    })
+    await load()
+    $q.notify({ type: 'positive', message: 'Benachrichtigungseinstellungen gespeichert' })
+  } catch (e) {
+    contactError.value = e.response?.data?.detail || 'Fehler beim Speichern'
+  } finally {
+    savingContact.value = false
+  }
+}
+
+async function onSendTest() {
+  sendingTest.value = true
+  try {
+    await api.post('/api/auth/me/contact/test')
+    $q.notify({ type: 'positive', message: 'Test-Nachricht versendet' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Versand fehlgeschlagen' })
+  } finally {
+    sendingTest.value = false
   }
 }
 
