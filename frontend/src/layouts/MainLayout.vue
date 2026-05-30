@@ -77,6 +77,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.user?.role === 'admin' || auth.hasPermission('tickets.bereiche.verwalten')"
+            clickable
+            :to="{ name: 'ticket-verwaltung' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="settings" /></q-item-section>
+            <q-item-section>Ticket-Verwaltung</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.user?.role === 'admin'"
             clickable
             :to="{ name: 'kassenverwaltung' }"

@@ -34,6 +34,7 @@
         emit-value map-options
       />
       <q-checkbox v-model="filterNurMeine" label="Nur meine" />
+      <q-checkbox v-model="filterMitAbgeschlossenen" label="Abgeschlossene" />
     </div>
 
     <!-- ── Mobile: Karten-Liste ── -->
@@ -77,6 +78,8 @@
       flat bordered
       :loading="loading"
       :rows-per-page-options="[25, 50, 0]"
+      @row-click="(_, row) => openDetailDialog(row)"
+      class="cursor-pointer"
     >
       <template #body-cell-status="props">
         <q-td :props="props">
@@ -86,9 +89,12 @@
       </template>
       <template #body-cell-prioritaet="props">
         <q-td :props="props">
-          <q-icon :name="prioritaetIcon(props.row.prioritaet)" :color="prioritaetColor(props.row.prioritaet)" size="sm">
-            <q-tooltip>{{ prioritaetLabel(props.row.prioritaet) }}</q-tooltip>
-          </q-icon>
+          <div class="row items-center q-gutter-xs no-wrap">
+            <q-icon :name="prioritaetIcon(props.row.prioritaet)" :color="prioritaetColor(props.row.prioritaet)" size="sm" />
+            <span :class="`text-${prioritaetColor(props.row.prioritaet)} text-caption text-weight-medium`">
+              {{ prioritaetLabel(props.row.prioritaet) }}
+            </span>
+          </div>
         </q-td>
       </template>
       <template #body-cell-counts="props">
@@ -101,69 +107,21 @@
           </span>
         </q-td>
       </template>
-      <template #body-cell-actions="props">
-        <q-td :props="props">
-          <q-btn flat dense round icon="open_in_new" size="sm" color="primary" @click="openDetailDialog(props.row)">
-            <q-tooltip>Details</q-tooltip>
-          </q-btn>
-        </q-td>
-      </template>
     </q-table>
 
 
-    <!-- ═══════════════════════════════════════════════════════
-         Ticket anlegen
-    ════════════════════════════════════════════════════════ -->
-    <q-dialog
-      v-model="createDialogOpen"
-      persistent
-      :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
-    >
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
+    <!-- ── Bereich-Vorauswahl beim Anlegen ── -->
+    <q-dialog v-model="pickBereichOpen" persistent>
+      <q-card style="min-width: 340px">
         <q-card-section class="text-h6">Neues Ticket</q-card-section>
         <q-separator />
-        <q-card-section class="q-gutter-sm">
-          <q-input v-model="createForm.titel" label="Titel *" outlined autofocus />
-          <q-input v-model="createForm.beschreibung" label="Beschreibung" outlined type="textarea" rows="3" />
-          <div class="row q-gutter-sm">
-            <q-select
-              v-model="createForm.bereich_id"
-              :options="bereichOptions"
-              label="Bereich"
-              outlined dense clearable
-              class="col"
-              option-value="id"
-              option-label="name"
-              emit-value map-options
-            />
-            <q-select
-              v-model="createForm.kategorie_id"
-              :options="kategorieOptions"
-              label="Kategorie"
-              outlined dense clearable
-              class="col"
-              option-value="id"
-              option-label="name"
-              emit-value map-options
-            />
-          </div>
-          <div class="row q-gutter-sm">
-            <q-select
-              v-model="createForm.prioritaet"
-              :options="prioritaetOptions"
-              label="Priorität"
-              outlined dense
-              class="col"
-              emit-value map-options
-            />
-            <q-input v-model="createForm.faellig_am" type="date" label="Fällig am" outlined dense clearable class="col" />
-          </div>
+        <q-card-section>
           <q-select
-            v-if="isAdmin"
-            v-model="createForm.zugewiesen_an"
-            :options="userOptions"
-            label="Zugewiesen an"
-            outlined dense clearable
+            v-model="pickBereichId"
+            :options="bereichOptions"
+            label="Bereich *"
+            outlined autofocus
+            option-value="id" option-label="name"
             emit-value map-options
           />
         </q-card-section>
@@ -171,22 +129,21 @@
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn
-            label="Erstellen"
+            label="Weiter"
             icon="arrow_forward"
-            color="primary"
-            unelevated
+            color="primary" unelevated
+            :disable="!pickBereichId"
             :loading="saving"
-            @click="onCreateSave"
+            @click="onPickBereichConfirm"
           />
         </q-card-actions>
       </q-card>
     </q-dialog>
 
-
     <!-- ═══════════════════════════════════════════════════════
-         Ticket-Detail  (mit Inline-Bearbeitung)
+         Ticket-Dialog  (Anlegen + Detail in einem Fenster)
     ════════════════════════════════════════════════════════ -->
-    <q-dialog v-model="detailDialogOpen" maximized>
+    <q-dialog v-model="detailDialogOpen" maximized persistent>
       <q-card>
         <q-bar class="bg-primary text-white">
           <q-icon name="confirmation_number" />
@@ -195,7 +152,7 @@
             <span v-if="!canWrite"> – {{ selectedTicket?.titel }}</span>
           </div>
           <q-space />
-          <q-btn flat round dense icon="close" v-close-popup />
+          <q-btn flat round dense icon="close" @click="closeDetailDialog" />
         </q-bar>
 
         <q-scroll-area style="height: calc(100vh - 50px)">
@@ -208,6 +165,7 @@
                   v-model="detailForm.titel"
                   label="Titel *"
                   outlined
+                  :autofocus="isDraftTicket"
                   class="q-mb-sm"
                 />
                 <q-input
@@ -222,12 +180,13 @@
                   <q-select
                     v-model="detailForm.bereich_id"
                     :options="bereichOptions"
-                    label="Bereich"
-                    outlined dense clearable
+                    label="Bereich *"
+                    outlined dense
                     class="col"
                     option-value="id"
                     option-label="name"
                     emit-value map-options
+                    :rules="[v => !!v || 'Pflichtfeld']"
                   />
                   <q-select
                     v-model="detailForm.kategorie_id"
@@ -310,7 +269,7 @@
               </div>
 
               <!-- Statuswechsel -->
-              <div v-if="!isAbgeschlossen(selectedTicket) && canWrite" class="q-mb-md">
+              <div v-if="!isAbgeschlossen(selectedTicket) && canChangeStatus" class="q-mb-md">
                 <div class="text-subtitle2 q-mb-xs">Status ändern</div>
                 <div class="row q-gutter-sm">
                   <q-btn
@@ -323,6 +282,18 @@
                     @click="doStatusChange(s)"
                   />
                 </div>
+              </div>
+
+              <!-- Zurückziehen (nur Ersteller, solange offen) -->
+              <div v-if="canWithdraw && !isDraftTicket" class="q-mb-md">
+                <q-btn
+                  label="Ticket zurückziehen"
+                  icon="undo"
+                  flat
+                  color="negative"
+                  size="sm"
+                  @click="onWithdraw"
+                />
               </div>
 
               <q-separator class="q-mb-md" />
@@ -383,7 +354,7 @@
                   />
                   <div class="row items-center q-mt-sm q-gutter-sm">
                     <q-toggle
-                      v-if="canWrite"
+                      v-if="canChangeStatus"
                       v-model="kommentarIntern"
                       label="Intern"
                       color="amber-8"
@@ -405,6 +376,7 @@
               </div>
 
             </template>
+
           </div>
         </q-scroll-area>
       </q-card>
@@ -435,11 +407,11 @@ const loading = ref(false)
 const filterBereich = ref(null)
 const filterStatus = ref(null)
 const filterNurMeine = ref(false)
+const filterMitAbgeschlossenen = ref(false)
 
-// ── Erstellen-Dialog ───────────────────────────────────────────────────────
-const createDialogOpen = ref(false)
+// ── Erstellen / Detail ─────────────────────────────────────────────────────
+const isDraftTicket = ref(false)
 const saving = ref(false)
-const createForm = ref(emptyCreateForm())
 
 // ── Detail-Dialog ──────────────────────────────────────────────────────────
 const detailDialogOpen = ref(false)
@@ -471,9 +443,38 @@ const kommentarIntern = ref(false)
 const kommentarSaving = ref(false)
 
 // ── Berechtigungen ─────────────────────────────────────────────────────────
+const meineBerechtigungen = ref({ ist_admin: false, bereiche: {} })
+
+function _bereichFlags(ticket) {
+  if (!ticket) return {}
+  if (meineBerechtigungen.value.ist_admin) return { darf_lesen: true, darf_bearbeiten: true, darf_schliessen: true }
+  return meineBerechtigungen.value.bereiche[String(ticket.bereich_id)] ?? {}
+}
+
 const canWrite = computed(() => {
   if (!selectedTicket.value) return false
-  return isAdmin.value || selectedTicket.value.gemeldet_von === currentUserId.value
+  if (isAdmin.value) return true
+  if (isDraftTicket.value) return true
+  const t = selectedTicket.value
+  if (t.gemeldet_von === currentUserId.value) return true
+  return !!_bereichFlags(t).darf_bearbeiten
+})
+
+const canChangeStatus = computed(() => {
+  if (!selectedTicket.value) return false
+  if (isAdmin.value) return true
+  return !!_bereichFlags(selectedTicket.value).darf_bearbeiten
+})
+
+const canClose = computed(() => {
+  if (!selectedTicket.value) return false
+  if (isAdmin.value) return true
+  return !!_bereichFlags(selectedTicket.value).darf_schliessen
+})
+
+const canWithdraw = computed(() => {
+  if (!selectedTicket.value || isAbgeschlossen(selectedTicket.value)) return false
+  return selectedTicket.value.gemeldet_von === currentUserId.value
 })
 
 // ── Status-/Prioritäts-Konstanten ──────────────────────────────────────────
@@ -511,6 +512,7 @@ const userOptions = computed(() => users.value.map(u => ({ value: u.id, label: u
 
 const filteredTickets = computed(() => {
   let result = tickets.value
+  if (!filterMitAbgeschlossenen.value) result = result.filter(t => !isAbgeschlossen(t))
   if (filterBereich.value) result = result.filter(t => t.bereich_id === filterBereich.value)
   if (filterStatus.value)  result = result.filter(t => t.status === filterStatus.value)
   if (filterNurMeine.value) result = result.filter(t => t.gemeldet_von === currentUserId.value)
@@ -518,20 +520,25 @@ const filteredTickets = computed(() => {
 })
 
 const columns = [
-  { name: 'id',         label: '#',        field: 'id',         align: 'left',   sortable: true, style: 'width:55px' },
-  { name: 'prioritaet', label: '',         field: 'prioritaet', align: 'center', style: 'width:40px' },
-  { name: 'titel',      label: 'Titel',    field: 'titel',      align: 'left',   sortable: true },
-  { name: 'status',     label: 'Status',   field: 'status',     align: 'left'  },
-  { name: 'counts',     label: '',         field: 'id',         align: 'left',   style: 'width:80px' },
-  { name: 'created_at', label: 'Erstellt', field: 'created_at', align: 'left',   sortable: true, format: v => formatDate(v) },
-  { name: 'actions',    label: '',         field: 'actions',    align: 'right',  style: 'width:60px' },
+  { name: 'id',                    label: '#',           field: 'id',                    align: 'left',   sortable: true, style: 'width:55px' },
+  { name: 'prioritaet',            label: 'Priorität',   field: 'prioritaet',            align: 'left',   style: 'width:120px' },
+  { name: 'titel',                 label: 'Titel',       field: 'titel',                 align: 'left',   sortable: true },
+  { name: 'bereich_name',          label: 'Bereich',     field: 'bereich_name',          align: 'left',   sortable: true },
+  { name: 'status',                label: 'Status',      field: 'status',                align: 'left'  },
+  { name: 'gemeldet_von_username', label: 'Erstellt von', field: 'gemeldet_von_username', align: 'left',  sortable: true },
+  { name: 'counts',                label: '',            field: 'id',                    align: 'left',   style: 'width:80px' },
+  { name: 'created_at',            label: 'Erstellt',    field: 'created_at',            align: 'left',   sortable: true, format: v => formatDate(v) },
 ]
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────
 function statusLabel(s)    { return STATUS_LABELS[s] ?? s }
 function statusColor(s)    { return STATUS_COLORS[s] ?? 'grey' }
 function isAbgeschlossen(t){ return t?.status === 'erledigt' || t?.status === 'abgelehnt' }
-function erlaubteStatus(t) { return STATUS_UEBERGAENGE[t?.status] ?? [] }
+function erlaubteStatus(t) {
+  const alle = STATUS_UEBERGAENGE[t?.status] ?? []
+  if (canClose.value) return alle
+  return alle.filter(s => s !== 'erledigt' && s !== 'abgelehnt')
+}
 
 function prioritaetIcon(p)  { return { niedrig: 'keyboard_arrow_down', normal: 'remove', hoch: 'keyboard_arrow_up', sicherheit: 'warning' }[p] ?? 'remove' }
 function prioritaetColor(p) { return { niedrig: 'grey', normal: 'primary', hoch: 'orange', sicherheit: 'negative' }[p] ?? 'grey' }
@@ -571,13 +578,15 @@ async function loadAll() {
       api.get('/api/tickets/'),
       api.get('/api/tickets/bereiche'),
       api.get('/api/tickets/kategorien'),
+      api.get('/api/tickets/meine-berechtigungen'),
     ]
     if (isAdmin.value) requests.push(api.get('/api/users/'))
     const results = await Promise.all(requests)
-    tickets.value = results[0].data
-    bereiche.value = results[1].data
+    tickets.value    = results[0].data
+    bereiche.value   = results[1].data
     kategorien.value = results[2].data
-    if (isAdmin.value) users.value = results[3].data
+    meineBerechtigungen.value = results[3].data
+    if (isAdmin.value) users.value = results[4].data
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden der Tickets.' })
   } finally {
@@ -586,26 +595,25 @@ async function loadAll() {
 }
 
 // ── Erstellen ──────────────────────────────────────────────────────────────
+const pickBereichOpen = ref(false)
+const pickBereichId = ref(null)
+
 function openCreateDialog() {
-  createForm.value = emptyCreateForm()
-  createDialogOpen.value = true
+  pickBereichId.value = null
+  pickBereichOpen.value = true
 }
 
-async function onCreateSave() {
-  if (!createForm.value.titel.trim()) {
-    $q.notify({ type: 'warning', message: 'Bitte einen Titel eingeben.' })
-    return
-  }
+async function onPickBereichConfirm() {
+  if (!pickBereichId.value) return
   saving.value = true
   try {
-    const { data } = await api.post('/api/tickets/', createForm.value)
-    createDialogOpen.value = false
-    await loadAll()
-    // Direkt in den Detail-Dialog wechseln
-    const fresh = tickets.value.find(t => t.id === data.id) ?? data
-    openDetailDialog(fresh)
+    const { data } = await api.post('/api/tickets/?draft=true', { titel: 'Neues Ticket', prioritaet: 'normal', bereich_id: pickBereichId.value })
+    pickBereichOpen.value = false
+    tickets.value = [data, ...tickets.value]
+    isDraftTicket.value = true
+    await openDetailDialog(data)
   } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
+    $q.notify({ type: 'negative', message: 'Fehler beim Anlegen des Tickets.' })
   } finally {
     saving.value = false
   }
@@ -615,14 +623,46 @@ async function onCreateSave() {
 async function openDetailDialog(ticket) {
   selectedTicket.value = ticket
   syncDetailForm(ticket)
+  if (isDraftTicket.value) detailForm.value.titel = ''
   detailAnhaenge.value = []
   kommentare.value = []
   detailDialogOpen.value = true
   await Promise.all([loadAnhaenge(ticket.id), loadKommentare(ticket.id)])
 }
 
+async function onWithdraw() {
+  $q.dialog({
+    title: 'Ticket zurückziehen',
+    message: 'Das Ticket wird zurückgezogen und aus der Liste entfernt. Fortfahren?',
+    cancel: true,
+    ok: { label: 'Zurückziehen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/tickets/${selectedTicket.value.id}`)
+      tickets.value = tickets.value.filter(t => t.id !== selectedTicket.value.id)
+      isDraftTicket.value = false
+      detailDialogOpen.value = false
+      $q.notify({ type: 'info', message: 'Ticket zurückgezogen.' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler.' })
+    }
+  })
+}
+
+async function closeDetailDialog() {
+  if (isDraftTicket.value && selectedTicket.value) {
+    try {
+      await api.delete(`/api/tickets/${selectedTicket.value.id}`)
+      tickets.value = tickets.value.filter(t => t.id !== selectedTicket.value.id)
+      $q.notify({ type: 'info', message: 'Ticket verworfen.' })
+    } catch { /* ignorieren */ }
+  }
+  isDraftTicket.value = false
+  detailDialogOpen.value = false
+}
+
 // Wenn selectedTicket von außen aktualisiert wird (Statuswechsel), Form nachziehen
-watch(selectedTicket, (t) => { if (t) syncDetailForm(t) }, { deep: false })
+watch(selectedTicket, (t) => { if (t && !isDraftTicket.value) syncDetailForm(t) }, { deep: false })
 
 async function loadAnhaenge(ticketId) {
   try {
@@ -633,6 +673,10 @@ async function loadAnhaenge(ticketId) {
 
 // ── Inline-Speichern ───────────────────────────────────────────────────────
 async function onDetailSave() {
+  if (!detailForm.value.bereich_id) {
+    $q.notify({ type: 'warning', message: 'Bitte einen Bereich wählen.' })
+    return
+  }
   if (!detailForm.value.titel.trim()) {
     $q.notify({ type: 'warning', message: 'Bitte einen Titel eingeben.' })
     return
@@ -642,11 +686,19 @@ async function onDetailSave() {
     const { data } = await api.put(`/api/tickets/${selectedTicket.value.id}`, {
       ...detailForm.value,
       expected_version: selectedTicket.value.version,
+      notify_as_new: isDraftTicket.value,
     })
+    const wasDraft = isDraftTicket.value
     selectedTicket.value = data
+    isDraftTicket.value = false
     const idx = tickets.value.findIndex(t => t.id === data.id)
     if (idx >= 0) tickets.value[idx] = data
-    $q.notify({ type: 'positive', message: 'Gespeichert.' })
+    if (wasDraft) {
+      detailDialogOpen.value = false
+      $q.notify({ type: 'positive', message: 'Ticket gespeichert.' })
+    } else {
+      $q.notify({ type: 'positive', message: 'Gespeichert.' })
+    }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
   } finally {
@@ -673,6 +725,7 @@ async function doStatusChange(newStatus) {
 
 // ── Anhänge ────────────────────────────────────────────────────────────────
 function onAnhangUploaded(newAnhang) {
+  isDraftTicket.value = false
   detailAnhaenge.value = [...detailAnhaenge.value, newAnhang]
   if (selectedTicket.value) {
     selectedTicket.value = { ...selectedTicket.value, anhang_count: (selectedTicket.value.anhang_count || 0) + 1 }
@@ -705,6 +758,7 @@ async function sendKommentar() {
       inhalt: neuerKommentar.value,
       sichtbarkeit: kommentarIntern.value ? 'intern' : 'oeffentlich',
     })
+    isDraftTicket.value = false
     kommentare.value = [...kommentare.value, data]
     neuerKommentar.value = ''
     kommentarIntern.value = false

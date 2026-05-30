@@ -42,6 +42,7 @@ class TicketWrite(BaseModel):
 
 class TicketUpdate(TicketWrite):
     expected_version: int
+    notify_as_new: bool = False
 
 
 class StatusChange(BaseModel):
@@ -63,6 +64,12 @@ class BereichUpdate(BereichWrite):
     expected_version: int
 
 
+class BereichBerechtigungWrite(BaseModel):
+    darf_lesen: bool = False
+    darf_bearbeiten: bool = False
+    darf_schliessen: bool = False
+
+
 class KategorieWrite(BaseModel):
     name: str
     icon: Optional[str] = None
@@ -81,6 +88,12 @@ def _require_admin(user) -> None:
         raise HTTPException(status_code=403, detail="Nur Administratoren dürfen diese Aktion ausführen.")
 
 
+def _require_bereiche_verwalten(user) -> None:
+    from app.models.permission import Permission
+    if user.role != "admin" and not user.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Bereichsverwaltung.")
+
+
 def _can_read(ticket: Ticket, user, db) -> bool:
     if user.role == "admin":
         return True
@@ -94,8 +107,18 @@ def _can_read(ticket: Ticket, user, db) -> bool:
 def _can_write(ticket: Ticket, user, db) -> bool:
     if user.role == "admin":
         return True
+    if ticket.gemeldet_von == user.id or ticket.zugewiesen_an == user.id:
+        return True
     if ticket.bereich_id is None:
-        return ticket.gemeldet_von == user.id
+        return False
+    return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(ticket.bereich_id, user.id)
+
+
+def _can_change_status(ticket: Ticket, user, db) -> bool:
+    if user.role == "admin":
+        return True
+    if ticket.bereich_id is None:
+        return False
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(ticket.bereich_id, user.id)
 
 
@@ -105,6 +128,21 @@ def _can_close(ticket: Ticket, user, db) -> bool:
     if ticket.bereich_id is None:
         return False
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(ticket.bereich_id, user.id)
+
+
+def _enrich(ticket_dict: dict, db) -> dict:
+    """Fügt gemeldet_von_username und bereich_name hinzu."""
+    from app.services.user_service import UserService
+    user = db.get_user_by_id(ticket_dict.get('gemeldet_von'))
+    ticket_dict['gemeldet_von_username'] = user.username if user else f'#{ticket_dict.get("gemeldet_von")}'
+    bereich_id = ticket_dict.get('bereich_id')
+    if bereich_id:
+        bereiche = db.tickets.get_bereiche()
+        b = next((b for b in bereiche if b.id == bereich_id), None)
+        ticket_dict['bereich_name'] = b.name if b else None
+    else:
+        ticket_dict['bereich_name'] = None
+    return ticket_dict
 
 
 def _get_ticket_or_404(ticket_id: int, db) -> Ticket:
@@ -150,7 +188,93 @@ def update_bereich(bereich_id: int, data: BereichUpdate, user: CurrentUser, db: 
 @router.delete("/bereiche/{bereich_id}", status_code=204)
 def delete_bereich(bereich_id: int, user: CurrentUser, db: DB):
     _require_admin(user)
+    with db.tickets._ticket_repo.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM tickets
+            WHERE bereich_id = %s AND deleted_at IS NULL
+              AND status NOT IN ('erledigt', 'abgelehnt')
+            """,
+            (bereich_id,),
+        )
+        anzahl = cur.fetchone()["count"]
+    if anzahl > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Bereich enthält noch {anzahl} offene{'s' if anzahl == 1 else ''} Ticket{'s' if anzahl != 1 else ''}. Bitte zuerst abschließen oder einem anderen Bereich zuweisen.",
+        )
     db.tickets.mark_bereich_deleted(bereich_id, deleted_by=user.username)
+
+
+@router.get("/bereiche/{bereich_id}/berechtigungen")
+def list_bereich_berechtigungen(bereich_id: int, user: CurrentUser, db: DB):
+    """User mit bestehender Berechtigung für diesen Bereich."""
+    _require_bereiche_verwalten(user)
+    eintraege = db.ticket_bereich_berechtigungen.list_berechtigungen_fuer_bereich(bereich_id)
+    return [
+        {
+            "user_id":         e["user_id"],
+            "username":        e["username"],
+            "darf_lesen":      bool(e["darf_lesen"]),
+            "darf_bearbeiten": bool(e["darf_bearbeiten"]),
+            "darf_schliessen": bool(e["darf_schliessen"]),
+        }
+        for e in eintraege
+        if e["darf_lesen"] or e["darf_bearbeiten"] or e["darf_schliessen"]
+    ]
+
+
+@router.get("/bereiche/{bereich_id}/berechtigungen/verfuegbare-user")
+def list_verfuegbare_user(bereich_id: int, user: CurrentUser, db: DB):
+    """Aktive Nicht-Admin-User ohne bestehende Berechtigung für diesen Bereich."""
+    _require_bereiche_verwalten(user)
+    from app.services.user_service import UserService
+    bereits = {e["user_id"] for e in db.ticket_bereich_berechtigungen.list_berechtigungen_fuer_bereich(bereich_id)}
+    return [
+        {"id": u.id, "username": u.username}
+        for u in UserService(db).list_all()
+        if u.role != "admin" and u.active and u.id not in bereits
+    ]
+
+
+@router.put("/bereiche/{bereich_id}/berechtigungen/{user_id}", status_code=200)
+def set_bereich_berechtigung(
+    bereich_id: int, user_id: int, data: BereichBerechtigungWrite,
+    user: CurrentUser, db: DB,
+):
+    _require_bereiche_verwalten(user)
+    # Kaskade: schliessen → bearbeiten → lesen
+    lesen     = data.darf_lesen or data.darf_bearbeiten or data.darf_schliessen
+    bearbeiten= data.darf_bearbeiten or data.darf_schliessen
+    schliessen= data.darf_schliessen
+    db.ticket_bereich_berechtigungen.set_berechtigung(
+        bereich_id=bereich_id,
+        user_id=user_id,
+        darf_lesen=lesen,
+        darf_bearbeiten=bearbeiten,
+        darf_schliessen=schliessen,
+        by=user.username,
+    )
+    return {"darf_lesen": lesen, "darf_bearbeiten": bearbeiten, "darf_schliessen": schliessen}
+
+
+@router.get("/meine-berechtigungen")
+def meine_berechtigungen(user: CurrentUser, db: DB):
+    """Eigene Bereich-Berechtigungen des eingeloggten Users."""
+    if user.role == "admin":
+        return {"ist_admin": True, "bereiche": {}}
+    eintraege = db.ticket_bereich_berechtigungen.list_berechtigungen_fuer_user(user.id)
+    return {
+        "ist_admin": False,
+        "bereiche": {
+            str(e["bereich_id"]): {
+                "darf_lesen":      bool(e["darf_lesen"]),
+                "darf_bearbeiten": bool(e["darf_bearbeiten"]),
+                "darf_schliessen": bool(e["darf_schliessen"]),
+            }
+            for e in eintraege
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +352,23 @@ def list_tickets(
             or t.bereich_id in lesbare_ids
         ]
 
-    return [asdict(t) for t in tickets]
+    from app.services.user_service import UserService
+    user_lookup = {u.id: u.username for u in UserService(db).list_all()}
+    bereiche_lookup = {b.id: b.name for b in db.tickets.get_bereiche()}
+
+    result = []
+    for t in tickets:
+        d = asdict(t)
+        d['gemeldet_von_username'] = user_lookup.get(t.gemeldet_von, f'#{t.gemeldet_von}')
+        d['bereich_name'] = bereiche_lookup.get(t.bereich_id) if t.bereich_id else None
+        result.append(d)
+    return result
 
 
 @router.post("/", status_code=201)
-def create_ticket(data: TicketWrite, user: CurrentUser, db: DB):
+def create_ticket(data: TicketWrite, user: CurrentUser, db: DB, draft: bool = False):
+    if not data.bereich_id:
+        raise HTTPException(status_code=422, detail="Bereich ist ein Pflichtfeld.")
     ticket = Ticket(
         titel=data.titel,
         beschreibung=data.beschreibung,
@@ -243,7 +379,8 @@ def create_ticket(data: TicketWrite, user: CurrentUser, db: DB):
         zugewiesen_an=data.zugewiesen_an,
         faellig_am=data.faellig_am,
     )
-    return asdict(db.tickets.create_ticket(ticket, created_by=user.username))
+    created = db.tickets.create_ticket(ticket, created_by=user.username, notify=not draft)
+    return _enrich(asdict(created), db)
 
 
 @router.get("/{ticket_id}")
@@ -251,7 +388,7 @@ def get_ticket(ticket_id: int, user: CurrentUser, db: DB):
     ticket = _get_ticket_or_404(ticket_id, db)
     if not _can_read(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
-    return asdict(ticket)
+    return _enrich(asdict(ticket), db)
 
 
 @router.put("/{ticket_id}")
@@ -267,17 +404,17 @@ def update_ticket(ticket_id: int, data: TicketUpdate, user: CurrentUser, db: DB)
     ticket.zugewiesen_an = data.zugewiesen_an
     ticket.faellig_am = data.faellig_am
     ticket.version = data.expected_version
-    ok = db.tickets.update_ticket(ticket, updated_by=user.username)
+    ok = db.tickets.update_ticket(ticket, updated_by=user.username, notify_as_new=data.notify_as_new)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
-    return asdict(_get_ticket_or_404(ticket_id, db))
+    return _enrich(asdict(_get_ticket_or_404(ticket_id, db)), db)
 
 
 @router.patch("/{ticket_id}/status")
 def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB):
     ticket = _get_ticket_or_404(ticket_id, db)
-    if not _can_write(ticket, user, db):
-        raise HTTPException(status_code=403, detail="Kein Schreibzugriff auf dieses Ticket.")
+    if not _can_change_status(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Recht zum Ändern des Status.")
     if data.status in TicketStatus.ABGESCHLOSSEN and not _can_close(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Recht zum Abschließen dieses Tickets.")
     try:
@@ -286,7 +423,7 @@ def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB)
         raise HTTPException(status_code=422, detail=str(exc))
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
-    return asdict(_get_ticket_or_404(ticket_id, db))
+    return _enrich(asdict(_get_ticket_or_404(ticket_id, db)), db)
 
 
 @router.delete("/{ticket_id}", status_code=204)
@@ -365,7 +502,7 @@ def list_kommentare(ticket_id: int, user: CurrentUser, db: DB):
     ticket = _get_ticket_or_404(ticket_id, db)
     if not _can_read(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
-    include_internal = user.role == "admin" or _can_write(ticket, user, db)
+    include_internal = user.role == "admin" or _can_change_status(ticket, user, db)
     kommentare = db.tickets.get_kommentare(ticket_id, include_internal=include_internal)
     return [_enrich_kommentar(k, db) for k in kommentare]
 
@@ -375,6 +512,8 @@ def create_kommentar(ticket_id: int, data: KommentarWrite, user: CurrentUser, db
     ticket = _get_ticket_or_404(ticket_id, db)
     if not _can_read(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf dieses Ticket.")
+    if data.sichtbarkeit == 'intern' and not _can_change_status(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Interne Kommentare erfordern Bearbeitungsrecht für diesen Bereich.")
     kommentar = TicketKommentar(
         ticket_id=ticket_id,
         autor_id=user.id,

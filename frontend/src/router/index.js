@@ -72,6 +72,12 @@ const routes = [
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),
       },
+      {
+        path: 'ticket-verwaltung',
+        name: 'ticket-verwaltung',
+        component: () => import('pages/TicketVerwaltungPage.vue'),
+        meta: { permission: 'tickets.bereiche.verwalten' },
+      },
     ],
   },
   {

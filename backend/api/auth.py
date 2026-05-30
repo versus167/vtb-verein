@@ -18,6 +18,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    id: int
     username: str
     role: str
     permissions: list[str]
@@ -52,6 +53,7 @@ def login(
     token = create_access_token(user.id, expires_delta=expire)
     return Token(
         access_token=token,
+        id=user.id,
         username=user.username,
         role=user.role,
         permissions=list(user.permissions),
@@ -230,6 +232,7 @@ def validate_magic_link(data: MagicLinkValidate, db=Depends(get_db)):
     )
     return Token(
         access_token=token,
+        id=user.id,
         username=user.username,
         role=user.role,
         permissions=list(user.permissions),

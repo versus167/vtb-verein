@@ -16,5 +16,8 @@ export default boot(({ router }) => {
     if (to.meta.adminOnly && auth.user?.role !== 'admin') {
       return { name: 'dashboard' }
     }
+    if (to.meta.permission && !auth.hasPermission(to.meta.permission) && auth.user?.role !== 'admin') {
+      return { name: 'dashboard' }
+    }
   })
 })

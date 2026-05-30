@@ -28,7 +28,7 @@ export const useAuthStore = defineStore('auth', {
 
     _applyToken(data) {
       this.token = data.access_token
-      this.user = { username: data.username, role: data.role, permissions: data.permissions }
+      this.user = { id: data.id, username: data.username, role: data.role, permissions: data.permissions }
       localStorage.setItem('vtb_token', this.token)
       localStorage.setItem('vtb_user', JSON.stringify(this.user))
       api.defaults.headers.common['Authorization'] = `Bearer ${this.token}`
