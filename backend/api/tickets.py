@@ -95,13 +95,7 @@ def _require_bereiche_verwalten(user) -> None:
 
 
 def _can_read(ticket: Ticket, user, db) -> bool:
-    if user.role == "admin":
-        return True
-    if ticket.gemeldet_von == user.id or ticket.zugewiesen_an == user.id:
-        return True
-    if ticket.bereich_id is None:
-        return True
-    return db.ticket_bereich_berechtigungen.user_darf_lesen(ticket.bereich_id, user.id)
+    return True
 
 
 def _can_write(ticket: Ticket, user, db) -> bool:
@@ -341,16 +335,6 @@ def list_tickets(
     if gemeldet_von is not None:
         tickets = [t for t in tickets if t.gemeldet_von == gemeldet_von]
 
-    # Sichtbarkeit: nur Tickets, auf die der User Lesezugriff hat
-    if user.role != "admin":
-        lesbare_ids = set(db.ticket_bereich_berechtigungen.get_lesbare_bereich_ids(user.id))
-        tickets = [
-            t for t in tickets
-            if t.gemeldet_von == user.id
-            or t.zugewiesen_an == user.id
-            or t.bereich_id is None
-            or t.bereich_id in lesbare_ids
-        ]
 
     from app.services.user_service import UserService
     user_lookup = {u.id: u.username for u in UserService(db).list_all()}
@@ -510,8 +494,8 @@ def list_kommentare(ticket_id: int, user: CurrentUser, db: DB):
 @router.post("/{ticket_id}/kommentare", status_code=201)
 def create_kommentar(ticket_id: int, data: KommentarWrite, user: CurrentUser, db: DB):
     ticket = _get_ticket_or_404(ticket_id, db)
-    if not _can_read(ticket, user, db):
-        raise HTTPException(status_code=403, detail="Kein Zugriff auf dieses Ticket.")
+    if ticket.status in ('erledigt', 'abgelehnt'):
+        raise HTTPException(status_code=403, detail="Kommentare zu abgeschlossenen Tickets sind nicht möglich.")
     if data.sichtbarkeit == 'intern' and not _can_change_status(ticket, user, db):
         raise HTTPException(status_code=403, detail="Interne Kommentare erfordern Bearbeitungsrecht für diesen Bereich.")
     kommentar = TicketKommentar(
