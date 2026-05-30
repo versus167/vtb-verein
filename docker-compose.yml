@@ -17,11 +17,11 @@ services:
       retries: 5
     restart: unless-stopped
 
-  vtb-verein-v2:
+  vtb-verein:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: vtb-verein-v2
+    container_name: vtb-verein
     depends_on:
       db:
         condition: service_healthy

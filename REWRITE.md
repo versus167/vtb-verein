@@ -86,7 +86,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 - Alle Repositories: `?` → `%s`, `lastrowid` → `RETURNING id`, SQLite-Datumsfunktionen ersetzt
 - Verbindung via `VTB_DATABASE_URL` in `.env` (`postgresql://user:pw@host:port/db`)
 - Alembic initialisiert (`backend/alembic/`), DB auf Baseline-Revision gestempelt
-- `docker-compose.yml` um `db`-Service (postgres:16) erweitert
+- `docker-compose.yml` um `db`-Service (postgres:18) erweitert
 
 ### Zukünftige Schema-Änderungen
 ```bash
