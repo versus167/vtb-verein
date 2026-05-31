@@ -142,12 +142,12 @@
 
         <!-- Aktions-Zeile -->
         <q-card-actions class="q-px-sm q-py-xs">
-          <q-btn
-            flat round icon="attach_file" color="grey" size="md"
-            @click="openAnhangDialog(b)"
-          >
+          <q-btn flat round icon="attach_file" color="grey" size="md" @click="openAnhangDialog(b)">
             <q-badge v-if="b.anhang_count > 0" color="primary" floating>{{ b.anhang_count }}</q-badge>
             <q-tooltip>Anhänge</q-tooltip>
+          </q-btn>
+          <q-btn flat round icon="history" color="grey" size="md" @click="openHistoryDialog(b)">
+            <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
           <q-space />
           <template v-if="kannSchreiben && !b.deleted_at && !b.exportiert_in_export_id">
@@ -224,6 +224,9 @@
             <q-btn flat dense round icon="attach_file" color="grey" size="sm" @click="openAnhangDialog(props.row)">
               <q-badge v-if="props.row.anhang_count > 0" color="primary" floating>{{ props.row.anhang_count }}</q-badge>
               <q-tooltip>Anhänge</q-tooltip>
+            </q-btn>
+            <q-btn flat dense round icon="history" color="grey" size="sm" @click="openHistoryDialog(props.row)">
+              <q-tooltip>Änderungshistorie</q-tooltip>
             </q-btn>
             <template v-if="kannSchreiben && !props.row.deleted_at && !props.row.exportiert_in_export_id">
               <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditDialog(props.row)" />
@@ -379,6 +382,72 @@
       </q-card>
     </q-dialog>
 
+    <!-- History-Dialog -->
+    <q-dialog v-model="historyDialogOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 520px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Änderungshistorie</div>
+          <div v-if="historyBuchung" class="text-caption text-grey q-ml-sm">
+            {{ historyBuchung.belegnummer }} · {{ historyBuchung.buchungstext }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <div v-if="historyLoading" class="row justify-center q-py-md">
+            <q-spinner size="32px" color="primary" />
+          </div>
+          <div v-else-if="historyEntries.length === 0" class="text-grey text-center q-py-md">
+            Keine Einträge gefunden.
+          </div>
+          <q-timeline v-else color="grey" layout="dense">
+            <template v-for="(h, idx) in historyEntries" :key="idx">
+              <!-- Anhang-Events -->
+              <q-timeline-entry
+                v-if="h._typ === 'anhang_upload' || h._typ === 'anhang_delete'"
+                :subtitle="`${h._zeit?.slice(0,16).replace('T',' ')} · ${h._von}`"
+                :color="h._typ === 'anhang_delete' ? 'negative' : 'teal'"
+                :icon="h._typ === 'anhang_delete' ? 'delete' : 'attach_file'"
+              >
+                <div class="text-caption">
+                  <span class="text-grey">{{ h._typ === 'anhang_delete' ? 'Anhang gelöscht: ' : 'Anhang hochgeladen: ' }}</span>
+                  {{ h._name }}
+                </div>
+              </q-timeline-entry>
+
+              <!-- Buchungs-Events -->
+              <q-timeline-entry
+                v-else
+                :subtitle="`v${h.version} · ${h.updated_at?.slice(0,16).replace('T',' ')} · ${h.updated_by}`"
+                :color="h.deleted_at ? 'negative' : h.version === 1 ? 'positive' : 'primary'"
+                :icon="h.deleted_at ? 'block' : h.version === 1 ? 'add_circle' : 'edit'"
+              >
+                <div v-if="h.deleted_at" class="text-negative text-caption">Storniert</div>
+                <div v-else-if="buchungVersionIdx(idx) === 0" class="text-caption">
+                  <div><span class="text-grey">Text: </span>{{ h.buchungstext }}</div>
+                  <div v-if="h.kategorie"><span class="text-grey">Kategorie: </span>{{ h.kategorie }}</div>
+                  <div v-if="h.buchungsdatum"><span class="text-grey">Datum: </span>{{ h.buchungsdatum }}</div>
+                  <div v-if="h.einnahme_cent > 0"><span class="text-grey">Einnahme: </span><span class="text-positive">{{ formatEuro(h.einnahme_cent) }}</span></div>
+                  <div v-if="h.ausgabe_cent > 0"><span class="text-grey">Ausgabe: </span><span class="text-negative">{{ formatEuro(h.ausgabe_cent) }}</span></div>
+                  <div v-if="h.notiz"><span class="text-grey">Notiz: </span>{{ h.notiz }}</div>
+                </div>
+                <div v-else class="text-caption">
+                  <template v-for="diff in historyDiff(prevBuchungVersion(idx), h)" :key="diff.feld">
+                    <div>
+                      <span class="text-grey">{{ diff.feld }}: </span>
+                      <span class="text-strike text-grey-6">{{ diff.alt }}</span>
+                      <q-icon name="arrow_forward" size="xs" class="q-mx-xs text-grey" />
+                      <span class="text-weight-medium">{{ diff.neu }}</span>
+                    </div>
+                  </template>
+                </div>
+              </q-timeline-entry>
+            </template>
+          </q-timeline>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
     <!-- Anhang-Dialog -->
     <q-dialog
       v-model="anhangDialogOpen"
@@ -470,6 +539,11 @@ const pdfBis = ref(today)
 const anhangDialogOpen = ref(false)
 const anhangBuchung = ref(null)
 const anhaenge = ref([])
+
+const historyDialogOpen = ref(false)
+const historyBuchung = ref(null)
+const historyEntries = ref([])
+const historyLoading = ref(false)
 
 // Laufenden Bestand je Buchung berechnen.
 // Strategie: rückwärts vom bekannten Gesamtbestand (bestandCent) — kein Extra-API-Aufruf nötig,
@@ -723,6 +797,60 @@ async function redownload(exportObj) {
     URL.revokeObjectURL(url)
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Download.' })
+  }
+}
+
+function buchungVersionIdx(idx) {
+  // Wie viele Buchungs-Versionen (ohne Anhang-Events) liegen nach diesem Eintrag? (0 = älteste)
+  return historyEntries.value.slice(idx + 1).filter(e => e._typ === 'buchung').length
+}
+
+function prevBuchungVersion(idx) {
+  // Nächster Buchungs-Eintrag hinter idx (= ältere Version in umgekehrter Liste)
+  return historyEntries.value.slice(idx + 1).find(e => e._typ === 'buchung')
+}
+
+function historyDiff(prev, curr) {
+  const felder = [
+    { key: 'buchungstext',  label: 'Text' },
+    { key: 'buchungsdatum', label: 'Datum' },
+    { key: 'kategorie',     label: 'Kategorie' },
+    { key: 'notiz',         label: 'Notiz' },
+    { key: 'einnahme_cent', label: 'Einnahme', fmt: v => v ? formatEuro(v) : '—' },
+    { key: 'ausgabe_cent',  label: 'Ausgabe',  fmt: v => v ? formatEuro(v) : '—' },
+  ]
+  return felder
+    .filter(f => (prev[f.key] ?? '') !== (curr[f.key] ?? ''))
+    .map(f => ({
+      feld: f.label,
+      alt:  f.fmt ? f.fmt(prev[f.key]) : (prev[f.key] || '—'),
+      neu:  f.fmt ? f.fmt(curr[f.key]) : (curr[f.key] || '—'),
+    }))
+}
+
+async function openHistoryDialog(buchung) {
+  historyBuchung.value = buchung
+  historyEntries.value = []
+  historyDialogOpen.value = true
+  historyLoading.value = true
+  try {
+    const { data } = await api.get(`/api/kassen/${kasseId.value}/buchungen/${buchung.id}/history`)
+    const buchungEvents = data.buchungen.map(h => ({ ...h, _typ: 'buchung' }))
+    const anhangEvents = data.anhaenge.flatMap(a => {
+      const events = [{ _typ: 'anhang_upload', _zeit: a.hochgeladen_am, _name: a.original_name, _von: a.hochgeladen_von }]
+      if (a.deleted_at) events.push({ _typ: 'anhang_delete', _zeit: a.deleted_at, _name: a.original_name, _von: a.deleted_by })
+      return events
+    })
+    const alle = [...buchungEvents, ...anhangEvents].sort((a, b) => {
+      const tA = a._typ === 'buchung' ? a.updated_at : a._zeit
+      const tB = b._typ === 'buchung' ? b.updated_at : b._zeit
+      return tA < tB ? -1 : tA > tB ? 1 : 0
+    })
+    historyEntries.value = alle.reverse()
+  } catch {
+    $q.notify({ type: 'negative', message: 'Historie konnte nicht geladen werden.' })
+  } finally {
+    historyLoading.value = false
   }
 }
 
