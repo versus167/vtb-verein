@@ -46,6 +46,12 @@ const routes = [
         meta: { permission: 'users.manage' },
       },
       {
+        path: 'personen',
+        name: 'personen',
+        component: () => import('pages/PersonenPage.vue'),
+        meta: { permission: 'users.manage' },
+      },
+      {
         path: 'users/:id/permissions',
         name: 'user-permissions',
         component: () => import('pages/UserPermissionsPage.vue'),

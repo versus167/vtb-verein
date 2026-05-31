@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class Database:
@@ -130,6 +130,7 @@ class Database:
               bic               TEXT,
               kontoinhaber      TEXT,
               abgerechnet_bis   TEXT,
+              user_id           INTEGER REFERENCES users(id),
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by        TEXT,
@@ -161,6 +162,7 @@ class Database:
               bic               TEXT,
               kontoinhaber      TEXT,
               abgerechnet_bis   TEXT,
+              user_id           INTEGER,
               created_at        TEXT,
               created_by        TEXT,
               updated_at        TEXT,
@@ -314,7 +316,7 @@ class Database:
               username          TEXT NOT NULL,
               email             TEXT NOT NULL,
               password_hash     TEXT NOT NULL,
-              role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special')),
+              role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied')),
               active            INTEGER NOT NULL DEFAULT 1,
               last_login        TEXT,
               telegram_id       TEXT,
@@ -782,13 +784,13 @@ class Database:
                     strasse, plz, ort, land, email, telefon,
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
                     NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
                     NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                     NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
             END; $$;
@@ -802,13 +804,13 @@ class Database:
                         strasse, plz, ort, land, email, telefon,
                         eintrittsdatum, austrittsdatum, status,
                         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
                         NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
                         NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                         NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
                 RETURN NEW;
@@ -1323,6 +1325,7 @@ class Database:
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_user_id       ON mitglied (user_id)  WHERE user_id IS NOT NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active    ON users (email)       WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL")
