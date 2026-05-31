@@ -18,22 +18,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Neue Rolle 'mitglied' im CHECK-Constraint
+    # Neue Rolle 'mitglied' im CHECK-Constraint (idempotent via DO-Block)
     op.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
     op.execute("""
-        ALTER TABLE users ADD CONSTRAINT users_role_check
-        CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied'))
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'users_role_check' AND conrelid = 'users'::regclass
+            ) THEN
+                ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied'));
+            END IF;
+        END $$;
     """)
 
     # user_id FK zu mitglied
-    op.execute("ALTER TABLE mitglied ADD COLUMN user_id INTEGER REFERENCES users(id)")
+    op.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)")
     op.execute("""
-        CREATE UNIQUE INDEX uix_mitglied_user_id
+        CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_user_id
         ON mitglied (user_id) WHERE user_id IS NOT NULL
     """)
 
     # user_id auch in der History-Tabelle (für vollständige Audit-Trails)
-    op.execute("ALTER TABLE mitglied_history ADD COLUMN user_id INTEGER")
+    op.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS user_id INTEGER")
 
     op.execute("UPDATE schema_version SET version = 17 WHERE id = 1")
 
