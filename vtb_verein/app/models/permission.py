@@ -98,9 +98,11 @@ class Permission:
                 cls.ABTEILUNGEN_READ,
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,
-                # readonly darf Tickets nur lesen
                 cls.TICKETS_ACCESS,
             }
+
+        if role == 'mitglied':
+            return {cls.TICKETS_ACCESS}
 
         return set()
 

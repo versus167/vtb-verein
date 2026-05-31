@@ -6,6 +6,7 @@ Mitglied Repository - All database operations for Mitglied entity.
 @author: AI Assistant
 '''
 
+from typing import Optional
 from psycopg import Connection as PgConnection
 from app.models.mitglied import Mitglied
 from app.db.base_repository import BaseRepository
@@ -64,7 +65,7 @@ class MitgliedRepository(BaseRepository):
                        strasse, plz, ort, land, email, telefon,
                        eintrittsdatum, austrittsdatum, status,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                       version, created_at, created_by, updated_at, updated_by
+                       user_id, version, created_at, created_by, updated_at, updated_by
                 FROM mitglied
                 WHERE id = %s AND deleted_at IS NULL
                 """,
@@ -84,7 +85,7 @@ class MitgliedRepository(BaseRepository):
                        strasse, plz, ort, land, email, telefon,
                        eintrittsdatum, austrittsdatum, status,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                       version, created_at, created_by, updated_at, updated_by
+                       user_id, version, created_at, created_by, updated_at, updated_by
                 FROM mitglied
                 WHERE deleted_at IS NULL
                 ORDER BY nachname, vorname
@@ -110,7 +111,7 @@ class MitgliedRepository(BaseRepository):
                        strasse, plz, ort, land, email, telefon,
                        eintrittsdatum, austrittsdatum, status,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                       version, created_at, created_by, updated_at, updated_by,
+                       user_id, version, created_at, created_by, updated_at, updated_by,
                        CASE 
                            WHEN austrittsdatum IS NOT NULL 
                                 AND austrittsdatum >= CURRENT_DATE - INTERVAL '6 months'
@@ -152,8 +153,8 @@ class MitgliedRepository(BaseRepository):
                     strasse, plz, ort, land, email, telefon,
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                    created_by, updated_at, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                    user_id, created_by, updated_at, updated_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
                 (
@@ -161,7 +162,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land, mitglied.email, mitglied.telefon,
                     mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
-                    created_by, created_by
+                    mitglied.user_id, created_by, created_by
                 ),
             )
             mitglied.id = cur.fetchone()['id']
@@ -173,7 +174,7 @@ class MitgliedRepository(BaseRepository):
                        strasse, plz, ort, land, email, telefon,
                        eintrittsdatum, austrittsdatum, status,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                       version, created_at, created_by, updated_at, updated_by
+                       user_id, version, created_at, created_by, updated_at, updated_by
                 FROM mitglied
                 WHERE id = %s
                 """,
@@ -196,6 +197,7 @@ class MitgliedRepository(BaseRepository):
                     strasse = %s, plz = %s, ort = %s, land = %s, email = %s, telefon = %s,
                     eintrittsdatum = %s, austrittsdatum = %s, status = %s,
                     zahlungsart = %s, iban = %s, bic = %s, kontoinhaber = %s, abgerechnet_bis = %s,
+                    user_id = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = %s
@@ -206,6 +208,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land, mitglied.email, mitglied.telefon,
                     mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
+                    mitglied.user_id,
                     updated_by, mitglied.id, mitglied.version
                 ),
             )
@@ -227,6 +230,43 @@ class MitgliedRepository(BaseRepository):
             mitglied.updated_by = updated_by
             return True
     
+    def get_by_user_id(self, user_id: int) -> Optional[Mitglied]:
+        """Gibt den Mitglied-Datensatz zurück, der mit einem User verknüpft ist."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                       strasse, plz, ort, land, email, telefon,
+                       eintrittsdatum, austrittsdatum, status,
+                       zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                       user_id, version, created_at, created_by, updated_at, updated_by
+                FROM mitglied
+                WHERE user_id = %s AND deleted_at IS NULL
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+            return Mitglied(**dict(row)) if row else None
+
+    def get_history(self, mitglied_id: int) -> list[dict]:
+        """Gibt alle History-Einträge eines Mitglieds zurück (für Änderungsanzeige)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                       strasse, plz, ort, land, email, telefon,
+                       eintrittsdatum, austrittsdatum, status,
+                       zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                       user_id, created_at, created_by, updated_at, updated_by,
+                       deleted_at, deleted_by
+                FROM mitglied_history
+                WHERE id = %s
+                ORDER BY version ASC
+                """,
+                (mitglied_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         """Soft-delete: Mark Mitglied as deleted.
         

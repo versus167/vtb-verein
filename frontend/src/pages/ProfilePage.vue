@@ -152,6 +152,37 @@
         </q-card>
       </div>
 
+      <!-- Meine Vereinsdaten (nur wenn Mitglied-Datensatz verknüpft) -->
+      <div v-if="meinMitglied" class="col-12">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Vereinsdaten</div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              E-Mail kann nur von einem Administrator geändert werden.
+            </div>
+            <div class="q-gutter-sm" style="max-width: 480px">
+              <q-input v-model="mitgliedForm.telefon" label="Telefon" outlined dense />
+
+              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Adresse</div>
+              <q-input v-model="mitgliedForm.strasse" label="Straße" outlined dense />
+              <div class="row q-gutter-sm">
+                <q-input v-model="mitgliedForm.plz" label="PLZ" outlined dense style="width: 100px" />
+                <q-input v-model="mitgliedForm.ort" label="Ort" outlined dense class="col" />
+              </div>
+              <q-input v-model="mitgliedForm.land" label="Land" outlined dense />
+
+              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Bankverbindung</div>
+              <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense />
+              <q-input v-model="mitgliedForm.bic" label="BIC" outlined dense />
+              <q-input v-model="mitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
+
+              <div v-if="mitgliedError" class="text-negative text-caption">{{ mitgliedError }}</div>
+              <q-btn label="Speichern" color="primary" unelevated :loading="savingMitglied" @click="onSaveMitglied" />
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
     </div>
   </q-page>
 </template>
@@ -166,7 +197,12 @@ const $q = useQuasar()
 const auth = useAuthStore()
 
 const me = ref(null)
-const roleLabels = { admin: 'Administrator', user: 'Bearbeiter', readonly: 'Nur Lesen' }
+const roleLabels = { admin: 'Administrator', user: 'Bearbeiter', readonly: 'Nur Lesen', mitglied: 'Mitglied' }
+
+const meinMitglied = ref(null)
+const mitgliedForm = ref({})
+const mitgliedError = ref('')
+const savingMitglied = ref(false)
 
 const pw1 = ref('')
 const pw2 = ref('')
@@ -192,6 +228,22 @@ async function load() {
   preferredContact.value = ['email', 'matrix'].includes(data.preferred_contact)
     ? data.preferred_contact
     : 'email'
+  try {
+    const { data: m } = await api.get('/api/personen/mein-mitglied')
+    meinMitglied.value = m
+    if (m) {
+      mitgliedForm.value = {
+        telefon: m.telefon ?? '',
+        strasse: m.strasse ?? '',
+        plz: m.plz ?? '',
+        ort: m.ort ?? '',
+        land: m.land ?? '',
+        iban: m.iban ?? '',
+        bic: m.bic ?? '',
+        kontoinhaber: m.kontoinhaber ?? '',
+      }
+    }
+  } catch { /* kein Mitglied-Datensatz → ignorieren */ }
 }
 
 async function onChangePassword() {
@@ -241,6 +293,23 @@ async function onSendTest() {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Versand fehlgeschlagen' })
   } finally {
     sendingTest.value = false
+  }
+}
+
+async function onSaveMitglied() {
+  mitgliedError.value = ''
+  savingMitglied.value = true
+  try {
+    await api.put('/api/personen/mein-mitglied', {
+      ...mitgliedForm.value,
+      expected_version: meinMitglied.value.version,
+    })
+    await load()
+    $q.notify({ type: 'positive', message: 'Vereinsdaten gespeichert' })
+  } catch (e) {
+    mitgliedError.value = e.response?.data?.detail || 'Fehler beim Speichern'
+  } finally {
+    savingMitglied.value = false
   }
 }
 

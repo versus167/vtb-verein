@@ -56,16 +56,17 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('mitglieder.read')"
+            v-if="auth.hasPermission('users.manage') || auth.hasPermission('mitglieder.read')"
             clickable
-            :to="{ name: 'mitglieder' }"
+            :to="{ name: 'personen' }"
             active-class="bg-primary text-white"
           >
-            <q-item-section avatar><q-icon name="group" /></q-item-section>
-            <q-item-section>Mitglieder</q-item-section>
+            <q-item-section avatar><q-icon name="people" /></q-item-section>
+            <q-item-section>Personen</q-item-section>
           </q-item>
 
           <q-item
+            v-if="hatKassenZugriff"
             clickable
             :to="{ name: 'kassenbuch' }"
             active-class="bg-primary text-white"
@@ -104,7 +105,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('users.manage')"
+            v-if="false"
             clickable
             :to="{ name: 'users' }"
             active-class="bg-primary text-white"
@@ -160,6 +161,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
+import { api } from 'src/boot/axios'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -190,8 +192,20 @@ function toggleDarkMode() {
   localStorage.setItem('darkMode', next === 'auto' ? 'auto' : String(next))
 }
 
+const hatKassenZugriff = ref(false)
+
+async function loadKassenZugriff() {
+  try {
+    const { data } = await api.get('/api/kassen/')
+    hatKassenZugriff.value = data.length > 0
+  } catch {
+    hatKassenZugriff.value = false
+  }
+}
+
 function onLogout() {
   auth.logout()
+  hatKassenZugriff.value = false
   router.push({ name: 'login' })
 }
 
@@ -215,6 +229,7 @@ function triggerInstall() {
 }
 
 onMounted(() => {
+  loadKassenZugriff()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true
 

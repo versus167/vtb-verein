@@ -188,6 +188,12 @@ class VereinsDB:
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         return self._mitglied_repo.mark_mitglied_deleted(mitglied_id, deleted_by)
 
+    def get_mitglied_by_user_id(self, user_id: int) -> Optional[Mitglied]:
+        return self._mitglied_repo.get_by_user_id(user_id)
+
+    def get_mitglied_history(self, mitglied_id: int) -> list[dict]:
+        return self._mitglied_repo.get_history(mitglied_id)
+
     # -----------------------------------
     # Abteilung Operations
     # -----------------------------------

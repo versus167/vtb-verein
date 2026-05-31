@@ -16,6 +16,7 @@ from backend.core.config import settings
 from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
+from backend.api.personen import router as personen_router
 from backend.api.abteilungen import router as abteilungen_router
 from backend.api.mitglied_abteilungen import router as mitglied_abteilungen_router
 from backend.api.kassenbuch import router as kassenbuch_router
@@ -43,6 +44,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api")
 app.include_router(mitglieder_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
+app.include_router(personen_router, prefix="/api")
 app.include_router(abteilungen_router, prefix="/api")
 app.include_router(mitglied_abteilungen_router, prefix="/api")
 app.include_router(kassenbuch_router, prefix="/api")

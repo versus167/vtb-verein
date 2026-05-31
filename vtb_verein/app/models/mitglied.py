@@ -35,7 +35,10 @@ class Mitglied:
     bic: Optional[str] = None
     kontoinhaber: Optional[str] = None
     abgerechnet_bis: Optional[str] = None
-    
+
+    # Verknüpfung mit User-Account (optional)
+    user_id: Optional[int] = None
+
     # Metadaten (vom System verwaltet)
     version: int = 1
     created_at: Optional[str] = None
