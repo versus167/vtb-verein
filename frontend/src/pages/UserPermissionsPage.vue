@@ -1,7 +1,7 @@
 <template>
   <q-page padding>
     <div class="row items-center q-mb-md">
-      <q-btn flat round icon="arrow_back" @click="router.push({ name: 'users' })" />
+      <q-btn flat round icon="arrow_back" @click="router.push({ name: 'personen' })" />
       <div class="text-h5 q-ml-sm">
         Berechtigungen: {{ userData?.username }}
       </div>
@@ -127,7 +127,7 @@ async function onSave() {
       permissions: selected.value,
     })
     $q.notify({ type: 'positive', message: 'Berechtigungen gespeichert' })
-    router.push({ name: 'users' })
+    router.push({ name: 'personen' })
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
   } finally {
