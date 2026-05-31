@@ -215,6 +215,26 @@ class TicketBereichBerechtigungRepository:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def mark_alle_berechtigungen_fuer_user_deleted(
+        self, user_id: int, deleted_by: str
+    ) -> int:
+        """Soft-Delete aller Bereichsberechtigungen eines Users (z.B. bei User-Löschung)."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            UPDATE ticket_bereich_berechtigungen
+            SET deleted_at = CURRENT_TIMESTAMP,
+                deleted_by = %s,
+                version    = version + 1,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = %s
+            WHERE user_id = %s AND deleted_at IS NULL
+            """,
+            (deleted_by, deleted_by, user_id),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def mark_alle_berechtigungen_fuer_bereich_deleted(
         self, bereich_id: int, deleted_by: str
     ) -> int:

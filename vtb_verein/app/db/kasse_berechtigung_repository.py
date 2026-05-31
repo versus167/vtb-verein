@@ -161,6 +161,23 @@ class KasseBerechtigungRepository:
         self._conn.commit()
         return result.rowcount > 0
 
+    def revoke_alle_berechtigungen_fuer_user(self, user_id: int, actor: str) -> int:
+        """Entzieht einem User alle Kassenrechte (z.B. beim User-Löschen)."""
+        result = self._conn.execute(
+            """
+            UPDATE kasse_berechtigungen
+            SET deleted_at = CURRENT_TIMESTAMP,
+                deleted_by = %s,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = %s,
+                version    = version + 1
+            WHERE user_id = %s AND deleted_at IS NULL
+            """,
+            (actor, actor, user_id),
+        )
+        self._conn.commit()
+        return result.rowcount
+
     def revoke_alle_berechtigungen_fuer_kasse(self, kasse_id: int, actor: str) -> int:
         """Entzieht allen Usern die Rechte für eine Kasse (z.B. beim Löschen der Kasse)."""
         result = self._conn.execute(

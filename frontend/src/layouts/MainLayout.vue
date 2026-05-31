@@ -4,6 +4,9 @@
       <q-toolbar>
         <q-btn flat dense round icon="menu" @click="drawer = !drawer" />
         <q-toolbar-title>Vereinsverwaltung</q-toolbar-title>
+        <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
+          <q-tooltip>{{ darkModeLabel }}</q-tooltip>
+        </q-btn>
         <q-btn flat dense round icon="account_circle">
           <q-menu>
             <q-list style="min-width: 160px">
@@ -17,6 +20,10 @@
               <q-item clickable v-close-popup :to="{ name: 'profile' }">
                 <q-item-section avatar><q-icon name="person" /></q-item-section>
                 <q-item-section>Mein Profil</q-item-section>
+              </q-item>
+              <q-item v-if="canInstall" clickable v-close-popup @click="triggerInstall">
+                <q-item-section avatar><q-icon name="install_mobile" /></q-item-section>
+                <q-item-section>App installieren</q-item-section>
               </q-item>
               <q-item clickable v-close-popup @click="onLogout">
                 <q-item-section avatar><q-icon name="logout" /></q-item-section>
@@ -112,11 +119,44 @@
     <q-page-container>
       <router-view />
     </q-page-container>
+
+    <!-- PWA-Installationsbanner (Android/Chrome) -->
+    <q-banner
+      v-if="showInstallBanner"
+      dense
+      class="bg-primary text-white fixed-bottom"
+      style="z-index: 9999"
+    >
+      <template #avatar>
+        <q-icon name="install_mobile" color="white" />
+      </template>
+      App auf dem Gerät installieren?
+      <template #action>
+        <q-btn flat dense label="Installieren" @click="installApp" />
+        <q-btn flat dense label="Später" @click="dismissBanner" />
+      </template>
+    </q-banner>
+
+    <!-- PWA-Hinweis für iOS (kein beforeinstallprompt) -->
+    <q-banner
+      v-if="showIosBanner"
+      dense
+      class="bg-primary text-white fixed-bottom"
+      style="z-index: 9999"
+    >
+      <template #avatar>
+        <q-icon name="ios_share" color="white" />
+      </template>
+      Zum Installieren: Teilen-Button → „Zum Home-Bildschirm"
+      <template #action>
+        <q-btn flat dense label="OK" @click="dismissBanner" />
+      </template>
+    </q-banner>
   </q-layout>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
@@ -126,8 +166,92 @@ const auth = useAuthStore()
 const $q = useQuasar()
 const drawer = ref(!$q.platform.is.mobile)
 
+const darkModeIcon = computed(() => {
+  const v = $q.dark.mode
+  if (v === true) return 'dark_mode'
+  if (v === false) return 'light_mode'
+  return 'brightness_auto'
+})
+
+const darkModeLabel = computed(() => {
+  const v = $q.dark.mode
+  if (v === true) return 'Dunkel'
+  if (v === false) return 'Hell'
+  return 'Systemeinstellung'
+})
+
+function toggleDarkMode() {
+  const v = $q.dark.mode
+  let next
+  if (v === 'auto') next = false
+  else if (v === false) next = true
+  else next = 'auto'
+  $q.dark.set(next)
+  localStorage.setItem('darkMode', next === 'auto' ? 'auto' : String(next))
+}
+
 function onLogout() {
   auth.logout()
   router.push({ name: 'login' })
+}
+
+// ── PWA-Installation ──
+let deferredPrompt = null
+const showInstallBanner = ref(false)
+const showIosBanner = ref(false)
+const isInstalled = ref(false)
+const isIosPlatform = ref(false)
+
+const canInstall = computed(() =>
+  !isInstalled.value && (!!deferredPrompt || isIosPlatform.value)
+)
+
+function triggerInstall() {
+  if (deferredPrompt) {
+    installApp()
+  } else if (isIosPlatform.value) {
+    showIosBanner.value = true
+  }
+}
+
+onMounted(() => {
+  const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true
+
+  if (isInStandaloneMode) {
+    isInstalled.value = true
+    return
+  }
+
+  isIosPlatform.value = $q.platform.is.ios
+
+  if (isIosPlatform.value) {
+    if (!localStorage.getItem('pwaInstallDismissed')) showIosBanner.value = true
+    return
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault()
+    deferredPrompt = e
+    if (!localStorage.getItem('pwaInstallDismissed')) showInstallBanner.value = true
+  })
+})
+
+async function installApp() {
+  if (!deferredPrompt) return
+  deferredPrompt.prompt()
+  const { outcome } = await deferredPrompt.userChoice
+  deferredPrompt = null
+  showInstallBanner.value = false
+  if (outcome === 'accepted') {
+    isInstalled.value = true
+    localStorage.setItem('pwaInstallDismissed', '1')
+  }
+}
+
+function dismissBanner() {
+  showInstallBanner.value = false
+  showIosBanner.value = false
+  localStorage.setItem('pwaInstallDismissed', '1')
 }
 </script>
