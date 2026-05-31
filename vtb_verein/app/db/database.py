@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class Database:
@@ -240,14 +240,17 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beitragsregel (
-              id             SERIAL PRIMARY KEY,
-              name           TEXT NOT NULL,
-              abteilung_id   INTEGER REFERENCES abteilung(id),
-              betrag         REAL NOT NULL,
-              periode        TEXT NOT NULL,
-              gueltig_ab     TEXT NOT NULL,
-              gueltig_bis    TEXT,
-              bedingung_raw  TEXT,
+              id                           SERIAL PRIMARY KEY,
+              name                         TEXT NOT NULL,
+              abteilung_id                 INTEGER REFERENCES abteilung(id),
+              betrag_pro_monat             REAL NOT NULL,
+              einzug_turnus                TEXT NOT NULL,
+              gueltig_ab                   TEXT NOT NULL,
+              gueltig_bis                  TEXT,
+              bedingung_raw                TEXT,
+              bedingung_abteilung_status   TEXT,
+              zahler_typ                   TEXT NOT NULL DEFAULT 'mitglied',
+              zahler_kasse_id              INTEGER REFERENCES kassen(id),
               version        INTEGER NOT NULL DEFAULT 1,
               created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by     TEXT,
@@ -259,15 +262,18 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beitragsregel_history (
-              id             INTEGER NOT NULL,
-              version        INTEGER NOT NULL,
-              name           TEXT,
-              abteilung_id   INTEGER,
-              betrag         REAL,
-              periode        TEXT,
-              gueltig_ab     TEXT,
-              gueltig_bis    TEXT,
-              bedingung_raw  TEXT,
+              id                           INTEGER NOT NULL,
+              version                      INTEGER NOT NULL,
+              name                         TEXT,
+              abteilung_id                 INTEGER,
+              betrag_pro_monat             REAL,
+              einzug_turnus                TEXT,
+              gueltig_ab                   TEXT,
+              gueltig_bis                  TEXT,
+              bedingung_raw                TEXT,
+              bedingung_abteilung_status   TEXT,
+              zahler_typ                   TEXT,
+              zahler_kasse_id              INTEGER,
               created_at     TEXT,
               created_by     TEXT,
               updated_at     TEXT,
@@ -279,11 +285,15 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beitrag_sollstellung (
-              id               SERIAL PRIMARY KEY,
-              mitglied_id      INTEGER NOT NULL REFERENCES mitglied(id),
-              beitragsregel_id INTEGER NOT NULL REFERENCES beitragsregel(id),
-              zeitraum         TEXT NOT NULL,
-              betrag_soll      REAL NOT NULL,
+              id                SERIAL PRIMARY KEY,
+              mitglied_id       INTEGER NOT NULL REFERENCES mitglied(id),
+              beitragsregel_id  INTEGER NOT NULL REFERENCES beitragsregel(id),
+              zeitraum          TEXT NOT NULL,
+              betrag_soll       REAL NOT NULL,
+              faelligkeitsdatum TEXT,
+              status            TEXT NOT NULL DEFAULT 'offen',
+              bezahlt_am        TEXT,
+              kassenbuchung_id  INTEGER REFERENCES kassenbuchungen(id),
               version          INTEGER NOT NULL DEFAULT 1,
               created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by       TEXT,
@@ -295,12 +305,16 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS beitrag_sollstellung_history (
-              id               INTEGER NOT NULL,
-              version          INTEGER NOT NULL,
-              mitglied_id      INTEGER,
-              beitragsregel_id INTEGER,
-              zeitraum         TEXT,
-              betrag_soll      REAL,
+              id                INTEGER NOT NULL,
+              version           INTEGER NOT NULL,
+              mitglied_id       INTEGER,
+              beitragsregel_id  INTEGER,
+              zeitraum          TEXT,
+              betrag_soll       REAL,
+              faelligkeitsdatum TEXT,
+              status            TEXT,
+              bezahlt_am        TEXT,
+              kassenbuchung_id  INTEGER,
               created_at       TEXT,
               created_by       TEXT,
               updated_at       TEXT,
@@ -1220,6 +1234,75 @@ class Database:
             END; $$;
         """)
 
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO beitragsregel_history (
+                    id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                    gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                    zahler_typ, zahler_kasse_id,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                    NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                    NEW.zahler_typ, NEW.zahler_kasse_id,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ, zahler_kasse_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO beitrag_sollstellung_history (
+                    id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+                    faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+                    NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO beitrag_sollstellung_history (
+                        id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+                        faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+                        NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+
     # -----------------------------------
     # Trigger-Bindungen
     # -----------------------------------
@@ -1255,6 +1338,10 @@ class Database:
             ('trig_ticket_kommentare_audit_update',                 'UPDATE', 'ticket_kommentare',                 'fn_ticket_kommentare_audit_update'),
             ('trig_ticket_bereich_berechtigungen_audit_insert',     'INSERT', 'ticket_bereich_berechtigungen',     'fn_ticket_bereich_berechtigungen_audit_insert'),
             ('trig_ticket_bereich_berechtigungen_audit_update',     'UPDATE', 'ticket_bereich_berechtigungen',     'fn_ticket_bereich_berechtigungen_audit_update'),
+            ('trig_beitragsregel_audit_insert',                     'INSERT', 'beitragsregel',                     'fn_beitragsregel_audit_insert'),
+            ('trig_beitragsregel_audit_update',                     'UPDATE', 'beitragsregel',                     'fn_beitragsregel_audit_update'),
+            ('trig_beitrag_sollstellung_audit_insert',              'INSERT', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_insert'),
+            ('trig_beitrag_sollstellung_audit_update',              'UPDATE', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_update'),
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}

@@ -95,6 +95,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('beitraege.read')"
+            clickable
+            :to="{ name: 'beitraege' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="euro" /></q-item-section>
+            <q-item-section>Beiträge</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.user?.role === 'admin'"
             clickable
             :to="{ name: 'kassenverwaltung' }"

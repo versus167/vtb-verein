@@ -74,6 +74,12 @@ const routes = [
         meta: { adminOnly: true },
       },
       {
+        path: 'beitraege',
+        name: 'beitraege',
+        component: () => import('pages/BeitragsverwaltungPage.vue'),
+        meta: { permission: 'beitraege.read' },
+      },
+      {
         path: 'tickets',
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),

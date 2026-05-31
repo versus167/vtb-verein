@@ -1,0 +1,67 @@
+"""
+Datenmodelle für Beitragsregeln und Sollstellungen.
+"""
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class Beitragsregel:
+    """Regel für die automatische Beitragsberechnung."""
+    id: Optional[int] = None
+    name: str = ""
+    abteilung_id: Optional[int] = None
+    abteilung_name: Optional[str] = None         # per JOIN befüllt
+    betrag_pro_monat: float = 0.0
+    einzug_turnus: str = "quartal"               # quartal | monat | halbjahr | jahr
+    gueltig_ab: str = ""
+    gueltig_bis: Optional[str] = None
+    bedingung_raw: Optional[str] = None
+    bedingung_abteilung_status: Optional[str] = None  # kommagetrennt, None = alle
+    zahler_typ: str = "mitglied"                 # mitglied | abteilung
+    zahler_kasse_id: Optional[int] = None
+    zahler_kasse_name: Optional[str] = None      # per JOIN befüllt
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+
+    @property
+    def betrag_pro_einzug(self) -> float:
+        """Berechneter Einzugsbetrag je Turnus."""
+        faktor = {'monat': 1, 'quartal': 3, 'halbjahr': 6, 'jahr': 12}
+        return self.betrag_pro_monat * faktor.get(self.einzug_turnus, 1)
+
+    @property
+    def bedingung_status_liste(self) -> Optional[list[str]]:
+        """Bedingung als Liste, None = alle Status."""
+        if not self.bedingung_abteilung_status:
+            return None
+        return [s.strip() for s in self.bedingung_abteilung_status.split(',') if s.strip()]
+
+
+@dataclass
+class BeitragSollstellung:
+    """Konkrete Beitragsforderung für ein Mitglied."""
+    id: Optional[int] = None
+    mitglied_id: int = 0
+    beitragsregel_id: int = 0
+    zeitraum: str = ""                           # z.B. "2026-Q4", "2026-01"
+    betrag_soll: float = 0.0
+    faelligkeitsdatum: Optional[str] = None
+    status: str = "offen"                        # offen | bezahlt | storniert
+    bezahlt_am: Optional[str] = None
+    kassenbuchung_id: Optional[int] = None
+    # Per JOIN befüllt
+    mitglied_vorname: Optional[str] = None
+    mitglied_nachname: Optional[str] = None
+    mitglied_iban: Optional[str] = None
+    mitglied_kontoinhaber: Optional[str] = None
+    beitragsregel_name: Optional[str] = None
+    zahler_typ: Optional[str] = None
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None

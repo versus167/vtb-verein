@@ -39,6 +39,8 @@ from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
+from app.db.beitragsregel_repository import BeitragsregelRepository
+from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -65,6 +67,8 @@ class VereinsDB:
         self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
         self._kasse_berechtigung_repo = KasseBerechtigungRepository(self.conn)
         self._kassenbuchung_anhang_repo = KassenbuchungAnhangRepository(self.conn)
+        self._beitragsregel_repo = BeitragsregelRepository(self.conn)
+        self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
@@ -300,3 +304,16 @@ class VereinsDB:
 
     def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
         return self._user_repo.mark_user_deleted(user_id, deleted_by)
+
+    # -----------------------------------
+    # Beiträge
+    # -----------------------------------
+
+    @property
+    def beitragsregeln(self) -> BeitragsregelRepository:
+        return self._beitragsregel_repo
+
+    @property
+    def sollstellungen(self) -> BeitragSollstellungRepository:
+        return self._sollstellung_repo
+
