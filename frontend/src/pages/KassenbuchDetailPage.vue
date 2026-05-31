@@ -87,50 +87,58 @@
       <q-card
         v-for="b in buchungenMitBestand"
         :key="b.id"
-        flat bordered
+        elevated
         class="q-mb-sm"
-        :class="b.deleted_at ? 'bg-grey-1' : ''"
+        :class="buchungBgClass(b)"
+        :style="`border-radius: 14px; overflow: hidden; border-left: 5px solid ${buchungBorderColor(b)}`"
       >
         <q-card-section class="q-py-sm q-px-md">
           <!-- Beleg + Datum -->
           <div class="row items-center q-mb-xs">
             <span class="text-caption text-grey col">
               {{ b.belegnummer }}
-              <q-icon v-if="b.exportiert_in_export_id" name="lock" size="xs" color="grey" class="q-ml-xs">
-                <q-tooltip>Exportiert – nicht mehr änderbar</q-tooltip>
-              </q-icon>
             </span>
-            <span class="text-caption text-grey">{{ b.buchungsdatum }}</span>
+            <q-chip v-if="b.exportiert_in_export_id" dense icon="lock" color="grey-4" text-color="grey-8" size="sm" class="q-ml-xs">
+              Exportiert
+            </q-chip>
+            <q-chip v-if="b.deleted_at" dense icon="block" color="grey-4" text-color="grey-8" size="sm" class="q-ml-xs">
+              Storniert
+            </q-chip>
+            <span class="text-caption text-grey q-ml-sm">{{ b.buchungsdatum }}</span>
           </div>
 
           <!-- Buchungstext + Kategorie -->
-          <div class="text-body2" :class="b.deleted_at ? 'text-grey text-strike' : ''">
+          <div class="text-body2 text-weight-medium" :class="b.deleted_at ? 'text-grey text-strike' : ''">
             {{ b.buchungstext }}
           </div>
           <div v-if="b.kategorie" class="text-caption text-grey q-mb-xs">{{ b.kategorie }}</div>
 
           <!-- Betrag + laufender Bestand -->
-          <div class="row items-end q-mt-xs">
+          <div class="row items-center q-mt-sm">
             <div class="col" />
             <div class="text-right">
               <div
                 v-if="b.einnahme_cent > 0"
-                class="text-subtitle1 text-weight-bold"
+                class="row items-center justify-end q-gutter-xs"
                 :class="b.deleted_at ? 'text-grey text-strike' : 'text-positive'"
-              >+ {{ formatEuro(b.einnahme_cent) }}</div>
+              >
+                <q-icon name="arrow_circle_up" size="sm" />
+                <span class="text-subtitle1 text-weight-bold">{{ formatEuro(b.einnahme_cent) }}</span>
+              </div>
               <div
                 v-if="b.ausgabe_cent > 0"
-                class="text-subtitle1 text-weight-bold"
+                class="row items-center justify-end q-gutter-xs"
                 :class="b.deleted_at ? 'text-grey text-strike' : 'text-negative'"
-              >− {{ formatEuro(b.ausgabe_cent) }}</div>
+              >
+                <q-icon name="arrow_circle_down" size="sm" />
+                <span class="text-subtitle1 text-weight-bold">{{ formatEuro(b.ausgabe_cent) }}</span>
+              </div>
               <div v-if="b.laufender_bestand_cent !== null" class="text-caption text-grey">
                 Bestand {{ formatEuro(b.laufender_bestand_cent) }}
               </div>
             </div>
           </div>
         </q-card-section>
-
-        <q-separator />
 
         <!-- Aktions-Zeile -->
         <q-card-actions class="q-px-sm q-py-xs">
@@ -162,69 +170,69 @@
       flat
       bordered
       :rows-per-page-options="[25, 50, 100, 0]"
-      :row-class="rowClass"
     >
-      <template #body-cell-belegnummer="props">
-        <q-td :props="props">
-          <span :class="props.row.deleted_at ? 'text-strike text-grey' : ''">
-            {{ props.row.belegnummer }}
-          </span>
-          <q-icon
-            v-if="props.row.exportiert_in_export_id"
-            name="lock"
-            size="xs"
-            color="grey"
-            class="q-ml-xs"
-          >
-            <q-tooltip>Exportiert – nicht mehr änderbar</q-tooltip>
-          </q-icon>
-        </q-td>
-      </template>
+      <template #body="props">
+        <q-tr :props="props" :style="rowBgStyle(props.row)">
+          <q-td key="belegnummer" :props="props">
+            <span :class="props.row.deleted_at ? 'text-strike text-grey' : ''">
+              {{ props.row.belegnummer }}
+            </span>
+            <q-icon v-if="props.row.exportiert_in_export_id" name="lock" size="xs" color="grey" class="q-ml-xs">
+              <q-tooltip>Exportiert – nicht mehr änderbar</q-tooltip>
+            </q-icon>
+          </q-td>
 
-      <template #body-cell-einnahme="props">
-        <q-td :props="props" class="text-right">
-          <span v-if="props.row.einnahme_cent > 0" :class="props.row.deleted_at ? 'text-grey text-strike' : 'text-positive'">
-            {{ formatEuro(props.row.einnahme_cent) }}
-          </span>
-        </q-td>
-      </template>
+          <q-td key="buchungsdatum" :props="props" :class="props.row.deleted_at ? 'text-grey' : ''">
+            {{ props.row.buchungsdatum }}
+          </q-td>
 
-      <template #body-cell-ausgabe="props">
-        <q-td :props="props" class="text-right">
-          <span v-if="props.row.ausgabe_cent > 0" :class="props.row.deleted_at ? 'text-grey text-strike' : 'text-negative'">
-            {{ formatEuro(props.row.ausgabe_cent) }}
-          </span>
-        </q-td>
-      </template>
+          <q-td key="buchungstext" :props="props" :class="props.row.deleted_at ? 'text-grey text-strike' : ''">
+            {{ props.row.buchungstext }}
+          </q-td>
 
-      <template #body-cell-bestand="props">
-        <q-td :props="props" class="text-right text-weight-bold">
-          <span v-if="props.row.laufender_bestand_cent !== null">
-            {{ formatEuro(props.row.laufender_bestand_cent) }}
-          </span>
-        </q-td>
-      </template>
+          <q-td key="kategorie" :props="props" :class="props.row.deleted_at ? 'text-grey' : ''">
+            {{ props.row.kategorie }}
+          </q-td>
 
-      <template #body-cell-actions="props">
-        <q-td :props="props" class="q-gutter-xs" style="white-space: nowrap">
-          <q-btn
-            flat dense round icon="attach_file" color="grey" size="sm"
-            @click="openAnhangDialog(props.row)"
-          >
-            <q-badge v-if="props.row.anhang_count > 0" color="primary" floating>
-              {{ props.row.anhang_count }}
-            </q-badge>
-            <q-tooltip>Anhänge</q-tooltip>
-          </q-btn>
-          <template v-if="kannSchreiben && !props.row.deleted_at && !props.row.exportiert_in_export_id">
-            <q-btn flat dense round icon="edit" color="primary" size="sm"
-              @click="openEditDialog(props.row)" />
-            <q-btn flat dense round icon="block" color="negative" size="sm"
-              @click="confirmStornieren(props.row)">
-              <q-tooltip>Stornieren</q-tooltip>
+          <q-td key="einnahme" :props="props" class="text-right">
+            <div v-if="props.row.einnahme_cent > 0" class="row items-center justify-end q-gutter-xs no-wrap"
+              :class="props.row.deleted_at ? 'text-grey text-strike' : 'text-positive'">
+              <q-icon name="arrow_circle_up" size="xs" />
+              <span>{{ formatEuro(props.row.einnahme_cent) }}</span>
+            </div>
+          </q-td>
+
+          <q-td key="ausgabe" :props="props" class="text-right">
+            <div v-if="props.row.ausgabe_cent > 0" class="row items-center justify-end q-gutter-xs no-wrap"
+              :class="props.row.deleted_at ? 'text-grey text-strike' : 'text-negative'">
+              <q-icon name="arrow_circle_down" size="xs" />
+              <span>{{ formatEuro(props.row.ausgabe_cent) }}</span>
+            </div>
+          </q-td>
+
+          <q-td key="bestand" :props="props" class="text-right text-weight-bold" :class="props.row.deleted_at ? 'text-grey' : ''">
+            <span v-if="props.row.laufender_bestand_cent !== null">
+              {{ formatEuro(props.row.laufender_bestand_cent) }}
+            </span>
+          </q-td>
+
+          <q-td key="created_by" :props="props" :class="props.row.deleted_at ? 'text-grey' : ''">
+            {{ props.row.created_by }}
+          </q-td>
+
+          <q-td key="actions" :props="props" class="q-gutter-xs" style="white-space: nowrap">
+            <q-btn flat dense round icon="attach_file" color="grey" size="sm" @click="openAnhangDialog(props.row)">
+              <q-badge v-if="props.row.anhang_count > 0" color="primary" floating>{{ props.row.anhang_count }}</q-badge>
+              <q-tooltip>Anhänge</q-tooltip>
             </q-btn>
-          </template>
-        </q-td>
+            <template v-if="kannSchreiben && !props.row.deleted_at && !props.row.exportiert_in_export_id">
+              <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditDialog(props.row)" />
+              <q-btn flat dense round icon="block" color="negative" size="sm" @click="confirmStornieren(props.row)">
+                <q-tooltip>Stornieren</q-tooltip>
+              </q-btn>
+            </template>
+          </q-td>
+        </q-tr>
       </template>
     </q-table>
 
@@ -499,8 +507,22 @@ const exportColumns = [
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
 
-function rowClass(row) {
-  return row.deleted_at ? 'text-grey' : ''
+function rowBgStyle(row) {
+  if (row.deleted_at) return { backgroundColor: '#fafafa' }
+  if (row.einnahme_cent > 0) return { backgroundColor: '#f1f8e9' }
+  return { backgroundColor: '#ffebee' }
+}
+
+function buchungBorderColor(b) {
+  if (b.deleted_at) return '#9e9e9e'
+  if (b.einnahme_cent > 0) return '#4caf50'
+  return '#f44336'
+}
+
+function buchungBgClass(b) {
+  if (b.deleted_at) return 'bg-grey-1'
+  if (b.einnahme_cent > 0) return 'bg-green-1'
+  return 'bg-red-1'
 }
 
 function formatEuro(cent) {

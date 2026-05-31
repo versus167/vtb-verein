@@ -10,13 +10,14 @@ from contextlib import contextmanager
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class Database:
     """Manages PostgreSQL connection and schema."""
 
     def __init__(self, database_url: str):
+        self._database_url = database_url
         self.conn = psycopg.connect(database_url, row_factory=dict_row)
         self._init_schema()
 
@@ -53,11 +54,42 @@ class Database:
             row = cur.fetchone()
         if row is None:
             self._create_schema()
-        elif row['version'] != SCHEMA_VERSION:
+            self._stamp_alembic_head()
+        elif row['version'] < SCHEMA_VERSION:
+            self._run_alembic_migrations()
+        elif row['version'] > SCHEMA_VERSION:
             raise RuntimeError(
-                f"Schema-Version {row['version']} gefunden, "
-                f"erwartet {SCHEMA_VERSION}. Bitte Alembic-Migration ausführen."
+                f"Schema-Version {row['version']} ist neuer als der Code (v{SCHEMA_VERSION}). "
+                f"Bitte Code aktualisieren."
             )
+
+    def _alembic_config(self):
+        import os
+        from alembic.config import Config
+        script_location = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../backend/alembic")
+        )
+        cfg = Config()
+        cfg.set_main_option("script_location", script_location)
+        # env.py liest VTB_DATABASE_URL aus der Umgebung – sicherstellen dass gesetzt
+        os.environ.setdefault("VTB_DATABASE_URL", self._database_url)
+        return cfg
+
+    def _run_alembic_migrations(self):
+        from alembic import command
+        print(f"⬆️  Schema-Migration von v{self._current_version()} → v{SCHEMA_VERSION} …")
+        command.upgrade(self._alembic_config(), "head")
+        print(f"✅ Migration abgeschlossen (Schema v{SCHEMA_VERSION})")
+
+    def _stamp_alembic_head(self):
+        from alembic import command
+        command.stamp(self._alembic_config(), "head")
+
+    def _current_version(self) -> int:
+        with self.cursor() as cur:
+            cur.execute("SELECT version FROM schema_version WHERE id = 1")
+            row = cur.fetchone()
+        return row['version'] if row else 0
 
     def _create_schema(self):
         """Erstellt das vollständige Schema (v15) auf einer frischen Datenbank."""
@@ -279,8 +311,8 @@ class Database:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
               id                SERIAL PRIMARY KEY,
-              username          TEXT UNIQUE NOT NULL,
-              email             TEXT UNIQUE NOT NULL,
+              username          TEXT NOT NULL,
+              email             TEXT NOT NULL,
               password_hash     TEXT NOT NULL,
               role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special')),
               active            INTEGER NOT NULL DEFAULT 1,
@@ -1291,8 +1323,10 @@ class Database:
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id ON users (telegram_id) WHERE telegram_id IS NOT NULL")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id   ON users (matrix_id)   WHERE matrix_id   IS NOT NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active    ON users (email)       WHERE deleted_at IS NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL")
 
     # -----------------------------------
     # Seed-Daten

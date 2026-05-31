@@ -119,10 +119,12 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
+import { useQuasar } from 'quasar'
 
 const router = useRouter()
 const auth = useAuthStore()
-const drawer = ref(true)
+const $q = useQuasar()
+const drawer = ref(!$q.platform.is.mobile)
 
 function onLogout() {
   auth.logout()

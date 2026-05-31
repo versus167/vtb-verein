@@ -149,7 +149,7 @@ def create_user(data: UserCreate, user: CurrentUser, db: DB):
             active=data.active,
             created_by=user.username,
             password=data.password,
-            send_magic_link=False,
+            send_magic_link=data.active,
         )
         return _user_to_dict(created)
     except ValueError as e:
