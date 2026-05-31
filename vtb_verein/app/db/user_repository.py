@@ -9,6 +9,7 @@ User Repository - All database operations for User entity.
 '''
 
 from psycopg import Connection as PgConnection
+from psycopg.errors import UniqueViolation
 from typing import Optional, List
 from app.models.user import User
 from app.db.base_repository import BaseRepository
@@ -121,17 +122,25 @@ class UserRepository(BaseRepository):
             Created User with default permissions for their role already loaded.
             (History is written automatically via trigger)
         """
-        with self.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO users (username, email, password_hash, role, active,
-                                   version, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
-                RETURNING id
-                """,
-                (username, email, password_hash, role, int(active), created_by, created_by)
-            )
-            user_id = cur.fetchone()['id']
+        try:
+            with self.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (username, email, password_hash, role, active,
+                                       version, created_by, updated_by)
+                    VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
+                    RETURNING id
+                    """,
+                    (username, email, password_hash, role, int(active), created_by, created_by)
+                )
+                user_id = cur.fetchone()['id']
+        except UniqueViolation as e:
+            detail = str(e)
+            if 'email' in detail:
+                raise ValueError(f"E-Mail '{email}' ist bereits vergeben")
+            if 'username' in detail:
+                raise ValueError(f"Benutzername '{username}' ist bereits vergeben")
+            raise ValueError("Benutzer existiert bereits")
         
         return self.get_by_id(user_id)
     

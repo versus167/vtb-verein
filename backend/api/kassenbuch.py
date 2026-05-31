@@ -534,3 +534,20 @@ def delete_anhang(kasse_id: int, buchung_id: int, anhang_id: int, user: CurrentU
     ok = db.kassenbuch.mark_anhang_deleted(anhang_id, deleted_by=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail=f"Anhang {anhang_id} nicht gefunden.")
+
+
+@router.get("/{kasse_id}/buchungen/{buchung_id}/history")
+def get_buchung_history(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB):
+    try:
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Buchung {buchung_id} nicht gefunden.")
+    if buchung.kasse_id != kasse_id:
+        raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
+    return {
+        "buchungen": db.kassenbuch._buchung.get_history(buchung_id),
+        "anhaenge": db.kassenbuch._anhang_repo.list_all_by_buchung(buchung_id),
+    }

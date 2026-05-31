@@ -158,6 +158,90 @@ VTB Vereinsverwaltung
             return False
     
     @staticmethod
+    def send_welcome_email(recipient_email: str, token: str, username: str) -> bool:
+        """
+        Sendet Willkommens-E-Mail mit Magic-Link an neu angelegten Benutzer
+        """
+        if not EmailConfig.is_configured():
+            print("⚠️  E-Mail-Konfiguration fehlt. Bitte .env-Datei prüfen.")
+            return False
+
+        base_url = EmailConfig.get_base_url()
+        magic_link = f"{base_url}/auth/magic-link?token={token}"
+
+        subject = "Willkommen in der VTB Vereinsverwaltung"
+
+        text_body = f"""
+Hallo {username},
+
+dein Account in der VTB Vereinsverwaltung wurde eingerichtet.
+
+Du erreichst die App unter:
+{base_url}
+
+Um dich direkt einzuloggen, klicke auf den folgenden Link – du brauchst kein Passwort:
+{magic_link}
+
+Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.
+Danach kannst du dir jederzeit einen neuen Login-Link über die App anfordern.
+
+Viele Grüße,
+VTB Vereinsverwaltung
+"""
+
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2c3e50;">Willkommen in der VTB Vereinsverwaltung</h2>
+
+        <p>Hallo <strong>{username}</strong>,</p>
+
+        <p>dein Account wurde eingerichtet. Du kannst die App ab sofort nutzen:</p>
+
+        <p>
+            <a href="{base_url}" style="color: #3498db;">{base_url}</a>
+        </p>
+
+        <p>Für deinen ersten Login haben wir dir bereits einen Link vorbereitet –
+        du brauchst kein Passwort:</p>
+
+        <div style="margin: 30px 0;">
+            <a href="{magic_link}"
+               style="display: inline-block; padding: 12px 24px; background-color: #3498db;
+                      color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                Jetzt einloggen
+            </a>
+        </div>
+
+        <p style="color: #7f8c8d; font-size: 14px;">
+            Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.
+            Danach kannst du dir jederzeit über die App einen neuen Login-Link anfordern.
+        </p>
+
+        <hr style="border: none; border-top: 1px solid #ecf0f1; margin: 30px 0;">
+
+        <p style="color: #95a5a6; font-size: 12px;">
+            Viele Grüße,<br>
+            VTB Vereinsverwaltung
+        </p>
+    </div>
+</body>
+</html>
+"""
+
+        return EmailService._send_email(
+            to=recipient_email,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body
+        )
+
+    @staticmethod
     def send_text_email(recipient_email: str, subject: str, body: str) -> bool:
         """
         Sendet einfache Text-E-Mail (für Benachrichtigungen, etc.)

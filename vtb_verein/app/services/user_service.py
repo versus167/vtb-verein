@@ -204,21 +204,17 @@ class UserService:
         if default_permissions:
             self.db.permissions.set_permissions_for_user(user.id, default_permissions, created_by)
         
-        # Magic-Link automatisch senden (falls E-Mail konfiguriert)
-        if send_magic_link and active:
-            self.send_magic_link(email)
-        elif active:
-            # Kein Magic-Link: Willkommens-Mail senden
-            from app.services.notification_service import NotificationService
-            NotificationService.send_notification(
-                user,
-                title="Willkommen in der VTB-Vereinsverwaltung",
-                message=(
-                    f"Hallo {username},\n\n"
-                    f"dein Account wurde eingerichtet.\n"
-                    f"Benutzername: {username}\n\n"
-                    f"Du kannst dich jetzt in der Vereinsverwaltung anmelden."
-                ),
+        # Willkommens-Mail mit Magic-Link senden (falls E-Mail konfiguriert)
+        if send_magic_link and active and EmailConfig.is_configured():
+            token = self.token_repo.create_token(
+                user_id=user.id,
+                token_type='magic_link',
+                expires_days=7
+            )
+            EmailService.send_welcome_email(
+                recipient_email=email,
+                token=token,
+                username=username
             )
 
         return user

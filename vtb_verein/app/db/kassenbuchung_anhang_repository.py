@@ -34,6 +34,22 @@ class KassenbuchungAnhangRepository:
         )
         return [self._map(row) for row in cursor.fetchall()]
 
+    def list_all_by_buchung(self, buchung_id: int) -> list[dict]:
+        """Alle Anhänge (inkl. gelöschter) mit Usernamen für die History-Anzeige."""
+        cursor = self.conn.execute(
+            """
+            SELECT a.id, a.original_name, a.dateigroesse, a.mime_type,
+                   a.hochgeladen_am, u.username AS hochgeladen_von,
+                   a.deleted_at, a.deleted_by
+            FROM kassenbuchung_anhaenge a
+            LEFT JOIN users u ON u.id = a.hochgeladen_von
+            WHERE a.buchung_id = %s
+            ORDER BY a.hochgeladen_am ASC
+            """,
+            (buchung_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     def create(self, anhang: KassenbuchungAnhang) -> KassenbuchungAnhang:
         """Legt Anhang an. stored_name wird nach INSERT anhand der ID gesetzt."""
         ext = os.path.splitext(anhang.original_name)[1].lower()
