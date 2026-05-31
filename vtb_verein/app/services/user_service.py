@@ -332,10 +332,15 @@ class UserService:
         
         # Soft-Delete durchführen
         success = self.user_repo.mark_user_deleted(user_id, deleted_by)
-        
+
         if not success:
             raise ValueError("Löschen fehlgeschlagen")
-        
+
+        # Alle Berechtigungen des Users entziehen
+        self.db.permissions.revoke_all_permissions_for_user(user_id, deleted_by)
+        self.db.kasse_berechtigungen.revoke_alle_berechtigungen_fuer_user(user_id, deleted_by)
+        self.db.ticket_bereich_berechtigungen.mark_alle_berechtigungen_fuer_user_deleted(user_id, deleted_by)
+
         return True
     
     def update_contact_preferences(self, user_id: int, matrix_id: str | None,
