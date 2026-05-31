@@ -3,53 +3,52 @@
     <div class="text-h4 q-mb-md">Willkommen, {{ auth.user?.username }}!</div>
     <div class="text-subtitle1 q-mb-lg text-grey-7">Was möchten Sie tun?</div>
 
-    <div class="row q-gutter-md">
-      <q-card
+    <div class="row q-col-gutter-md">
+      <div
         v-if="auth.hasPermission('abteilungen.read')"
-        class="col-auto cursor-pointer dashboard-card"
-        @click="router.push({ name: 'abteilungen' })"
+        class="col-6 col-sm-4 col-md-3"
       >
-        <q-card-section class="text-center" style="min-width: 160px">
-          <q-icon name="account_tree" size="3rem" color="primary" />
-          <div class="text-h6 q-mt-sm">Abteilungen</div>
-          <div class="text-caption text-grey">Abteilungen verwalten</div>
-        </q-card-section>
-      </q-card>
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'abteilungen' })">
+          <q-card-section class="text-center">
+            <q-icon name="account_tree" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Abteilungen</div>
+            <div class="text-caption text-grey">Abteilungen verwalten</div>
+          </q-card-section>
+        </q-card>
+      </div>
 
-      <q-card
+      <div
         v-if="auth.hasPermission('mitglieder.read')"
-        class="col-auto cursor-pointer dashboard-card"
-        @click="router.push({ name: 'mitglieder' })"
+        class="col-6 col-sm-4 col-md-3"
       >
-        <q-card-section class="text-center" style="min-width: 160px">
-          <q-icon name="group" size="3rem" color="primary" />
-          <div class="text-h6 q-mt-sm">Mitglieder</div>
-          <div class="text-caption text-grey">Mitglieder verwalten</div>
-        </q-card-section>
-      </q-card>
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'mitglieder' })">
+          <q-card-section class="text-center">
+            <q-icon name="group" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Mitglieder</div>
+            <div class="text-caption text-grey">Mitglieder verwalten</div>
+          </q-card-section>
+        </q-card>
+      </div>
 
-      <q-card
-        v-if="hatKassenZugriff"
-        class="col-auto cursor-pointer dashboard-card"
-        @click="router.push({ name: 'kassenbuch' })"
-      >
-        <q-card-section class="text-center" style="min-width: 160px">
-          <q-icon name="account_balance_wallet" size="3rem" color="primary" />
-          <div class="text-h6 q-mt-sm">Kassenbuch</div>
-          <div class="text-caption text-grey">Buchungen & Berichte</div>
-        </q-card-section>
-      </q-card>
+      <div v-if="hatKassenZugriff" class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'kassenbuch' })">
+          <q-card-section class="text-center">
+            <q-icon name="account_balance_wallet" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Kassenbuch</div>
+            <div class="text-caption text-grey">Buchungen & Berichte</div>
+          </q-card-section>
+        </q-card>
+      </div>
 
-      <q-card
-        class="col-auto cursor-pointer dashboard-card"
-        @click="router.push({ name: 'tickets' })"
-      >
-        <q-card-section class="text-center" style="min-width: 160px">
-          <q-icon name="confirmation_number" size="3rem" color="primary" />
-          <div class="text-h6 q-mt-sm">Tickets</div>
-          <div class="text-caption text-grey">Anfragen & Aufgaben</div>
-        </q-card-section>
-      </q-card>
+      <div class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
+          <q-card-section class="text-center">
+            <q-icon name="confirmation_number" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Tickets</div>
+            <div class="text-caption text-grey">Anfragen & Aufgaben</div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>
