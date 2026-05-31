@@ -292,6 +292,32 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     return _person_row(u, db.get_mitglied_by_user_id(user_id), abteilungen)
 
 
+@router.post("/{user_id}/mitglied", status_code=status.HTTP_201_CREATED)
+def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
+    """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
+    _require_manage(user)
+    u = db.get_user_by_id(user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="User nicht gefunden")
+    if db.get_mitglied_by_user_id(user_id) is not None:
+        raise HTTPException(status_code=409, detail="Dieser User hat bereits einen Mitglied-Datensatz")
+    m = Mitglied(
+        vorname=data.vorname, nachname=data.nachname,
+        geburtsdatum=data.geburtsdatum,
+        strasse=data.strasse, plz=data.plz, ort=data.ort, land=data.land,
+        telefon=data.telefon,
+        eintrittsdatum=data.eintrittsdatum, austrittsdatum=data.austrittsdatum,
+        status=data.status, zahlungsart=data.zahlungsart,
+        iban=data.iban, bic=data.bic, kontoinhaber=data.kontoinhaber,
+        abgerechnet_bis=data.abgerechnet_bis,
+        email=u.email,
+        user_id=user_id,
+    )
+    mitglied = db.create_mitglied(m, created_by=user.username)
+    abteilungen = db.list_mitglied_abteilungen(mitglied.id)
+    return _person_row(u, mitglied, abteilungen)
+
+
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_person(user_id: int, user: CurrentUser, db: DB):
     _require_manage(user)

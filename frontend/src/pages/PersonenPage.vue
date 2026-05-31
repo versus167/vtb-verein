@@ -76,6 +76,10 @@
             @click="openEditMitgliedDialog(props.row)">
             <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
           </q-btn>
+          <q-btn v-else flat dense round icon="person_add" color="teal" size="sm"
+            @click="openAddMitgliedDialog(props.row)">
+            <q-tooltip>Als Vereinsmitglied erfassen</q-tooltip>
+          </q-btn>
           <q-btn v-if="props.row.mitglied" flat dense round icon="group" color="purple" size="sm"
             @click="openAbteilungenDialog(props.row)">
             <q-tooltip>Abteilungen</q-tooltip>
@@ -198,7 +202,7 @@
          ════════════════════════════════════════════════ -->
     <q-dialog v-model="editMitgliedOpen" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
       <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:520px;max-width:680px'">
-        <q-card-section class="text-h6">Vereinsdaten bearbeiten</q-card-section>
+        <q-card-section class="text-h6">{{ editMitgliedIsNew ? 'Als Vereinsmitglied erfassen' : 'Vereinsdaten bearbeiten' }}</q-card-section>
         <q-separator />
         <q-card-section class="q-gutter-sm" style="max-height:70vh;overflow-y:auto">
           <div class="row q-gutter-sm">
@@ -510,14 +514,31 @@ const editMitgliedSaving = ref(false)
 const editMitgliedError  = ref('')
 const editMitgliedForm   = ref({})
 const editingMitgliedUserId = ref(null)
+const editMitgliedIsNew  = ref(false)
+
+function openAddMitgliedDialog(row) {
+  editingMitgliedUserId.value = row.user_id
+  editMitgliedIsNew.value = true
+  editMitgliedError.value = ''
+  editMitgliedForm.value = {
+    vorname: '', nachname: '', geburtsdatum: '', telefon: '',
+    eintrittsdatum: '', austrittsdatum: '',
+    status: 'aktiv', zahlungsart: '',
+    strasse: '', plz: '', ort: '', land: '',
+    iban: '', bic: '', kontoinhaber: '',
+    expected_version: 1,
+  }
+  editMitgliedOpen.value = true
+}
 
 function openEditMitgliedDialog(row) {
   editingMitgliedUserId.value = row.user_id
+  editMitgliedIsNew.value = false
   editMitgliedError.value = ''
   const m = row.mitglied
   editMitgliedForm.value = {
     vorname: m.vorname, nachname: m.nachname, geburtsdatum: m.geburtsdatum ?? '',
-    email: m.email ?? '', telefon: m.telefon ?? '',
+    telefon: m.telefon ?? '',
     eintrittsdatum: m.eintrittsdatum ?? '', austrittsdatum: m.austrittsdatum ?? '',
     status: m.status, zahlungsart: m.zahlungsart ?? '',
     strasse: m.strasse ?? '', plz: m.plz ?? '', ort: m.ort ?? '', land: m.land ?? '',
@@ -531,7 +552,11 @@ async function onSaveMitglied() {
   editMitgliedSaving.value = true
   editMitgliedError.value = ''
   try {
-    await api.put(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
+    if (editMitgliedIsNew.value) {
+      await api.post(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
+    } else {
+      await api.put(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
+    }
     $q.notify({ type: 'positive', message: 'Gespeichert' })
     editMitgliedOpen.value = false
     await loadPersonen()
