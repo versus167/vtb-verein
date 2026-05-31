@@ -582,9 +582,10 @@ const exportColumns = [
 ]
 
 function rowBgStyle(row) {
-  if (row.deleted_at) return { backgroundColor: '#fafafa' }
-  if (row.einnahme_cent > 0) return { backgroundColor: '#f1f8e9' }
-  return { backgroundColor: '#ffebee' }
+  const dark = $q.dark.isActive
+  if (row.deleted_at) return { backgroundColor: dark ? '#1a1a1e' : '#fafafa' }
+  if (row.einnahme_cent > 0) return { backgroundColor: dark ? '#1a2e1a' : '#f1f8e9' }
+  return { backgroundColor: dark ? '#2e1a1a' : '#ffebee' }
 }
 
 function buchungBorderColor(b) {

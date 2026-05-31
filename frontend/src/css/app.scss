@@ -1,1 +1,80 @@
-// app global css / scss goes here
+// ── Dark Mode Theme ──────────────────────────────────────────────────────────
+//
+// Modernes dunkles Grau mit hohem Textkontrast.
+// Quasar setzt body.body--dark wenn Dark-Mode aktiv ist.
+//
+// Farbschema:
+//   Seitenhintegrund  #111115  (fast schwarz, minimaler Blauanteil)
+//   Oberflächen       #1e1e24  (Karten, Drawer, Header)
+//   Erhöhte Flächen   #28282f  (Dialoge, Tooltips, Hover)
+//   Text primär       #f0f0f2  (fast weiß, hoher Kontrast)
+//   Text sekundär     #a0a0b0  (Captions, Hints)
+//   Trennlinie        #2e2e38
+
+body.body--dark {
+  // Quasar-interne Hintergrundvariablen
+  --q-color-dark:      #1e1e24;
+  --q-color-dark-page: #111115;
+
+  // Seitentext
+  color: #f0f0f2;
+
+  // Karten
+  .q-card {
+    background: #1e1e24;
+    color: #f0f0f2;
+  }
+
+  // Drawer & Header
+  .q-header,
+  .q-drawer {
+    background: #1e1e24;
+  }
+
+  // Tabellen: Zebrastreifen & Hover
+  .q-table tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.05) !important;
+  }
+
+  // Trennlinien
+  .q-separator {
+    background: #2e2e38;
+  }
+
+  // Inputs & Selects
+  .q-field__native,
+  .q-field__input {
+    color: #f0f0f2;
+  }
+  .q-field--outlined .q-field__control {
+    border-color: #3a3a46;
+  }
+  .q-field--outlined:hover .q-field__control {
+    border-color: #6060ff;
+  }
+
+  // Chip
+  .q-chip {
+    background: #28282f;
+    color: #d0d0e0;
+  }
+
+  // Timeline
+  .q-timeline__subtitle,
+  .q-timeline__dot:before {
+    color: #a0a0b0;
+  }
+
+  // Captions und sekundärer Text
+  .text-grey,
+  .text-grey-6,
+  .text-grey-7,
+  .text-grey-8 {
+    color: #a0a0b0 !important;
+  }
+
+  // Kassenbuch-Zeilenfarben im Dark Mode (gedämpfte Töne)
+  .bg-green-1 { background-color: #1a2e1a !important; }
+  .bg-red-1   { background-color: #2e1a1a !important; }
+  .bg-grey-1  { background-color: #1a1a1e !important; }
+}
