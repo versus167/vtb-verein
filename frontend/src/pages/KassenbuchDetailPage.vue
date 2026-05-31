@@ -71,8 +71,8 @@
       <div v-show="$q.screen.gt.xs || filterOpen" class="row q-gutter-sm q-mb-md items-center">
         <q-input v-model="filterVon" type="date" label="Von" outlined dense style="width: 150px" />
         <q-input v-model="filterBis" type="date" label="Bis" outlined dense style="width: 150px" />
-        <q-checkbox v-model="showStorniert" label="Stornierte" />
         <q-btn label="Anwenden" outline color="primary" dense @click="applyFilter" />
+        <q-checkbox v-model="showStorniert" label="Stornierte" @update:model-value="applyFilter" />
       </div>
     </q-slide-transition>
 
