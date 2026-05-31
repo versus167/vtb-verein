@@ -730,7 +730,36 @@ async function openHistoryDialog(row) {
       _full: h.version === 1 ? { Vorname: h.vorname, Nachname: h.nachname, Status: h.status } : null,
     }))
 
-    const all = [...userEvents, ...mitgliedEvents].sort((a, b) => {
+    // Abteilungs-Zuordnungen gruppiert nach id
+    const abteilungById = {}
+    for (const h of (data.abteilungen ?? [])) {
+      if (!abteilungById[h.id]) abteilungById[h.id] = []
+      abteilungById[h.id].push(h)
+    }
+    const ABTEILUNG_DIFF_FIELDS = [
+      { key: 'status', label: 'Status' },
+      { key: 'von',    label: 'Von' },
+      { key: 'bis',    label: 'Bis' },
+    ]
+    const abteilungEvents = []
+    for (const versions of Object.values(abteilungById)) {
+      versions.forEach((h, i) => {
+        abteilungEvents.push({
+          _typ: 'abteilung', _zeit: h.updated_at, _by: h.updated_by,
+          _color: h.deleted_at ? 'negative' : h.version === 1 ? 'purple' : 'primary',
+          _icon: h.deleted_at ? 'group_remove' : h.version === 1 ? 'group_add' : 'edit',
+          _label: h.deleted_at
+            ? `Abteilung verlassen: ${h.abteilung_name}`
+            : h.version === 1
+              ? `Abteilung beigetreten: ${h.abteilung_name}`
+              : `Abteilung geändert: ${h.abteilung_name}`,
+          _diffs: diffEntries(versions[i - 1], h, ABTEILUNG_DIFF_FIELDS),
+          _full: h.version === 1 ? { Status: h.status, Von: h.von, Bis: h.bis } : null,
+        })
+      })
+    }
+
+    const all = [...userEvents, ...mitgliedEvents, ...abteilungEvents].sort((a, b) => {
       const ta = a._zeit ?? '', tb = b._zeit ?? ''
       return ta < tb ? -1 : ta > tb ? 1 : 0
     })

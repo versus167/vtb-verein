@@ -350,7 +350,28 @@ def get_person_history(user_id: int, user: CurrentUser, db: DB):
     mitglied = db.get_mitglied_by_user_id(user_id)
     mitglied_history = db.get_mitglied_history(mitglied.id) if mitglied else []
 
-    return {'user': user_history, 'mitglied': mitglied_history}
+    abteilung_history = []
+    if mitglied:
+        with db.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT mah.id, mah.version, mah.abteilung_id,
+                       COALESCE(a.name, mah.abteilung_id::text) AS abteilung_name,
+                       a.kuerzel AS abteilung_kuerzel,
+                       mah.status, mah.von, mah.bis,
+                       mah.created_at, mah.created_by,
+                       mah.updated_at, mah.updated_by,
+                       mah.deleted_at, mah.deleted_by
+                FROM mitglied_abteilung_history mah
+                LEFT JOIN abteilung a ON a.id = mah.abteilung_id
+                WHERE mah.mitglied_id = %s
+                ORDER BY mah.id, mah.version ASC
+                """,
+                (mitglied.id,),
+            )
+            abteilung_history = [dict(r) for r in cur.fetchall()]
+
+    return {'user': user_history, 'mitglied': mitglied_history, 'abteilungen': abteilung_history}
 
 
 # ---------------------------------------------------------------------------
