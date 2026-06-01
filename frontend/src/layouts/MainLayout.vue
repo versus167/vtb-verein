@@ -95,6 +95,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('beitraege.read')"
+            clickable
+            :to="{ name: 'beitraege' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="euro" /></q-item-section>
+            <q-item-section>Beiträge</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.user?.role === 'admin'"
             clickable
             :to="{ name: 'kassenverwaltung' }"
@@ -102,6 +112,16 @@
           >
             <q-item-section avatar><q-icon name="manage_history" /></q-item-section>
             <q-item-section>Kassenverwaltung</q-item-section>
+          </q-item>
+
+          <q-item
+            v-if="auth.user?.role === 'admin'"
+            clickable
+            :to="{ name: 'einstellungen' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="tune" /></q-item-section>
+            <q-item-section>Einstellungen</q-item-section>
           </q-item>
 
           <q-item
@@ -166,7 +186,7 @@ import { api } from 'src/boot/axios'
 const router = useRouter()
 const auth = useAuthStore()
 const $q = useQuasar()
-const drawer = ref(!$q.platform.is.mobile)
+const drawer = ref($q.screen.gt.sm)
 
 const darkModeIcon = computed(() => {
   const v = $q.dark.mode

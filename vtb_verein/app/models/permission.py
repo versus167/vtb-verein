@@ -24,8 +24,9 @@ class Permission:
     ABTEILUNGEN_DELETE = 'abteilungen.delete'
 
     # --- Beiträge ---
-    BEITRAEGE_READ  = 'beitraege.read'
-    BEITRAEGE_WRITE = 'beitraege.write'
+    BEITRAEGE_READ      = 'beitraege.read'
+    BEITRAEGE_WRITE     = 'beitraege.write'
+    BEITRAEGE_ABRECHNEN = 'beitraege.abrechnen'
 
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'

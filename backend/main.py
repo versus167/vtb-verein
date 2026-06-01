@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -18,8 +19,11 @@ from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
 from backend.api.personen import router as personen_router
+from backend.api.beitraege import router as beitraege_router
 from backend.api.abteilungen import router as abteilungen_router
 from backend.api.mitglied_abteilungen import router as mitglied_abteilungen_router
+from backend.api.mitglied_funktionen import router as mitglied_funktionen_router
+from backend.api.funktionen import router as funktionen_router
 from backend.api.kassenbuch import router as kassenbuch_router
 from backend.api.tickets import router as tickets_router
 from backend.api.uploads import router as uploads_router
@@ -56,11 +60,25 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(mitglieder_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(personen_router, prefix="/api")
+app.include_router(beitraege_router, prefix="/api")
 app.include_router(abteilungen_router, prefix="/api")
 app.include_router(mitglied_abteilungen_router, prefix="/api")
+app.include_router(mitglied_funktionen_router, prefix="/api")
+app.include_router(funktionen_router, prefix="/api")
 app.include_router(kassenbuch_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
+
+
+@app.on_event("startup")
+def startup():
+    # app.* Logger in den uvicorn-Handler einhängen
+    logging.getLogger("app").setLevel(logging.INFO)
+    logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
+
+    # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
+    from backend.core.db import get_db
+    get_db()
 
 
 @app.get("/api/health")

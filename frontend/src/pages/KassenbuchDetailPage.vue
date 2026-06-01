@@ -18,7 +18,7 @@
     <!-- Aktions-Leiste -->
     <div class="row q-gutter-sm q-mb-sm items-center">
       <q-btn
-        v-if="$q.screen.lt.sm"
+        v-if="$q.screen.lt.md"
         flat round dense icon="filter_list"
         :color="filterAktiv ? 'primary' : 'grey'"
         @click="filterOpen = !filterOpen"
@@ -32,43 +32,43 @@
       <template v-if="kannSchreiben">
         <q-btn
           icon="add"
-          :label="$q.screen.gt.xs ? 'Einnahme' : undefined"
+          :label="$q.screen.gt.sm ? 'Einnahme' : undefined"
           color="positive"
           unelevated
-          :round="$q.screen.lt.sm"
+          :round="$q.screen.lt.md"
           @click="openCreateDialog('einnahme')"
         />
         <q-btn
           icon="remove"
-          :label="$q.screen.gt.xs ? 'Ausgabe' : undefined"
+          :label="$q.screen.gt.sm ? 'Ausgabe' : undefined"
           color="negative"
           unelevated
-          :round="$q.screen.lt.sm"
+          :round="$q.screen.lt.md"
           @click="openCreateDialog('ausgabe')"
         />
       </template>
       <q-btn
         v-if="kannExportieren"
         icon="download"
-        :label="$q.screen.gt.xs ? 'CSV-Export' : undefined"
+        :label="$q.screen.gt.sm ? 'CSV-Export' : undefined"
         color="primary"
         outline
-        :round="$q.screen.lt.sm"
+        :round="$q.screen.lt.md"
         @click="openExportDialog"
       />
       <q-btn
         icon="picture_as_pdf"
-        :label="$q.screen.gt.xs ? 'PDF-Bericht' : undefined"
+        :label="$q.screen.gt.sm ? 'PDF-Bericht' : undefined"
         color="secondary"
         outline
-        :round="$q.screen.lt.sm"
+        :round="$q.screen.lt.md"
         @click="openPdfDialog"
       />
     </div>
 
     <!-- Filter (Desktop: immer sichtbar; Mobile: einklappbar) -->
     <q-slide-transition>
-      <div v-show="$q.screen.gt.xs || filterOpen" class="row q-gutter-sm q-mb-md items-center">
+      <div v-show="$q.screen.gt.md || filterOpen" class="row q-gutter-sm q-mb-md items-center">
         <q-input v-model="filterVon" type="date" label="Von" outlined dense style="width: 150px" />
         <q-input v-model="filterBis" type="date" label="Bis" outlined dense style="width: 150px" />
         <q-btn label="Anwenden" outline color="primary" dense @click="applyFilter" />
@@ -77,7 +77,7 @@
     </q-slide-transition>
 
     <!-- ── Mobile: Karten-Liste ── -->
-    <template v-if="$q.screen.lt.sm">
+    <template v-if="$q.screen.lt.md">
       <div v-if="loading" class="row justify-center q-py-xl">
         <q-spinner size="40px" color="primary" />
       </div>

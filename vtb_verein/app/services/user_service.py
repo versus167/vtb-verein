@@ -32,7 +32,7 @@ class UserService:
         Returns:
             User-Objekt wenn erfolgreich, sonst None
         """
-        user = self.user_repo.get_by_username(username)
+        user = self.user_repo.get_by_username(username.lower().strip())
         
         if not user:
             return None
@@ -176,6 +176,7 @@ class UserService:
             ValueError: Bei ungültigen Daten oder Duplikaten
         """
         # Validierung
+        username = username.lower().strip()
         if not username or not email:
             raise ValueError("Username und E-Mail dürfen nicht leer sein")
         
@@ -239,6 +240,7 @@ class UserService:
         Raises:
             ValueError: Bei Validierungsfehlern oder Versionskonflikten
         """
+        username = username.lower().strip()
         # Prüfe "letzter Admin" Constraint
         user = self.user_repo.get_by_id(user_id)
         if not user:

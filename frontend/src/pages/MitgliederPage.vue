@@ -52,6 +52,12 @@
             <q-tooltip>Abteilungen</q-tooltip>
           </q-btn>
           <q-btn
+            flat dense round icon="badge" color="teal" size="sm"
+            @click="openFunktionenDialog(props.row)"
+          >
+            <q-tooltip>Funktionen</q-tooltip>
+          </q-btn>
+          <q-btn
             v-if="auth.hasPermission('mitglieder.delete')"
             flat dense round icon="delete" color="negative" size="sm"
             @click="confirmDelete(props.row)"
@@ -209,6 +215,110 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+    <!-- Funktionen-Dialog -->
+    <q-dialog v-model="funktionenDialogOpen" persistent>
+      <q-card style="min-width: 560px; max-width: 700px">
+        <q-card-section class="row items-center">
+          <div class="text-h6 col">
+            Funktionen –
+            <span class="text-weight-regular">{{ aktivMitglied?.vorname }} {{ aktivMitglied?.nachname }}</span>
+          </div>
+          <q-btn
+            v-if="auth.hasPermission('mitglieder.write')"
+            label="Hinzufügen"
+            icon="add"
+            color="primary"
+            unelevated
+            size="sm"
+            @click="openFunktionForm(null)"
+          />
+        </q-card-section>
+        <q-separator />
+
+        <q-card-section style="max-height: 50vh; overflow-y: auto">
+          <q-inner-loading :showing="funktionenLoading" />
+          <div v-if="!funktionenLoading && funktionen.length === 0" class="text-grey text-center q-py-md">
+            Keine Funktionen zugeordnet
+          </div>
+          <q-list separator>
+            <q-item v-for="f in funktionen" :key="f.id">
+              <q-item-section>
+                <q-item-label>
+                  {{ funktionLabel(f.funktion) }}
+                  <q-badge class="q-ml-sm" color="teal">{{ f.abteilung_name ?? 'Verein' }}</q-badge>
+                </q-item-label>
+                <q-item-label caption>
+                  <span v-if="f.von">ab {{ f.von }}</span>
+                  <span v-if="f.von && f.bis"> · </span>
+                  <span v-if="f.bis">bis {{ f.bis }}</span>
+                  <span v-if="!f.von && !f.bis">Kein Zeitraum angegeben</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="q-gutter-xs">
+                  <q-btn
+                    v-if="auth.hasPermission('mitglieder.write')"
+                    flat dense round icon="edit" color="primary" size="sm"
+                    @click="openFunktionForm(f)"
+                  />
+                  <q-btn
+                    v-if="auth.hasPermission('mitglieder.delete')"
+                    flat dense round icon="delete" color="negative" size="sm"
+                    @click="confirmDeleteFunktion(f)"
+                  />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </q-card-section>
+
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Schließen" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Funktion anlegen / bearbeiten -->
+    <q-dialog v-model="funktionFormOpen" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="text-h6">
+          {{ editingFunktionId ? 'Funktion bearbeiten' : 'Neue Funktion' }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-select
+            v-model="funktionForm.funktion"
+            label="Funktion *"
+            outlined
+            :options="funktionOptionen"
+            emit-value
+            map-options
+            :rules="[(v) => !!v || 'Pflichtfeld']"
+          />
+          <q-select
+            v-model="funktionForm.abteilung_id"
+            label="Abteilung"
+            outlined
+            :options="abteilungOptions"
+            option-value="id"
+            option-label="name"
+            emit-value
+            map-options
+            clearable
+          />
+          <div class="row q-gutter-sm">
+            <q-input v-model="funktionForm.von" label="Von" outlined mask="####-##-##" placeholder="JJJJ-MM-TT" class="col" clearable />
+            <q-input v-model="funktionForm.bis" label="Bis" outlined mask="####-##-##" placeholder="JJJJ-MM-TT" class="col" clearable />
+          </div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="funktionSaving" @click="onSaveFunktion" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -242,6 +352,30 @@ const editingZuordnungId = ref(null)
 const editingZuordnungVersion = ref(null)
 
 const statusOptionen = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+
+const funktionOptionen = [
+  { label: 'Schiedsrichter',  value: 'schiedsrichter' },
+  { label: 'Übungsleiter',    value: 'uebungsleiter' },
+  { label: 'Abteilungsleiter', value: 'abteilungsleiter' },
+]
+
+function funktionLabel(f) {
+  return { schiedsrichter: 'Schiedsrichter', uebungsleiter: 'Übungsleiter', abteilungsleiter: 'Abteilungsleiter' }[f] ?? f
+}
+
+// Funktionen-Dialog
+const funktionenDialogOpen = ref(false)
+const funktionenLoading = ref(false)
+const funktionen = ref([])
+
+// Funktion-Formular
+const funktionFormOpen = ref(false)
+const funktionSaving = ref(false)
+const editingFunktionId = ref(null)
+const editingFunktionVersion = ref(null)
+
+const emptyFunktionForm = () => ({ funktion: null, abteilung_id: null, von: null, bis: null })
+const funktionForm = ref(emptyFunktionForm())
 
 const emptyZuordnungForm = () => ({ abteilung_id: null, status: 'aktiv', von: null, bis: null })
 const zuordnungForm = ref(emptyZuordnungForm())
@@ -401,6 +535,79 @@ function confirmDeleteZuordnung(zuordnung) {
       await api.delete(`/api/mitglieder/${aktivMitglied.value.id}/abteilungen/${zuordnung.id}`)
       $q.notify({ type: 'positive', message: 'Zuordnung entfernt' })
       await loadZuordnungen()
+    } catch {
+      $q.notify({ type: 'negative', message: 'Fehler beim Löschen' })
+    }
+  })
+}
+
+// --- Funktionen-Dialog ---
+
+async function openFunktionenDialog(mitglied) {
+  aktivMitglied.value = mitglied
+  funktionenDialogOpen.value = true
+  await loadFunktionen()
+  await loadAbteilungOptions()
+}
+
+async function loadFunktionen() {
+  funktionenLoading.value = true
+  try {
+    const { data } = await api.get(`/api/mitglieder/${aktivMitglied.value.id}/funktionen`)
+    funktionen.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Fehler beim Laden der Funktionen' })
+  } finally {
+    funktionenLoading.value = false
+  }
+}
+
+function openFunktionForm(funktion) {
+  if (funktion) {
+    editingFunktionId.value = funktion.id
+    editingFunktionVersion.value = funktion.version
+    funktionForm.value = { funktion: funktion.funktion, abteilung_id: funktion.abteilung_id, von: funktion.von, bis: funktion.bis }
+  } else {
+    editingFunktionId.value = null
+    editingFunktionVersion.value = null
+    funktionForm.value = emptyFunktionForm()
+  }
+  funktionFormOpen.value = true
+}
+
+async function onSaveFunktion() {
+  funktionSaving.value = true
+  try {
+    const mitgliedId = aktivMitglied.value.id
+    if (editingFunktionId.value) {
+      await api.put(`/api/mitglieder/${mitgliedId}/funktionen/${editingFunktionId.value}`, {
+        ...funktionForm.value,
+        expected_version: editingFunktionVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${mitgliedId}/funktionen`, funktionForm.value)
+    }
+    $q.notify({ type: 'positive', message: 'Gespeichert' })
+    funktionFormOpen.value = false
+    await loadFunktionen()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
+  } finally {
+    funktionSaving.value = false
+  }
+}
+
+function confirmDeleteFunktion(funktion) {
+  $q.dialog({
+    title: 'Funktion entfernen',
+    message: `Funktion „${funktionLabel(funktion.funktion)}" wirklich entfernen?`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/mitglieder/${aktivMitglied.value.id}/funktionen/${funktion.id}`)
+      $q.notify({ type: 'positive', message: 'Funktion entfernt' })
+      await loadFunktionen()
     } catch {
       $q.notify({ type: 'negative', message: 'Fehler beim Löschen' })
     }

@@ -74,6 +74,12 @@ const routes = [
         meta: { adminOnly: true },
       },
       {
+        path: 'beitraege',
+        name: 'beitraege',
+        component: () => import('pages/BeitragsverwaltungPage.vue'),
+        meta: { permission: 'beitraege.read' },
+      },
+      {
         path: 'tickets',
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),
@@ -83,6 +89,12 @@ const routes = [
         name: 'ticket-verwaltung',
         component: () => import('pages/TicketVerwaltungPage.vue'),
         meta: { permission: 'tickets.bereiche.verwalten' },
+      },
+      {
+        path: 'einstellungen',
+        name: 'einstellungen',
+        component: () => import('pages/EinstellungenPage.vue'),
+        meta: { adminOnly: true },
       },
     ],
   },
