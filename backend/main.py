@@ -7,10 +7,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "vtb_verein"))
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core.config import settings
 from backend.api.auth import router as auth_router
@@ -35,6 +36,16 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.FRONTEND_ORIGINS,
@@ -66,12 +77,19 @@ if _FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
     app.mount("/icons", StaticFiles(directory=str(_FRONTEND_DIST / "icons")), name="icons")
 
+    _FRONTEND_DIST_RESOLVED = _FRONTEND_DIST.resolve()
+
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
-        file = _FRONTEND_DIST / full_path
-        if file.is_file():
-            return FileResponse(str(file))
-        return FileResponse(str(_FRONTEND_DIST / "index.html"))
+        index = _FRONTEND_DIST_RESOLVED / "index.html"
+        try:
+            candidate = (_FRONTEND_DIST_RESOLVED / full_path).resolve()
+            candidate.relative_to(_FRONTEND_DIST_RESOLVED)  # raises ValueError on traversal
+        except (ValueError, OSError):
+            return FileResponse(str(index))
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(index))
 
 
 if __name__ == "__main__":
