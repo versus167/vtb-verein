@@ -57,6 +57,16 @@
         </q-td>
       </template>
 
+      <template #body-cell-last_login="props">
+        <q-td :props="props">
+          <span v-if="props.row.last_login" class="text-caption">
+            {{ formatLastLogin(props.row.last_login) }}
+            <q-tooltip>{{ new Date(props.row.last_login).toLocaleString('de-DE') }}</q-tooltip>
+          </span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
       <template #body-cell-abteilungen="props">
         <q-td :props="props">
           <q-chip v-for="ab in props.row.abteilungen" :key="ab.id" dense size="sm"
@@ -83,6 +93,10 @@
           <q-btn v-if="props.row.mitglied" flat dense round icon="group" color="purple" size="sm"
             @click="openAbteilungenDialog(props.row)">
             <q-tooltip>Abteilungen</q-tooltip>
+          </q-btn>
+          <q-btn v-if="props.row.mitglied" flat dense round icon="badge" color="indigo" size="sm"
+            @click="openFunktionenDialog(props.row)">
+            <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
           <q-btn flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
@@ -295,6 +309,64 @@
     </q-dialog>
 
     <!-- ════════════════════════════════════════════════
+         Funktionen-Dialog
+         ════════════════════════════════════════════════ -->
+    <q-dialog v-model="funktionenOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Funktionen</div>
+          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
+            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <q-inner-loading :showing="funktionenLoading" />
+          <div v-if="!funktionenLoading && funktionen.length === 0"
+            class="text-grey text-center q-py-md">Keine Funktionen zugewiesen.</div>
+          <q-list separator>
+            <q-item v-for="f in funktionen" :key="f.id">
+              <q-item-section>
+                <q-item-label>{{ funktionLabel(f.funktion) }}</q-item-label>
+                <q-item-label caption>
+                  <span v-if="f.abteilung_name" class="q-mr-sm">{{ f.abteilung_name }}</span>
+                  <span v-if="f.von || f.bis">{{ f.von ?? '?' }} – {{ f.bis ?? 'heute' }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row q-gutter-xs">
+                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditFunktion(f)" />
+                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteFunktion(f)" />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <q-btn flat icon="add" label="Funktion hinzufügen" color="primary" class="q-mt-sm"
+            @click="openAddFunktion" />
+          <!-- Formular -->
+          <div v-if="funktionFormOpen" class="q-mt-md q-gutter-sm">
+            <q-select v-model="funktionForm.funktion" :options="funktionOptionen"
+              option-value="value" option-label="label" emit-value map-options
+              label="Funktion *" outlined dense :readonly="!!editingFunktionId" />
+            <q-select v-model="funktionForm.abteilung_id" :options="alleAbteilungen"
+              :option-value="a => a.id" :option-label="a => a.name" emit-value map-options
+              label="Abteilung (leer = vereinsweit)" outlined dense clearable />
+            <div class="row q-gutter-sm">
+              <q-input v-model="funktionForm.von" label="Von" outlined dense type="date" class="col" />
+              <q-input v-model="funktionForm.bis" label="Bis" outlined dense type="date" class="col" />
+            </div>
+            <div class="row q-gutter-sm">
+              <q-btn flat label="Abbrechen" @click="funktionFormOpen = false" />
+              <q-btn unelevated :label="editingFunktionId ? 'Speichern' : 'Hinzufügen'"
+                color="primary" :loading="funktionSaving" @click="onSaveFunktion" />
+            </div>
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- ════════════════════════════════════════════════
          History-Dialog
          ════════════════════════════════════════════════ -->
     <q-dialog v-model="historyOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
@@ -369,7 +441,8 @@ const columns = [
   { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left' },
   { name: 'mitgliedsnr', label: 'Mitgliedsnr.', field: r => r.mitglied?.mitgliedsnummer, align: 'left' },
   { name: 'rolle',       label: 'Rolle',        field: 'role',     align: 'left' },
-  { name: 'status',      label: 'Status',       field: 'active',   align: 'center' },
+  { name: 'status',      label: 'Status',       field: 'active',      align: 'center' },
+  { name: 'last_login',  label: 'Zuletzt aktiv', field: 'last_login', align: 'left' },
   { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
   { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
 ]
@@ -410,6 +483,21 @@ const mitgliedStatusOptions = [
   { label: 'Ausgetreten',     value: 'ausgetreten' },
 ]
 const abteilungZuordnungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+
+function formatLastLogin(iso) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const min  = Math.floor(diff / 60000)
+  if (min < 1)   return 'gerade eben'
+  if (min < 60)  return `vor ${min} Min.`
+  const h = Math.floor(min / 60)
+  if (h < 24)    return `vor ${h} Std.`
+  const d = Math.floor(h / 24)
+  if (d < 30)    return `vor ${d} Tag${d === 1 ? '' : 'en'}`
+  const m = Math.floor(d / 30)
+  if (m < 12)    return `vor ${m} Monat${m === 1 ? '' : 'en'}`
+  const y = Math.floor(d / 365)
+  return `vor ${y} Jahr${y === 1 ? '' : 'en'}`
+}
 
 function rolleLabel(role) {
   return { admin: 'Admin', user: 'Bearbeiter', readonly: 'Nur Lesen', mitglied: 'Mitglied', special: 'Speziell' }[role] ?? role
@@ -665,6 +753,105 @@ async function deleteZuordnung(z) {
   }
 }
 
+// ── Funktionen ─────────────────────────────────────────────
+const funktionenOpen    = ref(false)
+const funktionenLoading = ref(false)
+const funktionen        = ref([])
+const funktionFormOpen  = ref(false)
+const funktionSaving    = ref(false)
+const editingFunktionId      = ref(null)
+const editingFunktionVersion = ref(null)
+const funktionForm      = ref({ funktion: null, abteilung_id: null, von: '', bis: '' })
+
+const funktionOptionen = ref([])
+
+async function loadFunktionOptionen() {
+  try {
+    const { data } = await api.get('/api/funktionen')
+    funktionOptionen.value = data.map(f => ({ label: f.name, value: f.key }))
+  } catch {
+    funktionOptionen.value = []
+  }
+}
+
+function funktionLabel(f) {
+  return funktionOptionen.value.find(o => o.value === f)?.label ?? f
+}
+
+async function openFunktionenDialog(row) {
+  aktivPerson.value = row
+  funktionFormOpen.value = false
+  funktionenOpen.value = true
+  funktionenLoading.value = true
+  try {
+    const [{ data: fns }, { data: ab }] = await Promise.all([
+      api.get(`/api/mitglieder/${row.mitglied.id}/funktionen`),
+      alleAbteilungen.value.length ? Promise.resolve({ data: alleAbteilungen.value }) : api.get('/api/abteilungen/'),
+    ])
+    funktionen.value = fns
+    alleAbteilungen.value = ab
+  } finally {
+    funktionenLoading.value = false
+  }
+}
+
+function openAddFunktion() {
+  editingFunktionId.value = null
+  funktionForm.value = { funktion: null, abteilung_id: null, von: '', bis: '' }
+  funktionFormOpen.value = true
+}
+
+function openEditFunktion(f) {
+  editingFunktionId.value = f.id
+  editingFunktionVersion.value = f.version
+  funktionForm.value = { funktion: f.funktion, abteilung_id: f.abteilung_id, von: f.von ?? '', bis: f.bis ?? '' }
+  funktionFormOpen.value = true
+}
+
+async function onSaveFunktion() {
+  if (!funktionForm.value.funktion) {
+    $q.notify({ type: 'negative', message: 'Bitte eine Funktion auswählen.' })
+    return
+  }
+  funktionSaving.value = true
+  const mitgliedId = aktivPerson.value.mitglied.id
+  try {
+    if (editingFunktionId.value) {
+      await api.put(`/api/mitglieder/${mitgliedId}/funktionen/${editingFunktionId.value}`, {
+        funktion: funktionForm.value.funktion,
+        abteilung_id: funktionForm.value.abteilung_id || null,
+        von: funktionForm.value.von || null,
+        bis: funktionForm.value.bis || null,
+        expected_version: editingFunktionVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${mitgliedId}/funktionen`, {
+        funktion: funktionForm.value.funktion,
+        abteilung_id: funktionForm.value.abteilung_id || null,
+        von: funktionForm.value.von || null,
+        bis: funktionForm.value.bis || null,
+      })
+    }
+    funktionFormOpen.value = false
+    const { data } = await api.get(`/api/mitglieder/${mitgliedId}/funktionen`)
+    funktionen.value = data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  } finally {
+    funktionSaving.value = false
+  }
+}
+
+async function deleteFunktion(f) {
+  const mitgliedId = aktivPerson.value.mitglied.id
+  try {
+    await api.delete(`/api/mitglieder/${mitgliedId}/funktionen/${f.id}`)
+    funktionen.value = funktionen.value.filter(x => x.id !== f.id)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  }
+}
+
 // ── History ────────────────────────────────────────────────
 const historyOpen    = ref(false)
 const historyLoading = ref(false)
@@ -771,5 +958,8 @@ async function openHistoryDialog(row) {
   }
 }
 
-onMounted(loadPersonen)
+onMounted(() => {
+  loadPersonen()
+  loadFunktionOptionen()
+})
 </script>

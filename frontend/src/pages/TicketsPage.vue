@@ -5,8 +5,8 @@
       <div class="text-h5 col">Tickets</div>
       <q-btn
         icon="add"
-        :label="$q.screen.gt.xs ? 'Neues Ticket' : undefined"
-        :round="$q.screen.lt.sm"
+        :label="$q.screen.gt.sm ? 'Neues Ticket' : undefined"
+        :round="$q.screen.lt.md"
         color="primary"
         unelevated
         @click="openCreateDialog"
@@ -38,7 +38,7 @@
     </div>
 
     <!-- ── Mobile: Karten-Liste ── -->
-    <template v-if="$q.screen.lt.sm">
+    <template v-if="$q.screen.lt.md">
       <div v-if="loading" class="row justify-center q-py-xl">
         <q-spinner size="40px" color="primary" />
       </div>

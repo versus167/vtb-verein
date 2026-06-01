@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 from app.models.permission import Permission
-from app.db.mitglied_funktion_repository import VALID_FUNKTIONEN
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(tags=["mitglied-funktionen"])
@@ -44,8 +43,9 @@ def list_funktionen(mitglied_id: int, user: CurrentUser, db: DB):
 @router.post("/mitglieder/{mitglied_id}/funktionen", status_code=status.HTTP_201_CREATED)
 def create_funktion(mitglied_id: int, data: FunktionWrite, user: CurrentUser, db: DB):
     _require_write(user)
-    if data.funktion not in VALID_FUNKTIONEN:
-        raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {VALID_FUNKTIONEN}")
+    valid_keys = db.funktionen.list_keys()
+    if data.funktion not in valid_keys:
+        raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
     try:
         db.get_mitglied(mitglied_id)
     except KeyError:
@@ -61,8 +61,9 @@ def create_funktion(mitglied_id: int, data: FunktionWrite, user: CurrentUser, db
 def update_funktion(mitglied_id: int, funktion_id: int, data: FunktionUpdate,
                     user: CurrentUser, db: DB):
     _require_write(user)
-    if data.funktion not in VALID_FUNKTIONEN:
-        raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {VALID_FUNKTIONEN}")
+    valid_keys = db.funktionen.list_keys()
+    if data.funktion not in valid_keys:
+        raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
     eintrag = db.get_mitglied_funktion(funktion_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Funktionszuordnung nicht gefunden")

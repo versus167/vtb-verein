@@ -3,14 +3,17 @@ PostgreSQL database connection and schema management.
 Rewritten 2026-05-18: sqlite3 → psycopg3, single consolidated schema (v15).
 '''
 
+import logging
 import os
 import bcrypt
 from contextlib import contextmanager
 
+logger = logging.getLogger(__name__)
+
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 class Database:
@@ -53,14 +56,21 @@ class Database:
             cur.execute("SELECT version FROM schema_version WHERE id = 1")
             row = cur.fetchone()
         if row is None:
+            logger.info("Frische Datenbank – Schema v%d wird erstellt …", SCHEMA_VERSION)
             self._create_schema()
+            logger.info("Schema v%d erfolgreich angelegt.", SCHEMA_VERSION)
         elif row['version'] < SCHEMA_VERSION:
+            logger.info("Schema-Version in DB: v%d – Code erwartet v%d. Starte Migrationen …",
+                        row['version'], SCHEMA_VERSION)
             self._run_migrations(row['version'])
+            logger.info("Alle Migrationen abgeschlossen. Schema jetzt v%d.", SCHEMA_VERSION)
         elif row['version'] > SCHEMA_VERSION:
             raise RuntimeError(
                 f"Schema-Version {row['version']} ist neuer als der Code (v{SCHEMA_VERSION}). "
                 f"Bitte Code aktualisieren."
             )
+        else:
+            logger.info("Datenbank bereit. Schema v%d.", SCHEMA_VERSION)
 
     def _run_migrations(self, current_version: int) -> None:
         """Führt alle ausstehenden Migrationen sequenziell aus.
@@ -68,6 +78,7 @@ class Database:
         schema_version als letzten Schritt — bei Fehler vollständiger Rollback."""
         migration_map = {
             19: self._migrate_v18_to_v19,
+            20: self._migrate_v19_to_v20,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -76,9 +87,9 @@ class Database:
                     f"Keine Migrationsfunktion für v{target} vorhanden. "
                     f"Bitte Code aktualisieren."
                 )
-            print(f"⬆️  Schema-Migration v{target - 1} → v{target} …", flush=True)
+            logger.info("Schema-Migration v%d → v%d wird ausgeführt …", target - 1, target)
             fn()
-            print(f"✅ Migration v{target} abgeschlossen", flush=True)
+            logger.info("Schema-Migration v%d abgeschlossen.", target)
 
     def _migrate_v18_to_v19(self) -> None:
         with self.cursor() as cur:
@@ -202,6 +213,42 @@ class Database:
                 END; $$;
             """)
             cur.execute("UPDATE schema_version SET version = 19 WHERE id = 1")
+
+    def _migrate_v19_to_v20(self) -> None:
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS funktion (
+                  id            SERIAL PRIMARY KEY,
+                  key           TEXT NOT NULL,
+                  name          TEXT NOT NULL,
+                  beschreibung  TEXT,
+                  version       INTEGER NOT NULL DEFAULT 1,
+                  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  created_by    TEXT,
+                  updated_at    TIMESTAMP,
+                  updated_by    TEXT,
+                  deleted_at    TIMESTAMP,
+                  deleted_by    TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_funktion_key_active
+                ON funktion (key)
+                WHERE deleted_at IS NULL
+            """)
+            for key, name in [
+                ('schiedsrichter',   'Schiedsrichter'),
+                ('uebungsleiter',    'Übungsleiter'),
+                ('abteilungsleiter', 'Abteilungsleiter'),
+            ]:
+                cur.execute("""
+                    INSERT INTO funktion (key, name, created_by)
+                    SELECT %s, %s, 'system'
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM funktion WHERE key = %s AND deleted_at IS NULL
+                    )
+                """, (key, name, key))
+            cur.execute("UPDATE schema_version SET version = 20 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema (v15) auf einer frischen Datenbank."""
@@ -1628,7 +1675,7 @@ class Database:
             RETURNING id
         """, ('admin', 'admin@verein.local', pw_hash))
         admin_id = cur.fetchone()['id']
-        print("⚠️  Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
+        logger.warning("Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
 
         for perm in _ADMIN_PERMS:
             cur.execute("""

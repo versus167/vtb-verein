@@ -90,6 +90,12 @@ const routes = [
         component: () => import('pages/TicketVerwaltungPage.vue'),
         meta: { permission: 'tickets.bereiche.verwalten' },
       },
+      {
+        path: 'einstellungen',
+        name: 'einstellungen',
+        component: () => import('pages/EinstellungenPage.vue'),
+        meta: { adminOnly: true },
+      },
     ],
   },
   {

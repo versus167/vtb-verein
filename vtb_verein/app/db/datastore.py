@@ -40,6 +40,7 @@ from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository, MitgliedFunktion
+from app.db.funktion_repository import FunktionRepository
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.models.mitglied import Mitglied
@@ -61,6 +62,7 @@ class VereinsDB:
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._mitglied_abteilung_repo = MitgliedAbteilungRepository(self.conn)
         self._mitglied_funktion_repo = MitgliedFunktionRepository(self.conn)
+        self._funktion_repo = FunktionRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
@@ -159,6 +161,10 @@ class VereinsDB:
     def ticket_bereich_berechtigungen(self) -> TicketBereichBerechtigungRepository:
         """Zugriff auf TicketBereichBerechtigungRepository."""
         return self._ticket_bereich_berechtigung_repo
+
+    @property
+    def funktionen(self) -> FunktionRepository:
+        return self._funktion_repo
 
     def cursor(self):
         return self._database.cursor()

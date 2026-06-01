@@ -247,13 +247,19 @@ const kannAbrechnen    = computed(() => auth.hasPermission('beitraege.abrechnen'
 // ── Optionen ───────────────────────────────────────────────
 const abteilungOptions = ref([])
 const kasseOptions = ref([])
-const funktionOptionen = [
-  { label: 'Schiedsrichter',   value: 'schiedsrichter' },
-  { label: 'Übungsleiter',     value: 'uebungsleiter' },
-  { label: 'Abteilungsleiter', value: 'abteilungsleiter' },
-]
+const funktionOptionen = ref([])
+
+async function loadFunktionOptionen() {
+  try {
+    const { data } = await api.get('/api/funktionen')
+    funktionOptionen.value = data.map(f => ({ label: f.name, value: f.key }))
+  } catch {
+    funktionOptionen.value = []
+  }
+}
+
 function funktionLabel(f) {
-  return { schiedsrichter: 'Schiedsrichter', uebungsleiter: 'Übungsleiter', abteilungsleiter: 'Abteilungsleiter' }[f] ?? f
+  return funktionOptionen.value.find(o => o.value === f)?.label ?? f
 }
 const turnusOptions = [
   { label: 'Monatlich',     value: 'monat' },
@@ -462,6 +468,6 @@ async function loadOptionen() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRegeln(), loadOptionen()])
+  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen()])
 })
 </script>

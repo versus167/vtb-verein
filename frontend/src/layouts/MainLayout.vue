@@ -115,6 +115,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.user?.role === 'admin'"
+            clickable
+            :to="{ name: 'einstellungen' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="tune" /></q-item-section>
+            <q-item-section>Einstellungen</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="false"
             clickable
             :to="{ name: 'users' }"
@@ -176,7 +186,7 @@ import { api } from 'src/boot/axios'
 const router = useRouter()
 const auth = useAuthStore()
 const $q = useQuasar()
-const drawer = ref(!$q.platform.is.mobile)
+const drawer = ref($q.screen.gt.sm)
 
 const darkModeIcon = computed(() => {
   const v = $q.dark.mode

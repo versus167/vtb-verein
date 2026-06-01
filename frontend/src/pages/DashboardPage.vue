@@ -18,14 +18,14 @@
       </div>
 
       <div
-        v-if="auth.hasPermission('mitglieder.read')"
+        v-if="auth.hasPermission('users.manage') || auth.hasPermission('mitglieder.read')"
         class="col-6 col-sm-4 col-md-3"
       >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'mitglieder' })">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'personen' })">
           <q-card-section class="text-center">
-            <q-icon name="group" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Mitglieder</div>
-            <div class="text-caption text-grey">Mitglieder verwalten</div>
+            <q-icon name="people" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Personen</div>
+            <div class="text-caption text-grey">Personen verwalten</div>
           </q-card-section>
         </q-card>
       </div>
