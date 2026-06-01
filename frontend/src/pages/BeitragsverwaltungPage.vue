@@ -40,6 +40,12 @@
                 <q-chip v-if="r.bedingung_abteilung_status" dense size="sm" color="orange" text-color="white">
                   Status: {{ r.bedingung_abteilung_status }}
                 </q-chip>
+                <q-chip v-if="r.bedingung_funktion" dense size="sm" color="indigo" text-color="white">
+                  Funktion: {{ funktionLabel(r.bedingung_funktion) }}
+                </q-chip>
+                <q-chip v-if="r.ausnahme_funktion" dense size="sm" color="deep-orange" text-color="white">
+                  Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}
+                </q-chip>
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
                   Umbuchung: {{ r.zahler_kasse_name }}
                 </q-chip>
@@ -185,7 +191,25 @@
           </div>
           <q-input v-model="regelForm.bedingung_abteilung_status"
             label="Nur für Abteilungs-Status (kommagetrennt, leer = alle)"
-            outlined dense hint="z.B. schiedsrichter" />
+            outlined dense />
+          <q-select
+            v-if="regelForm.abteilung_id"
+            v-model="regelForm.bedingung_funktion"
+            :options="funktionOptionen" emit-value map-options
+            label="Nur für Funktion (leer = alle)"
+            outlined dense clearable />
+          <q-select
+            v-model="regelForm.ausnahme_funktion"
+            :options="funktionOptionen" emit-value map-options
+            label="Ausnahme: Funktion ausschließen (leer = keine)"
+            outlined dense clearable />
+          <q-select
+            v-if="regelForm.ausnahme_funktion"
+            v-model="regelForm.ausnahme_funktion_abteilung_id"
+            :options="abteilungOptions" option-value="id" option-label="name"
+            emit-value map-options
+            label="Ausnahme gilt für Abteilung (leer = alle)"
+            outlined dense clearable />
           <q-select v-model="regelForm.zahler_typ"
             :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt (Umbuchung)',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
@@ -223,6 +247,14 @@ const kannAbrechnen    = computed(() => auth.hasPermission('beitraege.abrechnen'
 // ── Optionen ───────────────────────────────────────────────
 const abteilungOptions = ref([])
 const kasseOptions = ref([])
+const funktionOptionen = [
+  { label: 'Schiedsrichter',   value: 'schiedsrichter' },
+  { label: 'Übungsleiter',     value: 'uebungsleiter' },
+  { label: 'Abteilungsleiter', value: 'abteilungsleiter' },
+]
+function funktionLabel(f) {
+  return { schiedsrichter: 'Schiedsrichter', uebungsleiter: 'Übungsleiter', abteilungsleiter: 'Abteilungsleiter' }[f] ?? f
+}
 const turnusOptions = [
   { label: 'Monatlich',     value: 'monat' },
   { label: 'Vierteljährlich', value: 'quartal' },
@@ -263,6 +295,9 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: r.betrag_pro_monat, einzug_turnus: r.einzug_turnus,
     gueltig_ab: r.gueltig_ab, gueltig_bis: r.gueltig_bis ?? '',
     bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
+    bedingung_funktion: r.bedingung_funktion ?? null,
+    ausnahme_funktion: r.ausnahme_funktion ?? null,
+    ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
     zahler_typ: r.zahler_typ, zahler_kasse_id: r.zahler_kasse_id,
     expected_version: r.version,
   } : {
@@ -270,6 +305,9 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: 0, einzug_turnus: 'quartal',
     gueltig_ab: heute, gueltig_bis: '',
     bedingung_abteilung_status: '',
+    bedingung_funktion: null,
+    ausnahme_funktion: null,
+    ausnahme_funktion_abteilung_id: null,
     zahler_typ: 'mitglied', zahler_kasse_id: null,
   }
   regelDialogOpen.value = true
@@ -284,6 +322,9 @@ async function saveRegel() {
       betrag_pro_monat: Number(regelForm.value.betrag_pro_monat),
       gueltig_bis: regelForm.value.gueltig_bis || null,
       bedingung_abteilung_status: regelForm.value.bedingung_abteilung_status || null,
+      bedingung_funktion: regelForm.value.bedingung_funktion || null,
+      ausnahme_funktion: regelForm.value.ausnahme_funktion || null,
+      ausnahme_funktion_abteilung_id: regelForm.value.ausnahme_funktion_abteilung_id || null,
     }
     if (editingRegel.value?.id) {
       await api.put(`/api/beitraege/regeln/${editingRegel.value.id}`, payload)

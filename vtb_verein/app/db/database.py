@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class Database:
@@ -54,42 +54,154 @@ class Database:
             row = cur.fetchone()
         if row is None:
             self._create_schema()
-            self._stamp_alembic_head()
         elif row['version'] < SCHEMA_VERSION:
-            self._run_alembic_migrations()
+            self._run_migrations(row['version'])
         elif row['version'] > SCHEMA_VERSION:
             raise RuntimeError(
                 f"Schema-Version {row['version']} ist neuer als der Code (v{SCHEMA_VERSION}). "
                 f"Bitte Code aktualisieren."
             )
 
-    def _alembic_config(self):
-        import os
-        from alembic.config import Config
-        script_location = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../../backend/alembic")
-        )
-        cfg = Config()
-        cfg.set_main_option("script_location", script_location)
-        # env.py liest VTB_DATABASE_URL aus der Umgebung – sicherstellen dass gesetzt
-        os.environ.setdefault("VTB_DATABASE_URL", self._database_url)
-        return cfg
+    def _run_migrations(self, current_version: int) -> None:
+        """Führt alle ausstehenden Migrationen sequenziell aus.
+        Jede Migration läuft in einer eigenen Transaktion und aktualisiert
+        schema_version als letzten Schritt — bei Fehler vollständiger Rollback."""
+        migration_map = {
+            19: self._migrate_v18_to_v19,
+        }
+        for target in range(current_version + 1, SCHEMA_VERSION + 1):
+            fn = migration_map.get(target)
+            if fn is None:
+                raise RuntimeError(
+                    f"Keine Migrationsfunktion für v{target} vorhanden. "
+                    f"Bitte Code aktualisieren."
+                )
+            print(f"⬆️  Schema-Migration v{target - 1} → v{target} …", flush=True)
+            fn()
+            print(f"✅ Migration v{target} abgeschlossen", flush=True)
 
-    def _run_alembic_migrations(self):
-        from alembic import command
-        print(f"⬆️  Schema-Migration von v{self._current_version()} → v{SCHEMA_VERSION} …")
-        command.upgrade(self._alembic_config(), "head")
-        print(f"✅ Migration abgeschlossen (Schema v{SCHEMA_VERSION})")
-
-    def _stamp_alembic_head(self):
-        from alembic import command
-        command.stamp(self._alembic_config(), "head")
-
-    def _current_version(self) -> int:
+    def _migrate_v18_to_v19(self) -> None:
         with self.cursor() as cur:
-            cur.execute("SELECT version FROM schema_version WHERE id = 1")
-            row = cur.fetchone()
-        return row['version'] if row else 0
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_funktion (
+                  id             SERIAL PRIMARY KEY,
+                  mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+                  abteilung_id   INTEGER REFERENCES abteilung(id),
+                  funktion       TEXT NOT NULL,
+                  von            TEXT,
+                  bis            TEXT,
+                  version        INTEGER NOT NULL DEFAULT 1,
+                  created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_funktion_history (
+                  id             INTEGER NOT NULL,
+                  version        INTEGER NOT NULL,
+                  mitglied_id    INTEGER,
+                  abteilung_id   INTEGER,
+                  funktion       TEXT,
+                  von            TEXT,
+                  bis            TEXT,
+                  created_at     TEXT,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO mitglied_funktion_history (
+                        id, version, mitglied_id, abteilung_id, funktion, von, bis,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.funktion, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_funktion_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO mitglied_funktion_history (
+                            id, version, mitglied_id, abteilung_id, funktion, von, bis,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.funktion, NEW.von, NEW.bis,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_mitglied_funktion_audit_insert
+                AFTER INSERT ON mitglied_funktion
+                FOR EACH ROW EXECUTE FUNCTION fn_mitglied_funktion_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_mitglied_funktion_audit_update
+                AFTER UPDATE ON mitglied_funktion
+                FOR EACH ROW EXECUTE FUNCTION fn_mitglied_funktion_audit_update();
+            """)
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS bedingung_funktion TEXT")
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS ausnahme_funktion TEXT")
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS ausnahme_funktion_abteilung_id INTEGER REFERENCES abteilung(id)")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS bedingung_funktion TEXT")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS ausnahme_funktion TEXT")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS ausnahme_funktion_abteilung_id INTEGER")
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ, zahler_kasse_id,
+                        bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ, zahler_kasse_id,
+                            bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ, NEW.zahler_kasse_id,
+                            NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("UPDATE schema_version SET version = 19 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema (v15) auf einer frischen Datenbank."""
@@ -239,6 +351,41 @@ class Database:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_funktion (
+              id             SERIAL PRIMARY KEY,
+              mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+              abteilung_id   INTEGER REFERENCES abteilung(id),
+              funktion       TEXT NOT NULL,
+              von            TEXT,
+              bis            TEXT,
+              version        INTEGER NOT NULL DEFAULT 1,
+              created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_funktion_history (
+              id             INTEGER NOT NULL,
+              version        INTEGER NOT NULL,
+              mitglied_id    INTEGER,
+              abteilung_id   INTEGER,
+              funktion       TEXT,
+              von            TEXT,
+              bis            TEXT,
+              created_at     TEXT,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS beitragsregel (
               id                           SERIAL PRIMARY KEY,
               name                         TEXT NOT NULL,
@@ -249,6 +396,9 @@ class Database:
               gueltig_bis                  TEXT,
               bedingung_raw                TEXT,
               bedingung_abteilung_status   TEXT,
+              bedingung_funktion           TEXT,
+              ausnahme_funktion            TEXT,
+              ausnahme_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
               zahler_typ                   TEXT NOT NULL DEFAULT 'mitglied',
               zahler_kasse_id              INTEGER REFERENCES kassen(id),
               version        INTEGER NOT NULL DEFAULT 1,
@@ -272,6 +422,9 @@ class Database:
               gueltig_bis                  TEXT,
               bedingung_raw                TEXT,
               bedingung_abteilung_status   TEXT,
+              bedingung_funktion           TEXT,
+              ausnahme_funktion            TEXT,
+              ausnahme_funktion_abteilung_id INTEGER,
               zahler_typ                   TEXT,
               zahler_kasse_id              INTEGER,
               created_at     TEXT,
@@ -1235,17 +1388,47 @@ class Database:
         """)
 
         cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO mitglied_funktion_history (
+                    id, version, mitglied_id, abteilung_id, funktion, von, bis,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.funktion, NEW.von, NEW.bis,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_funktion_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO mitglied_funktion_history (
+                        id, version, mitglied_id, abteilung_id, funktion, von, bis,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.funktion, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
             CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO beitragsregel_history (
                     id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                     zahler_typ, zahler_kasse_id,
+                    bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                     NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                     NEW.zahler_typ, NEW.zahler_kasse_id,
+                    NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -1259,11 +1442,13 @@ class Database:
                         id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                         gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                         zahler_typ, zahler_kasse_id,
+                        bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                         NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                         NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -1315,6 +1500,8 @@ class Database:
             ('trig_abteilung_audit_update',                         'UPDATE', 'abteilung',                         'fn_abteilung_audit_update'),
             ('trig_mitglied_abteilung_audit_insert',                'INSERT', 'mitglied_abteilung',                'fn_mitglied_abteilung_audit_insert'),
             ('trig_mitglied_abteilung_audit_update',                'UPDATE', 'mitglied_abteilung',                'fn_mitglied_abteilung_audit_update'),
+            ('trig_mitglied_funktion_audit_insert',                 'INSERT', 'mitglied_funktion',                 'fn_mitglied_funktion_audit_insert'),
+            ('trig_mitglied_funktion_audit_update',                 'UPDATE', 'mitglied_funktion',                 'fn_mitglied_funktion_audit_update'),
             ('trig_users_audit_insert',                             'INSERT', 'users',                             'fn_users_audit_insert'),
             ('trig_users_audit_update',                             'UPDATE', 'users',                             'fn_users_audit_update'),
             ('trig_auth_tokens_audit_insert',                       'INSERT', 'auth_tokens',                       'fn_auth_tokens_audit_insert'),

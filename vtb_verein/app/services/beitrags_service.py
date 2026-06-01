@@ -179,53 +179,55 @@ class BeitragsService:
         Ermittelt alle Mitglieder auf die eine Regel zutrifft.
 
         - Vereinsbeitrag (abteilung_id IS NULL): alle aktiven Vereinsmitglieder
-        - Abteilungsbeitrag: Mitglieder der Abteilung, gefiltert nach Status
+        - Abteilungsbeitrag: Mitglieder der Abteilung, gefiltert nach Status/Funktion
+        - ausnahme_funktion: Mitglieder mit dieser Funktion werden immer ausgeschlossen
+        - bedingung_funktion: nur Mitglieder mit dieser Funktion werden eingeschlossen
         """
-        status_filter = regel.bedingung_status_liste  # None = alle
+        joins: list[str] = []
+        where: list[str] = ["m.deleted_at IS NULL"]
+        params: list = []
 
+        if regel.abteilung_id is None:
+            where.append("m.austrittsdatum IS NULL")
+        else:
+            joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
+            where += ["ma.abteilung_id = %s", "ma.deleted_at IS NULL",
+                      "(ma.bis IS NULL OR ma.bis >= CURRENT_DATE)"]
+            params.append(regel.abteilung_id)
+
+            status_filter = regel.bedingung_status_liste
+            if status_filter:
+                placeholders = ','.join(['%s'] * len(status_filter))
+                where.append(f"ma.status IN ({placeholders})")
+                params.extend(status_filter)
+
+        if regel.bedingung_funktion:
+            joins.append("JOIN mitglied_funktion mf_incl ON mf_incl.mitglied_id = m.id")
+            where += ["mf_incl.funktion = %s", "mf_incl.deleted_at IS NULL",
+                      "(mf_incl.bis IS NULL OR mf_incl.bis >= CURRENT_DATE)"]
+            params.append(regel.bedingung_funktion)
+            if regel.abteilung_id is not None:
+                where.append("mf_incl.abteilung_id = %s")
+                params.append(regel.abteilung_id)
+
+        if regel.ausnahme_funktion:
+            excl = ["mf_excl.mitglied_id = m.id", "mf_excl.funktion = %s",
+                    "mf_excl.deleted_at IS NULL", "(mf_excl.bis IS NULL OR mf_excl.bis >= CURRENT_DATE)"]
+            params.append(regel.ausnahme_funktion)
+            if regel.ausnahme_funktion_abteilung_id:
+                excl.append("mf_excl.abteilung_id = %s")
+                params.append(regel.ausnahme_funktion_abteilung_id)
+            where.append(f"NOT EXISTS (SELECT 1 FROM mitglied_funktion mf_excl WHERE {' AND '.join(excl)})")
+
+        sql = f"""
+            SELECT DISTINCT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber
+            FROM mitglied m
+            {' '.join(joins)}
+            WHERE {' AND '.join(where)}
+            ORDER BY m.nachname, m.vorname
+        """
         with self.db.conn.cursor() as cur:
-            if regel.abteilung_id is None:
-                # Vereinsbeitrag: alle aktiven Mitglieder
-                cur.execute(
-                    """
-                    SELECT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber
-                    FROM mitglied m
-                    WHERE m.deleted_at IS NULL
-                      AND m.austrittsdatum IS NULL
-                    ORDER BY m.nachname, m.vorname
-                    """
-                )
-            else:
-                if status_filter:
-                    placeholders = ','.join(['%s'] * len(status_filter))
-                    cur.execute(
-                        f"""
-                        SELECT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber
-                        FROM mitglied m
-                        JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id
-                        WHERE m.deleted_at IS NULL
-                          AND ma.abteilung_id = %s
-                          AND ma.deleted_at IS NULL
-                          AND ma.status IN ({placeholders})
-                          AND (ma.bis IS NULL OR ma.bis >= CURRENT_DATE)
-                        ORDER BY m.nachname, m.vorname
-                        """,
-                        (regel.abteilung_id, *status_filter),
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber
-                        FROM mitglied m
-                        JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id
-                        WHERE m.deleted_at IS NULL
-                          AND ma.abteilung_id = %s
-                          AND ma.deleted_at IS NULL
-                          AND (ma.bis IS NULL OR ma.bis >= CURRENT_DATE)
-                        ORDER BY m.nachname, m.vorname
-                        """,
-                        (regel.abteilung_id,),
-                    )
+            cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
 
     def _erstelle_umbuchung(

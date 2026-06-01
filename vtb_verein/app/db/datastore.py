@@ -39,6 +39,7 @@ from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
+from app.db.mitglied_funktion_repository import MitgliedFunktionRepository, MitgliedFunktion
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.models.mitglied import Mitglied
@@ -59,6 +60,7 @@ class VereinsDB:
         self._mitglied_repo = MitgliedRepository(self.conn)
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._mitglied_abteilung_repo = MitgliedAbteilungRepository(self.conn)
+        self._mitglied_funktion_repo = MitgliedFunktionRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
@@ -267,6 +269,29 @@ class VereinsDB:
 
     def mitglied_abteilung_exists_active(self, mitglied_id: int, abteilung_id: int) -> bool:
         return self._mitglied_abteilung_repo.exists_active(mitglied_id, abteilung_id)
+
+    def list_mitglied_funktionen(self, mitglied_id: int) -> list[MitgliedFunktion]:
+        return self._mitglied_funktion_repo.list_for_mitglied(mitglied_id)
+
+    def get_mitglied_funktion(self, id: int) -> Optional[MitgliedFunktion]:
+        return self._mitglied_funktion_repo.get(id)
+
+    def create_mitglied_funktion(self, mitglied_id: int, abteilung_id: Optional[int],
+                                  funktion: str, von: Optional[str], bis: Optional[str],
+                                  created_by: str) -> MitgliedFunktion:
+        return self._mitglied_funktion_repo.create(
+            mitglied_id, abteilung_id, funktion, von, bis, created_by
+        )
+
+    def update_mitglied_funktion(self, id: int, abteilung_id: Optional[int], funktion: str,
+                                  von: Optional[str], bis: Optional[str],
+                                  updated_by: str, expected_version: int) -> bool:
+        return self._mitglied_funktion_repo.update(
+            id, abteilung_id, funktion, von, bis, updated_by, expected_version
+        )
+
+    def mark_mitglied_funktion_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._mitglied_funktion_repo.mark_deleted(id, deleted_by)
 
     # -----------------------------------
     # User Operations
