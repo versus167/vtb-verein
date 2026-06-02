@@ -51,6 +51,7 @@ def login(
         )
     expire = timedelta(days=30) if remember_me else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     token = create_access_token(user.id, expires_delta=expire)
+    db.update_last_login(user.id)
     return Token(
         access_token=token,
         id=user.id,
@@ -66,6 +67,7 @@ class OwnPasswordChange(BaseModel):
 
 @router.get("/me", response_model=UserInfo)
 def get_me(user: CurrentUser, db: DB):
+    db.update_last_login(user.id)
     fresh = db.get_user_by_id(user.id)
     return UserInfo(
         id=fresh.id,
