@@ -72,6 +72,11 @@ app.include_router(uploads_router, prefix="/api")
 
 @app.on_event("startup")
 def startup():
+    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            handler.setFormatter(fmt)
+
     # app.* Logger in den uvicorn-Handler einhängen
     logging.getLogger("app").setLevel(logging.INFO)
     logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
