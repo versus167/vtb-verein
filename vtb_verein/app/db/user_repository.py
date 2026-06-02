@@ -49,7 +49,7 @@ class UserRepository(BaseRepository):
                 """SELECT id, username, email, password_hash, role, active, last_login,
                           version, created_at, created_by, updated_at, updated_by,
                           matrix_id, preferred_contact
-                   FROM users WHERE username = %s AND deleted_at IS NULL""",
+                   FROM users WHERE LOWER(username) = LOWER(%s) AND deleted_at IS NULL""",
                 (username,)
             )
             row = cur.fetchone()
