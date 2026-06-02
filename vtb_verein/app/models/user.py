@@ -42,16 +42,13 @@ class User:
         return permission in self.permissions
 
     def can_manage_users(self) -> bool:
-        """Prüft ob User Benutzerverwaltung durchführen darf."""
         from app.models.permission import Permission
-        return self.has_permission(Permission.USERS_MANAGE)
+        return self.has_permission(Permission.PERSONEN_PERMISSIONS)
 
     def can_edit(self) -> bool:
-        """Prüft ob User Mitgliedsdaten bearbeiten darf."""
         from app.models.permission import Permission
-        return self.has_permission(Permission.MITGLIEDER_WRITE)
+        return self.has_permission(Permission.PERSONEN_WRITE)
 
     def can_view(self) -> bool:
-        """Prüft ob User Mitgliedsdaten ansehen darf."""
         from app.models.permission import Permission
-        return self.active and self.has_permission(Permission.MITGLIEDER_READ)
+        return self.active and self.has_permission(Permission.PERSONEN_READ)

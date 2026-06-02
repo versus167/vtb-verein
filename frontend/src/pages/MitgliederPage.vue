@@ -3,7 +3,7 @@
     <div class="row items-center q-mb-md">
       <div class="text-h5 col">Mitglieder</div>
       <q-btn
-        v-if="auth.hasPermission('mitglieder.write')"
+        v-if="auth.hasPermission('personen.write')"
         label="Neu"
         icon="add"
         color="primary"
@@ -58,7 +58,7 @@
             <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
           <q-btn
-            v-if="auth.hasPermission('mitglieder.delete')"
+            v-if="auth.hasPermission('personen.delete')"
             flat dense round icon="delete" color="negative" size="sm"
             @click="confirmDelete(props.row)"
           >
@@ -122,7 +122,7 @@
             <span class="text-weight-regular">{{ aktivMitglied?.vorname }} {{ aktivMitglied?.nachname }}</span>
           </div>
           <q-btn
-            v-if="auth.hasPermission('mitglieder.write')"
+            v-if="auth.hasPermission('personen.write')"
             label="Hinzufügen"
             icon="add"
             color="primary"
@@ -155,12 +155,12 @@
               <q-item-section side>
                 <div class="q-gutter-xs">
                   <q-btn
-                    v-if="auth.hasPermission('mitglieder.write')"
+                    v-if="auth.hasPermission('personen.write')"
                     flat dense round icon="edit" color="primary" size="sm"
                     @click="openZuordnungForm(z)"
                   />
                   <q-btn
-                    v-if="auth.hasPermission('mitglieder.delete')"
+                    v-if="auth.hasPermission('personen.delete')"
                     flat dense round icon="delete" color="negative" size="sm"
                     @click="confirmDeleteZuordnung(z)"
                   />
@@ -224,7 +224,7 @@
             <span class="text-weight-regular">{{ aktivMitglied?.vorname }} {{ aktivMitglied?.nachname }}</span>
           </div>
           <q-btn
-            v-if="auth.hasPermission('mitglieder.write')"
+            v-if="auth.hasPermission('personen.write')"
             label="Hinzufügen"
             icon="add"
             color="primary"
@@ -257,12 +257,12 @@
               <q-item-section side>
                 <div class="q-gutter-xs">
                   <q-btn
-                    v-if="auth.hasPermission('mitglieder.write')"
+                    v-if="auth.hasPermission('personen.write')"
                     flat dense round icon="edit" color="primary" size="sm"
                     @click="openFunktionForm(f)"
                   />
                   <q-btn
-                    v-if="auth.hasPermission('mitglieder.delete')"
+                    v-if="auth.hasPermission('personen.delete')"
                     flat dense round icon="delete" color="negative" size="sm"
                     @click="confirmDeleteFunktion(f)"
                   />

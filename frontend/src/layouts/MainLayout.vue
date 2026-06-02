@@ -56,7 +56,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('users.manage') || auth.hasPermission('mitglieder.read')"
+            v-if="auth.hasPermission('personen.read')"
             clickable
             :to="{ name: 'personen' }"
             active-class="bg-primary text-white"

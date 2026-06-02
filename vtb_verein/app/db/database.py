@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 class Database:
@@ -80,6 +80,7 @@ class Database:
             18: self._migrate_v17_to_v18,
             19: self._migrate_v18_to_v19,
             20: self._migrate_v19_to_v20,
+            21: self._migrate_v20_to_v21,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -360,6 +361,54 @@ class Database:
                     )
                 """, (key, name, key))
             cur.execute("UPDATE schema_version SET version = 20 WHERE id = 1")
+
+    def _migrate_v20_to_v21(self) -> None:
+        """Benennt Permissions von mitglieder.*/users.* auf personen.* um."""
+        mapping = [
+            ('mitglieder.read',   'personen.read'),
+            ('mitglieder.write',  'personen.write'),
+            ('mitglieder.delete', 'personen.delete'),
+            ('users.manage',      'personen.permissions'),
+            ('users.read',        'personen.read'),
+        ]
+        with self.cursor() as cur:
+            for old, new in mapping:
+                # Neue Permission anlegen wo sie noch nicht existiert
+                cur.execute("""
+                    INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                    SELECT user_id, %s, created_by, created_by
+                    FROM user_permissions
+                    WHERE permission = %s
+                      AND deleted_at IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_permissions up2
+                          WHERE up2.user_id = user_permissions.user_id
+                            AND up2.permission = %s
+                            AND up2.deleted_at IS NULL
+                      )
+                """, (new, old, new))
+                # Alte Permission soft-deleten
+                cur.execute("""
+                    UPDATE user_permissions
+                    SET deleted_at = CURRENT_TIMESTAMP, deleted_by = 'migration_v21'
+                    WHERE permission = %s AND deleted_at IS NULL
+                """, (old,))
+            # users.manage-User bekommen auch personen.read/write/delete
+            for perm in ('personen.read', 'personen.write', 'personen.delete'):
+                cur.execute("""
+                    INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                    SELECT DISTINCT user_id, %s, 'migration_v21', 'migration_v21'
+                    FROM user_permissions
+                    WHERE permission = 'personen.permissions'
+                      AND deleted_at IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_permissions up2
+                          WHERE up2.user_id = user_permissions.user_id
+                            AND up2.permission = %s
+                            AND up2.deleted_at IS NULL
+                      )
+                """, (perm, perm))
+            cur.execute("UPDATE schema_version SET version = 21 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema (v15) auf einer frischen Datenbank."""
@@ -1769,11 +1818,10 @@ class Database:
 
     def _seed_data(self, cur):
         _ADMIN_PERMS = {
-            'mitglieder.read', 'mitglieder.write', 'mitglieder.delete',
+            'personen.read', 'personen.write', 'personen.delete', 'personen.permissions',
             'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
-            'beitraege.read', 'beitraege.write',
+            'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
             'berichte.read', 'berichte.export',
-            'users.read', 'users.manage',
             'system.config',
             'tickets.access',
             'tickets.bereiche_verwalten',

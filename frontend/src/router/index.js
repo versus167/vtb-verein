@@ -31,7 +31,7 @@ const routes = [
         path: 'mitglieder',
         name: 'mitglieder',
         component: () => import('pages/MitgliederPage.vue'),
-        meta: { permission: 'mitglieder.read' },
+        meta: { permission: 'personen.read' },
       },
       {
         path: 'abteilungen',
@@ -43,19 +43,19 @@ const routes = [
         path: 'users',
         name: 'users',
         component: () => import('pages/UsersPage.vue'),
-        meta: { permission: 'users.manage' },
+        meta: { permission: 'personen.read' },
       },
       {
         path: 'personen',
         name: 'personen',
         component: () => import('pages/PersonenPage.vue'),
-        meta: { permission: 'users.manage' },
+        meta: { permission: 'personen.read' },
       },
       {
         path: 'users/:id/permissions',
         name: 'user-permissions',
         component: () => import('pages/UserPermissionsPage.vue'),
-        meta: { permission: 'users.manage' },
+        meta: { permission: 'personen.read' },
       },
       {
         path: 'kassenbuch',

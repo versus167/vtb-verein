@@ -13,10 +13,11 @@ from dataclasses import dataclass
 class Permission:
     """Alle verfügbaren globalen Permissions als Konstanten."""
 
-    # --- Mitglieder ---
-    MITGLIEDER_READ   = 'mitglieder.read'
-    MITGLIEDER_WRITE  = 'mitglieder.write'
-    MITGLIEDER_DELETE = 'mitglieder.delete'
+    # --- Personen (Mitglieder + Benutzer) ---
+    PERSONEN_READ        = 'personen.read'
+    PERSONEN_WRITE       = 'personen.write'
+    PERSONEN_DELETE      = 'personen.delete'
+    PERSONEN_PERMISSIONS = 'personen.permissions'
 
     # --- Abteilungen ---
     ABTEILUNGEN_READ   = 'abteilungen.read'
@@ -31,10 +32,6 @@ class Permission:
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'
-
-    # --- Benutzerverwaltung ---
-    USERS_READ   = 'users.read'
-    USERS_MANAGE = 'users.manage'
 
     # --- System ---
     SYSTEM_CONFIG = 'system.config'
@@ -78,9 +75,9 @@ class Permission:
 
         if role == 'user':
             return {
-                cls.MITGLIEDER_READ,
-                cls.MITGLIEDER_WRITE,
-                cls.MITGLIEDER_DELETE,
+                cls.PERSONEN_READ,
+                cls.PERSONEN_WRITE,
+                cls.PERSONEN_DELETE,
                 cls.ABTEILUNGEN_READ,
                 cls.ABTEILUNGEN_WRITE,
                 cls.ABTEILUNGEN_DELETE,
@@ -88,14 +85,12 @@ class Permission:
                 cls.BEITRAEGE_WRITE,
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
-                # cls.USERS_READ,  # Entfernt, da nicht verwendet
-                # Tickets: voller Zugang für alle eingeloggten User
                 cls.TICKETS_ACCESS,
             }
 
         if role == 'readonly':
             return {
-                cls.MITGLIEDER_READ,
+                cls.PERSONEN_READ,
                 cls.ABTEILUNGEN_READ,
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,

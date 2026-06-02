@@ -9,7 +9,7 @@ export const useAuthStore = defineStore('auth', {
 
   getters: {
     isAuthenticated: (state) => !!state.token,
-    hasPermission: (state) => (permission) => state.user?.permissions?.includes(permission) ?? false,
+    hasPermission: (state) => (permission) => state.user?.role === 'admin' || state.user?.permissions?.includes(permission) || false,
   },
 
   actions: {

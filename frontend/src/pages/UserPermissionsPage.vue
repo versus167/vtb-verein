@@ -39,6 +39,7 @@
                   v-model="selected"
                   :val="perm.key"
                   :label="perm.label"
+                  :disable="!canEdit"
                   :color="deviatesFromDefault(perm.key) ? 'orange' : 'primary'"
                 />
               </div>
@@ -47,7 +48,7 @@
         </div>
       </div>
 
-      <div class="row q-gutter-sm">
+      <div v-if="canEdit" class="row q-gutter-sm">
         <q-btn
           label="Auf Rollen-Standard zurücksetzen"
           icon="restart_alt"
@@ -64,6 +65,9 @@
           @click="onSave"
         />
       </div>
+      <div v-else class="text-caption text-grey-6">
+        <q-icon name="visibility" size="xs" class="q-mr-xs" />Nur Ansicht – keine Berechtigung zum Bearbeiten
+      </div>
     </template>
   </q-page>
 </template>
@@ -73,10 +77,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { useAuthStore } from 'src/stores/auth'
 
 const $q = useQuasar()
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+
+const canEdit = computed(() => auth.hasPermission('personen.permissions'))
 
 const loading = ref(false)
 const saving = ref(false)

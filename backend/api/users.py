@@ -9,11 +9,12 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 PERMISSION_GROUPS = [
     {
-        'label': 'Mitglieder', 'icon': 'people',
+        'label': 'Personen', 'icon': 'people',
         'permissions': [
-            (Permission.MITGLIEDER_READ,   'Ansehen'),
-            (Permission.MITGLIEDER_WRITE,  'Bearbeiten'),
-            (Permission.MITGLIEDER_DELETE, 'Löschen'),
+            (Permission.PERSONEN_READ,        'Ansehen'),
+            (Permission.PERSONEN_WRITE,       'Bearbeiten'),
+            (Permission.PERSONEN_DELETE,      'Löschen'),
+            (Permission.PERSONEN_PERMISSIONS, 'Berechtigungen verwalten'),
         ],
     },
     {
@@ -27,8 +28,9 @@ PERMISSION_GROUPS = [
     {
         'label': 'Beiträge', 'icon': 'euro',
         'permissions': [
-            (Permission.BEITRAEGE_READ,  'Ansehen'),
-            (Permission.BEITRAEGE_WRITE, 'Bearbeiten'),
+            (Permission.BEITRAEGE_READ,      'Ansehen'),
+            (Permission.BEITRAEGE_WRITE,     'Bearbeiten'),
+            (Permission.BEITRAEGE_ABRECHNEN, 'Abrechnen'),
         ],
     },
     {
@@ -36,12 +38,6 @@ PERMISSION_GROUPS = [
         'permissions': [
             (Permission.BERICHTE_READ,   'Ansehen'),
             (Permission.BERICHTE_EXPORT, 'Exportieren'),
-        ],
-    },
-    {
-        'label': 'Benutzerverwaltung', 'icon': 'manage_accounts',
-        'permissions': [
-            (Permission.USERS_MANAGE, 'Verwalten'),
         ],
     },
     {
@@ -60,9 +56,21 @@ PERMISSION_GROUPS = [
 ]
 
 
-def _require_manage(user):
-    if not user.has_permission(Permission.USERS_MANAGE):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung")
+def _require_read(user):
+    if not user.has_permission(Permission.PERSONEN_READ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Leseberechtigung")
+
+def _require_write(user):
+    if not user.has_permission(Permission.PERSONEN_WRITE):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Schreibberechtigung")
+
+def _require_delete(user):
+    if not user.has_permission(Permission.PERSONEN_DELETE):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Löschberechtigung")
+
+def _require_permissions(user):
+    if not user.has_permission(Permission.PERSONEN_PERMISSIONS):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung für Berechtigungsverwaltung")
 
 
 def _user_to_dict(u):
@@ -107,14 +115,14 @@ class PermissionsUpdate(BaseModel):
 
 @router.get("/")
 def list_users(user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_read(user)
     service = UserService(db)
     return [_user_to_dict(u) for u in service.list_all()]
 
 
 @router.get("/permission-groups")
 def get_permission_groups(user: CurrentUser):
-    _require_manage(user)
+    _require_read(user)
     return [
         {
             'label': g['label'],
@@ -130,7 +138,7 @@ def get_permission_groups(user: CurrentUser):
 
 @router.get("/{user_id}")
 def get_user(user_id: int, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_read(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
@@ -139,7 +147,7 @@ def get_user(user_id: int, user: CurrentUser, db: DB):
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(data: UserCreate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     service = UserService(db)
     try:
         created = service.create(
@@ -158,7 +166,7 @@ def create_user(data: UserCreate, user: CurrentUser, db: DB):
 
 @router.put("/{user_id}")
 def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     service = UserService(db)
     try:
         service.update(
@@ -177,7 +185,7 @@ def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
 
 @router.post("/{user_id}/password")
 def change_password(user_id: int, data: PasswordChange, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     service = UserService(db)
     try:
         service.change_password(user_id, data.new_password, updated_by=user.username)
@@ -188,7 +196,7 @@ def change_password(user_id: int, data: PasswordChange, user: CurrentUser, db: D
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_user(user_id: int, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_delete(user)
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="Eigenen Account nicht löschbar")
     service = UserService(db)
@@ -200,7 +208,7 @@ def delete_user(user_id: int, user: CurrentUser, db: DB):
 
 @router.get("/{user_id}/permissions")
 def get_permissions(user_id: int, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_read(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
@@ -215,15 +223,15 @@ def get_permissions(user_id: int, user: CurrentUser, db: DB):
 
 @router.put("/{user_id}/permissions")
 def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_permissions(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    if target.role == 'admin' and Permission.USERS_MANAGE not in data.permissions:
+    if target.role == 'admin' and Permission.PERSONEN_PERMISSIONS not in data.permissions:
         if db.count_active_admins() <= 1:
             raise HTTPException(
                 status_code=400,
-                detail="Kann USERS_MANAGE nicht entziehen: letzter aktiver Administrator",
+                detail="Kann personen.permissions nicht entziehen: letzter aktiver Administrator",
             )
     db.permissions.set_permissions_for_user(
         user_id=user_id,

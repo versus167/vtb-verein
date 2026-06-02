@@ -2,7 +2,7 @@
 KasseBerechtigungRepository
 
 Verwaltet kassenspezifische Berechtigungen (wer darf lesen/schreiben/exportieren).
-Admins (users.manage) umgehen diese Tabelle und haben immer vollen Zugriff.
+Admins (role=admin) umgehen diese Tabelle und haben immer vollen Zugriff.
 """
 from __future__ import annotations
 

@@ -87,9 +87,17 @@ class MeinMitgliedUpdate(BaseModel):
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
-def _require_manage(user):
-    if not user.has_permission(Permission.USERS_MANAGE):
-        raise HTTPException(status_code=403, detail="Keine Berechtigung")
+def _require_read(user):
+    if not user.has_permission(Permission.PERSONEN_READ):
+        raise HTTPException(status_code=403, detail="Keine Leseberechtigung")
+
+def _require_write(user):
+    if not user.has_permission(Permission.PERSONEN_WRITE):
+        raise HTTPException(status_code=403, detail="Keine Schreibberechtigung")
+
+def _require_delete(user):
+    if not user.has_permission(Permission.PERSONEN_DELETE):
+        raise HTTPException(status_code=403, detail="Keine Löschberechtigung")
 
 
 def _mitglied_to_dict(m) -> dict:
@@ -155,7 +163,7 @@ def _person_row(user, mitglied, abteilungen: list) -> dict:
 
 @router.get("/")
 def list_personen(user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_read(user)
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version,
@@ -203,7 +211,7 @@ def list_personen(user: CurrentUser, db: DB):
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     service = PersonService(db)
     try:
         if data.vorname and data.nachname:
@@ -238,7 +246,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
 
 @router.put("/{user_id}/user")
 def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     svc = UserService(db)
     try:
         ok = svc.update(
@@ -263,7 +271,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
 
 @router.put("/{user_id}/mitglied")
 def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_write(user)
     m = db.get_mitglied_by_user_id(user_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Kein Mitglied-Datensatz für diesen User")
@@ -295,7 +303,7 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
 @router.post("/{user_id}/mitglied", status_code=status.HTTP_201_CREATED)
 def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
-    _require_manage(user)
+    _require_write(user)
     u = db.get_user_by_id(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
@@ -320,7 +328,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_person(user_id: int, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_delete(user)
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="Eigener Account kann nicht gelöscht werden")
     try:
@@ -331,7 +339,7 @@ def delete_person(user_id: int, user: CurrentUser, db: DB):
 
 @router.get("/{user_id}/history")
 def get_person_history(user_id: int, user: CurrentUser, db: DB):
-    _require_manage(user)
+    _require_read(user)
     u = db.get_user_by_id(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="Person nicht gefunden")

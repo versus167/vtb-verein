@@ -20,17 +20,17 @@ class FunktionUpdate(FunktionWrite):
 
 
 def _require_read(user):
-    if not user.has_permission(Permission.MITGLIEDER_READ):
+    if not user.has_permission(Permission.PERSONEN_READ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Leseberechtigung")
 
 
 def _require_write(user):
-    if not user.has_permission(Permission.MITGLIEDER_WRITE):
+    if not user.has_permission(Permission.PERSONEN_WRITE):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Schreibberechtigung")
 
 
 def _require_delete(user):
-    if not user.has_permission(Permission.MITGLIEDER_DELETE):
+    if not user.has_permission(Permission.PERSONEN_DELETE):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Löschberechtigung")
 
 

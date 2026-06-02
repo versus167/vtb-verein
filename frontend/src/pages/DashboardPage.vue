@@ -18,7 +18,7 @@
       </div>
 
       <div
-        v-if="auth.hasPermission('users.manage') || auth.hasPermission('mitglieder.read')"
+        v-if="auth.hasPermission('personen.read')"
         class="col-6 col-sm-4 col-md-3"
       >
         <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'personen' })">
