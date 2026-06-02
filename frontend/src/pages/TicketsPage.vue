@@ -385,7 +385,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -792,5 +792,11 @@ async function deleteKommentar(k) {
     })
 }
 
-onMounted(loadAll)
+onMounted(() => {
+  loadAll()
+  window.addEventListener('vtb:ticket-created', loadAll)
+})
+onUnmounted(() => {
+  window.removeEventListener('vtb:ticket-created', loadAll)
+})
 </script>

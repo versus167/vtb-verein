@@ -207,6 +207,7 @@ async function onSave() {
 
     $q.notify({ type: 'positive', message: `Ticket #${ticket.id} angelegt` })
     dialogOpen.value = false
+    window.dispatchEvent(new CustomEvent('vtb:ticket-created', { detail: ticket }))
   } catch (e) {
     error.value = e.response?.data?.detail || 'Fehler beim Speichern'
   } finally {
