@@ -45,6 +45,7 @@ class RegelCreate(BaseModel):
     gueltig_bis: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None
     bedingung_funktion: Optional[str] = None
+    bedingung_funktion_abteilung_id: Optional[int] = None
     ausnahme_funktion: Optional[str] = None
     ausnahme_funktion_abteilung_id: Optional[int] = None
     zahler_typ: str = 'mitglied'
@@ -83,6 +84,7 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
         bedingung_abteilung_status=data.bedingung_abteilung_status,
         bedingung_funktion=data.bedingung_funktion,
+        bedingung_funktion_abteilung_id=data.bedingung_funktion_abteilung_id,
         ausnahme_funktion=data.ausnahme_funktion,
         ausnahme_funktion_abteilung_id=data.ausnahme_funktion_abteilung_id,
         zahler_typ=data.zahler_typ, zahler_kasse_id=data.zahler_kasse_id,
@@ -105,6 +107,7 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.gueltig_bis = data.gueltig_bis
     r.bedingung_abteilung_status = data.bedingung_abteilung_status
     r.bedingung_funktion = data.bedingung_funktion
+    r.bedingung_funktion_abteilung_id = data.bedingung_funktion_abteilung_id
     r.ausnahme_funktion = data.ausnahme_funktion
     r.ausnahme_funktion_abteilung_id = data.ausnahme_funktion_abteilung_id
     r.zahler_typ = data.zahler_typ
@@ -233,6 +236,7 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'gueltig_ab': r.gueltig_ab, 'gueltig_bis': r.gueltig_bis,
         'bedingung_abteilung_status': r.bedingung_abteilung_status,
         'bedingung_funktion': r.bedingung_funktion,
+        'bedingung_funktion_abteilung_id': r.bedingung_funktion_abteilung_id,
         'ausnahme_funktion': r.ausnahme_funktion,
         'ausnahme_funktion_abteilung_id': r.ausnahme_funktion_abteilung_id,
         'zahler_typ': r.zahler_typ,

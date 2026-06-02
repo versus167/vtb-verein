@@ -206,9 +206,10 @@ class BeitragsService:
             where += ["mf_incl.funktion = %s", "mf_incl.deleted_at IS NULL",
                       "(mf_incl.bis IS NULL OR mf_incl.bis >= CURRENT_DATE)"]
             params.append(regel.bedingung_funktion)
-            if regel.abteilung_id is not None:
+            abt_filter = regel.bedingung_funktion_abteilung_id or regel.abteilung_id
+            if abt_filter is not None:
                 where.append("mf_incl.abteilung_id = %s")
-                params.append(regel.abteilung_id)
+                params.append(abt_filter)
 
         if regel.ausnahme_funktion:
             excl = ["mf_excl.mitglied_id = m.id", "mf_excl.funktion = %s",

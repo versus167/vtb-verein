@@ -18,9 +18,10 @@ class Beitragsregel:
     gueltig_bis: Optional[str] = None
     bedingung_raw: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None  # kommagetrennt, None = alle
-    bedingung_funktion: Optional[str] = None          # nur Mitglieder mit dieser Funktion
-    ausnahme_funktion: Optional[str] = None           # Mitglieder mit dieser Funktion ausschließen
-    ausnahme_funktion_abteilung_id: Optional[int] = None  # Ausschluss auf diese Abteilung begrenzen
+    bedingung_funktion: Optional[str] = None               # nur Mitglieder mit dieser Funktion
+    bedingung_funktion_abteilung_id: Optional[int] = None  # Bedingung auf diese Abteilung begrenzen
+    ausnahme_funktion: Optional[str] = None                # Mitglieder mit dieser Funktion ausschließen
+    ausnahme_funktion_abteilung_id: Optional[int] = None   # Ausschluss auf diese Abteilung begrenzen
     zahler_typ: str = "mitglied"                 # mitglied | abteilung
     zahler_kasse_id: Optional[int] = None
     zahler_kasse_name: Optional[str] = None      # per JOIN befüllt

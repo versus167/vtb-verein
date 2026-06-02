@@ -41,7 +41,7 @@
                   Status: {{ r.bedingung_abteilung_status }}
                 </q-chip>
                 <q-chip v-if="r.bedingung_funktion" dense size="sm" color="indigo" text-color="white">
-                  Funktion: {{ funktionLabel(r.bedingung_funktion) }}
+                  Funktion: {{ funktionLabel(r.bedingung_funktion) }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
                 <q-chip v-if="r.ausnahme_funktion" dense size="sm" color="deep-orange" text-color="white">
                   Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}
@@ -193,10 +193,16 @@
             label="Nur für Abteilungs-Status (kommagetrennt, leer = alle)"
             outlined dense />
           <q-select
-            v-if="regelForm.abteilung_id"
             v-model="regelForm.bedingung_funktion"
             :options="funktionOptionen" emit-value map-options
-            label="Nur für Funktion (leer = alle)"
+            label="Bedingung: Nur für Funktion (leer = alle)"
+            outlined dense clearable />
+          <q-select
+            v-if="regelForm.bedingung_funktion"
+            v-model="regelForm.bedingung_funktion_abteilung_id"
+            :options="abteilungOptions" option-value="id" option-label="name"
+            emit-value map-options
+            label="Bedingung gilt für Abteilung (leer = alle)"
             outlined dense clearable />
           <q-select
             v-model="regelForm.ausnahme_funktion"
@@ -302,6 +308,7 @@ function openRegelDialog(r = null) {
     gueltig_ab: r.gueltig_ab, gueltig_bis: r.gueltig_bis ?? '',
     bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
     bedingung_funktion: r.bedingung_funktion ?? null,
+    bedingung_funktion_abteilung_id: r.bedingung_funktion_abteilung_id ?? null,
     ausnahme_funktion: r.ausnahme_funktion ?? null,
     ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
     zahler_typ: r.zahler_typ, zahler_kasse_id: r.zahler_kasse_id,
@@ -312,6 +319,7 @@ function openRegelDialog(r = null) {
     gueltig_ab: heute, gueltig_bis: '',
     bedingung_abteilung_status: '',
     bedingung_funktion: null,
+    bedingung_funktion_abteilung_id: null,
     ausnahme_funktion: null,
     ausnahme_funktion_abteilung_id: null,
     zahler_typ: 'mitglied', zahler_kasse_id: null,

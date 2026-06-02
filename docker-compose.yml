@@ -29,6 +29,7 @@ services:
 
     environment:
       VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+      VTB_UPLOAD_PATH: /app/uploads
 
     ports:
       - "${VTB_PORT:-8000}:8000"
