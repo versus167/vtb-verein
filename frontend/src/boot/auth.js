@@ -6,15 +6,8 @@ export default boot(async ({ router }) => {
   // useAuthStore() benötigt eine aktive Pinia-Instanz
   const auth = useAuthStore(pinia)
 
-  // Permissions beim App-Start einmal fresh vom Server laden
-  if (auth.isAuthenticated) {
-    try {
-      await auth.loadMe()
-    } catch {
-      // Token abgelaufen o.ä. – Router-Guard leitet weiter
-    }
-  }
-
+  // Guard ZUERST registrieren – vor jedem await, damit die initiale
+  // Navigation nicht ohne Guard durchläuft
   router.beforeEach((to) => {
     if (to.meta.requiresAuth && !auth.isAuthenticated) {
       return { name: 'login' }
@@ -29,4 +22,13 @@ export default boot(async ({ router }) => {
       return { name: 'dashboard' }
     }
   })
+
+  // Permissions nach Guard-Registrierung fresh laden
+  if (auth.isAuthenticated) {
+    try {
+      await auth.loadMe()
+    } catch {
+      // 401 wird vom Axios-Interceptor behandelt
+    }
+  }
 })
