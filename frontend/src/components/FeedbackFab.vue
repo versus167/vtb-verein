@@ -194,13 +194,14 @@ async function onSave() {
     // Screenshot anhängen — best effort, Ticket bleibt erhalten wenn es fehlschlägt
     if (screenshotBlob.value) {
       try {
+        // Blob-Type explizit setzen (manche Umgebungen liefern leeren type)
+        const pngBlob = new Blob([screenshotBlob.value], { type: 'image/png' })
         const fd = new FormData()
-        fd.append('file', screenshotBlob.value, `screenshot-ticket-${ticket.id}.png`)
-        await api.post(`/api/tickets/${ticket.id}/anhaenge`, fd, {
-          headers: { 'Content-Type': undefined },
-        })
-      } catch {
-        $q.notify({ type: 'warning', message: 'Ticket gespeichert, Screenshot konnte nicht angehängt werden.' })
+        fd.append('file', pngBlob, `screenshot-ticket-${ticket.id}.png`)
+        await api.post(`/api/tickets/${ticket.id}/anhaenge`, fd)
+      } catch (e) {
+        const detail = e.response?.data?.detail || e.message || 'unbekannter Fehler'
+        $q.notify({ type: 'warning', message: `Ticket gespeichert, Screenshot fehlgeschlagen: ${detail}` })
       }
     }
 
