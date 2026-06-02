@@ -9,7 +9,7 @@ class Settings:
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("VTB_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h
     DATABASE_URL: str = os.getenv("VTB_DATABASE_URL", "")
-    UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", str(_ROOT / "vtb_verein" / "uploads"))
+    UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", "/app/uploads")
     HOST: str = os.getenv("VTB_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("VTB_PORT", "8000"))
     FRONTEND_ORIGINS: list[str] = os.getenv(
