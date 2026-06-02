@@ -141,6 +141,8 @@
       <router-view />
     </q-page-container>
 
+    <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
+
     <!-- PWA-Installationsbanner (Android/Chrome) -->
     <q-banner
       v-if="showInstallBanner"
@@ -182,6 +184,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import FeedbackFab from 'src/components/FeedbackFab.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
