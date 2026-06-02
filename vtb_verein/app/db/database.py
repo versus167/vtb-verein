@@ -77,6 +77,7 @@ class Database:
         Jede Migration läuft in einer eigenen Transaktion und aktualisiert
         schema_version als letzten Schritt — bei Fehler vollständiger Rollback."""
         migration_map = {
+            18: self._migrate_v17_to_v18,
             19: self._migrate_v18_to_v19,
             20: self._migrate_v19_to_v20,
         }
@@ -90,6 +91,116 @@ class Database:
             logger.info("Schema-Migration v%d → v%d wird ausgeführt …", target - 1, target)
             fn()
             logger.info("Schema-Migration v%d abgeschlossen.", target)
+
+    def _migrate_v17_to_v18(self) -> None:
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE beitragsregel RENAME COLUMN betrag TO betrag_pro_monat")
+            cur.execute("ALTER TABLE beitragsregel RENAME COLUMN periode TO einzug_turnus")
+            cur.execute("ALTER TABLE beitragsregel_history RENAME COLUMN betrag TO betrag_pro_monat")
+            cur.execute("ALTER TABLE beitragsregel_history RENAME COLUMN periode TO einzug_turnus")
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS zahler_typ TEXT NOT NULL DEFAULT 'mitglied'")
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS zahler_kasse_id INTEGER REFERENCES kassen(id)")
+            cur.execute("ALTER TABLE beitragsregel ADD COLUMN IF NOT EXISTS bedingung_abteilung_status TEXT")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS zahler_typ TEXT")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS zahler_kasse_id INTEGER")
+            cur.execute("ALTER TABLE beitragsregel_history ADD COLUMN IF NOT EXISTS bedingung_abteilung_status TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung ADD COLUMN IF NOT EXISTS faelligkeitsdatum TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'offen'")
+            cur.execute("ALTER TABLE beitrag_sollstellung ADD COLUMN IF NOT EXISTS bezahlt_am TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung ADD COLUMN IF NOT EXISTS kassenbuchung_id INTEGER REFERENCES kassenbuchungen(id)")
+            cur.execute("ALTER TABLE beitrag_sollstellung_history ADD COLUMN IF NOT EXISTS faelligkeitsdatum TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung_history ADD COLUMN IF NOT EXISTS status TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung_history ADD COLUMN IF NOT EXISTS bezahlt_am TEXT")
+            cur.execute("ALTER TABLE beitrag_sollstellung_history ADD COLUMN IF NOT EXISTS kassenbuchung_id INTEGER")
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ, zahler_kasse_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ, zahler_kasse_id,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ, NEW.zahler_kasse_id,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitragsregel_audit_insert
+                AFTER INSERT ON beitragsregel
+                FOR EACH ROW EXECUTE FUNCTION fn_beitragsregel_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitragsregel_audit_update
+                AFTER UPDATE ON beitragsregel
+                FOR EACH ROW EXECUTE FUNCTION fn_beitragsregel_audit_update();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitrag_sollstellung_history (
+                        id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+                        faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+                        NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitrag_sollstellung_history (
+                            id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+                            faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+                            NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitrag_sollstellung_audit_insert
+                AFTER INSERT ON beitrag_sollstellung
+                FOR EACH ROW EXECUTE FUNCTION fn_beitrag_sollstellung_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitrag_sollstellung_audit_update
+                AFTER UPDATE ON beitrag_sollstellung
+                FOR EACH ROW EXECUTE FUNCTION fn_beitrag_sollstellung_audit_update();
+            """)
+            cur.execute("UPDATE schema_version SET version = 18 WHERE id = 1")
 
     def _migrate_v18_to_v19(self) -> None:
         with self.cursor() as cur:
