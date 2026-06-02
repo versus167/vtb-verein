@@ -17,8 +17,86 @@
       </q-input>
     </div>
 
-    <!-- Tabelle -->
-    <q-table :rows="filteredPersonen" :columns="columns" row-key="user_id"
+    <!-- Mobile/Tablet: Kacheln -->
+    <template v-if="$q.screen.lt.md">
+      <div v-if="loading" class="row justify-center q-py-xl">
+        <q-spinner size="40px" color="primary" />
+      </div>
+      <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
+        Keine Personen gefunden.
+      </div>
+      <q-card v-for="p in filteredPersonen" :key="p.user_id" elevated class="q-mb-md"
+        style="border-radius:14px;overflow:hidden">
+        <q-card-section class="q-py-sm q-px-md">
+          <div class="row items-center no-wrap q-mb-xs">
+            <div class="col">
+              <div v-if="p.mitglied" class="text-subtitle2 text-weight-bold">
+                {{ p.mitglied.nachname }}, {{ p.mitglied.vorname }}
+              </div>
+              <div v-else class="text-subtitle2 text-weight-bold text-grey-7">{{ p.username }}</div>
+              <div class="text-caption text-grey">{{ p.username }}</div>
+            </div>
+            <div class="row items-center q-gutter-xs">
+              <q-chip dense :color="rolleColor(p.role)" text-color="white" size="sm">
+                {{ rolleLabel(p.role) }}
+              </q-chip>
+              <q-icon v-if="p.active" name="check_circle" color="positive" size="sm" />
+              <q-icon v-else name="cancel" color="negative" size="sm" />
+            </div>
+          </div>
+          <div class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
+          <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
+            <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
+              :color="abteilungStatusColor(ab.status)" text-color="white">
+              {{ ab.abteilung_kuerzel || ab.abteilung_name }}
+            </q-chip>
+          </div>
+          <div v-if="p.last_login" class="text-caption text-grey-5">
+            Zuletzt aktiv: {{ formatLastLogin(p.last_login) }}
+          </div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions class="q-px-sm q-py-xs">
+          <q-btn flat dense round icon="edit" color="primary" size="sm"
+            @click="openEditUserDialog(p)">
+            <q-tooltip>Account bearbeiten</q-tooltip>
+          </q-btn>
+          <q-btn v-if="p.mitglied" flat dense round icon="person" color="teal" size="sm"
+            @click="openEditMitgliedDialog(p)">
+            <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
+          </q-btn>
+          <q-btn v-else flat dense round icon="person_add" color="teal" size="sm"
+            @click="openAddMitgliedDialog(p)">
+            <q-tooltip>Als Vereinsmitglied erfassen</q-tooltip>
+          </q-btn>
+          <q-btn v-if="p.mitglied" flat dense round icon="group" color="purple" size="sm"
+            @click="openAbteilungenDialog(p)">
+            <q-tooltip>Abteilungen</q-tooltip>
+          </q-btn>
+          <q-btn v-if="p.mitglied" flat dense round icon="badge" color="indigo" size="sm"
+            @click="openFunktionenDialog(p)">
+            <q-tooltip>Funktionen</q-tooltip>
+          </q-btn>
+          <q-btn flat dense round icon="security" color="grey" size="sm"
+            @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
+            <q-tooltip>Berechtigungen</q-tooltip>
+          </q-btn>
+          <q-btn flat dense round icon="history" color="grey" size="sm"
+            @click="openHistoryDialog(p)">
+            <q-tooltip>Änderungshistorie</q-tooltip>
+          </q-btn>
+          <q-space />
+          <q-btn flat dense round icon="delete" color="negative" size="sm"
+            :disable="p.user_id === auth.user?.id"
+            @click="confirmDelete(p)">
+            <q-tooltip>Löschen</q-tooltip>
+          </q-btn>
+        </q-card-actions>
+      </q-card>
+    </template>
+
+    <!-- Desktop: Tabelle -->
+    <q-table v-else :rows="filteredPersonen" :columns="columns" row-key="user_id"
       flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]">
 
       <template #body-cell-name="props">
