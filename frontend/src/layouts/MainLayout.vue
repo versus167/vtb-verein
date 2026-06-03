@@ -25,6 +25,10 @@
                 <q-item-section avatar><q-icon name="install_mobile" /></q-item-section>
                 <q-item-section>App installieren</q-item-section>
               </q-item>
+              <q-item clickable v-close-popup @click="onReloadApp">
+                <q-item-section avatar><q-icon name="refresh" /></q-item-section>
+                <q-item-section>App neu laden</q-item-section>
+              </q-item>
               <q-item clickable v-close-popup @click="onLogout">
                 <q-item-section avatar><q-icon name="logout" /></q-item-section>
                 <q-item-section>Abmelden</q-item-section>
@@ -230,6 +234,10 @@ function onLogout() {
   auth.logout()
   hatKassenZugriff.value = false
   router.push({ name: 'login' })
+}
+
+function onReloadApp() {
+  window.location.reload()
 }
 
 // ── PWA-Installation ──

@@ -116,6 +116,16 @@
             </div>
           </q-tab-panel>
         </q-tab-panels>
+        <div class="text-center q-mt-md">
+          <q-btn
+            flat
+            dense
+            size="sm"
+            label="App neu laden"
+            icon="refresh"
+            @click="window.location.reload()"
+          />
+        </div>
       </q-card-section>
     </q-card>
   </div>
