@@ -49,6 +49,19 @@
           </q-card-section>
         </q-card>
       </div>
+
+      <div
+        v-if="auth.hasPermission('beitraege.read')"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'beitraege' })">
+          <q-card-section class="text-center">
+            <q-icon name="euro" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Beiträge</div>
+            <div class="text-caption text-grey">Beitragsverwaltung</div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>
