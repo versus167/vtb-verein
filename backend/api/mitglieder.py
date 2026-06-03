@@ -1,6 +1,6 @@
 from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
@@ -27,6 +27,10 @@ class MitgliedCreate(BaseModel):
     bic: Optional[str] = None
     kontoinhaber: Optional[str] = None
     abgerechnet_bis: Optional[str] = None
+
+    @field_validator('geburtsdatum', 'eintrittsdatum', 'austrittsdatum', 'abgerechnet_bis', mode='before')
+    @classmethod
+    def empty_str_to_none(cls, v): return None if v == '' else v
 
 
 def _require_read(user):

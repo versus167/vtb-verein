@@ -25,7 +25,7 @@
       <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
         Keine Personen gefunden.
       </div>
-      <q-card v-for="p in filteredPersonen" :key="p.user_id" elevated class="q-mb-md"
+      <q-card v-for="p in filteredPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md"
         style="border-radius:14px;overflow:hidden">
         <q-card-section class="q-py-sm q-px-md">
           <div class="row items-center no-wrap q-mb-xs">
@@ -34,17 +34,18 @@
                 {{ p.mitglied.nachname }}, {{ p.mitglied.vorname }}
               </div>
               <div v-else class="text-subtitle2 text-weight-bold text-grey-7">{{ p.username }}</div>
-              <div class="text-caption text-grey">{{ p.username }}</div>
+              <div v-if="p.username" class="text-caption text-grey">{{ p.username }}</div>
+              <div v-else class="text-caption text-grey-5">Kein Login</div>
             </div>
             <div class="row items-center q-gutter-xs">
-              <q-chip dense :color="rolleColor(p.role)" text-color="white" size="sm">
+              <q-chip v-if="p.role" dense :color="rolleColor(p.role)" text-color="white" size="sm">
                 {{ rolleLabel(p.role) }}
               </q-chip>
-              <q-icon v-if="p.active" name="check_circle" color="positive" size="sm" />
-              <q-icon v-else name="cancel" color="negative" size="sm" />
+              <q-icon v-if="p.user_id && p.active" name="check_circle" color="positive" size="sm" />
+              <q-icon v-else-if="p.user_id" name="cancel" color="negative" size="sm" />
             </div>
           </div>
-          <div class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
+          <div v-if="p.email" class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
             <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
               :color="abteilungStatusColor(ab.status)" text-color="white">
@@ -57,7 +58,7 @@
         </q-card-section>
         <q-separator />
         <q-card-actions class="q-px-sm q-py-xs">
-          <q-btn flat dense round icon="edit" color="primary" size="sm"
+          <q-btn v-if="p.user_id" flat dense round icon="edit" color="primary" size="sm"
             @click="openEditUserDialog(p)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
@@ -65,7 +66,7 @@
             @click="openEditMitgliedDialog(p)">
             <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-else flat dense round icon="person_add" color="teal" size="sm"
+          <q-btn v-else-if="p.user_id" flat dense round icon="person_add" color="teal" size="sm"
             @click="openAddMitgliedDialog(p)">
             <q-tooltip>Als Vereinsmitglied erfassen</q-tooltip>
           </q-btn>
@@ -77,11 +78,11 @@
             @click="openFunktionenDialog(p)">
             <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
-          <q-btn flat dense round icon="security" color="grey" size="sm"
+          <q-btn v-if="p.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="p.user_id" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(p)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -96,7 +97,7 @@
     </template>
 
     <!-- Desktop: Tabelle -->
-    <q-table v-else :rows="filteredPersonen" :columns="columns" row-key="user_id"
+    <q-table v-else :rows="filteredPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
       flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]">
 
       <template #body-cell-name="props">
@@ -156,7 +157,7 @@
 
       <template #body-cell-actions="props">
         <q-td :props="props" style="white-space: nowrap">
-          <q-btn flat dense round icon="edit" color="primary" size="sm"
+          <q-btn v-if="props.row.user_id" flat dense round icon="edit" color="primary" size="sm"
             @click="openEditUserDialog(props.row)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
@@ -164,7 +165,7 @@
             @click="openEditMitgliedDialog(props.row)">
             <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-else flat dense round icon="person_add" color="teal" size="sm"
+          <q-btn v-else-if="props.row.user_id" flat dense round icon="person_add" color="teal" size="sm"
             @click="openAddMitgliedDialog(props.row)">
             <q-tooltip>Als Vereinsmitglied erfassen</q-tooltip>
           </q-btn>
@@ -176,11 +177,11 @@
             @click="openFunktionenDialog(props.row)">
             <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
-          <q-btn flat dense round icon="security" color="grey" size="sm"
+          <q-btn v-if="props.row.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="props.row.user_id" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(props.row)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -213,8 +214,11 @@
                 <q-input v-model="createForm.vorname" label="Vorname *" outlined dense class="col" />
                 <q-input v-model="createForm.nachname" label="Nachname *" outlined dense class="col" />
               </div>
-              <q-input v-model="createForm.email" label="E-Mail *" outlined dense type="email" />
-              <div class="row q-gutter-sm">
+              <q-input v-model="createForm.email" label="E-Mail (optional)" outlined dense type="email" />
+              <div v-if="!createForm.email" class="text-caption text-grey-6">
+                <q-icon name="info" size="xs" /> Ohne E-Mail: kein Login möglich, nur Mitglied-Datensatz
+              </div>
+              <div v-if="createForm.email" class="row q-gutter-sm">
                 <q-select v-model="createForm.role" :options="rolleOptions" label="Rolle"
                   outlined dense emit-value map-options class="col" />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
@@ -739,7 +743,11 @@ function confirmDelete(row) {
   $q.dialog({ title: 'Person löschen', message: `„${name}" wirklich löschen?`, cancel: true, persistent: true })
     .onOk(async () => {
       try {
-        await api.delete(`/api/personen/${row.user_id}`)
+        if (row.user_id) {
+          await api.delete(`/api/personen/${row.user_id}`)
+        } else {
+          await api.delete(`/api/personen/mitglied/${row.mitglied.id}`)
+        }
         $q.notify({ type: 'positive', message: 'Gelöscht' })
         await loadPersonen()
       } catch (e) {

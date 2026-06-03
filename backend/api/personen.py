@@ -2,7 +2,7 @@ from dataclasses import asdict
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.models.mitglied import Mitglied
 from app.models.permission import Permission
@@ -17,8 +17,12 @@ router = APIRouter(prefix="/personen", tags=["personen"])
 # Pydantic-Schemas
 # ---------------------------------------------------------------------------
 
+def _none_if_empty(v):
+    return None if v == '' else v
+
+
 class PersonCreate(BaseModel):
-    email: str
+    email: Optional[str] = None
     role: str = 'mitglied'
     active: bool = True
     password: Optional[str] = None
@@ -34,6 +38,10 @@ class PersonCreate(BaseModel):
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     mitglied_status: str = 'aktiv'
+
+    @field_validator('eintrittsdatum', 'austrittsdatum', 'geburtsdatum', 'abgerechnet_bis', mode='before')
+    @classmethod
+    def empty_str_to_none(cls, v): return _none_if_empty(v)
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -63,6 +71,10 @@ class PersonMitgliedUpdate(BaseModel):
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     status: str = 'aktiv'
+
+    @field_validator('eintrittsdatum', 'austrittsdatum', 'geburtsdatum', 'abgerechnet_bis', mode='before')
+    @classmethod
+    def empty_str_to_none(cls, v): return _none_if_empty(v)
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -134,13 +146,13 @@ def _mitglied_to_dict(m) -> dict:
 
 def _person_row(user, mitglied, abteilungen: list) -> dict:
     return {
-        'user_id': user.id,
-        'username': user.username,
-        'email': user.email,
-        'role': user.role,
-        'active': bool(user.active),
-        'last_login': user.last_login,
-        'user_version': user.version,
+        'user_id': user.id if user else None,
+        'username': user.username if user else None,
+        'email': user.email if user else None,
+        'role': user.role if user else None,
+        'active': bool(user.active) if user else True,
+        'last_login': user.last_login if user else None,
+        'user_version': user.version if user else None,
         'mitglied': _mitglied_to_dict(mitglied),
         'abteilungen': [
             {
@@ -166,29 +178,43 @@ def list_personen(user: CurrentUser, db: DB):
     _require_read(user)
     with db.conn.cursor() as cur:
         cur.execute("""
-            SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version,
-                   m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
-                   m.strasse, m.plz, m.ort, m.land, m.email AS m_email, m.telefon,
-                   m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
-                   m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
-                   m.user_id AS m_user_id, m.version AS m_version,
-                   m.created_at AS m_created_at, m.created_by AS m_created_by,
-                   m.updated_at AS m_updated_at, m.updated_by AS m_updated_by
-            FROM users u
-            LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
-            WHERE u.deleted_at IS NULL
-            ORDER BY COALESCE(m.nachname, u.username), COALESCE(m.vorname, '')
+            SELECT * FROM (
+                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version,
+                       m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
+                       m.strasse, m.plz, m.ort, m.land, m.email AS m_email, m.telefon,
+                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
+                       m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
+                       m.user_id AS m_user_id, m.version AS m_version,
+                       m.created_at AS m_created_at, m.created_by AS m_created_by,
+                       m.updated_at AS m_updated_at, m.updated_by AS m_updated_by
+                FROM users u
+                LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
+                WHERE u.deleted_at IS NULL
+                UNION ALL
+                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                       m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
+                       m.strasse, m.plz, m.ort, m.land, m.email, m.telefon,
+                       m.eintrittsdatum, m.austrittsdatum, m.status,
+                       m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
+                       NULL, m.version,
+                       m.created_at, m.created_by, m.updated_at, m.updated_by
+                FROM mitglied m
+                WHERE m.deleted_at IS NULL AND m.user_id IS NULL
+            ) p
+            ORDER BY COALESCE(p.vorname, p.username), COALESCE(p.nachname, '')
         """)
         rows = cur.fetchall()
 
     result = []
     for row in rows:
         r = dict(row)
-        u_obj = type('U', (), {
-            'id': r['id'], 'username': r['username'], 'email': r['email'],
-            'role': r['role'], 'active': r['active'], 'last_login': r['last_login'],
-            'version': r['version'],
-        })()
+        u_obj = None
+        if r['id'] is not None:
+            u_obj = type('U', (), {
+                'id': r['id'], 'username': r['username'], 'email': r['email'],
+                'role': r['role'], 'active': r['active'], 'last_login': r['last_login'],
+                'version': r['version'],
+            })()
         m_obj = None
         if r['m_id'] is not None:
             m_obj = Mitglied(
@@ -224,14 +250,22 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
                 'iban': data.iban, 'bic': data.bic, 'kontoinhaber': data.kontoinhaber,
                 'abgerechnet_bis': data.abgerechnet_bis,
             }
-            u, m = service.create_vereinsmitglied(
-                vorname=data.vorname, nachname=data.nachname,
-                email=data.email, role=data.role, active=data.active,
-                created_by=user.username, mitglied_data=mitglied_data,
-                password=data.password,
-            )
-            abteilungen = db.list_mitglied_abteilungen(m.id)
-            return _person_row(u, m, abteilungen)
+            if data.email:
+                u, m = service.create_vereinsmitglied(
+                    vorname=data.vorname, nachname=data.nachname,
+                    email=data.email, role=data.role, active=data.active,
+                    created_by=user.username, mitglied_data=mitglied_data,
+                    password=data.password,
+                )
+                abteilungen = db.list_mitglied_abteilungen(m.id)
+                return _person_row(u, m, abteilungen)
+            else:
+                m = service.create_mitglied_ohne_user(
+                    vorname=data.vorname, nachname=data.nachname,
+                    created_by=user.username, mitglied_data=mitglied_data,
+                )
+                abteilungen = db.list_mitglied_abteilungen(m.id)
+                return _person_row(None, m, abteilungen)
         else:
             if not data.username:
                 raise HTTPException(status_code=400, detail="Username ist pflicht für Benutzer ohne Mitglied-Datensatz")
@@ -335,6 +369,17 @@ def delete_person(user_id: int, user: CurrentUser, db: DB):
         PersonService(db).delete_person(user_id, deleted_by=user.username)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/mitglied/{mitglied_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
+    _require_delete(user)
+    m = db.get_mitglied(mitglied_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    if m.user_id is not None:
+        raise HTTPException(status_code=400, detail="Mitglied hat einen User-Account — bitte über Person löschen")
+    PersonService(db).delete_mitglied_ohne_user(mitglied_id, deleted_by=user.username)
 
 
 @router.get("/{user_id}/history")

@@ -44,10 +44,10 @@
                   Funktion: {{ funktionLabel(r.bedingung_funktion) }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
                 <q-chip v-if="r.ausnahme_funktion" dense size="sm" color="deep-orange" text-color="white">
-                  Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}
+                  Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}{{ r.ausnahme_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.ausnahme_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
-                  Umbuchung: {{ r.zahler_kasse_name }}
+                  {{ r.zahler_kasse_name ? `Umbuchung: ${r.zahler_kasse_name}` : `Zahlung: ${r.abteilung_name ?? 'Abteilung'}` }}
                 </q-chip>
               </q-item-label>
             </q-item-section>
@@ -108,7 +108,7 @@
                 <q-chip dense size="sm"
                   :color="props.row.zahler_typ === 'abteilung' ? 'teal' : 'primary'"
                   text-color="white">
-                  {{ props.row.zahler_typ === 'abteilung' ? 'Umbuchung' : 'SEPA' }}
+                  {{ props.row.zahler_typ === 'abteilung' ? 'Abteilung' : 'SEPA' }}
                 </q-chip>
               </q-td>
             </template>

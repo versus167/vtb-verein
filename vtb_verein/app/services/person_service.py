@@ -64,6 +64,23 @@ class PersonService:
 
         return user, mitglied
 
+    def create_mitglied_ohne_user(
+        self,
+        vorname: str,
+        nachname: str,
+        created_by: str,
+        mitglied_data: dict,
+    ) -> Mitglied:
+        """Legt nur einen Mitglied-Datensatz an (kein User, kein Login)."""
+        m = Mitglied(vorname=vorname, nachname=nachname, user_id=None, **mitglied_data)
+        return self.db.create_mitglied(m, created_by=created_by)
+
+    def delete_mitglied_ohne_user(self, mitglied_id: int, deleted_by: str) -> None:
+        """Soft-löscht einen Mitglied-Datensatz ohne User."""
+        for zuordnung in self.db.list_mitglied_abteilungen(mitglied_id):
+            self.db.mark_mitglied_abteilung_deleted(zuordnung.id, deleted_by)
+        self.db.mark_mitglied_deleted(mitglied_id, deleted_by)
+
     def create_user_only(
         self,
         username: str,

@@ -188,11 +188,11 @@ class BeitragsService:
         params: list = []
 
         if regel.abteilung_id is None:
-            where.append("m.austrittsdatum IS NULL")
+            where.append("(m.austrittsdatum IS NULL OR m.austrittsdatum = '')")
         else:
             joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
             where += ["ma.abteilung_id = %s", "ma.deleted_at IS NULL",
-                      "(ma.bis IS NULL OR ma.bis >= CURRENT_DATE)"]
+                      "(ma.bis IS NULL OR ma.bis::date >= CURRENT_DATE)"]
             params.append(regel.abteilung_id)
 
             status_filter = regel.bedingung_status_liste
@@ -204,7 +204,7 @@ class BeitragsService:
         if regel.bedingung_funktion:
             joins.append("JOIN mitglied_funktion mf_incl ON mf_incl.mitglied_id = m.id")
             where += ["mf_incl.funktion = %s", "mf_incl.deleted_at IS NULL",
-                      "(mf_incl.bis IS NULL OR mf_incl.bis >= CURRENT_DATE)"]
+                      "(mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE)"]
             params.append(regel.bedingung_funktion)
             abt_filter = regel.bedingung_funktion_abteilung_id or regel.abteilung_id
             if abt_filter is not None:
@@ -213,7 +213,7 @@ class BeitragsService:
 
         if regel.ausnahme_funktion:
             excl = ["mf_excl.mitglied_id = m.id", "mf_excl.funktion = %s",
-                    "mf_excl.deleted_at IS NULL", "(mf_excl.bis IS NULL OR mf_excl.bis >= CURRENT_DATE)"]
+                    "mf_excl.deleted_at IS NULL", "(mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE)"]
             params.append(regel.ausnahme_funktion)
             if regel.ausnahme_funktion_abteilung_id:
                 excl.append("mf_excl.abteilung_id = %s")
