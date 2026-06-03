@@ -140,7 +140,7 @@ import { api } from 'src/boot/axios'
 const router = useRouter()
 const auth = useAuthStore()
 
-const tab = ref('password')
+const tab = ref('magic')
 
 const username = ref('')
 const password = ref('')
