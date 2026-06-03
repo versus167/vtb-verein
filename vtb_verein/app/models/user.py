@@ -38,7 +38,9 @@ class User:
         }
 
     def has_permission(self, permission: str) -> bool:
-        """Prüft ob dieser User eine bestimmte Permission hat."""
+        """Prüft ob dieser User eine bestimmte Permission hat. Admins haben immer alle."""
+        if self.role == 'admin':
+            return True
         return permission in self.permissions
 
     def can_manage_users(self) -> bool:
