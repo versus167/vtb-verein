@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 class Database:
@@ -82,6 +82,7 @@ class Database:
             20: self._migrate_v19_to_v20,
             21: self._migrate_v20_to_v21,
             22: self._migrate_v21_to_v22,
+            23: self._migrate_v22_to_v23,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -461,6 +462,67 @@ class Database:
                 END; $$;
             """)
             cur.execute("UPDATE schema_version SET version = 22 WHERE id = 1")
+
+    def _migrate_v22_to_v23(self) -> None:
+        """Fügt funktion_history + Audit-Trigger für die funktion-Tabelle hinzu."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS funktion_history (
+                  id           INTEGER NOT NULL,
+                  version      INTEGER NOT NULL,
+                  key          TEXT,
+                  name         TEXT,
+                  beschreibung TEXT,
+                  created_at   TIMESTAMP,
+                  created_by   TEXT,
+                  updated_at   TIMESTAMP,
+                  updated_by   TEXT,
+                  deleted_at   TIMESTAMP,
+                  deleted_by   TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO funktion_history (
+                        id, version, key, name, beschreibung,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.key, NEW.name, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_funktion_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO funktion_history (
+                            id, version, key, name, beschreibung,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.key, NEW.name, NEW.beschreibung,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                            NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_funktion_audit_insert
+                AFTER INSERT ON funktion
+                FOR EACH ROW EXECUTE FUNCTION fn_funktion_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_funktion_audit_update
+                AFTER UPDATE ON funktion
+                FOR EACH ROW EXECUTE FUNCTION fn_funktion_audit_update();
+            """)
+            cur.execute("UPDATE schema_version SET version = 23 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
@@ -1198,6 +1260,41 @@ class Database:
               deleted_by      TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS funktion (
+              id            SERIAL PRIMARY KEY,
+              key           TEXT NOT NULL,
+              name          TEXT NOT NULL,
+              beschreibung  TEXT,
+              version       INTEGER NOT NULL DEFAULT 1,
+              created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              created_by    TEXT,
+              updated_at    TIMESTAMP,
+              updated_by    TEXT,
+              deleted_at    TIMESTAMP,
+              deleted_by    TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uix_funktion_key_active
+            ON funktion (key) WHERE deleted_at IS NULL
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS funktion_history (
+              id           INTEGER NOT NULL,
+              version      INTEGER NOT NULL,
+              key          TEXT,
+              name         TEXT,
+              beschreibung TEXT,
+              created_at   TIMESTAMP,
+              created_by   TEXT,
+              updated_at   TIMESTAMP,
+              updated_by   TEXT,
+              deleted_at   TIMESTAMP,
+              deleted_by   TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
 
     # -----------------------------------
     # Trigger-Funktionen (PL/pgSQL)
@@ -1748,6 +1845,36 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO funktion_history (
+                    id, version, key, name, beschreibung,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.key, NEW.name, NEW.beschreibung,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                    NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_funktion_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO funktion_history (
+                        id, version, key, name, beschreibung,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.key, NEW.name, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by,
+                        NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
 
     # -----------------------------------
     # Trigger-Bindungen
@@ -1790,6 +1917,8 @@ class Database:
             ('trig_beitragsregel_audit_update',                     'UPDATE', 'beitragsregel',                     'fn_beitragsregel_audit_update'),
             ('trig_beitrag_sollstellung_audit_insert',              'INSERT', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_insert'),
             ('trig_beitrag_sollstellung_audit_update',              'UPDATE', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_update'),
+            ('trig_funktion_audit_insert',                          'INSERT', 'funktion',                          'fn_funktion_audit_insert'),
+            ('trig_funktion_audit_update',                          'UPDATE', 'funktion',                          'fn_funktion_audit_update'),
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -1930,3 +2059,16 @@ class Database:
                 INSERT INTO ticket_kategorien (name, icon, created_by, updated_by)
                 VALUES (%s, %s, 'SYSTEM', 'SYSTEM')
             """, (name, icon))
+
+        for key, name in [
+            ('schiedsrichter',   'Schiedsrichter'),
+            ('uebungsleiter',    'Übungsleiter'),
+            ('abteilungsleiter', 'Abteilungsleiter'),
+        ]:
+            cur.execute("""
+                INSERT INTO funktion (key, name, created_by)
+                SELECT %s, %s, 'SYSTEM'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM funktion WHERE key = %s AND deleted_at IS NULL
+                )
+            """, (key, name, key))
