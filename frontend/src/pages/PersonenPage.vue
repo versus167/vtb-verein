@@ -98,7 +98,7 @@
 
     <!-- Desktop: Tabelle -->
     <q-table v-else :rows="filteredPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
-      flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]">
+      flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]" :row-class="getRowClass">
 
       <template #body-cell-name="props">
         <q-td :props="props">
@@ -545,6 +545,11 @@ const filteredPersonen = computed(() => {
   }
   return list
 })
+
+// ── Tabellen-Styling ───────────────────────────────────────
+const getRowClass = (index) => {
+  return index % 2 === 0 ? 'bg-grey-1' : ''
+}
 
 // ── Optionen ───────────────────────────────────────────────
 const rolleOptions = [
