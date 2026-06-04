@@ -25,7 +25,7 @@
       <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
         Keine Personen gefunden.
       </div>
-      <q-card v-for="p in filteredPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md"
+      <q-card v-for="(p, index) in filteredPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'bg-grey-1' : ''"
         style="border-radius:14px;overflow:hidden">
         <q-card-section class="q-py-sm q-px-md">
           <div class="row items-center no-wrap q-mb-xs">
