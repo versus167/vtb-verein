@@ -236,7 +236,11 @@ function onLogout() {
   router.push({ name: 'login' })
 }
 
-function onReloadApp() {
+async function onReloadApp() {
+  if ('caches' in window) {
+    const keys = await caches.keys()
+    await Promise.all(keys.map(k => caches.delete(k)))
+  }
   window.location.reload()
 }
 

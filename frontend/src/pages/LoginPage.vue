@@ -123,7 +123,7 @@
             size="sm"
             label="App neu laden"
             icon="refresh"
-            @click="window.location.reload()"
+            @click="onReloadApp"
           />
         </div>
       </q-card-section>
@@ -153,6 +153,14 @@ const magicSent = ref(false)
 
 const loading = ref(false)
 const errorMsg = ref('')
+
+async function onReloadApp() {
+  if ('caches' in window) {
+    const keys = await caches.keys()
+    await Promise.all(keys.map(k => caches.delete(k)))
+  }
+  window.location.reload()
+}
 
 async function onLogin() {
   errorMsg.value = ''
