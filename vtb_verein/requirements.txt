@@ -1,7 +1,6 @@
 # VTB Vereinsverwaltung - Python Dependencies
-
-# Web Framework
-nicegui>=1.4.0
+# Hinweis: Das aktive Backend ist FastAPI (backend/). Das frühere NiceGUI-UI
+# (vtb_verein/app/ui/) wurde entfernt.
 
 # Password Hashing
 bcrypt>=4.0.0
