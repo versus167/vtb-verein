@@ -101,7 +101,7 @@ class BeitragsService:
             faellig = faelligkeitsdatum(regel.einzug_turnus, stichtag)
             betrag = regel.betrag_pro_einzug
 
-            for mitglied in self._betroffene_mitglieder(regel):
+            for mitglied in self._betroffene_mitglieder(regel, stichtag_str):
                 bereits = self.db.sollstellungen.exists(
                     mitglied['id'], regel.id, zeitraum
                 )
@@ -174,7 +174,7 @@ class BeitragsService:
     # Interne Hilfsmethoden
     # ------------------------------------------------------------------
 
-    def _betroffene_mitglieder(self, regel: Beitragsregel) -> list[dict]:
+    def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str) -> list[dict]:
         """
         Ermittelt alle Mitglieder auf die eine Regel zutrifft.
 
@@ -182,6 +182,8 @@ class BeitragsService:
         - Abteilungsbeitrag: Mitglieder der Abteilung, gefiltert nach Status/Funktion
         - ausnahme_funktion: Mitglieder mit dieser Funktion werden immer ausgeschlossen
         - bedingung_funktion: nur Mitglieder mit dieser Funktion werden eingeschlossen
+        - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
+          ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
         """
         joins: list[str] = []
         where: list[str] = ["m.deleted_at IS NULL"]
@@ -219,6 +221,17 @@ class BeitragsService:
                 excl.append("mf_excl.abteilung_id = %s")
                 params.append(regel.ausnahme_funktion_abteilung_id)
             where.append(f"NOT EXISTS (SELECT 1 FROM mitglied_funktion mf_excl WHERE {' AND '.join(excl)})")
+
+        if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
+            # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
+            age_expr = ("(CASE WHEN m.geburtsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "
+                        "THEN date_part('year', age(%s::date, left(m.geburtsdatum,10)::date)) END)")
+            if regel.bedingung_alter_min is not None:
+                where.append(f"{age_expr} >= %s")
+                params.extend([stichtag_str, regel.bedingung_alter_min])
+            if regel.bedingung_alter_max is not None:
+                where.append(f"{age_expr} <= %s")
+                params.extend([stichtag_str, regel.bedingung_alter_max])
 
         sql = f"""
             SELECT DISTINCT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber

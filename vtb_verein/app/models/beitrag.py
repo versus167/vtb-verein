@@ -22,6 +22,8 @@ class Beitragsregel:
     bedingung_funktion_abteilung_id: Optional[int] = None  # Bedingung auf diese Abteilung begrenzen
     ausnahme_funktion: Optional[str] = None                # Mitglieder mit dieser Funktion ausschließen
     ausnahme_funktion_abteilung_id: Optional[int] = None   # Ausschluss auf diese Abteilung begrenzen
+    bedingung_alter_min: Optional[int] = None              # Mindestalter (Jahre), None = keine Untergrenze
+    bedingung_alter_max: Optional[int] = None              # Höchstalter (Jahre), None = keine Obergrenze
     zahler_typ: str = "mitglied"                 # mitglied | abteilung
     zahler_kasse_id: Optional[int] = None
     zahler_kasse_name: Optional[str] = None      # per JOIN befüllt

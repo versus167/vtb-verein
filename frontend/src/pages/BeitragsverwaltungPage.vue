@@ -46,6 +46,9 @@
                 <q-chip v-if="r.ausnahme_funktion" dense size="sm" color="deep-orange" text-color="white">
                   Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}{{ r.ausnahme_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.ausnahme_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
+                <q-chip v-if="r.bedingung_alter_min != null || r.bedingung_alter_max != null" dense size="sm" color="blue-grey" text-color="white">
+                  Alter {{ r.bedingung_alter_min ?? 0 }}–{{ r.bedingung_alter_max ?? '∞' }} J.
+                </q-chip>
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
                   {{ r.zahler_kasse_name ? `Umbuchung: ${r.zahler_kasse_name}` : `Zahlung: ${r.abteilung_name ?? 'Abteilung'}` }}
                 </q-chip>
@@ -216,6 +219,16 @@
             emit-value map-options
             label="Ausnahme gilt für Abteilung (leer = alle)"
             outlined dense clearable />
+          <div class="row q-gutter-sm">
+            <q-input v-model.number="regelForm.bedingung_alter_min" label="Alter von (Jahre)"
+              outlined dense type="number" min="0" clearable class="col" />
+            <q-input v-model.number="regelForm.bedingung_alter_max" label="Alter bis (Jahre)"
+              outlined dense type="number" min="0" clearable class="col" />
+          </div>
+          <div class="text-caption text-grey-6 q-mb-xs">
+            Alter am Abrechnungs-Stichtag. Mitglieder ohne gültiges Geburtsdatum werden bei
+            gesetzter Altersbedingung nicht berücksichtigt.
+          </div>
           <q-select v-model="regelForm.zahler_typ"
             :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt (Umbuchung)',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
@@ -311,6 +324,8 @@ function openRegelDialog(r = null) {
     bedingung_funktion_abteilung_id: r.bedingung_funktion_abteilung_id ?? null,
     ausnahme_funktion: r.ausnahme_funktion ?? null,
     ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
+    bedingung_alter_min: r.bedingung_alter_min ?? null,
+    bedingung_alter_max: r.bedingung_alter_max ?? null,
     zahler_typ: r.zahler_typ, zahler_kasse_id: r.zahler_kasse_id,
     expected_version: r.version,
   } : {
@@ -322,6 +337,8 @@ function openRegelDialog(r = null) {
     bedingung_funktion_abteilung_id: null,
     ausnahme_funktion: null,
     ausnahme_funktion_abteilung_id: null,
+    bedingung_alter_min: null,
+    bedingung_alter_max: null,
     zahler_typ: 'mitglied', zahler_kasse_id: null,
   }
   regelDialogOpen.value = true
@@ -339,6 +356,8 @@ async function saveRegel() {
       bedingung_funktion: regelForm.value.bedingung_funktion || null,
       ausnahme_funktion: regelForm.value.ausnahme_funktion || null,
       ausnahme_funktion_abteilung_id: regelForm.value.ausnahme_funktion_abteilung_id || null,
+      bedingung_alter_min: regelForm.value.bedingung_alter_min === '' || regelForm.value.bedingung_alter_min == null ? null : Number(regelForm.value.bedingung_alter_min),
+      bedingung_alter_max: regelForm.value.bedingung_alter_max === '' || regelForm.value.bedingung_alter_max == null ? null : Number(regelForm.value.bedingung_alter_max),
     }
     if (editingRegel.value?.id) {
       await api.put(`/api/beitraege/regeln/${editingRegel.value.id}`, payload)

@@ -48,6 +48,8 @@ class RegelCreate(BaseModel):
     bedingung_funktion_abteilung_id: Optional[int] = None
     ausnahme_funktion: Optional[str] = None
     ausnahme_funktion_abteilung_id: Optional[int] = None
+    bedingung_alter_min: Optional[int] = None
+    bedingung_alter_max: Optional[int] = None
     zahler_typ: str = 'mitglied'
     zahler_kasse_id: Optional[int] = None
 
@@ -87,6 +89,8 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         bedingung_funktion_abteilung_id=data.bedingung_funktion_abteilung_id,
         ausnahme_funktion=data.ausnahme_funktion,
         ausnahme_funktion_abteilung_id=data.ausnahme_funktion_abteilung_id,
+        bedingung_alter_min=data.bedingung_alter_min,
+        bedingung_alter_max=data.bedingung_alter_max,
         zahler_typ=data.zahler_typ, zahler_kasse_id=data.zahler_kasse_id,
     )
     created = db.beitragsregeln.create(r, created_by=user.username)
@@ -110,6 +114,8 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.bedingung_funktion_abteilung_id = data.bedingung_funktion_abteilung_id
     r.ausnahme_funktion = data.ausnahme_funktion
     r.ausnahme_funktion_abteilung_id = data.ausnahme_funktion_abteilung_id
+    r.bedingung_alter_min = data.bedingung_alter_min
+    r.bedingung_alter_max = data.bedingung_alter_max
     r.zahler_typ = data.zahler_typ
     r.zahler_kasse_id = data.zahler_kasse_id
     r.version = data.expected_version
@@ -239,6 +245,8 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'bedingung_funktion_abteilung_id': r.bedingung_funktion_abteilung_id,
         'ausnahme_funktion': r.ausnahme_funktion,
         'ausnahme_funktion_abteilung_id': r.ausnahme_funktion_abteilung_id,
+        'bedingung_alter_min': r.bedingung_alter_min,
+        'bedingung_alter_max': r.bedingung_alter_max,
         'zahler_typ': r.zahler_typ,
         'zahler_kasse_id': r.zahler_kasse_id, 'zahler_kasse_name': r.zahler_kasse_name,
         'version': r.version,
