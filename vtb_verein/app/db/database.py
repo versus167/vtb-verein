@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 
 class Database:
@@ -87,6 +87,7 @@ class Database:
             25: self._migrate_v24_to_v25,
             26: self._migrate_v25_to_v26,
             27: self._migrate_v26_to_v27,
+            28: self._migrate_v27_to_v28,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -829,6 +830,104 @@ class Database:
             ):
                 cur.execute(sql)
             cur.execute("UPDATE schema_version SET version = 27 WHERE id = 1")
+
+    def _migrate_v27_to_v28(self) -> None:
+        """Aufnahme-/Einmalgebühren: gebuehr (Katalog mit Gültigkeit) + gebuehr_forderung
+        (einmalige Forderung je Mitglied, einziehbar wie Beiträge)."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gebuehr (
+                  id              SERIAL PRIMARY KEY,
+                  name            TEXT NOT NULL,
+                  abteilung_id    INTEGER REFERENCES abteilung(id),
+                  betrag          REAL NOT NULL,
+                  anlass          TEXT NOT NULL DEFAULT 'aufnahme',
+                  gueltig_ab      TEXT NOT NULL,
+                  gueltig_bis     TEXT,
+                  zahler_typ      TEXT NOT NULL DEFAULT 'mitglied',
+                  zahler_kasse_id INTEGER REFERENCES kassen(id),
+                  version         INTEGER NOT NULL DEFAULT 1,
+                  created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by      TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at      TEXT, deleted_by TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gebuehr_history (
+                  id INTEGER NOT NULL, version INTEGER NOT NULL,
+                  name TEXT, abteilung_id INTEGER, betrag REAL, anlass TEXT,
+                  gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT, zahler_kasse_id INTEGER,
+                  created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at TEXT, deleted_by TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gebuehr_forderung (
+                  id                SERIAL PRIMARY KEY,
+                  mitglied_id       INTEGER NOT NULL REFERENCES mitglied(id),
+                  gebuehr_id        INTEGER NOT NULL REFERENCES gebuehr(id),
+                  datum             TEXT NOT NULL,
+                  betrag_soll       REAL NOT NULL,
+                  status            TEXT NOT NULL DEFAULT 'offen',
+                  bezahlt_am        TEXT,
+                  kassenbuchung_id  INTEGER REFERENCES kassenbuchungen(id),
+                  version           INTEGER NOT NULL DEFAULT 1,
+                  created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by        TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at        TEXT, deleted_by TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gebuehr_forderung_history (
+                  id INTEGER NOT NULL, version INTEGER NOT NULL,
+                  mitglied_id INTEGER, gebuehr_id INTEGER, datum TEXT, betrag_soll REAL,
+                  status TEXT, bezahlt_am TEXT, kassenbuchung_id INTEGER,
+                  created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at TEXT, deleted_by TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            for sql in (
+                """CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN INSERT INTO gebuehr_history (id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                       zahler_typ, zahler_kasse_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                       NEW.zahler_typ, NEW.zahler_kasse_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN IF NEW.version != OLD.version THEN INSERT INTO gebuehr_history (id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                       zahler_typ, zahler_kasse_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                       NEW.zahler_typ, NEW.zahler_kasse_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   END IF; RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN INSERT INTO gebuehr_forderung_history (id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN IF NEW.version != OLD.version THEN INSERT INTO gebuehr_forderung_history (id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   END IF; RETURN NEW; END; $$;""",
+                "CREATE OR REPLACE TRIGGER trig_gebuehr_audit_insert AFTER INSERT ON gebuehr FOR EACH ROW EXECUTE FUNCTION fn_gebuehr_audit_insert()",
+                "CREATE OR REPLACE TRIGGER trig_gebuehr_audit_update AFTER UPDATE ON gebuehr FOR EACH ROW EXECUTE FUNCTION fn_gebuehr_audit_update()",
+                "CREATE OR REPLACE TRIGGER trig_gebuehr_forderung_audit_insert AFTER INSERT ON gebuehr_forderung FOR EACH ROW EXECUTE FUNCTION fn_gebuehr_forderung_audit_insert()",
+                "CREATE OR REPLACE TRIGGER trig_gebuehr_forderung_audit_update AFTER UPDATE ON gebuehr_forderung FOR EACH ROW EXECUTE FUNCTION fn_gebuehr_forderung_audit_update()",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_abteilung_id ON gebuehr(abteilung_id)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_deleted_at ON gebuehr(deleted_at)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_history_id ON gebuehr_history(id)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_forderung_mitglied_id ON gebuehr_forderung(mitglied_id)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_forderung_gebuehr_id ON gebuehr_forderung(gebuehr_id)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_forderung_status ON gebuehr_forderung(status)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_forderung_deleted_at ON gebuehr_forderung(deleted_at)",
+                "CREATE INDEX IF NOT EXISTS idx_gebuehr_forderung_history_id ON gebuehr_forderung_history(id)",
+            ):
+                cur.execute(sql)
+            cur.execute("UPDATE schema_version SET version = 28 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
@@ -1672,6 +1771,65 @@ class Database:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS gebuehr (
+              id              SERIAL PRIMARY KEY,
+              name            TEXT NOT NULL,
+              abteilung_id    INTEGER REFERENCES abteilung(id),
+              betrag          REAL NOT NULL,
+              anlass          TEXT NOT NULL DEFAULT 'aufnahme',
+              gueltig_ab      TEXT NOT NULL,
+              gueltig_bis     TEXT,
+              zahler_typ      TEXT NOT NULL DEFAULT 'mitglied',
+              zahler_kasse_id INTEGER REFERENCES kassen(id),
+              version         INTEGER NOT NULL DEFAULT 1,
+              created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by      TEXT,
+              updated_at      TEXT,
+              updated_by      TEXT,
+              deleted_at      TEXT,
+              deleted_by      TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gebuehr_history (
+              id INTEGER NOT NULL, version INTEGER NOT NULL,
+              name TEXT, abteilung_id INTEGER, betrag REAL, anlass TEXT,
+              gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT, zahler_kasse_id INTEGER,
+              created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+              deleted_at TEXT, deleted_by TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gebuehr_forderung (
+              id                SERIAL PRIMARY KEY,
+              mitglied_id       INTEGER NOT NULL REFERENCES mitglied(id),
+              gebuehr_id        INTEGER NOT NULL REFERENCES gebuehr(id),
+              datum             TEXT NOT NULL,
+              betrag_soll       REAL NOT NULL,
+              status            TEXT NOT NULL DEFAULT 'offen',
+              bezahlt_am        TEXT,
+              kassenbuchung_id  INTEGER REFERENCES kassenbuchungen(id),
+              version           INTEGER NOT NULL DEFAULT 1,
+              created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by        TEXT,
+              updated_at        TEXT,
+              updated_by        TEXT,
+              deleted_at        TEXT,
+              deleted_by        TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gebuehr_forderung_history (
+              id INTEGER NOT NULL, version INTEGER NOT NULL,
+              mitglied_id INTEGER, gebuehr_id INTEGER, datum TEXT, betrag_soll REAL,
+              status TEXT, bezahlt_am TEXT, kassenbuchung_id INTEGER,
+              created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+              deleted_at TEXT, deleted_by TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS funktion (
               id            SERIAL PRIMARY KEY,
               key           TEXT NOT NULL,
@@ -1830,6 +1988,66 @@ class Database:
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO gebuehr_history (
+                    id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                    zahler_typ, zahler_kasse_id,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                    NEW.zahler_typ, NEW.zahler_kasse_id,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO gebuehr_history (
+                        id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                        zahler_typ, zahler_kasse_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO gebuehr_forderung_history (
+                    id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO gebuehr_forderung_history (
+                        id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -2395,6 +2613,10 @@ class Database:
             ('trig_mannschaft_audit_update',                        'UPDATE', 'mannschaft',                        'fn_mannschaft_audit_update'),
             ('trig_mitglied_mannschaft_audit_insert',               'INSERT', 'mitglied_mannschaft',               'fn_mitglied_mannschaft_audit_insert'),
             ('trig_mitglied_mannschaft_audit_update',               'UPDATE', 'mitglied_mannschaft',               'fn_mitglied_mannschaft_audit_update'),
+            ('trig_gebuehr_audit_insert',                           'INSERT', 'gebuehr',                           'fn_gebuehr_audit_insert'),
+            ('trig_gebuehr_audit_update',                           'UPDATE', 'gebuehr',                           'fn_gebuehr_audit_update'),
+            ('trig_gebuehr_forderung_audit_insert',                 'INSERT', 'gebuehr_forderung',                 'fn_gebuehr_forderung_audit_insert'),
+            ('trig_gebuehr_forderung_audit_update',                 'UPDATE', 'gebuehr_forderung',                 'fn_gebuehr_forderung_audit_update'),
             ('trig_users_audit_insert',                             'INSERT', 'users',                             'fn_users_audit_insert'),
             ('trig_users_audit_update',                             'UPDATE', 'users',                             'fn_users_audit_update'),
             ('trig_auth_tokens_audit_insert',                       'INSERT', 'auth_tokens',                       'fn_auth_tokens_audit_insert'),
@@ -2501,6 +2723,14 @@ class Database:
             ("idx_mitglied_mannschaft_mannschaft_id",               "mitglied_mannschaft(mannschaft_id)"),
             ("idx_mitglied_mannschaft_deleted_at",                  "mitglied_mannschaft(deleted_at)"),
             ("idx_mitglied_mannschaft_history_id",                  "mitglied_mannschaft_history(id)"),
+            ("idx_gebuehr_abteilung_id",                            "gebuehr(abteilung_id)"),
+            ("idx_gebuehr_deleted_at",                              "gebuehr(deleted_at)"),
+            ("idx_gebuehr_history_id",                              "gebuehr_history(id)"),
+            ("idx_gebuehr_forderung_mitglied_id",                   "gebuehr_forderung(mitglied_id)"),
+            ("idx_gebuehr_forderung_gebuehr_id",                    "gebuehr_forderung(gebuehr_id)"),
+            ("idx_gebuehr_forderung_status",                        "gebuehr_forderung(status)"),
+            ("idx_gebuehr_forderung_deleted_at",                    "gebuehr_forderung(deleted_at)"),
+            ("idx_gebuehr_forderung_history_id",                    "gebuehr_forderung_history(id)"),
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -2521,6 +2751,7 @@ class Database:
             'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
             'mannschaften.read', 'mannschaften.write', 'mannschaften.delete',
             'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
+            'gebuehren.read', 'gebuehren.write', 'gebuehren.abrechnen',
             'berichte.read', 'berichte.export',
             'system.config',
             'tickets.access',

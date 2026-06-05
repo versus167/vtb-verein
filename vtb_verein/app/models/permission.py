@@ -34,6 +34,11 @@ class Permission:
     BEITRAEGE_WRITE     = 'beitraege.write'
     BEITRAEGE_ABRECHNEN = 'beitraege.abrechnen'
 
+    # --- Gebühren (Einmal-/Aufnahmegebühren) ---
+    GEBUEHREN_READ      = 'gebuehren.read'
+    GEBUEHREN_WRITE     = 'gebuehren.write'
+    GEBUEHREN_ABRECHNEN = 'gebuehren.abrechnen'
+
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'
@@ -91,6 +96,8 @@ class Permission:
                 cls.MANNSCHAFTEN_DELETE,
                 cls.BEITRAEGE_READ,
                 cls.BEITRAEGE_WRITE,
+                cls.GEBUEHREN_READ,
+                cls.GEBUEHREN_WRITE,
                 cls.BERICHTE_READ,
                 cls.BERICHTE_EXPORT,
                 cls.TICKETS_ACCESS,
@@ -102,6 +109,7 @@ class Permission:
                 cls.ABTEILUNGEN_READ,
                 cls.MANNSCHAFTEN_READ,
                 cls.BEITRAEGE_READ,
+                cls.GEBUEHREN_READ,
                 cls.BERICHTE_READ,
                 cls.TICKETS_ACCESS,
             }

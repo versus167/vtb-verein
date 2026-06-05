@@ -20,6 +20,7 @@ from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
 from backend.api.personen import router as personen_router
 from backend.api.beitraege import router as beitraege_router
+from backend.api.gebuehren import router as gebuehren_router
 from backend.api.abteilungen import router as abteilungen_router
 from backend.api.mitglied_abteilungen import router as mitglied_abteilungen_router
 from backend.api.mitglied_funktionen import router as mitglied_funktionen_router
@@ -63,6 +64,7 @@ app.include_router(mitglieder_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(personen_router, prefix="/api")
 app.include_router(beitraege_router, prefix="/api")
+app.include_router(gebuehren_router, prefix="/api")
 app.include_router(abteilungen_router, prefix="/api")
 app.include_router(mitglied_abteilungen_router, prefix="/api")
 app.include_router(mitglied_funktionen_router, prefix="/api")

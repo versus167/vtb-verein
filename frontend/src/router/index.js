@@ -86,6 +86,12 @@ const routes = [
         meta: { permission: 'beitraege.read' },
       },
       {
+        path: 'gebuehren',
+        name: 'gebuehren',
+        component: () => import('pages/GebuehrenPage.vue'),
+        meta: { permission: 'gebuehren.read' },
+      },
+      {
         path: 'tickets',
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),

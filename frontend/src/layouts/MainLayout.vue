@@ -119,6 +119,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('gebuehren.read')"
+            clickable
+            :to="{ name: 'gebuehren' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="receipt_long" /></q-item-section>
+            <q-item-section>Gebühren</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.user?.role === 'admin'"
             clickable
             :to="{ name: 'kassenverwaltung' }"

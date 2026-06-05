@@ -46,6 +46,9 @@ from app.db.mitglied_mannschaft_repository import MitgliedMannschaftRepository, 
 from app.db.funktion_repository import FunktionRepository
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
+from app.db.gebuehr_repository import GebuehrRepository
+from app.db.gebuehr_forderung_repository import GebuehrForderungRepository
+from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
@@ -79,6 +82,8 @@ class VereinsDB:
         self._kassenbuchung_anhang_repo = KassenbuchungAnhangRepository(self.conn)
         self._beitragsregel_repo = BeitragsregelRepository(self.conn)
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
+        self._gebuehr_repo = GebuehrRepository(self.conn)
+        self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
@@ -429,4 +434,28 @@ class VereinsDB:
     @property
     def sollstellungen(self) -> BeitragSollstellungRepository:
         return self._sollstellung_repo
+
+    @property
+    def gebuehren(self) -> GebuehrRepository:
+        return self._gebuehr_repo
+
+    @property
+    def gebuehr_forderungen(self) -> GebuehrForderungRepository:
+        return self._gebuehr_forderung_repo
+
+    # --- Gebühren-Delegationen (für Service/API) ---
+    def get_gebuehr(self, id: int) -> Optional[Gebuehr]:
+        return self._gebuehr_repo.get(id)
+
+    def get_gebuehr_forderung(self, id: int) -> Optional[GebuehrForderung]:
+        return self._gebuehr_forderung_repo.get(id)
+
+    def gebuehr_forderung_exists(self, mitglied_id: int, gebuehr_id: int) -> bool:
+        return self._gebuehr_forderung_repo.exists(mitglied_id, gebuehr_id)
+
+    def create_gebuehr_forderung(self, f: GebuehrForderung, created_by: str) -> GebuehrForderung:
+        return self._gebuehr_forderung_repo.create(f, created_by)
+
+    def set_gebuehr_forderung_kassenbuchung(self, id: int, kassenbuchung_id: int, updated_by: str) -> bool:
+        return self._gebuehr_forderung_repo.set_kassenbuchung(id, kassenbuchung_id, updated_by)
 
