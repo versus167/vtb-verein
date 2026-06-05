@@ -46,6 +46,8 @@ def create_funktion(mitglied_id: int, data: FunktionWrite, user: CurrentUser, db
     valid_keys = db.funktionen.list_keys()
     if data.funktion not in valid_keys:
         raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
+    if not (data.von or '').strip():
+        raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
     try:
         db.get_mitglied(mitglied_id)
     except KeyError:
@@ -64,6 +66,8 @@ def update_funktion(mitglied_id: int, funktion_id: int, data: FunktionUpdate,
     valid_keys = db.funktionen.list_keys()
     if data.funktion not in valid_keys:
         raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
+    if not (data.von or '').strip():
+        raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
     eintrag = db.get_mitglied_funktion(funktion_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Funktionszuordnung nicht gefunden")

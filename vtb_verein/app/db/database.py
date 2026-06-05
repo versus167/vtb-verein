@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 
 class Database:
@@ -84,6 +84,7 @@ class Database:
             22: self._migrate_v21_to_v22,
             23: self._migrate_v22_to_v23,
             24: self._migrate_v23_to_v24,
+            25: self._migrate_v24_to_v25,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -668,6 +669,18 @@ class Database:
 
             cur.execute("UPDATE schema_version SET version = 24 WHERE id = 1")
 
+    def _migrate_v24_to_v25(self) -> None:
+        """Funktions-Zeitraum verpflichtend: mitglied_funktion.von wird NOT NULL.
+        Bestehende NULL/leere Werte werden auf das Anlagedatum (created_at) gesetzt."""
+        with self.cursor() as cur:
+            cur.execute("""
+                UPDATE mitglied_funktion
+                SET von = COALESCE(NULLIF(von, ''), LEFT(created_at, 10), CURRENT_DATE::text)
+                WHERE von IS NULL OR von = ''
+            """)
+            cur.execute("ALTER TABLE mitglied_funktion ALTER COLUMN von SET NOT NULL")
+            cur.execute("UPDATE schema_version SET version = 25 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -854,7 +867,7 @@ class Database:
               mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
               abteilung_id   INTEGER REFERENCES abteilung(id),
               funktion       TEXT NOT NULL,
-              von            TEXT,
+              von            TEXT NOT NULL,
               bis            TEXT,
               version        INTEGER NOT NULL DEFAULT 1,
               created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

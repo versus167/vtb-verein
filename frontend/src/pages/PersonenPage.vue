@@ -443,7 +443,7 @@
               :option-value="a => a.id" :option-label="a => a.name" emit-value map-options
               label="Abteilung (leer = vereinsweit)" outlined dense clearable />
             <div class="row q-gutter-sm">
-              <q-input v-model="funktionForm.von" label="Von" outlined dense type="date" class="col" />
+              <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" />
               <q-input v-model="funktionForm.bis" label="Bis" outlined dense type="date" class="col" />
             </div>
             <div class="row q-gutter-sm">
@@ -967,6 +967,10 @@ function openEditFunktion(f) {
 async function onSaveFunktion() {
   if (!funktionForm.value.funktion) {
     $q.notify({ type: 'negative', message: 'Bitte eine Funktion auswählen.' })
+    return
+  }
+  if (!funktionForm.value.von) {
+    $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben (Zeitraum ist Pflicht).' })
     return
   }
   funktionSaving.value = true
