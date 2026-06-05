@@ -41,6 +41,8 @@ from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtig
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository, MitgliedFunktion
 from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository, MitgliedKontakt
+from app.db.mannschaft_repository import MannschaftRepository, Mannschaft
+from app.db.mitglied_mannschaft_repository import MitgliedMannschaftRepository, MitgliedMannschaft
 from app.db.funktion_repository import FunktionRepository
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
@@ -64,6 +66,8 @@ class VereinsDB:
         self._mitglied_abteilung_repo = MitgliedAbteilungRepository(self.conn)
         self._mitglied_funktion_repo = MitgliedFunktionRepository(self.conn)
         self._mitglied_kontakt_repo = MitgliedKontaktRepository(self.conn)
+        self._mannschaft_repo = MannschaftRepository(self.conn)
+        self._mitglied_mannschaft_repo = MitgliedMannschaftRepository(self.conn)
         self._funktion_repo = FunktionRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
@@ -334,6 +338,48 @@ class VereinsDB:
     def set_mitglied_primaer_kontakt(self, mitglied_id: int, typ: str,
                                      wert: Optional[str], actor: str) -> None:
         return self._mitglied_kontakt_repo.upsert_primaer(mitglied_id, typ, wert, actor)
+
+    # -----------------------------------
+    # Mannschaften / Teams
+    # -----------------------------------
+
+    def list_mannschaften(self, abteilung_id: Optional[int] = None) -> list[Mannschaft]:
+        return self._mannschaft_repo.list_all(abteilung_id)
+
+    def get_mannschaft(self, id: int) -> Optional[Mannschaft]:
+        return self._mannschaft_repo.get(id)
+
+    def create_mannschaft(self, m: Mannschaft, created_by: str) -> Mannschaft:
+        return self._mannschaft_repo.create(m, created_by)
+
+    def update_mannschaft(self, m: Mannschaft, updated_by: str) -> bool:
+        return self._mannschaft_repo.update(m, updated_by)
+
+    def mark_mannschaft_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._mannschaft_repo.mark_deleted(id, deleted_by)
+
+    def mannschaft_has_active_mitglieder(self, mannschaft_id: int) -> bool:
+        return self._mannschaft_repo.has_active_mitglied_references(mannschaft_id)
+
+    def list_mannschaft_kader(self, mannschaft_id: int) -> list[MitgliedMannschaft]:
+        return self._mitglied_mannschaft_repo.list_for_mannschaft(mannschaft_id)
+
+    def list_mitglied_mannschaften(self, mitglied_id: int) -> list[MitgliedMannschaft]:
+        return self._mitglied_mannschaft_repo.list_for_mitglied(mitglied_id)
+
+    def get_mitglied_mannschaft(self, id: int) -> Optional[MitgliedMannschaft]:
+        return self._mitglied_mannschaft_repo.get(id)
+
+    def create_mitglied_mannschaft(self, mitglied_id: int, mannschaft_id: int, rolle: str,
+                                   von: str, bis: Optional[str], created_by: str) -> MitgliedMannschaft:
+        return self._mitglied_mannschaft_repo.create(mitglied_id, mannschaft_id, rolle, von, bis, created_by)
+
+    def update_mitglied_mannschaft(self, id: int, rolle: str, von: str, bis: Optional[str],
+                                   updated_by: str, expected_version: int) -> bool:
+        return self._mitglied_mannschaft_repo.update(id, rolle, von, bis, updated_by, expected_version)
+
+    def mark_mitglied_mannschaft_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._mitglied_mannschaft_repo.mark_deleted(id, deleted_by)
 
     # -----------------------------------
     # User Operations

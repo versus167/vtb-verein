@@ -60,6 +60,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('mannschaften.read')"
+            clickable
+            :to="{ name: 'mannschaften' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="sports_soccer" /></q-item-section>
+            <q-item-section>Mannschaften</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('personen.read')"
             clickable
             :to="{ name: 'personen' }"

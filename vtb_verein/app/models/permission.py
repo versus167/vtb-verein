@@ -24,6 +24,11 @@ class Permission:
     ABTEILUNGEN_WRITE  = 'abteilungen.write'
     ABTEILUNGEN_DELETE = 'abteilungen.delete'
 
+    # --- Mannschaften / Teams ---
+    MANNSCHAFTEN_READ   = 'mannschaften.read'
+    MANNSCHAFTEN_WRITE  = 'mannschaften.write'
+    MANNSCHAFTEN_DELETE = 'mannschaften.delete'
+
     # --- Beiträge ---
     BEITRAEGE_READ      = 'beitraege.read'
     BEITRAEGE_WRITE     = 'beitraege.write'
@@ -81,6 +86,9 @@ class Permission:
                 cls.ABTEILUNGEN_READ,
                 cls.ABTEILUNGEN_WRITE,
                 cls.ABTEILUNGEN_DELETE,
+                cls.MANNSCHAFTEN_READ,
+                cls.MANNSCHAFTEN_WRITE,
+                cls.MANNSCHAFTEN_DELETE,
                 cls.BEITRAEGE_READ,
                 cls.BEITRAEGE_WRITE,
                 cls.BERICHTE_READ,
@@ -92,6 +100,7 @@ class Permission:
             return {
                 cls.PERSONEN_READ,
                 cls.ABTEILUNGEN_READ,
+                cls.MANNSCHAFTEN_READ,
                 cls.BEITRAEGE_READ,
                 cls.BERICHTE_READ,
                 cls.TICKETS_ACCESS,

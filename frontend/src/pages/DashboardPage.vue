@@ -18,6 +18,19 @@
       </div>
 
       <div
+        v-if="auth.hasPermission('mannschaften.read')"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'mannschaften' })">
+          <q-card-section class="text-center">
+            <q-icon name="sports_soccer" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Mannschaften</div>
+            <div class="text-caption text-grey">Teams & Kader verwalten</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div
         v-if="auth.hasPermission('personen.read')"
         class="col-6 col-sm-4 col-md-3"
       >

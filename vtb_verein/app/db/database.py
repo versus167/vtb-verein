@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 
 class Database:
@@ -86,6 +86,7 @@ class Database:
             24: self._migrate_v23_to_v24,
             25: self._migrate_v24_to_v25,
             26: self._migrate_v25_to_v26,
+            27: self._migrate_v26_to_v27,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -734,6 +735,100 @@ class Database:
                 END; $$;
             """)
             cur.execute("UPDATE schema_version SET version = 26 WHERE id = 1")
+
+    def _migrate_v26_to_v27(self) -> None:
+        """Mannschaften/Teams: mannschaft + mitglied_mannschaft (mit Rolle/Zeitraum)."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mannschaft (
+                  id             SERIAL PRIMARY KEY,
+                  abteilung_id   INTEGER NOT NULL REFERENCES abteilung(id),
+                  name           TEXT NOT NULL,
+                  saison         TEXT,
+                  beschreibung   TEXT,
+                  version        INTEGER NOT NULL DEFAULT 1,
+                  created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mannschaft_history (
+                  id INTEGER NOT NULL, version INTEGER NOT NULL,
+                  abteilung_id INTEGER, name TEXT, saison TEXT, beschreibung TEXT,
+                  created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at TEXT, deleted_by TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_mannschaft (
+                  id             SERIAL PRIMARY KEY,
+                  mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+                  mannschaft_id  INTEGER NOT NULL REFERENCES mannschaft(id),
+                  rolle          TEXT NOT NULL,
+                  von            TEXT NOT NULL,
+                  bis            TEXT,
+                  version        INTEGER NOT NULL DEFAULT 1,
+                  created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_mannschaft_history (
+                  id INTEGER NOT NULL, version INTEGER NOT NULL,
+                  mitglied_id INTEGER, mannschaft_id INTEGER, rolle TEXT, von TEXT, bis TEXT,
+                  created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+                  deleted_at TEXT, deleted_by TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            for sql in (
+                """CREATE OR REPLACE FUNCTION fn_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN INSERT INTO mannschaft_history (id, version, abteilung_id, name, saison, beschreibung,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN IF NEW.version != OLD.version THEN INSERT INTO mannschaft_history (id, version, abteilung_id, name, saison, beschreibung,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   END IF; RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN INSERT INTO mitglied_mannschaft_history (id, version, mitglied_id, mannschaft_id, rolle, von, bis,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   RETURN NEW; END; $$;""",
+                """CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                   BEGIN IF NEW.version != OLD.version THEN INSERT INTO mitglied_mannschaft_history (id, version, mitglied_id, mannschaft_id, rolle, von, bis,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by)
+                   VALUES (NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
+                       NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by);
+                   END IF; RETURN NEW; END; $$;""",
+                "CREATE OR REPLACE TRIGGER trig_mannschaft_audit_insert AFTER INSERT ON mannschaft FOR EACH ROW EXECUTE FUNCTION fn_mannschaft_audit_insert()",
+                "CREATE OR REPLACE TRIGGER trig_mannschaft_audit_update AFTER UPDATE ON mannschaft FOR EACH ROW EXECUTE FUNCTION fn_mannschaft_audit_update()",
+                "CREATE OR REPLACE TRIGGER trig_mitglied_mannschaft_audit_insert AFTER INSERT ON mitglied_mannschaft FOR EACH ROW EXECUTE FUNCTION fn_mitglied_mannschaft_audit_insert()",
+                "CREATE OR REPLACE TRIGGER trig_mitglied_mannschaft_audit_update AFTER UPDATE ON mitglied_mannschaft FOR EACH ROW EXECUTE FUNCTION fn_mitglied_mannschaft_audit_update()",
+                "CREATE INDEX IF NOT EXISTS idx_mannschaft_abteilung_id ON mannschaft(abteilung_id)",
+                "CREATE INDEX IF NOT EXISTS idx_mannschaft_deleted_at ON mannschaft(deleted_at)",
+                "CREATE INDEX IF NOT EXISTS idx_mannschaft_history_id ON mannschaft_history(id)",
+                "CREATE INDEX IF NOT EXISTS idx_mitglied_mannschaft_mitglied_id ON mitglied_mannschaft(mitglied_id)",
+                "CREATE INDEX IF NOT EXISTS idx_mitglied_mannschaft_mannschaft_id ON mitglied_mannschaft(mannschaft_id)",
+                "CREATE INDEX IF NOT EXISTS idx_mitglied_mannschaft_deleted_at ON mitglied_mannschaft(deleted_at)",
+                "CREATE INDEX IF NOT EXISTS idx_mitglied_mannschaft_history_id ON mitglied_mannschaft_history(id)",
+            ):
+                cur.execute(sql)
+            cur.execute("UPDATE schema_version SET version = 27 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
@@ -1509,6 +1604,74 @@ class Database:
             )
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS mannschaft (
+              id             SERIAL PRIMARY KEY,
+              abteilung_id   INTEGER NOT NULL REFERENCES abteilung(id),
+              name           TEXT NOT NULL,
+              saison         TEXT,
+              beschreibung   TEXT,
+              version        INTEGER NOT NULL DEFAULT 1,
+              created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mannschaft_history (
+              id             INTEGER NOT NULL,
+              version        INTEGER NOT NULL,
+              abteilung_id   INTEGER,
+              name           TEXT,
+              saison         TEXT,
+              beschreibung   TEXT,
+              created_at     TEXT,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_mannschaft (
+              id             SERIAL PRIMARY KEY,
+              mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+              mannschaft_id  INTEGER NOT NULL REFERENCES mannschaft(id),
+              rolle          TEXT NOT NULL,
+              von            TEXT NOT NULL,
+              bis            TEXT,
+              version        INTEGER NOT NULL DEFAULT 1,
+              created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_mannschaft_history (
+              id             INTEGER NOT NULL,
+              version        INTEGER NOT NULL,
+              mitglied_id    INTEGER,
+              mannschaft_id  INTEGER,
+              rolle          TEXT,
+              von            TEXT,
+              bis            TEXT,
+              created_at     TEXT,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS funktion (
               id            SERIAL PRIMARY KEY,
               key           TEXT NOT NULL,
@@ -1611,6 +1774,62 @@ class Database:
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.mitglied_id, NEW.typ, NEW.wert, NEW.label, NEW.ist_primaer,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO mannschaft_history (
+                    id, version, abteilung_id, name, saison, beschreibung,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO mannschaft_history (
+                        id, version, abteilung_id, name, saison, beschreibung,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO mitglied_mannschaft_history (
+                    id, version, mitglied_id, mannschaft_id, rolle, von, bis,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO mitglied_mannschaft_history (
+                        id, version, mitglied_id, mannschaft_id, rolle, von, bis,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -2172,6 +2391,10 @@ class Database:
             ('trig_mitglied_funktion_audit_update',                 'UPDATE', 'mitglied_funktion',                 'fn_mitglied_funktion_audit_update'),
             ('trig_mitglied_kontakt_audit_insert',                  'INSERT', 'mitglied_kontakt',                  'fn_mitglied_kontakt_audit_insert'),
             ('trig_mitglied_kontakt_audit_update',                  'UPDATE', 'mitglied_kontakt',                  'fn_mitglied_kontakt_audit_update'),
+            ('trig_mannschaft_audit_insert',                        'INSERT', 'mannschaft',                        'fn_mannschaft_audit_insert'),
+            ('trig_mannschaft_audit_update',                        'UPDATE', 'mannschaft',                        'fn_mannschaft_audit_update'),
+            ('trig_mitglied_mannschaft_audit_insert',               'INSERT', 'mitglied_mannschaft',               'fn_mitglied_mannschaft_audit_insert'),
+            ('trig_mitglied_mannschaft_audit_update',               'UPDATE', 'mitglied_mannschaft',               'fn_mitglied_mannschaft_audit_update'),
             ('trig_users_audit_insert',                             'INSERT', 'users',                             'fn_users_audit_insert'),
             ('trig_users_audit_update',                             'UPDATE', 'users',                             'fn_users_audit_update'),
             ('trig_auth_tokens_audit_insert',                       'INSERT', 'auth_tokens',                       'fn_auth_tokens_audit_insert'),
@@ -2271,6 +2494,13 @@ class Database:
             ("idx_mitglied_kontakt_mitglied_id",                    "mitglied_kontakt(mitglied_id)"),
             ("idx_mitglied_kontakt_deleted_at",                     "mitglied_kontakt(deleted_at)"),
             ("idx_mitglied_kontakt_history_id",                     "mitglied_kontakt_history(id)"),
+            ("idx_mannschaft_abteilung_id",                         "mannschaft(abteilung_id)"),
+            ("idx_mannschaft_deleted_at",                           "mannschaft(deleted_at)"),
+            ("idx_mannschaft_history_id",                           "mannschaft_history(id)"),
+            ("idx_mitglied_mannschaft_mitglied_id",                 "mitglied_mannschaft(mitglied_id)"),
+            ("idx_mitglied_mannschaft_mannschaft_id",               "mitglied_mannschaft(mannschaft_id)"),
+            ("idx_mitglied_mannschaft_deleted_at",                  "mitglied_mannschaft(deleted_at)"),
+            ("idx_mitglied_mannschaft_history_id",                  "mitglied_mannschaft_history(id)"),
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -2289,6 +2519,7 @@ class Database:
         _ADMIN_PERMS = {
             'personen.read', 'personen.write', 'personen.delete', 'personen.permissions',
             'abteilungen.read', 'abteilungen.write', 'abteilungen.delete',
+            'mannschaften.read', 'mannschaften.write', 'mannschaften.delete',
             'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
             'berichte.read', 'berichte.export',
             'system.config',
