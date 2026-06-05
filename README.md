@@ -1,552 +1,274 @@
 # VTB Vereinsverwaltung
 
-Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen und Beiträgen.
+Moderne Web-Anwendung zur Verwaltung von Vereinsmitgliedern, Abteilungen, Mannschaften,
+Beiträgen, Gebühren und Kassen.
+
+**Tech-Stack:** Quasar/Vue (Frontend) · FastAPI (Backend) · PostgreSQL (psycopg3).
+Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 
 ## Features
 
-✅ **Benutzerverwaltung**
-- Rollenbasierte Zugriffskontrolle (Admin, Bearbeiter, Nur Lesen)
-- Feingranulare Permission-Matrix pro User (unabhängig von der Rolle)
-- Passwort-Management mit bcrypt
-- Session-Management
-
-✅ **Abteilungsverwaltung**
-- CRUD-Operationen für Abteilungen
-- Soft-Delete mit Wiederherstellung
-- Validierung von Abhängigkeiten
-- Anzeige und Wiederherstellung gelöschter Abteilungen
-
-✅ **Mitgliederverwaltung**
-- Vollständige Mitgliederverwaltung mit allen relevanten Daten
+✅ **Personenverwaltung** (Benutzer + Mitglieder vereint)
+- Eine „Personen"-Seite für System-Benutzer und Vereinsmitglieder
+- Rollen (admin, user, readonly, mitglied, special) + feingranulare Permission-Matrix je User
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
-- Persönliche Daten, Kontakt, Adresse
-- Vereinsdaten (Eintritt, Austritt, Status)
-- Zahlungsdaten (IBAN, BIC, Zahlungsart)
-- Soft-Delete mit History
+- Persönliche Daten, Adresse, Vereinsdaten (Eintritt/Austritt/Status), Zahlungsdaten (IBAN/BIC)
+- Passwort-Hashing (bcrypt), Magic-Link-Login per E-Mail
+- Self-Service-Profil für die Rolle `mitglied`
 
-✅ **Mitglied-Abteilung-Zuordnung**
-- Mehrfachzuordnung von Mitgliedern zu Abteilungen
-- Status-Management (aktiv, passiv, trainer, vorstand, etc.)
-- Von/Bis-Datumsfelder für zeitliche Zuordnungen
-- Sub-Dialog zur Verwaltung der Zuordnungen
-- Vollständiger Audit-Trail
+✅ **Kontaktdaten (mehrfach)** *(Schema v24)*
+- Beliebig viele E-Mails/Telefonnummern je Mitglied (`mitglied_kontakt`), voll normalisiert
+- Genau ein Primärkontakt je Typ; Primär-E-Mail/-Telefon weiter in Formularen pflegbar
 
-✅ **Kassenbuch (Grundstruktur)**
-- Verwaltung mehrerer Barkassen (vereinsweit oder je Abteilung)
-- Kassenbuchungen mit Belegnummer, Kategorie, Einnahme/Ausgabe (in Cent)
-- Stornierung von Buchungen (Soft-Delete)
-- Bestandsberechnung direkt per SQL (kein Python-Loop)
+✅ **Abteilungen & Funktionen**
+- Abteilungen mit Soft-Delete + Wiederherstellung
+- Mitglied-Abteilung-Zuordnung (Status, Von/Bis)
+- Funktionen je Mitglied (Schiedsrichter, Übungsleiter, Abteilungsleiter …) mit **Pflicht-Zeitraum** *(v25)*
+
+✅ **Mannschaften / Teams** *(Schema v27)*
+- Mannschaften je Abteilung (Name, Saison)
+- Kader-Zuordnung mit Rolle (spieler, uebungsleiter, trainer, betreuer) und Zeitraum
+
+✅ **Beiträge**
+- Beitragsregeln (Verein vs. Abteilung), Einzugsturnus, Gültigkeitszeitraum
+- Bedingungen nach Abteilungsstatus, Funktion und **Alter** *(v26)*
+- Sollstellungs-Lauf (Vorschau + Abrechnung), SEPA-Export, Umbuchung in Abteilungskasse
+
+✅ **Gebühren (Aufnahme-/Einmalgebühren)** *(Schema v28)*
+- Gebühren-Katalog mit Gültigkeit (Verein vs. Abteilung, Zahler Mitglied/Abteilung)
+- Einmalige Forderung je Mitglied (Duplikatschutz), einziehbar wie Beiträge (SEPA / Umbuchung)
+
+✅ **Kassenbuch**
+- Mehrere Barkassen (vereinsweit oder je Abteilung), Beträge in **Cent** (kein Float)
+- Belegnummer `YYYY-NNN`, Stornierung (Soft-Delete), Bestandsberechnung per SQL
 - Revisionssicherer CSV-Export mit Exportsperre
-- Belegnummer-Vergabe nach Schema `YYYY-NNN`
-- History-Tracking via DB-Trigger
 
-✅ **Audit-Trail**
-- Vollständige Versionierung aller Änderungen
-- History-Tabellen für jeden Datensatz
-- Nachvollziehbare Datenänderungen (wer, wann, was)
+✅ **Tickets** & **Anhänge** (Fotos/PDFs), domänenspezifische Ablage
 
-✅ **Moderne UI**
-- Responsive Design mit Quasar Framework
-- Intuitive Navigation
-- Echtzeit-Validierung
-- Übersichtliche Dialoge mit Sections
+✅ **Audit-Trail & Soft-Delete** durchgängig
+- `*_history`-Tabellen je Entität, automatisch via DB-Trigger (INSERT/UPDATE)
+- Optimistic Locking (`version`), Soft-Delete (`deleted_at`/`deleted_by`)
+
+## Architektur
+
+```
+┌─────────────────────────────┐
+│  Frontend (Quasar/Vue, PWA) │  frontend/src/        – SPA, ruft /api
+└──────────────┬──────────────┘
+               │ HTTP /api
+┌──────────────┴──────────────┐
+│  API (FastAPI)              │  backend/api/         – Router, Auth (JWT), Permissions
+└──────────────┬──────────────┘
+               │
+┌──────────────┴──────────────┐
+│  Service-Layer              │  vtb_verein/app/services/  – Business-Logik, Orchestrierung
+└──────────────┬──────────────┘
+               │
+┌──────────────┴──────────────┐
+│  Repository-Layer           │  vtb_verein/app/db/   – CRUD, SQL, Mapping → Models
+└──────────────┬──────────────┘
+               │
+┌──────────────┴──────────────┐
+│  PostgreSQL (psycopg3)      │  Schema + Migrationen in app/db/database.py
+└─────────────────────────────┘
+```
+
+Der Service-/Repository-Layer unter `vtb_verein/app/` wird vom FastAPI-Backend über
+`PYTHONPATH=vtb_verein` importiert. Das produktive Docker-Image baut das Quasar-Frontend und
+serviert es als statische PWA zusammen mit der API.
 
 ## Installation
 
-### Option 1: Docker (Empfohlen)
+### Option 1: Docker Compose (empfohlen)
 
-**Voraussetzungen:**
-- Docker und Docker Compose installiert
-
-**Schnellstart:**
+**Voraussetzungen:** Docker + Docker Compose.
 
 1. **Repository klonen**
    ```bash
    git clone https://github.com/versus167/vtb-verein.git
    cd vtb-verein
    ```
-
-2. **Environment-Datei erstellen**
+2. **Environment-Datei anlegen**
    ```bash
    cp .env.example .env
-   # .env bearbeiten und SMTP-Einstellungen konfigurieren
+   # mindestens VTB_PG_USER / VTB_PG_PASSWORD / VTB_PG_DB setzen,
+   # optional SMTP-Daten für Magic-Link-Login
    ```
-
-3. **Container starten**
+3. **Stack starten** (PostgreSQL + App-Container)
    ```bash
-   docker compose up -d
+   docker compose up -d --build
    ```
+4. **Browser öffnen:** http://localhost:8000  *(Host-Port via `VTB_PORT`, Default 8000)*
 
-4. **Browser öffnen**
-   ```
-   http://localhost:8080
-   ```
-
-**Docker-Befehle:**
-
+**Nützliche Befehle:**
 ```bash
-# Container stoppen
-docker compose down
-
-# Logs anzeigen
-docker compose logs -f
-
-# Container neu bauen
-docker compose build --no-cache
-
-# Container neu starten
-docker compose restart
+docker compose logs -f          # Logs
+docker compose restart vtb-verein
+docker compose down             # stoppen
+docker compose build --no-cache # neu bauen
 ```
 
-**Daten-Persistence:**
+**Daten-Persistenz:** Die PostgreSQL-Daten liegen im Volume `./pg_data`, Uploads in `./uploads`.
 
-Die SQLite-Datenbank wird im `./data` Verzeichnis gespeichert und bleibt bei Container-Updates erhalten.
+### Option 2: Lokale Entwicklung
 
-### Option 2: Manuelle Installation
+**Voraussetzungen:** Python 3.11+, Node 20+, eine erreichbare PostgreSQL-Instanz.
 
-**Voraussetzungen:**
-
-- Python 3.11 oder höher
-- pip (Python Package Manager)
-
-**Setup:**
-
-1. **Repository klonen**
+1. **PostgreSQL bereitstellen** (Beispiel via Docker):
    ```bash
-   git clone https://github.com/versus167/vtb-verein.git
-   cd vtb-verein
+   docker run -d --name vtb-pg -e POSTGRES_USER=vtb -e POSTGRES_PASSWORD=vtb_dev \
+     -e POSTGRES_DB=verein -p 5432:5432 postgres:18
    ```
-
-2. **Virtuelle Umgebung erstellen (empfohlen)**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   # oder
-   venv\Scripts\activate  # Windows
-   ```
-
-3. **Abhängigkeiten installieren**
-   ```bash
-   cd vtb_verein
-   pip install -r requirements.txt
-   ```
-
-4. **Umgebungsvariablen konfigurieren (optional)**
+2. **`.env` anlegen** und `VTB_DATABASE_URL` setzen, z.B.:
    ```bash
    cp .env.example .env
-   # Dann .env bearbeiten
+   # VTB_DATABASE_URL=postgresql://vtb:vtb_dev@localhost:5432/verein
    ```
-
-5. **Anwendung starten**
+3. **Backend** (Service-Layer liegt unter `vtb_verein/`, daher `PYTHONPATH`):
    ```bash
-   python main.py
+   python -m venv venv && source venv/bin/activate
+   pip install -r vtb_verein/requirements.txt -r backend/requirements.txt
+   PYTHONPATH=vtb_verein python -m uvicorn backend.main:app --reload --port 8000
    ```
-
-6. **Browser öffnen**
+   Das Schema wird beim Start **automatisch** auf die aktuelle Version migriert.
+4. **Frontend** (in zweitem Terminal):
+   ```bash
+   cd frontend
+   npm ci
+   npx quasar dev
    ```
-   http://localhost:8080
-   ```
+   Der Quasar-Dev-Server öffnet den Browser; API-Aufrufe (`/api`) werden laut
+   `frontend/quasar.config.js` auf `http://localhost:8000` weitergeleitet.
 
 ## Erste Schritte
 
-### Standard-Admin-Account
-
-Beim ersten Start wird automatisch ein Admin-Account erstellt:
+Beim ersten Start wird automatisch ein Admin-Account angelegt:
 
 - **Username:** `admin`
 - **Passwort:** `admin123`
 
-⚠️ **WICHTIG:** Bitte Passwort sofort nach dem ersten Login ändern!
-
-### Neue Benutzer anlegen
-
-1. Als Admin einloggen
-2. Navigation: "Benutzer" klicken
-3. "Neuen Benutzer anlegen" Button
-4. Formular ausfüllen und speichern
-
-### Abteilungen verwalten
-
-1. Als Admin oder Bearbeiter einloggen
-2. Navigation: "Abteilungen" klicken
-3. Abteilungen anlegen, bearbeiten oder löschen
-4. Gelöschte Abteilungen können wiederhergestellt werden
-
-### Mitglieder verwalten
-
-1. Als Admin oder Bearbeiter einloggen
-2. Navigation: "Mitglieder" klicken
-3. "Neues Mitglied anlegen" Button
-4. Formular ausfüllen:
-   - Mitgliedsnummer wird automatisch vergeben (kann geändert werden)
-   - Pflichtfelder: Vorname, Nachname, Zahlungsart
-5. Mitglieder bearbeiten oder löschen
-6. "Abteilungen verwalten" Button: Zuordnung zu Abteilungen
+⚠️ **Passwort sofort nach dem ersten Login ändern.**
 
 ## Konfiguration
 
-### Umgebungsvariablen
-
-Die Anwendung kann über Umgebungsvariablen konfiguriert werden:
+Konfiguration über Umgebungsvariablen (bzw. `.env`):
 
 ```bash
-# Datenbank
-VTB_DB_PATH=verein.db  # Docker: /data/verein.db
+# Datenbank (PostgreSQL)
+VTB_DATABASE_URL=postgresql://USER:PASSWORT@HOST:PORT/DBNAME
+# Für docker compose werden daraus genutzt:
+VTB_PG_USER=vtb
+VTB_PG_PASSWORD=...
+VTB_PG_DB=verein
 
 # Server
-VTB_HOST=0.0.0.0
-VTB_PORT=8080
+VTB_PORT=8000            # Host-Port (Compose), Default 8000
 
-# Security
-VTB_STORAGE_SECRET=your-secret-key-here
+# Uploads
+VTB_UPLOAD_PATH=uploads/ # Docker: /app/uploads
+VTB_MAX_UPLOAD_MB=10
 
-# SMTP (für Magic-Link-Login)
+# Magic-Link-Login (SMTP)
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
+SMTP_USE_TLS=true
+SMTP_USERNAME=...
+SMTP_PASSWORD=...
 MAIL_FROM=VTB Verein <vereinsverwaltung@gmail.com>
-BASE_URL=http://localhost:8080
+BASE_URL=http://localhost:8000
 ```
 
-Alternativ: `.env` Datei im Projektverzeichnis anlegen.
-
-### Datenbank
-
-Die Anwendung verwendet SQLite als Datenbank. Die Datenbankdatei wird automatisch beim ersten Start erstellt.
-
-**Datenbank zurücksetzen:**
-
+**Datenbank zurücksetzen (Docker):**
 ```bash
-# Manuell
-rm verein.db
-cd vtb_verein
-python main.py
-
-# Docker
 docker compose down
-rm -rf data/
-mkdir data
-docker compose up -d
+sudo rm -rf pg_data/
+docker compose up -d --build
 ```
 
-## Docker Production Deployment
-
-### Image bauen
-
-```bash
-# Image bauen
-docker build -t vtb-verein:latest .
-
-# Image mit Tag bauen
-docker build -t vtb-verein:v1.0.0 .
-```
-
-### Container manuell starten
-
-```bash
-docker run -d \
-  --name vtb-verein \
-  -p 8080:8080 \
-  -v $(pwd)/data:/data \
-  -e VTB_DB_PATH=/data/verein.db \
-  -e VTB_STORAGE_SECRET=your-secret-key \
-  --env-file .env \
-  --restart unless-stopped \
-  vtb-verein:latest
-```
-
-### Health Check
-
-Das Docker-Image enthält einen integrierten Health Check:
-
-```bash
-# Container-Status prüfen
-docker ps
-
-# Health-Status anzeigen
-docker inspect --format='{{.State.Health.Status}}' vtb-verein
-```
-
-### Ressourcen-Limits
-
-In `docker-compose.yml` sind bereits Ressourcen-Limits definiert:
-
-- **CPU:** Max 1.0 Core, Reserve 0.25 Core
-- **Memory:** Max 512MB, Reserve 128MB
-
-Passe diese nach Bedarf an.
-
-## Entwicklung
-
-### Projektstruktur
+## Projektstruktur
 
 ```
 vtb-verein/
-├── requirements.txt             # Python-Abhängigkeiten
+├── docker-compose.yml           # PostgreSQL + App-Container
 ├── README.md                    # Diese Datei
-├── TODO.md                      # Roadmap und offene Aufgaben
-├── Dockerfile                   # Docker-Image-Definition
-├── docker-compose.yml           # Docker Compose Konfiguration
-├── .dockerignore                # Dateien für Docker-Build ausschließen
-└── vtb_verein/
-    ├── main.py                  # Haupteinstiegspunkt
-    ├── __init__.py
+├── TODO.md                      # Roadmap / offene Aufgaben
+├── frontend/                    # Quasar/Vue Single-Page-App (PWA)
+│   ├── src/pages/               # Seiten (Personen, Abteilungen, Mannschaften,
+│   │                            #   Beiträge, Gebühren, Kassenbuch, Tickets …)
+│   ├── src/layouts/             # MainLayout (Navigation)
+│   ├── src/router/              # Routen (+ meta.permission)
+│   ├── src/stores/              # Pinia (auth)
+│   └── quasar.config.js         # Dev-Proxy /api → Backend
+├── backend/                     # FastAPI
+│   ├── Dockerfile               # baut Frontend + Backend, startet uvicorn
+│   ├── main.py                  # App, Router-Registrierung, /api/health
+│   ├── api/                     # Router je Domäne
+│   ├── core/                    # deps (CurrentUser, DB), config
+│   └── requirements.txt
+└── vtb_verein/                  # Service-/Repository-/Model-Layer (via PYTHONPATH importiert)
+    ├── requirements.txt
     └── app/
-        ├── auth/                # Authentifizierung
-        │   ├── auth_helper.py   # Session, require_permission-Decorator
-        │   └── __init__.py
-        ├── db/                  # Datenbank-Layer (Repository Pattern)
-        │   ├── __init__.py
-        │   ├── base_repository.py              # Basis-Klasse für Repositories
-        │   ├── database.py                     # Connection & Schema-Management
-        │   ├── datastore.py                    # VereinsDB Facade (Backward Compat.)
-        │   ├── mitglied_repository.py          # Mitglied-Datenzugriff
-        │   ├── abteilung_repository.py         # Abteilung-Datenzugriff
-        │   ├── user_repository.py              # User-Datenzugriff
-        │   ├── permission_repository.py        # Permission-Datenzugriff
-        │   ├── kasse_repository.py             # Kasse CRUD + Bestandsberechnung
-        │   ├── kassenbuchung_repository.py     # Kassenbuchung CRUD + Stornierung
-        │   └── kassenbuch_export_repository.py # Kassenbuch-Export (revisionssicher)
-        ├── models/              # Datenmodelle
-        │   ├── abteilung.py
-        │   ├── mitglied.py
-        │   ├── user.py
-        │   ├── permission.py    # Permission-Konstanten & UserPermission-Modell
-        │   ├── kasse.py         # Kasse, Kassenbuchung, KassenbuchExport
-        │   └── __init__.py
-        ├── services/            # Business-Logik
-        │   ├── abteilungen_service.py
-        │   ├── mitglied_abteilung_service.py
-        │   ├── user_service.py
-        │   └── __init__.py
-        ├── ui/                  # User Interface
-        │   ├── abteilung_management.py
-        │   ├── mitglied_management.py
-        │   ├── mitglied_abteilung_dialog.py
-        │   ├── login_page.py
-        │   ├── navigation.py
-        │   ├── user_management.py
-        │   └── __init__.py
-        └── web/                 # Web-spezifische Komponenten
-            └── __init__.py
+        ├── db/                  # Repositories + database.py (Schema & Migrationen)
+        ├── models/              # Dataclasses (mitglied, beitrag, gebuehr, kasse, permission …)
+        └── services/            # Business-Logik (person, beitrags, gebuehren, kassenbuch …)
 ```
 
-### Testing
+## Datenbank-Schema & Migrationen
+
+Das Schema wird **nicht** über Alembic zur Laufzeit verwaltet, sondern über eine eigene,
+versionierte Pipeline in `vtb_verein/app/db/database.py`:
+
+- `SCHEMA_VERSION` definiert die Zielversion (aktuell **28**).
+- Beim Backend-Start vergleicht `Database._init_schema()` die DB-Version und führt fehlende
+  `_migrate_vX_to_vY()`-Schritte sequenziell aus (jeweils in eigener Transaktion).
+- Neue Migration = neue `_migrate_…`-Funktion + Eintrag in `migration_map` + `SCHEMA_VERSION`
+  erhöhen. Das Frisch-Schema (`_create_tables` / `_create_trigger_functions` /
+  `_create_triggers` / `_create_indexes`) parallel pflegen.
+
+Durchgängige Prinzipien: **Soft-Delete** (`deleted_at`/`deleted_by`, nie hart löschen),
+**Optimistic Locking** (`version`) und **Audit-History** (`*_history`-Tabellen via
+INSERT/UPDATE-Trigger). Beträge im Kassenbuch in **Cent** (Integer).
+
+Jüngste Meilensteine: v24 mehrere Kontaktdaten · v25 Funktions-Pflichtzeitraum ·
+v26 altersabhängige Beitragsregeln · v27 Mannschaften · v28 Aufnahme-/Einmalgebühren.
+
+> Hinweis: `sqlalchemy`/`alembic` sind als Dependencies vorhanden, werden für die
+> Laufzeit-Migrationen aber **nicht** verwendet.
+
+## Permissions
+
+Feingranulare Permission-Matrix in der Form `ressource.aktion`, geprüft im API-Layer
+(`user.has_permission(...)` + `backend/core/deps.py`). Ressourcen u.a.:
+`personen.*`, `abteilungen.*`, `mannschaften.*`, `beitraege.*`, `gebuehren.*`,
+`berichte.*`, `tickets.*`, `system.config`.
+
+Rollen vergeben Default-Permissions (`Permission.defaults_for_role`):
+`admin` = alle · `user` = Verwaltung (ohne System) · `readonly` = nur `*.read` ·
+`mitglied` = nur eigenes Profil/Tickets.
+
+## Tests
 
 ```bash
-# Anwendung im Entwicklungsmodus starten
-cd vtb_verein
-python main.py
+# immer über das venv ausführen
+./venv/bin/python -m pytest vtb_verein/tests/ -q
 ```
 
-### Neue Features hinzufügen
-
-1. Branch erstellen: `git checkout -b feature/mein-feature`
-2. Änderungen durchführen
-3. Commit: `git commit -am "Add: Mein Feature"`
-4. Push: `git push origin feature/mein-feature`
-5. Pull Request erstellen
-
-## Technische Details
-
-### Architektur
-
-**Repository Pattern (seit v2.0):**
-
-Die Anwendung nutzt das Repository Pattern für saubere Trennung von Datenzugriff und Business-Logik:
-
-```
-┌─────────────────┐
-│   UI Layer      │  NiceGUI-Komponenten
-└────────┬────────┘
-         │
-┌────────┴────────┐
-│ Service Layer   │  Business-Logik, Validierung, Orchestrierung
-└────────┬────────┘
-         │
-┌────────┴────────┐
-│ Repository Layer│  Reine CRUD-Operationen, SQL-Queries
-└────────┬────────┘
-         │
-┌────────┴────────┐
-│   Database      │  SQLite mit Row Factory
-└─────────────────┘
-```
-
-**Layer-Verantwortlichkeiten:**
-
-1. **UI Layer** (`app/ui/`):
-   - NiceGUI-Komponenten
-   - User Interaction
-   - Keine Business-Logik
-
-2. **Service Layer** (`app/services/`):
-   - Business-Logik (z.B. „Letzter Admin"-Schutz, Export-Sperre-Prüfung)
-   - Validierung (z.B. Passwort-Hashing)
-   - Orchestrierung mehrerer Repositories
-   - **Keine direkten SQL-Queries**
-
-3. **Repository Layer** (`app/db/`):
-   - Pure CRUD-Operationen
-   - SQL-Queries
-   - Mapping von DB-Rows zu Models
-   - **Keine Business-Logik**
-
-4. **Models** (`app/models/`):
-   - Datenklassen (dataclasses)
-   - Permission-Konstanten (`Permission`-Klasse)
-   - Type Safety
-
-**Vorteile:**
-- ✅ Klare Trennung der Verantwortlichkeiten
-- ✅ Testbarkeit (Repositories können gemockt werden)
-- ✅ Wartbarkeit (SQL-Änderungen nur in Repositories)
-- ✅ Wiederverwendbarkeit (Repositories in mehreren Services nutzbar)
-
-### Permission-System
-
-Seit Schema v5 verwendet die Anwendung eine feingranulare **Permission-Matrix** statt rein rollenbasierter Zugriffssteuerung.
-
-**Permissions** haben die Form `ressource.aktion`, z.B.:
-- `mitglieder.read`, `mitglieder.write`, `mitglieder.delete`
-- `abteilungen.read`, `abteilungen.write`, `abteilungen.delete`
-- `beitraege.read`, `beitraege.write`
-- `berichte.read`, `berichte.export`
-- `users.read`, `users.manage`
-- `system.config`
-- `kasse.read`, `kasse.write`, `kasse.delete`, `kasse.export` *(geplant für nächsten Schritt)*
-
-**Rollen** vergeben beim Anlegen eines Users automatisch Default-Permissions:
-- `admin`: alle Permissions
-- `user`: alle außer `users.manage` und `system.config`
-- `readonly`: nur `*.read`
-
-Individuelle Permissions können anschließend pro User angepasst werden (über `PermissionRepository`).
-
-**Zugriffsprüfung in der UI:**
-```python
-from app.auth.auth_helper import AuthHelper, require_permission
-from app.models.permission import Permission
-
-# Imperativ
-if AuthHelper.has_permission(Permission.MITGLIEDER_WRITE):
-    ...
-
-# Als Decorator
-@require_permission(Permission.MITGLIEDER_WRITE)
-def edit_member():
-    ...
-```
-
-### Kassenbuch-Modul
-
-Das Kassenbuch-Modul (Schema v6) verwaltet Barkassen des Vereins oder einzelner Abteilungen.
-
-**Datenmodell:**
-
-| Tabelle | Beschreibung |
-|---------|-------------|
-| `kassen` | Barkassen mit Name, Anfangsbestand (Cent), optionaler Abteilungszuordnung |
-| `kassenbuchungen` | Einzelbuchungen mit Betrag (Cent), Belegnummer, Kategorie, Exportsperre |
-| `kassenbuch_exporte` | Revisionssichere Abschlüsse eines Zeitraums (immutable nach Erstellen) |
-
-**Wichtige Design-Entscheidungen:**
-- Beträge werden immer in **Cent** (Integer) gespeichert – kein Floating Point
-- Belegnummer-Format: `YYYY-NNN` (z.B. `2026-001`), read-only nach Erstellen
-- Stornierte Buchungen bleiben erhalten (Soft-Delete), zählen aber nicht zum Bestand
-- Exportierte Buchungen sind gesperrt – Stornierung nur über Service-Layer möglich
-- Bestandsberechnung via SQL-Aggregation (kein Python-Loop)
-
-**Repositories:**
-- `KasseRepository`: CRUD + `get_bestand_cent()`, `get_bestand_zum_datum_cent()`
-- `KassenbuchungRepository`: CRUD + Stornierung + `get_naechste_belegnummer()` + `mark_buchungen_exportiert()`
-- `KassenbuchExportRepository`: Create + `get_nicht_exportierte_buchungen()` + `ist_buchung_gesperrt()`
-
-### Datenbank-Schema
-
-**Mitgliedsnummern:**
-- Typ: INTEGER (automatische Vergabe)
-- UNIQUE Constraint
-- Manuelle Überschreibung möglich
-- Validierung auf Duplikate
-
-**Mitglied-Abteilung-Zuordnung:**
-- Many-to-Many Beziehung via mitglied_abteilung Tabelle
-- Status-Feld für verschiedene Rollen
-- Von/Bis-Datumsfelder für zeitliche Zuordnungen
-- Soft-Delete Support
-
-**Soft-Delete:**
-- Alle Entitäten unterstützen Soft-Delete
-- `deleted_at` und `deleted_by` Felder
-- Wiederherstellung möglich (wo sinnvoll)
-- History bleibt erhalten
-
-**Optimistic Locking:**
-- Version-Feld für Concurrency Control
-- Verhindert Überschreiben von Änderungen
-- Konflikterkennung bei Updates
-
-**History/Audit-Trail:**
-- Automatische Versionierung via Database-Triggers
-- Trigger nur für INSERT und UPDATE (kein DELETE – Prune soll nicht getrackt werden)
-- Jede Änderung wird in `*_history` Tabellen protokolliert
-
-**Schema-Versionen:**
-
-| Version | Inhalt |
-|---------|--------|
-| 1 | Initiales Schema (mitglied, abteilung, beitrag, users) |
-| 2 | History-Trigger für mitglied; DELETE-Trigger entfernt |
-| 3 | Rolle `special` in users-Tabelle |
-| 4 | `auth_tokens` für Magic-Link-Authentication |
-| 5 | `user_permissions` für Permission-Matrix |
-| 6 | Kassenbuch-Tabellen (kassen, kassenbuchungen, kassenbuch_exporte) |
-
-### Repository Pattern Details
-
-**BaseRepository:**
-- Gemeinsame Basis für alle Repositories
-- Stellt `cursor()` Context Manager bereit
-- Automatisches Commit/Rollback
-
-**Spezialisierte Repositories:**
-- `MitgliedRepository`: CRUD für Mitglieder, Mitgliedsnummer-Management
-- `AbteilungRepository`: CRUD für Abteilungen, Dependency-Checks
-- `UserRepository`: CRUD für User, Authentication-Queries
-- `PermissionRepository`: CRUD für User-Permissions (grant, revoke, set)
-- `KasseRepository`: CRUD für Kassen, Bestandsberechnung per SQL
-- `KassenbuchungRepository`: CRUD für Buchungen, Stornierung, Exportsperre
-- `KassenbuchExportRepository`: Revisionssichere Export-Datensätze
-
-**VereinsDB Facade:**
-- Kombiniert alle Repositories
-- Stellt einheitliche Schnittstelle bereit
-- Backward Compatibility für Legacy-Code
-- Kasse-Repositories noch nicht in Facade integriert (nächster Schritt)
+Aktuell sind nur wenige Unit-Tests vorhanden (`test_anhang_service`,
+`test_notification_services`). Eine PostgreSQL-Test-Fixture (conftest) existiert noch nicht;
+DB-nahe Tests werden derzeit gegen einen Wegwerf-PostgreSQL-Container gefahren.
 
 ## Roadmap
 
-Siehe [TODO.md](TODO.md) für die detaillierte Roadmap und offene Aufgaben.
-
-## Support
-
-Bei Fragen oder Problemen:
-
-1. Issue erstellen: https://github.com/versus167/vtb-verein/issues
-2. Dokumentation prüfen: Diese README
-3. Code anschauen: Gut kommentiert
+Siehe [TODO.md](TODO.md). Nächster großer Schritt: Import der realen Mitgliederdaten.
 
 ## Lizenz
 
-Dieses Projekt ist privat und nicht für die öffentliche Nutzung bestimmt.
+Privat, nicht für die öffentliche Nutzung bestimmt.
 
 ## Credits
 
-Entwickelt mit:
-- [NiceGUI](https://nicegui.io/) - Python UI Framework
-- [SQLite](https://www.sqlite.org/) - Datenbank
-- [bcrypt](https://github.com/pyca/bcrypt/) - Password Hashing
-- [Quasar Framework](https://quasar.dev/) - UI Components
-- [Docker](https://www.docker.com/) - Containerization
+- [Vue](https://vuejs.org/) + [Quasar Framework](https://quasar.dev/) – Frontend
+- [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) – Backend
+- [PostgreSQL](https://www.postgresql.org/) + [psycopg](https://www.psycopg.org/) – Datenbank
+- [bcrypt](https://github.com/pyca/bcrypt/) – Password Hashing
+- [Docker](https://www.docker.com/) – Containerisierung
