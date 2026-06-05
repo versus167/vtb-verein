@@ -181,7 +181,9 @@ def list_personen(user: CurrentUser, db: DB):
             SELECT * FROM (
                 SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version,
                        m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
-                       m.strasse, m.plz, m.ort, m.land, m.email AS m_email, m.telefon,
+                       m.strasse, m.plz, m.ort, m.land,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
                        m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        m.user_id AS m_user_id, m.version AS m_version,
@@ -193,7 +195,9 @@ def list_personen(user: CurrentUser, db: DB):
                 UNION ALL
                 SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                        m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
-                       m.strasse, m.plz, m.ort, m.land, m.email, m.telefon,
+                       m.strasse, m.plz, m.ort, m.land,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
                        m.eintrittsdatum, m.austrittsdatum, m.status,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        NULL, m.version,
@@ -294,10 +298,9 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
     u = db.get_user_by_id(user_id)
     m = db.get_mitglied_by_user_id(user_id)
-    # E-Mail im Mitglied-Datensatz synchron halten
-    if m and m.email != data.email:
-        m.email = data.email
-        db.update_mitglied(m, updated_by=user.username)
+    # Primären E-Mail-Kontakt des Mitglieds mit der Login-E-Mail synchron halten
+    if m:
+        db.set_mitglied_primaer_kontakt(m.id, 'email', data.email, user.username)
         m = db.get_mitglied_by_user_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id) if m else []
     return _person_row(u, m, abteilungen)
@@ -329,6 +332,8 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    # Primären Telefon-Kontakt aus dem Einzelfeld pflegen (weitere Kontakte über /kontakte)
+    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     u = db.get_user_by_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id)
     return _person_row(u, db.get_mitglied_by_user_id(user_id), abteilungen)
@@ -347,15 +352,20 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         vorname=data.vorname, nachname=data.nachname,
         geburtsdatum=data.geburtsdatum,
         strasse=data.strasse, plz=data.plz, ort=data.ort, land=data.land,
-        telefon=data.telefon,
         eintrittsdatum=data.eintrittsdatum, austrittsdatum=data.austrittsdatum,
         status=data.status, zahlungsart=data.zahlungsart,
         iban=data.iban, bic=data.bic, kontoinhaber=data.kontoinhaber,
         abgerechnet_bis=data.abgerechnet_bis,
-        email=u.email,
         user_id=user_id,
     )
     mitglied = db.create_mitglied(m, created_by=user.username)
+    # Primäre Kontakte anlegen (E-Mail = Login-E-Mail, Telefon aus Formular)
+    if u.email:
+        db.create_mitglied_kontakt(mitglied.id, 'email', u.email, None, True, user.username)
+        mitglied.email = u.email
+    if data.telefon:
+        db.create_mitglied_kontakt(mitglied.id, 'telefon', data.telefon, None, True, user.username)
+        mitglied.telefon = data.telefon
     abteilungen = db.list_mitglied_abteilungen(mitglied.id)
     return _person_row(u, mitglied, abteilungen)
 
@@ -454,4 +464,5 @@ def update_mein_mitglied(data: MeinMitgliedUpdate, user: CurrentUser, db: DB):
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     return _mitglied_to_dict(db.get_mitglied_by_user_id(user.id))

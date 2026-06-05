@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 class Database:
@@ -83,6 +83,7 @@ class Database:
             21: self._migrate_v20_to_v21,
             22: self._migrate_v21_to_v22,
             23: self._migrate_v22_to_v23,
+            24: self._migrate_v23_to_v24,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -524,6 +525,149 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 23 WHERE id = 1")
 
+    def _migrate_v23_to_v24(self) -> None:
+        """Mehrere Kontaktdaten je Mitglied: neue Tabelle mitglied_kontakt (voll
+        normalisiert). Bestehende mitglied.email/telefon werden als primäre Kontakte
+        übernommen, danach werden die Spalten entfernt. mitglied_history behält seine
+        email/telefon-Spalten als eingefrorene Historie."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_kontakt (
+                  id             SERIAL PRIMARY KEY,
+                  mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+                  typ            TEXT NOT NULL,
+                  wert           TEXT NOT NULL,
+                  label          TEXT,
+                  ist_primaer    BOOLEAN NOT NULL DEFAULT FALSE,
+                  version        INTEGER NOT NULL DEFAULT 1,
+                  created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS mitglied_kontakt_history (
+                  id             INTEGER NOT NULL,
+                  version        INTEGER NOT NULL,
+                  mitglied_id    INTEGER,
+                  typ            TEXT,
+                  wert           TEXT,
+                  label          TEXT,
+                  ist_primaer    BOOLEAN,
+                  created_at     TEXT,
+                  created_by     TEXT,
+                  updated_at     TEXT,
+                  updated_by     TEXT,
+                  deleted_at     TEXT,
+                  deleted_by     TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_kontakt_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO mitglied_kontakt_history (
+                        id, version, mitglied_id, typ, wert, label, ist_primaer,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.typ, NEW.wert, NEW.label, NEW.ist_primaer,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_kontakt_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO mitglied_kontakt_history (
+                            id, version, mitglied_id, typ, wert, label, ist_primaer,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.mitglied_id, NEW.typ, NEW.wert, NEW.label, NEW.ist_primaer,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_mitglied_kontakt_audit_insert
+                AFTER INSERT ON mitglied_kontakt
+                FOR EACH ROW EXECUTE FUNCTION fn_mitglied_kontakt_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_mitglied_kontakt_audit_update
+                AFTER UPDATE ON mitglied_kontakt
+                FOR EACH ROW EXECUTE FUNCTION fn_mitglied_kontakt_audit_update();
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_mitglied_kontakt_mitglied_id ON mitglied_kontakt(mitglied_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_mitglied_kontakt_deleted_at  ON mitglied_kontakt(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_mitglied_kontakt_history_id  ON mitglied_kontakt_history(id)")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_kontakt_primaer ON mitglied_kontakt (mitglied_id, typ) WHERE ist_primaer AND deleted_at IS NULL")
+
+            # Bestandsdaten übernehmen: vorhandene email/telefon als primäre Kontakte
+            cur.execute("""
+                INSERT INTO mitglied_kontakt (mitglied_id, typ, wert, ist_primaer, created_by)
+                SELECT id, 'email', email, TRUE, 'migration'
+                FROM mitglied WHERE email IS NOT NULL AND email <> ''
+            """)
+            cur.execute("""
+                INSERT INTO mitglied_kontakt (mitglied_id, typ, wert, ist_primaer, created_by)
+                SELECT id, 'telefon', telefon, TRUE, 'migration'
+                FROM mitglied WHERE telefon IS NOT NULL AND telefon <> ''
+            """)
+
+            # mitglied-Audit-Funktionen ohne email/telefon neu definieren …
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO mitglied_history (
+                        id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                        strasse, plz, ort, land,
+                        eintrittsdatum, austrittsdatum, status,
+                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                        user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                        NEW.strasse, NEW.plz, NEW.ort, NEW.land,
+                        NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                        NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                        NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO mitglied_history (
+                            id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                            strasse, plz, ort, land,
+                            eintrittsdatum, austrittsdatum, status,
+                            zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                            user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                            NEW.strasse, NEW.plz, NEW.ort, NEW.land,
+                            NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                            NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                            NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            # … und erst danach die Spalten entfernen (Funktion referenziert sie nicht mehr)
+            cur.execute("ALTER TABLE mitglied DROP COLUMN IF EXISTS email")
+            cur.execute("ALTER TABLE mitglied DROP COLUMN IF EXISTS telefon")
+
+            cur.execute("UPDATE schema_version SET version = 24 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -553,8 +697,6 @@ class Database:
               plz               TEXT,
               ort               TEXT,
               land              TEXT,
-              email             TEXT,
-              telefon           TEXT,
               eintrittsdatum    TEXT,
               austrittsdatum    TEXT,
               status            TEXT NOT NULL DEFAULT 'aktiv',
@@ -602,6 +744,41 @@ class Database:
               updated_by        TEXT,
               deleted_at        TEXT,
               deleted_by        TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_kontakt (
+              id             SERIAL PRIMARY KEY,
+              mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
+              typ            TEXT NOT NULL,
+              wert           TEXT NOT NULL,
+              label          TEXT,
+              ist_primaer    BOOLEAN NOT NULL DEFAULT FALSE,
+              version        INTEGER NOT NULL DEFAULT 1,
+              created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS mitglied_kontakt_history (
+              id             INTEGER NOT NULL,
+              version        INTEGER NOT NULL,
+              mitglied_id    INTEGER,
+              typ            TEXT,
+              wert           TEXT,
+              label          TEXT,
+              ist_primaer    BOOLEAN,
+              created_at     TEXT,
+              created_by     TEXT,
+              updated_at     TEXT,
+              updated_by     TEXT,
+              deleted_at     TEXT,
+              deleted_by     TEXT,
               PRIMARY KEY (id, version)
             )
         """)
@@ -1306,13 +1483,13 @@ class Database:
             BEGIN
                 INSERT INTO mitglied_history (
                     id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
-                    strasse, plz, ort, land, email, telefon,
+                    strasse, plz, ort, land,
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                     user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
-                    NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
+                    NEW.strasse, NEW.plz, NEW.ort, NEW.land,
                     NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                     NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
                     NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
@@ -1326,16 +1503,44 @@ class Database:
                 IF NEW.version != OLD.version THEN
                     INSERT INTO mitglied_history (
                         id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
-                        strasse, plz, ort, land, email, telefon,
+                        strasse, plz, ort, land,
                         eintrittsdatum, austrittsdatum, status,
                         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                         user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
-                        NEW.strasse, NEW.plz, NEW.ort, NEW.land, NEW.email, NEW.telefon,
+                        NEW.strasse, NEW.plz, NEW.ort, NEW.land,
                         NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                         NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
                         NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_kontakt_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO mitglied_kontakt_history (
+                    id, version, mitglied_id, typ, wert, label, ist_primaer,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.mitglied_id, NEW.typ, NEW.wert, NEW.label, NEW.ist_primaer,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_mitglied_kontakt_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO mitglied_kontakt_history (
+                        id, version, mitglied_id, typ, wert, label, ist_primaer,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitglied_id, NEW.typ, NEW.wert, NEW.label, NEW.ist_primaer,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
                 RETURN NEW;
@@ -1890,6 +2095,8 @@ class Database:
             ('trig_mitglied_abteilung_audit_update',                'UPDATE', 'mitglied_abteilung',                'fn_mitglied_abteilung_audit_update'),
             ('trig_mitglied_funktion_audit_insert',                 'INSERT', 'mitglied_funktion',                 'fn_mitglied_funktion_audit_insert'),
             ('trig_mitglied_funktion_audit_update',                 'UPDATE', 'mitglied_funktion',                 'fn_mitglied_funktion_audit_update'),
+            ('trig_mitglied_kontakt_audit_insert',                  'INSERT', 'mitglied_kontakt',                  'fn_mitglied_kontakt_audit_insert'),
+            ('trig_mitglied_kontakt_audit_update',                  'UPDATE', 'mitglied_kontakt',                  'fn_mitglied_kontakt_audit_update'),
             ('trig_users_audit_insert',                             'INSERT', 'users',                             'fn_users_audit_insert'),
             ('trig_users_audit_update',                             'UPDATE', 'users',                             'fn_users_audit_update'),
             ('trig_auth_tokens_audit_insert',                       'INSERT', 'auth_tokens',                       'fn_auth_tokens_audit_insert'),
@@ -1986,10 +2193,14 @@ class Database:
             ("idx_ticket_bereich_berechtigungen_history_id",        "ticket_bereich_berechtigungen_history(id)"),
             ("idx_kassenbuchung_anhaenge_buchung_id",               "kassenbuchung_anhaenge(buchung_id)"),
             ("idx_kassenbuchung_anhaenge_deleted_at",               "kassenbuchung_anhaenge(deleted_at)"),
+            ("idx_mitglied_kontakt_mitglied_id",                    "mitglied_kontakt(mitglied_id)"),
+            ("idx_mitglied_kontakt_deleted_at",                     "mitglied_kontakt(deleted_at)"),
+            ("idx_mitglied_kontakt_history_id",                     "mitglied_kontakt_history(id)"),
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_user_id       ON mitglied (user_id)  WHERE user_id IS NOT NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_kontakt_primaer ON mitglied_kontakt (mitglied_id, typ) WHERE ist_primaer AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active    ON users (email)       WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL")

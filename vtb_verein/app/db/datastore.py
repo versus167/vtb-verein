@@ -40,6 +40,7 @@ from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository, MitgliedFunktion
+from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository, MitgliedKontakt
 from app.db.funktion_repository import FunktionRepository
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
@@ -62,6 +63,7 @@ class VereinsDB:
         self._abteilung_repo = AbteilungRepository(self.conn)
         self._mitglied_abteilung_repo = MitgliedAbteilungRepository(self.conn)
         self._mitglied_funktion_repo = MitgliedFunktionRepository(self.conn)
+        self._mitglied_kontakt_repo = MitgliedKontaktRepository(self.conn)
         self._funktion_repo = FunktionRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
@@ -298,6 +300,40 @@ class VereinsDB:
 
     def mark_mitglied_funktion_deleted(self, id: int, deleted_by: str) -> bool:
         return self._mitglied_funktion_repo.mark_deleted(id, deleted_by)
+
+    # -----------------------------------
+    # Mitglied-Kontakt-Zuordnung (mehrere E-Mails/Telefonnummern)
+    # -----------------------------------
+
+    def list_mitglied_kontakte(self, mitglied_id: int) -> list[MitgliedKontakt]:
+        return self._mitglied_kontakt_repo.list_for_mitglied(mitglied_id)
+
+    def get_mitglied_kontakt(self, id: int) -> Optional[MitgliedKontakt]:
+        return self._mitglied_kontakt_repo.get(id)
+
+    def get_mitglied_kontakt_primaer(self, mitglied_id: int, typ: str) -> Optional[str]:
+        return self._mitglied_kontakt_repo.get_primaer(mitglied_id, typ)
+
+    def create_mitglied_kontakt(self, mitglied_id: int, typ: str, wert: str,
+                                label: Optional[str], ist_primaer: bool,
+                                created_by: str) -> MitgliedKontakt:
+        return self._mitglied_kontakt_repo.create(
+            mitglied_id, typ, wert, label, ist_primaer, created_by
+        )
+
+    def update_mitglied_kontakt(self, id: int, typ: str, wert: str, label: Optional[str],
+                                ist_primaer: bool, updated_by: str,
+                                expected_version: int) -> bool:
+        return self._mitglied_kontakt_repo.update(
+            id, typ, wert, label, ist_primaer, updated_by, expected_version
+        )
+
+    def mark_mitglied_kontakt_deleted(self, id: int, deleted_by: str) -> bool:
+        return self._mitglied_kontakt_repo.mark_deleted(id, deleted_by)
+
+    def set_mitglied_primaer_kontakt(self, mitglied_id: int, typ: str,
+                                     wert: Optional[str], actor: str) -> None:
+        return self._mitglied_kontakt_repo.upsert_primaer(mitglied_id, typ, wert, actor)
 
     # -----------------------------------
     # User Operations

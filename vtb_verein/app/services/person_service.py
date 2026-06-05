@@ -46,14 +46,15 @@ class PersonService:
         )
 
         try:
+            telefon = mitglied_data.pop('telefon', None)
             m = Mitglied(
                 vorname=vorname,
                 nachname=nachname,
-                email=email,
                 user_id=user.id,
                 **mitglied_data,
             )
             mitglied = self.db.create_mitglied(m, created_by=created_by)
+            self._create_initial_kontakte(mitglied, email, telefon, created_by)
         except Exception:
             # Kompensation: User soft-deleten wenn Mitglied-Anlage fehlschlägt
             try:
@@ -72,8 +73,23 @@ class PersonService:
         mitglied_data: dict,
     ) -> Mitglied:
         """Legt nur einen Mitglied-Datensatz an (kein User, kein Login)."""
+        telefon = mitglied_data.pop('telefon', None)
+        email = mitglied_data.pop('email', None)
         m = Mitglied(vorname=vorname, nachname=nachname, user_id=None, **mitglied_data)
-        return self.db.create_mitglied(m, created_by=created_by)
+        mitglied = self.db.create_mitglied(m, created_by=created_by)
+        self._create_initial_kontakte(mitglied, email, telefon, created_by)
+        return mitglied
+
+    def _create_initial_kontakte(self, mitglied: Mitglied, email: Optional[str],
+                                 telefon: Optional[str], created_by: str) -> None:
+        """Legt die anfänglichen primären Kontakte (E-Mail/Telefon) an und spiegelt sie
+        in die transienten Felder mitglied.email/telefon für die Rückgabe."""
+        if email:
+            self.db.create_mitglied_kontakt(mitglied.id, 'email', email, None, True, created_by)
+            mitglied.email = email
+        if telefon:
+            self.db.create_mitglied_kontakt(mitglied.id, 'telefon', telefon, None, True, created_by)
+            mitglied.telefon = telefon
 
     def delete_mitglied_ohne_user(self, mitglied_id: int, deleted_by: str) -> None:
         """Soft-löscht einen Mitglied-Datensatz ohne User."""

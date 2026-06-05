@@ -78,6 +78,10 @@
             @click="openFunktionenDialog(p)">
             <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
+          <q-btn v-if="p.mitglied" flat dense round icon="contact_phone" color="cyan-8" size="sm"
+            @click="openKontakteDialog(p)">
+            <q-tooltip>Kontaktdaten</q-tooltip>
+          </q-btn>
           <q-btn v-if="p.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
@@ -176,6 +180,10 @@
           <q-btn v-if="props.row.mitglied" flat dense round icon="badge" color="indigo" size="sm"
             @click="openFunktionenDialog(props.row)">
             <q-tooltip>Funktionen</q-tooltip>
+          </q-btn>
+          <q-btn v-if="props.row.mitglied" flat dense round icon="contact_phone" color="cyan-8" size="sm"
+            @click="openKontakteDialog(props.row)">
+            <q-tooltip>Kontaktdaten</q-tooltip>
           </q-btn>
           <q-btn v-if="props.row.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
@@ -442,6 +450,68 @@
               <q-btn flat label="Abbrechen" @click="funktionFormOpen = false" />
               <q-btn unelevated :label="editingFunktionId ? 'Speichern' : 'Hinzufügen'"
                 color="primary" :loading="funktionSaving" @click="onSaveFunktion" />
+            </div>
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- ════════════════════════════════════════════════
+         Kontakte-Dialog (mehrere E-Mails/Telefonnummern)
+         ════════════════════════════════════════════════ -->
+    <q-dialog v-model="kontakteOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Kontaktdaten</div>
+          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
+            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <q-inner-loading :showing="kontakteLoading" />
+          <div v-if="!kontakteLoading && kontakte.length === 0"
+            class="text-grey text-center q-py-md">Keine Kontaktdaten erfasst.</div>
+          <q-list separator>
+            <q-item v-for="k in kontakte" :key="k.id">
+              <q-item-section avatar>
+                <q-icon :name="kontaktIcon(k.typ)" color="cyan-8" />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>
+                  {{ k.wert }}
+                  <q-chip v-if="k.ist_primaer" dense size="xs" color="cyan-8" text-color="white" class="q-ml-xs">primär</q-chip>
+                </q-item-label>
+                <q-item-label caption>
+                  {{ typLabel(k.typ) }}<span v-if="k.label"> · {{ k.label }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row q-gutter-xs">
+                  <q-btn v-if="!k.ist_primaer" flat dense round icon="star" color="amber-8" size="sm"
+                    @click="setPrimaer(k)"><q-tooltip>Als primär setzen</q-tooltip></q-btn>
+                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKontakt(k)" />
+                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteKontakt(k)" />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <q-btn flat icon="add" label="Kontakt hinzufügen" color="primary" class="q-mt-sm"
+            @click="openAddKontakt" />
+          <!-- Formular -->
+          <div v-if="kontaktFormOpen" class="q-mt-md q-gutter-sm">
+            <q-select v-model="kontaktForm.typ" :options="kontaktTypOptionen"
+              option-value="value" option-label="label" emit-value map-options
+              label="Typ *" outlined dense />
+            <q-input v-model="kontaktForm.wert" label="Wert *" outlined dense
+              :type="kontaktForm.typ === 'email' ? 'email' : 'text'" />
+            <q-input v-model="kontaktForm.label" label="Bezeichnung (optional, z.B. privat)" outlined dense />
+            <q-toggle v-model="kontaktForm.ist_primaer" label="Primärer Kontakt dieses Typs" color="cyan-8" />
+            <div class="row q-gutter-sm">
+              <q-btn flat label="Abbrechen" @click="kontaktFormOpen = false" />
+              <q-btn unelevated :label="editingKontaktId ? 'Speichern' : 'Hinzufügen'"
+                color="primary" :loading="kontaktSaving" @click="onSaveKontakt" />
             </div>
           </div>
         </q-card-section>
@@ -933,6 +1003,114 @@ async function deleteFunktion(f) {
   try {
     await api.delete(`/api/mitglieder/${mitgliedId}/funktionen/${f.id}`)
     funktionen.value = funktionen.value.filter(x => x.id !== f.id)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  }
+}
+
+// ── Kontaktdaten (mehrere E-Mails/Telefonnummern) ──────────
+const kontakteOpen     = ref(false)
+const kontakteLoading  = ref(false)
+const kontakte         = ref([])
+const kontaktFormOpen  = ref(false)
+const kontaktSaving    = ref(false)
+const editingKontaktId      = ref(null)
+const editingKontaktVersion = ref(null)
+const kontaktForm = ref({ typ: 'email', wert: '', label: '', ist_primaer: false })
+
+const kontaktTypOptionen = [
+  { label: 'E-Mail', value: 'email' },
+  { label: 'Telefon', value: 'telefon' },
+  { label: 'Mobil', value: 'mobil' },
+  { label: 'Fax', value: 'fax' },
+]
+
+function typLabel(t) {
+  return kontaktTypOptionen.find(o => o.value === t)?.label ?? t
+}
+
+function kontaktIcon(t) {
+  return { email: 'mail', telefon: 'call', mobil: 'smartphone', fax: 'fax' }[t] ?? 'contact_phone'
+}
+
+async function openKontakteDialog(row) {
+  aktivPerson.value = row
+  kontaktFormOpen.value = false
+  kontakteOpen.value = true
+  kontakteLoading.value = true
+  try {
+    const { data } = await api.get(`/api/mitglieder/${row.mitglied.id}/kontakte`)
+    kontakte.value = data
+  } finally {
+    kontakteLoading.value = false
+  }
+}
+
+function openAddKontakt() {
+  editingKontaktId.value = null
+  kontaktForm.value = { typ: 'email', wert: '', label: '', ist_primaer: false }
+  kontaktFormOpen.value = true
+}
+
+function openEditKontakt(k) {
+  editingKontaktId.value = k.id
+  editingKontaktVersion.value = k.version
+  kontaktForm.value = { typ: k.typ, wert: k.wert, label: k.label ?? '', ist_primaer: k.ist_primaer }
+  kontaktFormOpen.value = true
+}
+
+async function reloadKontakte() {
+  const { data } = await api.get(`/api/mitglieder/${aktivPerson.value.mitglied.id}/kontakte`)
+  kontakte.value = data
+}
+
+async function onSaveKontakt() {
+  if (!kontaktForm.value.typ || !kontaktForm.value.wert.trim()) {
+    $q.notify({ type: 'negative', message: 'Typ und Wert sind erforderlich.' })
+    return
+  }
+  kontaktSaving.value = true
+  const mitgliedId = aktivPerson.value.mitglied.id
+  try {
+    if (editingKontaktId.value) {
+      await api.put(`/api/mitglieder/${mitgliedId}/kontakte/${editingKontaktId.value}`, {
+        typ: kontaktForm.value.typ,
+        wert: kontaktForm.value.wert.trim(),
+        label: kontaktForm.value.label || null,
+        ist_primaer: kontaktForm.value.ist_primaer,
+        expected_version: editingKontaktVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${mitgliedId}/kontakte`, {
+        typ: kontaktForm.value.typ,
+        wert: kontaktForm.value.wert.trim(),
+        label: kontaktForm.value.label || null,
+        ist_primaer: kontaktForm.value.ist_primaer,
+      })
+    }
+    kontaktFormOpen.value = false
+    await reloadKontakte()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  } finally {
+    kontaktSaving.value = false
+  }
+}
+
+async function setPrimaer(k) {
+  try {
+    await api.put(`/api/mitglieder/${aktivPerson.value.mitglied.id}/kontakte/${k.id}/primaer`)
+    await reloadKontakte()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  }
+}
+
+async function deleteKontakt(k) {
+  const mitgliedId = aktivPerson.value.mitglied.id
+  try {
+    await api.delete(`/api/mitglieder/${mitgliedId}/kontakte/${k.id}`)
+    kontakte.value = kontakte.value.filter(x => x.id !== k.id)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }
