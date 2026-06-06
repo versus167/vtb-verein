@@ -36,6 +36,12 @@ class Mitglied:
     kontoinhaber: Optional[str] = None
     abgerechnet_bis: Optional[str] = None
 
+    # Zusatzfelder (u.a. aus dem SPG-Verein-Import)
+    geschlecht: Optional[str] = None          # 'm' | 'w' | 'd'
+    bemerkungen: Optional[str] = None
+    sepa_mandatsref: Optional[str] = None
+    sepa_mandatsdatum: Optional[str] = None
+
     # Verknüpfung mit User-Account (optional)
     user_id: Optional[int] = None
 

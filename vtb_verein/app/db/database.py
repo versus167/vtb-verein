@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 
 class Database:
@@ -88,6 +88,7 @@ class Database:
             26: self._migrate_v25_to_v26,
             27: self._migrate_v26_to_v27,
             28: self._migrate_v27_to_v28,
+            29: self._migrate_v28_to_v29,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -929,6 +930,59 @@ class Database:
                 cur.execute(sql)
             cur.execute("UPDATE schema_version SET version = 28 WHERE id = 1")
 
+    def _migrate_v28_to_v29(self) -> None:
+        """Import-Zusatzfelder am Mitglied: Geschlecht, Bemerkungen, SEPA-Mandatsreferenz
+        (+ -datum). Für die Übernahme aus dem SPG-Verein-Export."""
+        with self.cursor() as cur:
+            for col in ('geschlecht', 'bemerkungen', 'sepa_mandatsref', 'sepa_mandatsdatum'):
+                cur.execute(f"ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS {col} TEXT")
+                cur.execute(f"ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS {col} TEXT")
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO mitglied_history (
+                        id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                        strasse, plz, ort, land,
+                        eintrittsdatum, austrittsdatum, status,
+                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                        geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
+                        user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                        NEW.strasse, NEW.plz, NEW.ort, NEW.land,
+                        NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                        NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                        NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
+                        NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_mitglied_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO mitglied_history (
+                            id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
+                            strasse, plz, ort, land,
+                            eintrittsdatum, austrittsdatum, status,
+                            zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                            geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
+                            user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
+                            NEW.strasse, NEW.plz, NEW.ort, NEW.land,
+                            NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
+                            NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                            NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
+                            NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("UPDATE schema_version SET version = 29 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -966,6 +1020,10 @@ class Database:
               bic               TEXT,
               kontoinhaber      TEXT,
               abgerechnet_bis   TEXT,
+              geschlecht        TEXT,
+              bemerkungen       TEXT,
+              sepa_mandatsref   TEXT,
+              sepa_mandatsdatum TEXT,
               user_id           INTEGER REFERENCES users(id),
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -998,6 +1056,10 @@ class Database:
               bic               TEXT,
               kontoinhaber      TEXT,
               abgerechnet_bis   TEXT,
+              geschlecht        TEXT,
+              bemerkungen       TEXT,
+              sepa_mandatsref   TEXT,
+              sepa_mandatsdatum TEXT,
               user_id           INTEGER,
               created_at        TEXT,
               created_by        TEXT,
@@ -1878,12 +1940,14 @@ class Database:
                     strasse, plz, ort, land,
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                    geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
                     user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
                     NEW.strasse, NEW.plz, NEW.ort, NEW.land,
                     NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                     NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                    NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
                     NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -1898,12 +1962,14 @@ class Database:
                         strasse, plz, ort, land,
                         eintrittsdatum, austrittsdatum, status,
                         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                        geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
                         user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
                         NEW.strasse, NEW.plz, NEW.ort, NEW.land,
                         NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
                         NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
+                        NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
                         NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;

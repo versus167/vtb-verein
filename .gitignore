@@ -30,6 +30,11 @@ vtb_verein/.settings/
 # PostgreSQL Daten (Docker Bind-Mount)
 pg_data/
 
+# Mitglieder-Exporte / Importdateien (enthalten PII – niemals committen)
+SPG-Verein-Export_*.csv
+*-Export_*.csv
+import_*.csv
+
 # Frontend Build-Artefakte
 frontend/node_modules/
 frontend/.quasar/

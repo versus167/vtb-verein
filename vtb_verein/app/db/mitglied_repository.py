@@ -26,6 +26,7 @@ _MITGLIED_COLS = """
              AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
         eintrittsdatum, austrittsdatum, status,
         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+        geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
         user_id, version, created_at, created_by, updated_at, updated_by
 """
 
@@ -162,8 +163,9 @@ class MitgliedRepository(BaseRepository):
                     strasse, plz, ort, land,
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
+                    geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
                     user_id, created_by, updated_at, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
                 (
@@ -171,6 +173,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land,
                     mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
+                    mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.user_id, created_by, created_by
                 ),
             )
@@ -205,6 +208,7 @@ class MitgliedRepository(BaseRepository):
                     strasse = %s, plz = %s, ort = %s, land = %s,
                     eintrittsdatum = %s, austrittsdatum = %s, status = %s,
                     zahlungsart = %s, iban = %s, bic = %s, kontoinhaber = %s, abgerechnet_bis = %s,
+                    geschlecht = %s, bemerkungen = %s, sepa_mandatsref = %s, sepa_mandatsdatum = %s,
                     user_id = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
@@ -216,6 +220,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land,
                     mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
+                    mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.user_id,
                     updated_by, mitglied.id, mitglied.version
                 ),
