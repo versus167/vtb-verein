@@ -161,6 +161,7 @@
             color="indigo" text-color="white" class="q-mr-xs">
             {{ funktionLabel(f.funktion) }}
           </q-chip>
+          <span v-if="!props.row.funktionen?.length" class="text-grey">—</span>
         </q-td>
       </template>
 
@@ -1011,7 +1012,9 @@ async function loadFunktionOptionen() {
 }
 
 function funktionLabel(f) {
-  return funktionOptionen.value.find(o => o.value === f)?.label ?? f
+  if (!f) return ''
+  const found = funktionOptionen.value.find(o => o.value === f)
+  return found?.label ?? f
 }
 
 async function openFunktionenDialog(row) {
