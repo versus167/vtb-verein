@@ -8,13 +8,26 @@
     </div>
 
     <!-- Filter -->
-    <div class="row q-gutter-sm q-mb-md items-center">
+    <div class="row q-gutter-sm q-mb-sm items-center">
       <q-btn-toggle v-model="filter" :options="filterOptions" unelevated dense
         toggle-color="primary" color="white" text-color="primary" />
       <q-input v-model="search" placeholder="Suche..." outlined dense clearable
         style="min-width: 200px">
         <template #prepend><q-icon name="search" /></template>
       </q-input>
+      <q-btn flat dense icon="filter_alt" color="primary" @click="resetAllFilters">
+        <q-tooltip>Alle Filter zurücksetzen</q-tooltip>
+      </q-btn>
+    </div>
+    
+    <!-- Erweiterte Filter -->
+    <div class="row q-gutter-sm q-mb-md items-center" v-if="filter.value === 'mitglieder'">
+      <q-select v-model="abteilungFilter" :options="alleAbteilungen" 
+        option-value="id" option-label="name" label="Abteilung" 
+        outlined dense clearable multiple style="min-width: 180px" />
+      <q-select v-model="funktionFilter" :options="funktionOptionen" 
+        option-value="value" option-label="label" label="Funktion" 
+        outlined dense clearable multiple style="min-width: 180px" />
     </div>
 
     <!-- Mobile/Tablet: Kacheln -->
@@ -25,7 +38,7 @@
       <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
         Keine Personen gefunden.
       </div>
-      <q-card v-for="(p, index) in filteredPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'bg-grey-1' : ''"
+      <q-card v-for="(p, index) in sortedPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'bg-grey-1' : ''"
         style="border-radius:14px;overflow:hidden">
         <q-card-section class="q-py-sm q-px-md">
           <div class="row items-center no-wrap q-mb-xs">
@@ -105,8 +118,9 @@
     </template>
 
     <!-- Desktop: Tabelle -->
-    <q-table v-else :rows="filteredPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
-      flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]">
+    <q-table v-else :rows="sortedPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
+      flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]"
+      @update:sort="onSortChange">
 
       <template #body-cell-name="props">
         <q-td :props="props">
@@ -136,11 +150,11 @@
         </q-td>
       </template>
 
-      <template #body-cell-last_login="props">
+      <template #body-cell-last_edited="props">
         <q-td :props="props">
-          <span v-if="props.row.last_login" class="text-caption">
-            {{ formatLastLogin(props.row.last_login) }}
-            <q-tooltip>{{ new Date(props.row.last_login).toLocaleString('de-DE') }}</q-tooltip>
+          <span v-if="props.row.last_edited" class="text-caption">
+            {{ formatDate(props.row.last_edited) }}
+            <q-tooltip>{{ new Date(props.row.last_edited).toLocaleString('de-DE') }}</q-tooltip>
           </span>
           <span v-else class="text-grey">—</span>
         </q-td>
@@ -617,6 +631,13 @@ const personen = ref([])
 const loading = ref(false)
 const filter = ref('alle')
 const search = ref('')
+const abteilungFilter = ref([])
+const funktionFilter = ref([])
+const alleAbteilungen = ref([])
+
+// ── Sortierung ─────────────────────────────────────────────
+const sortColumn = ref(null)
+const sortDirection = ref('asc')
 
 const filterOptions = [
   { label: 'Alle', value: 'alle' },
@@ -625,12 +646,12 @@ const filterOptions = [
 ]
 
 const columns = [
-  { name: 'name',        label: 'Name',        field: 'username', align: 'left' },
-  { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left' },
-  { name: 'geburtsdatum', label: 'Geburtstag',  field: r => r.mitglied?.geburtsdatum, align: 'left' },
-  { name: 'eintritt',    label: 'Eintritt',     field: r => r.mitglied?.eintrittsdatum, align: 'left' },
-  { name: 'status',      label: 'Status',       field: 'active',      align: 'center' },
-  { name: 'last_login',  label: 'Zuletzt aktiv', field: 'last_login', align: 'left' },
+  { name: 'name',        label: 'Name',        field: 'username', align: 'left', sortable: true },
+  { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left', sortable: true },
+  { name: 'geburtsdatum', label: 'Geburtstag',  field: r => r.mitglied?.geburtsdatum, align: 'left', sortable: true },
+  { name: 'eintritt',    label: 'Eintritt',     field: r => r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
+  { name: 'status',      label: 'Status',       field: 'active',      align: 'center', sortable: true },
+  { name: 'last_edited',  label: 'Zuletzt bearbeitet', field: 'last_edited', align: 'left', sortable: true },
   { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
   { name: 'funktionen',  label: 'Funktionen',   field: 'funktionen',  align: 'left' },
   { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
@@ -638,8 +659,26 @@ const columns = [
 
 const filteredPersonen = computed(() => {
   let list = personen.value
+  
+  // Basis-Filter
   if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
+  
+  // Abteilung-Filter (nur bei Mitgliedern relevant)
+  if (filter.value === 'mitglieder' && abteilungFilter.value?.length) {
+    list = list.filter(p => 
+      p.abteilungen?.some(ab => abteilungFilter.value.includes(ab.abteilung_id))
+    )
+  }
+  
+  // Funktion-Filter (nur bei Mitgliedern relevant)
+  if (filter.value === 'mitglieder' && funktionFilter.value?.length) {
+    list = list.filter(p => 
+      p.funktionen?.some(f => funktionFilter.value.includes(f.funktion))
+    )
+  }
+  
+  // Textsuche
   if (search.value) {
     const q = search.value.toLowerCase()
     list = list.filter(p =>
@@ -652,6 +691,63 @@ const filteredPersonen = computed(() => {
   }
   return list
 })
+
+// Sortierte Liste
+const sortedPersonen = computed(() => {
+  const list = filteredPersonen.value
+  if (!sortColumn.value) return list
+  
+  return [...list].sort((a, b) => {
+    let aVal, bVal
+    
+    // Spezialbehandlung für verschachtelte Felder
+    switch (sortColumn.value) {
+      case 'name':
+        aVal = (a.mitglied?.nachname || a.username || '').toLowerCase()
+        bVal = (b.mitglied?.nachname || b.username || '').toLowerCase()
+        break
+      case 'geburtsdatum':
+        aVal = a.mitglied?.geburtsdatum || ''
+        bVal = b.mitglied?.geburtsdatum || ''
+        break
+      case 'eintritt':
+        aVal = a.mitglied?.eintrittsdatum || ''
+        bVal = b.mitglied?.eintrittsdatum || ''
+        break
+      case 'last_edited':
+        aVal = a.last_edited || ''
+        bVal = b.last_edited || ''
+        break
+      default:
+        aVal = a[sortColumn.value] ?? ''
+        bVal = b[sortColumn.value] ?? ''
+    }
+    
+    if (aVal < bVal) return sortDirection.value === 'asc' ? -1 : 1
+    if (aVal > bVal) return sortDirection.value === 'asc' ? 1 : -1
+    return 0
+  })
+})
+
+// Filter zurücksetzen
+function resetAllFilters() {
+  filter.value = 'alle'
+  abteilungFilter.value = []
+  funktionFilter.value = []
+  search.value = ''
+}
+
+// Sortierung ändern
+function onSortChange(details) {
+  sortColumn.value = details.sortBy
+  sortDirection.value = details.descending ? 'desc' : 'asc'
+}
+
+// ── Hilfsfunktionen ────────────────────────────────────────
+function formatDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('de-DE')
+}
 
 // ── Optionen ───────────────────────────────────────────────
 const rolleOptions = [
@@ -912,7 +1008,6 @@ const abteilungenOpen    = ref(false)
 const abteilungenLoading = ref(false)
 const aktivPerson        = ref(null)
 const zuordnungen        = ref([])
-const alleAbteilungen    = ref([])
 const zuordnungFormOpen  = ref(false)
 const zuordnungSaving    = ref(false)
 const editingZuordnungId = ref(null)
@@ -930,7 +1025,9 @@ async function openAbteilungenDialog(row) {
       api.get('/api/abteilungen/'),
     ])
     zuordnungen.value = z
-    alleAbteilungen.value = ab
+    if (alleAbteilungen.value.length === 0) {
+      alleAbteilungen.value = ab
+    }
   } finally {
     abteilungenLoading.value = false
   }
@@ -1011,6 +1108,15 @@ async function loadFunktionOptionen() {
   }
 }
 
+async function loadAlleAbteilungen() {
+  try {
+    const { data } = await api.get('/api/abteilungen/')
+    alleAbteilungen.value = data
+  } catch {
+    alleAbteilungen.value = []
+  }
+}
+
 function funktionLabel(f) {
   if (!f) return ''
   const found = funktionOptionen.value.find(o => o.value === f)
@@ -1028,7 +1134,9 @@ async function openFunktionenDialog(row) {
       alleAbteilungen.value.length ? Promise.resolve({ data: alleAbteilungen.value }) : api.get('/api/abteilungen/'),
     ])
     funktionen.value = fns
-    alleAbteilungen.value = ab
+    if (alleAbteilungen.value.length === 0) {
+      alleAbteilungen.value = ab
+    }
   } finally {
     funktionenLoading.value = false
   }
@@ -1312,6 +1420,7 @@ async function openHistoryDialog(row) {
 onMounted(() => {
   loadPersonen()
   loadFunktionOptionen()
+  loadAlleAbteilungen()
 })
 </script>
 

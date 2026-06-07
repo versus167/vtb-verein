@@ -152,6 +152,17 @@ def _mitglied_to_dict(m) -> dict:
 
 
 def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
+    # Berechne "zuletzt bearbeitet" als Maximum der updated_at Felder
+    user_updated = user.updated_at if user else None
+    mitglied_updated = mitglied.updated_at if mitglied else None
+    last_edited = None
+    if user_updated and mitglied_updated:
+        last_edited = user_updated if user_updated > mitglied_updated else mitglied_updated
+    elif user_updated:
+        last_edited = user_updated
+    elif mitglied_updated:
+        last_edited = mitglied_updated
+    
     return {
         'user_id': user.id if user else None,
         'username': user.username if user else None,
@@ -159,6 +170,7 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
         'role': user.role if user else None,
         'active': bool(user.active) if user else True,
         'last_login': user.last_login if user else None,
+        'last_edited': last_edited,
         'user_version': user.version if user else None,
         'mitglied': _mitglied_to_dict(mitglied),
         'abteilungen': [
@@ -197,7 +209,7 @@ def list_personen(user: CurrentUser, db: DB):
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT * FROM (
-                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version,
+                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version, u.updated_at,
                        m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
@@ -211,7 +223,7 @@ def list_personen(user: CurrentUser, db: DB):
                 LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
                 WHERE u.deleted_at IS NULL
                 UNION ALL
-                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                        m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
@@ -236,6 +248,7 @@ def list_personen(user: CurrentUser, db: DB):
                 'id': r['id'], 'username': r['username'], 'email': r['email'],
                 'role': r['role'], 'active': r['active'], 'last_login': r['last_login'],
                 'version': r['version'],
+                'updated_at': r['updated_at'],
             })()
         m_obj = None
         if r['m_id'] is not None:
