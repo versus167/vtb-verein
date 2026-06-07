@@ -48,7 +48,7 @@
           <div v-if="p.email" class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
             <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
-              :color="abteilungStatusColor(ab.status)" text-color="white">
+              :color="abteilungKuerzelColor(ab.abteilung_kuerzel)" text-color="white">
               {{ ab.abteilung_kuerzel || ab.abteilung_name }}
             </q-chip>
           </div>
@@ -149,7 +149,7 @@
       <template #body-cell-abteilungen="props">
         <q-td :props="props">
           <q-chip v-for="ab in props.row.abteilungen" :key="ab.id" dense size="sm"
-            :color="abteilungStatusColor(ab.status)" text-color="white" class="q-mr-xs">
+            :color="abteilungKuerzelColor(ab.abteilung_kuerzel)" text-color="white" class="q-mr-xs">
             {{ ab.abteilung_kuerzel || ab.abteilung_name }}
           </q-chip>
         </q-td>
@@ -694,6 +694,17 @@ function rolleColor(role) {
 }
 function abteilungStatusColor(s) {
   return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber' }[s] ?? 'grey'
+}
+
+// Farbpalette für Abteilungs-Kürzel (deterministisch pro Kürzel)
+const abteilungColors = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'amber', 'purple', 'blue', 'cyan', 'teal', 'green', 'orange', 'red', 'pink']
+function abteilungKuerzelColor(kuerzel) {
+  if (!kuerzel) return 'grey'
+  let hash = 0
+  for (let i = 0; i < kuerzel.length; i++) {
+    hash = kuerzel.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return abteilungColors[Math.abs(hash) % abteilungColors.length]
 }
 
 // ── Laden ──────────────────────────────────────────────────
