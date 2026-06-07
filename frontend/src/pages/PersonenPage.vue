@@ -636,7 +636,7 @@ const columns = [
 const filteredPersonen = computed(() => {
   let list = personen.value
   if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
-  if (filter.value === 'benutzer')   list = list.filter(p => !p.mitglied)
+  if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
   if (search.value) {
     const q = search.value.toLowerCase()
     list = list.filter(p =>
