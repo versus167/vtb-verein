@@ -59,6 +59,13 @@ class PersonUserUpdate(BaseModel):
     expected_version: int
 
 
+class NutzerFuerMitgliedCreate(BaseModel):
+    email: str
+    role: str = 'mitglied'
+    active: bool = True
+    password: Optional[str] = None
+
+
 class PersonMitgliedUpdate(BaseModel):
     vorname: str
     nachname: str
@@ -368,6 +375,43 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         mitglied.telefon = data.telefon
     abteilungen = db.list_mitglied_abteilungen(mitglied.id)
     return _person_row(u, mitglied, abteilungen)
+
+
+@router.post("/mitglied/{mitglied_id}/nutzer", status_code=status.HTTP_201_CREATED)
+def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate,
+                                user: CurrentUser, db: DB):
+    """Legt einen Login-Account für ein bestehendes Mitglied ohne User-Konto an."""
+    _require_write(user)
+    try:
+        m = db.get_mitglied(mitglied_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    if m.user_id is not None:
+        raise HTTPException(status_code=409, detail="Dieses Mitglied hat bereits einen Login-Account")
+
+    service = PersonService(db)
+    try:
+        u = service.create_user_only(
+            username=service._generate_username(m.vorname, m.nachname),
+            email=data.email,
+            role=data.role,
+            active=data.active,
+            created_by=user.username,
+            password=data.password,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Mitglied mit dem neuen User verknüpfen
+    m.user_id = u.id
+    db.update_mitglied(m, updated_by=user.username)
+
+    # E-Mail als primären Kontakt setzen
+    db.set_mitglied_primaer_kontakt(m.id, 'email', data.email, user.username)
+
+    m = db.get_mitglied(mitglied_id)
+    abteilungen = db.list_mitglied_abteilungen(m.id)
+    return _person_row(u, m, abteilungen)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

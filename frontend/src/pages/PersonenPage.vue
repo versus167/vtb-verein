@@ -62,6 +62,10 @@
             @click="openEditUserDialog(p)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
+          <q-btn v-if="p.mitglied && !p.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
+            @click="openNutzerDialog(p)">
+            <q-tooltip>Login-Account anlegen</q-tooltip>
+          </q-btn>
           <q-btn v-if="p.mitglied" flat dense round icon="person" color="teal" size="sm"
             @click="openEditMitgliedDialog(p)">
             <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
@@ -164,6 +168,10 @@
           <q-btn v-if="props.row.user_id" flat dense round icon="edit" color="primary" size="sm"
             @click="openEditUserDialog(props.row)">
             <q-tooltip>Account bearbeiten</q-tooltip>
+          </q-btn>
+          <q-btn v-if="props.row.mitglied && !props.row.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
+            @click="openNutzerDialog(props.row)">
+            <q-tooltip>Login-Account anlegen</q-tooltip>
           </q-btn>
           <q-btn v-if="props.row.mitglied" flat dense round icon="person" color="teal" size="sm"
             @click="openEditMitgliedDialog(props.row)">
@@ -297,6 +305,32 @@
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn label="Speichern" color="primary" unelevated :loading="editUserSaving" @click="onSaveUser" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ════════════════════════════════════════════════
+         Login-Account für bestehendes Mitglied anlegen
+         ════════════════════════════════════════════════ -->
+    <q-dialog v-model="nutzerOpen" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:420px'">
+        <q-card-section class="text-h6">Login-Account anlegen</q-card-section>
+        <q-card-section v-if="nutzerPerson" class="text-caption text-grey q-pt-none">
+          für {{ nutzerPerson.mitglied?.nachname }}, {{ nutzerPerson.mitglied?.vorname }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="nutzerForm.email" label="E-Mail *" outlined dense type="email"
+            hint="Login per Magic-Link an diese Adresse" />
+          <q-select v-model="nutzerForm.role" :options="rolleOptionsAll" label="Rolle"
+            outlined dense emit-value map-options />
+          <q-toggle v-model="nutzerForm.active" label="Aktiv (Magic-Link versenden)" />
+          <div v-if="nutzerError" class="text-negative text-caption">{{ nutzerError }}</div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Anlegen" color="primary" unelevated :loading="nutzerSaving" @click="onSaveNutzer" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -745,6 +779,43 @@ async function onSaveUser() {
     editUserError.value = e.response?.data?.detail || 'Fehler beim Speichern'
   } finally {
     editUserSaving.value = false
+  }
+}
+
+// ── Login-Account für bestehendes Mitglied anlegen ─────────
+const nutzerOpen   = ref(false)
+const nutzerSaving = ref(false)
+const nutzerError  = ref('')
+const nutzerPerson = ref(null)
+const nutzerForm   = ref({ email: '', role: 'mitglied', active: true })
+
+function openNutzerDialog(row) {
+  nutzerPerson.value = row
+  nutzerError.value = ''
+  nutzerForm.value = {
+    email: row.mitglied?.email ?? '',   // Primär-E-Mail vorbelegen, falls vorhanden
+    role: 'mitglied',
+    active: true,
+  }
+  nutzerOpen.value = true
+}
+
+async function onSaveNutzer() {
+  if (!nutzerForm.value.email.trim()) {
+    nutzerError.value = 'E-Mail ist erforderlich.'
+    return
+  }
+  nutzerSaving.value = true
+  nutzerError.value = ''
+  try {
+    await api.post(`/api/personen/mitglied/${nutzerPerson.value.mitglied.id}/nutzer`, nutzerForm.value)
+    $q.notify({ type: 'positive', message: 'Login-Account angelegt' })
+    nutzerOpen.value = false
+    await loadPersonen()
+  } catch (e) {
+    nutzerError.value = e.response?.data?.detail || 'Fehler beim Anlegen'
+  } finally {
+    nutzerSaving.value = false
   }
 }
 
