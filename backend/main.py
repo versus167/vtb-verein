@@ -31,6 +31,7 @@ from backend.api.funktionen import router as funktionen_router
 from backend.api.kassenbuch import router as kassenbuch_router
 from backend.api.tickets import router as tickets_router
 from backend.api.uploads import router as uploads_router
+from backend.api.imports import router as imports_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -93,6 +94,7 @@ app.include_router(funktionen_router, prefix="/api")
 app.include_router(kassenbuch_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
+app.include_router(imports_router, prefix="/api")
 
 
 

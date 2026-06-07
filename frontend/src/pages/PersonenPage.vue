@@ -606,8 +606,8 @@ const filteredPersonen = computed(() => {
   if (search.value) {
     const q = search.value.toLowerCase()
     list = list.filter(p =>
-      p.username.toLowerCase().includes(q) ||
-      p.email.toLowerCase().includes(q) ||
+      (p.username ?? '').toLowerCase().includes(q) ||
+      (p.email ?? '').toLowerCase().includes(q) ||
       (p.mitglied?.vorname ?? '').toLowerCase().includes(q) ||
       (p.mitglied?.nachname ?? '').toLowerCase().includes(q) ||
       String(p.mitglied?.mitgliedsnummer ?? '').includes(q)
