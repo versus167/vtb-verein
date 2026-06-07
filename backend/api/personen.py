@@ -151,7 +151,7 @@ def _mitglied_to_dict(m) -> dict:
     }
 
 
-def _person_row(user, mitglied, abteilungen: list) -> dict:
+def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
     return {
         'user_id': user.id if user else None,
         'username': user.username if user else None,
@@ -172,6 +172,17 @@ def _person_row(user, mitglied, abteilungen: list) -> dict:
                 'bis': z.bis,
             }
             for z in abteilungen
+        ],
+        'funktionen': [
+            {
+                'id': f.id,
+                'funktion': f.funktion,
+                'abteilung_id': f.abteilung_id,
+                'abteilung_name': f.abteilung_name,
+                'von': f.von,
+                'bis': f.bis,
+            }
+            for f in funktionen
         ],
     }
 
@@ -242,7 +253,8 @@ def list_personen(user: CurrentUser, db: DB):
                 updated_by=r['m_updated_by'],
             )
         abteilungen = db.list_mitglied_abteilungen(m_obj.id) if m_obj else []
-        result.append(_person_row(u_obj, m_obj, abteilungen))
+        funktionen = db.list_mitglied_funktionen(m_obj.id) if m_obj else []
+        result.append(_person_row(u_obj, m_obj, abteilungen, funktionen))
     return result
 
 

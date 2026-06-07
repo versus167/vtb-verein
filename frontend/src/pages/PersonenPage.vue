@@ -163,6 +163,15 @@
         </q-td>
       </template>
 
+      <template #body-cell-funktionen="props">
+        <q-td :props="props">
+          <q-chip v-for="f in props.row.funktionen" :key="f.id" dense size="sm"
+            color="indigo" text-color="white" class="q-mr-xs">
+            {{ funktionLabel(f.funktion) }}
+          </q-chip>
+        </q-td>
+      </template>
+
       <template #body-cell-actions="props">
         <q-td :props="props" style="white-space: nowrap">
           <q-btn v-if="props.row.user_id" flat dense round icon="edit" color="primary" size="sm"
@@ -630,6 +639,7 @@ const columns = [
   { name: 'status',      label: 'Status',       field: 'active',      align: 'center' },
   { name: 'last_login',  label: 'Zuletzt aktiv', field: 'last_login', align: 'left' },
   { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
+  { name: 'funktionen',  label: 'Funktionen',   field: 'funktionen',  align: 'left' },
   { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
 ]
 
