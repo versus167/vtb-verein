@@ -77,6 +77,8 @@ class Database:
         Jede Migration läuft in einer eigenen Transaktion und aktualisiert
         schema_version als letzten Schritt — bei Fehler vollständiger Rollback."""
         migration_map = {
+            16: self._migrate_v15_to_v16,
+            17: self._migrate_v16_to_v17,
             18: self._migrate_v17_to_v18,
             19: self._migrate_v18_to_v19,
             20: self._migrate_v19_to_v20,
@@ -100,6 +102,38 @@ class Database:
             logger.info("Schema-Migration v%d → v%d wird ausgeführt …", target - 1, target)
             fn()
             logger.info("Schema-Migration v%d abgeschlossen.", target)
+
+    def _migrate_v15_to_v16(self) -> None:
+        """Partielle Unique-Indizes auf users.email/username (statt harter UNIQUE-Constraints),
+        damit soft-gelöschte Accounts die E-Mail nicht dauerhaft blockieren."""
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key")
+            cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key")
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active
+                ON users (email) WHERE deleted_at IS NULL
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active
+                ON users (username) WHERE deleted_at IS NULL
+            """)
+            cur.execute("UPDATE schema_version SET version = 16 WHERE id = 1")
+
+    def _migrate_v16_to_v17(self) -> None:
+        """mitglied.user_id → users.id (optional, 1:1) + Rolle 'mitglied' im CHECK-Constraint."""
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
+            cur.execute("""
+                ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied'))
+            """)
+            cur.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)")
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_user_id
+                ON mitglied (user_id) WHERE user_id IS NOT NULL
+            """)
+            cur.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS user_id INTEGER")
+            cur.execute("UPDATE schema_version SET version = 17 WHERE id = 1")
 
     def _migrate_v17_to_v18(self) -> None:
         with self.cursor() as cur:

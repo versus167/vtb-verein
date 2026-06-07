@@ -1,5 +1,6 @@
 import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # vtb_verein/ in sys.path eintragen, damit 'from app.xxx import yyy' funktioniert
@@ -33,12 +34,30 @@ from backend.api.uploads import router as uploads_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Logging-Format
+    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        for handler in logging.getLogger(name).handlers:
+            handler.setFormatter(fmt)
+    logging.getLogger("app").setLevel(logging.INFO)
+    logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
+
+    # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
+    from backend.core.db import get_db
+    get_db()
+
+    yield
+
+
 app = FastAPI(
     title="VTB Vereinsverwaltung API",
     version="2.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -75,21 +94,6 @@ app.include_router(kassenbuch_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(uploads_router, prefix="/api")
 
-
-@app.on_event("startup")
-def startup():
-    fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        for handler in logging.getLogger(name).handlers:
-            handler.setFormatter(fmt)
-
-    # app.* Logger in den uvicorn-Handler einhängen
-    logging.getLogger("app").setLevel(logging.INFO)
-    logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
-
-    # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
-    from backend.core.db import get_db
-    get_db()
 
 
 @app.get("/api/health")

@@ -8,8 +8,13 @@ Import von Mitgliederdaten aus einem SPG-Verein-CSV-Export in das vtb_verein-Dat
 - STANDARD = Dry-Run (schreibt nichts, zeigt nur eine Zusammenfassung). Erst mit --commit
   wird geschrieben.
 
-Bewusst NICHT importiert (separate Entscheidung): Beiträge/Beitragsarten, Einmalbeträge,
-Ehrungen, Zusatzfelder.
+Abteilungen sind Stammdaten und werden NUR gematcht (in der App von Hand anlegen). Findet
+der Import eine Abteilung nicht, bricht --commit ab (oder --allow-unmatched-abteilung
+überspringt nur diese Zuordnungen). 'Ehrenmitglieder' ist keine Sparte: solche Mitglieder
+werden ohne Abteilung importiert und erhalten stattdessen die Funktion 'ehrenmitglied'
+(Eintrittsdatum als Von-Datum).
+
+Bewusst NICHT importiert: Beiträge/Beitragsarten, Einmalbeträge, Ehrungen.
 
 Beispiele:
   ./venv/bin/python tools/import_spg.py export.csv --database-url postgresql://… --limit 5
@@ -19,6 +24,7 @@ import argparse
 import csv
 import os
 import sys
+from collections import Counter
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,9 +44,10 @@ from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository
 from app.db.funktion_repository import FunktionRepository
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository
 from app.models.mitglied import Mitglied
-from app.models.abteilung import Abteilung
 
 ACTOR = 'spg-import'
+EHRENMITGLIED_ABT = 'Ehrenmitglieder'                        # keine Sparte -> Funktion
+EHRENMITGLIED_FUNKTION = ('ehrenmitglied', 'Ehrenmitglied')  # key, Anzeigename
 
 # SPG-Funktionsbezeichnung -> (key, Anzeigename)
 FUNKTION_MAP = {
@@ -54,6 +61,9 @@ FUNKTION_MAP = {
 }
 ZAHLART = {'s': 'lastschrift', 'b': 'ueberweisung'}
 ABT_STATUS = {'a': 'aktiv', 'p': 'passiv'}
+
+# Optionale Aliasse, falls App-Abteilungsname vom Export abweicht: {CSV-Name: App-Name}
+ABT_ALIAS = {}
 
 # Kontaktfelder in Reihenfolge: (CSV-Spalte, Typ, Label)
 CONTACT_FIELDS = [
@@ -104,6 +114,12 @@ def funktion_key_name(raw):
     return key, raw
 
 
+def norm_abt(s):
+    """Toleranter Vergleichsschlüssel: Groß/Klein, Leerzeichen, '/', ß egal."""
+    s = (s or '').lower().replace('ß', 'ss')
+    return ''.join(c for c in s if c.isalnum())
+
+
 def parse_csv(path):
     text = open(path, 'rb').read().decode('cp1252')
     rows = list(csv.reader(text.splitlines(), delimiter=';'))
@@ -118,17 +134,30 @@ def parse_csv(path):
 
 
 def build_contacts(row):
-    """Liefert [(typ, wert, label, ist_primaer)] – je Typ wird der erste Wert primär."""
-    result = []
-    primary_seen = set()
+    """[(typ, wert, label, ist_primaer)] – je Typ wird der erste Wert primär."""
+    result, primary_seen = [], set()
     for col, typ, label in CONTACT_FIELDS:
         wert = row.get(col, '')
         if not wert:
             continue
-        primaer = typ not in primary_seen
+        result.append((typ, wert, label, typ not in primary_seen))
         primary_seen.add(typ)
-        result.append((typ, wert, label, primaer))
     return result
+
+
+def row_abteilungen(row):
+    """Liefert (sparten, ist_ehrenmitglied). sparten = [(name, status, von)] ohne Ehrenmitglieder."""
+    sparten, ehren = [], False
+    for i in range(1, 8):
+        n = row.get(f'Abteilung_{i}', '')
+        if not n:
+            continue
+        if norm_abt(n) == norm_abt(EHRENMITGLIED_ABT):
+            ehren = True
+            continue
+        sparten.append((n, ABT_STATUS.get(row.get(f'Abt_Status_{i}', ''), 'aktiv'),
+                        to_iso(row.get(f'Abteilung_Datum_{i}'))))
+    return sparten, ehren
 
 
 def main():
@@ -137,6 +166,8 @@ def main():
     ap.add_argument('--database-url', default=os.environ.get('VTB_DATABASE_URL'))
     ap.add_argument('--commit', action='store_true', help='tatsächlich schreiben (sonst Dry-Run)')
     ap.add_argument('--update', action='store_true', help='bestehende Mitglieder aktualisieren statt überspringen')
+    ap.add_argument('--allow-unmatched-abteilung', action='store_true',
+                    help='nicht gematchte Abteilungen überspringen statt abzubrechen')
     ap.add_argument('--limit', type=int, default=0, help='nur die ersten N Zeilen')
     args = ap.parse_args()
 
@@ -159,27 +190,49 @@ def main():
     f_repo = FunktionRepository(conn)
     mf_repo = MitgliedFunktionRepository(conn)
 
-    # --- Kataloge vorbereiten: Abteilungen + Funktionen ---
-    abt_names = set()
-    funk_keys = {}  # key -> name
+    # --- CSV-Kataloge sammeln ---
+    abt_count, funk_keys = Counter(), {}
     for row in rows:
         for i in range(1, 8):
             n = row.get(f'Abteilung_{i}', '')
             if n:
-                abt_names.add(n)
+                abt_count[n] += 1
         for i in range(1, 11):
             raw = row.get(f'Funktion_{i}', '')
             if raw:
                 k, name = funktion_key_name(raw)
                 funk_keys[k] = name
 
-    abt_map = {a.name: a.id for a in a_repo.list_abteilungen()}
-    neue_abt = sorted(n for n in abt_names if n not in abt_map)
+    # --- Abteilungen NUR matchen (keine Auto-Anlage) ---
+    abt_by_norm = {norm_abt(a.name): a.id for a in a_repo.list_abteilungen()}
+
+    def match_abt(name):
+        name = ABT_ALIAS.get(name, name)
+        return abt_by_norm.get(norm_abt(name))
+
+    csv_sparten = [n for n in abt_count if norm_abt(n) != norm_abt(EHRENMITGLIED_ABT)]
+    matched = {n: match_abt(n) for n in csv_sparten}
+    unmatched = sorted(n for n, i in matched.items() if i is None)
+
+    print("=== Abteilungs-Abgleich ===")
+    for n in sorted(csv_sparten):
+        mark = '✓' if matched[n] is not None else '✗ FEHLT'
+        print(f"  {mark:8s} {n!r}  ({abt_count[n]} Mitglieder)")
+    if EHRENMITGLIED_ABT in abt_count:
+        print(f"  (Funktion)   {EHRENMITGLIED_ABT!r}: {abt_count[EHRENMITGLIED_ABT]} -> ohne Abteilung, Funktion '{EHRENMITGLIED_FUNKTION[0]}'")
+    print()
+
+    if unmatched and args.commit and not args.allow_unmatched_abteilung:
+        sys.exit("Abbruch: Bitte diese Abteilungen erst in der App anlegen "
+                 "(oder Alias ergänzen / --allow-unmatched-abteilung):\n  - " + "\n  - ".join(unmatched))
+
+    # Ehrenmitglied in funk_keys aufnehmen (damit es mit angelegt wird)
+    if abt_count.get(EHRENMITGLIED_ABT, 0) > 0:
+        funk_keys[EHRENMITGLIED_FUNKTION[0]] = EHRENMITGLIED_FUNKTION[1]
+
+    # Funktionen weiterhin automatisch in den Katalog aufnehmen
     neue_funk = sorted(k for k in funk_keys if f_repo.get_by_key(k) is None)
     if args.commit:
-        for n in neue_abt:
-            created = a_repo.create_abteilung(Abteilung(name=n), ACTOR)
-            abt_map[n] = created.id
         for k in neue_funk:
             f_repo.create(k, funk_keys[k], 'aus SPG-Import', ACTOR)
 
@@ -188,8 +241,7 @@ def main():
             cur.execute("SELECT id, version FROM mitglied WHERE mitgliedsnummer=%s AND deleted_at IS NULL", (nr,))
             return cur.fetchone()
 
-    st = dict(neu=0, aktualisiert=0, skip_exist=0, skip_noname=0, skip_nonr=0,
-              kontakte=0, abteilungen=0, funktionen=0, warn=0)
+    st = Counter()
 
     for row in rows:
         nachname = row.get('Nachname', '')
@@ -201,24 +253,21 @@ def main():
             st['skip_nonr'] += 1
             continue
 
-        austritt = to_iso(row.get('Austritt_Datum'))
+        sparten, ehren = row_abteilungen(row)
         eintritt = to_iso(row.get('Eintritt_Datum'))
-        zahler = row.get('Zahler', '')
+        austritt = to_iso(row.get('Austritt_Datum'))
         vorname = row.get('Vorname', '')
+        zahler = row.get('Zahler', '')
+
         m = Mitglied(
-            mitgliedsnummer=nr,
-            vorname=vorname, nachname=nachname,
+            mitgliedsnummer=nr, vorname=vorname, nachname=nachname,
             geburtsdatum=to_iso(row.get('Geburtsdatum')),
-            strasse=row.get('Strasse') or None,
-            plz=row.get('PLZ') or None,
-            ort=row.get('Ort') or None,
-            land=row.get('Land') or None,
-            eintrittsdatum=eintritt,
-            austrittsdatum=austritt,
+            strasse=row.get('Strasse') or None, plz=row.get('PLZ') or None,
+            ort=row.get('Ort') or None, land=row.get('Land') or None,
+            eintrittsdatum=eintritt, austrittsdatum=austritt,
             status='ausgetreten' if austritt else 'aktiv',
             zahlungsart=ZAHLART.get(row.get('Zahlart', ''), 'lastschrift'),
-            iban=row.get('IBAN_Nr') or None,
-            bic=row.get('BIC_Nr') or None,
+            iban=row.get('IBAN_Nr') or None, bic=row.get('BIC_Nr') or None,
             kontoinhaber=zahler or f"{vorname} {nachname}".strip(),
             geschlecht=row.get('Geschlecht') or None,
             bemerkungen=row.get('Bemerkungen') or None,
@@ -227,14 +276,7 @@ def main():
         )
 
         contacts = build_contacts(row)
-        abteilungen = []  # (abteilung_name, status, von)
-        for i in range(1, 8):
-            n = row.get(f'Abteilung_{i}', '')
-            if not n:
-                continue
-            abteilungen.append((n, ABT_STATUS.get(row.get(f'Abt_Status_{i}', ''), 'aktiv'),
-                                to_iso(row.get(f'Abteilung_Datum_{i}'))))
-        funktionen = []  # (key, von, bis)
+        funktionen = []
         for i in range(1, 11):
             raw = row.get(f'Funktion_{i}', '')
             if not raw:
@@ -242,24 +284,34 @@ def main():
             k, _ = funktion_key_name(raw)
             von = to_iso(row.get(f'Funkt_von_Datum_{i}')) or eintritt or '1900-01-01'
             funktionen.append((k, von, to_iso(row.get(f'Funkt_Bis_Datum_{i}'))))
+        if ehren:
+            funktionen.append((EHRENMITGLIED_FUNKTION[0], eintritt or '1900-01-01', None))
+            st['ehrenmitglied'] += 1
+
+        # zu erstellende Abteilungs-Zuordnungen (gematcht)
+        zuordnungen = []
+        for name, status, von in sparten:
+            aid = matched.get(name)
+            if aid is None:
+                st['abt_unmatched'] += 1
+            else:
+                zuordnungen.append((aid, status, von))
 
         st['kontakte'] += len(contacts)
-        st['abteilungen'] += len(abteilungen)
+        st['abteilungen'] += len(zuordnungen)
         st['funktionen'] += len(funktionen)
 
         existing = lookup_mitglied(nr)
         if existing and not args.update:
             st['skip_exist'] += 1
             continue
-
         if not args.commit:
             st['aktualisiert' if existing else 'neu'] += 1
             continue
 
         # --- schreiben ---
         if existing:
-            m.id = existing['id']
-            m.version = existing['version']
+            m.id, m.version = existing['id'], existing['version']
             m_repo.update_mitglied(m, ACTOR)
             mid = existing['id']
             for z in k_repo.list_for_mitglied(mid):
@@ -275,8 +327,8 @@ def main():
 
         for typ, wert, label, primaer in contacts:
             k_repo.create(mid, typ, wert, label, primaer, ACTOR)
-        for name, status, von in abteilungen:
-            ma_repo.create(mid, abt_map[name], status, von, None, ACTOR)
+        for aid, status, von in zuordnungen:
+            ma_repo.create(mid, aid, status, von, None, ACTOR)
         for key, von, bis in funktionen:
             mf_repo.create(mid, None, key, von, bis, ACTOR)
 
@@ -288,11 +340,14 @@ def main():
     print(f"  übersprungen (existiert):   {st['skip_exist']}")
     print(f"  übersprungen (kein Name):   {st['skip_noname']}")
     print(f"  übersprungen (keine Nr):    {st['skip_nonr']}")
+    print(f"  davon Ehrenmitglied:        {st['ehrenmitglied']} (als Funktion)")
     print(f"  Kontakte:                   {st['kontakte']}")
     print(f"  Abteilungs-Zuordnungen:     {st['abteilungen']}")
-    print(f"  Funktions-Zuordnungen:      {st['funktionen']}")
-    print(f"  neue Abteilungen:           {len(neue_abt)} {neue_abt if neue_abt else ''}")
+    print(f"  Funktions-Zuordnungen:      {st['funktionen']} (inkl. Ehrenmitglied)")
     print(f"  neue Funktions-Katalog:     {len(neue_funk)} {neue_funk if neue_funk else ''}")
+    if unmatched:
+        print(f"  !! nicht gematchte Abteilungen: {unmatched}")
+        print(f"     -> übersprungene Zuordnungen: {st['abt_unmatched']}")
     if not args.commit:
         print("\n(DRY-RUN – es wurde nichts geschrieben. Mit --commit ausführen.)")
 
