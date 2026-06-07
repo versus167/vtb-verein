@@ -48,7 +48,7 @@
           <div v-if="p.email" class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
             <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
-              :color="abteilungKuerzelColor(ab.abteilung_kuerzel)" text-color="white">
+              :color="abteilungColor(ab.abteilung_id)" text-color="white">
               {{ ab.abteilung_kuerzel || ab.abteilung_name }}
             </q-chip>
           </div>
@@ -149,7 +149,7 @@
       <template #body-cell-abteilungen="props">
         <q-td :props="props">
           <q-chip v-for="ab in props.row.abteilungen" :key="ab.id" dense size="sm"
-            :color="abteilungKuerzelColor(ab.abteilung_kuerzel)" text-color="white" class="q-mr-xs">
+            :color="abteilungColor(ab.abteilung_id)" text-color="white" class="q-mr-xs">
             {{ ab.abteilung_kuerzel || ab.abteilung_name }}
           </q-chip>
         </q-td>
@@ -626,7 +626,8 @@ const filterOptions = [
 const columns = [
   { name: 'name',        label: 'Name',        field: 'username', align: 'left' },
   { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left' },
-  { name: 'mitgliedsnr', label: 'Mitgliedsnr.', field: r => r.mitglied?.mitgliedsnummer, align: 'left' },
+  { name: 'geburtsdatum', label: 'Geburtstag',  field: r => r.mitglied?.geburtsdatum, align: 'left' },
+  { name: 'eintritt',    label: 'Eintritt',     field: r => r.mitglied?.eintrittsdatum, align: 'left' },
   { name: 'status',      label: 'Status',       field: 'active',      align: 'center' },
   { name: 'last_login',  label: 'Zuletzt aktiv', field: 'last_login', align: 'left' },
   { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
@@ -696,15 +697,11 @@ function abteilungStatusColor(s) {
   return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber' }[s] ?? 'grey'
 }
 
-// Farbpalette für Abteilungs-Kürzel (deterministisch pro Kürzel)
-const abteilungColors = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'amber', 'purple', 'blue', 'cyan', 'teal', 'green', 'orange', 'red', 'pink']
-function abteilungKuerzelColor(kuerzel) {
-  if (!kuerzel) return 'grey'
-  let hash = 0
-  for (let i = 0; i < kuerzel.length; i++) {
-    hash = kuerzel.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return abteilungColors[Math.abs(hash) % abteilungColors.length]
+// Farbpalette für Abteilungs-IDs (deterministisch pro Abteilung)
+const abteilungColors = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'amber', 'purple', 'blue-8', 'cyan-8', 'teal-8', 'green-8', 'orange-8', 'red-8', 'pink-8']
+function abteilungColor(abteilungId) {
+  if (!abteilungId) return 'grey'
+  return abteilungColors[abteilungId % abteilungColors.length]
 }
 
 // ── Laden ──────────────────────────────────────────────────
