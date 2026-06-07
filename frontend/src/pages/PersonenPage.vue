@@ -125,14 +125,6 @@
         </q-td>
       </template>
 
-      <template #body-cell-rolle="props">
-        <q-td :props="props">
-          <q-chip dense :color="rolleColor(props.row.role)" text-color="white" size="sm">
-            {{ rolleLabel(props.row.role) }}
-          </q-chip>
-        </q-td>
-      </template>
-
       <template #body-cell-status="props">
         <q-td :props="props" class="text-center">
           <q-icon v-if="props.row.active" name="check_circle" color="positive" size="sm">
@@ -635,7 +627,6 @@ const columns = [
   { name: 'name',        label: 'Name',        field: 'username', align: 'left' },
   { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left' },
   { name: 'mitgliedsnr', label: 'Mitgliedsnr.', field: r => r.mitglied?.mitgliedsnummer, align: 'left' },
-  { name: 'rolle',       label: 'Rolle',        field: 'role',     align: 'left' },
   { name: 'status',      label: 'Status',       field: 'active',      align: 'center' },
   { name: 'last_login',  label: 'Zuletzt aktiv', field: 'last_login', align: 'left' },
   { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
