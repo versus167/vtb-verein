@@ -95,6 +95,10 @@
             @click="openKontakteDialog(p)">
             <q-tooltip>Kontaktdaten</q-tooltip>
           </q-btn>
+          <q-btn v-if="p.mitglied" flat dense round icon="groups" color="cyan-8" size="sm"
+            @click="openMannschaftenDialog(p)">
+            <q-tooltip>Mannschaften</q-tooltip>
+          </q-btn>
           <q-btn v-if="p.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
@@ -204,6 +208,10 @@
           <q-btn v-if="props.row.mitglied" flat dense round icon="contact_phone" color="cyan-8" size="sm"
             @click="openKontakteDialog(props.row)">
             <q-tooltip>Kontaktdaten</q-tooltip>
+          </q-btn>
+          <q-btn v-if="props.row.mitglied" flat dense round icon="groups" color="cyan-8" size="sm"
+            @click="openMannschaftenDialog(props.row)">
+            <q-tooltip>Mannschaften</q-tooltip>
           </q-btn>
           <q-btn v-if="props.row.user_id" flat dense round icon="security" color="grey" size="sm"
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
@@ -558,6 +566,65 @@
               <q-btn flat label="Abbrechen" @click="kontaktFormOpen = false" />
               <q-btn unelevated :label="editingKontaktId ? 'Speichern' : 'Hinzufügen'"
                 color="primary" :loading="kontaktSaving" @click="onSaveKontakt" />
+            </div>
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- ════════════════════════════════════════════════
+         Mannschaften-Dialog (Teams eines Mitglieds)
+         ════════════════════════════════════════════════ -->
+    <q-dialog v-model="mannschaftenOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Mannschaften</div>
+          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
+            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <q-inner-loading :showing="mannschaftenLoading" />
+          <div v-if="!mannschaftenLoading && mitgliedTeams.length === 0"
+            class="text-grey text-center q-py-md">In keiner Mannschaft.</div>
+          <q-list separator>
+            <q-item v-for="t in mitgliedTeams" :key="t.id">
+              <q-item-section avatar><q-icon name="groups" color="cyan-8" /></q-item-section>
+              <q-item-section>
+                <q-item-label>{{ t.mannschaft_name }}</q-item-label>
+                <q-item-label caption>
+                  <q-chip dense size="xs" :color="teamRolleColor(t.rolle)" text-color="white">{{ teamRolleLabel(t.rolle) }}</q-chip>
+                  <span v-if="t.abteilung_name" class="q-mx-xs">{{ t.abteilung_name }}</span>
+                  <span>{{ t.von }} – {{ t.bis ?? 'heute' }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row q-gutter-xs">
+                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditTeam(t)" />
+                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeTeam(t)" />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <q-btn flat icon="add" label="Zu Mannschaft hinzufügen" color="primary" class="q-mt-sm"
+            @click="openAddTeam" />
+          <!-- Formular -->
+          <div v-if="teamFormOpen" class="q-mt-md q-gutter-sm">
+            <q-select v-if="!editingTeamId" v-model="teamForm.mannschaft_id" :options="alleMannschaften"
+              option-value="id" :option-label="t => `${t.name} (${t.abteilung_name})`" emit-value map-options
+              use-input input-debounce="0" @filter="filterTeams" label="Mannschaft *" outlined dense />
+            <q-select v-model="teamForm.rolle" :options="teamRolleOptionen" option-value="value" option-label="label"
+              emit-value map-options label="Rolle *" outlined dense />
+            <div class="row q-gutter-sm">
+              <q-input v-model="teamForm.von" label="Von *" outlined dense type="date" class="col" />
+              <q-input v-model="teamForm.bis" label="Bis" outlined dense type="date" class="col" />
+            </div>
+            <div class="row q-gutter-sm">
+              <q-btn flat label="Abbrechen" @click="teamFormOpen = false" />
+              <q-btn unelevated :label="editingTeamId ? 'Speichern' : 'Hinzufügen'"
+                color="primary" :loading="teamSaving" @click="onSaveTeam" />
             </div>
           </div>
         </q-card-section>
@@ -1303,6 +1370,109 @@ async function deleteKontakt(k) {
   try {
     await api.delete(`/api/mitglieder/${mitgliedId}/kontakte/${k.id}`)
     kontakte.value = kontakte.value.filter(x => x.id !== k.id)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  }
+}
+
+// ── Mannschaften (Teams eines Mitglieds) ───────────────────
+const mannschaftenOpen    = ref(false)
+const mannschaftenLoading = ref(false)
+const mitgliedTeams       = ref([])
+const alleMannschaften    = ref([])
+const alleMannschaftenAll = ref([])
+const teamFormOpen        = ref(false)
+const teamSaving          = ref(false)
+const editingTeamId       = ref(null)
+const editingTeamMannschaft = ref(null)
+const editingTeamVersion  = ref(null)
+const teamForm = ref({ mannschaft_id: null, rolle: 'spieler', von: '', bis: '' })
+
+const teamRolleOptionen = [
+  { label: 'Spieler', value: 'spieler' },
+  { label: 'Übungsleiter', value: 'uebungsleiter' },
+  { label: 'Trainer', value: 'trainer' },
+  { label: 'Betreuer', value: 'betreuer' },
+]
+function teamRolleLabel(r) { return teamRolleOptionen.find(o => o.value === r)?.label ?? r }
+function teamRolleColor(r) {
+  return { spieler: 'blue', uebungsleiter: 'indigo', trainer: 'deep-purple', betreuer: 'teal' }[r] ?? 'grey'
+}
+function filterTeams(val, update) {
+  const needle = val.toLowerCase()
+  update(() => {
+    alleMannschaften.value = !needle
+      ? alleMannschaftenAll.value
+      : alleMannschaftenAll.value.filter(t => `${t.name} ${t.abteilung_name}`.toLowerCase().includes(needle))
+  })
+}
+
+async function openMannschaftenDialog(row) {
+  aktivPerson.value = row
+  teamFormOpen.value = false
+  mannschaftenOpen.value = true
+  mannschaftenLoading.value = true
+  try {
+    const [{ data: teams }, { data: alle }] = await Promise.all([
+      api.get(`/api/mitglieder/${row.mitglied.id}/mannschaften`),
+      alleMannschaftenAll.value.length ? Promise.resolve({ data: null }) : api.get('/api/mannschaften'),
+    ])
+    mitgliedTeams.value = teams
+    if (alle) alleMannschaftenAll.value = alle
+    alleMannschaften.value = alleMannschaftenAll.value
+  } finally {
+    mannschaftenLoading.value = false
+  }
+}
+function openAddTeam() {
+  editingTeamId.value = null
+  teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: '', bis: '' }
+  teamFormOpen.value = true
+}
+function openEditTeam(t) {
+  editingTeamId.value = t.id
+  editingTeamMannschaft.value = t.mannschaft_id
+  editingTeamVersion.value = t.version
+  teamForm.value = { mannschaft_id: t.mannschaft_id, rolle: t.rolle, von: t.von ?? '', bis: t.bis ?? '' }
+  teamFormOpen.value = true
+}
+async function reloadTeams() {
+  const { data } = await api.get(`/api/mitglieder/${aktivPerson.value.mitglied.id}/mannschaften`)
+  mitgliedTeams.value = data
+}
+async function onSaveTeam() {
+  if (!editingTeamId.value && !teamForm.value.mannschaft_id) {
+    $q.notify({ type: 'negative', message: 'Bitte eine Mannschaft wählen.' }); return
+  }
+  if (!teamForm.value.von) {
+    $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben.' }); return
+  }
+  teamSaving.value = true
+  const mid = aktivPerson.value.mitglied.id
+  try {
+    if (editingTeamId.value) {
+      await api.put(`/api/mannschaften/${editingTeamMannschaft.value}/mitglieder/${editingTeamId.value}`, {
+        rolle: teamForm.value.rolle, von: teamForm.value.von || null,
+        bis: teamForm.value.bis || null, expected_version: editingTeamVersion.value,
+      })
+    } else {
+      await api.post(`/api/mannschaften/${teamForm.value.mannschaft_id}/mitglieder`, {
+        mitglied_id: mid, rolle: teamForm.value.rolle,
+        von: teamForm.value.von || null, bis: teamForm.value.bis || null,
+      })
+    }
+    teamFormOpen.value = false
+    await reloadTeams()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  } finally {
+    teamSaving.value = false
+  }
+}
+async function removeTeam(t) {
+  try {
+    await api.delete(`/api/mannschaften/${t.mannschaft_id}/mitglieder/${t.id}`)
+    mitgliedTeams.value = mitgliedTeams.value.filter(x => x.id !== t.id)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }

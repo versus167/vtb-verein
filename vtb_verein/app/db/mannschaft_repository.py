@@ -12,6 +12,7 @@ class Mannschaft:
     name: str = ''
     saison: Optional[str] = None
     beschreibung: Optional[str] = None
+    mitglieder_count: int = 0                 # per Subquery befüllt (aktiver Kader)
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -24,6 +25,8 @@ class Mannschaft:
 _SELECT = """
     SELECT m.id, m.abteilung_id, a.name AS abteilung_name,
            m.name, m.saison, m.beschreibung,
+           (SELECT count(*) FROM mitglied_mannschaft mm
+              WHERE mm.mannschaft_id = m.id AND mm.deleted_at IS NULL) AS mitglieder_count,
            m.version, m.created_at, m.created_by, m.updated_at, m.updated_by,
            m.deleted_at, m.deleted_by
     FROM mannschaft m

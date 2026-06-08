@@ -7,42 +7,99 @@
         icon="add" label="Neue Mannschaft" :round="$q.screen.lt.sm" @click="openCreate" />
     </div>
 
-    <q-inner-loading :showing="loading" />
-    <div v-if="!loading && mannschaften.length === 0" class="text-grey text-center q-py-xl">
-      Noch keine Mannschaften angelegt.
+    <!-- Filter -->
+    <div class="row q-col-gutter-sm q-mb-md items-center">
+      <div class="col-12 col-sm-5">
+        <q-select v-model="filterAbteilung" :options="abteilungFilterOptions" emit-value map-options
+          dense outlined clearable label="Abteilung filtern" />
+      </div>
+      <div class="col-12 col-sm-5">
+        <q-input v-model="search" dense outlined clearable placeholder="Team suchen…">
+          <template #prepend><q-icon name="search" /></template>
+        </q-input>
+      </div>
+      <div class="col text-caption text-grey-7">
+        {{ gefilterte.length }} Team(s) · {{ kaderGesamt }} im Kader
+      </div>
     </div>
 
-    <div class="row q-col-gutter-md">
-      <div v-for="m in mannschaften" :key="m.id" class="col-12 col-md-6 col-lg-4">
-        <q-card flat bordered>
-          <q-card-section class="q-pb-xs">
-            <div class="row items-center">
-              <div class="text-h6">{{ m.name }}</div>
-              <q-space />
-              <q-chip dense size="sm" color="purple" text-color="white">{{ m.abteilung_name }}</q-chip>
-            </div>
-            <div class="text-caption text-grey-7">
-              <span v-if="m.saison">Saison {{ m.saison }}</span>
-              <span v-if="m.beschreibung"> · {{ m.beschreibung }}</span>
-            </div>
-          </q-card-section>
-          <q-separator />
-          <q-card-actions class="q-px-sm q-py-xs">
-            <q-btn flat dense round icon="groups" color="cyan-8" size="sm" @click="openKader(m)">
-              <q-tooltip>Kader</q-tooltip>
-            </q-btn>
-            <q-btn v-if="auth.hasPermission('mannschaften.write')" flat dense round icon="edit"
-              color="primary" size="sm" @click="openEdit(m)">
-              <q-tooltip>Bearbeiten</q-tooltip>
-            </q-btn>
-            <q-space />
-            <q-btn v-if="auth.hasPermission('mannschaften.delete')" flat dense round icon="delete"
-              color="negative" size="sm" @click="confirmDelete(m)">
-              <q-tooltip>Löschen</q-tooltip>
-            </q-btn>
-          </q-card-actions>
-        </q-card>
+    <q-inner-loading :showing="loading" />
+    <div v-if="!loading && gefilterte.length === 0" class="text-grey text-center q-py-xl">
+      Keine Mannschaften gefunden.
+    </div>
+
+    <!-- Gruppiert nach Abteilung, Teams als aufklappbare Liste -->
+    <div v-for="g in gruppen" :key="g.abteilung" class="q-mb-md">
+      <div class="row items-center q-mb-xs">
+        <q-icon name="account_tree" color="purple" size="20px" class="q-mr-xs" />
+        <div class="text-subtitle1 text-weight-medium">{{ g.abteilung }}</div>
+        <q-chip dense size="sm" color="grey-3" class="q-ml-sm">{{ g.teams.length }}</q-chip>
       </div>
+      <q-list bordered separator class="rounded-borders">
+        <q-expansion-item v-for="m in g.teams" :key="m.id" icon="groups" @show="loadKader(m)">
+          <template #header>
+            <q-item-section>
+              <q-item-label>{{ m.name }}</q-item-label>
+              <q-item-label caption v-if="m.saison || m.beschreibung">
+                <span v-if="m.saison">Saison {{ m.saison }}</span>
+                <span v-if="m.beschreibung"> · {{ m.beschreibung }}</span>
+              </q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <div class="row items-center q-gutter-xs no-wrap">
+                <q-chip dense size="sm" color="cyan-8" text-color="white" icon="groups">{{ m.mitglieder_count }}</q-chip>
+                <q-btn v-if="auth.hasPermission('mannschaften.write')" flat dense round icon="edit"
+                  color="primary" size="sm" @click.stop="openEdit(m)"><q-tooltip>Bearbeiten</q-tooltip></q-btn>
+                <q-btn v-if="auth.hasPermission('mannschaften.delete')" flat dense round icon="delete"
+                  color="negative" size="sm" @click.stop="confirmDelete(m)"><q-tooltip>Löschen</q-tooltip></q-btn>
+              </div>
+            </q-item-section>
+          </template>
+
+          <q-card>
+            <q-card-section class="q-pt-sm">
+              <q-inner-loading :showing="kaderLoadingId === m.id" />
+              <div v-if="kaderLoadingId !== m.id && (kaderByTeam[m.id]?.length ?? 0) === 0"
+                class="text-grey text-center q-py-sm">Noch keine Mitglieder im Kader.</div>
+              <q-list dense separator>
+                <q-item v-for="z in (kaderByTeam[m.id] ?? [])" :key="z.id">
+                  <q-item-section>
+                    <q-item-label>{{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}</q-item-label>
+                    <q-item-label caption>
+                      <q-chip dense size="xs" :color="rolleColor(z.rolle)" text-color="white">{{ rolleLabel(z.rolle) }}</q-chip>
+                      <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side v-if="auth.hasPermission('mannschaften.write')">
+                    <div class="row q-gutter-xs">
+                      <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKader(m, z)" />
+                      <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeKader(m, z)" />
+                    </div>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="person_add"
+                label="Mitglied hinzufügen" color="primary" size="sm" class="q-mt-xs" @click="openAddKader(m)" />
+              <div v-if="kaderFormTeamId === m.id" class="q-mt-sm q-gutter-sm">
+                <q-select v-if="!editingKaderId" v-model="kaderForm.mitglied_id" :options="mitgliedOptions"
+                  option-value="id" :option-label="mitgliedLabel" emit-value map-options use-input
+                  input-debounce="0" @filter="filterMitglieder" label="Mitglied *" outlined dense />
+                <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
+                  emit-value map-options label="Rolle *" outlined dense />
+                <div class="row q-gutter-sm">
+                  <q-input v-model="kaderForm.von" label="Von *" outlined dense type="date" class="col" />
+                  <q-input v-model="kaderForm.bis" label="Bis" outlined dense type="date" class="col" />
+                </div>
+                <div class="row q-gutter-sm">
+                  <q-btn flat label="Abbrechen" @click="kaderFormTeamId = null" />
+                  <q-btn unelevated :label="editingKaderId ? 'Speichern' : 'Hinzufügen'"
+                    color="primary" :loading="kaderSaving" @click="saveKader(m)" />
+                </div>
+              </div>
+            </q-card-section>
+          </q-card>
+        </q-expansion-item>
+      </q-list>
     </div>
 
     <!-- Mannschaft anlegen/bearbeiten -->
@@ -65,63 +122,11 @@
       </q-card>
     </q-dialog>
 
-    <!-- Kader -->
-    <q-dialog v-model="kaderOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:520px'">
-        <q-card-section class="row items-center q-pb-none">
-          <div class="text-h6">Kader</div>
-          <div v-if="aktivMannschaft" class="text-caption text-grey q-ml-sm">{{ aktivMannschaft.name }}</div>
-          <q-space />
-          <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
-        <q-card-section>
-          <q-inner-loading :showing="kaderLoading" />
-          <div v-if="!kaderLoading && kader.length === 0" class="text-grey text-center q-py-md">
-            Noch keine Mitglieder im Kader.
-          </div>
-          <q-list separator>
-            <q-item v-for="z in kader" :key="z.id">
-              <q-item-section>
-                <q-item-label>{{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}</q-item-label>
-                <q-item-label caption>
-                  <q-chip dense size="xs" :color="rolleColor(z.rolle)" text-color="white">{{ rolleLabel(z.rolle) }}</q-chip>
-                  <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side v-if="auth.hasPermission('mannschaften.write')">
-                <div class="row q-gutter-xs">
-                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKader(z)" />
-                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeKader(z)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
-          <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="person_add"
-            label="Mitglied hinzufügen" color="primary" class="q-mt-sm" @click="openAddKader" />
-          <div v-if="kaderFormOpen" class="q-mt-md q-gutter-sm">
-            <q-select v-if="!editingKaderId" v-model="kaderForm.mitglied_id" :options="mitgliedOptions"
-              option-value="id" :option-label="mitgliedLabel" emit-value map-options use-input
-              input-debounce="0" @filter="filterMitglieder" label="Mitglied *" outlined dense />
-            <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
-              emit-value map-options label="Rolle *" outlined dense />
-            <div class="row q-gutter-sm">
-              <q-input v-model="kaderForm.von" label="Von *" outlined dense type="date" class="col" />
-              <q-input v-model="kaderForm.bis" label="Bis" outlined dense type="date" class="col" />
-            </div>
-            <div class="row q-gutter-sm">
-              <q-btn flat label="Abbrechen" @click="kaderFormOpen = false" />
-              <q-btn unelevated :label="editingKaderId ? 'Speichern' : 'Hinzufügen'"
-                color="primary" :loading="kaderSaving" @click="saveKader" />
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -131,6 +136,35 @@ const auth = useAuthStore()
 
 const mannschaften = ref([])
 const abteilungen = ref([])
+
+// ── Filter & Gruppierung ───────────────────────────────────
+const filterAbteilung = ref(null)
+const search = ref('')
+
+const abteilungFilterOptions = computed(() =>
+  abteilungen.value.map(a => ({ label: a.name, value: a.id })))
+
+const gefilterte = computed(() => {
+  let list = mannschaften.value
+  if (filterAbteilung.value) list = list.filter(m => m.abteilung_id === filterAbteilung.value)
+  if (search.value) {
+    const q = search.value.toLowerCase()
+    list = list.filter(m => (m.name ?? '').toLowerCase().includes(q))
+  }
+  return list
+})
+
+const kaderGesamt = computed(() =>
+  gefilterte.value.reduce((s, m) => s + (m.mitglieder_count || 0), 0))
+
+const gruppen = computed(() => {
+  const byAbt = {}
+  for (const m of gefilterte.value) {
+    const key = m.abteilung_name || '(ohne Abteilung)'
+    ;(byAbt[key] ??= []).push(m)
+  }
+  return Object.keys(byAbt).sort().map(abteilung => ({ abteilung, teams: byAbt[abteilung] }))
+})
 const loading = ref(false)
 
 const rolleOptionen = [
@@ -219,12 +253,10 @@ function confirmDelete(m) {
   })
 }
 
-// ── Kader ──────────────────────────────────────────────────
-const kaderOpen = ref(false)
-const kaderLoading = ref(false)
-const kader = ref([])
-const aktivMannschaft = ref(null)
-const kaderFormOpen = ref(false)
+// ── Kader (inline je Team) ─────────────────────────────────
+const kaderByTeam = ref({})         // teamId -> kader[]
+const kaderLoadingId = ref(null)
+const kaderFormTeamId = ref(null)
 const kaderSaving = ref(false)
 const editingKaderId = ref(null)
 const editingKaderVersion = ref(null)
@@ -241,44 +273,39 @@ function filterMitglieder(val, update) {
       : alleMitglieder.value.filter(m => `${m.nachname} ${m.vorname}`.toLowerCase().includes(needle))
   })
 }
+async function ensureMitglieder() {
+  if (alleMitglieder.value.length) return
+  const { data } = await api.get('/api/personen/')
+  alleMitglieder.value = data.filter(p => p.mitglied).map(p => ({
+    id: p.mitglied.id, vorname: p.mitglied.vorname, nachname: p.mitglied.nachname,
+  }))
+  mitgliedOptions.value = alleMitglieder.value
+}
 
-async function openKader(m) {
-  aktivMannschaft.value = m
-  kaderFormOpen.value = false
-  kaderOpen.value = true
-  kaderLoading.value = true
+async function loadKader(team) {
+  kaderFormTeamId.value = null
+  kaderLoadingId.value = team.id
   try {
-    const [{ data: k }, { data: pers }] = await Promise.all([
-      api.get(`/api/mannschaften/${m.id}/mitglieder`),
-      alleMitglieder.value.length ? Promise.resolve({ data: null }) : api.get('/api/personen/'),
-    ])
-    kader.value = k
-    if (pers) {
-      alleMitglieder.value = pers.filter(p => p.mitglied).map(p => ({
-        id: p.mitglied.id, vorname: p.mitglied.vorname, nachname: p.mitglied.nachname,
-      }))
-    }
-    mitgliedOptions.value = alleMitglieder.value
+    const { data } = await api.get(`/api/mannschaften/${team.id}/mitglieder`)
+    kaderByTeam.value = { ...kaderByTeam.value, [team.id]: data }
+    team.mitglieder_count = data.length
   } finally {
-    kaderLoading.value = false
+    kaderLoadingId.value = null
   }
 }
-function openAddKader() {
+function openAddKader(team) {
   editingKaderId.value = null
   kaderForm.value = { mitglied_id: null, rolle: 'spieler', von: '', bis: '' }
-  kaderFormOpen.value = true
+  kaderFormTeamId.value = team.id
+  ensureMitglieder()
 }
-function openEditKader(z) {
+function openEditKader(team, z) {
   editingKaderId.value = z.id
   editingKaderVersion.value = z.version
   kaderForm.value = { mitglied_id: z.mitglied_id, rolle: z.rolle, von: z.von ?? '', bis: z.bis ?? '' }
-  kaderFormOpen.value = true
+  kaderFormTeamId.value = team.id
 }
-async function reloadKader() {
-  const { data } = await api.get(`/api/mannschaften/${aktivMannschaft.value.id}/mitglieder`)
-  kader.value = data
-}
-async function saveKader() {
+async function saveKader(team) {
   if (!editingKaderId.value && !kaderForm.value.mitglied_id) {
     $q.notify({ type: 'negative', message: 'Bitte ein Mitglied auswählen.' }); return
   }
@@ -286,31 +313,32 @@ async function saveKader() {
     $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben.' }); return
   }
   kaderSaving.value = true
-  const mid = aktivMannschaft.value.id
   try {
     if (editingKaderId.value) {
-      await api.put(`/api/mannschaften/${mid}/mitglieder/${editingKaderId.value}`, {
+      await api.put(`/api/mannschaften/${team.id}/mitglieder/${editingKaderId.value}`, {
         rolle: kaderForm.value.rolle, von: kaderForm.value.von || null,
         bis: kaderForm.value.bis || null, expected_version: editingKaderVersion.value,
       })
     } else {
-      await api.post(`/api/mannschaften/${mid}/mitglieder`, {
+      await api.post(`/api/mannschaften/${team.id}/mitglieder`, {
         mitglied_id: kaderForm.value.mitglied_id, rolle: kaderForm.value.rolle,
         von: kaderForm.value.von || null, bis: kaderForm.value.bis || null,
       })
     }
-    kaderFormOpen.value = false
-    await reloadKader()
+    kaderFormTeamId.value = null
+    await loadKader(team)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   } finally {
     kaderSaving.value = false
   }
 }
-async function removeKader(z) {
+async function removeKader(team, z) {
   try {
-    await api.delete(`/api/mannschaften/${aktivMannschaft.value.id}/mitglieder/${z.id}`)
-    kader.value = kader.value.filter(x => x.id !== z.id)
+    await api.delete(`/api/mannschaften/${team.id}/mitglieder/${z.id}`)
+    const arr = (kaderByTeam.value[team.id] ?? []).filter(x => x.id !== z.id)
+    kaderByTeam.value = { ...kaderByTeam.value, [team.id]: arr }
+    team.mitglieder_count = arr.length
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }
