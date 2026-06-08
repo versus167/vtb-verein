@@ -58,6 +58,12 @@ def main():
     if r.ehrenmitglieder_count:
         print(f"  (Funktion)   {r.ehrenmitglieder_count}x 'Ehrenmitglieder' -> Funktion 'ehrenmitglied'")
     print()
+    if r.mannschaften_uebersicht:
+        print("=== Mannschaften (Sonstiges_1) ===")
+        for t in r.mannschaften_uebersicht:
+            mark = '✓' if t['matched'] else '✗ Abt. fehlt'
+            print(f"  {mark:12s} {t['name']!r} -> {t['abteilung']} ({t['count']})")
+        print()
 
     if r.aborted:
         print("ABBRUCH:", r.abort_reason)
@@ -73,7 +79,9 @@ def main():
     print(f"  Kontakte:                   {r.kontakte}")
     print(f"  Abteilungs-Zuordnungen:     {r.abteilungen}")
     print(f"  Funktions-Zuordnungen:      {r.funktionen} (inkl. Ehrenmitglied)")
+    print(f"  Kader-Zuordnungen:          {r.kader}")
     print(f"  neue Funktions-Katalog:     {len(r.neue_funktionen)} {r.neue_funktionen if r.neue_funktionen else ''}")
+    print(f"  neue Mannschaften:          {len(r.neue_mannschaften)} {r.neue_mannschaften if r.neue_mannschaften else ''}")
     if r.unmatched_abteilungen:
         print(f"  !! nicht gematchte Abteilungen: {r.unmatched_abteilungen}")
         print(f"     -> übersprungene Zuordnungen: {r.abt_unmatched_zuordnungen}")

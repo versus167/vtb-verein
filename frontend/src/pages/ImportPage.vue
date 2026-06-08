@@ -85,6 +85,24 @@
         </div>
       </q-card-section>
 
+      <q-separator v-if="result.mannschaften_uebersicht?.length" />
+
+      <q-card-section v-if="result.mannschaften_uebersicht?.length">
+        <div class="text-subtitle2 q-mb-xs">Mannschaften / Teams (aus Sonstiges_1)</div>
+        <q-list dense bordered>
+          <q-item v-for="t in result.mannschaften_uebersicht" :key="t.name">
+            <q-item-section avatar>
+              <q-icon :name="t.matched ? 'groups' : 'cancel'" :color="t.matched ? 'cyan-8' : 'negative'" />
+            </q-item-section>
+            <q-item-section>
+              {{ t.name }}
+              <q-item-label caption>→ {{ t.abteilung }}</q-item-label>
+            </q-item-section>
+            <q-item-section side>{{ t.count }} Mitglieder</q-item-section>
+          </q-item>
+        </q-list>
+      </q-card-section>
+
       <q-separator />
 
       <q-card-section class="row q-col-gutter-md">
@@ -128,6 +146,7 @@ const summary = computed(() => {
     { label: 'Kontakte', value: r.kontakte },
     { label: 'Abteilungs-Zuordnungen', value: r.abteilungen },
     { label: 'Funktions-Zuordnungen', value: r.funktionen },
+    { label: 'Kader-Zuordnungen', value: r.kader },
     { label: 'Zeilen gelesen', value: r.rows },
   ]
 })

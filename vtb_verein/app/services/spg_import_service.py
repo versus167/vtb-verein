@@ -11,6 +11,7 @@ Bewusst NICHT importiert: Beiträge, Einmalbeträge, Ehrungen.
 """
 import csv
 from collections import Counter
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -22,6 +23,8 @@ from app.db.abteilung_repository import AbteilungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository
 from app.db.funktion_repository import FunktionRepository
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository
+from app.db.mannschaft_repository import MannschaftRepository, Mannschaft
+from app.db.mitglied_mannschaft_repository import MitgliedMannschaftRepository
 
 ACTOR = 'spg-import'
 EHRENMITGLIED_ABT = 'Ehrenmitglieder'
@@ -39,6 +42,9 @@ FUNKTION_MAP = {
 ZAHLART = {'s': 'lastschrift', 'b': 'ueberweisung'}
 ABT_STATUS = {'a': 'aktiv', 'p': 'passiv'}
 ABT_ALIAS = {}  # optionale Aliasse: {CSV-Name: App-Name}
+
+# Spalten, die Mannschaften/Teams enthalten (ein Mitglied kann in mehreren sein)
+TEAM_FIELDS = ('Sonstiges_1', 'Sonstiges_2')
 
 CONTACT_FIELDS = [
     ('Email',              'email',   None),
@@ -73,6 +79,11 @@ class ImportResult:
     # [{name, count, matched}] für die Anzeige
     abteilungs_abgleich: list = field(default_factory=list)
     ehrenmitglieder_count: int = 0
+    # Mannschaften/Teams (aus Sonstiges_1)
+    kader: int = 0
+    neue_mannschaften: list = field(default_factory=list)
+    # [{name, abteilung, count, matched}] für die Anzeige
+    mannschaften_uebersicht: list = field(default_factory=list)
 
 
 # --- Hilfsfunktionen ---------------------------------------------------------
@@ -159,6 +170,17 @@ def build_contacts(row):
     return result
 
 
+def row_teams(row):
+    """Deduplizierte Liste der Team-Namen eines Mitglieds aus allen TEAM_FIELDS."""
+    seen, result = set(), []
+    for fcol in TEAM_FIELDS:
+        t = row.get(fcol, '')
+        if t and t not in seen:
+            seen.add(t)
+            result.append(t)
+    return result
+
+
 def row_abteilungen(row):
     sparten, ehren = [], False
     for i in range(1, 8):
@@ -184,6 +206,8 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
     ma_repo = MitgliedAbteilungRepository(conn)
     f_repo = FunktionRepository(conn)
     mf_repo = MitgliedFunktionRepository(conn)
+    t_repo = MannschaftRepository(conn)
+    tm_repo = MitgliedMannschaftRepository(conn)
 
     rows = parse_csv_bytes(csv_bytes)
     if limit:
@@ -197,16 +221,21 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
 
     # CSV-Kataloge sammeln
     abt_count, funk_keys = Counter(), {}
+    team_abt = defaultdict(Counter)   # Team (Sonstiges_1) -> Counter(Abteilungsname)
+    team_count = Counter()            # Team -> Anzahl Mitglieder (einmal je Mitglied)
     for row in rows:
-        for i in range(1, 8):
-            n = row.get(f'Abteilung_{i}', '')
-            if n:
-                abt_count[n] += 1
+        member_abts = [row.get(f'Abteilung_{i}', '') for i in range(1, 8) if row.get(f'Abteilung_{i}', '')]
+        for n in member_abts:
+            abt_count[n] += 1
         for i in range(1, 11):
             raw = row.get(f'Funktion_{i}', '')
             if raw:
                 k, name = funktion_key_name(raw)
                 funk_keys[k] = name
+        for team in row_teams(row):
+            team_count[team] += 1
+            for a in member_abts:
+                team_abt[team][a] += 1
 
     # Abteilungen NUR matchen
     abt_by_norm = {norm_abt(a.name): a.id for a in a_repo.list_abteilungen()}
@@ -239,6 +268,29 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
     if commit:
         for k in res.neue_funktionen:
             f_repo.create(k, funk_keys[k], 'aus SPG-Import', ACTOR)
+
+    # --- Mannschaften/Teams (Sonstiges_1) -> Mehrheits-Abteilung, auto-anlegen ---
+    team_to_mid = {}   # Teamname -> mannschaft_id (für Kader-Zuordnung)
+    existing_teams = {m.name: m.id for m in t_repo.list_all()}
+    for team in sorted(team_count):
+        majority_abt = team_abt[team].most_common(1)[0][0] if team_abt[team] else None
+        aid = match_abt(majority_abt) if majority_abt else None
+        res.mannschaften_uebersicht.append(
+            {'name': team, 'abteilung': majority_abt or '(keine Abteilung)',
+             'count': team_count[team], 'matched': aid is not None}
+        )
+        if aid is None:
+            continue  # keine (gematchte) Abteilung -> Team kann nicht angelegt werden
+        if team in existing_teams:
+            team_to_mid[team] = existing_teams[team]
+        else:
+            res.neue_mannschaften.append(team)
+            if commit:
+                created = t_repo.create(
+                    Mannschaft(abteilung_id=aid, name=team, beschreibung='aus SPG-Import (Sonstiges_1)'),
+                    ACTOR,
+                )
+                team_to_mid[team] = created.id
 
     def lookup_mitglied(spg_nr: int):
         """Findet ein bereits importiertes Mitglied anhand des SPG-Vermerks in bemerkungen."""
@@ -309,9 +361,13 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             else:
                 zuordnungen.append((aid, status, von))
 
+        # Kader: alle Teams des Mitglieds -> mannschaft_ids (sofern Team angelegt/gematcht)
+        member_team_mids = [team_to_mid[t] for t in row_teams(row) if t in team_to_mid]
+
         res.kontakte += len(contacts)
         res.abteilungen += len(zuordnungen)
         res.funktionen += len(funktionen)
+        res.kader += len(member_team_mids)
 
         existing = lookup_mitglied(nr)
         if existing and not update:
@@ -337,6 +393,8 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
                 ma_repo.mark_deleted(z.id, ACTOR)
             for z in mf_repo.list_for_mitglied(mid):
                 mf_repo.mark_deleted(z.id, ACTOR)
+            for z in tm_repo.list_for_mitglied(mid):
+                tm_repo.mark_deleted(z.id, ACTOR)
             res.aktualisiert += 1
         else:
             mid = m_repo.create_mitglied(m, ACTOR).id
@@ -348,5 +406,7 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             ma_repo.create(mid, aid, status, von, None, ACTOR)
         for key, von, bis in funktionen:
             mf_repo.create(mid, None, key, von, bis, ACTOR)
+        for tmid in member_team_mids:
+            tm_repo.create(mid, tmid, 'spieler', eintritt or '1900-01-01', None, ACTOR)
 
     return res
