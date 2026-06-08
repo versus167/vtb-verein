@@ -8,9 +8,15 @@
     </div>
 
     <!-- Filter -->
-    <div class="row q-gutter-sm q-mb-sm items-center">
+    <div class="row q-gutter-sm q-mb-md items-center wrap">
       <q-btn-toggle v-model="filter" :options="filterOptions" unelevated dense
         toggle-color="primary" color="white" text-color="primary" />
+      <q-select v-model="abteilungFilter" :options="alleAbteilungen" 
+        option-value="id" option-label="name" label="Abteilung" 
+        outlined dense clearable multiple style="min-width: 180px" />
+      <q-select v-model="funktionFilter" :options="funktionOptionen" 
+        option-value="value" option-label="label" label="Funktion" 
+        outlined dense clearable multiple style="min-width: 180px" />
       <q-input v-model="search" placeholder="Suche..." outlined dense clearable
         style="min-width: 200px">
         <template #prepend><q-icon name="search" /></template>
@@ -18,16 +24,6 @@
       <q-btn flat dense icon="filter_alt" color="primary" @click="resetAllFilters">
         <q-tooltip>Alle Filter zurücksetzen</q-tooltip>
       </q-btn>
-    </div>
-    
-    <!-- Erweiterte Filter -->
-    <div class="row q-gutter-sm q-mb-md items-center" v-if="filter.value === 'mitglieder'">
-      <q-select v-model="abteilungFilter" :options="alleAbteilungen" 
-        option-value="id" option-label="name" label="Abteilung" 
-        outlined dense clearable multiple style="min-width: 180px" />
-      <q-select v-model="funktionFilter" :options="funktionOptionen" 
-        option-value="value" option-label="label" label="Funktion" 
-        outlined dense clearable multiple style="min-width: 180px" />
     </div>
 
     <!-- Mobile/Tablet: Kacheln -->
@@ -664,17 +660,19 @@ const filteredPersonen = computed(() => {
   if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
   
-  // Abteilung-Filter (nur bei Mitgliedern relevant)
-  if (filter.value === 'mitglieder' && abteilungFilter.value?.length) {
+  // Abteilung-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Abteilungen haben)
+  if (abteilungFilter.value?.length) {
+    const abteilungsIds = abteilungFilter.value.map(x => typeof x === 'object' ? x.id : x)
     list = list.filter(p => 
-      p.abteilungen?.some(ab => abteilungFilter.value.includes(ab.abteilung_id))
+      (p.abteilungen || []).some(ab => abteilungsIds.includes(ab.abteilung_id))
     )
   }
   
-  // Funktion-Filter (nur bei Mitgliedern relevant)
-  if (filter.value === 'mitglieder' && funktionFilter.value?.length) {
+  // Funktion-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Funktionen haben)
+  if (funktionFilter.value?.length) {
+    const funktionKeys = funktionFilter.value.map(x => typeof x === 'object' ? x.value : x)
     list = list.filter(p => 
-      p.funktionen?.some(f => funktionFilter.value.includes(f.funktion))
+      (p.funktionen || []).some(f => funktionKeys.includes(f.funktion))
     )
   }
   
@@ -729,9 +727,8 @@ const sortedPersonen = computed(() => {
   })
 })
 
-// Filter zurücksetzen
+// Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
 function resetAllFilters() {
-  filter.value = 'alle'
   abteilungFilter.value = []
   funktionFilter.value = []
   search.value = ''
