@@ -354,6 +354,9 @@ class VereinsDB:
     def get_mannschaft(self, id: int) -> Optional[Mannschaft]:
         return self._mannschaft_repo.get(id)
 
+    def list_mannschaft_kandidaten(self, mannschaft_id: int) -> list[dict]:
+        return self._mannschaft_repo.list_kandidaten(mannschaft_id)
+
     def create_mannschaft(self, m: Mannschaft, created_by: str) -> Mannschaft:
         return self._mannschaft_repo.create(m, created_by)
 

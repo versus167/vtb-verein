@@ -102,3 +102,30 @@ class MannschaftRepository(BaseRepository):
                 (mannschaft_id,),
             )
             return cur.fetchone() is not None
+
+    def list_kandidaten(self, mannschaft_id: int) -> list[dict]:
+        """Mitglieder der Abteilung dieses Teams, die noch NICHT im Team sind, samt ihren
+        aktuellen Teamnamen. Für das Sammel-Hinzufügen zum Kader."""
+        with self.cursor() as cur:
+            cur.execute("SELECT abteilung_id FROM mannschaft WHERE id=%s AND deleted_at IS NULL",
+                        (mannschaft_id,))
+            row = cur.fetchone()
+            if row is None:
+                return []
+            abteilung_id = row['abteilung_id']
+            cur.execute(
+                """
+                SELECT m.id, m.vorname, m.nachname, m.geburtsdatum,
+                       (SELECT array_agg(t.name ORDER BY t.name)
+                          FROM mitglied_mannschaft mm JOIN mannschaft t ON t.id = mm.mannschaft_id
+                          WHERE mm.mitglied_id = m.id AND mm.deleted_at IS NULL AND t.deleted_at IS NULL) AS teams
+                FROM mitglied m
+                WHERE m.deleted_at IS NULL
+                  AND EXISTS (SELECT 1 FROM mitglied_abteilung ma
+                               WHERE ma.mitglied_id = m.id AND ma.abteilung_id = %s AND ma.deleted_at IS NULL)
+                  AND NOT EXISTS (SELECT 1 FROM mitglied_mannschaft mmx
+                               WHERE mmx.mitglied_id = m.id AND mmx.mannschaft_id = %s AND mmx.deleted_at IS NULL)
+                """,
+                (abteilung_id, mannschaft_id),
+            )
+            return [dict(r) for r in cur.fetchall()]

@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -41,6 +42,12 @@ class KaderUpdate(BaseModel):
     expected_version: int
 
 
+class BulkKaderCreate(BaseModel):
+    mitglied_ids: list[int]
+    rolle: str = 'spieler'
+    von: str
+
+
 # ---------------------------------------------------------------------------
 # Helfer
 # ---------------------------------------------------------------------------
@@ -60,6 +67,19 @@ def _require_delete(user):
 def _validate_rolle(rolle: str):
     if rolle not in VALID_ROLLEN:
         raise HTTPException(status_code=422, detail=f"Ungültige Rolle. Erlaubt: {VALID_ROLLEN}")
+
+
+def _alter_jahrgang(geburtsdatum):
+    """(alter_in_jahren, geburtsjahr) aus 'YYYY-MM-DD'; (None, None) wenn fehlt/ungültig."""
+    if not geburtsdatum:
+        return None, None
+    try:
+        d = date.fromisoformat(str(geburtsdatum)[:10])
+    except (ValueError, TypeError):
+        return None, None
+    today = date.today()
+    alter = today.year - d.year - ((today.month, today.day) < (d.month, d.day))
+    return alter, d.year
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +138,31 @@ def list_kader(mannschaft_id: int, user: CurrentUser, db: DB):
     return [asdict(z) for z in db.list_mannschaft_kader(mannschaft_id)]
 
 
+@router.get("/mannschaften/{mannschaft_id}/kandidaten")
+def list_kandidaten(mannschaft_id: int, user: CurrentUser, db: DB):
+    """Mitglieder der Team-Abteilung, die noch nicht in diesem Team sind (für Sammel-Hinzufügen).
+    Inkl. Alter/Jahrgang und aktueller Mannschaften; sortiert: ohne Team zuerst, dann nach Team/Alter."""
+    _require_read(user)
+    if db.get_mannschaft(mannschaft_id) is None:
+        raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    out = []
+    for r in db.list_mannschaft_kandidaten(mannschaft_id):
+        alter, jahrgang = _alter_jahrgang(r.get('geburtsdatum'))
+        out.append({
+            'id': r['id'], 'vorname': r['vorname'], 'nachname': r['nachname'],
+            'geburtsdatum': r.get('geburtsdatum'),
+            'alter': alter, 'jahrgang': jahrgang,
+            'teams': r.get('teams') or [],
+        })
+    out.sort(key=lambda c: (
+        1 if c['teams'] else 0,
+        c['teams'][0].lower() if c['teams'] else '',
+        c['alter'] if c['alter'] is not None else 999,
+        (c['nachname'] or '').lower(), (c['vorname'] or '').lower(),
+    ))
+    return out
+
+
 @router.post("/mannschaften/{mannschaft_id}/mitglieder", status_code=status.HTTP_201_CREATED)
 def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
     _require_write(user)
@@ -135,6 +180,28 @@ def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
         created_by=user.username,
     )
     return asdict(z)
+
+
+@router.post("/mannschaften/{mannschaft_id}/mitglieder/bulk", status_code=status.HTTP_201_CREATED)
+def add_kader_bulk(mannschaft_id: int, data: BulkKaderCreate, user: CurrentUser, db: DB):
+    """Mehrere Mitglieder auf einmal zum Kader hinzufügen (gleiche Rolle + Von)."""
+    _require_write(user)
+    _validate_rolle(data.rolle)
+    if not (data.von or '').strip():
+        raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
+    if db.get_mannschaft(mannschaft_id) is None:
+        raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    existing = {z.mitglied_id for z in db.list_mannschaft_kader(mannschaft_id)}
+    added, skipped = 0, 0
+    for mid in data.mitglied_ids:
+        if mid in existing:
+            skipped += 1
+            continue
+        db.create_mitglied_mannschaft(mid, mannschaft_id, data.rolle, data.von, None,
+                                      created_by=user.username)
+        existing.add(mid)
+        added += 1
+    return {'added': added, 'skipped': skipped}
 
 
 @router.put("/mannschaften/{mannschaft_id}/mitglieder/{zuordnung_id}")

@@ -78,12 +78,10 @@
                   </q-item-section>
                 </q-item>
               </q-list>
-              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="person_add"
-                label="Mitglied hinzufügen" color="primary" size="sm" class="q-mt-xs" @click="openAddKader(m)" />
-              <div v-if="kaderFormTeamId === m.id" class="q-mt-sm q-gutter-sm">
-                <q-select v-if="!editingKaderId" v-model="kaderForm.mitglied_id" :options="mitgliedOptions"
-                  option-value="id" :option-label="mitgliedLabel" emit-value map-options use-input
-                  input-debounce="0" @filter="filterMitglieder" label="Mitglied *" outlined dense />
+              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="group_add"
+                label="Mitglieder hinzufügen" color="primary" size="sm" class="q-mt-xs" @click="openPicker(m)" />
+              <!-- Inline-Form nur noch zum Bearbeiten von Rolle/Zeitraum -->
+              <div v-if="kaderFormTeamId === m.id && editingKaderId" class="q-mt-sm q-gutter-sm">
                 <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
                   emit-value map-options label="Rolle *" outlined dense />
                 <div class="row q-gutter-sm">
@@ -118,6 +116,63 @@
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn unelevated color="primary" :label="form.id ? 'Speichern' : 'Anlegen'"
             :loading="saving" @click="save" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Mitglieder zum Kader hinzufügen (Picker) -->
+    <q-dialog v-model="pickerOpen" :maximized="$q.screen.lt.md">
+      <q-card style="width: 800px; max-width: 95vw">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Mitglieder hinzufügen</div>
+          <div v-if="pickerTeam" class="text-caption text-grey q-ml-sm">
+            {{ pickerTeam.name }} · {{ pickerTeam.abteilung_name }}
+          </div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+
+        <q-card-section class="row q-col-gutter-sm items-center q-pb-none">
+          <div class="col-12 col-sm-4">
+            <q-select v-model="pickerRolle" :options="rolleOptionen" option-value="value" option-label="label"
+              emit-value map-options label="Rolle (für alle)" outlined dense />
+          </div>
+          <div class="col-6 col-sm-4">
+            <q-input v-model="pickerVon" label="Von (für alle) *" outlined dense type="date" />
+          </div>
+          <div class="col-6 col-sm-4">
+            <q-toggle v-model="nurOhneTeam" label="Nur ohne Mannschaft" dense />
+          </div>
+        </q-card-section>
+
+        <q-card-section>
+          <q-table
+            :rows="pickerRows" :columns="kandidatenColumns" row-key="id"
+            selection="multiple" v-model:selected="pickerSelected"
+            :filter="pickerFilter" :loading="pickerLoading"
+            dense flat :rows-per-page-options="[0]" :pagination="{ rowsPerPage: 0 }"
+            virtual-scroll style="max-height: 55vh">
+            <template #top-left>
+              <div class="text-caption text-grey-7">{{ pickerSelected.length }} ausgewählt · {{ pickerRows.length }} Kandidaten</div>
+            </template>
+            <template #top-right>
+              <q-input v-model="pickerFilter" dense outlined clearable placeholder="Name suchen…">
+                <template #prepend><q-icon name="search" /></template>
+              </q-input>
+            </template>
+            <template #body-cell-teams="props">
+              <q-td :props="props">
+                <q-chip v-for="t in props.row.teams" :key="t" dense size="xs" color="cyan-8" text-color="white">{{ t }}</q-chip>
+                <span v-if="!props.row.teams.length" class="text-grey-5">–</span>
+              </q-td>
+            </template>
+          </q-table>
+        </q-card-section>
+
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn unelevated color="primary" :label="`${pickerSelected.length} hinzufügen`"
+            :disable="pickerSelected.length === 0" :loading="pickerSaving" @click="savePicker" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -262,24 +317,60 @@ const editingKaderId = ref(null)
 const editingKaderVersion = ref(null)
 const kaderForm = ref({ mitglied_id: null, rolle: 'spieler', von: '', bis: '' })
 
-const alleMitglieder = ref([])
-const mitgliedOptions = ref([])
-function mitgliedLabel(m) { return `${m.nachname}, ${m.vorname}` }
-function filterMitglieder(val, update) {
-  const needle = val.toLowerCase()
-  update(() => {
-    mitgliedOptions.value = !needle
-      ? alleMitglieder.value
-      : alleMitglieder.value.filter(m => `${m.nachname} ${m.vorname}`.toLowerCase().includes(needle))
-  })
+// Picker zum Sammel-Hinzufügen von Mitgliedern
+const pickerOpen = ref(false)
+const pickerTeam = ref(null)
+const pickerLoading = ref(false)
+const kandidaten = ref([])
+const pickerSelected = ref([])
+const pickerRolle = ref('spieler')
+const pickerVon = ref(new Date().toISOString().slice(0, 10))
+const pickerFilter = ref('')
+const pickerSaving = ref(false)
+const nurOhneTeam = ref(false)
+
+const kandidatenColumns = [
+  { name: 'name', label: 'Name', align: 'left', field: r => `${r.nachname}, ${r.vorname}`, sortable: true },
+  { name: 'alter', label: 'Alter', align: 'right', field: 'alter', sortable: true },
+  { name: 'jahrgang', label: 'Jahrgang', align: 'right', field: 'jahrgang', sortable: true },
+  { name: 'teams', label: 'Mannschaften', align: 'left', field: r => (r.teams || []).join(', '), sortable: false },
+]
+const pickerRows = computed(() =>
+  nurOhneTeam.value ? kandidaten.value.filter(c => !c.teams.length) : kandidaten.value)
+
+async function openPicker(team) {
+  pickerTeam.value = team
+  pickerSelected.value = []
+  pickerFilter.value = ''
+  nurOhneTeam.value = false
+  pickerRolle.value = 'spieler'
+  pickerVon.value = new Date().toISOString().slice(0, 10)
+  pickerOpen.value = true
+  pickerLoading.value = true
+  try {
+    const { data } = await api.get(`/api/mannschaften/${team.id}/kandidaten`)
+    kandidaten.value = data
+  } finally {
+    pickerLoading.value = false
+  }
 }
-async function ensureMitglieder() {
-  if (alleMitglieder.value.length) return
-  const { data } = await api.get('/api/personen/')
-  alleMitglieder.value = data.filter(p => p.mitglied).map(p => ({
-    id: p.mitglied.id, vorname: p.mitglied.vorname, nachname: p.mitglied.nachname,
-  }))
-  mitgliedOptions.value = alleMitglieder.value
+async function savePicker() {
+  if (!pickerSelected.value.length) return
+  if (!pickerVon.value) { $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben.' }); return }
+  pickerSaving.value = true
+  try {
+    const { data } = await api.post(`/api/mannschaften/${pickerTeam.value.id}/mitglieder/bulk`, {
+      mitglied_ids: pickerSelected.value.map(r => r.id),
+      rolle: pickerRolle.value, von: pickerVon.value,
+    })
+    $q.notify({ type: 'positive', message: `${data.added} hinzugefügt${data.skipped ? `, ${data.skipped} übersprungen` : ''}.` })
+    pickerOpen.value = false
+    await loadKader(pickerTeam.value)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  } finally {
+    pickerSaving.value = false
+  }
 }
 
 async function loadKader(team) {
@@ -292,12 +383,6 @@ async function loadKader(team) {
   } finally {
     kaderLoadingId.value = null
   }
-}
-function openAddKader(team) {
-  editingKaderId.value = null
-  kaderForm.value = { mitglied_id: null, rolle: 'spieler', von: '', bis: '' }
-  kaderFormTeamId.value = team.id
-  ensureMitglieder()
 }
 function openEditKader(team, z) {
   editingKaderId.value = z.id
