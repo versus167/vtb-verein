@@ -26,7 +26,6 @@ class GebuehrCreate(BaseModel):
     gueltig_ab: str
     gueltig_bis: Optional[str] = None
     zahler_typ: str = 'mitglied'
-    zahler_kasse_id: Optional[int] = None
 
 
 class GebuehrUpdate(GebuehrCreate):
@@ -67,7 +66,6 @@ def _gebuehr_dict(g: Gebuehr) -> dict:
         'betrag': g.betrag, 'anlass': g.anlass,
         'gueltig_ab': g.gueltig_ab, 'gueltig_bis': g.gueltig_bis,
         'zahler_typ': g.zahler_typ,
-        'zahler_kasse_id': g.zahler_kasse_id, 'zahler_kasse_name': g.zahler_kasse_name,
         'version': g.version,
     }
 
@@ -91,7 +89,7 @@ def create_gebuehr(data: GebuehrCreate, user: CurrentUser, db: DB):
         raise HTTPException(status_code=422, detail="Gültig ab ist erforderlich")
     g = Gebuehr(name=data.name.strip(), abteilung_id=data.abteilung_id, betrag=data.betrag,
                 anlass=data.anlass, gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
-                zahler_typ=data.zahler_typ, zahler_kasse_id=data.zahler_kasse_id)
+                zahler_typ=data.zahler_typ)
     return _gebuehr_dict(db.gebuehren.create(g, created_by=user.username))
 
 
@@ -108,7 +106,6 @@ def update_gebuehr(gebuehr_id: int, data: GebuehrUpdate, user: CurrentUser, db: 
     g.gueltig_ab = data.gueltig_ab
     g.gueltig_bis = data.gueltig_bis
     g.zahler_typ = data.zahler_typ
-    g.zahler_kasse_id = data.zahler_kasse_id
     g.version = data.expected_version
     if not db.gebuehren.update(g, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")

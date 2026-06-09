@@ -50,7 +50,7 @@
                   Alter {{ r.bedingung_alter_min ?? 0 }}–{{ r.bedingung_alter_max ?? '∞' }} J.
                 </q-chip>
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
-                  {{ r.zahler_kasse_name ? `Umbuchung: ${r.zahler_kasse_name}` : `Zahlung: ${r.abteilung_name ?? 'Abteilung'}` }}
+                  Zahlung: {{ r.abteilung_name ?? 'Abteilung' }}
                 </q-chip>
               </q-item-label>
             </q-item-section>
@@ -127,8 +127,8 @@
         <q-banner v-if="abrechnungErgebnis" class="bg-positive text-white q-mt-md" rounded>
           <template #avatar><q-icon name="check_circle" /></template>
           <strong>{{ abrechnungErgebnis.zeitraum }}</strong> abgerechnet:
-          {{ abrechnungErgebnis.angelegt }} Sollstellungen angelegt,
-          {{ abrechnungErgebnis.umbuchungen }} Kassenbuchungen erzeugt.
+          {{ abrechnungErgebnis.angelegt }} Sollstellungen angelegt
+          ({{ abrechnungErgebnis.uebersprungen }} übersprungen).
         </q-banner>
       </q-tab-panel>
 
@@ -230,12 +230,8 @@
             gesetzter Altersbedingung nicht berücksichtigt.
           </div>
           <q-select v-model="regelForm.zahler_typ"
-            :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt (Umbuchung)',value:'abteilung'}]"
+            :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
-          <q-select v-if="regelForm.zahler_typ === 'abteilung'"
-            v-model="regelForm.zahler_kasse_id"
-            :options="kasseOptions" option-value="id" option-label="name"
-            emit-value map-options label="Kasse für Umbuchung" outlined dense />
           <div v-if="regelError" class="text-negative text-caption">{{ regelError }}</div>
         </q-card-section>
         <q-separator />
@@ -265,7 +261,6 @@ const kannAbrechnen    = computed(() => auth.hasPermission('beitraege.abrechnen'
 
 // ── Optionen ───────────────────────────────────────────────
 const abteilungOptions = ref([])
-const kasseOptions = ref([])
 const funktionOptionen = ref([])
 
 async function loadFunktionOptionen() {
@@ -326,7 +321,7 @@ function openRegelDialog(r = null) {
     ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
     bedingung_alter_min: r.bedingung_alter_min ?? null,
     bedingung_alter_max: r.bedingung_alter_max ?? null,
-    zahler_typ: r.zahler_typ, zahler_kasse_id: r.zahler_kasse_id,
+    zahler_typ: r.zahler_typ,
     expected_version: r.version,
   } : {
     name: '', abteilung_id: null,
@@ -339,7 +334,7 @@ function openRegelDialog(r = null) {
     ausnahme_funktion_abteilung_id: null,
     bedingung_alter_min: null,
     bedingung_alter_max: null,
-    zahler_typ: 'mitglied', zahler_kasse_id: null,
+    zahler_typ: 'mitglied',
   }
   regelDialogOpen.value = true
 }
@@ -486,12 +481,8 @@ async function sepaExport() {
 }
 
 async function loadOptionen() {
-  const [{ data: ab }, { data: ka }] = await Promise.all([
-    api.get('/api/abteilungen/'),
-    api.get('/api/kassen/'),
-  ])
+  const { data: ab } = await api.get('/api/abteilungen/')
   abteilungOptions.value = ab
-  kasseOptions.value = ka
 }
 
 onMounted(async () => {

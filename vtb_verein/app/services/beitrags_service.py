@@ -26,7 +26,6 @@ class VorschauPosition:
     beitragsregel_name: str
     betrag: float
     zahler_typ: str                   # mitglied | abteilung
-    zahler_kasse_id: Optional[int]
     zeitraum: str
     faelligkeitsdatum: str
     bereits_vorhanden: bool           # True = Duplikat, wird übersprungen
@@ -37,7 +36,6 @@ class AbrechnungErgebnis:
     zeitraum: str
     angelegt: int
     uebersprungen: int                # Duplikate
-    umbuchungen: int                  # erzeugte Kassenbuchungen
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +112,6 @@ class BeitragsService:
                     beitragsregel_name=regel.name,
                     betrag=betrag,
                     zahler_typ=regel.zahler_typ,
-                    zahler_kasse_id=regel.zahler_kasse_id,
                     zeitraum=zeitraum,
                     faelligkeitsdatum=faellig,
                     bereits_vorhanden=bereits,
@@ -124,13 +121,12 @@ class BeitragsService:
 
     def abrechnen(self, stichtag_str: str, erstellt_von: str) -> AbrechnungErgebnis:
         """
-        Legt Sollstellungen und ggf. Kassenbuchungen für den Stichtag an.
-        Überspringt bereits vorhandene Einträge (Duplikat-Schutz).
+        Legt Sollstellungen für den Stichtag an. Überspringt bereits vorhandene
+        Einträge (Duplikat-Schutz). Beiträge werden nie auf Kassen gebucht.
         """
         positionen = self.vorschau(stichtag_str)
         angelegt = 0
         uebersprungen = 0
-        umbuchungen = 0
 
         for pos in positionen:
             if pos.bereits_vorhanden:
@@ -144,20 +140,8 @@ class BeitragsService:
                 betrag_soll=pos.betrag,
                 faelligkeitsdatum=pos.faelligkeitsdatum,
             )
-            sollstellung = self.db.sollstellungen.create(s, created_by=erstellt_von)
+            self.db.sollstellungen.create(s, created_by=erstellt_von)
             angelegt += 1
-
-            # Bei Abteilungs-Zahler: Kassenbuchung als Ausgabe anlegen
-            if pos.zahler_typ == 'abteilung' and pos.zahler_kasse_id:
-                buchung_id = self._erstelle_umbuchung(
-                    kasse_id=pos.zahler_kasse_id,
-                    sollstellung=sollstellung,
-                    erstellt_von=erstellt_von,
-                )
-                self.db.sollstellungen.set_kassenbuchung(
-                    sollstellung.id, buchung_id, updated_by=erstellt_von
-                )
-                umbuchungen += 1
 
         return AbrechnungErgebnis(
             zeitraum=zeitraum_label(
@@ -167,7 +151,6 @@ class BeitragsService:
             ),
             angelegt=angelegt,
             uebersprungen=uebersprungen,
-            umbuchungen=umbuchungen,
         )
 
     # ------------------------------------------------------------------
@@ -257,21 +240,3 @@ class BeitragsService:
         with self.db.conn.cursor() as cur:
             cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
-
-    def _erstelle_umbuchung(
-        self, kasse_id: int, sollstellung: BeitragSollstellung, erstellt_von: str
-    ) -> int:
-        """Legt eine Kassenbuchung (Ausgabe) in der Abteilungs-Kasse an."""
-        from app.models.kasse import Kassenbuchung
-        name = f"{sollstellung.mitglied_vorname or ''} {sollstellung.mitglied_nachname or ''}".strip()
-        kb = Kassenbuchung(
-            kasse_id=kasse_id,
-            buchungsdatum=date.today().isoformat(),
-            buchungstext=f"Vereinsbeitrag {name} – {sollstellung.zeitraum}",
-            kategorie="Beiträge",
-            einnahme_cent=0,
-            ausgabe_cent=round(sollstellung.betrag_soll * 100),
-            notiz=f"Automatisch erzeugte Umbuchung für Sollstellung #{sollstellung.id}",
-        )
-        buchung = self.db.kassenbuch.create_buchung(kb, created_by=erstellt_von)
-        return buchung.id

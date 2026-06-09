@@ -19,8 +19,6 @@ class Gebuehr:
     gueltig_ab: str = ""
     gueltig_bis: Optional[str] = None
     zahler_typ: str = "mitglied"                  # mitglied | abteilung
-    zahler_kasse_id: Optional[int] = None
-    zahler_kasse_name: Optional[str] = None       # per JOIN
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

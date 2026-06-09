@@ -51,7 +51,6 @@ class RegelCreate(BaseModel):
     bedingung_alter_min: Optional[int] = None
     bedingung_alter_max: Optional[int] = None
     zahler_typ: str = 'mitglied'
-    zahler_kasse_id: Optional[int] = None
 
 
 class RegelUpdate(RegelCreate):
@@ -91,7 +90,7 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         ausnahme_funktion_abteilung_id=data.ausnahme_funktion_abteilung_id,
         bedingung_alter_min=data.bedingung_alter_min,
         bedingung_alter_max=data.bedingung_alter_max,
-        zahler_typ=data.zahler_typ, zahler_kasse_id=data.zahler_kasse_id,
+        zahler_typ=data.zahler_typ,
     )
     created = db.beitragsregeln.create(r, created_by=user.username)
     return _regel_dict(created)
@@ -117,7 +116,6 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.bedingung_alter_min = data.bedingung_alter_min
     r.bedingung_alter_max = data.bedingung_alter_max
     r.zahler_typ = data.zahler_typ
-    r.zahler_kasse_id = data.zahler_kasse_id
     r.version = data.expected_version
     ok = db.beitragsregeln.update(r, updated_by=user.username)
     if not ok:
@@ -164,7 +162,6 @@ def abrechnen(data: AbrechnungRequest, user: CurrentUser, db: DB):
         'zeitraum': ergebnis.zeitraum,
         'angelegt': ergebnis.angelegt,
         'uebersprungen': ergebnis.uebersprungen,
-        'umbuchungen': ergebnis.umbuchungen,
     }
 
 
@@ -248,7 +245,6 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'bedingung_alter_min': r.bedingung_alter_min,
         'bedingung_alter_max': r.bedingung_alter_max,
         'zahler_typ': r.zahler_typ,
-        'zahler_kasse_id': r.zahler_kasse_id, 'zahler_kasse_name': r.zahler_kasse_name,
         'version': r.version,
     }
 

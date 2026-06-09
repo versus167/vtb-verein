@@ -25,8 +25,6 @@ class Beitragsregel:
     bedingung_alter_min: Optional[int] = None              # Mindestalter (Jahre), None = keine Untergrenze
     bedingung_alter_max: Optional[int] = None              # Höchstalter (Jahre), None = keine Obergrenze
     zahler_typ: str = "mitglied"                 # mitglied | abteilung
-    zahler_kasse_id: Optional[int] = None
-    zahler_kasse_name: Optional[str] = None      # per JOIN befüllt
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

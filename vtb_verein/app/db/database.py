@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 
 class Database:
@@ -91,6 +91,7 @@ class Database:
             27: self._migrate_v26_to_v27,
             28: self._migrate_v27_to_v28,
             29: self._migrate_v28_to_v29,
+            30: self._migrate_v29_to_v30,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1017,6 +1018,94 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 29 WHERE id = 1")
 
+    def _migrate_v29_to_v30(self) -> None:
+        """Entfernt die 'Kasse für Umbuchung' (zahler_kasse_id) aus beitragsregel und
+        gebuehr (inkl. *_history). Beiträge/Gebühren werden nie auf Kassen gebucht;
+        zahler_typ='abteilung' bleibt als reine Zahler-Zuordnung erhalten."""
+        with self.cursor() as cur:
+            # Audit-Trigger-Funktionen ohne zahler_kasse_id neu schreiben (sonst brechen
+            # sie beim nächsten INSERT/UPDATE, weil NEW.zahler_kasse_id wegfällt).
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ,
+                        bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                        bedingung_alter_min, bedingung_alter_max,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ,
+                        NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                        NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ,
+                            bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                            bedingung_alter_min, bedingung_alter_max,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ,
+                            NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                            NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO gebuehr_history (
+                        id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                        zahler_typ,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                        NEW.zahler_typ,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO gebuehr_history (
+                            id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                            zahler_typ,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                            NEW.zahler_typ,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            # Spalte überall entfernen (FK auf kassen wird mit gedroppt)
+            for tbl in ('beitragsregel', 'beitragsregel_history', 'gebuehr', 'gebuehr_history'):
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS zahler_kasse_id")
+            cur.execute("UPDATE schema_version SET version = 30 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1258,7 +1347,6 @@ class Database:
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT NOT NULL DEFAULT 'mitglied',
-              zahler_kasse_id              INTEGER REFERENCES kassen(id),
               version        INTEGER NOT NULL DEFAULT 1,
               created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by     TEXT,
@@ -1287,7 +1375,6 @@ class Database:
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT,
-              zahler_kasse_id              INTEGER,
               created_at     TEXT,
               created_by     TEXT,
               updated_at     TEXT,
@@ -1876,7 +1963,6 @@ class Database:
               gueltig_ab      TEXT NOT NULL,
               gueltig_bis     TEXT,
               zahler_typ      TEXT NOT NULL DEFAULT 'mitglied',
-              zahler_kasse_id INTEGER REFERENCES kassen(id),
               version         INTEGER NOT NULL DEFAULT 1,
               created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by      TEXT,
@@ -1890,7 +1976,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS gebuehr_history (
               id INTEGER NOT NULL, version INTEGER NOT NULL,
               name TEXT, abteilung_id INTEGER, betrag REAL, anlass TEXT,
-              gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT, zahler_kasse_id INTEGER,
+              gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT,
               created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
               deleted_at TEXT, deleted_by TEXT,
               PRIMARY KEY (id, version)
@@ -2099,11 +2185,11 @@ class Database:
             BEGIN
                 INSERT INTO gebuehr_history (
                     id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                    zahler_typ, zahler_kasse_id,
+                    zahler_typ,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                    NEW.zahler_typ, NEW.zahler_kasse_id,
+                    NEW.zahler_typ,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -2115,11 +2201,11 @@ class Database:
                 IF NEW.version != OLD.version THEN
                     INSERT INTO gebuehr_history (
                         id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                        zahler_typ, zahler_kasse_id,
+                        zahler_typ,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.zahler_typ,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -2592,14 +2678,14 @@ class Database:
                 INSERT INTO beitragsregel_history (
                     id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
-                    zahler_typ, zahler_kasse_id,
+                    zahler_typ,
                     bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
                     bedingung_alter_min, bedingung_alter_max,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                     NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
-                    NEW.zahler_typ, NEW.zahler_kasse_id,
+                    NEW.zahler_typ,
                     NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
                     NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
@@ -2614,14 +2700,14 @@ class Database:
                     INSERT INTO beitragsregel_history (
                         id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                         gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
-                        zahler_typ, zahler_kasse_id,
+                        zahler_typ,
                         bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
                         bedingung_alter_min, bedingung_alter_max,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                         NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
-                        NEW.zahler_typ, NEW.zahler_kasse_id,
+                        NEW.zahler_typ,
                         NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
                         NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by

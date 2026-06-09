@@ -6,11 +6,10 @@ from app.db.base_repository import BaseRepository
 _SELECT = """
     SELECT g.id, g.name, g.abteilung_id, a.name AS abteilung_name,
            g.betrag, g.anlass, g.gueltig_ab, g.gueltig_bis,
-           g.zahler_typ, g.zahler_kasse_id, k.name AS zahler_kasse_name,
+           g.zahler_typ,
            g.version, g.created_at, g.created_by, g.updated_at, g.updated_by
     FROM gebuehr g
     LEFT JOIN abteilung a ON a.id = g.abteilung_id AND a.deleted_at IS NULL
-    LEFT JOIN kassen k ON k.id = g.zahler_kasse_id AND k.deleted_at IS NULL
 """
 
 
@@ -50,12 +49,12 @@ class GebuehrRepository(BaseRepository):
             cur.execute(
                 """
                 INSERT INTO gebuehr (name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                                     zahler_typ, zahler_kasse_id, created_by, updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                     zahler_typ, created_by, updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
                 (g.name, g.abteilung_id, g.betrag, g.anlass, g.gueltig_ab, g.gueltig_bis,
-                 g.zahler_typ, g.zahler_kasse_id, created_by, created_by),
+                 g.zahler_typ, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -66,12 +65,12 @@ class GebuehrRepository(BaseRepository):
                 """
                 UPDATE gebuehr
                 SET name=%s, abteilung_id=%s, betrag=%s, anlass=%s, gueltig_ab=%s, gueltig_bis=%s,
-                    zahler_typ=%s, zahler_kasse_id=%s,
+                    zahler_typ=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND version=%s AND deleted_at IS NULL
                 """,
                 (g.name, g.abteilung_id, g.betrag, g.anlass, g.gueltig_ab, g.gueltig_bis,
-                 g.zahler_typ, g.zahler_kasse_id, updated_by, g.id, g.version),
+                 g.zahler_typ, updated_by, g.id, g.version),
             )
             return cur.rowcount == 1
 

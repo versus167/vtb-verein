@@ -27,7 +27,7 @@
               </q-chip>
               <span class="q-mx-xs">ab {{ g.gueltig_ab }}<span v-if="g.gueltig_bis"> bis {{ g.gueltig_bis }}</span></span>
               <q-chip v-if="g.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
-                Umbuchung: {{ g.zahler_kasse_name ?? 'Kasse' }}
+                Zahlung: {{ g.abteilung_name ?? 'Abteilung' }}
               </q-chip>
             </q-item-label>
           </q-item-section>
@@ -92,11 +92,8 @@
             <q-input v-model="gForm.gueltig_bis" label="Gültig bis" outlined dense type="date" class="col" />
           </div>
           <q-select v-model="gForm.zahler_typ"
-            :options="[{label:'Mitglied zahlt (SEPA)',value:'mitglied'},{label:'Abteilung zahlt (Umbuchung)',value:'abteilung'}]"
+            :options="[{label:'Mitglied zahlt (SEPA)',value:'mitglied'},{label:'Abteilung zahlt',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
-          <q-select v-if="gForm.zahler_typ === 'abteilung'" v-model="gForm.zahler_kasse_id"
-            :options="kassen" option-value="id" option-label="name" emit-value map-options
-            label="Kasse für Umbuchung" outlined dense />
           <div v-if="gError" class="text-negative text-caption">{{ gError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -141,7 +138,6 @@ const auth = useAuthStore()
 const tab = ref('katalog')
 const gebuehren = ref([])
 const abteilungen = ref([])
-const kassen = ref([])
 
 const statusFilter = ref('offen')
 const statusFilterOptionen = [
@@ -155,14 +151,12 @@ const forderungen = ref([])
 function statusColor(s) { return { offen: 'orange', bezahlt: 'positive', storniert: 'grey' }[s] ?? 'grey' }
 
 async function loadKatalog() {
-  const [{ data: g }, { data: ab }, { data: ka }] = await Promise.all([
+  const [{ data: g }, { data: ab }] = await Promise.all([
     api.get('/api/gebuehren'),
     api.get('/api/abteilungen/'),
-    api.get('/api/kassen/'),
   ])
   gebuehren.value = g
   abteilungen.value = ab
-  kassen.value = ka
 }
 async function loadForderungen() {
   const params = statusFilter.value ? { status_filter: statusFilter.value } : {}
@@ -184,11 +178,11 @@ function openGebuehr(g = null) {
   gForm.value = g ? {
     id: g.id, name: g.name, abteilung_id: g.abteilung_id, betrag: g.betrag, anlass: g.anlass,
     gueltig_ab: g.gueltig_ab, gueltig_bis: g.gueltig_bis ?? '', zahler_typ: g.zahler_typ,
-    zahler_kasse_id: g.zahler_kasse_id, version: g.version,
+    version: g.version,
   } : {
     id: null, name: '', abteilung_id: null, betrag: 0, anlass: 'aufnahme',
     gueltig_ab: new Date().toISOString().slice(0, 10), gueltig_bis: '',
-    zahler_typ: 'mitglied', zahler_kasse_id: null,
+    zahler_typ: 'mitglied',
   }
   gebuehrOpen.value = true
 }
@@ -202,7 +196,7 @@ async function saveGebuehr() {
       name: gForm.value.name.trim(), abteilung_id: gForm.value.abteilung_id || null,
       betrag: Number(gForm.value.betrag), anlass: gForm.value.anlass || 'aufnahme',
       gueltig_ab: gForm.value.gueltig_ab, gueltig_bis: gForm.value.gueltig_bis || null,
-      zahler_typ: gForm.value.zahler_typ, zahler_kasse_id: gForm.value.zahler_kasse_id || null,
+      zahler_typ: gForm.value.zahler_typ,
     }
     if (gForm.value.id) {
       await api.put(`/api/gebuehren/${gForm.value.id}`, { ...payload, expected_version: gForm.value.version })
