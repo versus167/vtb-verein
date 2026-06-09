@@ -20,6 +20,8 @@
       :filter="filter"
       flat
       bordered
+      :rows-per-page-options="[15, 25, 50, 0]"
+      rows-per-page="15"
     >
       <template #top-right>
         <div class="row q-gutter-sm items-center">
