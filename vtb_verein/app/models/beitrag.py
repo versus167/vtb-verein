@@ -19,9 +19,9 @@ class Beitragsregel:
     bedingung_raw: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None  # kommagetrennt, None = alle
     bedingung_funktion: Optional[str] = None               # nur Mitglieder mit dieser Funktion
-    bedingung_funktion_abteilung_id: Optional[int] = None  # Bedingung auf diese Abteilung begrenzen
+    bedingung_funktion_abteilung_id: Optional[int] = None  # zusätzlich: Mitglied dieser Abteilung
     ausnahme_funktion: Optional[str] = None                # Mitglieder mit dieser Funktion ausschließen
-    ausnahme_funktion_abteilung_id: Optional[int] = None   # Ausschluss auf diese Abteilung begrenzen
+    ausnahme_funktion_abteilung_id: Optional[int] = None   # Ausschluss nur für Mitglieder dieser Abteilung
     bedingung_alter_min: Optional[int] = None              # Mindestalter (Jahre), None = keine Untergrenze
     bedingung_alter_max: Optional[int] = None              # Höchstalter (Jahre), None = keine Obergrenze
     zahler_typ: str = "mitglied"                 # mitglied | abteilung

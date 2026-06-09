@@ -208,19 +208,33 @@ class BeitragsService:
             where += ["mf_incl.funktion = %s", "mf_incl.deleted_at IS NULL",
                       "(mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE)"]
             params.append(regel.bedingung_funktion)
-            abt_filter = regel.bedingung_funktion_abteilung_id or regel.abteilung_id
-            if abt_filter is not None:
-                where.append("mf_incl.abteilung_id = %s")
-                params.append(abt_filter)
+            # Abteilungs-Zusatz an der Funktions-Bedingung = MITGLIEDSCHAFT in dieser
+            # Abteilung (nicht: Funktion auf die Abteilung getaggt). Die Regel greift nur,
+            # wenn das Mitglied die Funktion hat UND in der Abteilung ist.
+            if regel.bedingung_funktion_abteilung_id is not None:
+                where.append(
+                    "EXISTS (SELECT 1 FROM mitglied_abteilung ma_bf "
+                    "WHERE ma_bf.mitglied_id = m.id AND ma_bf.abteilung_id = %s "
+                    "AND ma_bf.deleted_at IS NULL "
+                    "AND (ma_bf.bis IS NULL OR ma_bf.bis::date >= CURRENT_DATE))"
+                )
+                params.append(regel.bedingung_funktion_abteilung_id)
 
         if regel.ausnahme_funktion:
-            excl = ["mf_excl.mitglied_id = m.id", "mf_excl.funktion = %s",
-                    "mf_excl.deleted_at IS NULL", "(mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE)"]
+            # Ausschluss greift, wenn das Mitglied die Funktion hat; mit Abteilungs-Zusatz
+            # zusätzlich nur, wenn es auch Mitglied dieser Abteilung ist.
+            cond = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_excl "
+                    "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = %s "
+                    "AND mf_excl.deleted_at IS NULL "
+                    "AND (mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE))")
             params.append(regel.ausnahme_funktion)
-            if regel.ausnahme_funktion_abteilung_id:
-                excl.append("mf_excl.abteilung_id = %s")
+            if regel.ausnahme_funktion_abteilung_id is not None:
+                cond += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_excl "
+                         "WHERE ma_excl.mitglied_id = m.id AND ma_excl.abteilung_id = %s "
+                         "AND ma_excl.deleted_at IS NULL "
+                         "AND (ma_excl.bis IS NULL OR ma_excl.bis::date >= CURRENT_DATE))")
                 params.append(regel.ausnahme_funktion_abteilung_id)
-            where.append(f"NOT EXISTS (SELECT 1 FROM mitglied_funktion mf_excl WHERE {' AND '.join(excl)})")
+            where.append(f"NOT ({cond})")
 
         if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
             # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
