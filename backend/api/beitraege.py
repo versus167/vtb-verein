@@ -144,6 +144,8 @@ def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
             'mitglied_iban': p.mitglied_iban,
             'beitragsregel_id': p.beitragsregel_id,
             'beitragsregel_name': p.beitragsregel_name,
+            'abteilung_id': p.beitragsregel_abteilung_id,
+            'abteilung_name': p.beitragsregel_abteilung_name,
             'betrag': p.betrag,
             'zahler_typ': p.zahler_typ,
             'zeitraum': p.zeitraum,

@@ -95,11 +95,22 @@
 
         <!-- Vorschau-Tabelle -->
         <template v-if="vorschau.length > 0">
-          <div class="text-subtitle2 q-mb-sm">
-            Vorschau: {{ vorschauNeu.length }} neue Sollstellungen,
-            {{ vorschauDuplikate.length }} bereits vorhanden
+          <div class="row q-gutter-sm q-mb-sm items-center">
+            <q-input v-model="vorschauFilterName" dense outlined clearable
+              label="Nach Name suchen" style="min-width: 200px"
+              debounce="200" />
+            <q-select v-model="vorschauFilterAbteilung" :options="vorschauAbteilungOptionen"
+              emit-value map-options clearable dense outlined
+              label="Abteilung filtern" style="min-width: 200px" />
+            <div class="text-subtitle2 col-auto">
+              {{ gefilterteVorschau.filter(p => !p.bereits_vorhanden).length }} neu,
+              {{ gefilterteVorschau.filter(p => p.bereits_vorhanden).length }} vorhanden
+              <span v-if="vorschauFilterName || vorschauFilterAbteilung" class="text-grey-6">
+                (von {{ vorschauNeu.length + vorschauDuplikate.length }} gesamt)
+              </span>
+            </div>
           </div>
-          <q-table :rows="vorschau" :columns="vorschauColumns" row-key="mitglied_id"
+          <q-table :rows="gefilterteVorschau" :columns="vorschauColumns" row-key="mitglied_id"
             flat bordered dense :rows-per-page-options="[0]" hide-bottom>
             <template #body-cell-status="props">
               <q-td :props="props">
@@ -405,9 +416,36 @@ const vorschau = ref([])
 const vorschauLoading = ref(false)
 const abrechnungLoading = ref(false)
 const abrechnungErgebnis = ref(null)
+const vorschauFilterName = ref('')
+const vorschauFilterAbteilung = ref(null)
 
 const vorschauNeu = computed(() => vorschau.value.filter(p => !p.bereits_vorhanden))
 const vorschauDuplikate = computed(() => vorschau.value.filter(p => p.bereits_vorhanden))
+
+const vorschauAbteilungOptionen = computed(() => {
+  const seen = new Set()
+  const opts = []
+  for (const p of vorschau.value) {
+    const key = p.abteilung_id ?? '__verein__'
+    if (!seen.has(key)) {
+      seen.add(key)
+      opts.push({ label: p.abteilung_name ?? 'Verein (alle)', value: p.abteilung_id ?? null })
+    }
+  }
+  return opts.sort((a, b) => (a.label > b.label ? 1 : -1))
+})
+
+const gefilterteVorschau = computed(() => {
+  let rows = vorschau.value
+  if (vorschauFilterName.value) {
+    const q = vorschauFilterName.value.toLowerCase()
+    rows = rows.filter(p => p.mitglied_name.toLowerCase().includes(q))
+  }
+  if (vorschauFilterAbteilung.value !== null && vorschauFilterAbteilung.value !== undefined) {
+    rows = rows.filter(p => p.abteilung_id === vorschauFilterAbteilung.value)
+  }
+  return rows
+})
 
 const vorschauColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
@@ -442,6 +480,8 @@ async function confirmAbrechnung() {
       const { data } = await api.post('/api/beitraege/abrechnen', { stichtag: stichtag.value })
       abrechnungErgebnis.value = data
       vorschau.value = []
+      vorschauFilterName.value = ''
+      vorschauFilterAbteilung.value = null
       $q.notify({ type: 'positive', message: `Abrechnung ${data.zeitraum} abgeschlossen` })
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })

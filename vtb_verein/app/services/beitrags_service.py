@@ -24,6 +24,8 @@ class VorschauPosition:
     mitglied_iban: Optional[str]
     beitragsregel_id: int
     beitragsregel_name: str
+    beitragsregel_abteilung_id: Optional[int]
+    beitragsregel_abteilung_name: Optional[str]
     betrag: float
     zahler_typ: str                   # mitglied | abteilung
     zeitraum: str
@@ -110,6 +112,8 @@ class BeitragsService:
                     mitglied_iban=mitglied.get('iban'),
                     beitragsregel_id=regel.id,
                     beitragsregel_name=regel.name,
+                    beitragsregel_abteilung_id=regel.abteilung_id,
+                    beitragsregel_abteilung_name=regel.abteilung_name,
                     betrag=betrag,
                     zahler_typ=regel.zahler_typ,
                     zeitraum=zeitraum,
