@@ -108,13 +108,17 @@
       <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:440px'">
         <q-card-section class="text-h6">Forderung anlegen</q-card-section>
         <q-card-section class="q-gutter-sm q-pt-none">
-          <q-select v-model="fForm.gebuehr_id" :options="gebuehren" option-value="id"
-            :option-label="g => `${g.name} (${g.betrag.toFixed(2)} €)`" emit-value map-options
-            label="Gebühr *" outlined dense />
           <q-select v-model="fForm.mitglied_id" :options="mitgliedOptions" option-value="id"
             :option-label="m => `${m.nachname}, ${m.vorname}`" emit-value map-options use-input
             input-debounce="0" @filter="filterMitglieder" label="Mitglied *" outlined dense />
+          <div v-if="selectedMitglied" class="text-caption text-grey-7 q-px-xs">
+            Abteilungen: {{ selectedMitgliedAbteilungen || '–' }}<span v-if="mitgliedAlter != null"> · Alter: {{ mitgliedAlter }} J.</span>
+          </div>
           <q-input v-model="fForm.datum" label="Datum *" outlined dense type="date" />
+          <q-select v-model="fForm.gebuehr_id" :options="passendeGebuehren" option-value="id"
+            :option-label="g => `${g.name} (${g.betrag.toFixed(2)} €)`" emit-value map-options
+            label="Gebühr *" outlined dense :disable="!fForm.mitglied_id"
+            :hint="!fForm.mitglied_id ? 'Erst Mitglied wählen' : (passendeGebuehren.length === 0 ? 'Keine passende Gebühr (Verein/Abteilung/Gültigkeit)' : '')" />
           <div v-if="fError" class="text-negative text-caption">{{ fError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -127,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -234,6 +238,49 @@ function filterMitglieder(val, update) {
       : alleMitglieder.value.filter(m => `${m.nachname} ${m.vorname}`.toLowerCase().includes(needle))
   })
 }
+
+const selectedMitglied = computed(() =>
+  alleMitglieder.value.find(m => m.id === fForm.value.mitglied_id) || null)
+
+const mitgliedAlter = computed(() => {
+  const g = selectedMitglied.value?.geburtsdatum
+  if (!g) return null
+  const d = new Date(g)
+  if (isNaN(d.getTime())) return null
+  const t = new Date()
+  let a = t.getFullYear() - d.getFullYear()
+  if (t.getMonth() < d.getMonth() || (t.getMonth() === d.getMonth() && t.getDate() < d.getDate())) a--
+  return a
+})
+
+const selectedMitgliedAbteilungen = computed(() => {
+  const m = selectedMitglied.value
+  if (!m) return ''
+  return m.abteilung_ids
+    .map(id => abteilungen.value.find(a => a.id === id)?.name)
+    .filter(Boolean).join(', ')
+})
+
+// Nur Gebühren, die für das gewählte Mitglied zutreffen: Verein (ohne Abteilung)
+// oder eine Abteilung des Mitglieds, und am Forderungsdatum gültig.
+const passendeGebuehren = computed(() => {
+  const m = selectedMitglied.value
+  if (!m) return []
+  const datum = fForm.value.datum || new Date().toISOString().slice(0, 10)
+  const abt = new Set(m.abteilung_ids)
+  return gebuehren.value.filter(g => {
+    if (g.gueltig_ab && g.gueltig_ab > datum) return false
+    if (g.gueltig_bis && g.gueltig_bis < datum) return false
+    return g.abteilung_id == null || abt.has(g.abteilung_id)
+  })
+})
+
+// Gewählte Gebühr verwerfen, wenn sie nach Mitglied-/Datumswechsel nicht mehr passt
+watch(passendeGebuehren, (list) => {
+  if (fForm.value.gebuehr_id && !list.some(g => g.id === fForm.value.gebuehr_id)) {
+    fForm.value.gebuehr_id = null
+  }
+})
 async function openForderung() {
   fError.value = ''
   fForm.value = { gebuehr_id: null, mitglied_id: null, datum: new Date().toISOString().slice(0, 10) }
@@ -241,6 +288,8 @@ async function openForderung() {
     const { data } = await api.get('/api/personen/')
     alleMitglieder.value = data.filter(p => p.mitglied).map(p => ({
       id: p.mitglied.id, vorname: p.mitglied.vorname, nachname: p.mitglied.nachname,
+      geburtsdatum: p.mitglied.geburtsdatum,
+      abteilung_ids: (p.abteilungen || []).map(a => a.abteilung_id),
     }))
   }
   mitgliedOptions.value = alleMitglieder.value
