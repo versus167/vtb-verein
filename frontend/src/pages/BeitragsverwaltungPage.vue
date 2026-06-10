@@ -13,7 +13,11 @@
          ════════════════════════════════════════════════ -->
     <q-tab-panels v-model="tab" animated>
       <q-tab-panel name="regeln" class="q-pa-none">
-        <div class="row justify-end q-mb-md">
+        <div class="row items-center q-mb-md">
+          <q-select v-model="filterAbteilung" :options="abteilungFilterOptions"
+            emit-value map-options clearable dense outlined
+            label="Abteilung filtern" style="min-width: 240px" />
+          <q-space />
           <q-btn v-if="kannSchreiben" icon="add" label="Neue Regel" color="primary"
             unelevated @click="openRegelDialog()" />
         </div>
@@ -21,7 +25,7 @@
           <q-spinner size="40px" color="primary" />
         </div>
         <q-list bordered separator v-else>
-          <q-item v-for="r in regeln" :key="r.id">
+          <q-item v-for="r in gefilterteRegeln" :key="r.id">
             <q-item-section>
               <q-item-label class="text-weight-medium">{{ r.name }}</q-item-label>
               <q-item-label caption>
@@ -61,9 +65,9 @@
               </div>
             </q-item-section>
           </q-item>
-          <q-item v-if="regeln.length === 0">
+          <q-item v-if="gefilterteRegeln.length === 0">
             <q-item-section class="text-grey text-center q-py-md">
-              Noch keine Beitragsregeln angelegt.
+              {{ regeln.length === 0 ? 'Noch keine Beitragsregeln angelegt.' : 'Keine Regeln für diese Abteilung.' }}
             </q-item-section>
           </q-item>
         </q-list>
@@ -291,6 +295,24 @@ function statusColor(s) {
 // ── Regeln ─────────────────────────────────────────────────
 const regeln = ref([])
 const regelnLoading = ref(false)
+
+// Filter nach Abteilung: null = alle, 'verein' = Vereinsbeitrag (ohne Abteilung), sonst abteilung_id
+const filterAbteilung = ref(null)
+const abteilungFilterOptions = computed(() => [
+  { label: 'Verein (alle Mitglieder)', value: 'verein' },
+  ...abteilungOptions.value.map(a => ({ label: a.name, value: a.id })),
+])
+const gefilterteRegeln = computed(() => {
+  if (filterAbteilung.value === null) return regeln.value
+  if (filterAbteilung.value === 'verein') return regeln.value.filter(r => r.abteilung_id == null)
+  // Alle Regeln, die diese Abteilung betreffen: eigene Abteilung, Bedingung auf die
+  // Abteilung (Einschluss) oder Ausnahme auf die Abteilung (Ausschluss)
+  return regeln.value.filter(r =>
+    r.abteilung_id === filterAbteilung.value ||
+    r.bedingung_funktion_abteilung_id === filterAbteilung.value ||
+    r.ausnahme_funktion_abteilung_id === filterAbteilung.value
+  )
+})
 const regelDialogOpen = ref(false)
 const regelSaving = ref(false)
 const regelError = ref('')
