@@ -294,14 +294,16 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
                     password=data.password,
                 )
                 abteilungen = db.list_mitglied_abteilungen(m.id)
-                return _person_row(u, m, abteilungen)
+                funktionen = db.list_mitglied_funktionen(m.id)
+                return _person_row(u, m, abteilungen, funktionen)
             else:
                 m = service.create_mitglied_ohne_user(
                     vorname=data.vorname, nachname=data.nachname,
                     created_by=user.username, mitglied_data=mitglied_data,
                 )
                 abteilungen = db.list_mitglied_abteilungen(m.id)
-                return _person_row(None, m, abteilungen)
+                funktionen = db.list_mitglied_funktionen(m.id)
+                return _person_row(None, m, abteilungen, funktionen)
         else:
             if not data.username:
                 raise HTTPException(status_code=400, detail="Username ist pflicht für Benutzer ohne Mitglied-Datensatz")
@@ -309,7 +311,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
                 username=data.username, email=data.email, role=data.role,
                 active=data.active, created_by=user.username, password=data.password,
             )
-            return _person_row(u, None, [])
+            return _person_row(u, None, [], [])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -335,7 +337,8 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
         db.set_mitglied_primaer_kontakt(m.id, 'email', data.email, user.username)
         m = db.get_mitglied_by_user_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id) if m else []
-    return _person_row(u, m, abteilungen)
+    funktionen = db.list_mitglied_funktionen(m.id) if m else []
+    return _person_row(u, m, abteilungen, funktionen)
 
 
 @router.put("/{user_id}/mitglied")
@@ -368,7 +371,8 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     u = db.get_user_by_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id)
-    return _person_row(u, db.get_mitglied_by_user_id(user_id), abteilungen)
+    funktionen = db.list_mitglied_funktionen(m.id)
+    return _person_row(u, db.get_mitglied_by_user_id(user_id), abteilungen, funktionen)
 
 
 @router.post("/{user_id}/mitglied", status_code=status.HTTP_201_CREATED)
@@ -399,7 +403,8 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         db.create_mitglied_kontakt(mitglied.id, 'telefon', data.telefon, None, True, user.username)
         mitglied.telefon = data.telefon
     abteilungen = db.list_mitglied_abteilungen(mitglied.id)
-    return _person_row(u, mitglied, abteilungen)
+    funktionen = db.list_mitglied_funktionen(mitglied.id)
+    return _person_row(u, mitglied, abteilungen, funktionen)
 
 
 @router.post("/mitglied/{mitglied_id}/nutzer", status_code=status.HTTP_201_CREATED)
@@ -436,7 +441,8 @@ def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate
 
     m = db.get_mitglied(mitglied_id)
     abteilungen = db.list_mitglied_abteilungen(m.id)
-    return _person_row(u, m, abteilungen)
+    funktionen = db.list_mitglied_funktionen(m.id)
+    return _person_row(u, m, abteilungen, funktionen)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
