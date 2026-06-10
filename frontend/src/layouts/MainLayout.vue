@@ -99,7 +99,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.user?.role === 'admin' || auth.hasPermission('tickets.bereiche.verwalten')"
+            v-if="auth.user?.role === 'admin' || auth.hasPermission('tickets.bereiche_verwalten')"
             clickable
             :to="{ name: 'ticket-verwaltung' }"
             active-class="bg-primary text-white"
