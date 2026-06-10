@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -151,7 +152,20 @@ def _mitglied_to_dict(m) -> dict:
     }
 
 
+def _gueltig_heute(von, bis) -> bool:
+    """True, wenn der Zeitraum (von/bis als ISO-Datum) das heutige Datum einschließt."""
+    heute = date.today().isoformat()
+    if von and von > heute:
+        return False
+    if bis and bis < heute:
+        return False
+    return True
+
+
 def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
+    # In der Personenliste nur aktuell (heute) gültige Abteilungen/Funktionen zeigen
+    abteilungen = [z for z in abteilungen if _gueltig_heute(z.von, z.bis)]
+    funktionen = [f for f in funktionen if _gueltig_heute(f.von, f.bis)]
     # Berechne "zuletzt bearbeitet" als Maximum der updated_at Felder
     user_updated = user.updated_at if user else None
     mitglied_updated = mitglied.updated_at if mitglied else None
