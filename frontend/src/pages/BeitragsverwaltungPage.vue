@@ -109,7 +109,7 @@
               </span>
             </div>
           </div>
-          <q-table :rows="gefilterteVorschau" :columns="vorschauColumns" row-key="mitglied_id"
+          <q-table :rows="gefilterteVorschau" :columns="vorschauColumns" :row-key="vorschauRowKey"
             flat bordered dense :rows-per-page-options="[0]" hide-bottom>
             <template #body-cell-status="props">
               <q-td :props="props">
@@ -420,6 +420,13 @@ const vorschauFilterAbteilung = ref(null)
 
 const vorschauNeu = computed(() => vorschau.value.filter(p => !p.bereits_vorhanden))
 const vorschauDuplikate = computed(() => vorschau.value.filter(p => p.bereits_vorhanden))
+
+// Eindeutiger Zeilen-Key: ein Mitglied kann mehrere Beiträge haben (Vereins- +
+// Abteilungsbeitrag), daher reicht mitglied_id allein nicht – sonst rendert
+// q-table beim Filtern doppelte/veraltete Zeilen.
+function vorschauRowKey(row) {
+  return `${row.mitglied_id}-${row.beitragsregel_id}-${row.zeitraum}`
+}
 
 // Abteilungs-Optionen aus den Mitgliedschaften der Vorschau-Mitglieder ableiten.
 const vorschauAbteilungOptionen = computed(() => {
