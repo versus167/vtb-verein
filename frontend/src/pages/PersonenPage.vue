@@ -679,15 +679,28 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 
+// Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
+// damit der Listen-Zustand beim Zurückkehren erhalten bleibt.
+defineOptions({ name: 'PersonenPage' })
+
 const $q = useQuasar()
 const router = useRouter()
 const auth = useAuthStore()
+
+// Scrollposition über Navigation hinweg merken (keep-alive cached den Rest).
+// requestAnimationFrame, damit der Restore nach dem router-scrollBehavior
+// (das nach oben scrollt) läuft.
+let savedScrollY = 0
+onDeactivated(() => { savedScrollY = window.scrollY })
+onActivated(() => {
+  nextTick(() => requestAnimationFrame(() => window.scrollTo(0, savedScrollY)))
+})
 
 // ── Daten ──────────────────────────────────────────────────
 const personen = ref([])

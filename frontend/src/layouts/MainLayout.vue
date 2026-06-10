@@ -172,7 +172,13 @@
     </q-drawer>
 
     <q-page-container>
-      <router-view />
+      <!-- PersonenPage wird gecacht, damit Filter/Sortierung/Seite/Scroll beim
+           Zurückkehren (z.B. von der Berechtigungen-Seite) erhalten bleiben. -->
+      <router-view v-slot="{ Component }">
+        <keep-alive :include="['PersonenPage']">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </q-page-container>
 
     <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
