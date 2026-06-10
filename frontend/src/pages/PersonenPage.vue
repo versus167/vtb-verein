@@ -150,6 +150,25 @@
         </q-td>
       </template>
 
+      <template #body-cell-rolle="props">
+        <q-td :props="props">
+          <q-chip v-if="props.row.role" dense :color="rolleColor(props.row.role)" text-color="white" size="sm">
+            {{ rolleLabel(props.row.role) }}
+          </q-chip>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
+      <template #body-cell-last_login="props">
+        <q-td :props="props">
+          <span v-if="props.row.last_login" class="text-caption">
+            {{ formatLastLogin(props.row.last_login) }}
+            <q-tooltip>{{ new Date(props.row.last_login).toLocaleString('de-DE') }}</q-tooltip>
+          </span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
       <template #body-cell-last_edited="props">
         <q-td :props="props">
           <span v-if="props.row.last_edited" class="text-caption">
@@ -723,17 +742,34 @@ const filterOptions = [
   { label: 'Nur Benutzer', value: 'benutzer' },
 ]
 
-const columns = [
-  { name: 'name',        label: 'Name',        field: 'username', align: 'left', sortable: true },
-  { name: 'email',       label: 'E-Mail',       field: 'email',    align: 'left', sortable: true },
-  { name: 'geburtsdatum', label: 'Geburtstag',  field: r => r.mitglied?.geburtsdatum, align: 'left', sortable: true },
-  { name: 'eintritt',    label: 'Eintritt',     field: r => r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
-  { name: 'status',      label: 'Status',       field: 'active',      align: 'center', sortable: true },
-  { name: 'last_edited',  label: 'Zuletzt bearbeitet', field: 'last_edited', align: 'left', sortable: true },
-  { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
-  { name: 'funktionen',  label: 'Funktionen',   field: 'funktionen',  align: 'left' },
-  { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
-]
+// Spalten sind tab-abhängig: Im Tab "Nur Benutzer" interessieren Rolle und
+// letzte Aktivität statt Geburtstag/Eintritt (Ticket #14).
+const columns = computed(() => {
+  const istBenutzer = filter.value === 'benutzer'
+  const cols = [
+    { name: 'name',  label: 'Name',   field: 'username', align: 'left', sortable: true },
+    { name: 'email', label: 'E-Mail', field: 'email',    align: 'left', sortable: true },
+  ]
+  if (istBenutzer) {
+    cols.push({ name: 'rolle', label: 'Rolle', field: 'role', align: 'left', sortable: true })
+  } else {
+    cols.push(
+      { name: 'geburtsdatum', label: 'Geburtstag', field: r => r.mitglied?.geburtsdatum, align: 'left', sortable: true },
+      { name: 'eintritt',     label: 'Eintritt',   field: r => r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
+    )
+  }
+  cols.push({ name: 'status', label: 'Status', field: 'active', align: 'center', sortable: true })
+  if (istBenutzer) {
+    cols.push({ name: 'last_login', label: 'Zuletzt aktiv', field: 'last_login', align: 'left', sortable: true })
+  }
+  cols.push(
+    { name: 'last_edited', label: 'Zuletzt bearbeitet', field: 'last_edited', align: 'left', sortable: true },
+    { name: 'abteilungen', label: 'Abteilungen',  field: 'abteilungen', align: 'left' },
+    { name: 'funktionen',  label: 'Funktionen',   field: 'funktionen',  align: 'left' },
+    { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
+  )
+  return cols
+})
 
 const filteredPersonen = computed(() => {
   let list = personen.value
@@ -797,6 +833,14 @@ const sortedPersonen = computed(() => {
       case 'last_edited':
         aVal = a.last_edited || ''
         bVal = b.last_edited || ''
+        break
+      case 'rolle':
+        aVal = a.role || ''
+        bVal = b.role || ''
+        break
+      case 'last_login':
+        aVal = a.last_login || ''
+        bVal = b.last_login || ''
         break
       default:
         aVal = a[sortColumn.value] ?? ''
