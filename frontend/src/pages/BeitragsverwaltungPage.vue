@@ -421,21 +421,16 @@ const vorschauFilterAbteilung = ref(null)
 const vorschauNeu = computed(() => vorschau.value.filter(p => !p.bereits_vorhanden))
 const vorschauDuplikate = computed(() => vorschau.value.filter(p => p.bereits_vorhanden))
 
-// Platzhalter für Vereinsbeitrag (abteilung_id === null), damit die Auswahl
-// nicht mit "kein Filter" (ebenfalls null) kollidiert.
-const VEREIN_KEY = '__verein__'
-
+// Abteilungs-Optionen aus den Mitgliedschaften der Vorschau-Mitglieder ableiten.
 const vorschauAbteilungOptionen = computed(() => {
-  const seen = new Set()
-  const opts = []
+  const ids = new Set()
   for (const p of vorschau.value) {
-    const key = p.abteilung_id ?? VEREIN_KEY
-    if (!seen.has(key)) {
-      seen.add(key)
-      opts.push({ label: p.abteilung_name ?? 'Verein (alle)', value: key })
-    }
+    for (const aid of (p.mitglied_abteilung_ids || [])) ids.add(aid)
   }
-  return opts.sort((a, b) => (a.label > b.label ? 1 : -1))
+  const nameById = new Map(abteilungOptions.value.map(a => [a.id, a.name]))
+  return [...ids]
+    .map(id => ({ label: nameById.get(id) ?? `Abteilung ${id}`, value: id }))
+    .sort((a, b) => (a.label > b.label ? 1 : -1))
 })
 
 const gefilterteVorschau = computed(() => {
@@ -444,8 +439,10 @@ const gefilterteVorschau = computed(() => {
     const q = vorschauFilterName.value.toLowerCase()
     rows = rows.filter(p => p.mitglied_name.toLowerCase().includes(q))
   }
+  // Abteilungsfilter: alle Beiträge von Mitgliedern, die der Abteilung angehören
+  // (egal ob Vereins-, eigener oder fremder Abteilungsbeitrag).
   if (vorschauFilterAbteilung.value != null) {
-    rows = rows.filter(p => (p.abteilung_id ?? VEREIN_KEY) === vorschauFilterAbteilung.value)
+    rows = rows.filter(p => (p.mitglied_abteilung_ids || []).includes(vorschauFilterAbteilung.value))
   }
   return rows
 })

@@ -5,7 +5,7 @@ Ablauf:
 1. vorschau(zeitraum) → Liste der zu erzeugenden Sollstellungen (ohne DB-Schreibzugriff)
 2. abrechnen(zeitraum, erstellt_von) → Sollstellungen + Kassenbuchungen anlegen
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
@@ -31,6 +31,8 @@ class VorschauPosition:
     zeitraum: str
     faelligkeitsdatum: str
     bereits_vorhanden: bool           # True = Duplikat, wird übersprungen
+    # Alle Abteilungen, denen das Mitglied aktuell angehört (für Frontend-Filter).
+    mitglied_abteilung_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +123,14 @@ class BeitragsService:
                     bereits_vorhanden=bereits,
                 ))
 
+        # Abteilungs-Mitgliedschaften der betroffenen Mitglieder nachladen, damit
+        # das Frontend nach "Mitglied gehört zu Abteilung X" filtern kann.
+        mitglied_ids = {p.mitglied_id for p in positionen}
+        if mitglied_ids:
+            mitgliedschaften = self._mitglied_abteilungen(mitglied_ids)
+            for p in positionen:
+                p.mitglied_abteilung_ids = mitgliedschaften.get(p.mitglied_id, [])
+
         return positionen
 
     def abrechnen(self, stichtag_str: str, erstellt_von: str) -> AbrechnungErgebnis:
@@ -160,6 +170,23 @@ class BeitragsService:
     # ------------------------------------------------------------------
     # Interne Hilfsmethoden
     # ------------------------------------------------------------------
+
+    def _mitglied_abteilungen(self, mitglied_ids: set[int]) -> dict[int, list[int]]:
+        """Mappt mitglied_id → Liste aktueller Abteilungs-IDs (aktive Mitgliedschaften)."""
+        placeholders = ','.join(['%s'] * len(mitglied_ids))
+        sql = f"""
+            SELECT mitglied_id, abteilung_id
+            FROM mitglied_abteilung
+            WHERE deleted_at IS NULL
+              AND (bis IS NULL OR bis::date >= CURRENT_DATE)
+              AND mitglied_id IN ({placeholders})
+        """
+        result: dict[int, list[int]] = {}
+        with self.db.conn.cursor() as cur:
+            cur.execute(sql, list(mitglied_ids))
+            for row in cur.fetchall():
+                result.setdefault(row['mitglied_id'], []).append(row['abteilung_id'])
+        return result
 
     def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str) -> list[dict]:
         """
