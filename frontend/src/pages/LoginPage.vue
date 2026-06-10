@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-center bg-grey-2" style="min-height: 100vh">
+  <div class="flex flex-center" :class="$q.dark.isActive ? 'login-bg--dark' : 'bg-grey-2'" style="min-height: 100vh">
     <q-card style="min-width: 360px; max-width: 420px; width: 100%">
       <q-card-section class="text-center q-pb-none">
         <q-icon name="corporate_fare" size="4rem" color="primary" />
@@ -188,3 +188,10 @@ async function onRequestMagicLink() {
   }
 }
 </script>
+
+<style scoped>
+/* Im Darkmode dunkler als die Login-Karte (#1d1d1d), damit sie sich abhebt. */
+.login-bg--dark {
+  background-color: #121212;
+}
+</style>
