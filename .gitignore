@@ -9,6 +9,10 @@ __pycache__/
 
 # Umgebungsvariablen (Secrets)
 .env
+tools/tickets.local.env
+
+# Geholte Tickets (können PII enthalten – niemals committen)
+tickets/
 
 # Datenbank
 *.db
