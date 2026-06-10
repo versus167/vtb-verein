@@ -87,8 +87,9 @@ class ApiError(RuntimeError):
 
 
 def _request(method: str, url: str, *, token: str | None = None,
-             json_body: dict | None = None, form_body: dict | None = None) -> object:
-    headers = {"Accept": "application/json"}
+             json_body: dict | None = None, form_body: dict | None = None,
+             raw: bool = False) -> object:
+    headers = {"Accept": "*/*" if raw else "application/json"}
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode("utf-8")
@@ -101,9 +102,12 @@ def _request(method: str, url: str, *, token: str | None = None,
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            roh = resp.read().decode("utf-8")
-            return json.loads(roh) if roh else None
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            roh = resp.read()
+            if raw:
+                return roh
+            text = roh.decode("utf-8")
+            return json.loads(text) if text else None
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")
         try:
@@ -134,6 +138,14 @@ class Client:
 
     def patch(self, pfad: str, body: dict) -> object:
         return _request("PATCH", f"{self.base}{pfad}", token=self.token, json_body=body)
+
+    def anhaenge(self, ticket_id: int) -> list[dict]:
+        eintraege = self.get(f"/tickets/{ticket_id}/anhaenge") or []
+        return [a for a in eintraege if not a.get("deleted_at")]
+
+    def download(self, stored_name: str) -> bytes:
+        return _request("GET", f"{self.base}/uploads/{stored_name}",
+                        token=self.token, raw=True)
 
     def bereich_id(self, name: str) -> int:
         bereiche = self.get("/tickets/bereiche") or []
@@ -216,6 +228,32 @@ def cmd_show(client: Client, args) -> None:
         print(f"\n[{k.get('created_at', '')}] {autor} ({sicht}):")
         print(k.get("inhalt", "").strip())
 
+    anhaenge = client.anhaenge(args.id)
+    print("\n--- Anhänge ---")
+    if not anhaenge:
+        print("(keine)")
+    for a in anhaenge:
+        print(f"  #{a['id']} {a.get('original_name')} ({a.get('mime_type')}, "
+              f"{a.get('dateigroesse')} Bytes)")
+    if anhaenge:
+        print(f"\nHerunterladen: python3 tools/vtb_tickets.py attach {args.id}")
+
+
+def cmd_attach(client: Client, args) -> None:
+    anhaenge = client.anhaenge(args.id)
+    if not anhaenge:
+        print(f"Ticket #{args.id}: keine Anhänge.")
+        return
+    ziel = ROOT / "tickets" / "anhaenge" / str(args.id)
+    ziel.mkdir(parents=True, exist_ok=True)
+    for a in anhaenge:
+        daten = client.download(a["stored_name"])
+        basis = os.path.basename(a.get("original_name") or a["stored_name"]).replace("\\", "_")
+        pfad = ziel / f"{a['id']}_{basis}"
+        pfad.write_bytes(daten)
+        print(f"  {pfad.relative_to(ROOT)}  ({a.get('mime_type')}, {len(daten)} Bytes)")
+    print(f"→ {len(anhaenge)} Anhang/Anhänge von Ticket #{args.id} gespeichert.")
+
 
 def cmd_comment(client: Client, args) -> None:
     sicht = "intern" if args.intern else "oeffentlich"
@@ -259,6 +297,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("show", help="Einzelnes Ticket mit Kommentaren anzeigen")
     sp.add_argument("id", type=int)
     sp.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("attach", help="Anhänge eines Tickets herunterladen")
+    sp.add_argument("id", type=int)
+    sp.set_defaults(func=cmd_attach)
 
     sp = sub.add_parser("comment", help="Kommentar an ein Ticket schreiben")
     sp.add_argument("id", type=int)
