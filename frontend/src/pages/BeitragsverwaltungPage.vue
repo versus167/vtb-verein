@@ -97,8 +97,7 @@
         <template v-if="vorschau.length > 0">
           <div class="row q-gutter-sm q-mb-sm items-center">
             <q-input v-model="vorschauFilterName" dense outlined clearable
-              label="Nach Name suchen" style="min-width: 200px"
-              debounce="200" />
+              label="Nach Name suchen" style="min-width: 200px" />
             <q-select v-model="vorschauFilterAbteilung" :options="vorschauAbteilungOptionen"
               emit-value map-options clearable dense outlined
               label="Abteilung filtern" style="min-width: 200px" />
