@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 
 class Database:
@@ -92,6 +92,7 @@ class Database:
             28: self._migrate_v27_to_v28,
             29: self._migrate_v28_to_v29,
             30: self._migrate_v29_to_v30,
+            31: self._migrate_v30_to_v31,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1105,6 +1106,24 @@ class Database:
             for tbl in ('beitragsregel', 'beitragsregel_history', 'gebuehr', 'gebuehr_history'):
                 cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS zahler_kasse_id")
             cur.execute("UPDATE schema_version SET version = 30 WHERE id = 1")
+
+    def _migrate_v30_to_v31(self) -> None:
+        """Matrix-ID/Telegram-ID-Unique-Indizes schließen soft-gelöschte User aus.
+        Bisher blockierte ein gelöschter Account die Matrix-/Telegram-ID dauerhaft,
+        sodass sie kein anderer (lebender) Benutzer mehr verwenden konnte –
+        analog zu uix_users_email_active/uix_users_username_active."""
+        with self.cursor() as cur:
+            cur.execute("DROP INDEX IF EXISTS uix_users_matrix_id")
+            cur.execute("DROP INDEX IF EXISTS uix_users_telegram_id")
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id
+                ON users (matrix_id) WHERE matrix_id IS NOT NULL AND deleted_at IS NULL
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id
+                ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL
+            """)
+            cur.execute("UPDATE schema_version SET version = 31 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
@@ -2924,8 +2943,8 @@ class Database:
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_kontakt_primaer ON mitglied_kontakt (mitglied_id, typ) WHERE ist_primaer AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active    ON users (email)       WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")
 
     # -----------------------------------
     # Seed-Daten
