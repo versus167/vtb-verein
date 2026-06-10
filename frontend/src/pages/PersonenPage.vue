@@ -12,11 +12,11 @@
       <q-btn-toggle v-model="filter" :options="filterOptions" unelevated dense
         toggle-color="primary" color="white" text-color="primary" />
       <q-select v-model="abteilungFilter" :options="alleAbteilungen" 
-        option-value="id" option-label="name" label="Abteilung" 
-        outlined dense clearable multiple style="min-width: 180px" />
+        option-value="id" option-label="name" emit-value map-options label="Abteilung"
+        outlined dense clearable style="min-width: 180px" />
       <q-select v-model="funktionFilter" :options="funktionOptionen" 
-        option-value="value" option-label="label" label="Funktion" 
-        outlined dense clearable multiple style="min-width: 180px" />
+        option-value="value" option-label="label" emit-value map-options label="Funktion"
+        outlined dense clearable style="min-width: 180px" />
       <q-input v-model="search" placeholder="Suche..." outlined dense clearable
         style="min-width: 200px">
         <template #prepend><q-icon name="search" /></template>
@@ -694,8 +694,8 @@ const personen = ref([])
 const loading = ref(false)
 const filter = ref('alle')
 const search = ref('')
-const abteilungFilter = ref([])
-const funktionFilter = ref([])
+const abteilungFilter = ref(null)
+const funktionFilter = ref(null)
 const alleAbteilungen = ref([])
 
 // ── Sortierung ─────────────────────────────────────────────
@@ -728,16 +728,16 @@ const filteredPersonen = computed(() => {
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
   
   // Abteilung-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Abteilungen haben)
-  if (abteilungFilter.value?.length) {
-    const abteilungsIds = abteilungFilter.value.map(x => typeof x === 'object' ? x.id : x)
+  if (abteilungFilter.value != null) {
+    const abteilungsIds = [abteilungFilter.value]
     list = list.filter(p => 
       (p.abteilungen || []).some(ab => abteilungsIds.includes(ab.abteilung_id))
     )
   }
   
   // Funktion-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Funktionen haben)
-  if (funktionFilter.value?.length) {
-    const funktionKeys = funktionFilter.value.map(x => typeof x === 'object' ? x.value : x)
+  if (funktionFilter.value != null) {
+    const funktionKeys = [funktionFilter.value]
     list = list.filter(p => 
       (p.funktionen || []).some(f => funktionKeys.includes(f.funktion))
     )
@@ -796,8 +796,8 @@ const sortedPersonen = computed(() => {
 
 // Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
 function resetAllFilters() {
-  abteilungFilter.value = []
-  funktionFilter.value = []
+  abteilungFilter.value = null
+  funktionFilter.value = null
   search.value = ''
 }
 
