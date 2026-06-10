@@ -1,5 +1,5 @@
 <template>
-  <q-page padding>
+  <q-page padding :class="{ 'page--dark': $q.dark.isActive }">
     <!-- Kopfzeile -->
     <div class="row items-center q-mb-md">
       <div class="text-h5 col">Personen</div>
@@ -34,7 +34,7 @@
       <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
         Keine Personen gefunden.
       </div>
-      <q-card v-for="(p, index) in sortedPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'bg-grey-1' : ''"
+      <q-card v-for="(p, index) in sortedPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'stripe' : ''"
         style="border-radius:14px;overflow:hidden">
         <q-card-section class="q-py-sm q-px-md">
           <div class="row items-center no-wrap q-mb-xs">
@@ -1607,7 +1607,19 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* Zebra-Streifen – hell. Im Darkmode (page--dark) dunkler Überzug statt
+   Hellgrau, damit weiße Schrift lesbar bleibt. */
 :deep(.q-table tbody tr:nth-child(even) td) {
   background-color: #f5f5f5;
+}
+.page--dark :deep(.q-table tbody tr:nth-child(even) td) {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.stripe {
+  background-color: #f5f5f5;
+}
+.page--dark .stripe {
+  background-color: #2d2d2d;
 }
 </style>
