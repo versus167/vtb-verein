@@ -663,9 +663,11 @@
                     </div>
                   </template>
                   <template v-else-if="h._full">
-                    <div v-for="(v, k) in h._full" :key="k" v-if="v">
-                      <span class="text-grey">{{ k }}: </span>{{ v }}
-                    </div>
+                    <template v-for="(v, k) in h._full" :key="k">
+                      <div v-if="v">
+                        <span class="text-grey">{{ k }}: </span>{{ v }}
+                      </div>
+                    </template>
                   </template>
                 </div>
               </q-timeline-entry>
