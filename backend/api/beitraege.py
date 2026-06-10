@@ -135,7 +135,7 @@ def delete_regel(regel_id: int, user: CurrentUser, db: DB):
 
 @router.post("/vorschau")
 def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
-    _require_abrechnen(user)
+    _require_read(user)
     positionen = BeitragsService(db).vorschau(data.stichtag)
     return [
         {
