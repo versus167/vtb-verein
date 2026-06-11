@@ -45,6 +45,26 @@ class AbrechnungErgebnis:
     uebersprungen: int                # Duplikate
 
 
+@dataclass
+class DashboardAbteilung:
+    """Aggregierte Beitrags-Projektion einer Abteilung (bzw. des Vereinsbeitrags)."""
+    abteilung_id: Optional[int]
+    abteilung_name: str
+    summe: float
+    anzahl_zahler: int                # verschiedene Mitglieder mit Forderung
+    anzahl_positionen: int
+
+
+@dataclass
+class DashboardErgebnis:
+    zeitraum: str                     # Quartal des Stichtags, z.B. '2026-Q4'
+    stichtag: str
+    gruppen: list[DashboardAbteilung]
+    gesamt_summe: float
+    gesamt_zahler: int                # verschiedene Mitglieder insgesamt
+    gesamt_positionen: int
+
+
 # ---------------------------------------------------------------------------
 # Zeitraum-Hilfsfunktionen
 # ---------------------------------------------------------------------------
@@ -235,6 +255,52 @@ class BeitragsService:
             ),
             angelegt=angelegt,
             uebersprungen=uebersprungen,
+        )
+
+    def dashboard(self, stichtag_str: str) -> DashboardErgebnis:
+        """
+        Aggregiert die Projektion (vorschau) zum Stichtag: Summen und Zahler-Zahl
+        je Abteilung (Vereinsbeitrag = ohne Abteilung) sowie Gesamtwerte.
+        Die Beträge sind anteilig (siehe vorschau); Duplikate werden mitgezählt.
+        """
+        positionen = self.vorschau(stichtag_str)
+
+        gruppen: dict[Optional[int], dict] = {}
+        alle_zahler: set[int] = set()
+        for p in positionen:
+            g = gruppen.setdefault(p.beitragsregel_abteilung_id, {
+                'abteilung_id': p.beitragsregel_abteilung_id,
+                'abteilung_name': p.beitragsregel_abteilung_name or 'Vereinsbeitrag',
+                'summe': 0.0,
+                'zahler': set(),
+                'anzahl_positionen': 0,
+            })
+            g['summe'] += p.betrag
+            g['zahler'].add(p.mitglied_id)
+            g['anzahl_positionen'] += 1
+            alle_zahler.add(p.mitglied_id)
+
+        gruppen_liste = [
+            DashboardAbteilung(
+                abteilung_id=g['abteilung_id'],
+                abteilung_name=g['abteilung_name'],
+                summe=round(g['summe'], 2),
+                anzahl_zahler=len(g['zahler']),
+                anzahl_positionen=g['anzahl_positionen'],
+            )
+            for g in gruppen.values()
+        ]
+        # Vereinsbeitrag (ohne Abteilung) zuerst, danach Abteilungen alphabetisch.
+        gruppen_liste.sort(key=lambda x: (x.abteilung_id is not None,
+                                          x.abteilung_name.lower()))
+
+        return DashboardErgebnis(
+            zeitraum=zeitraum_label('quartal', date.fromisoformat(stichtag_str)),
+            stichtag=stichtag_str,
+            gruppen=gruppen_liste,
+            gesamt_summe=round(sum(p.betrag for p in positionen), 2),
+            gesamt_zahler=len(alle_zahler),
+            gesamt_positionen=len(positionen),
         )
 
     # ------------------------------------------------------------------

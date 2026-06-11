@@ -159,6 +159,31 @@ def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
     ]
 
 
+@router.get("/dashboard")
+def dashboard(user: CurrentUser, db: DB, stichtag: Optional[str] = None):
+    _require_read(user)
+    if not stichtag:
+        stichtag = date.today().isoformat()
+    erg = BeitragsService(db).dashboard(stichtag)
+    return {
+        'zeitraum': erg.zeitraum,
+        'stichtag': erg.stichtag,
+        'gesamt_summe': erg.gesamt_summe,
+        'gesamt_zahler': erg.gesamt_zahler,
+        'gesamt_positionen': erg.gesamt_positionen,
+        'gruppen': [
+            {
+                'abteilung_id': g.abteilung_id,
+                'abteilung_name': g.abteilung_name,
+                'summe': g.summe,
+                'anzahl_zahler': g.anzahl_zahler,
+                'anzahl_positionen': g.anzahl_positionen,
+            }
+            for g in erg.gruppen
+        ],
+    }
+
+
 @router.post("/abrechnen", status_code=status.HTTP_201_CREATED)
 def abrechnen(data: AbrechnungRequest, user: CurrentUser, db: DB):
     _require_abrechnen(user)

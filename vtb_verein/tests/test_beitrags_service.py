@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from app.models.beitrag import Beitragsregel
 from app.services.beitrags_service import (
     BeitragsService,
+    VorschauPosition,
     zeitraum_monate,
     zeitraum_label,
     faelligkeitsdatum,
@@ -184,6 +185,52 @@ class TestVorschauAnteilig:
         assert len(positionen) == 1
         assert positionen[0].anzahl_monate == 2
         assert positionen[0].betrag == 20.0
+
+
+class TestDashboardAggregation:
+    """Aggregation der Projektion zu Summen/Zahlern je Bereich (Fake-vorschau)."""
+
+    def _pos(self, mid, abt_id, abt_name, betrag):
+        return VorschauPosition(
+            mitglied_id=mid, mitglied_vorname='', mitglied_nachname='',
+            mitglied_iban=None, beitragsregel_id=1, beitragsregel_name='',
+            beitragsregel_abteilung_id=abt_id, beitragsregel_abteilung_name=abt_name,
+            betrag=betrag, zahler_typ='mitglied', zeitraum='2026-Q4',
+            faelligkeitsdatum='2026-12-31', bereits_vorhanden=False)
+
+    def _dashboard(self, positionen):
+        svc = BeitragsService(SimpleNamespace())
+        svc.vorschau = lambda s: positionen
+        return svc.dashboard('2026-10-01')
+
+    def test_summen_und_distinct_zahler(self):
+        positionen = [
+            self._pos(1, None, None, 30.0),     # Vereinsbeitrag
+            self._pos(2, None, None, 20.0),
+            self._pos(1, 5, 'Turnen', 15.0),    # Mitglied 1 zusätzlich in Abteilung 5
+            self._pos(3, 5, 'Turnen', 15.0),
+        ]
+        erg = self._dashboard(positionen)
+
+        assert erg.zeitraum == '2026-Q4'
+        assert erg.gesamt_summe == 80.0
+        assert erg.gesamt_zahler == 3            # Mitglieder 1, 2, 3 – distinct
+        assert erg.gesamt_positionen == 4
+
+        # Vereinsbeitrag steht vorn und bekommt einen Ersatznamen.
+        verein = erg.gruppen[0]
+        assert verein.abteilung_id is None
+        assert verein.abteilung_name == 'Vereinsbeitrag'
+        assert (verein.summe, verein.anzahl_zahler, verein.anzahl_positionen) == (50.0, 2, 2)
+
+        turnen = erg.gruppen[1]
+        assert turnen.abteilung_id == 5
+        assert (turnen.summe, turnen.anzahl_zahler) == (30.0, 2)
+
+    def test_leer(self):
+        erg = self._dashboard([])
+        assert erg.gruppen == []
+        assert (erg.gesamt_summe, erg.gesamt_zahler, erg.gesamt_positionen) == (0, 0, 0)
 
 
 class TestZeitraumLabelUndFaelligkeit:

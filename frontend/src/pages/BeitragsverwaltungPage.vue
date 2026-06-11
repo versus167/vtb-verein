@@ -3,6 +3,7 @@
     <div class="text-h5 q-mb-md">Beitragsverwaltung</div>
 
     <q-tabs v-model="tab" dense align="left" class="q-mb-md">
+      <q-tab name="dashboard"    label="Dashboard"     icon="insights" />
       <q-tab name="regeln"       label="Regeln"        icon="rule" />
       <q-tab name="abrechnung"   label="Abrechnung"    icon="calculate" />
       <q-tab name="sollstellungen" label="Sollstellungen" icon="list_alt" />
@@ -12,6 +13,87 @@
          Tab: Beitragsregeln
          ════════════════════════════════════════════════ -->
     <q-tab-panels v-model="tab" animated>
+      <!-- ════════════════════════════════════════════════
+           Tab: Dashboard (Projektion aktuelles Quartal)
+           ════════════════════════════════════════════════ -->
+      <q-tab-panel name="dashboard" class="q-pa-none">
+        <div class="row items-center q-gutter-sm q-mb-md">
+          <q-btn flat round dense icon="chevron_left" @click="verschiebeQuartal(-1)" />
+          <div class="text-h6" style="min-width: 110px; text-align: center">
+            {{ dashboard?.zeitraum || '—' }}
+          </div>
+          <q-btn flat round dense icon="chevron_right" @click="verschiebeQuartal(1)" />
+          <q-btn flat dense no-caps label="Aktuelles Quartal" icon="today"
+            @click="dashboardStichtag = heute; ladeDashboard()" />
+          <q-space />
+          <q-btn flat round dense icon="refresh" :loading="dashboardLoading" @click="ladeDashboard" />
+        </div>
+        <div class="text-caption text-grey-7 q-mb-md">
+          Projektion aus den Beitragsregeln (anteilig nach Ein-/Austritt) – unabhängig davon,
+          ob die Abrechnung bereits gelaufen ist. Beträge je Regel für den Zeitraum, der den
+          Stichtag enthält.
+        </div>
+
+        <div v-if="dashboardLoading" class="row justify-center q-py-xl">
+          <q-spinner size="40px" color="primary" />
+        </div>
+
+        <template v-else-if="dashboard">
+          <!-- Kennzahlen -->
+          <div class="row q-col-gutter-md q-mb-md">
+            <div class="col-12 col-sm-4">
+              <q-card flat bordered>
+                <q-card-section class="text-center">
+                  <div class="text-caption text-grey-7">Summe gesamt</div>
+                  <div class="text-h5 text-primary">{{ euro(dashboard.gesamt_summe) }}</div>
+                </q-card-section>
+              </q-card>
+            </div>
+            <div class="col-12 col-sm-4">
+              <q-card flat bordered>
+                <q-card-section class="text-center">
+                  <div class="text-caption text-grey-7">Zahler</div>
+                  <div class="text-h5">{{ dashboard.gesamt_zahler }}</div>
+                </q-card-section>
+              </q-card>
+            </div>
+            <div class="col-12 col-sm-4">
+              <q-card flat bordered>
+                <q-card-section class="text-center">
+                  <div class="text-caption text-grey-7">Positionen</div>
+                  <div class="text-h5">{{ dashboard.gesamt_positionen }}</div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </div>
+
+          <!-- Aufschlüsselung je Abteilung -->
+          <q-table :rows="dashboard.gruppen" :columns="dashboardColumns" row-key="abteilung_name"
+            flat bordered hide-pagination :pagination="{ rowsPerPage: 0 }">
+            <template #body-cell-abteilung_name="props">
+              <q-td :props="props">
+                <q-chip v-if="props.row.abteilung_id == null" dense size="sm"
+                  color="primary" text-color="white">Verein</q-chip>
+                <q-chip v-else dense size="sm" color="purple" text-color="white">
+                  {{ props.row.abteilung_name }}
+                </q-chip>
+              </q-td>
+            </template>
+            <template #bottom-row>
+              <q-tr class="text-weight-bold">
+                <q-td>Gesamt</q-td>
+                <q-td class="text-right">{{ euro(dashboard.gesamt_summe) }}</q-td>
+                <q-td class="text-center">{{ dashboard.gesamt_zahler }}</q-td>
+                <q-td class="text-center">{{ dashboard.gesamt_positionen }}</q-td>
+              </q-tr>
+            </template>
+          </q-table>
+          <div v-if="dashboard.gruppen.length === 0" class="text-grey text-center q-py-lg">
+            Keine fälligen Beiträge im {{ dashboard.zeitraum }}.
+          </div>
+        </template>
+      </q-tab-panel>
+
       <q-tab-panel name="regeln" class="q-pa-none">
         <div class="row items-center q-mb-md">
           <q-select v-model="filterAbteilung" :options="abteilungFilterOptions"
@@ -269,8 +351,12 @@ import { useAuthStore } from 'src/stores/auth'
 const $q = useQuasar()
 const auth = useAuthStore()
 
-const tab = ref('regeln')
+const tab = ref('dashboard')
 const heute = new Date().toISOString().slice(0, 10)
+
+function euro(v) {
+  return (Number(v) || 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+}
 
 const kannSchreiben    = computed(() => auth.hasPermission('beitraege.write'))
 const kannAbrechnen    = computed(() => auth.hasPermission('beitraege.abrechnen'))
@@ -302,6 +388,38 @@ function turnusLabel(t) {
 }
 function statusColor(s) {
   return { offen: 'warning', bezahlt: 'positive', storniert: 'negative' }[s] ?? 'grey'
+}
+
+// ── Dashboard (Projektion aktuelles Quartal) ───────────────
+const dashboard = ref(null)
+const dashboardLoading = ref(false)
+const dashboardStichtag = ref(heute)
+const dashboardColumns = [
+  { name: 'abteilung_name', label: 'Bereich',    field: 'abteilung_name', align: 'left' },
+  { name: 'summe',          label: 'Summe',       field: r => euro(r.summe), align: 'right' },
+  { name: 'anzahl_zahler',  label: 'Zahler',      field: 'anzahl_zahler',  align: 'center' },
+  { name: 'anzahl_positionen', label: 'Positionen', field: 'anzahl_positionen', align: 'center' },
+]
+
+async function ladeDashboard() {
+  dashboardLoading.value = true
+  try {
+    const { data } = await api.get('/api/beitraege/dashboard',
+      { params: { stichtag: dashboardStichtag.value } })
+    dashboard.value = data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Dashboard konnte nicht geladen werden' })
+  } finally {
+    dashboardLoading.value = false
+  }
+}
+
+function verschiebeQuartal(delta) {
+  const d = new Date(dashboardStichtag.value + 'T00:00:00')
+  d.setDate(1)
+  d.setMonth(d.getMonth() + delta * 3)
+  dashboardStichtag.value = d.toISOString().slice(0, 10)
+  ladeDashboard()
 }
 
 // ── Regeln ─────────────────────────────────────────────────
@@ -562,6 +680,6 @@ async function loadOptionen() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen()])
+  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard()])
 })
 </script>
