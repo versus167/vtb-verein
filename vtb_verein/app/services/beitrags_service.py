@@ -183,6 +183,11 @@ class BeitragsService:
                     regel, stichtag_str, periode_start, periode_ende):
                 von = parse_datum(mitglied.get('aktiv_von'))
                 bis = parse_datum(mitglied.get('aktiv_bis'))
+                # Vereinsaustritt deckelt das Abteilungs-Intervall, auch wenn die
+                # Mitgliedschaft selbst kein Ende-Datum hat.
+                verein_bis = parse_datum(mitglied.get('verein_bis'))
+                if verein_bis is not None and (bis is None or verein_bis < bis):
+                    bis = verein_bis
                 eintrag = aktiv_pro_mitglied.setdefault(
                     mitglied['id'], {'mitglied': mitglied, 'monate': set()})
                 eintrag['monate'] |= aktive_monate_menge(monate, von, bis)
@@ -357,14 +362,20 @@ class BeitragsService:
             ]
             params.extend([periode_ende.isoformat(), periode_start.isoformat()])
         else:
-            aktiv_cols = "ma.von AS aktiv_von, ma.bis AS aktiv_bis"
+            # Vereinsaustritt beendet implizit auch die Abteilungsmitgliedschaft:
+            # austrittsdatum wird mitgeladen und im Service als Obergrenze des
+            # Aktiv-Intervalls angewendet (min(ma.bis, austrittsdatum)).
+            aktiv_cols = ("ma.von AS aktiv_von, ma.bis AS aktiv_bis, "
+                          "m.austrittsdatum AS verein_bis")
             joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
             where += [
                 "ma.abteilung_id = %s", "ma.deleted_at IS NULL",
                 "(ma.von IS NULL OR ma.von !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.von,10) <= %s)",
                 "(ma.bis IS NULL OR ma.bis !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.bis,10) >= %s)",
+                "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
             ]
-            params.extend([regel.abteilung_id, periode_ende.isoformat(), periode_start.isoformat()])
+            params.extend([regel.abteilung_id, periode_ende.isoformat(),
+                           periode_start.isoformat(), periode_start.isoformat()])
 
             status_filter = regel.bedingung_status_liste
             if status_filter:

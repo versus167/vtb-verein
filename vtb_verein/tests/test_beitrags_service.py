@@ -170,6 +170,47 @@ class TestVorschauAnteilig:
         assert all(p.monate_im_zeitraum == 3 for p in positionen)
         assert by_id[2].zeitraum == '2026-Q4'
 
+    def test_vereinsaustritt_deckelt_abteilungsbeitrag(self):
+        # Ticket #18 Nachtrag: Austritt aus dem Verein (30.06.) beendet implizit
+        # die Abteilungsmitgliedschaft – auch wenn dort kein bis-Datum steht.
+        regel = Beitragsregel(id=9, name='Abt', abteilung_id=5,
+                              betrag_pro_monat=11.0, einzug_turnus='quartal')
+        rows = [
+            {'id': 1, 'vorname': 'Ben', 'nachname': 'M', 'iban': None,
+             'aktiv_von': '2014-11-01', 'aktiv_bis': None,
+             'verein_bis': '2026-06-30'},
+        ]
+        # Q3 (Jul–Sep): nach dem Vereinsaustritt → keine Position mehr
+        assert self._service(regel, rows).vorschau('2026-07-01') == []
+        # Q2 (Apr–Jun): noch voll aktiv → 3 Monate
+        positionen = self._service(regel, rows).vorschau('2026-04-01')
+        assert len(positionen) == 1
+        assert (positionen[0].anzahl_monate, positionen[0].betrag) == (3, 33.0)
+
+    def test_vereinsaustritt_im_quartal_zaehlt_anteilig(self):
+        # Austritt 10.08. → Austrittsmonat zählt mit: Jul+Aug = 2 Monate
+        regel = Beitragsregel(id=9, name='Abt', abteilung_id=5,
+                              betrag_pro_monat=11.0, einzug_turnus='quartal')
+        rows = [
+            {'id': 1, 'vorname': 'Ben', 'nachname': 'M', 'iban': None,
+             'aktiv_von': '2014-11-01', 'aktiv_bis': None,
+             'verein_bis': '2026-08-10'},
+        ]
+        positionen = self._service(regel, rows).vorschau('2026-07-01')
+        assert (positionen[0].anzahl_monate, positionen[0].betrag) == (2, 22.0)
+
+    def test_frueheres_abteilungsende_hat_vorrang(self):
+        # bis (31.07.) liegt vor dem Vereinsaustritt (30.09.) → bis gewinnt: Jul = 1 Monat
+        regel = Beitragsregel(id=9, name='Abt', abteilung_id=5,
+                              betrag_pro_monat=11.0, einzug_turnus='quartal')
+        rows = [
+            {'id': 1, 'vorname': 'Ben', 'nachname': 'M', 'iban': None,
+             'aktiv_von': '2014-11-01', 'aktiv_bis': '2026-07-31',
+             'verein_bis': '2026-09-30'},
+        ]
+        positionen = self._service(regel, rows).vorschau('2026-07-01')
+        assert (positionen[0].anzahl_monate, positionen[0].betrag) == (1, 11.0)
+
     def test_mehrere_intervalle_werden_vereinigt(self):
         # Zwei Mitgliedschafts-Zeilen desselben Mitglieds: Monate vereinigen,
         # nicht summieren. Okt (aus Zeile 1) + Dez (aus Zeile 2) = 2 Monate.
@@ -228,6 +269,13 @@ class TestBetroffeneMitgliederSQL:
         # Das fehlerhafte NOT(... AND ...)-Muster darf nicht zurückkommen.
         assert 'NOT (ma.bis' not in sql
         assert 'NOT (ma.von' not in sql
+
+    def test_abteilung_beruecksichtigt_vereinsaustritt(self):
+        # Vereinsaustritt beendet implizit die Abteilungsmitgliedschaft:
+        # austrittsdatum muss selektiert und vorgefiltert werden.
+        sql = self._sql_fuer(Beitragsregel(id=1, abteilung_id=5, einzug_turnus='quartal'))
+        assert 'm.austrittsdatum AS verein_bis' in sql
+        assert 'm.austrittsdatum IS NULL' in sql
 
     def test_verein_schliesst_aktive_mitglieder_nicht_aus(self):
         sql = self._sql_fuer(Beitragsregel(id=2, abteilung_id=None, einzug_turnus='quartal'))
