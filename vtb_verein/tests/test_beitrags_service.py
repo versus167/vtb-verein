@@ -187,6 +187,55 @@ class TestVorschauAnteilig:
         assert positionen[0].betrag == 20.0
 
 
+class _FakeCursor:
+    """Minimaler Cursor, der die letzte SQL/Parameter festhält und [] liefert."""
+    def __init__(self):
+        self.sql = None
+        self.params = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.sql = sql
+        self.params = params
+
+    def fetchall(self):
+        return []
+
+
+class TestBetroffeneMitgliederSQL:
+    """
+    Regressionsschutz für den NULL-Datums-Bug (Tickets #18/#19): offene
+    Mitgliedschaften (bis/austritt IS NULL) bzw. fehlende Eintritts-/von-Daten
+    dürfen vom Vorfilter NICHT ausgeschlossen werden. Ohne echte DB wird die
+    generierte WHERE-Klausel geprüft.
+    """
+    def _sql_fuer(self, regel):
+        cur = _FakeCursor()
+        db = SimpleNamespace(conn=SimpleNamespace(cursor=lambda: cur))
+        BeitragsService(db)._betroffene_mitglieder(
+            regel, '2026-04-15', date(2026, 4, 1), date(2026, 6, 30))
+        return cur.sql
+
+    def test_abteilung_schliesst_offene_mitgliedschaften_nicht_aus(self):
+        sql = self._sql_fuer(Beitragsregel(id=1, abteilung_id=5, einzug_turnus='quartal'))
+        assert 'ma.bis IS NULL' in sql
+        assert 'ma.von IS NULL' in sql
+        # Das fehlerhafte NOT(... AND ...)-Muster darf nicht zurückkommen.
+        assert 'NOT (ma.bis' not in sql
+        assert 'NOT (ma.von' not in sql
+
+    def test_verein_schliesst_aktive_mitglieder_nicht_aus(self):
+        sql = self._sql_fuer(Beitragsregel(id=2, abteilung_id=None, einzug_turnus='quartal'))
+        assert 'm.austrittsdatum IS NULL' in sql
+        assert 'm.eintrittsdatum IS NULL' in sql
+        assert 'NOT (m.austrittsdatum' not in sql
+
+
 class TestDashboardAggregation:
     """Aggregation der Projektion zu Summen/Zahlern je Bereich (Fake-vorschau)."""
 

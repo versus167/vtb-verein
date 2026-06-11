@@ -345,11 +345,15 @@ class BeitragsService:
         where: list[str] = ["m.deleted_at IS NULL"]
         params: list = []
 
+        # Datums-Vorfilter: NULL/leer/ungültig immer einschließen (die maßgebliche
+        # Monatsüberlappung rechnet der Service); nur gültige Daten ausserhalb des
+        # Zeitraums vorab ausschließen. Wichtig: ohne das explizite IS NULL würde
+        # NOT(... AND ...) bei NULL zu NULL → die Zeile fiele aus der WHERE-Klausel.
         if regel.abteilung_id is None:
             aktiv_cols = "m.eintrittsdatum AS aktiv_von, m.austrittsdatum AS aktiv_bis"
             where += [
-                "NOT (m.eintrittsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(m.eintrittsdatum,10) > %s)",
-                "NOT (m.austrittsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(m.austrittsdatum,10) < %s)",
+                "(m.eintrittsdatum IS NULL OR m.eintrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.eintrittsdatum,10) <= %s)",
+                "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
             ]
             params.extend([periode_ende.isoformat(), periode_start.isoformat()])
         else:
@@ -357,8 +361,8 @@ class BeitragsService:
             joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
             where += [
                 "ma.abteilung_id = %s", "ma.deleted_at IS NULL",
-                "NOT (ma.von ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(ma.von,10) > %s)",
-                "NOT (ma.bis ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(ma.bis,10) < %s)",
+                "(ma.von IS NULL OR ma.von !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.von,10) <= %s)",
+                "(ma.bis IS NULL OR ma.bis !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.bis,10) >= %s)",
             ]
             params.extend([regel.abteilung_id, periode_ende.isoformat(), periode_start.isoformat()])
 
