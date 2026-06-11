@@ -46,7 +46,7 @@ class UserRepository(BaseRepository):
         """Find User by username (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login,
+                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
                           version, created_at, created_by, updated_at, updated_by,
                           matrix_id, preferred_contact
                    FROM users WHERE LOWER(username) = LOWER(%s) AND deleted_at IS NULL""",
@@ -61,7 +61,7 @@ class UserRepository(BaseRepository):
         """Find User by email (only non-deleted). Used for Magic-Link authentication."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login,
+                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
                           version, created_at, created_by, updated_at, updated_by,
                           matrix_id, preferred_contact
                    FROM users WHERE email = %s AND deleted_at IS NULL""",
@@ -76,7 +76,7 @@ class UserRepository(BaseRepository):
         """Find User by ID (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login,
+                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
                           version, created_at, created_by, updated_at, updated_by,
                           matrix_id, preferred_contact
                    FROM users WHERE id = %s AND deleted_at IS NULL""",
@@ -91,7 +91,7 @@ class UserRepository(BaseRepository):
         """List all users (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login,
+                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
                           version, created_at, created_by, updated_at, updated_by,
                           matrix_id, preferred_contact
                    FROM users WHERE deleted_at IS NULL ORDER BY username"""
@@ -241,7 +241,25 @@ class UserRepository(BaseRepository):
                 (user_id,)
             )
             return cur.rowcount == 1
-    
+
+    def update_last_seen(self, user_id: int) -> bool:
+        """Aktualisiert den 'zuletzt aktiv'-Zeitpunkt bei jedem authentifizierten Request.
+
+        Gedrosselt: schreibt höchstens einmal pro Minute, damit ein einzelner
+        Seitenaufruf (viele API-Calls) nur einen Write auslöst. Ohne Versions-Bump,
+        also kein History-Eintrag.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users SET last_seen = CURRENT_TIMESTAMP
+                WHERE id = %s AND deleted_at IS NULL
+                  AND (last_seen IS NULL OR last_seen::timestamptz < now() - interval '1 minute')
+                """,
+                (user_id,)
+            )
+            return cur.rowcount == 1
+
     def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
         """Soft-delete: Mark user as deleted.
         
@@ -278,6 +296,7 @@ class UserRepository(BaseRepository):
             role=row['role'],
             active=bool(row['active']),
             last_login=row['last_login'],
+            last_seen=row['last_seen'],
             version=row['version'],
             created_at=row['created_at'],
             created_by=row['created_by'],

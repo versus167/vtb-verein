@@ -81,6 +81,7 @@ def _user_to_dict(u):
         'role':       u.role,
         'active':     u.active,
         'last_login': u.last_login,
+        'last_seen':  u.last_seen,
         'version':    u.version,
     }
 

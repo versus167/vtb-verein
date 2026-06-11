@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 33
+SCHEMA_VERSION = 34
 
 
 class Database:
@@ -95,6 +95,7 @@ class Database:
             31: self._migrate_v30_to_v31,
             32: self._migrate_v31_to_v32,
             33: self._migrate_v32_to_v33,
+            34: self._migrate_v33_to_v34,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1238,6 +1239,55 @@ class Database:
 
             cur.execute("UPDATE schema_version SET version = 33 WHERE id = 1")
 
+    def _migrate_v33_to_v34(self) -> None:
+        """Echtes Aktivitäts-Feld users.last_seen einführen.
+
+        Bisher diente last_login doppelt: als Login-Zeitpunkt UND (durch den Bump
+        bei jedem GET /me) als "zuletzt aktiv". Das war mehrdeutig. Ab jetzt:
+        - last_login = echter Login (Passwort/Magic-Link)
+        - last_seen  = letzter authentifizierter Request (im Auth-Dependency gebumpt)
+        Bestandswerte werden mit last_login vorbelegt, damit "Zuletzt aktiv" nicht leer ist."""
+        with self.cursor() as cur:
+            for tbl in ('users', 'users_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS last_seen TEXT")
+                cur.execute(f"UPDATE {tbl} SET last_seen = last_login WHERE last_seen IS NULL")
+
+            # Audit-Trigger-Funktionen auf last_seen erweitern
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_users_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO users_history (
+                        id, version, username, email, password_hash, role, active, last_login, last_seen,
+                        telegram_id, matrix_id, preferred_contact,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                        NEW.active, NEW.last_login, NEW.last_seen, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_users_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO users_history (
+                            id, version, username, email, password_hash, role, active, last_login, last_seen,
+                            telegram_id, matrix_id, preferred_contact,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
+                            NEW.active, NEW.last_login, NEW.last_seen, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+
+            cur.execute("UPDATE schema_version SET version = 34 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1566,6 +1616,7 @@ class Database:
               role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied')),
               active            INTEGER NOT NULL DEFAULT 1,
               last_login        TEXT,
+              last_seen         TEXT,
               telegram_id       TEXT,
               matrix_id         TEXT,
               preferred_contact TEXT DEFAULT 'email',
@@ -1588,6 +1639,7 @@ class Database:
               role              TEXT NOT NULL,
               active            INTEGER NOT NULL,
               last_login        TEXT,
+              last_seen         TEXT,
               telegram_id       TEXT,
               matrix_id         TEXT,
               preferred_contact TEXT,
@@ -2449,12 +2501,12 @@ class Database:
             CREATE OR REPLACE FUNCTION fn_users_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO users_history (
-                    id, version, username, email, password_hash, role, active, last_login,
+                    id, version, username, email, password_hash, role, active, last_login, last_seen,
                     telegram_id, matrix_id, preferred_contact,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
-                    NEW.active, NEW.last_login, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                    NEW.active, NEW.last_login, NEW.last_seen, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -2465,12 +2517,12 @@ class Database:
             BEGIN
                 IF NEW.version != OLD.version THEN
                     INSERT INTO users_history (
-                        id, version, username, email, password_hash, role, active, last_login,
+                        id, version, username, email, password_hash, role, active, last_login, last_seen,
                         telegram_id, matrix_id, preferred_contact,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.username, NEW.email, NEW.password_hash, NEW.role,
-                        NEW.active, NEW.last_login, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
+                        NEW.active, NEW.last_login, NEW.last_seen, NEW.telegram_id, NEW.matrix_id, NEW.preferred_contact,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;

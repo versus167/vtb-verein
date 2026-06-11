@@ -21,7 +21,8 @@ class User:
     updated_by: str
     deleted_at: str | None = None
     deleted_by: str | None = None
-    
+
+    last_seen: str | None = None                # letzter authentifizierter Request ("zuletzt aktiv")
     matrix_id: str | None = None                # Matrix-ID (z.B. @user:matrix.org)
     preferred_contact: str = 'email'            # 'email', 'matrix'
     

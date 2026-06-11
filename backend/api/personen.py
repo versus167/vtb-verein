@@ -184,6 +184,7 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
         'role': user.role if user else None,
         'active': bool(user.active) if user else True,
         'last_login': user.last_login if user else None,
+        'last_seen': user.last_seen if user else None,
         'last_edited': last_edited,
         'user_version': user.version if user else None,
         'mitglied': _mitglied_to_dict(mitglied),
@@ -223,7 +224,7 @@ def list_personen(user: CurrentUser, db: DB):
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT * FROM (
-                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.version, u.updated_at,
+                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.last_seen, u.version, u.updated_at,
                        m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
@@ -237,7 +238,7 @@ def list_personen(user: CurrentUser, db: DB):
                 LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
                 WHERE u.deleted_at IS NULL
                 UNION ALL
-                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
                        m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
@@ -261,6 +262,7 @@ def list_personen(user: CurrentUser, db: DB):
             u_obj = type('U', (), {
                 'id': r['id'], 'username': r['username'], 'email': r['email'],
                 'role': r['role'], 'active': r['active'], 'last_login': r['last_login'],
+                'last_seen': r['last_seen'],
                 'version': r['version'],
                 'updated_at': r['updated_at'],
             })()
@@ -491,7 +493,7 @@ def get_person_history(user_id: int, user: CurrentUser, db: DB):
     with db.conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, version, username, email, role, active, last_login,
+            SELECT id, version, username, email, role, active, last_login, last_seen,
                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
             FROM users_history WHERE id = %s ORDER BY version ASC
             """,

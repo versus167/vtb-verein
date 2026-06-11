@@ -61,8 +61,8 @@
               {{ ab.abteilung_kuerzel || ab.abteilung_name }}
             </q-chip>
           </div>
-          <div v-if="p.last_login" class="text-caption text-grey-5">
-            Zuletzt aktiv: {{ formatLastLogin(p.last_login) }}
+          <div v-if="p.last_seen" class="text-caption text-grey-5">
+            Zuletzt aktiv: {{ formatLastLogin(p.last_seen) }}
           </div>
         </q-card-section>
         <q-separator />
@@ -159,11 +159,11 @@
         </q-td>
       </template>
 
-      <template #body-cell-last_login="props">
+      <template #body-cell-last_seen="props">
         <q-td :props="props">
-          <span v-if="props.row.last_login" class="text-caption">
-            {{ formatLastLogin(props.row.last_login) }}
-            <q-tooltip>{{ new Date(props.row.last_login).toLocaleString('de-DE') }}</q-tooltip>
+          <span v-if="props.row.last_seen" class="text-caption">
+            {{ formatLastLogin(props.row.last_seen) }}
+            <q-tooltip>{{ new Date(props.row.last_seen).toLocaleString('de-DE') }}</q-tooltip>
           </span>
           <span v-else class="text-grey">—</span>
         </q-td>
@@ -760,7 +760,7 @@ const columns = computed(() => {
   }
   cols.push({ name: 'status', label: 'Status', field: 'active', align: 'center', sortable: true })
   if (istBenutzer) {
-    cols.push({ name: 'last_login', label: 'Zuletzt aktiv', field: 'last_login', align: 'left', sortable: true })
+    cols.push({ name: 'last_seen', label: 'Zuletzt aktiv', field: 'last_seen', align: 'left', sortable: true })
   }
   cols.push(
     { name: 'last_edited', label: 'Zuletzt bearbeitet', field: 'last_edited', align: 'left', sortable: true },
@@ -838,9 +838,9 @@ const sortedPersonen = computed(() => {
         aVal = a.role || ''
         bVal = b.role || ''
         break
-      case 'last_login':
-        aVal = a.last_login || ''
-        bVal = b.last_login || ''
+      case 'last_seen':
+        aVal = a.last_seen || ''
+        bVal = b.last_seen || ''
         break
       default:
         aVal = a[sortColumn.value] ?? ''

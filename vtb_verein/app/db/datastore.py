@@ -423,6 +423,9 @@ class VereinsDB:
     def update_last_login(self, user_id: int) -> bool:
         return self._user_repo.update_last_login(user_id)
 
+    def update_last_seen(self, user_id: int) -> bool:
+        return self._user_repo.update_last_seen(user_id)
+
     def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
         return self._user_repo.mark_user_deleted(user_id, deleted_by)
 

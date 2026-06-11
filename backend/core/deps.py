@@ -27,6 +27,12 @@ def get_current_user(
     user = db.get_user_by_id(int(user_id))
     if user is None or not user.active:
         raise exc
+    # "Zuletzt aktiv" tracken: jeder authentifizierte Request markiert Aktivität
+    # (im Repository auf 1×/Minute gedrosselt). Best-effort – darf Auth nie brechen.
+    try:
+        db.update_last_seen(user.id)
+    except Exception:
+        pass
     # Permissions frisch aus der DB laden (damit Admin-Änderungen sofort wirken)
     user.permissions = db.permissions.get_permissions_for_user(user.id)
     return user

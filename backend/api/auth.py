@@ -31,6 +31,7 @@ class UserInfo(BaseModel):
     role: str
     permissions: list[str]
     last_login: str | None = None
+    last_seen: str | None = None
     version: int = 1
     matrix_id: str | None = None
     preferred_contact: str = 'email'
@@ -67,7 +68,8 @@ class OwnPasswordChange(BaseModel):
 
 @router.get("/me", response_model=UserInfo)
 def get_me(user: CurrentUser, db: DB):
-    db.update_last_login(user.id)
+    # Hinweis: kein last_login-Bump hier – das ist ein echter Login (Passwort/Magic-Link).
+    # Die Aktivität ("zuletzt aktiv") wird über last_seen im Auth-Dependency getrackt.
     fresh = db.get_user_by_id(user.id)
     return UserInfo(
         id=fresh.id,
@@ -76,6 +78,7 @@ def get_me(user: CurrentUser, db: DB):
         role=fresh.role,
         permissions=list(fresh.permissions),
         last_login=fresh.last_login,
+        last_seen=fresh.last_seen,
         version=fresh.version,
         matrix_id=fresh.matrix_id,
         preferred_contact=fresh.preferred_contact,
