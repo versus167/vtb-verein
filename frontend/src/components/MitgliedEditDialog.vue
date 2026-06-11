@@ -1,0 +1,480 @@
+<template>
+  <q-dialog
+    :model-value="modelValue"
+    @update:model-value="onDialogToggle"
+    persistent
+    :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+  >
+    <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:560px;max-width:720px'">
+      <q-card-section class="row items-center q-pb-none">
+        <div class="text-h6 col">
+          Mitglied bearbeiten
+          <span v-if="mitgliedName" class="text-weight-regular">– {{ mitgliedName }}</span>
+        </div>
+        <q-btn flat dense round icon="close" @click="close" />
+      </q-card-section>
+
+      <q-tabs v-model="tab" dense align="left" class="q-px-md text-primary">
+        <q-tab name="stammdaten" label="Stammdaten" icon="person" />
+        <q-tab name="abteilungen" label="Abteilungen" icon="group" />
+        <q-tab name="funktionen" label="Funktionen" icon="badge" />
+      </q-tabs>
+      <q-separator />
+
+      <div style="position:relative; min-height:120px">
+        <q-inner-loading :showing="loading" />
+
+        <q-tab-panels v-model="tab" animated style="max-height:68vh; overflow-y:auto">
+          <!-- ── Stammdaten ───────────────────────────────────── -->
+          <q-tab-panel name="stammdaten" class="q-gutter-sm">
+            <div class="row q-gutter-sm">
+              <q-input v-model="form.vorname" label="Vorname *" outlined dense class="col" :readonly="!canWrite" />
+              <q-input v-model="form.nachname" label="Nachname *" outlined dense class="col" :readonly="!canWrite" />
+            </div>
+            <div class="row q-gutter-sm">
+              <q-input v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.geburtsdatum" label="Geburtsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+            </div>
+            <q-input v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
+            <q-input v-model="form.telefon" label="Telefon" outlined dense :readonly="!canWrite" />
+            <div class="row q-gutter-sm">
+              <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+            </div>
+            <q-select
+              v-model="form.status" label="Vereinsstatus" outlined dense
+              :options="statusOptions" :readonly="!canWrite"
+            />
+            <q-expansion-item label="Adresse" dense icon="home">
+              <div class="q-gutter-sm q-pt-sm">
+                <q-input v-model="form.strasse" label="Straße" outlined dense :readonly="!canWrite" />
+                <div class="row q-gutter-sm">
+                  <q-input v-model="form.plz" label="PLZ" outlined dense style="width:110px" :readonly="!canWrite" />
+                  <q-input v-model="form.ort" label="Ort" outlined dense class="col" :readonly="!canWrite" />
+                </div>
+                <q-input v-model="form.land" label="Land" outlined dense :readonly="!canWrite" />
+              </div>
+            </q-expansion-item>
+            <q-expansion-item label="Zahlung / SEPA" dense icon="payments">
+              <div class="q-gutter-sm q-pt-sm">
+                <q-input v-model="form.zahlungsart" label="Zahlungsart" outlined dense :readonly="!canWrite" />
+                <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" />
+                <q-input v-model="form.bic" label="BIC" outlined dense :readonly="!canWrite" />
+                <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
+              </div>
+            </q-expansion-item>
+            <div v-if="stammError" class="text-negative text-caption">{{ stammError }}</div>
+            <div v-if="canWrite" class="row justify-end">
+              <q-btn label="Stammdaten speichern" color="primary" unelevated
+                :loading="savingStamm" @click="saveStammdaten" />
+            </div>
+          </q-tab-panel>
+
+          <!-- ── Abteilungen ──────────────────────────────────── -->
+          <q-tab-panel name="abteilungen" class="q-pa-none">
+            <q-card-section class="row items-center q-pb-sm">
+              <div class="text-subtitle2 col">Abteilungs-Zuordnungen</div>
+              <q-btn v-if="canWrite" label="Hinzufügen" icon="add" color="primary"
+                unelevated size="sm" @click="openZuordnungForm(null)" />
+            </q-card-section>
+            <q-separator />
+            <q-card-section>
+              <div v-if="zuordnungen.length === 0" class="text-grey text-center q-py-md">
+                Keine Abteilungszuordnungen vorhanden
+              </div>
+              <q-list separator>
+                <q-item v-for="z in zuordnungen" :key="z.id">
+                  <q-item-section>
+                    <q-item-label>
+                      {{ z.abteilung_name }}
+                      <q-badge class="q-ml-sm" :color="abteilungStatusColor(z.status)" text-color="white">{{ z.status }}</q-badge>
+                    </q-item-label>
+                    <q-item-label caption>
+                      <span v-if="z.von">ab {{ z.von }}</span>
+                      <span v-if="z.von && z.bis"> · </span>
+                      <span v-if="z.bis">bis {{ z.bis }}</span>
+                      <span v-if="!z.von && !z.bis">Kein Zeitraum angegeben</span>
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <div class="q-gutter-xs">
+                      <q-btn v-if="canWrite" flat dense round icon="edit" color="primary" size="sm" @click="openZuordnungForm(z)" />
+                      <q-btn v-if="canDelete" flat dense round icon="delete" color="negative" size="sm" @click="deleteZuordnung(z)" />
+                    </div>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </q-card-section>
+          </q-tab-panel>
+
+          <!-- ── Funktionen ───────────────────────────────────── -->
+          <q-tab-panel name="funktionen" class="q-pa-none">
+            <q-card-section class="row items-center q-pb-sm">
+              <div class="text-subtitle2 col">Funktionen</div>
+              <q-btn v-if="canWrite" label="Hinzufügen" icon="add" color="primary"
+                unelevated size="sm" @click="openFunktionForm(null)" />
+            </q-card-section>
+            <q-separator />
+            <q-card-section>
+              <div v-if="funktionen.length === 0" class="text-grey text-center q-py-md">
+                Keine Funktionen zugeordnet
+              </div>
+              <q-list separator>
+                <q-item v-for="f in funktionen" :key="f.id">
+                  <q-item-section>
+                    <q-item-label>
+                      {{ funktionLabel(f.funktion) }}
+                      <q-badge class="q-ml-sm" color="teal">{{ f.abteilung_name ?? 'Verein' }}</q-badge>
+                    </q-item-label>
+                    <q-item-label caption>
+                      <span v-if="f.von">ab {{ f.von }}</span>
+                      <span v-if="f.von && f.bis"> · </span>
+                      <span v-if="f.bis">bis {{ f.bis }}</span>
+                      <span v-if="!f.von && !f.bis">Kein Zeitraum angegeben</span>
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <div class="q-gutter-xs">
+                      <q-btn v-if="canWrite" flat dense round icon="edit" color="primary" size="sm" @click="openFunktionForm(f)" />
+                      <q-btn v-if="canDelete" flat dense round icon="delete" color="negative" size="sm" @click="deleteFunktion(f)" />
+                    </div>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </q-card-section>
+          </q-tab-panel>
+        </q-tab-panels>
+      </div>
+
+      <q-separator />
+      <q-card-actions align="right">
+        <q-btn flat label="Schließen" @click="close" />
+      </q-card-actions>
+    </q-card>
+
+    <!-- Abteilungs-Zuordnung anlegen / bearbeiten -->
+    <q-dialog v-model="zuordnungFormOpen" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="text-h6">
+          {{ editingZuordnungId ? 'Zuordnung bearbeiten' : 'Neue Zuordnung' }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-select
+            v-if="!editingZuordnungId"
+            v-model="zuordnungForm.abteilung_id" label="Abteilung *" outlined dense
+            :options="abteilungOptions" option-value="id" option-label="name"
+            emit-value map-options :rules="[(v) => !!v || 'Pflichtfeld']"
+          />
+          <q-select v-model="zuordnungForm.status" label="Status *" outlined dense :options="abteilungStatusOptions" />
+          <div class="row q-gutter-sm">
+            <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" clearable />
+            <q-input v-model="zuordnungForm.bis" label="Bis" outlined dense type="date" class="col" clearable />
+          </div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="zuordnungSaving" @click="saveZuordnung" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Funktion anlegen / bearbeiten -->
+    <q-dialog v-model="funktionFormOpen" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="text-h6">
+          {{ editingFunktionId ? 'Funktion bearbeiten' : 'Neue Funktion' }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-select
+            v-model="funktionForm.funktion" label="Funktion *" outlined dense
+            :options="funktionOptionen" emit-value map-options
+            :rules="[(v) => !!v || 'Pflichtfeld']"
+          />
+          <q-select
+            v-model="funktionForm.abteilung_id" label="Abteilung" outlined dense
+            :options="abteilungOptions" option-value="id" option-label="name"
+            emit-value map-options clearable
+          />
+          <div class="row q-gutter-sm">
+            <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" clearable />
+            <q-input v-model="funktionForm.bis" label="Bis" outlined dense type="date" class="col" clearable />
+          </div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="funktionSaving" @click="saveFunktion" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+  </q-dialog>
+</template>
+
+<script setup>
+import { ref, computed, watch } from 'vue'
+import { useQuasar } from 'quasar'
+import { api } from 'src/boot/axios'
+import { useAuthStore } from 'src/stores/auth'
+
+const props = defineProps({
+  modelValue: { type: Boolean, default: false },
+  mitgliedId: { type: [Number, String], default: null },
+  mitgliedName: { type: String, default: '' },
+})
+const emit = defineEmits(['update:modelValue', 'saved'])
+
+const $q = useQuasar()
+const auth = useAuthStore()
+
+const canWrite = computed(() => auth.hasPermission('personen.write'))
+const canDelete = computed(() => auth.hasPermission('personen.delete'))
+
+const tab = ref('stammdaten')
+const loading = ref(false)
+// Sammelt, ob in dieser Sitzung etwas geändert wurde – nur dann lohnt sich beim
+// Schließen ein 'saved' (damit der Aufrufer die Vorschau einmalig neu berechnet).
+const dirty = ref(false)
+
+// ── Stammdaten ───────────────────────────────────────────────
+const statusOptions = ['aktiv', 'passiv', 'ausgetreten']
+const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+
+const emptyForm = () => ({
+  vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null,
+  email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
+  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: '',
+  iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
+})
+const form = ref(emptyForm())
+const savingStamm = ref(false)
+const stammError = ref('')
+
+function abteilungStatusColor(s) {
+  return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber-8' }[s] ?? 'grey'
+}
+
+// ── Abteilungen ──────────────────────────────────────────────
+const zuordnungen = ref([])
+const abteilungOptions = ref([])
+const zuordnungFormOpen = ref(false)
+const zuordnungSaving = ref(false)
+const editingZuordnungId = ref(null)
+const editingZuordnungVersion = ref(null)
+const zuordnungForm = ref({ abteilung_id: null, status: 'aktiv', von: null, bis: null })
+
+// ── Funktionen ───────────────────────────────────────────────
+const funktionen = ref([])
+const funktionOptionen = ref([])
+const funktionFormOpen = ref(false)
+const funktionSaving = ref(false)
+const editingFunktionId = ref(null)
+const editingFunktionVersion = ref(null)
+const funktionForm = ref({ funktion: null, abteilung_id: null, von: null, bis: null })
+
+function funktionLabel(f) {
+  if (!f) return ''
+  return funktionOptionen.value.find(o => o.value === f)?.label ?? f
+}
+
+// ── Laden ────────────────────────────────────────────────────
+watch(() => props.modelValue, (open) => {
+  if (open && props.mitgliedId != null) {
+    tab.value = 'stammdaten'
+    dirty.value = false
+    loadAll()
+  }
+})
+
+async function loadAll() {
+  loading.value = true
+  stammError.value = ''
+  try {
+    const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }] = await Promise.all([
+      api.get(`/api/mitglieder/${props.mitgliedId}`),
+      api.get('/api/abteilungen/'),
+      api.get(`/api/mitglieder/${props.mitgliedId}/funktionen`),
+      api.get('/api/funktionen'),
+    ])
+    form.value = { ...emptyForm(), ...m }
+    abteilungOptions.value = ab
+    funktionen.value = fns
+    funktionOptionen.value = katalog.map(f => ({ label: f.name, value: f.key }))
+    const { data: z } = await api.get(`/api/mitglieder/${props.mitgliedId}/abteilungen`)
+    zuordnungen.value = z
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden' })
+  } finally {
+    loading.value = false
+  }
+}
+
+async function reloadZuordnungen() {
+  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/abteilungen`)
+  zuordnungen.value = data
+}
+
+async function reloadFunktionen() {
+  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/funktionen`)
+  funktionen.value = data
+}
+
+// ── Stammdaten speichern ─────────────────────────────────────
+async function saveStammdaten() {
+  savingStamm.value = true
+  stammError.value = ''
+  try {
+    await api.put(`/api/mitglieder/${props.mitgliedId}`, form.value)
+    dirty.value = true
+    $q.notify({ type: 'positive', message: 'Stammdaten gespeichert' })
+  } catch (e) {
+    stammError.value = e.response?.data?.detail || 'Fehler beim Speichern'
+  } finally {
+    savingStamm.value = false
+  }
+}
+
+// ── Abteilungs-Zuordnungen ───────────────────────────────────
+function openZuordnungForm(z) {
+  if (z) {
+    editingZuordnungId.value = z.id
+    editingZuordnungVersion.value = z.version
+    zuordnungForm.value = { abteilung_id: z.abteilung_id, status: z.status, von: z.von, bis: z.bis }
+  } else {
+    editingZuordnungId.value = null
+    editingZuordnungVersion.value = null
+    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: null, bis: null }
+  }
+  zuordnungFormOpen.value = true
+}
+
+async function saveZuordnung() {
+  zuordnungSaving.value = true
+  try {
+    if (editingZuordnungId.value) {
+      await api.put(`/api/mitglieder/${props.mitgliedId}/abteilungen/${editingZuordnungId.value}`, {
+        status: zuordnungForm.value.status,
+        von: zuordnungForm.value.von || null,
+        bis: zuordnungForm.value.bis || null,
+        expected_version: editingZuordnungVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${props.mitgliedId}/abteilungen`, {
+        abteilung_id: zuordnungForm.value.abteilung_id,
+        status: zuordnungForm.value.status,
+        von: zuordnungForm.value.von || null,
+        bis: zuordnungForm.value.bis || null,
+      })
+    }
+    dirty.value = true
+    zuordnungFormOpen.value = false
+    await reloadZuordnungen()
+    $q.notify({ type: 'positive', message: 'Gespeichert' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
+  } finally {
+    zuordnungSaving.value = false
+  }
+}
+
+function deleteZuordnung(z) {
+  $q.dialog({
+    title: 'Zuordnung entfernen',
+    message: `Zuordnung zu „${z.abteilung_name}" wirklich entfernen?`,
+    cancel: true, persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/mitglieder/${props.mitgliedId}/abteilungen/${z.id}`)
+      dirty.value = true
+      await reloadZuordnungen()
+      $q.notify({ type: 'positive', message: 'Zuordnung entfernt' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen' })
+    }
+  })
+}
+
+// ── Funktionen ───────────────────────────────────────────────
+function openFunktionForm(f) {
+  if (f) {
+    editingFunktionId.value = f.id
+    editingFunktionVersion.value = f.version
+    funktionForm.value = { funktion: f.funktion, abteilung_id: f.abteilung_id, von: f.von, bis: f.bis }
+  } else {
+    editingFunktionId.value = null
+    editingFunktionVersion.value = null
+    funktionForm.value = { funktion: null, abteilung_id: null, von: null, bis: null }
+  }
+  funktionFormOpen.value = true
+}
+
+async function saveFunktion() {
+  if (!funktionForm.value.funktion) {
+    $q.notify({ type: 'negative', message: 'Bitte eine Funktion auswählen.' })
+    return
+  }
+  if (!funktionForm.value.von) {
+    $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben (Zeitraum ist Pflicht).' })
+    return
+  }
+  funktionSaving.value = true
+  try {
+    if (editingFunktionId.value) {
+      await api.put(`/api/mitglieder/${props.mitgliedId}/funktionen/${editingFunktionId.value}`, {
+        funktion: funktionForm.value.funktion,
+        abteilung_id: funktionForm.value.abteilung_id || null,
+        von: funktionForm.value.von || null,
+        bis: funktionForm.value.bis || null,
+        expected_version: editingFunktionVersion.value,
+      })
+    } else {
+      await api.post(`/api/mitglieder/${props.mitgliedId}/funktionen`, {
+        funktion: funktionForm.value.funktion,
+        abteilung_id: funktionForm.value.abteilung_id || null,
+        von: funktionForm.value.von || null,
+        bis: funktionForm.value.bis || null,
+      })
+    }
+    dirty.value = true
+    funktionFormOpen.value = false
+    await reloadFunktionen()
+    $q.notify({ type: 'positive', message: 'Gespeichert' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
+  } finally {
+    funktionSaving.value = false
+  }
+}
+
+function deleteFunktion(f) {
+  $q.dialog({
+    title: 'Funktion entfernen',
+    message: `Funktion „${funktionLabel(f.funktion)}" wirklich entfernen?`,
+    cancel: true, persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/mitglieder/${props.mitgliedId}/funktionen/${f.id}`)
+      dirty.value = true
+      await reloadFunktionen()
+      $q.notify({ type: 'positive', message: 'Funktion entfernt' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen' })
+    }
+  })
+}
+
+// ── Schließen ────────────────────────────────────────────────
+function onDialogToggle(val) {
+  if (!val) close()
+}
+
+function close() {
+  emit('update:modelValue', false)
+  if (dirty.value) {
+    emit('saved')
+    dirty.value = false
+  }
+}
+</script>

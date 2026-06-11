@@ -43,6 +43,10 @@ Offen:
 - [ ] PostgreSQL-Test-Fixture/conftest etablieren (es gibt keine DB-nahe Test-Infra;
       bewährter manueller Weg bisher: Dev-DB-Dump → Wegwerf-Container postgres:18 → migrieren)
 - [ ] Stale SQLite-Erwähnung in `vtb_verein/tests/README.md` bereinigen
+- [ ] **Einheitliche Mitglied-Edit-Komponente** – die neue `MitgliedEditDialog.vue`
+      (Stammdaten + Abteilungen + Funktionen, eingebunden in die Abrechnungsvorschau)
+      auch in `PersonenPage.vue` und `MitgliederPage.vue` nutzen, damit die
+      Mitglieds-Bearbeitung eine Single-Source ist (aktuell dort dupliziert)
 
 Erledigt (2026-06-11):
 - [x] Frischaufbau-FK-Bug behoben – `mitglied→users` / `beitrag_sollstellung→kassenbuchungen`
