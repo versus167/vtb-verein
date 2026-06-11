@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 
 class Database:
@@ -93,6 +93,7 @@ class Database:
             29: self._migrate_v28_to_v29,
             30: self._migrate_v29_to_v30,
             31: self._migrate_v30_to_v31,
+            32: self._migrate_v31_to_v32,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1124,6 +1125,36 @@ class Database:
                 ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL
             """)
             cur.execute("UPDATE schema_version SET version = 31 WHERE id = 1")
+
+    def _migrate_v31_to_v32(self) -> None:
+        """Fehlende Audit-Trigger auf beitragsregel und beitrag_sollstellung nachziehen.
+        Beide Tabellen entstanden in der v17→v18-Migration; DBs, die diese Migration
+        durchliefen, bevor die Trigger-Erzeugung dort ergänzt wurde, haben zwar die
+        fn_*_audit_*-Funktionen, aber keine angebrachten Trigger – es wurde also keine
+        *_history geschrieben. Frischaufbauten sind nicht betroffen (siehe _create_triggers).
+        CREATE OR REPLACE TRIGGER ist idempotent: auf bereits korrekten DBs ein No-Op."""
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitragsregel_audit_insert
+                AFTER INSERT ON beitragsregel
+                FOR EACH ROW EXECUTE FUNCTION fn_beitragsregel_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitragsregel_audit_update
+                AFTER UPDATE ON beitragsregel
+                FOR EACH ROW EXECUTE FUNCTION fn_beitragsregel_audit_update();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitrag_sollstellung_audit_insert
+                AFTER INSERT ON beitrag_sollstellung
+                FOR EACH ROW EXECUTE FUNCTION fn_beitrag_sollstellung_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_beitrag_sollstellung_audit_update
+                AFTER UPDATE ON beitrag_sollstellung
+                FOR EACH ROW EXECUTE FUNCTION fn_beitrag_sollstellung_audit_update();
+            """)
+            cur.execute("UPDATE schema_version SET version = 32 WHERE id = 1")
 
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
