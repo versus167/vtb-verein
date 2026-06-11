@@ -1166,7 +1166,7 @@ class Database:
               bemerkungen       TEXT,
               sepa_mandatsref   TEXT,
               sepa_mandatsdatum TEXT,
-              user_id           INTEGER REFERENCES users(id),
+              user_id           INTEGER,
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by        TEXT,
@@ -1413,7 +1413,7 @@ class Database:
               faelligkeitsdatum TEXT,
               status            TEXT NOT NULL DEFAULT 'offen',
               bezahlt_am        TEXT,
-              kassenbuchung_id  INTEGER REFERENCES kassenbuchungen(id),
+              kassenbuchung_id  INTEGER,
               version          INTEGER NOT NULL DEFAULT 1,
               created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by       TEXT,
@@ -2064,6 +2064,23 @@ class Database:
               deleted_by   TEXT,
               PRIMARY KEY (id, version)
             )
+        """)
+
+        # Forward-Referenzen: Diese FKs werden erst NACH allen CREATE TABLE gesetzt,
+        # weil ihre Ziel-Tabelle in der Erzeugungsreihenfolge später kommt
+        # (mitglied vor users, beitrag_sollstellung vor kassenbuchungen).
+        # Inline-REFERENCES würden beim Frischaufbau mit UndefinedTable abbrechen.
+        # Constraint-Namen entsprechen den Postgres-Defaults, damit frisch gebaute
+        # und hochmigrierte DBs identisch sind.
+        cur.execute("""
+            ALTER TABLE mitglied
+            ADD CONSTRAINT mitglied_user_id_fkey
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        """)
+        cur.execute("""
+            ALTER TABLE beitrag_sollstellung
+            ADD CONSTRAINT beitrag_sollstellung_kassenbuchung_id_fkey
+            FOREIGN KEY (kassenbuchung_id) REFERENCES kassenbuchungen(id)
         """)
 
     # -----------------------------------
