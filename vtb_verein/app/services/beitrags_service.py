@@ -194,8 +194,8 @@ class BeitragsService:
 
         - Vereinsbeitrag (abteilung_id IS NULL): alle aktiven Vereinsmitglieder
         - Abteilungsbeitrag: Mitglieder der Abteilung, gefiltert nach Status/Funktion
-        - ausnahme_funktion: Mitglieder mit dieser Funktion werden immer ausgeschlossen
-        - bedingung_funktion: nur Mitglieder mit dieser Funktion werden eingeschlossen
+        - ausnahme_funktionen: Mitglieder mit (irgend)einer dieser Funktionen werden ausgeschlossen
+        - bedingung_funktionen: nur Mitglieder mit (mind.) einer dieser Funktionen werden eingeschlossen
         - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
           ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
         """
@@ -217,11 +217,13 @@ class BeitragsService:
                 where.append(f"ma.status IN ({placeholders})")
                 params.extend(status_filter)
 
-        if regel.bedingung_funktion:
+        if regel.bedingung_funktionen:
+            # Mitglied muss mindestens eine der gewählten Funktionen haben (ODER).
+            # DISTINCT im finalen SELECT entdoppelt Mehrfach-Treffer aus dem JOIN.
             joins.append("JOIN mitglied_funktion mf_incl ON mf_incl.mitglied_id = m.id")
-            where += ["mf_incl.funktion = %s", "mf_incl.deleted_at IS NULL",
+            where += ["mf_incl.funktion = ANY(%s)", "mf_incl.deleted_at IS NULL",
                       "(mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE)"]
-            params.append(regel.bedingung_funktion)
+            params.append(regel.bedingung_funktionen)
             # Abteilungs-Zusatz an der Funktions-Bedingung = MITGLIEDSCHAFT in dieser
             # Abteilung (nicht: Funktion auf die Abteilung getaggt). Die Regel greift nur,
             # wenn das Mitglied die Funktion hat UND in der Abteilung ist.
@@ -234,14 +236,14 @@ class BeitragsService:
                 )
                 params.append(regel.bedingung_funktion_abteilung_id)
 
-        if regel.ausnahme_funktion:
-            # Ausschluss greift, wenn das Mitglied die Funktion hat; mit Abteilungs-Zusatz
-            # zusätzlich nur, wenn es auch Mitglied dieser Abteilung ist.
+        if regel.ausnahme_funktionen:
+            # Ausschluss greift, wenn das Mitglied (irgend)eine der Funktionen hat; mit
+            # Abteilungs-Zusatz zusätzlich nur, wenn es auch Mitglied dieser Abteilung ist.
             cond = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_excl "
-                    "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = %s "
+                    "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = ANY(%s) "
                     "AND mf_excl.deleted_at IS NULL "
                     "AND (mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE))")
-            params.append(regel.ausnahme_funktion)
+            params.append(regel.ausnahme_funktionen)
             if regel.ausnahme_funktion_abteilung_id is not None:
                 cond += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_excl "
                          "WHERE ma_excl.mitglied_id = m.id AND ma_excl.abteilung_id = %s "

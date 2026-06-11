@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 
 class Database:
@@ -94,6 +94,7 @@ class Database:
             30: self._migrate_v29_to_v30,
             31: self._migrate_v30_to_v31,
             32: self._migrate_v31_to_v32,
+            33: self._migrate_v32_to_v33,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1156,6 +1157,87 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 32 WHERE id = 1")
 
+    def _migrate_v32_to_v33(self) -> None:
+        """Ein-/Ausschluss von Funktionen je Beitragsregel von Einzelwert auf
+        Mehrfachauswahl umstellen: bedingung_funktion/ausnahme_funktion (TEXT) →
+        bedingung_funktionen/ausnahme_funktionen (TEXT[]). Bestehende Einzelwerte
+        werden in einelementige Arrays migriert, danach die Altspalten entfernt.
+        Die Abteilungs-Qualifizierer (…_abteilung_id) bleiben unverändert."""
+        with self.cursor() as cur:
+            # 1) Neue Array-Spalten anlegen
+            for tbl in ('beitragsregel', 'beitragsregel_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS bedingung_funktionen TEXT[]")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS ausnahme_funktionen TEXT[]")
+
+            # 2) Backfill: vorhandene Einzelwerte in einelementige Arrays überführen
+            for tbl in ('beitragsregel', 'beitragsregel_history'):
+                cur.execute(
+                    f"UPDATE {tbl} SET bedingung_funktionen = ARRAY[bedingung_funktion] "
+                    f"WHERE bedingung_funktion IS NOT NULL AND bedingung_funktion <> ''"
+                )
+                cur.execute(
+                    f"UPDATE {tbl} SET ausnahme_funktionen = ARRAY[ausnahme_funktion] "
+                    f"WHERE ausnahme_funktion IS NOT NULL AND ausnahme_funktion <> ''"
+                )
+
+            # 3) Audit-Trigger-Funktionen auf die neuen Spalten umstellen (vor dem Drop,
+            #    damit die Funktionskörper keine entfallenden Spalten mehr referenzieren)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ,
+                        bedingung_funktionen, bedingung_funktion_abteilung_id,
+                        ausnahme_funktionen, ausnahme_funktion_abteilung_id,
+                        bedingung_alter_min, bedingung_alter_max,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ,
+                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
+                        NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ,
+                            bedingung_funktionen, bedingung_funktion_abteilung_id,
+                            ausnahme_funktionen, ausnahme_funktion_abteilung_id,
+                            bedingung_alter_min, bedingung_alter_max,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ,
+                            NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                            NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
+                            NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+
+            # 4) Altspalten entfernen
+            for tbl in ('beitragsregel', 'beitragsregel_history'):
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS bedingung_funktion")
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS ausnahme_funktion")
+
+            cur.execute("UPDATE schema_version SET version = 33 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1390,9 +1472,9 @@ class Database:
               gueltig_bis                  TEXT,
               bedingung_raw                TEXT,
               bedingung_abteilung_status   TEXT,
-              bedingung_funktion           TEXT,
+              bedingung_funktionen         TEXT[],
               bedingung_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
-              ausnahme_funktion            TEXT,
+              ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
@@ -1418,9 +1500,9 @@ class Database:
               gueltig_bis                  TEXT,
               bedingung_raw                TEXT,
               bedingung_abteilung_status   TEXT,
-              bedingung_funktion           TEXT,
+              bedingung_funktionen         TEXT[],
               bedingung_funktion_abteilung_id INTEGER,
-              ausnahme_funktion            TEXT,
+              ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER,
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
@@ -2746,14 +2828,16 @@ class Database:
                     id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                     zahler_typ,
-                    bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                    bedingung_funktionen, bedingung_funktion_abteilung_id,
+                    ausnahme_funktionen, ausnahme_funktion_abteilung_id,
                     bedingung_alter_min, bedingung_alter_max,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                     NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                     NEW.zahler_typ,
-                    NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                    NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                    NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
                     NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
@@ -2768,14 +2852,16 @@ class Database:
                         id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                         gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                         zahler_typ,
-                        bedingung_funktion, ausnahme_funktion, ausnahme_funktion_abteilung_id,
+                        bedingung_funktionen, bedingung_funktion_abteilung_id,
+                        ausnahme_funktionen, ausnahme_funktion_abteilung_id,
                         bedingung_alter_min, bedingung_alter_max,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                         NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                         NEW.zahler_typ,
-                        NEW.bedingung_funktion, NEW.ausnahme_funktion, NEW.ausnahme_funktion_abteilung_id,
+                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
                         NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );

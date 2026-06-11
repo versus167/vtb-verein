@@ -44,11 +44,11 @@
                 <q-chip v-if="r.bedingung_abteilung_status" dense size="sm" color="orange" text-color="white">
                   Status: {{ r.bedingung_abteilung_status }}
                 </q-chip>
-                <q-chip v-if="r.bedingung_funktion" dense size="sm" color="indigo" text-color="white">
-                  Funktion: {{ funktionLabel(r.bedingung_funktion) }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
+                <q-chip v-if="r.bedingung_funktionen && r.bedingung_funktionen.length" dense size="sm" color="indigo" text-color="white">
+                  Funktion: {{ r.bedingung_funktionen.map(funktionLabel).join(', ') }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
-                <q-chip v-if="r.ausnahme_funktion" dense size="sm" color="deep-orange" text-color="white">
-                  Ausnahme: {{ funktionLabel(r.ausnahme_funktion) }}{{ r.ausnahme_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.ausnahme_funktion_abteilung_id)?.name ?? '?'})` : '' }}
+                <q-chip v-if="r.ausnahme_funktionen && r.ausnahme_funktionen.length" dense size="sm" color="deep-orange" text-color="white">
+                  Ausnahme: {{ r.ausnahme_funktionen.map(funktionLabel).join(', ') }}{{ r.ausnahme_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.ausnahme_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
                 <q-chip v-if="r.bedingung_alter_min != null || r.bedingung_alter_max != null" dense size="sm" color="blue-grey" text-color="white">
                   Alter {{ r.bedingung_alter_min ?? 0 }}–{{ r.bedingung_alter_max ?? '∞' }} J.
@@ -210,24 +210,26 @@
             label="Nur für Abteilungs-Status (kommagetrennt, leer = alle)"
             outlined dense />
           <q-select
-            v-model="regelForm.bedingung_funktion"
+            v-model="regelForm.bedingung_funktionen"
             :options="funktionOptionen" emit-value map-options
-            label="Bedingung: Nur für Funktion (leer = alle)"
+            multiple use-chips
+            label="Bedingung: Nur für Funktionen (leer = alle)"
             outlined dense clearable />
           <q-select
-            v-if="regelForm.bedingung_funktion"
+            v-if="regelForm.bedingung_funktionen && regelForm.bedingung_funktionen.length"
             v-model="regelForm.bedingung_funktion_abteilung_id"
             :options="abteilungOptions" option-value="id" option-label="name"
             emit-value map-options
             label="Bedingung gilt für Abteilung (leer = alle)"
             outlined dense clearable />
           <q-select
-            v-model="regelForm.ausnahme_funktion"
+            v-model="regelForm.ausnahme_funktionen"
             :options="funktionOptionen" emit-value map-options
-            label="Ausnahme: Funktion ausschließen (leer = keine)"
+            multiple use-chips
+            label="Ausnahme: Funktionen ausschließen (leer = keine)"
             outlined dense clearable />
           <q-select
-            v-if="regelForm.ausnahme_funktion"
+            v-if="regelForm.ausnahme_funktionen && regelForm.ausnahme_funktionen.length"
             v-model="regelForm.ausnahme_funktion_abteilung_id"
             :options="abteilungOptions" option-value="id" option-label="name"
             emit-value map-options
@@ -347,9 +349,9 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: r.betrag_pro_monat, einzug_turnus: r.einzug_turnus,
     gueltig_ab: r.gueltig_ab, gueltig_bis: r.gueltig_bis ?? '',
     bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
-    bedingung_funktion: r.bedingung_funktion ?? null,
+    bedingung_funktionen: r.bedingung_funktionen ?? [],
     bedingung_funktion_abteilung_id: r.bedingung_funktion_abteilung_id ?? null,
-    ausnahme_funktion: r.ausnahme_funktion ?? null,
+    ausnahme_funktionen: r.ausnahme_funktionen ?? [],
     ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
     bedingung_alter_min: r.bedingung_alter_min ?? null,
     bedingung_alter_max: r.bedingung_alter_max ?? null,
@@ -360,9 +362,9 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: 0, einzug_turnus: 'quartal',
     gueltig_ab: heute, gueltig_bis: '',
     bedingung_abteilung_status: '',
-    bedingung_funktion: null,
+    bedingung_funktionen: [],
     bedingung_funktion_abteilung_id: null,
-    ausnahme_funktion: null,
+    ausnahme_funktionen: [],
     ausnahme_funktion_abteilung_id: null,
     bedingung_alter_min: null,
     bedingung_alter_max: null,
@@ -380,9 +382,13 @@ async function saveRegel() {
       betrag_pro_monat: Number(regelForm.value.betrag_pro_monat),
       gueltig_bis: regelForm.value.gueltig_bis || null,
       bedingung_abteilung_status: regelForm.value.bedingung_abteilung_status || null,
-      bedingung_funktion: regelForm.value.bedingung_funktion || null,
-      ausnahme_funktion: regelForm.value.ausnahme_funktion || null,
-      ausnahme_funktion_abteilung_id: regelForm.value.ausnahme_funktion_abteilung_id || null,
+      bedingung_funktionen: regelForm.value.bedingung_funktionen || [],
+      ausnahme_funktionen: regelForm.value.ausnahme_funktionen || [],
+      // Abteilungs-Qualifizierer nur behalten, wenn überhaupt Funktionen gewählt sind
+      bedingung_funktion_abteilung_id: regelForm.value.bedingung_funktionen?.length
+        ? (regelForm.value.bedingung_funktion_abteilung_id || null) : null,
+      ausnahme_funktion_abteilung_id: regelForm.value.ausnahme_funktionen?.length
+        ? (regelForm.value.ausnahme_funktion_abteilung_id || null) : null,
       bedingung_alter_min: regelForm.value.bedingung_alter_min === '' || regelForm.value.bedingung_alter_min == null ? null : Number(regelForm.value.bedingung_alter_min),
       bedingung_alter_max: regelForm.value.bedingung_alter_max === '' || regelForm.value.bedingung_alter_max == null ? null : Number(regelForm.value.bedingung_alter_max),
     }

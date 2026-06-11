@@ -44,9 +44,9 @@ class RegelCreate(BaseModel):
     gueltig_ab: str
     gueltig_bis: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None
-    bedingung_funktion: Optional[str] = None
+    bedingung_funktionen: list[str] = []
     bedingung_funktion_abteilung_id: Optional[int] = None
-    ausnahme_funktion: Optional[str] = None
+    ausnahme_funktionen: list[str] = []
     ausnahme_funktion_abteilung_id: Optional[int] = None
     bedingung_alter_min: Optional[int] = None
     bedingung_alter_max: Optional[int] = None
@@ -84,9 +84,9 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         betrag_pro_monat=data.betrag_pro_monat, einzug_turnus=data.einzug_turnus,
         gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
         bedingung_abteilung_status=data.bedingung_abteilung_status,
-        bedingung_funktion=data.bedingung_funktion,
+        bedingung_funktionen=data.bedingung_funktionen,
         bedingung_funktion_abteilung_id=data.bedingung_funktion_abteilung_id,
-        ausnahme_funktion=data.ausnahme_funktion,
+        ausnahme_funktionen=data.ausnahme_funktionen,
         ausnahme_funktion_abteilung_id=data.ausnahme_funktion_abteilung_id,
         bedingung_alter_min=data.bedingung_alter_min,
         bedingung_alter_max=data.bedingung_alter_max,
@@ -109,9 +109,9 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.gueltig_ab = data.gueltig_ab
     r.gueltig_bis = data.gueltig_bis
     r.bedingung_abteilung_status = data.bedingung_abteilung_status
-    r.bedingung_funktion = data.bedingung_funktion
+    r.bedingung_funktionen = data.bedingung_funktionen
     r.bedingung_funktion_abteilung_id = data.bedingung_funktion_abteilung_id
-    r.ausnahme_funktion = data.ausnahme_funktion
+    r.ausnahme_funktionen = data.ausnahme_funktionen
     r.ausnahme_funktion_abteilung_id = data.ausnahme_funktion_abteilung_id
     r.bedingung_alter_min = data.bedingung_alter_min
     r.bedingung_alter_max = data.bedingung_alter_max
@@ -241,9 +241,9 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'einzug_turnus': r.einzug_turnus,
         'gueltig_ab': r.gueltig_ab, 'gueltig_bis': r.gueltig_bis,
         'bedingung_abteilung_status': r.bedingung_abteilung_status,
-        'bedingung_funktion': r.bedingung_funktion,
+        'bedingung_funktionen': r.bedingung_funktionen,
         'bedingung_funktion_abteilung_id': r.bedingung_funktion_abteilung_id,
-        'ausnahme_funktion': r.ausnahme_funktion,
+        'ausnahme_funktionen': r.ausnahme_funktionen,
         'ausnahme_funktion_abteilung_id': r.ausnahme_funktion_abteilung_id,
         'bedingung_alter_min': r.bedingung_alter_min,
         'bedingung_alter_max': r.bedingung_alter_max,
