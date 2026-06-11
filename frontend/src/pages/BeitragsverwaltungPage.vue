@@ -464,6 +464,7 @@ const vorschauColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
   { name: 'beitragsregel_name',label: 'Regel',        field: 'beitragsregel_name',align: 'left' },
   { name: 'betrag',            label: 'Betrag',       field: r => r.betrag.toFixed(2) + ' €', align: 'right' },
+  { name: 'monate',            label: 'Monate',       field: r => `${r.anzahl_monate}/${r.monate_im_zeitraum}`, align: 'center' },
   { name: 'zeitraum',          label: 'Zeitraum',     field: 'zeitraum',           align: 'left' },
   { name: 'zahler',            label: 'Zahler',       field: 'zahler_typ',         align: 'left' },
   { name: 'status',            label: 'Status',       field: 'bereits_vorhanden',  align: 'left' },

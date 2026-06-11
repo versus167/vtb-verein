@@ -33,6 +33,9 @@ class VorschauPosition:
     bereits_vorhanden: bool           # True = Duplikat, wird übersprungen
     # Alle Abteilungen, denen das Mitglied aktuell angehört (für Frontend-Filter).
     mitglied_abteilung_ids: list[int] = field(default_factory=list)
+    # Anteilige Abrechnung: tatsächlich berechnete Monate / Monate im Turnus.
+    anzahl_monate: int = 0
+    monate_im_zeitraum: int = 0
 
 
 @dataclass
@@ -68,7 +71,7 @@ def faelligkeitsdatum(turnus: str, stichtag: date) -> str:
     if turnus == 'quartal':
         q = (stichtag.month - 1) // 3
         letzter_monat = (q + 1) * 3
-        naechster = date(stichtag.year + (1 if letzter_monat > 12 else 0),
+        naechster = date(stichtag.year + (1 if letzter_monat == 12 else 0),
                          letzter_monat % 12 + 1, 1)
         return (naechster - timedelta(days=1)).isoformat()
     if turnus == 'halbjahr':
@@ -78,6 +81,54 @@ def faelligkeitsdatum(turnus: str, stichtag: date) -> str:
         return (naechster - timedelta(days=1)).isoformat()
     # jahr
     return date(stichtag.year, 12, 31).isoformat()
+
+
+def _letzter_tag(jahr: int, monat: int) -> date:
+    """Letzter Kalendertag eines Monats."""
+    if monat == 12:
+        return date(jahr, 12, 31)
+    return date(jahr, monat + 1, 1) - timedelta(days=1)
+
+
+def zeitraum_monate(turnus: str, stichtag: date) -> list[tuple[int, int]]:
+    """Alle Kalendermonate (jahr, monat) im Abrechnungszeitraum des Stichtags."""
+    if turnus == 'monat':
+        return [(stichtag.year, stichtag.month)]
+    if turnus == 'quartal':
+        start = ((stichtag.month - 1) // 3) * 3 + 1
+        return [(stichtag.year, start + i) for i in range(3)]
+    if turnus == 'halbjahr':
+        start = 1 if stichtag.month <= 6 else 7
+        return [(stichtag.year, start + i) for i in range(6)]
+    # jahr
+    return [(stichtag.year, m) for m in range(1, 13)]
+
+
+def parse_datum(s: Optional[str]) -> Optional[date]:
+    """Parst ein TEXT-Datum (führende 10 Zeichen, ISO) zu date; leer/ungültig → None."""
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def aktive_monate_menge(monate: list[tuple[int, int]],
+                        von: Optional[date],
+                        bis: Optional[date]) -> set[tuple[int, int]]:
+    """
+    Teilmenge der `monate`, in denen das Aktiv-Intervall [von, bis] mindestens einen
+    Tag überlappt – „angefangener Monat zählt voll", der Austrittsmonat zählt mit.
+    von=None → seit jeher aktiv; bis=None → unbefristet aktiv.
+    """
+    treffer: set[tuple[int, int]] = set()
+    for jahr, monat in monate:
+        monat_start = date(jahr, monat, 1)
+        monat_ende = _letzter_tag(jahr, monat)
+        if (von is None or von <= monat_ende) and (bis is None or bis >= monat_start):
+            treffer.add((jahr, monat))
+    return treffer
 
 
 # ---------------------------------------------------------------------------
@@ -101,14 +152,31 @@ class BeitragsService:
         for regel in regeln:
             zeitraum = zeitraum_label(regel.einzug_turnus, stichtag)
             faellig = faelligkeitsdatum(regel.einzug_turnus, stichtag)
-            betrag = regel.betrag_pro_einzug
+            monate = zeitraum_monate(regel.einzug_turnus, stichtag)
+            periode_start = date(monate[0][0], monate[0][1], 1)
+            periode_ende = _letzter_tag(monate[-1][0], monate[-1][1])
 
-            for mitglied in self._betroffene_mitglieder(regel, stichtag_str):
-                bereits = self.db.sollstellungen.exists(
-                    mitglied['id'], regel.id, zeitraum
-                )
+            # Ein Mitglied kann mehrere Aktiv-Intervalle haben (z.B. mehrere
+            # Abteilungs-Mitgliedschaften); Treffer-Monate werden vereinigt.
+            aktiv_pro_mitglied: dict[int, dict] = {}
+            for mitglied in self._betroffene_mitglieder(
+                    regel, stichtag_str, periode_start, periode_ende):
+                von = parse_datum(mitglied.get('aktiv_von'))
+                bis = parse_datum(mitglied.get('aktiv_bis'))
+                eintrag = aktiv_pro_mitglied.setdefault(
+                    mitglied['id'], {'mitglied': mitglied, 'monate': set()})
+                eintrag['monate'] |= aktive_monate_menge(monate, von, bis)
+
+            for mid, eintrag in aktiv_pro_mitglied.items():
+                anzahl = len(eintrag['monate'])
+                if anzahl == 0:
+                    continue  # im Abrechnungszeitraum nicht aktiv → keine Forderung
+                mitglied = eintrag['mitglied']
+                # betrag_pro_monat × volle Monate – immer ganze Cent, keine Rundung nötig.
+                betrag = round(regel.betrag_pro_monat * anzahl, 2)
+                bereits = self.db.sollstellungen.exists(mid, regel.id, zeitraum)
                 positionen.append(VorschauPosition(
-                    mitglied_id=mitglied['id'],
+                    mitglied_id=mid,
                     mitglied_vorname=mitglied['vorname'],
                     mitglied_nachname=mitglied['nachname'],
                     mitglied_iban=mitglied.get('iban'),
@@ -121,6 +189,8 @@ class BeitragsService:
                     zeitraum=zeitraum,
                     faelligkeitsdatum=faellig,
                     bereits_vorhanden=bereits,
+                    anzahl_monate=anzahl,
+                    monate_im_zeitraum=len(monate),
                 ))
 
         # Abteilungs-Mitgliedschaften der betroffenen Mitglieder nachladen, damit
@@ -188,28 +258,43 @@ class BeitragsService:
                 result.setdefault(row['mitglied_id'], []).append(row['abteilung_id'])
         return result
 
-    def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str) -> list[dict]:
+    def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str,
+                               periode_start: date, periode_ende: date) -> list[dict]:
         """
-        Ermittelt alle Mitglieder auf die eine Regel zutrifft.
+        Ermittelt alle Mitglieder auf die eine Regel zutrifft, inkl. ihres Aktiv-
+        Intervalls (`aktiv_von`/`aktiv_bis`) für die anteilige Monatsberechnung.
 
-        - Vereinsbeitrag (abteilung_id IS NULL): alle aktiven Vereinsmitglieder
-        - Abteilungsbeitrag: Mitglieder der Abteilung, gefiltert nach Status/Funktion
+        - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
+        - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
         - ausnahme_funktionen: Mitglieder mit (irgend)einer dieser Funktionen werden ausgeschlossen
         - bedingung_funktionen: nur Mitglieder mit (mind.) einer dieser Funktionen werden eingeschlossen
         - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
           ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
+
+        Der Datums-Vorfilter grenzt nur grob auf den Zeitraum ein (string-Vergleich,
+        regex-geschützt gegen ungültige Werte); die maßgebliche Monatsüberlappung
+        bestimmt der Service über `aktive_monate_menge`.
         """
         joins: list[str] = []
         where: list[str] = ["m.deleted_at IS NULL"]
         params: list = []
 
         if regel.abteilung_id is None:
-            where.append("(m.austrittsdatum IS NULL OR m.austrittsdatum = '')")
+            aktiv_cols = "m.eintrittsdatum AS aktiv_von, m.austrittsdatum AS aktiv_bis"
+            where += [
+                "NOT (m.eintrittsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(m.eintrittsdatum,10) > %s)",
+                "NOT (m.austrittsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(m.austrittsdatum,10) < %s)",
+            ]
+            params.extend([periode_ende.isoformat(), periode_start.isoformat()])
         else:
+            aktiv_cols = "ma.von AS aktiv_von, ma.bis AS aktiv_bis"
             joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
-            where += ["ma.abteilung_id = %s", "ma.deleted_at IS NULL",
-                      "(ma.bis IS NULL OR ma.bis::date >= CURRENT_DATE)"]
-            params.append(regel.abteilung_id)
+            where += [
+                "ma.abteilung_id = %s", "ma.deleted_at IS NULL",
+                "NOT (ma.von ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(ma.von,10) > %s)",
+                "NOT (ma.bis ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(ma.bis,10) < %s)",
+            ]
+            params.extend([regel.abteilung_id, periode_ende.isoformat(), periode_start.isoformat()])
 
             status_filter = regel.bedingung_status_liste
             if status_filter:
@@ -264,7 +349,8 @@ class BeitragsService:
                 params.extend([stichtag_str, regel.bedingung_alter_max])
 
         sql = f"""
-            SELECT DISTINCT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber
+            SELECT DISTINCT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber,
+                   {aktiv_cols}
             FROM mitglied m
             {' '.join(joins)}
             WHERE {' AND '.join(where)}

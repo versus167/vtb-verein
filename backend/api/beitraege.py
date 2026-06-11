@@ -152,6 +152,8 @@ def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
             'zeitraum': p.zeitraum,
             'faelligkeitsdatum': p.faelligkeitsdatum,
             'bereits_vorhanden': p.bereits_vorhanden,
+            'anzahl_monate': p.anzahl_monate,
+            'monate_im_zeitraum': p.monate_im_zeitraum,
         }
         for p in positionen
     ]
