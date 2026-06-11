@@ -53,7 +53,7 @@ API-Dokumentation: http://localhost:8000/api/docs
 - [x] Abteilungen (CRUD + Soft-Delete + Papierkorb/Restore)
 - [x] Benutzerverwaltung (CRUD + Berechtigungs-Matrix)
 - [x] Quasar SPA: Login, Dashboard, Navigation, alle obigen Seiten
-- [x] PostgreSQL-Migration (psycopg3, PL/pgSQL-Trigger, Alembic)
+- [x] PostgreSQL-Migration (psycopg3, PL/pgSQL-Trigger)
 - [x] Kassenbuch (Kassen-CRUD, Buchungen, CSV-Export, kassenspez. Berechtigungen)
 - [x] Anhänge (Kassenbuch + Tickets): Upload, Download, Soft-Delete; `AnhangPanel.vue` geteilt
 - [x] Tickets (vollständig): Bereiche, Kategorien, CRUD, Statuswechsel, Anhänge, Kommentare, Berechtigungen, Mobile
@@ -81,19 +81,17 @@ API-Dokumentation: http://localhost:8000/api/docs
 
 ## PostgreSQL-Migration (✅ abgeschlossen 2026-05-18)
 
-- Treiber: `psycopg[binary]>=3.1` + `sqlalchemy>=2.0` + `alembic>=1.13`
+- Treiber: `psycopg[binary]>=3.1` (rohes SQL, kein ORM)
 - `vtb_verein/app/db/database.py` komplett neu: psycopg3-Connection, konsolidiertes Schema v15, PL/pgSQL-Trigger
 - Alle Repositories: `?` → `%s`, `lastrowid` → `RETURNING id`, SQLite-Datumsfunktionen ersetzt
 - Verbindung via `VTB_DATABASE_URL` in `.env` (`postgresql://user:pw@host:port/db`)
-- Alembic initialisiert (`backend/alembic/`), DB auf Baseline-Revision gestempelt
 - `docker-compose.yml` um `db`-Service (postgres:18) erweitert
 
-### Zukünftige Schema-Änderungen
-```bash
-./venv/bin/alembic revision -m "beschreibung"   # neue Migration anlegen
-./venv/bin/alembic upgrade head                  # Migration ausführen
-./venv/bin/alembic current                       # aktuelle Version prüfen
-```
+### Schema-Änderungen
+Migrationen laufen **nicht** über Alembic, sondern über eine eigene versionierte
+Pipeline in `database.py` (siehe README → „Datenbank-Schema & Migrationen"):
+neue `_migrate_vX_to_vY()`-Funktion anlegen, in `migration_map` eintragen und
+`SCHEMA_VERSION` erhöhen. Die Migration läuft beim Backend-Start automatisch.
 
 ---
 

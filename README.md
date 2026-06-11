@@ -232,9 +232,6 @@ INSERT/UPDATE-Trigger). Beträge im Kassenbuch in **Cent** (Integer).
 Jüngste Meilensteine: v24 mehrere Kontaktdaten · v25 Funktions-Pflichtzeitraum ·
 v26 altersabhängige Beitragsregeln · v27 Mannschaften · v28 Aufnahme-/Einmalgebühren.
 
-> Hinweis: `sqlalchemy`/`alembic` sind als Dependencies vorhanden, werden für die
-> Laufzeit-Migrationen aber **nicht** verwendet.
-
 ## Permissions
 
 Feingranulare Permission-Matrix in der Form `ressource.aktion`, geprüft im API-Layer
