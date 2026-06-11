@@ -211,6 +211,14 @@
                 </q-chip>
               </q-td>
             </template>
+            <template #body-cell-edit="props">
+              <q-td :props="props">
+                <q-btn v-if="kannMitgliedBearbeiten" flat dense round icon="edit"
+                  color="primary" size="sm" @click="openMitgliedEdit(props.row)">
+                  <q-tooltip>Mitglied bearbeiten (Schlüsselung prüfen/korrigieren)</q-tooltip>
+                </q-btn>
+              </q-td>
+            </template>
           </q-table>
           <div class="q-mt-md">
             <q-btn v-if="kannAbrechnen && vorschauNeu.length > 0"
@@ -339,6 +347,10 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Mitglied-Bearbeiten-Dialog (Schlüsselung direkt in der Vorschau korrigieren) -->
+    <MitgliedEditDialog v-model="editMitgliedOpen" :mitglied-id="editMitgliedId"
+      :mitglied-name="editMitgliedName" @saved="ladeVorschau" />
   </q-page>
 </template>
 
@@ -347,6 +359,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -586,7 +599,20 @@ const vorschauColumns = [
   { name: 'zeitraum',          label: 'Zeitraum',     field: 'zeitraum',           align: 'left' },
   { name: 'zahler',            label: 'Zahler',       field: 'zahler_typ',         align: 'left' },
   { name: 'status',            label: 'Status',       field: 'bereits_vorhanden',  align: 'left' },
+  { name: 'edit',              label: '',             field: 'edit',               align: 'right' },
 ]
+
+// Mitglied direkt aus der Vorschau bearbeiten (Schlüsselung prüfen/korrigieren).
+const kannMitgliedBearbeiten = computed(() => auth.hasPermission('personen.write'))
+const editMitgliedOpen = ref(false)
+const editMitgliedId   = ref(null)
+const editMitgliedName = ref('')
+
+function openMitgliedEdit(row) {
+  editMitgliedId.value = row.mitglied_id
+  editMitgliedName.value = row.mitglied_name
+  editMitgliedOpen.value = true
+}
 
 async function ladeVorschau() {
   vorschauLoading.value = true
