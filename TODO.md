@@ -13,9 +13,9 @@
 - [ ] **Pagination / Lazy Loading** für große Listen (>1000 Mitglieder); Performance-Test
 
 ### Mitglieder-Import (SPG-Verein)
-- [ ] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`
+- [x] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`
       ist fertig + idempotent)
-- [ ] Beiträge-Import ergänzen
+- [x] Beiträge-Import ergänzen
 - [ ] Neu importierte Felder in der Personen-UI sichtbar machen
 
 ### Tickets
@@ -39,11 +39,18 @@ Offen ist die Verdrahtung weiterer Ereignisse:
 
 ## 🧹 Tech-Debt / bekannte Altlasten
 
-> Stand vor Bearbeitung jeweils kurz verifizieren.
-- [ ] Frischaufbau-FK-Bug (frische DB ohne Migrationspfad)
-- [ ] Fehlende `beitragsregel`-Trigger
-- [ ] Alte Tests, die noch von SQLite ausgehen, auf PostgreSQL umstellen oder entfernen
-- [ ] Schema-Migrationen via Wegwerf-Container + Dump testen (Pipeline etablieren)
+Offen:
+- [ ] PostgreSQL-Test-Fixture/conftest etablieren (es gibt keine DB-nahe Test-Infra;
+      bewährter manueller Weg bisher: Dev-DB-Dump → Wegwerf-Container postgres:18 → migrieren)
+- [ ] Stale SQLite-Erwähnung in `vtb_verein/tests/README.md` bereinigen
+
+Erledigt (2026-06-11):
+- [x] Frischaufbau-FK-Bug behoben – `mitglied→users` / `beitrag_sollstellung→kassenbuchungen`
+      werden jetzt nach allen CREATE TABLE per ALTER nachgezogen
+      (Branch `fix/frischaufbau-fk-reihenfolge`)
+- [x] Fehlende Audit-Trigger auf `beitragsregel` **und** `beitrag_sollstellung` nachgezogen
+      (Migration v32, Branch `fix/fehlende-beitrag-trigger`)
+- [x] Veraltete SQLite-Tests entfernt (nur noch Doku-Erwähnung übrig, s.o.)
 
 ## 💡 Backlog / Ideen (längerfristig)
 
