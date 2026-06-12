@@ -136,8 +136,8 @@ class TicketService:
             tickets = self._ticket_repo.list_all()
         return tickets
 
-    def list_tickets_with_counts(self) -> list[Ticket]:
-        return self._ticket_repo.list_all_with_counts()
+    def list_tickets_with_counts(self, nur_geloeschte: bool = False) -> list[Ticket]:
+        return self._ticket_repo.list_all_with_counts(nur_geloeschte=nur_geloeschte)
 
     def create_ticket(self, ticket: Ticket, created_by: str, notify: bool = True) -> Ticket:
         created = self._ticket_repo.create(ticket, created_by)
@@ -185,6 +185,9 @@ class TicketService:
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
         return self._ticket_repo.mark_deleted(ticket_id, deleted_by)
+
+    def restore_ticket(self, ticket_id: int, restored_by: str) -> bool:
+        return self._ticket_repo.restore(ticket_id, restored_by)
 
     def get_ticket_history(self, ticket_id: int) -> list[dict]:
         return self._ticket_repo.get_history(ticket_id)

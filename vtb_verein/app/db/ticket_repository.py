@@ -119,6 +119,17 @@ class TicketRepository:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def restore(self, id: int, restored_by: str) -> bool:
+        """Hebt einen Soft-Delete wieder auf (Ticket erscheint wieder in der Liste)."""
+        cursor = self.conn.execute(
+            "UPDATE tickets SET deleted_at = NULL, deleted_by = NULL, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
+            "WHERE id = %s AND deleted_at IS NOT NULL",
+            (restored_by, id)
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
     def get_history(self, ticket_id: int) -> list[dict]:
         cursor = self.conn.execute(
             "SELECT id, version, titel, status, prioritaet, bereich_id, kategorie_id, "
@@ -134,7 +145,11 @@ class TicketRepository:
         ]
         return [dict(row) for row in cursor.fetchall()]
 
-    def list_all_with_counts(self) -> list[Ticket]:
+    def list_all_with_counts(self, nur_geloeschte: bool = False) -> list[Ticket]:
+        if nur_geloeschte:
+            where_order = "WHERE t.deleted_at IS NOT NULL ORDER BY t.deleted_at DESC"
+        else:
+            where_order = "WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC"
         cursor = self.conn.execute(
             "SELECT t.id, t.titel, t.beschreibung, t.status, t.prioritaet, "
             "t.bereich_id, t.kategorie_id, t.gemeldet_von, t.zugewiesen_an, "
@@ -144,7 +159,7 @@ class TicketRepository:
             " WHERE k.ticket_id = t.id AND k.deleted_at IS NULL) AS kommentar_count, "
             "(SELECT COUNT(*) FROM ticket_anhaenge a "
             " WHERE a.ticket_id = t.id AND a.deleted_at IS NULL) AS anhang_count "
-            "FROM tickets t WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC"
+            "FROM tickets t " + where_order
         )
         return [self._map_ticket_with_counts(row) for row in cursor.fetchall()]
 
