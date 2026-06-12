@@ -22,30 +22,13 @@
         Kassenbuch-Berechtigungen werden pro Kasse in der Kassenverwaltung vergeben.
       </q-banner>
 
-      <div class="row q-col-gutter-md q-mb-lg">
-        <div
-          v-for="group in groups"
-          :key="group.label"
-          class="col-12 col-sm-6 col-md-4"
-        >
-          <q-card flat bordered>
-            <q-card-section>
-              <div class="row items-center q-mb-sm">
-                <q-icon :name="group.icon" color="primary" size="sm" />
-                <span class="text-subtitle2 text-weight-bold q-ml-sm">{{ group.label }}</span>
-              </div>
-              <div v-for="perm in group.permissions" :key="perm.key">
-                <q-checkbox
-                  v-model="selected"
-                  :val="perm.key"
-                  :label="perm.label"
-                  :disable="!canEdit"
-                  :color="deviatesFromDefault(perm.key) ? 'orange' : 'primary'"
-                />
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
+      <div class="q-mb-lg">
+        <PermissionMatrix
+          v-model="selected"
+          :groups="groups"
+          :readonly="!canEdit"
+          :highlight-keys="deviatingKeys"
+        />
       </div>
 
       <div v-if="canEdit" class="row q-gutter-sm">
@@ -78,6 +61,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -100,11 +84,12 @@ const hasCustomPermissions = computed(() => {
   return [...sel].some((p) => !def.has(p))
 })
 
-function deviatesFromDefault(key) {
-  const inSelected = selected.value.includes(key)
-  const inDefault = defaults.value.includes(key)
-  return inSelected !== inDefault
-}
+const deviatingKeys = computed(() => {
+  const def = new Set(defaults.value)
+  const sel = new Set(selected.value)
+  const keys = new Set([...sel, ...def])
+  return [...keys].filter(k => sel.has(k) !== def.has(k))
+})
 
 function resetToDefaults() {
   selected.value = [...defaults.value]

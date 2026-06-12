@@ -35,6 +35,9 @@
             </q-item-section>
             <q-item-section side>
               <div class="row q-gutter-xs">
+                <q-btn flat dense round icon="security" color="teal" @click="openPermissionsDialog(f)">
+                  <q-tooltip>Berechtigungen dieser Funktion</q-tooltip>
+                </q-btn>
                 <q-btn flat dense round icon="edit" color="primary" @click="openDialog(f)" />
                 <q-btn flat dense round icon="delete" color="negative" @click="confirmDelete(f)" />
               </div>
@@ -71,6 +74,34 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Berechtigungen einer Funktion -->
+    <q-dialog v-model="permDialogOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:640px;max-width:860px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6 col">
+            Berechtigungen –
+            <span class="text-weight-regular">{{ permFunktion?.name }}</span>
+          </div>
+          <q-btn flat dense round icon="close" v-close-popup />
+        </q-card-section>
+        <q-card-section class="text-caption text-grey-7 q-pt-xs">
+          Mitglieder mit dieser Funktion erben die hier gewählten Rechte (mehrere Funktionen
+          kumulieren). Eine an eine Abteilung gebundene Funktion wirkt aktuell noch vereinsweit –
+          die Abteilungs-Einschränkung wird erst später durchgesetzt.
+        </q-card-section>
+        <q-separator />
+        <q-card-section style="max-height:60vh; overflow-y:auto">
+          <q-inner-loading :showing="permLoading" />
+          <PermissionMatrix v-model="permSelected" :groups="groups" />
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="permSaving" @click="savePermissions" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -78,6 +109,7 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 
 const $q = useQuasar()
 
@@ -89,6 +121,14 @@ const saving = ref(false)
 const error = ref('')
 const editing = ref(null)
 const form = ref({ key: '', name: '', beschreibung: '' })
+
+// Funktions-Berechtigungen
+const groups = ref([])
+const permDialogOpen = ref(false)
+const permLoading = ref(false)
+const permSaving = ref(false)
+const permFunktion = ref(null)
+const permSelected = ref([])
 
 async function loadFunktionen() {
   loading.value = true
@@ -136,6 +176,40 @@ async function save() {
     error.value = e.response?.data?.detail || 'Fehler beim Speichern.'
   } finally {
     saving.value = false
+  }
+}
+
+async function openPermissionsDialog(f) {
+  permFunktion.value = f
+  permSelected.value = []
+  permDialogOpen.value = true
+  permLoading.value = true
+  try {
+    const reqs = [api.get(`/api/funktionen/${f.id}/permissions`)]
+    if (groups.value.length === 0) reqs.push(api.get('/api/users/permission-groups'))
+    const res = await Promise.all(reqs)
+    permSelected.value = res[0].data.permissions
+    if (res[1]) groups.value = res[1].data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden der Berechtigungen.' })
+    permDialogOpen.value = false
+  } finally {
+    permLoading.value = false
+  }
+}
+
+async function savePermissions() {
+  permSaving.value = true
+  try {
+    await api.put(`/api/funktionen/${permFunktion.value.id}/permissions`, {
+      permissions: permSelected.value,
+    })
+    $q.notify({ type: 'positive', message: 'Berechtigungen gespeichert' })
+    permDialogOpen.value = false
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
+  } finally {
+    permSaving.value = false
   }
 }
 
