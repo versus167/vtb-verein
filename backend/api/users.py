@@ -109,7 +109,11 @@ class PasswordChange(BaseModel):
 
 
 class PermissionsUpdate(BaseModel):
-    permissions: list[str]
+    # Neues Format (Stufe C): Tri-State-Overrides.
+    grants: list[str] | None = None
+    denies: list[str] | None = None
+    # Legacy-Format (vor Stufe C): nur Grants – weiterhin akzeptiert.
+    permissions: list[str] | None = None
 
 
 # --- Endpoints ---
@@ -207,19 +211,41 @@ def delete_user(user_id: int, user: CurrentUser, db: DB):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _permissions_payload(target, db):
+    """Effektive Rechte + Herkunft + Overrides eines Users (siehe BERECHTIGUNGEN.md)."""
+    from app.models.permission import BASE_PERMISSIONS
+    eff = db.permissions.get_effective_permissions(target.id)
+    overrides = db.permissions.get_overrides_for_user(target.id)
+    # Geerbt = aus Sockel oder Funktion (ohne individuelle Grants)
+    inherited = sorted({
+        key for key, srcs in eff.sources.items()
+        if any(s['typ'] in ('sockel', 'funktion') for s in srcs)
+    })
+    effective = []
+    for key in sorted(eff.keys()):
+        scopes = 'global' if key in eff.global_perms else sorted(eff.scoped.get(key, set()))
+        effective.append({'key': key, 'scopes': scopes})
+    return {
+        'user':      _user_to_dict(target),
+        'base':      sorted(BASE_PERMISSIONS),
+        'inherited': inherited,
+        'sources':   eff.sources,
+        'grants':    sorted(overrides['grants']),
+        'denies':    sorted(overrides['denies']),
+        'effective': effective,
+        # Backward-Compat (entfällt in Stufe D):
+        'current':   sorted(db.permissions.get_permissions_for_user(target.id)),
+        'defaults':  sorted(Permission.defaults_for_role(target.role)),
+    }
+
+
 @router.get("/{user_id}/permissions")
 def get_permissions(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    current = list(db.permissions.get_permissions_for_user(user_id))
-    defaults = list(Permission.defaults_for_role(target.role))
-    return {
-        'user':     _user_to_dict(target),
-        'current':  current,
-        'defaults': defaults,
-    }
+    return _permissions_payload(target, db)
 
 
 @router.put("/{user_id}/permissions")
@@ -228,15 +254,25 @@ def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
-    if target.role == 'admin' and Permission.PERSONEN_PERMISSIONS not in data.permissions:
-        if db.count_active_admins() <= 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Kann personen.permissions nicht entziehen: letzter aktiver Administrator",
-            )
-    db.permissions.set_permissions_for_user(
-        user_id=user_id,
-        permissions=set(data.permissions),
-        actor=user.username,
-    )
-    return {"ok": True}
+
+    valid = set(Permission.all())
+    if data.grants is not None or data.denies is not None:
+        grants = set(data.grants or [])
+        denies = set(data.denies or [])
+        unbekannt = (grants | denies) - valid
+        if unbekannt:
+            raise HTTPException(status_code=422, detail=f"Unbekannte Permission(s): {sorted(unbekannt)}")
+        if grants & denies:
+            raise HTTPException(status_code=422, detail=f"Permission gleichzeitig grant und deny: {sorted(grants & denies)}")
+        db.permissions.set_overrides_for_user(user_id, grants, denies, actor=user.username)
+    elif data.permissions is not None:
+        # Legacy: nur Grants setzen (keine Denies)
+        perms = set(data.permissions)
+        unbekannt = perms - valid
+        if unbekannt:
+            raise HTTPException(status_code=422, detail=f"Unbekannte Permission(s): {sorted(unbekannt)}")
+        db.permissions.set_permissions_for_user(user_id, perms, actor=user.username)
+    else:
+        raise HTTPException(status_code=422, detail="grants/denies oder permissions erforderlich")
+
+    return _permissions_payload(target, db)

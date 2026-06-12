@@ -92,6 +92,100 @@ class PermissionRepository(BaseRepository):
 
         return compute_effective_permissions(funktion_rows, override_rows)
 
+    def get_overrides_for_user(self, user_id: int) -> dict[str, set[str]]:
+        """Individuelle Overrides eines Users, getrennt nach grant/deny."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT permission, effect
+                FROM user_permissions
+                WHERE user_id = %s AND deleted_at IS NULL
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        return {
+            'grants': {r['permission'] for r in rows if r['effect'] == 'grant'},
+            'denies': {r['permission'] for r in rows if r['effect'] == 'deny'},
+        }
+
+    def set_overrides_for_user(
+        self,
+        user_id: int,
+        grants: set[str],
+        denies: set[str],
+        actor: str,
+    ) -> None:
+        """Setzt die individuellen Overrides eines Users (Tri-State).
+
+        grant/deny pro Permission; wegen UNIQUE(user_id, permission) existiert je
+        Permission genau eine Zeile – ein Wechsel grant↔deny ist ein UPDATE des
+        effect, Entfernen ein Soft-Delete, Hinzufügen ein Insert/Reaktivieren.
+        Bei Überschneidung gewinnt deny.
+        """
+        desired: dict[str, str] = {p: 'grant' for p in grants}
+        desired.update({p: 'deny' for p in denies})  # deny schlägt grant
+        now = datetime.now().isoformat()
+
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT permission, effect FROM user_permissions
+                WHERE user_id = %s AND deleted_at IS NULL
+                """,
+                (user_id,),
+            )
+            current = {r['permission']: r['effect'] for r in cur.fetchall()}
+
+            # Nicht mehr gewünschte Overrides soft-deleten
+            for perm in current.keys() - desired.keys():
+                cur.execute(
+                    """
+                    UPDATE user_permissions
+                    SET deleted_at = %s, deleted_by = %s,
+                        updated_at = %s, updated_by = %s, version = version + 1
+                    WHERE user_id = %s AND permission = %s AND deleted_at IS NULL
+                    """,
+                    (now, actor, now, actor, user_id, perm),
+                )
+
+            for perm, effect in desired.items():
+                if perm in current:
+                    if current[perm] != effect:
+                        cur.execute(
+                            """
+                            UPDATE user_permissions
+                            SET effect = %s, updated_at = %s, updated_by = %s, version = version + 1
+                            WHERE user_id = %s AND permission = %s AND deleted_at IS NULL
+                            """,
+                            (effect, now, actor, user_id, perm),
+                        )
+                    continue
+                # Inaktive (soft-deleted) Zeile reaktivieren oder neu anlegen
+                cur.execute(
+                    "SELECT id FROM user_permissions WHERE user_id = %s AND permission = %s",
+                    (user_id, perm),
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        """
+                        UPDATE user_permissions
+                        SET deleted_at = NULL, deleted_by = NULL, effect = %s,
+                            updated_at = %s, updated_by = %s, version = version + 1
+                        WHERE user_id = %s AND permission = %s
+                        """,
+                        (effect, now, actor, user_id, perm),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO user_permissions
+                            (user_id, permission, effect, created_at, created_by, updated_at, updated_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (user_id, perm, effect, now, actor, now, actor),
+                    )
+
     def set_permissions_for_user(
         self,
         user_id: int,
