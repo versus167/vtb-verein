@@ -123,6 +123,16 @@ def _can_close(ticket: Ticket, user, db) -> bool:
     return db.ticket_bereich_berechtigungen.user_darf_schliessen(ticket.bereich_id, user.id)
 
 
+def _can_verwalten(ticket: Ticket, user, db) -> bool:
+    """Verwalter eines Bereichs: Admin oder darf_bearbeiten. Darf Tickets verbergen
+    (smart löschen), gelöschte einsehen und wiederherstellen."""
+    if user.role == "admin":
+        return True
+    if ticket.bereich_id is None:
+        return False
+    return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(ticket.bereich_id, user.id)
+
+
 def _enrich(ticket_dict: dict, db) -> dict:
     """Fügt gemeldet_von_username und bereich_name hinzu."""
     from app.services.user_service import UserService
@@ -320,8 +330,21 @@ def list_tickets(
     bereich_id: Optional[int] = None,
     status: Optional[str] = None,
     gemeldet_von: Optional[int] = None,
+    nur_geloeschte: bool = False,
 ):
-    tickets = db.tickets.list_tickets_with_counts()
+    if nur_geloeschte:
+        # "Einblenden": gelöschte Tickets nur für Verwalter. Admin sieht alle,
+        # sonst nur gelöschte aus Bereichen mit darf_bearbeiten.
+        tickets = db.tickets.list_tickets_with_counts(nur_geloeschte=True)
+        if user.role != "admin":
+            verwaltbare = {
+                e["bereich_id"]
+                for e in db.ticket_bereich_berechtigungen.list_berechtigungen_fuer_user(user.id)
+                if e["darf_bearbeiten"]
+            }
+            tickets = [t for t in tickets if t.bereich_id in verwaltbare]
+    else:
+        tickets = db.tickets.list_tickets_with_counts()
 
     # Bereichs-Filter
     if bereich_id is not None:
@@ -406,10 +429,24 @@ def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB)
 
 @router.delete("/{ticket_id}", status_code=204)
 def delete_ticket(ticket_id: int, user: CurrentUser, db: DB):
+    """Soft-Delete: Verwalter (Admin/Bereichs-Bearbeiter) verbergen beliebige Tickets,
+    der Melder darf sein eigenes Ticket zurückziehen."""
     ticket = _get_ticket_or_404(ticket_id, db)
-    if not _can_write(ticket, user, db):
-        raise HTTPException(status_code=403, detail="Kein Schreibzugriff auf dieses Ticket.")
+    if not _can_verwalten(ticket, user, db) and ticket.gemeldet_von != user.id:
+        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket zu verbergen.")
     db.tickets.mark_ticket_deleted(ticket_id, deleted_by=user.username)
+
+
+@router.post("/{ticket_id}/restore")
+def restore_ticket(ticket_id: int, user: CurrentUser, db: DB):
+    """Hebt einen Soft-Delete wieder auf – nur Verwalter (Admin/Bereichs-Bearbeiter)."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_verwalten(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket wiederherzustellen.")
+    ok = db.tickets.restore_ticket(ticket_id, restored_by=user.username)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Ticket ist nicht gelöscht oder bereits wiederhergestellt.")
+    return _enrich(asdict(_get_ticket_or_404(ticket_id, db)), db)
 
 
 # ---------------------------------------------------------------------------

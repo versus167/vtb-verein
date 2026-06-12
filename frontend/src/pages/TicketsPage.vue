@@ -35,7 +35,15 @@
       />
       <q-checkbox v-model="filterNurMeine" label="Nur meine" />
       <q-checkbox v-model="filterMitAbgeschlossenen" label="Abgeschlossene" />
+      <q-checkbox v-if="kannVerwaltenIrgendwas" v-model="zeigeGeloeschte"
+        color="negative" label="Gelöschte anzeigen" />
     </div>
+
+    <q-banner v-if="zeigeGeloeschte" dense class="bg-red-1 text-red-10 q-mb-md" rounded>
+      <template #avatar><q-icon name="delete_sweep" color="negative" /></template>
+      Gelöschte (verborgene) Tickets – für die öffentliche Ansicht ausgeblendet.
+      Verwalter können sie wiederherstellen.
+    </q-banner>
 
     <!-- ── Mobile: Karten-Liste ── -->
     <template v-if="$q.screen.lt.md">
@@ -57,6 +65,10 @@
           <div class="row items-center q-mb-sm no-wrap">
             <span class="text-caption text-grey-5 col">#{{ t.id }}</span>
             <q-chip dense :color="statusColor(t.status)" text-color="white" :label="statusLabel(t.status)" />
+            <q-btn v-if="zeigeGeloeschte" flat round dense icon="restore" color="primary" size="sm"
+              @click.stop="onRestore(t)">
+              <q-tooltip>Wiederherstellen</q-tooltip>
+            </q-btn>
           </div>
           <div class="text-subtitle1 text-weight-bold q-mb-xs" style="line-height: 1.3">{{ t.titel }}</div>
           <div v-if="t.bereich_name" class="row items-center q-mb-sm">
@@ -82,7 +94,7 @@
     <q-table
       v-else
       :rows="filteredTickets"
-      :columns="columns"
+      :columns="tableColumns"
       row-key="id"
       flat bordered
       :loading="loading"
@@ -114,6 +126,14 @@
           <span v-if="props.row.anhang_count > 0">
             <q-icon name="attach_file" size="xs" /> {{ props.row.anhang_count }}
           </span>
+        </q-td>
+      </template>
+      <template #body-cell-actions="props">
+        <q-td :props="props" @click.stop>
+          <q-btn flat round dense icon="restore" color="primary" size="sm"
+            @click="onRestore(props.row)">
+            <q-tooltip>Wiederherstellen</q-tooltip>
+          </q-btn>
         </q-td>
       </template>
     </q-table>
@@ -168,8 +188,18 @@
           <div class="q-pa-md" style="max-width: 800px; margin: 0 auto">
             <template v-if="selectedTicket">
 
+              <!-- ── Gelöscht-Hinweis + Wiederherstellen ── -->
+              <q-banner v-if="selectedIstGeloescht" class="bg-red-1 text-red-10 q-mb-md" rounded>
+                <template #avatar><q-icon name="delete" color="negative" /></template>
+                Dieses Ticket ist verborgen (gelöscht{{ selectedTicket.deleted_by ? ' von ' + selectedTicket.deleted_by : '' }}).
+                Es erscheint nicht in der öffentlichen Ansicht.
+                <template v-if="canVerwaltenSelected" #action>
+                  <q-btn flat color="negative" icon="restore" label="Wiederherstellen" @click="onRestore()" />
+                </template>
+              </q-banner>
+
               <!-- ── Editierbare Felder (wenn Schreibrecht) ── -->
-              <template v-if="canWrite">
+              <template v-if="canWrite && !selectedIstGeloescht">
                 <q-input
                   v-model="detailForm.titel"
                   label="Titel *"
@@ -269,7 +299,7 @@
               </div>
 
               <!-- Statuswechsel -->
-              <div v-if="!isAbgeschlossen(selectedTicket) && canChangeStatus" class="q-mb-md">
+              <div v-if="!isAbgeschlossen(selectedTicket) && canChangeStatus && !selectedIstGeloescht" class="q-mb-md">
                 <div class="text-subtitle2 q-mb-xs">Status ändern</div>
                 <div class="row q-gutter-sm">
                   <q-btn
@@ -285,7 +315,7 @@
               </div>
 
               <!-- Zurückziehen (nur Ersteller, solange offen) -->
-              <div v-if="canWithdraw && !isDraftTicket" class="q-mb-md">
+              <div v-if="canWithdraw && !isDraftTicket && !selectedIstGeloescht" class="q-mb-md">
                 <q-btn
                   label="Ticket zurückziehen"
                   icon="undo"
@@ -293,6 +323,18 @@
                   color="negative"
                   size="sm"
                   @click="onWithdraw"
+                />
+              </div>
+
+              <!-- Verbergen / smart löschen (Verwalter) -->
+              <div v-if="canVerwaltenSelected && !selectedIstGeloescht && !isDraftTicket" class="q-mb-md">
+                <q-btn
+                  label="Ticket verbergen"
+                  icon="visibility_off"
+                  flat
+                  color="negative"
+                  size="sm"
+                  @click="onSmartDelete"
                 />
               </div>
 
@@ -304,8 +346,8 @@
                 <anhang-panel
                   :anhaenge="detailAnhaenge"
                   :upload-url="`/api/tickets/${selectedTicket.id}/anhaenge`"
-                  :can-upload="!isAbgeschlossen(selectedTicket)"
-                  :can-delete="!isAbgeschlossen(selectedTicket)"
+                  :can-upload="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
+                  :can-delete="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   @uploaded="onAnhangUploaded"
                   @deleted="onAnhangDeleted"
                 />
@@ -344,7 +386,7 @@
                 </div>
 
                 <!-- Neuer Kommentar -->
-                <div v-if="!isAbgeschlossen(selectedTicket)" class="q-mt-md">
+                <div v-if="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht" class="q-mt-md">
                   <q-input
                     v-model="neuerKommentar"
                     outlined
@@ -408,6 +450,8 @@ const filterBereich = ref(null)
 const filterStatus = ref(null)
 const filterNurMeine = ref(false)
 const filterMitAbgeschlossenen = ref(false)
+// "Einblenden": gelöschte (verborgene) Tickets anzeigen – nur für Verwalter.
+const zeigeGeloeschte = ref(false)
 
 // ── Erstellen / Detail ─────────────────────────────────────────────────────
 const isDraftTicket = ref(false)
@@ -477,6 +521,19 @@ const canWithdraw = computed(() => {
   return selectedTicket.value.gemeldet_von === currentUserId.value
 })
 
+// ── Verwalten (verbergen / einblenden / wiederherstellen) ────────────────────
+// Verwalter = Admin oder darf_bearbeiten im Bereich. Kategorie hat kein eigenes
+// Rechtemodell – die Rechte hängen am Bereich.
+function kannVerwalten(ticket) {
+  if (isAdmin.value) return true
+  return !!_bereichFlags(ticket).darf_bearbeiten
+}
+const kannVerwaltenIrgendwas = computed(() =>
+  isAdmin.value || Object.values(meineBerechtigungen.value.bereiche || {}).some(b => b.darf_bearbeiten)
+)
+const canVerwaltenSelected = computed(() => kannVerwalten(selectedTicket.value))
+const selectedIstGeloescht = computed(() => !!selectedTicket.value?.deleted_at)
+
 // ── Status-/Prioritäts-Konstanten ──────────────────────────────────────────
 const STATUS_UEBERGAENGE = {
   offen:       ['in_pruefung', 'erledigt', 'abgelehnt'],
@@ -512,7 +569,8 @@ const userOptions = computed(() => users.value.map(u => ({ value: u.id, label: u
 
 const filteredTickets = computed(() => {
   let result = tickets.value
-  if (!filterMitAbgeschlossenen.value) result = result.filter(t => !isAbgeschlossen(t))
+  // In der Gelöscht-Ansicht zeigen wir alle verborgenen Tickets (auch abgeschlossene).
+  if (!filterMitAbgeschlossenen.value && !zeigeGeloeschte.value) result = result.filter(t => !isAbgeschlossen(t))
   if (filterBereich.value) result = result.filter(t => t.bereich_id === filterBereich.value)
   if (filterStatus.value)  result = result.filter(t => t.status === filterStatus.value)
   if (filterNurMeine.value) result = result.filter(t =>
@@ -532,6 +590,13 @@ const columns = [
   { name: 'counts',                label: '',            field: 'id',                    align: 'left',   style: 'width:80px' },
   { name: 'created_at',            label: 'Erstellt',    field: 'created_at',            align: 'left',   sortable: true, format: v => formatDate(v) },
 ]
+
+// In der Gelöscht-Ansicht eine Aktionsspalte (Wiederherstellen) anhängen.
+const tableColumns = computed(() =>
+  zeigeGeloeschte.value
+    ? [...columns, { name: 'actions', label: '', field: 'id', align: 'right', style: 'width:60px' }]
+    : columns
+)
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────
 function statusLabel(s)    { return STATUS_LABELS[s] ?? s }
@@ -575,11 +640,15 @@ function syncDetailForm(ticket) {
 }
 
 // ── Laden ──────────────────────────────────────────────────────────────────
+function _ticketParams() {
+  return zeigeGeloeschte.value ? { nur_geloeschte: true } : {}
+}
+
 async function loadAll() {
   loading.value = true
   try {
     const requests = [
-      api.get('/api/tickets/'),
+      api.get('/api/tickets/', { params: _ticketParams() }),
       api.get('/api/tickets/bereiche'),
       api.get('/api/tickets/kategorien'),
       api.get('/api/tickets/meine-berechtigungen'),
@@ -597,6 +666,21 @@ async function loadAll() {
     loading.value = false
   }
 }
+
+// Nur die Ticket-Liste neu laden (beim Umschalten der Gelöscht-Ansicht).
+async function loadTickets() {
+  loading.value = true
+  try {
+    const { data } = await api.get('/api/tickets/', { params: _ticketParams() })
+    tickets.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Fehler beim Laden der Tickets.' })
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(zeigeGeloeschte, loadTickets)
 
 // ── Erstellen ──────────────────────────────────────────────────────────────
 const pickBereichOpen = ref(false)
@@ -649,6 +733,49 @@ async function onWithdraw() {
       $q.notify({ type: 'info', message: 'Ticket zurückgezogen.' })
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler.' })
+    }
+  })
+}
+
+// ── Verbergen (smart löschen) / Wiederherstellen ────────────────────────────
+function onSmartDelete() {
+  const t = selectedTicket.value
+  if (!t) return
+  $q.dialog({
+    title: 'Ticket verbergen',
+    message: `Ticket #${t.id} „${t.titel}" aus der öffentlichen Ansicht entfernen? `
+      + 'Es bleibt erhalten und kann von Verwaltern jederzeit wieder eingeblendet werden.',
+    cancel: true,
+    ok: { label: 'Verbergen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/tickets/${t.id}`)
+      tickets.value = tickets.value.filter(x => x.id !== t.id)
+      detailDialogOpen.value = false
+      $q.notify({ type: 'info', message: 'Ticket verborgen.' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Verbergen.' })
+    }
+  })
+}
+
+function onRestore(ticket) {
+  const t = ticket || selectedTicket.value
+  if (!t) return
+  $q.dialog({
+    title: 'Ticket wiederherstellen',
+    message: `Ticket #${t.id} „${t.titel}" wieder einblenden?`,
+    cancel: true,
+    ok: { label: 'Wiederherstellen', color: 'primary' },
+  }).onOk(async () => {
+    try {
+      await api.post(`/api/tickets/${t.id}/restore`)
+      // In der Gelöscht-Ansicht verschwindet das Ticket dadurch aus der Liste.
+      tickets.value = tickets.value.filter(x => x.id !== t.id)
+      if (selectedTicket.value?.id === t.id) detailDialogOpen.value = false
+      $q.notify({ type: 'positive', message: 'Ticket wiederhergestellt.' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Wiederherstellen.' })
     }
   })
 }
