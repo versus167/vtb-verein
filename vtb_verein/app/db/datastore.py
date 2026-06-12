@@ -44,6 +44,7 @@ from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository, Mitgli
 from app.db.mannschaft_repository import MannschaftRepository, Mannschaft
 from app.db.mitglied_mannschaft_repository import MitgliedMannschaftRepository, MitgliedMannschaft
 from app.db.funktion_repository import FunktionRepository
+from app.db.funktion_permission_repository import FunktionPermissionRepository
 from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.db.gebuehr_repository import GebuehrRepository
@@ -72,6 +73,7 @@ class VereinsDB:
         self._mannschaft_repo = MannschaftRepository(self.conn)
         self._mitglied_mannschaft_repo = MitgliedMannschaftRepository(self.conn)
         self._funktion_repo = FunktionRepository(self.conn)
+        self._funktion_permission_repo = FunktionPermissionRepository(self.conn)
         self._user_repo = UserRepository(self.conn)
         self._permission_repo = PermissionRepository(self.conn)
         self._auth_token_repo = AuthTokenRepository(self._database)
@@ -130,6 +132,10 @@ class VereinsDB:
     @property
     def permissions(self) -> PermissionRepository:
         return self._permission_repo
+
+    @property
+    def funktion_permissions(self) -> FunktionPermissionRepository:
+        return self._funktion_permission_repo
 
     @property
     def auth_token_repository(self) -> AuthTokenRepository:

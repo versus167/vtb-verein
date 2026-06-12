@@ -21,6 +21,22 @@
 ### Tickets
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
+### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
+Stufe A (Datenmodell v35 + effektive Berechnung + Sockel) ist umgesetzt. Offen:
+- [ ] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
+      (PUT hart Admin), Matrix-Komponente aus UserPermissionsPage extrahieren,
+      Dialog im Einstellungen-Tab „Funktionen" (+ Hinweis „Abteilungs-Scope wird
+      noch nicht durchgesetzt")
+- [ ] **Stufe C** – persönlicher Berechtigungsscreen: Herkunftsanzeige
+      (geerbt von Funktion/Sockel) + Tri-State-Overrides (grant/deny),
+      PUT-Format `{grants, denies}`
+- [ ] **Stufe D** – Rollen-Ablösung (v36): nur noch admin/mitglied,
+      `defaults_for_role` entfernen, harte `role=='admin'`-Checks ersetzen
+      (`funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien →
+      `tickets.bereiche_verwalten`), Admin-Flag-Vergabe nur durch Admins
+- [ ] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
+      `allowed_abteilungen('personen.read')`
+
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
 E-Mail + Matrix als Kanäle sind fertig; Ticket-Ereignisse lösen bereits Benachrichtigungen aus.
@@ -47,6 +63,16 @@ Offen:
       (Stammdaten + Abteilungen + Funktionen, eingebunden in die Abrechnungsvorschau)
       auch in `PersonenPage.vue` und `MitgliederPage.vue` nutzen, damit die
       Mitglieds-Bearbeitung eine Single-Source ist (aktuell dort dupliziert)
+- [ ] **Beitragslogik: CURRENT_DATE statt Stichtag** – `beitrags_service.py`
+      wertet Funktions-Bedingungen mit `CURRENT_DATE` statt dem Abrechnungs-
+      Stichtag aus; bei rückwirkender Abrechnung zählen aktuelle statt
+      historischer Funktionen
+- [ ] **mitglied_funktion.funktion → funktion_id umstellen** – echter FK statt
+      String-Key (FK auf partiellen Unique-Index nicht möglich); betrifft
+      Repository, API, Frontend und Beitragsregeln (`bedingung_funktionen`);
+      v35 loggt verwaiste Keys nur als WARN
+- [ ] Tote Konstante `VALID_FUNKTIONEN` in `mitglied_funktion_repository.py`
+      entfernen (Katalog validiert längst über die `funktion`-Tabelle)
 
 Erledigt (2026-06-11):
 - [x] Frischaufbau-FK-Bug behoben – `mitglied→users` / `beitrag_sollstellung→kassenbuchungen`

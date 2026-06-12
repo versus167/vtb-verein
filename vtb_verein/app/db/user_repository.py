@@ -34,12 +34,14 @@ class UserRepository(BaseRepository):
         self._permission_repo = PermissionRepository(db_conn)
     
     def _load_permissions(self, user: User) -> User:
-        """Befüllt user.permissions über den PermissionRepository.
-        
+        """Befüllt user.effective + user.permissions über den PermissionRepository.
+
         Wird nach jedem User-Load aufgerufen, damit Permissions
         direkt verfügbar sind für has_permission() und @require_permission().
+        Effektiv = (Sockel ∪ Funktionsrechte ∪ Grants) − Denies, siehe BERECHTIGUNGEN.md.
         """
-        user.permissions = self._permission_repo.get_permissions_for_user(user.id)
+        user.effective = self._permission_repo.get_effective_permissions(user.id)
+        user.permissions = user.effective.keys()
         return user
     
     def get_by_username(self, username: str) -> Optional[User]:
