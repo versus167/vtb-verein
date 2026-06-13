@@ -189,12 +189,15 @@
       </template>
 
       <template #body-cell-funktionen="props">
-        <q-td :props="props">
-          <q-chip v-for="f in props.row.funktionen" :key="f.id" dense size="sm"
-            color="indigo" text-color="white" class="q-mr-xs">
-            {{ funktionLabel(f.funktion) }}
-          </q-chip>
-          <span v-if="!props.row.funktionen?.length" class="text-grey">—</span>
+        <q-td :props="props" style="white-space: normal; max-width: 340px">
+          <div v-if="props.row.funktionen?.length" class="row items-center" style="gap: 4px">
+            <q-chip v-for="f in props.row.funktionen" :key="f.id" dense size="sm"
+              color="indigo" text-color="white" class="q-ma-none">
+              {{ funktionLabel(f.funktion) }}<span v-if="f.abteilung_name"
+                class="text-indigo-2"> · {{ f.abteilung_name }}</span>
+            </q-chip>
+          </div>
+          <span v-else class="text-grey">—</span>
         </q-td>
       </template>
 
@@ -1313,6 +1316,7 @@ async function onSaveFunktion() {
     funktionFormOpen.value = false
     const { data } = await api.get(`/api/mitglieder/${mitgliedId}/funktionen`)
     funktionen.value = data
+    await loadPersonen()   // Liste sofort aktualisieren
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   } finally {
@@ -1325,6 +1329,7 @@ async function deleteFunktion(f) {
   try {
     await api.delete(`/api/mitglieder/${mitgliedId}/funktionen/${f.id}`)
     funktionen.value = funktionen.value.filter(x => x.id !== f.id)
+    await loadPersonen()   // Liste sofort aktualisieren
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }
@@ -1412,6 +1417,7 @@ async function onSaveKontakt() {
     }
     kontaktFormOpen.value = false
     await reloadKontakte()
+    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   } finally {
@@ -1423,6 +1429,7 @@ async function setPrimaer(k) {
   try {
     await api.put(`/api/mitglieder/${aktivPerson.value.mitglied.id}/kontakte/${k.id}/primaer`)
     await reloadKontakte()
+    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }
@@ -1433,6 +1440,7 @@ async function deleteKontakt(k) {
   try {
     await api.delete(`/api/mitglieder/${mitgliedId}/kontakte/${k.id}`)
     kontakte.value = kontakte.value.filter(x => x.id !== k.id)
+    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
   }
