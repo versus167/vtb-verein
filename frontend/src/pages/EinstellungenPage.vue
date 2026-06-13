@@ -87,8 +87,8 @@
         </q-card-section>
         <q-card-section class="text-caption text-grey-7 q-pt-xs">
           Mitglieder mit dieser Funktion erben die hier gewählten Rechte (mehrere Funktionen
-          kumulieren). Eine an eine Abteilung gebundene Funktion wirkt aktuell noch vereinsweit –
-          die Abteilungs-Einschränkung wird erst später durchgesetzt.
+          kumulieren). Ist die Funktion an eine Abteilung gebunden, gelten die Rechte nur für
+          diese Abteilung; vereinsweite Funktionen wirken im gesamten Verein.
         </q-card-section>
         <q-separator />
         <q-card-section style="max-height:60vh; overflow-y:auto">
