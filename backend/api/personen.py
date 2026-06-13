@@ -11,6 +11,7 @@ from app.services.person_service import PersonService
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_role_assignment
+from ..core.scope import visible_mitglied_ids
 
 router = APIRouter(prefix="/personen", tags=["personen"])
 
@@ -222,6 +223,9 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
 @router.get("/")
 def list_personen(user: CurrentUser, db: DB):
     _require_read(user)
+    # Abteilungs-Scope (Stufe E): nur-scoped personen.read → nur Mitglieder der
+    # erlaubten Abteilungen; reine Benutzerkonten ohne Mitglied bleiben dann verborgen.
+    visible = visible_mitglied_ids(user, db)
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT * FROM (
@@ -282,6 +286,8 @@ def list_personen(user: CurrentUser, db: DB):
                 created_by=r['m_created_by'], updated_at=r['m_updated_at'],
                 updated_by=r['m_updated_by'],
             )
+        if visible is not None and (m_obj is None or m_obj.id not in visible):
+            continue  # außerhalb des erlaubten Abteilungs-Scopes
         abteilungen = db.list_mitglied_abteilungen(m_obj.id) if m_obj else []
         funktionen = db.list_mitglied_funktionen(m_obj.id) if m_obj else []
         result.append(_person_row(u_obj, m_obj, abteilungen, funktionen))

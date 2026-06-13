@@ -22,8 +22,9 @@
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
 ### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
-Stufen A–D umgesetzt (Datenmodell v36, funktionsbasierte Rechte, Funktions- und
-persönliche Matrix, Rollen-Ablösung). Offen:
+Vollständig umgesetzt (Stufen A–E): Datenmodell v36, funktionsbasierte Rechte,
+Funktions- und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
+Personen-/Mitgliederliste.
 - [x] **Stufe A** – Datenmodell v35 + effektive Berechnung + Sockel
 - [x] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
 - [x] **Stufe C** – persönlicher Berechtigungsscreen: Herkunft + Tri-State `{grants,denies}`
@@ -32,8 +33,12 @@ persönliche Matrix, Rollen-Ablösung). Offen:
       (`funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien →
       `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`),
       Admin-Flag-Vergabe nur durch Admins (`backend/core/authz.py`)
-- [ ] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
-      `allowed_abteilungen('personen.read')`
+- [x] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
+      `allowed_abteilungen('personen.read')` (`backend/core/scope.py`)
+
+Mögliche Folge-Arbeiten (kein Teil von #22): Scope auch auf Detail-/Schreib-
+Endpunkte ausweiten; Hinweis in der Funktions-Matrix-UI „Abteilungs-Scope wirkt
+in Listen".
 
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 

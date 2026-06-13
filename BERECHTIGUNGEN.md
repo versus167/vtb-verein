@@ -1,8 +1,9 @@
 # Berechtigungskonzept – funktionsbasierte Rechte (Ticket #22)
 
 > Zielbild und Stufenplan für den Umbau des Berechtigungssystems.
-> Stand: Stufen A–D umgesetzt (Schema v36, funktionsbasierte Rechte, Funktions-
-> und persönliche Matrix, Rollen-Ablösung). Offen: Stufe E (Scope-Durchsetzung).
+> Stand: Stufen A–E umgesetzt (Schema v36, funktionsbasierte Rechte, Funktions-
+> und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
+> Personen-/Mitgliederliste). Der Umbau aus Ticket #22 ist damit abgeschlossen.
 
 ## Zielbild
 
@@ -44,13 +45,15 @@ Funktions-Zuordnungen sind optional abteilungsgebunden
 abteilungsgebundenen Zuordnung tragen den Abteilungs-Scope durch die gesamte
 Berechnung (`EffectivePermissions.scoped`).
 
-**Übergangs-Semantik „lenient"** (bewusste Entscheidung): Bis die
-Endpoint-Filterung umgesetzt ist (Stufe E), erfüllt auch ein nur
-abteilungsgebunden geerbtes Recht die globale Prüfung `has_permission()` –
-es wirkt also übergangsweise vereinsweit. Kein Sicherheitsverlust gegenüber
-vorher (Funktionsrechte sind eine bewusste Admin-Vergabe), muss aber in der
-Funktions-Matrix-UI als Hinweis stehen. Für die spätere Durchsetzung stehen
-bereit: `has_permission_global()`, `has_permission_for_abteilung()`,
+**Semantik „lenient" vs. „strict":** Die globale Prüfung `has_permission()`
+ist weiterhin lenient – auch ein nur abteilungsgebunden geerbtes Recht erfüllt
+sie (kein Sicherheitsverlust, Funktionsrechte sind bewusste Admin-Vergabe).
+**Durchgesetzt wird der Scope seit Stufe E am Pilot Personen-/Mitgliederliste**
+(`GET /api/personen`, `GET /api/mitglieder`): Wer `personen.read` nur scoped
+besitzt, sieht dort ausschließlich Mitglieder der erlaubten Abteilungen
+(`backend/core/scope.py::visible_mitglied_ids`). Andere Endpunkte (Detail-/
+Schreibzugriffe) bleiben vorerst lenient – schrittweise Ausweitung möglich.
+Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 `allowed_abteilungen()` (alle in `app/models/user.py`).
 
 ### Was NICHT über dieses System läuft
@@ -89,7 +92,7 @@ bereit: `has_permission_global()`, `has_permission_for_abteilung()`,
 | **B** | Funktions-Matrix-UI: GET/PUT `/api/funktionen/{id}/permissions` (PUT hart Admin), Matrix-Komponente aus UserPermissionsPage extrahieren, Dialog im Einstellungen-Tab „Funktionen". | ✅ umgesetzt |
 | **C** | Persönlicher Berechtigungsscreen mit Herkunftsanzeige („geerbt von Funktion X (Abteilung Y)" / „Sockel") und Tri-State-Bedienung (Grant/Deny); PUT-Format `{grants, denies}`. | ✅ umgesetzt |
 | **D** | Rollen-Ablösung (v36): nur noch `admin`/`mitglied`; `defaults_for_role` entfällt (Bestand bleibt als Grants erhalten – Permissions wurden schon immer beim Anlegen materialisiert, es gibt keinen Rollen-Fallback zur Laufzeit). Harte `role=='admin'`-Checks ersetzt: `funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien → `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`. Admin-Flag-Vergabe nur durch Admins. | ✅ umgesetzt |
-| **E** | Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste: bei nur-scoped `personen.read` Filterung auf Mitglieder der erlaubten Abteilungen via `allowed_abteilungen()`. | offen |
+| **E** | Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste: bei nur-scoped `personen.read` Filterung auf Mitglieder der erlaubten Abteilungen via `allowed_abteilungen()`. | ✅ umgesetzt |
 
 ## Technische Referenz (Stufe A)
 
@@ -134,3 +137,20 @@ bereit: `has_permission_global()`, `has_permission_for_abteilung()`,
   `PersonenPage.vue`); Nav-/Route-Gates `kassenverwaltung` → `kassen.verwalten`,
   `einstellungen` → `funktionen.verwalten`; `KassenbuchDetailPage` nutzt
   `kassen.verwalten` statt `role==='admin'`.
+
+## Technische Referenz (Stufe E)
+
+- **Scope-Helper** `backend/core/scope.py::visible_mitglied_ids(user, db, perm)`:
+  liest `user.allowed_abteilungen(perm)` → `None` (vereinsweit/Admin → keine
+  Einschränkung) oder eine Abteilungsmenge; im scoped Fall eine Query auf
+  `mitglied_abteilung` (aktive Zuordnungen) → Menge sichtbarer `mitglied_id`s.
+- **Eingehängt** in `GET /api/mitglieder` und `GET /api/personen`. In der
+  Personenliste werden auch reine Benutzerkonten ohne Mitglied (keine Abteilung)
+  für scoped Leser verborgen.
+- **Sichtbarkeit knüpft an die Abteilungs-Mitgliedschaft des Ziels**, nicht an
+  die des Lesers: Ein Abteilungsleiter Fußball sieht die Fußball-Mitglieder,
+  unabhängig davon, ob er selbst Fußball-Mitglied ist.
+- **Kein Regress**: Bestehende Bearbeiter haben `personen.read` als globalen
+  Grant (`abteilung_id` NULL) → `allowed_abteilungen` = None → sehen weiterhin
+  alle. Eingeschränkt wird nur, wessen `personen.read` ausschließlich aus einer
+  abteilungsgebundenen Funktion stammt.

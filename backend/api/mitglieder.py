@@ -4,6 +4,7 @@ from pydantic import BaseModel, field_validator
 from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
+from ..core.scope import visible_mitglied_ids
 
 router = APIRouter(prefix="/mitglieder", tags=["mitglieder"])
 
@@ -51,7 +52,11 @@ def _require_delete(user):
 @router.get("/")
 def list_mitglieder(user: CurrentUser, db: DB):
     _require_read(user)
-    return [asdict(m) for m in db.list_mitglieder()]
+    mitglieder = db.list_mitglieder()
+    visible = visible_mitglied_ids(user, db)  # Abteilungs-Scope (Stufe E)
+    if visible is not None:
+        mitglieder = [m for m in mitglieder if m.id in visible]
+    return [asdict(m) for m in mitglieder]
 
 
 @router.get("/{mitglied_id}")
