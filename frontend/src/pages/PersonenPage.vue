@@ -61,6 +61,13 @@
               {{ ab.abteilung_kuerzel || ab.abteilung_name }}
             </q-chip>
           </div>
+          <div v-if="p.funktionen?.length" class="row items-center q-gutter-xs q-mb-xs">
+            <q-chip v-for="f in p.funktionen" :key="f.id" dense size="sm"
+              color="indigo" text-color="white">
+              {{ funktionLabel(f.funktion) }}<span v-if="f.abteilung_name"
+                class="text-indigo-2"> · {{ f.abteilung_name }}</span>
+            </q-chip>
+          </div>
           <div v-if="p.last_seen" class="text-caption text-grey-5">
             Zuletzt aktiv: {{ formatLastLogin(p.last_seen) }}
           </div>
