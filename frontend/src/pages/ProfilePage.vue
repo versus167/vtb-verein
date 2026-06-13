@@ -229,18 +229,77 @@
         </q-card>
       </div>
 
+      <!-- Meine Geräte / angemeldete Sessions (Ticket #24) -->
+      <div class="col-12">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="row items-center justify-between q-mb-sm">
+              <div class="text-subtitle1 text-weight-bold">Meine Geräte</div>
+              <q-btn
+                v-if="otherSessionsCount > 0"
+                label="Alle anderen abmelden"
+                icon="logout"
+                color="negative"
+                outline dense no-caps
+                :loading="revokingOthers"
+                @click="onRevokeOthers"
+              />
+            </div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              Hier siehst du, auf welchen Geräten du angemeldet bist. Kommt dir etwas
+              merkwürdig vor, kannst du einzelne Geräte oder alle anderen auf einmal abmelden.
+            </div>
+
+            <q-inner-loading :showing="loadingSessions" />
+
+            <q-banner v-if="!loadingSessions && sessions.length === 0" class="bg-grey-2 rounded-borders">
+              Keine aktiven Sitzungen gefunden.
+            </q-banner>
+
+            <q-list v-else separator>
+              <q-item v-for="s in sessions" :key="s.id">
+                <q-item-section avatar>
+                  <q-icon :name="deviceIcon(s)" size="sm" :color="s.current ? 'primary' : 'grey-7'" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>
+                    {{ s.device_label || 'Unbekanntes Gerät' }}
+                    <q-badge v-if="s.current" color="primary" label="Dieses Gerät" class="q-ml-sm" />
+                  </q-item-label>
+                  <q-item-label caption>
+                    Zuletzt aktiv: {{ fmt(s.last_seen_at) }}<template v-if="s.ip"> · IP {{ s.ip }}</template>
+                  </q-item-label>
+                  <q-item-label caption>Angemeldet seit {{ fmt(s.created_at) }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-btn
+                    flat round dense icon="logout" color="negative"
+                    :loading="revokingId === s.id"
+                    @click="onRevoke(s)"
+                  >
+                    <q-tooltip>{{ s.current ? 'Abmelden (dieses Gerät)' : 'Dieses Gerät abmelden' }}</q-tooltip>
+                  </q-btn>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-card-section>
+        </q-card>
+      </div>
+
     </div>
   </q-page>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 
 const $q = useQuasar()
 const auth = useAuthStore()
+const router = useRouter()
 
 const me = ref(null)
 const roleLabels = { admin: 'Administrator', mitglied: 'Mitglied' }
@@ -392,5 +451,95 @@ async function onSaveMitglied() {
   }
 }
 
-onMounted(load)
+// ---- Meine Geräte / Sessions (Ticket #24) ----
+const sessions = ref([])
+const loadingSessions = ref(false)
+const revokingId = ref(null)
+const revokingOthers = ref(false)
+
+const otherSessionsCount = computed(() => sessions.value.filter(s => !s.current).length)
+
+function deviceIcon(s) {
+  const ua = (s.user_agent || '').toLowerCase()
+  if (/ipad|tablet/.test(ua)) return 'tablet'
+  if (/android|iphone|ipod|mobile/.test(ua)) return 'smartphone'
+  return 'computer'
+}
+
+function fmt(ts) {
+  if (!ts) return '–'
+  const d = new Date(ts)
+  return isNaN(d.getTime())
+    ? ts
+    : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+async function loadSessions() {
+  loadingSessions.value = true
+  try {
+    const { data } = await api.get('/api/auth/me/sessions')
+    sessions.value = data
+  } catch { /* Anzeige optional */ } finally {
+    loadingSessions.value = false
+  }
+}
+
+function logoutSelf() {
+  auth.logout()
+  router.push({ name: 'login' })
+}
+
+async function onRevoke(s) {
+  if (s.current) {
+    $q.dialog({
+      title: 'Dieses Gerät abmelden?',
+      message: 'Du wirst hier abgemeldet und musst dich neu anmelden.',
+      cancel: true,
+      persistent: true,
+    }).onOk(async () => {
+      try {
+        await api.delete(`/api/auth/me/sessions/${s.id}`)
+        logoutSelf()
+      } catch (e) {
+        $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abmelden fehlgeschlagen' })
+      }
+    })
+    return
+  }
+  revokingId.value = s.id
+  try {
+    await api.delete(`/api/auth/me/sessions/${s.id}`)
+    await loadSessions()
+    $q.notify({ type: 'positive', message: 'Gerät abgemeldet' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abmelden fehlgeschlagen' })
+  } finally {
+    revokingId.value = null
+  }
+}
+
+function onRevokeOthers() {
+  $q.dialog({
+    title: 'Alle anderen Geräte abmelden?',
+    message: 'Alle Sitzungen außer dieser werden beendet.',
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    revokingOthers.value = true
+    try {
+      const { data } = await api.post('/api/auth/me/sessions/revoke-others')
+      await loadSessions()
+      $q.notify({ type: 'positive', message: `${data.revoked} Gerät(e) abgemeldet` })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abmelden fehlgeschlagen' })
+    } finally {
+      revokingOthers.value = false
+    }
+  })
+}
+
+onMounted(() => {
+  load()
+  loadSessions()
+})
 </script>

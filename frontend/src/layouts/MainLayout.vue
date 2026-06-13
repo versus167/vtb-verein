@@ -266,8 +266,8 @@ async function loadKassenZugriff() {
   }
 }
 
-function onLogout() {
-  auth.logout()
+async function onLogout() {
+  await auth.logoutServer()
   hatKassenZugriff.value = false
   router.push({ name: 'login' })
 }

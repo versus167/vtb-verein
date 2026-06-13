@@ -1,16 +1,24 @@
 import smtplib
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from app.services.user_service import UserService
 from ..core.db import get_db, get_db as _get_db
 from ..core.security import create_access_token
-from ..core.deps import CurrentUser, DB
+from ..core.deps import CurrentUser, CurrentSessionId, DB
 from ..core.config import settings
+
+
+def _client_ip(request: Request) -> str | None:
+    """Client-IP – berücksichtigt X-Forwarded-For hinter dem Reverse-Proxy."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,6 +47,7 @@ class UserInfo(BaseModel):
 
 @router.post("/login", response_model=Token)
 def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     remember_me: bool = False,
     db=Depends(get_db),
@@ -51,7 +60,13 @@ def login(
             detail="Falscher Benutzername oder Passwort",
         )
     expire = timedelta(days=30) if remember_me else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    token = create_access_token(user.id, expires_delta=expire)
+    sid = db.user_session_repository.create_session(
+        user_id=user.id,
+        expires_at=datetime.now(timezone.utc) + expire,
+        user_agent=request.headers.get("user-agent"),
+        ip=_client_ip(request),
+    )
+    token = create_access_token(user.id, expires_delta=expire, session_id=sid)
     db.update_last_login(user.id)
     return Token(
         access_token=token,
@@ -148,6 +163,67 @@ def change_own_password(data: OwnPasswordChange, user: CurrentUser, db: DB):
 
 
 # ---------------------------------------------------------------------------
+# Angemeldete Geräte / Sessions (Ticket #24)
+# ---------------------------------------------------------------------------
+
+class SessionInfo(BaseModel):
+    id: int
+    device_label: str | None = None
+    user_agent: str | None = None
+    ip: str | None = None
+    created_at: str | None = None
+    last_seen_at: str | None = None
+    expires_at: str | None = None
+    current: bool = False
+
+
+@router.get("/me/sessions", response_model=list[SessionInfo])
+def list_my_sessions(user: CurrentUser, sid: CurrentSessionId, db: DB):
+    """Eigene aktive Sessions/Geräte – das aktuelle Gerät ist markiert."""
+    return [
+        SessionInfo(
+            id=row["id"],
+            device_label=row["device_label"],
+            user_agent=row["user_agent"],
+            ip=row["ip"],
+            created_at=row["created_at"],
+            last_seen_at=row["last_seen_at"],
+            expires_at=row["expires_at"],
+            current=(sid is not None and row["sid"] == sid),
+        )
+        for row in db.user_session_repository.list_active_for_user(user.id)
+    ]
+
+
+@router.post("/logout")
+def logout_current(user: CurrentUser, sid: CurrentSessionId, db: DB):
+    """Normaler Logout: widerruft die aktuelle Server-Session (best effort),
+    damit sie nicht als „Geist-Gerät" in der Liste verbleibt."""
+    if sid is not None:
+        db.user_session_repository.revoke_by_sid(sid, revoked_by=user.username)
+    return {"ok": True}
+
+
+@router.post("/me/sessions/revoke-others")
+def revoke_other_sessions(user: CurrentUser, sid: CurrentSessionId, db: DB):
+    """Alle anderen Geräte abmelden ("en bloc") – das aktuelle bleibt angemeldet."""
+    revoked = db.user_session_repository.revoke_others(
+        user.id, keep_sid=sid, revoked_by=user.username
+    )
+    return {"ok": True, "revoked": revoked}
+
+
+@router.delete("/me/sessions/{session_id}")
+def revoke_my_session(session_id: int, user: CurrentUser, db: DB):
+    """Ein einzelnes Gerät abmelden. Nur eigene Sessions sind widerrufbar."""
+    if not db.user_session_repository.revoke_session(
+        session_id, user.id, revoked_by=user.username
+    ):
+        raise HTTPException(status_code=404, detail="Session nicht gefunden")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Magic-Link
 # ---------------------------------------------------------------------------
 
@@ -237,7 +313,7 @@ def request_magic_link(data: MagicLinkRequest, db=Depends(get_db)):
 
 
 @router.post("/magic-link/validate", response_model=Token)
-def validate_magic_link(data: MagicLinkValidate, db=Depends(get_db)):
+def validate_magic_link(data: MagicLinkValidate, request: Request, db=Depends(get_db)):
     result = db.auth_token_repository.validate_and_use_token(data.token)
     if not result or result.get("token_type") != "magic_link":
         raise HTTPException(status_code=401, detail="Link ungültig oder bereits verwendet")
@@ -247,10 +323,14 @@ def validate_magic_link(data: MagicLinkValidate, db=Depends(get_db)):
         raise HTTPException(status_code=401, detail="Benutzer nicht gefunden oder inaktiv")
 
     db.update_last_login(user.id)
-    token = create_access_token(
-        user.id,
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    expire = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    sid = db.user_session_repository.create_session(
+        user_id=user.id,
+        expires_at=datetime.now(timezone.utc) + expire,
+        user_agent=request.headers.get("user-agent"),
+        ip=_client_ip(request),
     )
+    token = create_access_token(user.id, expires_delta=expire, session_id=sid)
     return Token(
         access_token=token,
         id=user.id,

@@ -47,5 +47,15 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('vtb_user')
       delete api.defaults.headers.common['Authorization']
     },
+
+    // Vom Nutzer ausgelöster Logout: zuerst die Server-Session widerrufen
+    // (damit das Gerät nicht in der Geräteliste verbleibt), dann lokal leeren.
+    // Best effort – ein Fehler darf das lokale Abmelden nicht verhindern.
+    async logoutServer() {
+      try {
+        await api.post('/api/auth/logout')
+      } catch { /* Session evtl. schon ungültig – egal */ }
+      this.logout()
+    },
   },
 })

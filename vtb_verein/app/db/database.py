@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 
 
 class Database:
@@ -98,6 +98,7 @@ class Database:
             34: self._migrate_v33_to_v34,
             35: self._migrate_v34_to_v35,
             36: self._migrate_v35_to_v36,
+            37: self._migrate_v36_to_v37,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1464,6 +1465,99 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 36 WHERE id = 1")
 
+    def _migrate_v36_to_v37(self) -> None:
+        """Serverseitige Sessions – „eigene angemeldete Geräte" (Ticket #24).
+
+        Bisher war die Authentifizierung zustandslos (JWT trägt nur sub+exp).
+        Damit Nutzer ihre angemeldeten Geräte sehen und einzeln/„en bloc"
+        abmelden können, wird je Login eine Session-Zeile gespeichert und ihre
+        ID (sid) in den JWT eingebettet.
+
+        Bestandstoken ohne sid bleiben bis zum Ablauf gültig (werden geduldet),
+        tauchen mangels Datensatz aber nicht in der Geräteliste auf.
+
+        Abmelden ist Soft-Revoke (revoked_at) – kein Hard-Delete; abgelaufene
+        Sessions können später per Prune-Job entfernt werden.
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                  id            SERIAL PRIMARY KEY,
+                  user_id       INTEGER NOT NULL REFERENCES users(id),
+                  sid           TEXT UNIQUE NOT NULL,
+                  user_agent    TEXT,
+                  ip            TEXT,
+                  device_label  TEXT,
+                  expires_at    TEXT NOT NULL,
+                  last_seen_at  TEXT,
+                  revoked_at    TEXT,
+                  revoked_by    TEXT,
+                  version       INTEGER NOT NULL DEFAULT 1,
+                  created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_sessions_history (
+                  id            INTEGER NOT NULL,
+                  version       INTEGER NOT NULL,
+                  user_id       INTEGER NOT NULL,
+                  sid           TEXT NOT NULL,
+                  user_agent    TEXT,
+                  ip            TEXT,
+                  device_label  TEXT,
+                  expires_at    TEXT NOT NULL,
+                  last_seen_at  TEXT,
+                  revoked_at    TEXT,
+                  revoked_by    TEXT,
+                  created_at    TEXT NOT NULL,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_user_sessions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO user_sessions_history (
+                        id, version, user_id, sid, user_agent, ip, device_label,
+                        expires_at, last_seen_at, revoked_at, revoked_by, created_at
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.sid, NEW.user_agent, NEW.ip, NEW.device_label,
+                        NEW.expires_at, NEW.last_seen_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_user_sessions_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO user_sessions_history (
+                            id, version, user_id, sid, user_agent, ip, device_label,
+                            expires_at, last_seen_at, revoked_at, revoked_by, created_at
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.user_id, NEW.sid, NEW.user_agent, NEW.ip, NEW.device_label,
+                            NEW.expires_at, NEW.last_seen_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_user_sessions_audit_insert
+                AFTER INSERT ON user_sessions
+                FOR EACH ROW EXECUTE FUNCTION fn_user_sessions_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_user_sessions_audit_update
+                AFTER UPDATE ON user_sessions
+                FOR EACH ROW EXECUTE FUNCTION fn_user_sessions_audit_update();
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_sid ON user_sessions(sid)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_revoked_at ON user_sessions(revoked_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_history_id ON user_sessions_history(id)")
+            cur.execute("UPDATE schema_version SET version = 37 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1850,6 +1944,39 @@ class Database:
               expires_at  TEXT NOT NULL,
               used_at     TEXT,
               created_at  TEXT NOT NULL,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_sessions (
+              id            SERIAL PRIMARY KEY,
+              user_id       INTEGER NOT NULL REFERENCES users(id),
+              sid           TEXT UNIQUE NOT NULL,
+              user_agent    TEXT,
+              ip            TEXT,
+              device_label  TEXT,
+              expires_at    TEXT NOT NULL,
+              last_seen_at  TEXT,
+              revoked_at    TEXT,
+              revoked_by    TEXT,
+              version       INTEGER NOT NULL DEFAULT 1,
+              created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_sessions_history (
+              id            INTEGER NOT NULL,
+              version       INTEGER NOT NULL,
+              user_id       INTEGER NOT NULL,
+              sid           TEXT NOT NULL,
+              user_agent    TEXT,
+              ip            TEXT,
+              device_label  TEXT,
+              expires_at    TEXT NOT NULL,
+              last_seen_at  TEXT,
+              revoked_at    TEXT,
+              revoked_by    TEXT,
+              created_at    TEXT NOT NULL,
               PRIMARY KEY (id, version)
             )
         """)
@@ -2770,6 +2897,34 @@ class Database:
             END; $$;
         """)
         cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_user_sessions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO user_sessions_history (
+                    id, version, user_id, sid, user_agent, ip, device_label,
+                    expires_at, last_seen_at, revoked_at, revoked_by, created_at
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.user_id, NEW.sid, NEW.user_agent, NEW.ip, NEW.device_label,
+                    NEW.expires_at, NEW.last_seen_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_user_sessions_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO user_sessions_history (
+                        id, version, user_id, sid, user_agent, ip, device_label,
+                        expires_at, last_seen_at, revoked_at, revoked_by, created_at
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.sid, NEW.user_agent, NEW.ip, NEW.device_label,
+                        NEW.expires_at, NEW.last_seen_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
             CREATE OR REPLACE FUNCTION fn_user_permissions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO user_permissions_history (
@@ -3254,6 +3409,8 @@ class Database:
             ('trig_users_audit_update',                             'UPDATE', 'users',                             'fn_users_audit_update'),
             ('trig_auth_tokens_audit_insert',                       'INSERT', 'auth_tokens',                       'fn_auth_tokens_audit_insert'),
             ('trig_auth_tokens_audit_update',                       'UPDATE', 'auth_tokens',                       'fn_auth_tokens_audit_update'),
+            ('trig_user_sessions_audit_insert',                     'INSERT', 'user_sessions',                     'fn_user_sessions_audit_insert'),
+            ('trig_user_sessions_audit_update',                     'UPDATE', 'user_sessions',                     'fn_user_sessions_audit_update'),
             ('trig_user_permissions_audit_insert',                  'INSERT', 'user_permissions',                  'fn_user_permissions_audit_insert'),
             ('trig_user_permissions_audit_update',                  'UPDATE', 'user_permissions',                  'fn_user_permissions_audit_update'),
             ('trig_kassen_audit_insert',                            'INSERT', 'kassen',                            'fn_kassen_audit_insert'),
@@ -3305,6 +3462,11 @@ class Database:
             ("idx_auth_tokens_expires_at",                          "auth_tokens(expires_at)"),
             ("idx_auth_tokens_token_type",                          "auth_tokens(token_type)"),
             ("idx_auth_tokens_history_id",                          "auth_tokens_history(id)"),
+            ("idx_user_sessions_sid",                               "user_sessions(sid)"),
+            ("idx_user_sessions_user_id",                           "user_sessions(user_id)"),
+            ("idx_user_sessions_expires_at",                        "user_sessions(expires_at)"),
+            ("idx_user_sessions_revoked_at",                        "user_sessions(revoked_at)"),
+            ("idx_user_sessions_history_id",                        "user_sessions_history(id)"),
             ("idx_user_permissions_user_id",                        "user_permissions(user_id)"),
             ("idx_user_permissions_permission",                     "user_permissions(permission)"),
             ("idx_user_permissions_deleted_at",                     "user_permissions(deleted_at)"),
