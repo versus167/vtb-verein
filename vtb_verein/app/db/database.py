@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 
 
 class Database:
@@ -97,6 +97,7 @@ class Database:
             33: self._migrate_v32_to_v33,
             34: self._migrate_v33_to_v34,
             35: self._migrate_v34_to_v35,
+            36: self._migrate_v35_to_v36,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1438,6 +1439,31 @@ class Database:
 
             cur.execute("UPDATE schema_version SET version = 35 WHERE id = 1")
 
+    def _migrate_v35_to_v36(self) -> None:
+        """Rollen-Ablösung – Stufe D (siehe BERECHTIGUNGEN.md).
+
+        Das Berechtigungssystem ist jetzt funktionsbasiert; feste Rollen entfallen.
+        Es bleibt nur noch 'admin' (uneingeschränkt) und 'mitglied'. Alle anderen
+        Bestands-Rollen ('user', 'readonly', 'special') werden auf 'mitglied'
+        normalisiert.
+
+        Niemand verliert dabei Rechte: Rollen-Defaults wurden seit jeher beim
+        Anlegen in user_permissions materialisiert (es gab nie einen
+        Rollen-Fallback zur Laufzeit). Diese Einträge bleiben als individuelle
+        Grants bestehen.
+
+        users_history bleibt unangetastet (immutable Audit-Historie) – die
+        reduzierte CHECK-Constraint gilt nur für die Live-Tabelle.
+        """
+        with self.cursor() as cur:
+            cur.execute("UPDATE users SET role = 'mitglied' WHERE role <> 'admin'")
+            cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
+            cur.execute("""
+                ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK(role IN ('admin', 'mitglied'))
+            """)
+            cur.execute("UPDATE schema_version SET version = 36 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1763,7 +1789,7 @@ class Database:
               username          TEXT NOT NULL,
               email             TEXT NOT NULL,
               password_hash     TEXT NOT NULL,
-              role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied')),
+              role              TEXT NOT NULL CHECK(role IN ('admin', 'mitglied')),
               active            INTEGER NOT NULL DEFAULT 1,
               last_login        TEXT,
               last_seen         TEXT,

@@ -50,8 +50,14 @@ class Permission:
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'
 
-    # --- System ---
-    SYSTEM_CONFIG = 'system.config'
+    # --- System / Verwaltung ---
+    SYSTEM_CONFIG       = 'system.config'
+    # Funktionskatalog verwalten (Funktionen anlegen/umbenennen/löschen).
+    # Die Funktions-Berechtigungsmatrix selbst bleibt hart Admin-only.
+    FUNKTIONEN_VERWALTEN = 'funktionen.verwalten'
+    # Globaler Kassen-Admin: Kassen anlegen/bearbeiten/löschen, Kassen-Berechtigungen
+    # vergeben und alle Kassen einsehen/bebuchen (umgeht die per-Kasse-ACL).
+    KASSEN_VERWALTEN     = 'kassen.verwalten'
 
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben
@@ -81,50 +87,10 @@ class Permission:
             if not k.startswith('_') and isinstance(v, str)
         ]
 
-    @classmethod
-    def defaults_for_role(cls, role: str) -> set[str]:
-        """
-        Standard-Permissions für eine Rolle.
-        Kassenbuch-Zugriff ist hier nicht enthalten – der wird pro Kasse vergeben.
-        """
-        if role == 'admin':
-            return set(cls.all())
-
-        if role == 'user':
-            return {
-                cls.PERSONEN_READ,
-                cls.PERSONEN_WRITE,
-                cls.PERSONEN_DELETE,
-                cls.ABTEILUNGEN_READ,
-                cls.ABTEILUNGEN_WRITE,
-                cls.ABTEILUNGEN_DELETE,
-                cls.MANNSCHAFTEN_READ,
-                cls.MANNSCHAFTEN_WRITE,
-                cls.MANNSCHAFTEN_DELETE,
-                cls.BEITRAEGE_READ,
-                cls.BEITRAEGE_WRITE,
-                cls.GEBUEHREN_READ,
-                cls.GEBUEHREN_WRITE,
-                cls.BERICHTE_READ,
-                cls.BERICHTE_EXPORT,
-                cls.TICKETS_ACCESS,
-            }
-
-        if role == 'readonly':
-            return {
-                cls.PERSONEN_READ,
-                cls.ABTEILUNGEN_READ,
-                cls.MANNSCHAFTEN_READ,
-                cls.BEITRAEGE_READ,
-                cls.GEBUEHREN_READ,
-                cls.BERICHTE_READ,
-                cls.TICKETS_ACCESS,
-            }
-
-        if role == 'mitglied':
-            return {cls.TICKETS_ACCESS}
-
-        return set()
+    # Hinweis (Stufe D, siehe BERECHTIGUNGEN.md): Es gibt keine Rollen-Defaults mehr.
+    # Rechte ergeben sich aus Sockel (BASE_PERMISSIONS) ∪ Funktionsrechten ∪
+    # individuellen Grants − Denies. Die Rolle kennt nur noch 'admin' (uneingeschränkt)
+    # und 'mitglied'. defaults_for_role wurde entfernt.
 
 
 # Fester Sockel: gilt für JEDEN aktiven, eingeloggten User (auch ohne Funktion).

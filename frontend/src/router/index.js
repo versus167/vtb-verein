@@ -77,7 +77,7 @@ const routes = [
         path: 'kassenverwaltung',
         name: 'kassenverwaltung',
         component: () => import('pages/KassenverwaltungPage.vue'),
-        meta: { adminOnly: true },
+        meta: { permission: 'kassen.verwalten' },
       },
       {
         path: 'beitraege',
@@ -106,7 +106,7 @@ const routes = [
         path: 'einstellungen',
         name: 'einstellungen',
         component: () => import('pages/EinstellungenPage.vue'),
-        meta: { adminOnly: true },
+        meta: { permission: 'funktionen.verwalten' },
       },
       {
         path: 'import',

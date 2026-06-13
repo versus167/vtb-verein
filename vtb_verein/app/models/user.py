@@ -13,7 +13,7 @@ class User:
     username: str
     email: str
     password_hash: str
-    role: str  # 'admin', 'user', 'readonly'
+    role: str  # 'admin' | 'mitglied' (seit Stufe D, siehe BERECHTIGUNGEN.md)
     active: bool
     last_login: str | None
     version: int
@@ -36,11 +36,10 @@ class User:
 
     @staticmethod
     def get_available_roles() -> dict[str, str]:
-        """Verfügbare Benutzerrollen."""
+        """Verfügbare Benutzerrollen (seit Stufe D nur noch admin/mitglied)."""
         return {
-            'admin':    'Administrator – Volle Rechte inkl. Benutzerverwaltung',
-            'user':     'Bearbeiter – Kann alle Inhaltsdaten lesen und schreiben',
-            'readonly': 'Nur Lesen – Kann ausschließlich Daten ansehen',
+            'admin':    'Administrator – uneingeschränkter Zugriff',
+            'mitglied': 'Mitglied – Rechte über Funktionen und individuelle Vergabe',
         }
 
     def has_permission(self, permission: str) -> bool:

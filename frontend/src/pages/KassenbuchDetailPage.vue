@@ -490,7 +490,8 @@ const route = useRoute()
 const auth = useAuthStore()
 
 const kasseId = computed(() => Number(route.params.kasseId))
-const isAdmin = computed(() => auth.user?.role === 'admin')
+// Globaler Kassen-Admin (kassen.verwalten) umgeht die per-Kasse-ACL – wie im Backend.
+const kannVerwalten = computed(() => auth.hasPermission('kassen.verwalten'))
 
 const kasse = ref(null)
 const bestandCent = ref(0)
@@ -516,8 +517,8 @@ const filterAktiv = computed(() => !!filterBis.value || showStorniert.value)
 const datumMin = ref(null)
 const datumMax = ref('')
 
-const kannSchreiben = computed(() => isAdmin.value || !!kasse.value?.darf_schreiben)
-const kannExportieren = computed(() => isAdmin.value || !!kasse.value?.darf_exportieren)
+const kannSchreiben = computed(() => kannVerwalten.value || !!kasse.value?.darf_schreiben)
+const kannExportieren = computed(() => kannVerwalten.value || !!kasse.value?.darf_exportieren)
 
 const buchungDialogOpen = ref(false)
 const buchungSaving = ref(false)

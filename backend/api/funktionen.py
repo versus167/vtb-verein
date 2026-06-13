@@ -25,6 +25,14 @@ def _require_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur Admins")
 
 
+def _require_verwalten(user):
+    """Funktionskatalog pflegen. Die Funktions-Berechtigungsmatrix selbst bleibt
+    hart Admin-only (set_funktion_permissions)."""
+    if not user.has_permission(Permission.FUNKTIONEN_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung zur Funktionsverwaltung")
+
+
 @router.get("")
 def list_funktionen(db: DB):
     return [asdict(f) for f in db.funktionen.list_all()]
@@ -32,7 +40,7 @@ def list_funktionen(db: DB):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_funktion(data: FunktionCreate, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_verwalten(user)
     if not data.key.strip() or not data.name.strip():
         raise HTTPException(status_code=422, detail="Key und Name dürfen nicht leer sein")
     key = data.key.strip().lower().replace(' ', '_')
@@ -44,7 +52,7 @@ def create_funktion(data: FunktionCreate, user: CurrentUser, db: DB):
 
 @router.put("/{funktion_id}")
 def update_funktion(funktion_id: int, data: FunktionUpdate, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_verwalten(user)
     if not data.name.strip():
         raise HTTPException(status_code=422, detail="Name darf nicht leer sein")
     ok = db.funktionen.update(
@@ -61,7 +69,7 @@ def update_funktion(funktion_id: int, data: FunktionUpdate, user: CurrentUser, d
 
 @router.delete("/{funktion_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_funktion(funktion_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_verwalten(user)
     ok = db.funktionen.mark_deleted(funktion_id, deleted_by=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail="Funktion nicht gefunden")

@@ -4,6 +4,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
+from ..core.authz import authorize_role_assignment
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -41,9 +42,11 @@ PERMISSION_GROUPS = [
         ],
     },
     {
-        'label': 'System', 'icon': 'settings',
+        'label': 'Verwaltung', 'icon': 'admin_panel_settings',
         'permissions': [
-            (Permission.SYSTEM_CONFIG, 'Konfiguration'),
+            (Permission.FUNKTIONEN_VERWALTEN, 'Funktionen verwalten'),
+            (Permission.KASSEN_VERWALTEN,     'Kassen verwalten'),
+            (Permission.SYSTEM_CONFIG,        'System-Konfiguration'),
         ],
     },
     {
@@ -153,12 +156,13 @@ def get_user(user_id: int, user: CurrentUser, db: DB):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(data: UserCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    role = authorize_role_assignment(user, data.role)
     service = UserService(db)
     try:
         created = service.create(
             username=data.username,
             email=data.email,
-            role=data.role,
+            role=role,
             active=data.active,
             created_by=user.username,
             password=data.password,
@@ -172,13 +176,17 @@ def create_user(data: UserCreate, user: CurrentUser, db: DB):
 @router.put("/{user_id}")
 def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
     _require_write(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    role = authorize_role_assignment(user, data.role, current_role=target.role)
     service = UserService(db)
     try:
         service.update(
             user_id=user_id,
             username=data.username,
             email=data.email,
-            role=data.role,
+            role=role,
             active=data.active,
             updated_by=user.username,
             expected_version=data.expected_version,
@@ -233,9 +241,6 @@ def _permissions_payload(target, db):
         'grants':    sorted(overrides['grants']),
         'denies':    sorted(overrides['denies']),
         'effective': effective,
-        # Backward-Compat (entfällt in Stufe D):
-        'current':   sorted(db.permissions.get_permissions_for_user(target.id)),
-        'defaults':  sorted(Permission.defaults_for_role(target.role)),
     }
 
 

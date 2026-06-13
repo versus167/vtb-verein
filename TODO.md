@@ -22,18 +22,16 @@
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
 ### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
-Stufe A (Datenmodell v35 + effektive Berechnung + Sockel) ist umgesetzt. Offen:
-- [ ] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
-      (PUT hart Admin), Matrix-Komponente aus UserPermissionsPage extrahieren,
-      Dialog im Einstellungen-Tab „Funktionen" (+ Hinweis „Abteilungs-Scope wird
-      noch nicht durchgesetzt")
-- [ ] **Stufe C** – persönlicher Berechtigungsscreen: Herkunftsanzeige
-      (geerbt von Funktion/Sockel) + Tri-State-Overrides (grant/deny),
-      PUT-Format `{grants, denies}`
-- [ ] **Stufe D** – Rollen-Ablösung (v36): nur noch admin/mitglied,
-      `defaults_for_role` entfernen, harte `role=='admin'`-Checks ersetzen
+Stufen A–D umgesetzt (Datenmodell v36, funktionsbasierte Rechte, Funktions- und
+persönliche Matrix, Rollen-Ablösung). Offen:
+- [x] **Stufe A** – Datenmodell v35 + effektive Berechnung + Sockel
+- [x] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
+- [x] **Stufe C** – persönlicher Berechtigungsscreen: Herkunft + Tri-State `{grants,denies}`
+- [x] **Stufe D** – Rollen-Ablösung (v36): nur noch admin/mitglied,
+      `defaults_for_role` entfernt, harte `role=='admin'`-Checks ersetzt
       (`funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien →
-      `tickets.bereiche_verwalten`), Admin-Flag-Vergabe nur durch Admins
+      `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`),
+      Admin-Flag-Vergabe nur durch Admins (`backend/core/authz.py`)
 - [ ] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
       `allowed_abteilungen('personen.read')`
 

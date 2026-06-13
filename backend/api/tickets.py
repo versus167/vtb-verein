@@ -7,7 +7,8 @@ Berechtigungsmodell:
       - Lesen:      darf_lesen auf den Bereich des Tickets  (oder eigene Tickets)
       - Schreiben:  darf_bearbeiten auf den Bereich
       - Abschließen: darf_schliessen auf den Bereich
-      - Bereiche/Kategorien verwalten: nur Admin
+      - Bereiche/Kategorien verwalten: Permission tickets.bereiche_verwalten
+      - Fremde Kommentare löschen: Permission tickets.delete
 """
 
 from dataclasses import asdict
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
+from app.models.permission import Permission
 from app.models.ticket import (
     Ticket, TicketBereich, TicketKategorie, TicketKommentar,
     TicketStatus, TicketPrioritaet,
@@ -82,14 +84,9 @@ class KategorieUpdate(KategorieWrite):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _require_admin(user) -> None:
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Nur Administratoren dürfen diese Aktion ausführen.")
-
-
 def _require_bereiche_verwalten(user) -> None:
-    from app.models.permission import Permission
-    if user.role != "admin" and not user.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN):
+    # Bereiche UND Kategorien verwalten (seit Stufe D, vorher hart Admin-only).
+    if not user.has_permission(Permission.TICKETS_BEREICHE_VERWALTEN):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Bereichsverwaltung.")
 
 
@@ -166,14 +163,14 @@ def list_bereiche(user: CurrentUser, db: DB):
 
 @router.post("/bereiche", status_code=201)
 def create_bereich(data: BereichWrite, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     bereich = TicketBereich(name=data.name, beschreibung=data.beschreibung)
     return asdict(db.tickets.create_bereich(bereich, created_by=user.username))
 
 
 @router.put("/bereiche/{bereich_id}")
 def update_bereich(bereich_id: int, data: BereichUpdate, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     bereiche = db.tickets.get_bereiche()
     bereich = next((b for b in bereiche if b.id == bereich_id), None)
     if not bereich:
@@ -190,7 +187,7 @@ def update_bereich(bereich_id: int, data: BereichUpdate, user: CurrentUser, db: 
 
 @router.delete("/bereiche/{bereich_id}", status_code=204)
 def delete_bereich(bereich_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     with db.tickets._ticket_repo.conn.cursor() as cur:
         cur.execute(
             """
@@ -291,14 +288,14 @@ def list_kategorien(user: CurrentUser, db: DB):
 
 @router.post("/kategorien", status_code=201)
 def create_kategorie(data: KategorieWrite, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     kategorie = TicketKategorie(name=data.name, icon=data.icon)
     return asdict(db.tickets.create_kategorie(kategorie, created_by=user.username))
 
 
 @router.put("/kategorien/{kategorie_id}")
 def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     kategorien = db.tickets.get_kategorien()
     kat = next((k for k in kategorien if k.id == kategorie_id), None)
     if not kat:
@@ -315,7 +312,7 @@ def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser
 
 @router.delete("/kategorien/{kategorie_id}", status_code=204)
 def delete_kategorie(kategorie_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_bereiche_verwalten(user)
     db.tickets.mark_kategorie_deleted(kategorie_id, deleted_by=user.username)
 
 
@@ -544,6 +541,6 @@ def delete_kommentar(ticket_id: int, kommentar_id: int, user: CurrentUser, db: D
     kommentar = db.tickets._kommentar_repo.get(kommentar_id)
     if not kommentar or kommentar.ticket_id != ticket_id:
         raise HTTPException(status_code=404, detail="Kommentar nicht gefunden.")
-    if kommentar.autor_id != user.id and user.role != "admin":
+    if kommentar.autor_id != user.id and not user.has_permission(Permission.TICKETS_DELETE):
         raise HTTPException(status_code=403, detail="Nur eigene Kommentare können gelöscht werden.")
     db.tickets.mark_kommentar_deleted(kommentar_id, deleted_by=user.username)

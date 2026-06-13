@@ -197,7 +197,7 @@ const $q = useQuasar()
 const auth = useAuthStore()
 
 const me = ref(null)
-const roleLabels = { admin: 'Administrator', user: 'Bearbeiter', readonly: 'Nur Lesen', mitglied: 'Mitglied' }
+const roleLabels = { admin: 'Administrator', mitglied: 'Mitglied' }
 
 const meinMitglied = ref(null)
 const mitgliedForm = ref({})
