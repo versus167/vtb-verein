@@ -62,7 +62,7 @@ class TestNotificationService:
             username='testuser',
             email='test@example.com',
             password_hash='hashed',
-            role='user',
+            role='mitglied',
             active=True,
             last_login=None,
             version=1,

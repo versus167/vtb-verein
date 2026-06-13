@@ -273,9 +273,12 @@
               <div v-if="!createForm.email" class="text-caption text-grey-6">
                 <q-icon name="info" size="xs" /> Ohne E-Mail: kein Login möglich, nur Mitglied-Datensatz
               </div>
-              <div v-if="createForm.email" class="row q-gutter-sm">
-                <q-select v-model="createForm.role" :options="rolleOptions" label="Rolle"
-                  outlined dense emit-value map-options class="col" />
+              <div v-if="createForm.email" class="row items-center q-gutter-sm">
+                <q-toggle v-if="canAssignAdmin" class="self-center"
+                  :model-value="createForm.role === 'admin'"
+                  @update:model-value="v => createForm.role = v ? 'admin' : 'mitglied'"
+                  label="Administrator" />
+                <q-space />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
               </div>
               <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum" outlined dense type="date" />
@@ -307,9 +310,12 @@
             <q-tab-panel name="user" class="q-gutter-sm q-pa-none">
               <q-input v-model="createForm.username" label="Benutzername *" outlined dense />
               <q-input v-model="createForm.email" label="E-Mail *" outlined dense type="email" />
-              <div class="row q-gutter-sm">
-                <q-select v-model="createForm.role" :options="rolleOptionsAdmin" label="Rolle"
-                  outlined dense emit-value map-options class="col" />
+              <div class="row items-center q-gutter-sm">
+                <q-toggle v-if="canAssignAdmin" class="self-center"
+                  :model-value="createForm.role === 'admin'"
+                  @update:model-value="v => createForm.role = v ? 'admin' : 'mitglied'"
+                  label="Administrator" />
+                <q-space />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
               </div>
               <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense type="password" />
@@ -335,8 +341,13 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="editUserForm.username" label="Benutzername" outlined dense />
           <q-input v-model="editUserForm.email" label="E-Mail" outlined dense type="email" />
-          <q-select v-model="editUserForm.role" :options="rolleOptionsAll" label="Rolle"
-            outlined dense emit-value map-options />
+          <q-toggle v-if="canAssignAdmin"
+            :model-value="editUserForm.role === 'admin'"
+            @update:model-value="v => editUserForm.role = v ? 'admin' : 'mitglied'"
+            label="Administrator (uneingeschränkter Zugriff)" />
+          <div v-else-if="editUserForm.role === 'admin'" class="text-caption text-grey-7">
+            <q-icon name="shield" size="xs" class="q-mr-xs" />Administrator – nur ein Administrator kann dieses Recht ändern
+          </div>
           <q-toggle v-model="editUserForm.active" label="Aktiv" />
           <div v-if="editUserError" class="text-negative text-caption">{{ editUserError }}</div>
         </q-card-section>
@@ -361,8 +372,10 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="nutzerForm.email" label="E-Mail *" outlined dense type="email"
             hint="Login per Magic-Link an diese Adresse" />
-          <q-select v-model="nutzerForm.role" :options="rolleOptionsAll" label="Rolle"
-            outlined dense emit-value map-options />
+          <q-toggle v-if="canAssignAdmin"
+            :model-value="nutzerForm.role === 'admin'"
+            @update:model-value="v => nutzerForm.role = v ? 'admin' : 'mitglied'"
+            label="Administrator (uneingeschränkter Zugriff)" />
           <q-toggle v-model="nutzerForm.active" label="Aktiv (Magic-Link versenden)" />
           <div v-if="nutzerError" class="text-negative text-caption">{{ nutzerError }}</div>
         </q-card-section>
@@ -873,18 +886,9 @@ function formatDate(iso) {
 }
 
 // ── Optionen ───────────────────────────────────────────────
-const rolleOptions = [
-  { label: 'Mitglied',    value: 'mitglied' },
-  { label: 'Bearbeiter',  value: 'user' },
-  { label: 'Nur Lesen',   value: 'readonly' },
-]
-const rolleOptionsAdmin = [
-  { label: 'Administrator', value: 'admin' },
-  { label: 'Bearbeiter',    value: 'user' },
-  { label: 'Nur Lesen',     value: 'readonly' },
-  { label: 'Speziell',      value: 'special' },
-]
-const rolleOptionsAll = [...rolleOptions, ...rolleOptionsAdmin.filter(o => !rolleOptions.find(r => r.value === o.value))]
+// Seit Stufe D (siehe BERECHTIGUNGEN.md) gibt es nur noch 'admin'/'mitglied'.
+// Statt einer Rollen-Auswahl ein Administrator-Schalter (nur für Admins sichtbar).
+const canAssignAdmin = computed(() => auth.user?.role === 'admin')
 const mitgliedStatusOptions = [
   { label: 'Aktiv',           value: 'aktiv' },
   { label: 'Passiv',          value: 'passiv' },
@@ -908,10 +912,10 @@ function formatLastLogin(iso) {
 }
 
 function rolleLabel(role) {
-  return { admin: 'Admin', user: 'Bearbeiter', readonly: 'Nur Lesen', mitglied: 'Mitglied', special: 'Speziell' }[role] ?? role
+  return { admin: 'Admin', mitglied: 'Mitglied' }[role] ?? role
 }
 function rolleColor(role) {
-  return { admin: 'negative', user: 'primary', readonly: 'grey', mitglied: 'teal', special: 'purple' }[role] ?? 'grey'
+  return { admin: 'negative', mitglied: 'teal' }[role] ?? 'grey'
 }
 function abteilungStatusColor(s) {
   return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber' }[s] ?? 'grey'

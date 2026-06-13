@@ -21,6 +21,25 @@
 ### Tickets
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
+### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
+Vollständig umgesetzt (Stufen A–E): Datenmodell v36, funktionsbasierte Rechte,
+Funktions- und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
+Personen-/Mitgliederliste.
+- [x] **Stufe A** – Datenmodell v35 + effektive Berechnung + Sockel
+- [x] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
+- [x] **Stufe C** – persönlicher Berechtigungsscreen: Herkunft + Tri-State `{grants,denies}`
+- [x] **Stufe D** – Rollen-Ablösung (v36): nur noch admin/mitglied,
+      `defaults_for_role` entfernt, harte `role=='admin'`-Checks ersetzt
+      (`funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien →
+      `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`),
+      Admin-Flag-Vergabe nur durch Admins (`backend/core/authz.py`)
+- [x] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
+      `allowed_abteilungen('personen.read')` (`backend/core/scope.py`)
+
+Mögliche Folge-Arbeiten (kein Teil von #22): Scope auch auf Detail-/Schreib-
+Endpunkte ausweiten; Hinweis in der Funktions-Matrix-UI „Abteilungs-Scope wirkt
+in Listen".
+
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
 E-Mail + Matrix als Kanäle sind fertig; Ticket-Ereignisse lösen bereits Benachrichtigungen aus.
@@ -47,6 +66,16 @@ Offen:
       (Stammdaten + Abteilungen + Funktionen, eingebunden in die Abrechnungsvorschau)
       auch in `PersonenPage.vue` und `MitgliederPage.vue` nutzen, damit die
       Mitglieds-Bearbeitung eine Single-Source ist (aktuell dort dupliziert)
+- [ ] **Beitragslogik: CURRENT_DATE statt Stichtag** – `beitrags_service.py`
+      wertet Funktions-Bedingungen mit `CURRENT_DATE` statt dem Abrechnungs-
+      Stichtag aus; bei rückwirkender Abrechnung zählen aktuelle statt
+      historischer Funktionen
+- [ ] **mitglied_funktion.funktion → funktion_id umstellen** – echter FK statt
+      String-Key (FK auf partiellen Unique-Index nicht möglich); betrifft
+      Repository, API, Frontend und Beitragsregeln (`bedingung_funktionen`);
+      v35 loggt verwaiste Keys nur als WARN
+- [ ] Tote Konstante `VALID_FUNKTIONEN` in `mitglied_funktion_repository.py`
+      entfernen (Katalog validiert längst über die `funktion`-Tabelle)
 
 Erledigt (2026-06-11):
 - [x] Frischaufbau-FK-Bug behoben – `mitglied→users` / `beitrag_sollstellung→kassenbuchungen`

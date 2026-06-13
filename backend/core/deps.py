@@ -33,8 +33,9 @@ def get_current_user(
         db.update_last_seen(user.id)
     except Exception:
         pass
-    # Permissions frisch aus der DB laden (damit Admin-Änderungen sofort wirken)
-    user.permissions = db.permissions.get_permissions_for_user(user.id)
+    # Effektive Permissions (Sockel ∪ Funktionsrechte ∪ Grants − Denies) sind
+    # bereits frisch geladen: get_user_by_id → UserRepository._load_permissions.
+    # Änderungen an Matrix/Funktionen wirken damit ab dem nächsten Request.
     return user
 
 

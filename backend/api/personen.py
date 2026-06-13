@@ -10,6 +10,8 @@ from app.models.permission import Permission
 from app.services.person_service import PersonService
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
+from ..core.authz import authorize_role_assignment
+from ..core.scope import visible_mitglied_ids
 
 router = APIRouter(prefix="/personen", tags=["personen"])
 
@@ -221,6 +223,9 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
 @router.get("/")
 def list_personen(user: CurrentUser, db: DB):
     _require_read(user)
+    # Abteilungs-Scope (Stufe E): nur-scoped personen.read → nur Mitglieder der
+    # erlaubten Abteilungen; reine Benutzerkonten ohne Mitglied bleiben dann verborgen.
+    visible = visible_mitglied_ids(user, db)
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT * FROM (
@@ -281,6 +286,8 @@ def list_personen(user: CurrentUser, db: DB):
                 created_by=r['m_created_by'], updated_at=r['m_updated_at'],
                 updated_by=r['m_updated_by'],
             )
+        if visible is not None and (m_obj is None or m_obj.id not in visible):
+            continue  # außerhalb des erlaubten Abteilungs-Scopes
         abteilungen = db.list_mitglied_abteilungen(m_obj.id) if m_obj else []
         funktionen = db.list_mitglied_funktionen(m_obj.id) if m_obj else []
         result.append(_person_row(u_obj, m_obj, abteilungen, funktionen))
@@ -290,6 +297,7 @@ def list_personen(user: CurrentUser, db: DB):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    role = authorize_role_assignment(user, data.role)
     service = PersonService(db)
     try:
         if data.vorname and data.nachname:
@@ -305,7 +313,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
             if data.email:
                 u, m = service.create_vereinsmitglied(
                     vorname=data.vorname, nachname=data.nachname,
-                    email=data.email, role=data.role, active=data.active,
+                    email=data.email, role=role, active=data.active,
                     created_by=user.username, mitglied_data=mitglied_data,
                     password=data.password,
                 )
@@ -324,7 +332,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
             if not data.username:
                 raise HTTPException(status_code=400, detail="Username ist pflicht für Benutzer ohne Mitglied-Datensatz")
             u = service.create_user_only(
-                username=data.username, email=data.email, role=data.role,
+                username=data.username, email=data.email, role=role,
                 active=data.active, created_by=user.username, password=data.password,
             )
             return _person_row(u, None, [], [])
@@ -335,11 +343,15 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
 @router.put("/{user_id}/user")
 def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, db: DB):
     _require_write(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User nicht gefunden")
+    role = authorize_role_assignment(user, data.role, current_role=target.role)
     svc = UserService(db)
     try:
         ok = svc.update(
             user_id=user_id, username=data.username, email=data.email,
-            role=data.role, active=data.active,
+            role=role, active=data.active,
             updated_by=user.username, expected_version=data.expected_version,
         )
     except ValueError as e:
@@ -435,12 +447,13 @@ def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate
     if m.user_id is not None:
         raise HTTPException(status_code=409, detail="Dieses Mitglied hat bereits einen Login-Account")
 
+    role = authorize_role_assignment(user, data.role)
     service = PersonService(db)
     try:
         u = service.create_user_only(
             username=service._generate_username(m.vorname, m.nachname),
             email=data.email,
-            role=data.role,
+            role=role,
             active=data.active,
             created_by=user.username,
             password=data.password,

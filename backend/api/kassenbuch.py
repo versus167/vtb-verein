@@ -1,10 +1,11 @@
 """
 Kassenbuch API – Kassen, Buchungen, Exporte und Berechtigungen.
 
-Berechtigungsmodell:
-  - Kassen anlegen/bearbeiten/löschen: nur Admin (role == 'admin')
+Berechtigungsmodell (seit Stufe D, siehe BERECHTIGUNGEN.md):
+  - Kassen anlegen/bearbeiten/löschen: Permission kassen.verwalten
+  - Berechtigungen pro Kasse verwalten: Permission kassen.verwalten
   - Buchungen lesen/schreiben: kassenspezifisch via kasse_berechtigungen
-  - Berechtigungen verwalten: nur Admin
+    (per-Kasse-ACL); kassen.verwalten umgeht diese ACL (globaler Kassen-Admin).
 """
 
 from dataclasses import asdict
@@ -13,6 +14,7 @@ from pydantic import BaseModel, field_validator
 from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
+from app.models.permission import Permission
 from app.models.kasse import Kasse, Kassenbuchung
 from app.services.kassenbuch_service import (
     BuchungGesperrtError,
@@ -85,9 +87,15 @@ class BerechtigungWrite(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _require_admin(user) -> None:
-    if user.role != "admin":
-        raise HTTPException(status_code=403, detail="Nur Administratoren dürfen diese Aktion ausführen.")
+def _kassen_admin(user) -> bool:
+    """Globaler Kassen-Admin (umgeht die per-Kasse-ACL). Admins haben das Recht
+    immer (has_permission → True für role 'admin')."""
+    return user.has_permission(Permission.KASSEN_VERWALTEN)
+
+
+def _require_kassen_verwalten(user) -> None:
+    if not user.has_permission(Permission.KASSEN_VERWALTEN):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Kassenverwaltung.")
 
 
 def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
@@ -118,7 +126,7 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
 def list_kassen(user: CurrentUser, db: DB):
     """Alle Kassen, auf die der User Zugriff hat. Admins sehen alle."""
     from app.models.kasse import Kasse
-    is_admin = user.role == "admin"
+    is_admin = _kassen_admin(user)
     kassen = db.kassenbuch.get_kassen_fuer_user(user.id, is_admin=is_admin)
     result = []
     for k in kassen:
@@ -139,7 +147,7 @@ def list_kassen(user: CurrentUser, db: DB):
 
 @router.post("/", status_code=201)
 def create_kasse(data: KasseWrite, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     kasse = Kasse(
         name=data.name,
         beschreibung=data.beschreibung,
@@ -152,7 +160,7 @@ def create_kasse(data: KasseWrite, user: CurrentUser, db: DB):
 
 @router.put("/{kasse_id}")
 def update_kasse(kasse_id: int, data: KasseUpdate, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     try:
         kasse = db.kassen.get_kasse(kasse_id)
     except KeyError:
@@ -170,7 +178,7 @@ def update_kasse(kasse_id: int, data: KasseUpdate, user: CurrentUser, db: DB):
 
 @router.delete("/{kasse_id}", status_code=204)
 def delete_kasse(kasse_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     try:
         db.kassenbuch.delete_kasse(kasse_id, deleted_by=user.username)
     except KeyError:
@@ -193,7 +201,7 @@ def list_buchungen(
     storniert: bool = False,
 ):
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         buchungen = db.kassenbuch._buchung.list_kassenbuchungen(
             kasse_id,
             von_datum=von,
@@ -210,7 +218,7 @@ def list_buchungen(
 @router.get("/{kasse_id}/bestand")
 def get_bestand(kasse_id: int, user: CurrentUser, db: DB, bis: Optional[str] = None):
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         if bis:
             bestand = db.kassen.get_bestand_zum_datum_cent(kasse_id, bis)
         else:
@@ -236,7 +244,7 @@ def create_buchung(kasse_id: int, data: BuchungWrite, user: CurrentUser, db: DB)
     try:
         created = db.kassenbuch.create_buchung(
             buchung, created_by=user.username,
-            user_id=user.id, is_admin=(user.role == "admin"),
+            user_id=user.id, is_admin=_kassen_admin(user),
         )
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
@@ -263,7 +271,7 @@ def update_buchung(kasse_id: int, buchung_id: int, data: BuchungUpdate, user: Cu
     try:
         ok = db.kassenbuch.update_buchung(
             buchung, updated_by=user.username,
-            user_id=user.id, is_admin=(user.role == "admin"),
+            user_id=user.id, is_admin=_kassen_admin(user),
         )
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
@@ -284,7 +292,7 @@ def storniere_buchung(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB)
     try:
         db.kassenbuch.storniere_buchung(
             buchung_id, deleted_by=user.username,
-            user_id=user.id, is_admin=(user.role == "admin"),
+            user_id=user.id, is_admin=_kassen_admin(user),
         )
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
@@ -294,7 +302,7 @@ def storniere_buchung(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB)
 def get_datum_bereich(kasse_id: int, user: CurrentUser, db: DB):
     """Gibt den erlaubten Datumsbereich für neue Buchungen zurück."""
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         min_datum, max_datum = db.kassenbuch.get_datum_bereich(kasse_id)
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -319,7 +327,7 @@ def create_export(kasse_id: int, data: ExportRequest, user: CurrentUser, db: DB)
             bis_datum=data.bis_datum,
             exported_by=user.username,
             user_id=user.id,
-            is_admin=(user.role == "admin"),
+            is_admin=_kassen_admin(user),
         )
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
@@ -334,7 +342,7 @@ def create_export(kasse_id: int, data: ExportRequest, user: CurrentUser, db: DB)
 @router.get("/{kasse_id}/exporte")
 def list_exporte(kasse_id: int, user: CurrentUser, db: DB):
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         exporte = db.kassenbuch._export.list_exporte(kasse_id)
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -350,7 +358,7 @@ def redownload_export(kasse_id: int, export_id: int, user: CurrentUser, db: DB):
         dateiname, csv_bytes = db.kassenbuch.reexportiere_csv(
             export_id,
             user_id=user.id,
-            is_admin=(user.role == "admin"),
+            is_admin=_kassen_admin(user),
         )
     except KeinExportrechtError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -382,7 +390,7 @@ def kassenbuch_pdf_bericht(
             bis_datum=bis,
             include_storniert=True,
             user_id=user.id,
-            is_admin=(user.role == "admin"),
+            is_admin=_kassen_admin(user),
         )
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -416,7 +424,7 @@ def kassenbuch_pdf_bericht(
 
 @router.get("/{kasse_id}/berechtigungen")
 def list_berechtigungen(kasse_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     berechtigungen = db.kasse_berechtigungen.get_berechtigungen_fuer_kasse(kasse_id)
     # user_id → username anreichern für die UI
     result = []
@@ -437,7 +445,7 @@ def list_berechtigungen(kasse_id: int, user: CurrentUser, db: DB):
 
 @router.put("/{kasse_id}/berechtigungen/{user_id}", status_code=200)
 def set_berechtigung(kasse_id: int, user_id: int, data: BerechtigungWrite, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     b = db.kasse_berechtigungen.set_berechtigung(
         kasse_id=kasse_id,
         user_id=user_id,
@@ -460,7 +468,7 @@ def set_berechtigung(kasse_id: int, user_id: int, data: BerechtigungWrite, user:
 
 @router.delete("/{kasse_id}/berechtigungen/{user_id}", status_code=204)
 def revoke_berechtigung(kasse_id: int, user_id: int, user: CurrentUser, db: DB):
-    _require_admin(user)
+    _require_kassen_verwalten(user)
     ok = db.kasse_berechtigungen.revoke_berechtigung(kasse_id, user_id, actor=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail="Berechtigung nicht gefunden.")
@@ -473,7 +481,7 @@ def revoke_berechtigung(kasse_id: int, user_id: int, user: CurrentUser, db: DB):
 @router.get("/{kasse_id}/buchungen/{buchung_id}/anhaenge")
 def list_anhaenge(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB):
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -493,7 +501,7 @@ async def upload_anhang(
     file: UploadFile = File(...),
 ):
     try:
-        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
     except KeinSchreibzugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -523,7 +531,7 @@ async def upload_anhang(
 @router.delete("/{kasse_id}/buchungen/{buchung_id}/anhaenge/{anhang_id}", status_code=204)
 def delete_anhang(kasse_id: int, buchung_id: int, anhang_id: int, user: CurrentUser, db: DB):
     try:
-        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_schreibzugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
     except KeinSchreibzugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -539,7 +547,7 @@ def delete_anhang(kasse_id: int, buchung_id: int, anhang_id: int, user: CurrentU
 @router.get("/{kasse_id}/buchungen/{buchung_id}/history")
 def get_buchung_history(kasse_id: int, buchung_id: int, user: CurrentUser, db: DB):
     try:
-        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=(user.role == "admin"))
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
         buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))

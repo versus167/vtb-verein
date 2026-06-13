@@ -12,60 +12,51 @@
     <template v-if="!loading && userData">
       <div class="text-caption text-grey-7 q-mb-sm">Rolle: {{ userData.role }}</div>
 
-      <q-banner v-if="hasCustomPermissions" class="bg-orange-1 q-mb-md rounded-borders">
-        <template #avatar><q-icon name="warning" color="orange" /></template>
-        Die Berechtigungen weichen von den Rollen-Standards ab.
+      <q-banner v-if="userData.role === 'admin'" class="bg-blue-1 q-mb-md rounded-borders">
+        <template #avatar><q-icon name="shield" color="blue" /></template>
+        Administratoren haben unabhängig von dieser Matrix immer alle Rechte.
       </q-banner>
 
-      <q-banner class="bg-blue-1 q-mb-lg rounded-borders">
-        <template #avatar><q-icon name="info" color="blue" /></template>
-        Kassenbuch-Berechtigungen werden pro Kasse in der Kassenverwaltung vergeben.
+      <q-banner v-if="hasOverrides" class="bg-orange-1 q-mb-md rounded-borders">
+        <template #avatar><q-icon name="tune" color="orange" /></template>
+        Es sind individuelle Anpassungen gesetzt
+        ({{ grants.length }} gewährt, {{ denies.length }} entzogen).
       </q-banner>
 
-      <div class="row q-col-gutter-md q-mb-lg">
-        <div
-          v-for="group in groups"
-          :key="group.label"
-          class="col-12 col-sm-6 col-md-4"
-        >
-          <q-card flat bordered>
-            <q-card-section>
-              <div class="row items-center q-mb-sm">
-                <q-icon :name="group.icon" color="primary" size="sm" />
-                <span class="text-subtitle2 text-weight-bold q-ml-sm">{{ group.label }}</span>
-              </div>
-              <div v-for="perm in group.permissions" :key="perm.key">
-                <q-checkbox
-                  v-model="selected"
-                  :val="perm.key"
-                  :label="perm.label"
-                  :disable="!canEdit"
-                  :color="deviatesFromDefault(perm.key) ? 'orange' : 'primary'"
-                />
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
-      </div>
+      <q-banner class="bg-grey-2 q-mb-lg rounded-borders">
+        <template #avatar><q-icon name="info" color="grey-7" /></template>
+        Rechte werden über die <b>Funktionen</b> des Mitglieds geerbt (mehrere kumulieren).
+        Hier kannst du je Recht abweichen: <b>+</b> zusätzlich gewähren, <b>−</b> entziehen
+        (auch geerbte). Kassenbuch-Rechte werden separat pro Kasse vergeben.
+      </q-banner>
 
-      <div v-if="canEdit" class="row q-gutter-sm">
+      <PermissionMatrix
+        mode="tristate"
+        :groups="groups"
+        :readonly="!canEdit"
+        :inherited="inherited"
+        :sources="sources"
+        v-model:grants="grants"
+        v-model:denies="denies"
+      />
+
+      <div v-if="canEdit" class="row q-gutter-sm q-mt-lg">
         <q-btn
-          label="Auf Rollen-Standard zurücksetzen"
+          label="Alle Anpassungen entfernen"
           icon="restart_alt"
-          flat
-          color="secondary"
-          @click="resetToDefaults"
+          flat color="secondary"
+          :disable="!hasOverrides"
+          @click="clearOverrides"
         />
         <q-btn
           label="Speichern"
           icon="save"
-          color="primary"
-          unelevated
+          color="primary" unelevated
           :loading="saving"
           @click="onSave"
         />
       </div>
-      <div v-else class="text-caption text-grey-6">
+      <div v-else class="text-caption text-grey-6 q-mt-lg">
         <q-icon name="visibility" size="xs" class="q-mr-xs" />Nur Ansicht – keine Berechtigung zum Bearbeiten
       </div>
     </template>
@@ -78,6 +69,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -89,25 +81,17 @@ const canEdit = computed(() => auth.hasPermission('personen.permissions'))
 const loading = ref(false)
 const saving = ref(false)
 const userData = ref(null)
-const selected = ref([])
-const defaults = ref([])
 const groups = ref([])
+const inherited = ref([])
+const sources = ref({})
+const grants = ref([])
+const denies = ref([])
 
-const hasCustomPermissions = computed(() => {
-  const sel = new Set(selected.value)
-  const def = new Set(defaults.value)
-  if (sel.size !== def.size) return true
-  return [...sel].some((p) => !def.has(p))
-})
+const hasOverrides = computed(() => grants.value.length > 0 || denies.value.length > 0)
 
-function deviatesFromDefault(key) {
-  const inSelected = selected.value.includes(key)
-  const inDefault = defaults.value.includes(key)
-  return inSelected !== inDefault
-}
-
-function resetToDefaults() {
-  selected.value = [...defaults.value]
+function clearOverrides() {
+  grants.value = []
+  denies.value = []
 }
 
 async function load() {
@@ -118,8 +102,10 @@ async function load() {
       api.get('/api/users/permission-groups'),
     ])
     userData.value = permsRes.data.user
-    selected.value = [...permsRes.data.current]
-    defaults.value = [...permsRes.data.defaults]
+    inherited.value = permsRes.data.inherited
+    sources.value = permsRes.data.sources
+    grants.value = [...permsRes.data.grants]
+    denies.value = [...permsRes.data.denies]
     groups.value = groupsRes.data
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden' })
@@ -132,7 +118,8 @@ async function onSave() {
   saving.value = true
   try {
     await api.put(`/api/users/${route.params.id}/permissions`, {
-      permissions: selected.value,
+      grants: grants.value,
+      denies: denies.value,
     })
     $q.notify({ type: 'positive', message: 'Berechtigungen gespeichert' })
     router.push({ name: 'personen' })

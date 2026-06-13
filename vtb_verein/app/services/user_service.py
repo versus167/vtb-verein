@@ -163,7 +163,7 @@ class UserService:
         Args:
             username: Benutzername
             email: E-Mail-Adresse
-            role: Rolle ('admin', 'user', 'special', 'readonly')
+            role: Rolle ('admin' | 'mitglied')
             active: Aktiv-Status
             created_by: Username des Erstellers
             password: Optionales Passwort (Klartext, wird gehasht). Falls None, wird Dummy-Hash gesetzt
@@ -199,12 +199,10 @@ class UserService:
             active=active
         )
         
-        # Default-Permissions für die Rolle setzen
-        from app.models.permission import Permission
-        default_permissions = Permission.defaults_for_role(role)
-        if default_permissions:
-            self.db.permissions.set_permissions_for_user(user.id, default_permissions, created_by)
-        
+        # Keine Rollen-Default-Permissions mehr (Stufe D, siehe BERECHTIGUNGEN.md):
+        # Rechte ergeben sich aus Sockel ∪ Funktionsrechten ∪ individuellen Grants.
+        # Neue User starten ohne materialisierte Permissions (Admins brauchen keine).
+
         # Willkommens-Mail mit Magic-Link senden (falls E-Mail konfiguriert)
         if send_magic_link and active and EmailConfig.is_configured():
             token = self.token_repo.create_token(

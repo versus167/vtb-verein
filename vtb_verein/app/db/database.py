@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 34
+SCHEMA_VERSION = 36
 
 
 class Database:
@@ -96,6 +96,8 @@ class Database:
             32: self._migrate_v31_to_v32,
             33: self._migrate_v32_to_v33,
             34: self._migrate_v33_to_v34,
+            35: self._migrate_v34_to_v35,
+            36: self._migrate_v35_to_v36,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1288,6 +1290,180 @@ class Database:
 
             cur.execute("UPDATE schema_version SET version = 34 WHERE id = 1")
 
+    def _migrate_v34_to_v35(self) -> None:
+        """Funktionsbasierte Berechtigungen – Stufe A (siehe BERECHTIGUNGEN.md).
+
+        1. Neue Tabelle funktion_permission: Berechtigungsmatrix pro Katalog-Funktion.
+           Referenz über funktion_id (nicht key): FK auf den partiellen Unique-Index
+           uix_funktion_key_active ist nicht möglich, und Key-Reuse nach Soft-Delete
+           darf alte Rechte nicht wiederbeleben.
+        2. user_permissions wird zum Tri-State-Override: effect 'grant'|'deny'.
+           Bestandszeilen werden durch DEFAULT 'grant' automatisch zu individuellen
+           Grants – kein Datenumbau nötig, niemand verliert Rechte.
+        3. abteilung_id als Scope-Reserve (Stufe A immer NULL).
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS funktion_permission (
+                  id           SERIAL PRIMARY KEY,
+                  funktion_id  INTEGER NOT NULL REFERENCES funktion(id),
+                  permission   TEXT NOT NULL,
+                  version      INTEGER NOT NULL DEFAULT 1,
+                  created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by   TEXT NOT NULL,
+                  updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_by   TEXT NOT NULL,
+                  deleted_at   TEXT,
+                  deleted_by   TEXT,
+                  UNIQUE (funktion_id, permission)
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS funktion_permission_history (
+                  id           INTEGER NOT NULL,
+                  version      INTEGER NOT NULL,
+                  funktion_id  INTEGER NOT NULL,
+                  permission   TEXT NOT NULL,
+                  created_at   TEXT NOT NULL,
+                  created_by   TEXT NOT NULL,
+                  updated_at   TEXT NOT NULL,
+                  updated_by   TEXT NOT NULL,
+                  deleted_at   TEXT,
+                  deleted_by   TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_funktion_permission_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO funktion_permission_history (
+                        id, version, funktion_id, permission,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.funktion_id, NEW.permission,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_funktion_permission_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO funktion_permission_history (
+                            id, version, funktion_id, permission,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.funktion_id, NEW.permission,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_funktion_permission_audit_insert
+                AFTER INSERT ON funktion_permission
+                FOR EACH ROW EXECUTE FUNCTION fn_funktion_permission_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_funktion_permission_audit_update
+                AFTER UPDATE ON funktion_permission
+                FOR EACH ROW EXECUTE FUNCTION fn_funktion_permission_audit_update();
+            """)
+
+            # user_permissions → Tri-State-Override (+ Scope-Reserve)
+            cur.execute("""
+                ALTER TABLE user_permissions
+                ADD COLUMN IF NOT EXISTS effect TEXT NOT NULL DEFAULT 'grant'
+                CHECK (effect IN ('grant', 'deny'))
+            """)
+            cur.execute("""
+                ALTER TABLE user_permissions
+                ADD COLUMN IF NOT EXISTS abteilung_id INTEGER REFERENCES abteilung(id)
+            """)
+            cur.execute("ALTER TABLE user_permissions_history ADD COLUMN IF NOT EXISTS effect TEXT")
+            cur.execute("ALTER TABLE user_permissions_history ADD COLUMN IF NOT EXISTS abteilung_id INTEGER")
+
+            # Audit-Trigger-Funktionen auf die neuen Spalten erweitern (Muster v34)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_user_permissions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO user_permissions_history (
+                        id, version, user_id, permission, effect, abteilung_id,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.permission, NEW.effect, NEW.abteilung_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_user_permissions_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO user_permissions_history (
+                            id, version, user_id, permission, effect, abteilung_id,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.user_id, NEW.permission, NEW.effect, NEW.abteilung_id,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_funktion_permission_funktion_id ON funktion_permission(funktion_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_funktion_permission_deleted_at ON funktion_permission(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_funktion_permission_history_id ON funktion_permission_history(id)")
+
+            # Konsistenz-Check (nur WARN): mitglied_funktion.funktion ohne aktiven Katalog-Key.
+            # Echte FK ist auf den partiellen Unique-Index nicht möglich (bekannte Altlast).
+            cur.execute("""
+                SELECT DISTINCT mf.funktion
+                FROM mitglied_funktion mf
+                WHERE mf.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM funktion f
+                      WHERE f.key = mf.funktion AND f.deleted_at IS NULL
+                  )
+            """)
+            verwaiste = [row['funktion'] for row in cur.fetchall()]
+            if verwaiste:
+                logger.warning(
+                    "mitglied_funktion enthält Zuordnungen ohne aktiven Katalog-Eintrag: %s "
+                    "– diese tragen keine Berechtigungen.", verwaiste
+                )
+
+            cur.execute("UPDATE schema_version SET version = 35 WHERE id = 1")
+
+    def _migrate_v35_to_v36(self) -> None:
+        """Rollen-Ablösung – Stufe D (siehe BERECHTIGUNGEN.md).
+
+        Das Berechtigungssystem ist jetzt funktionsbasiert; feste Rollen entfallen.
+        Es bleibt nur noch 'admin' (uneingeschränkt) und 'mitglied'. Alle anderen
+        Bestands-Rollen ('user', 'readonly', 'special') werden auf 'mitglied'
+        normalisiert.
+
+        Niemand verliert dabei Rechte: Rollen-Defaults wurden seit jeher beim
+        Anlegen in user_permissions materialisiert (es gab nie einen
+        Rollen-Fallback zur Laufzeit). Diese Einträge bleiben als individuelle
+        Grants bestehen.
+
+        users_history bleibt unangetastet (immutable Audit-Historie) – die
+        reduzierte CHECK-Constraint gilt nur für die Live-Tabelle.
+        """
+        with self.cursor() as cur:
+            cur.execute("UPDATE users SET role = 'mitglied' WHERE role <> 'admin'")
+            cur.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check")
+            cur.execute("""
+                ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK(role IN ('admin', 'mitglied'))
+            """)
+            cur.execute("UPDATE schema_version SET version = 36 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1613,7 +1789,7 @@ class Database:
               username          TEXT NOT NULL,
               email             TEXT NOT NULL,
               password_hash     TEXT NOT NULL,
-              role              TEXT NOT NULL CHECK(role IN ('admin', 'user', 'readonly', 'special', 'mitglied')),
+              role              TEXT NOT NULL CHECK(role IN ('admin', 'mitglied')),
               active            INTEGER NOT NULL DEFAULT 1,
               last_login        TEXT,
               last_seen         TEXT,
@@ -1679,31 +1855,35 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_permissions (
-              id          SERIAL PRIMARY KEY,
-              user_id     INTEGER NOT NULL REFERENCES users(id),
-              permission  TEXT NOT NULL,
-              version     INTEGER NOT NULL DEFAULT 1,
-              created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              created_by  TEXT NOT NULL,
-              updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_by  TEXT NOT NULL,
-              deleted_at  TEXT,
-              deleted_by  TEXT,
+              id           SERIAL PRIMARY KEY,
+              user_id      INTEGER NOT NULL REFERENCES users(id),
+              permission   TEXT NOT NULL,
+              effect       TEXT NOT NULL DEFAULT 'grant' CHECK (effect IN ('grant', 'deny')),
+              abteilung_id INTEGER REFERENCES abteilung(id),
+              version      INTEGER NOT NULL DEFAULT 1,
+              created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by   TEXT NOT NULL,
+              updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_by   TEXT NOT NULL,
+              deleted_at   TEXT,
+              deleted_by   TEXT,
               UNIQUE (user_id, permission)
             )
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_permissions_history (
-              id          INTEGER NOT NULL,
-              version     INTEGER NOT NULL,
-              user_id     INTEGER NOT NULL,
-              permission  TEXT NOT NULL,
-              created_at  TEXT NOT NULL,
-              created_by  TEXT NOT NULL,
-              updated_at  TEXT NOT NULL,
-              updated_by  TEXT NOT NULL,
-              deleted_at  TEXT,
-              deleted_by  TEXT,
+              id           INTEGER NOT NULL,
+              version      INTEGER NOT NULL,
+              user_id      INTEGER NOT NULL,
+              permission   TEXT NOT NULL,
+              effect       TEXT,
+              abteilung_id INTEGER,
+              created_at   TEXT NOT NULL,
+              created_by   TEXT NOT NULL,
+              updated_at   TEXT NOT NULL,
+              updated_by   TEXT NOT NULL,
+              deleted_at   TEXT,
+              deleted_by   TEXT,
               PRIMARY KEY (id, version)
             )
         """)
@@ -2230,6 +2410,40 @@ class Database:
               PRIMARY KEY (id, version)
             )
         """)
+        # Berechtigungsmatrix pro Katalog-Funktion (siehe BERECHTIGUNGEN.md).
+        # Referenz über funktion_id: FK auf den partiellen Unique-Index
+        # uix_funktion_key_active ist nicht möglich; Key-Reuse nach Soft-Delete
+        # darf alte Rechte nicht wiederbeleben.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS funktion_permission (
+              id           SERIAL PRIMARY KEY,
+              funktion_id  INTEGER NOT NULL REFERENCES funktion(id),
+              permission   TEXT NOT NULL,
+              version      INTEGER NOT NULL DEFAULT 1,
+              created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by   TEXT NOT NULL,
+              updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_by   TEXT NOT NULL,
+              deleted_at   TEXT,
+              deleted_by   TEXT,
+              UNIQUE (funktion_id, permission)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS funktion_permission_history (
+              id           INTEGER NOT NULL,
+              version      INTEGER NOT NULL,
+              funktion_id  INTEGER NOT NULL,
+              permission   TEXT NOT NULL,
+              created_at   TEXT NOT NULL,
+              created_by   TEXT NOT NULL,
+              updated_at   TEXT NOT NULL,
+              updated_by   TEXT NOT NULL,
+              deleted_at   TEXT,
+              deleted_by   TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
 
         # Forward-Referenzen: Diese FKs werden erst NACH allen CREATE TABLE gesetzt,
         # weil ihre Ziel-Tabelle in der Erzeugungsreihenfolge später kommt
@@ -2559,10 +2773,10 @@ class Database:
             CREATE OR REPLACE FUNCTION fn_user_permissions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO user_permissions_history (
-                    id, version, user_id, permission,
+                    id, version, user_id, permission, effect, abteilung_id,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
-                    NEW.id, NEW.version, NEW.user_id, NEW.permission,
+                    NEW.id, NEW.version, NEW.user_id, NEW.permission, NEW.effect, NEW.abteilung_id,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -2573,10 +2787,38 @@ class Database:
             BEGIN
                 IF NEW.version != OLD.version THEN
                     INSERT INTO user_permissions_history (
-                        id, version, user_id, permission,
+                        id, version, user_id, permission, effect, abteilung_id,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
-                        NEW.id, NEW.version, NEW.user_id, NEW.permission,
+                        NEW.id, NEW.version, NEW.user_id, NEW.permission, NEW.effect, NEW.abteilung_id,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_funktion_permission_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO funktion_permission_history (
+                    id, version, funktion_id, permission,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.funktion_id, NEW.permission,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_funktion_permission_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO funktion_permission_history (
+                        id, version, funktion_id, permission,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.funktion_id, NEW.permission,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -3037,6 +3279,8 @@ class Database:
             ('trig_beitrag_sollstellung_audit_update',              'UPDATE', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_update'),
             ('trig_funktion_audit_insert',                          'INSERT', 'funktion',                          'fn_funktion_audit_insert'),
             ('trig_funktion_audit_update',                          'UPDATE', 'funktion',                          'fn_funktion_audit_update'),
+            ('trig_funktion_permission_audit_insert',               'INSERT', 'funktion_permission',               'fn_funktion_permission_audit_insert'),
+            ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -3065,6 +3309,9 @@ class Database:
             ("idx_user_permissions_permission",                     "user_permissions(permission)"),
             ("idx_user_permissions_deleted_at",                     "user_permissions(deleted_at)"),
             ("idx_user_permissions_history_id",                     "user_permissions_history(id)"),
+            ("idx_funktion_permission_funktion_id",                 "funktion_permission(funktion_id)"),
+            ("idx_funktion_permission_deleted_at",                  "funktion_permission(deleted_at)"),
+            ("idx_funktion_permission_history_id",                  "funktion_permission_history(id)"),
             ("idx_kassen_deleted_at",                               "kassen(deleted_at)"),
             ("idx_kassen_abteilung_id",                             "kassen(abteilung_id)"),
             ("idx_kassenbuchungen_kasse_id",                        "kassenbuchungen(kasse_id)"),

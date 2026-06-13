@@ -99,7 +99,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.user?.role === 'admin' || auth.hasPermission('tickets.bereiche_verwalten')"
+            v-if="auth.hasPermission('tickets.bereiche_verwalten')"
             clickable
             :to="{ name: 'ticket-verwaltung' }"
             active-class="bg-primary text-white"
@@ -129,7 +129,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.user?.role === 'admin'"
+            v-if="auth.hasPermission('kassen.verwalten')"
             clickable
             :to="{ name: 'kassenverwaltung' }"
             active-class="bg-primary text-white"
@@ -149,7 +149,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.user?.role === 'admin'"
+            v-if="auth.hasPermission('funktionen.verwalten')"
             clickable
             :to="{ name: 'einstellungen' }"
             active-class="bg-primary text-white"
