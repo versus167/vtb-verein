@@ -39,6 +39,52 @@
         </q-card>
       </div>
 
+      <!-- Meine Berechtigungen (read-only) -->
+      <div class="col-12">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Berechtigungen</div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              Diese Rechte ergeben sich aus deinen Funktionen im Verein.
+              Änderungen kann nur die Vereinsverwaltung vornehmen.
+            </div>
+
+            <q-banner v-if="me?.role === 'admin'" class="bg-blue-1 rounded-borders q-mb-md">
+              <template #avatar><q-icon name="shield" color="blue" /></template>
+              Als Administrator hast du uneingeschränkten Zugriff auf alle Funktionen.
+            </q-banner>
+
+            <template v-if="me?.role !== 'admin' && permGroups.length">
+              <div v-for="group in permGroups" :key="group.label" class="q-mb-md">
+                <div class="row items-center q-mb-xs">
+                  <q-icon :name="group.icon" color="primary" size="sm" />
+                  <span class="text-subtitle2 text-weight-medium q-ml-sm">{{ group.label }}</span>
+                </div>
+                <q-list dense>
+                  <q-item v-for="perm in group.perms" :key="perm.key" class="q-px-none">
+                    <q-item-section avatar style="min-width: 32px">
+                      <q-icon name="check_circle" color="positive" size="xs" />
+                    </q-item-section>
+                    <q-item-section>{{ perm.label }}</q-item-section>
+                    <q-item-section side>
+                      <div class="row q-gutter-xs justify-end">
+                        <q-badge
+                          v-for="(c, i) in perm.origins" :key="i"
+                          color="teal-1" text-color="teal-9"
+                        >{{ c }}</q-badge>
+                      </div>
+                    </q-item-section>
+                  </q-item>
+                </q-list>
+              </div>
+            </template>
+            <div v-else-if="me?.role !== 'admin'" class="text-caption text-grey-6">
+              Aktuell sind dir keine besonderen Berechtigungen zugeordnet.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
       <!-- Passwort ändern -->
       <div class="col-12">
         <q-card flat bordered>
@@ -188,7 +234,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -198,6 +244,35 @@ const auth = useAuthStore()
 
 const me = ref(null)
 const roleLabels = { admin: 'Administrator', mitglied: 'Mitglied' }
+
+// Eigene Berechtigungen (read-only Anzeige)
+const permData = ref(null)
+
+function originChips(key) {
+  const out = []
+  for (const s of permData.value?.sources?.[key] || []) {
+    if (s.typ === 'sockel') out.push('Standard')
+    else if (s.typ === 'funktion') {
+      out.push(s.abteilung_name ? `${s.funktion_name} (${s.abteilung_name})` : s.funktion_name)
+    } else if (s.typ === 'override' && s.effect === 'grant') out.push('individuell')
+  }
+  return [...new Set(out)]
+}
+
+// Nur tatsächlich wirksame Rechte, gruppiert, mit Herkunft.
+const permGroups = computed(() => {
+  if (!permData.value) return []
+  const effective = new Set((permData.value.effective || []).map(e => e.key))
+  return (permData.value.groups || [])
+    .map(g => ({
+      label: g.label,
+      icon: g.icon,
+      perms: g.permissions
+        .filter(p => effective.has(p.key))
+        .map(p => ({ key: p.key, label: p.label, origins: originChips(p.key) })),
+    }))
+    .filter(g => g.perms.length > 0)
+})
 
 const meinMitglied = ref(null)
 const mitgliedForm = ref({})
@@ -228,6 +303,10 @@ async function load() {
   preferredContact.value = ['email', 'matrix'].includes(data.preferred_contact)
     ? data.preferred_contact
     : 'email'
+  try {
+    const { data: perms } = await api.get('/api/auth/me/permissions')
+    permData.value = perms
+  } catch { /* Berechtigungen optional – Anzeige einfach weglassen */ }
   try {
     const { data: m } = await api.get('/api/personen/mein-mitglied')
     meinMitglied.value = m

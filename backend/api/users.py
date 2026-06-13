@@ -59,6 +59,21 @@ PERMISSION_GROUPS = [
 ]
 
 
+def permission_groups_payload():
+    """Statische Berechtigungsgruppen für die UI (Label + Keys je Gruppe)."""
+    return [
+        {
+            'label': g['label'],
+            'icon':  g['icon'],
+            'permissions': [
+                {'key': key, 'label': label}
+                for key, label in g['permissions']
+            ],
+        }
+        for g in PERMISSION_GROUPS
+    ]
+
+
 def _require_read(user):
     if not user.has_permission(Permission.PERSONEN_READ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Leseberechtigung")
@@ -131,17 +146,7 @@ def list_users(user: CurrentUser, db: DB):
 @router.get("/permission-groups")
 def get_permission_groups(user: CurrentUser):
     _require_read(user)
-    return [
-        {
-            'label': g['label'],
-            'icon':  g['icon'],
-            'permissions': [
-                {'key': key, 'label': label}
-                for key, label in g['permissions']
-            ],
-        }
-        for g in PERMISSION_GROUPS
-    ]
+    return permission_groups_payload()
 
 
 @router.get("/{user_id}")

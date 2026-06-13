@@ -85,6 +85,22 @@ def get_me(user: CurrentUser, db: DB):
     )
 
 
+@router.get("/me/permissions")
+def get_my_permissions(user: CurrentUser, db: DB):
+    """Eigene effektive Rechte inkl. Herkunft – read-only, ohne personen.read.
+
+    Jeder eingeloggte User darf seine eigenen Berechtigungen einsehen.
+    Liefert dieselbe Struktur wie /users/{id}/permissions plus die statischen
+    Berechtigungsgruppen, damit das Profil sie ohne Zusatz-Endpoint rendern kann.
+    """
+    from .users import _permissions_payload, permission_groups_payload
+    fresh = db.get_user_by_id(user.id)
+    return {
+        **_permissions_payload(fresh, db),
+        'groups': permission_groups_payload(),
+    }
+
+
 class ContactPreferencesUpdate(BaseModel):
     matrix_id: str | None = None
     preferred_contact: str
