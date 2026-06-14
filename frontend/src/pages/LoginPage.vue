@@ -4,7 +4,7 @@
       <q-card-section class="text-center q-pb-none">
         <q-icon name="corporate_fare" size="4rem" color="primary" />
         <div class="text-h5 q-mt-sm">Vereinsverwaltung</div>
-        <div class="text-caption text-grey">VTB</div>
+        <div class="text-caption text-grey">VTB<span v-if="appVersion"> · {{ appVersion }}</span></div>
       </q-card-section>
 
       <q-card-section>
@@ -132,7 +132,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
@@ -141,6 +141,19 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const tab = ref('magic')
+
+const appVersion = ref('')
+
+async function loadAppVersion() {
+  try {
+    const { data } = await api.get('/api/app-info')
+    appVersion.value = data.version ? `v.${data.version}` : ''
+  } catch {
+    appVersion.value = ''
+  }
+}
+
+onMounted(loadAppVersion)
 
 const username = ref('')
 const password = ref('')

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core.config import settings
+from app.config.app_info import APP_NAME, get_app_version
 from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
@@ -100,7 +101,13 @@ app.include_router(imports_router, prefix="/api")
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "2.0.0"}
+    return {"status": "ok", "version": get_app_version()}
+
+
+@app.get("/api/app-info")
+def app_info():
+    """Öffentliche App-Metadaten (Name + Version) für die Anzeige im Frontend."""
+    return {"name": APP_NAME, "version": get_app_version()}
 
 
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
