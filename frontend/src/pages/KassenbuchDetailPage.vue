@@ -260,7 +260,15 @@
             :max="datumMax"
           />
           <q-input v-model="buchungForm.buchungstext" label="Buchungstext *" outlined />
-          <q-input v-model="buchungForm.kategorie" label="Kategorie" outlined />
+          <q-select
+            v-if="kategorien.length"
+            v-model="buchungForm.kategorie"
+            :options="kategorieOptionen"
+            label="Kategorie *"
+            outlined
+            options-dense
+          />
+          <q-input v-else v-model="buchungForm.kategorie" label="Kategorie" outlined />
           <q-btn-toggle
             v-model="buchungTyp"
             :options="[{ label: 'Einnahme', value: 'einnahme' }, { label: 'Ausgabe', value: 'ausgabe' }]"
@@ -497,6 +505,15 @@ const kasse = ref(null)
 const bestandCent = ref(0)
 const buchungen = ref([])
 const exporte = ref([])
+const kategorien = ref([])   // verwaltete Kategorien dieser Kasse (allgemein ∪ kassenspezifisch)
+
+// Auswahl fürs Dropdown; ein vorhandener Legacy-Freitext der gerade bearbeiteten
+// Buchung bleibt als Option erhalten, damit er beim Editieren nicht verloren geht.
+const kategorieOptionen = computed(() => {
+  const namen = kategorien.value.map(k => k.name)
+  const aktuell = buchungForm.value.kategorie
+  return aktuell && !namen.includes(aktuell) ? [aktuell, ...namen] : namen
+})
 const loading = ref(false)
 const exporteLoading = ref(false)
 
@@ -615,7 +632,14 @@ async function applyFilter() {
 }
 
 async function loadAll() {
-  await Promise.all([loadKasse(), loadBuchungen(), loadBestand(), loadDatumBereich()])
+  await Promise.all([loadKasse(), loadBuchungen(), loadBestand(), loadDatumBereich(), loadKategorien()])
+}
+
+async function loadKategorien() {
+  try {
+    const { data } = await api.get(`/api/kassen/${kasseId.value}/kategorien`)
+    kategorien.value = data
+  } catch { /* ignorieren – Kategorien sind optional bis konfiguriert */ }
 }
 
 async function loadKasse() {
@@ -694,6 +718,11 @@ function openEditDialog(buchung) {
 async function onSaveBuchung() {
   if (!buchungForm.value.buchungstext.trim()) {
     $q.notify({ type: 'warning', message: 'Bitte den Buchungstext ausfüllen.' })
+    return
+  }
+  // Kategorie ist Pflicht, sobald für diese Kasse Kategorien konfiguriert sind.
+  if (kategorien.value.length && !buchungForm.value.kategorie) {
+    $q.notify({ type: 'warning', message: 'Bitte eine Kategorie wählen.' })
     return
   }
   buchungSaving.value = true

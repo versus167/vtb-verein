@@ -50,6 +50,75 @@
       </q-card>
     </div>
 
+    <!-- Kategorien -->
+    <q-card flat bordered class="q-mt-lg">
+      <q-card-section class="row items-center">
+        <div class="text-h6 col">Kategorien</div>
+        <q-btn label="Neue Kategorie" icon="add" color="primary" unelevated dense @click="openCreateKategorie" />
+      </q-card-section>
+      <q-separator />
+      <q-card-section class="q-pa-none">
+        <q-table
+          :rows="kategorien"
+          :columns="kategorieColumns"
+          row-key="id"
+          :loading="kategorienLoading"
+          flat
+          :pagination="{ rowsPerPage: 0 }"
+          hide-bottom
+          no-data-label="Noch keine Kategorien angelegt."
+        >
+          <template #body-cell-geltungsbereich="props">
+            <q-td :props="props">
+              <q-chip v-if="props.row.ist_allgemein" dense square color="primary" text-color="white" icon="public">
+                Alle Kassen
+              </q-chip>
+              <q-chip v-else dense square color="grey-3" text-color="grey-9" icon="account_balance_wallet">
+                {{ props.row.kasse_name }}
+              </q-chip>
+            </q-td>
+          </template>
+          <template #body-cell-actions="props">
+            <q-td :props="props">
+              <q-btn flat dense round icon="edit" color="grey-7" size="sm" @click="openEditKategorie(props.row)">
+                <q-tooltip>Bearbeiten</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="delete" color="negative" size="sm" @click="confirmDeleteKategorie(props.row)">
+                <q-tooltip>Löschen</q-tooltip>
+              </q-btn>
+            </q-td>
+          </template>
+        </q-table>
+      </q-card-section>
+    </q-card>
+
+    <!-- Kategorie anlegen / bearbeiten -->
+    <q-dialog v-model="kategorieDialogOpen" persistent>
+      <q-card style="min-width: 420px">
+        <q-card-section class="text-h6">
+          {{ editingKategorieId ? 'Kategorie bearbeiten' : 'Neue Kategorie' }}
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="kategorieForm.name" label="Name *" outlined :rules="[v => !!v || 'Pflichtfeld']" />
+          <q-select
+            v-model="kategorieForm.kasse_id"
+            :options="geltungsbereichOptionen"
+            label="Geltungsbereich"
+            outlined
+            emit-value
+            map-options
+            hint="„Alle Kassen“ = allgemein; sonst nur bei der gewählten Kasse wählbar."
+          />
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Speichern" color="primary" unelevated :loading="savingKategorie" @click="onSaveKategorie" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Kasse anlegen / bearbeiten -->
     <q-dialog v-model="kasseDialogOpen" persistent>
       <q-card style="min-width: 420px">
@@ -192,6 +261,26 @@ const berechtigungColumns = [
   { name: 'darf_exportieren', label: 'Exportieren', field: 'darf_exportieren', align: 'center' },
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
+
+// --- Kategorien ---
+const kategorien = ref([])
+const kategorienLoading = ref(false)
+const kategorieDialogOpen = ref(false)
+const savingKategorie = ref(false)
+const editingKategorieId = ref(null)
+const editingKategorieVersion = ref(null)
+const kategorieForm = ref({ name: '', kasse_id: null })
+
+const kategorieColumns = [
+  { name: 'name', label: 'Name', field: 'name', align: 'left' },
+  { name: 'geltungsbereich', label: 'Geltungsbereich', field: 'kasse_name', align: 'left' },
+  { name: 'actions', label: '', field: 'actions', align: 'right' },
+]
+
+const geltungsbereichOptionen = computed(() => [
+  { label: 'Alle Kassen (allgemein)', value: null },
+  ...kassen.value.map(k => ({ label: k.name, value: k.id })),
+])
 
 const verfuegbareUsers = computed(() => {
   const bereitsVorhanden = new Set(berechtigungen.value.map(b => b.user_id))
@@ -337,5 +426,81 @@ async function revokeBerechtigung(row) {
   }
 }
 
-onMounted(loadKassen)
+// -----------------------------------------------------------------------
+// Kategorien-Verwaltung
+// -----------------------------------------------------------------------
+
+async function loadKategorien() {
+  kategorienLoading.value = true
+  try {
+    const { data } = await api.get('/api/kassen/kategorien')
+    kategorien.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Fehler beim Laden der Kategorien.' })
+  } finally {
+    kategorienLoading.value = false
+  }
+}
+
+function openCreateKategorie() {
+  editingKategorieId.value = null
+  editingKategorieVersion.value = null
+  kategorieForm.value = { name: '', kasse_id: null }
+  kategorieDialogOpen.value = true
+}
+
+function openEditKategorie(kat) {
+  editingKategorieId.value = kat.id
+  editingKategorieVersion.value = kat.version
+  kategorieForm.value = { name: kat.name, kasse_id: kat.kasse_id }
+  kategorieDialogOpen.value = true
+}
+
+async function onSaveKategorie() {
+  if (!kategorieForm.value.name.trim()) return
+  savingKategorie.value = true
+  try {
+    const payload = {
+      name: kategorieForm.value.name.trim(),
+      kasse_id: kategorieForm.value.kasse_id ?? null,
+    }
+    if (editingKategorieId.value) {
+      await api.put(`/api/kassen/kategorien/${editingKategorieId.value}`, {
+        ...payload,
+        expected_version: editingKategorieVersion.value,
+      })
+    } else {
+      await api.post('/api/kassen/kategorien', payload)
+    }
+    $q.notify({ type: 'positive', message: 'Gespeichert.' })
+    kategorieDialogOpen.value = false
+    await loadKategorien()
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
+  } finally {
+    savingKategorie.value = false
+  }
+}
+
+function confirmDeleteKategorie(kat) {
+  $q.dialog({
+    title: 'Kategorie löschen',
+    message: `Kategorie „${kat.name}" wirklich löschen? Bestehende Buchungen behalten ihren Text.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/kassen/kategorien/${kat.id}`)
+      $q.notify({ type: 'positive', message: 'Kategorie gelöscht.' })
+      await loadKategorien()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen.' })
+    }
+  })
+}
+
+onMounted(() => {
+  loadKassen()
+  loadKategorien()
+})
 </script>

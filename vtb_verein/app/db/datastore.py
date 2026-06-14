@@ -32,6 +32,7 @@ from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
+from app.db.kassen_kategorie_repository import KassenKategorieRepository
 from app.db.ticket_repository import TicketRepository
 from app.db.ticket_kommentar_repository import TicketKommentarRepository
 from app.db.ticket_anhang_repository import TicketAnhangRepository
@@ -84,6 +85,7 @@ class VereinsDB:
         self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
         self._kasse_berechtigung_repo = KasseBerechtigungRepository(self.conn)
         self._kassenbuchung_anhang_repo = KassenbuchungAnhangRepository(self.conn)
+        self._kassen_kategorie_repo = KassenKategorieRepository(self.conn)
         self._beitragsregel_repo = BeitragsregelRepository(self.conn)
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
         self._gebuehr_repo = GebuehrRepository(self.conn)
@@ -101,6 +103,7 @@ class VereinsDB:
             berechtigung_repo=self._kasse_berechtigung_repo,
             anhang_repo=self._kassenbuchung_anhang_repo,
             anhang_service=self._anhang_service,
+            kategorie_repo=self._kassen_kategorie_repo,
         )
 
         self._ticket_repo = TicketRepository(self.conn)
@@ -160,6 +163,11 @@ class VereinsDB:
     def kasse_berechtigungen(self) -> KasseBerechtigungRepository:
         """Zugriff auf KasseBerechtigungRepository."""
         return self._kasse_berechtigung_repo
+
+    @property
+    def kassen_kategorien(self) -> KassenKategorieRepository:
+        """Direktzugriff auf KassenKategorieRepository (Stammdaten)."""
+        return self._kassen_kategorie_repo
 
     @property
     def anhang_service(self) -> AnhangService:

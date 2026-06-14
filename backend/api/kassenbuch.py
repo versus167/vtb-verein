@@ -15,7 +15,7 @@ from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
-from app.models.kasse import Kasse, Kassenbuchung
+from app.models.kasse import Kasse, Kassenbuchung, KassenKategorie
 from app.services.kassenbuch_service import (
     BuchungGesperrtError,
     NegativerBestandError,
@@ -23,6 +23,7 @@ from app.services.kassenbuch_service import (
     KeinSchreibzugriffError,
     KeinExportrechtError,
     DatumAusserhalbBereichError,
+    KategorieUngueltigError,
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
@@ -83,6 +84,23 @@ class BerechtigungWrite(BaseModel):
     darf_exportieren: bool = False
 
 
+class KategorieWrite(BaseModel):
+    name: str
+    kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
+
+    @field_validator("name")
+    @classmethod
+    def _name_nonempty(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("Name darf nicht leer sein.")
+        return v
+
+
+class KategorieUpdate(KategorieWrite):
+    expected_version: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -110,6 +128,8 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, NegativerBestandError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, DatumAusserhalbBereichError):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, KategorieUngueltigError):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
@@ -416,6 +436,94 @@ def kassenbuch_pdf_bericht(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Kategorien (Stammdaten für Buchungs-Kategorien)
+# ---------------------------------------------------------------------------
+
+def _kassen_namen(db) -> dict:
+    return {k.id: k.name for k in db.kassen.list_kassen()}
+
+
+def _kategorie_dict(k: KassenKategorie, kasse_name: Optional[str]) -> dict:
+    return {
+        "id": k.id,
+        "name": k.name,
+        "kasse_id": k.kasse_id,
+        "kasse_name": kasse_name,            # None bei allgemeiner Kategorie
+        "ist_allgemein": k.kasse_id is None,
+        "version": k.version,
+    }
+
+
+@router.get("/{kasse_id}/kategorien")
+def list_kategorien_fuer_kasse(kasse_id: int, user: CurrentUser, db: DB):
+    """Effektive Kategorie-Auswahl einer Kasse (allgemein ∪ kassenspezifisch).
+
+    Für das Dropdown bei der Buchungserfassung – braucht nur Lesezugriff.
+    """
+    try:
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    return [
+        {"id": k.id, "name": k.name, "kasse_id": k.kasse_id, "ist_allgemein": k.kasse_id is None}
+        for k in db.kassen_kategorien.list_for_kasse(kasse_id)
+    ]
+
+
+@router.get("/kategorien")
+def list_alle_kategorien(user: CurrentUser, db: DB):
+    """Alle Kategorien (allgemein + kassenspezifisch) für die Verwaltung."""
+    _require_kassen_verwalten(user)
+    namen = _kassen_namen(db)
+    return [_kategorie_dict(k, namen.get(k.kasse_id)) for k in db.kassen_kategorien.list_all()]
+
+
+@router.post("/kategorien", status_code=201)
+def create_kategorie(data: KategorieWrite, user: CurrentUser, db: DB):
+    _require_kassen_verwalten(user)
+    if data.kasse_id is not None:
+        try:
+            db.kassen.get_kasse(data.kasse_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Kasse {data.kasse_id} nicht gefunden.")
+    if db.kassen_kategorien.name_konflikt(data.kasse_id, data.name):
+        raise HTTPException(status_code=409, detail="Eine Kategorie mit diesem Namen existiert hier bereits.")
+    kat = db.kassen_kategorien.create(
+        KassenKategorie(name=data.name, kasse_id=data.kasse_id), created_by=user.username
+    )
+    return _kategorie_dict(kat, _kassen_namen(db).get(kat.kasse_id))
+
+
+@router.put("/kategorien/{kategorie_id}")
+def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser, db: DB):
+    _require_kassen_verwalten(user)
+    kat = db.kassen_kategorien.get(kategorie_id)
+    if kat is None or kat.deleted_at is not None:
+        raise HTTPException(status_code=404, detail=f"Kategorie {kategorie_id} nicht gefunden.")
+    if data.kasse_id is not None:
+        try:
+            db.kassen.get_kasse(data.kasse_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Kasse {data.kasse_id} nicht gefunden.")
+    if db.kassen_kategorien.name_konflikt(data.kasse_id, data.name, exclude_id=kategorie_id):
+        raise HTTPException(status_code=409, detail="Eine Kategorie mit diesem Namen existiert hier bereits.")
+    kat.name = data.name
+    kat.kasse_id = data.kasse_id
+    kat.version = data.expected_version
+    if not db.kassen_kategorien.update(kat, updated_by=user.username):
+        raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
+    updated = db.kassen_kategorien.get(kategorie_id)
+    return _kategorie_dict(updated, _kassen_namen(db).get(updated.kasse_id))
+
+
+@router.delete("/kategorien/{kategorie_id}", status_code=204)
+def delete_kategorie(kategorie_id: int, user: CurrentUser, db: DB):
+    _require_kassen_verwalten(user)
+    if not db.kassen_kategorien.mark_deleted(kategorie_id, deleted_by=user.username):
+        raise HTTPException(status_code=404, detail=f"Kategorie {kategorie_id} nicht gefunden.")
 
 
 # ---------------------------------------------------------------------------

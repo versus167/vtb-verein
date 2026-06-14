@@ -85,6 +85,33 @@ class KassenbuchungAnhang:
 
 
 @dataclass
+class KassenKategorie:
+    """Verwaltete Kategorie für Kassenbuchungen.
+
+    kasse_id == None  → allgemeine Kategorie, bei jeder Kasse wählbar.
+    kasse_id gesetzt  → nur bei der zugeordneten Kasse wählbar.
+
+    Die Buchung speichert die Kategorie weiterhin als Text (denormalisiert);
+    diese Stammdaten steuern nur die Auswahl bei der Erfassung.
+    """
+    name: str
+    kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
+
+    id: Optional[int] = None
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+    @property
+    def ist_allgemein(self) -> bool:
+        return self.kasse_id is None
+
+
+@dataclass
 class KassenbuchExport:
     """Repräsentiert einen abgeschlossenen CSV-Export eines Zeitraums."""
     kasse_id: int
