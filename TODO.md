@@ -21,6 +21,16 @@
 ### Tickets
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
+### Kassenbuch
+- [ ] **Verwaltete Kassen-Kategorien statt Freitext** – aktuell ist `kassenbuchungen.kategorie`
+      ein freies Textfeld (`q-input`), das uneinheitliche Schreibweisen und damit zersplitterte
+      Kategorien-Summen im Bericht erlaubt. Stattdessen eigene Stammdaten-Tabelle
+      `kassen_kategorien` (analog `ticket_kategorien`) + Dropdown bei der Erfassung.
+  - [ ] **Konfiguration der Kategorien als eigene Berechtigung** (analog
+        `tickets.bereiche_verwalten`, z.B. `kassen.kategorien_verwalten`)
+  - [ ] **Pflicht zur Kategorieauswahl** bei der Kassenerfassung (Dropdown statt Freitext,
+        Validierung in Backend + Frontend; Migration der Bestands-Freitexte bedenken)
+
 ### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
 Vollständig umgesetzt (Stufen A–E): Datenmodell v36, funktionsbasierte Rechte,
 Funktions- und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
