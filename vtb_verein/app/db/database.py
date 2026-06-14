@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 37
+SCHEMA_VERSION = 38
 
 
 class Database:
@@ -99,6 +99,7 @@ class Database:
             35: self._migrate_v34_to_v35,
             36: self._migrate_v35_to_v36,
             37: self._migrate_v36_to_v37,
+            38: self._migrate_v37_to_v38,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1558,6 +1559,97 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_history_id ON user_sessions_history(id)")
             cur.execute("UPDATE schema_version SET version = 37 WHERE id = 1")
 
+    def _migrate_v37_to_v38(self) -> None:
+        """Verwaltete Kassen-Kategorien statt Freitext (TODO „Kassenbuch").
+
+        Bisher war kassenbuchungen.kategorie ein freies Textfeld, was
+        uneinheitliche Schreibweisen und damit zersplitterte Kategorien-Summen
+        im Bericht erlaubte. Neue Stammdaten-Tabelle steuert die Auswahl bei der
+        Erfassung (Dropdown). Geltungsbereich:
+          kasse_id IS NULL → allgemeine Kategorie (bei jeder Kasse wählbar)
+          kasse_id gesetzt → nur bei der zugeordneten Kasse wählbar.
+
+        Die Buchung speichert die Kategorie weiterhin als Text (denormalisiert);
+        Bestands-Buchungen behalten ihren Freitext unangetastet (Legacy).
+        Soft-Delete-only; History via Trigger.
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_kategorien (
+                  id          SERIAL PRIMARY KEY,
+                  kasse_id    INTEGER REFERENCES kassen(id),
+                  name        TEXT NOT NULL,
+                  version     INTEGER NOT NULL DEFAULT 1,
+                  created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by  TEXT NOT NULL,
+                  updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_by  TEXT NOT NULL,
+                  deleted_at  TEXT,
+                  deleted_by  TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_kategorien_history (
+                  id          INTEGER NOT NULL,
+                  version     INTEGER NOT NULL,
+                  kasse_id    INTEGER,
+                  name        TEXT,
+                  created_at  TEXT,
+                  created_by  TEXT,
+                  updated_at  TEXT,
+                  updated_by  TEXT,
+                  deleted_at  TEXT,
+                  deleted_by  TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO kassen_kategorien_history (
+                        id, version, kasse_id, name,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO kassen_kategorien_history (
+                            id, version, kasse_id, name,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_kassen_kategorien_audit_insert
+                AFTER INSERT ON kassen_kategorien
+                FOR EACH ROW EXECUTE FUNCTION fn_kassen_kategorien_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_kassen_kategorien_audit_update
+                AFTER UPDATE ON kassen_kategorien
+                FOR EACH ROW EXECUTE FUNCTION fn_kassen_kategorien_audit_update();
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_kategorien_kasse_id ON kassen_kategorien(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_kategorien_deleted_at ON kassen_kategorien(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_kategorien_history_id ON kassen_kategorien_history(id)")
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uix_kassen_kategorien_scope_name "
+                "ON kassen_kategorien (COALESCE(kasse_id, 0), lower(name)) WHERE deleted_at IS NULL"
+            )
+            cur.execute("UPDATE schema_version SET version = 38 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2158,6 +2250,35 @@ class Database:
               updated_by       TEXT,
               deleted_at       TEXT,
               deleted_by       TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kassen_kategorien (
+              id          SERIAL PRIMARY KEY,
+              kasse_id    INTEGER REFERENCES kassen(id),
+              name        TEXT NOT NULL,
+              version     INTEGER NOT NULL DEFAULT 1,
+              created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by  TEXT NOT NULL,
+              updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_by  TEXT NOT NULL,
+              deleted_at  TEXT,
+              deleted_by  TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kassen_kategorien_history (
+              id          INTEGER NOT NULL,
+              version     INTEGER NOT NULL,
+              kasse_id    INTEGER,
+              name        TEXT,
+              created_at  TEXT,
+              created_by  TEXT,
+              updated_at  TEXT,
+              updated_by  TEXT,
+              deleted_at  TEXT,
+              deleted_by  TEXT,
               PRIMARY KEY (id, version)
             )
         """)
@@ -3090,6 +3211,34 @@ class Database:
             END; $$;
         """)
         cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO kassen_kategorien_history (
+                    id, version, kasse_id, name,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO kassen_kategorien_history (
+                        id, version, kasse_id, name,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
             CREATE OR REPLACE FUNCTION fn_ticket_bereiche_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO ticket_bereiche_history (
@@ -3420,6 +3569,8 @@ class Database:
             ('trig_kassenbuch_exporte_audit_insert',                'INSERT', 'kassenbuch_exporte',                'fn_kassenbuch_exporte_audit_insert'),
             ('trig_kasse_berechtigungen_audit_insert',              'INSERT', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_insert'),
             ('trig_kasse_berechtigungen_audit_update',              'UPDATE', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_update'),
+            ('trig_kassen_kategorien_audit_insert',                 'INSERT', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_insert'),
+            ('trig_kassen_kategorien_audit_update',                 'UPDATE', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_update'),
             ('trig_ticket_bereiche_audit_insert',                   'INSERT', 'ticket_bereiche',                   'fn_ticket_bereiche_audit_insert'),
             ('trig_ticket_bereiche_audit_update',                   'UPDATE', 'ticket_bereiche',                   'fn_ticket_bereiche_audit_update'),
             ('trig_ticket_kategorien_audit_insert',                 'INSERT', 'ticket_kategorien',                 'fn_ticket_kategorien_audit_insert'),
@@ -3488,6 +3639,9 @@ class Database:
             ("idx_kasse_berechtigungen_user_id",                    "kasse_berechtigungen(user_id)"),
             ("idx_kasse_berechtigungen_deleted_at",                 "kasse_berechtigungen(deleted_at)"),
             ("idx_kasse_berechtigungen_history_id",                 "kasse_berechtigungen_history(id)"),
+            ("idx_kassen_kategorien_kasse_id",                      "kassen_kategorien(kasse_id)"),
+            ("idx_kassen_kategorien_deleted_at",                    "kassen_kategorien(deleted_at)"),
+            ("idx_kassen_kategorien_history_id",                    "kassen_kategorien_history(id)"),
             ("idx_ticket_bereiche_deleted_at",                      "ticket_bereiche(deleted_at)"),
             ("idx_ticket_kategorien_deleted_at",                    "ticket_kategorien(deleted_at)"),
             ("idx_tickets_status",                                  "tickets(status)"),
@@ -3540,6 +3694,7 @@ class Database:
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_kassen_kategorien_scope_name ON kassen_kategorien (COALESCE(kasse_id, 0), lower(name)) WHERE deleted_at IS NULL")
 
     # -----------------------------------
     # Seed-Daten

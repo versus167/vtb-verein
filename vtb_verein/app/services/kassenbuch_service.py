@@ -14,6 +14,7 @@ from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
+from app.db.kassen_kategorie_repository import KassenKategorieRepository
 from app.services.anhang_service import AnhangService, DateitypNichtErlaubtError, DateiZuGrossError
 
 
@@ -39,6 +40,12 @@ class KeinSchreibzugriffError(Exception):
 
 class KeinExportrechtError(Exception):
     """Wird geworfen wenn der User kein Exportrecht für die Kasse hat."""
+    pass
+
+
+class KategorieUngueltigError(Exception):
+    """Wird geworfen wenn eine Buchungs-Kategorie nicht zu den für die Kasse
+    zugelassenen Stammdaten-Kategorien gehört."""
     pass
 
 
@@ -84,6 +91,7 @@ class KassenbuchService:
         berechtigung_repo: KasseBerechtigungRepository,
         anhang_repo: KassenbuchungAnhangRepository | None = None,
         anhang_service: AnhangService | None = None,
+        kategorie_repo: KassenKategorieRepository | None = None,
     ):
         self._kasse = kasse_repo
         self._buchung = buchung_repo
@@ -91,6 +99,7 @@ class KassenbuchService:
         self._berechtigung = berechtigung_repo
         self._anhang_repo = anhang_repo
         self._anhang_service = anhang_service
+        self._kategorie = kategorie_repo
 
     # -----------------------------------
     # Berechtigungsprüfung
@@ -162,6 +171,30 @@ class KassenbuchService:
         if min_datum is not None and buchungsdatum < min_datum:
             raise DatumAusserhalbBereichError(min_datum, max_datum)
 
+    def _validate_kategorie(
+        self, kasse_id: int, kategorie: str, vorheriger_wert: str | None = None
+    ) -> None:
+        """Stellt sicher, dass eine nicht-leere Kategorie zu den für die Kasse
+        zugelassenen Stammdaten gehört (allgemein ∪ kassenspezifisch).
+
+        Leer bleibt erlaubt (Backend lenient – die Pflicht erzwingt das Frontend).
+        Beim Bearbeiten bleibt der unveränderte Altwert zulässig, damit
+        Legacy-Freitexte beim Editieren nicht erzwungen geändert werden müssen.
+        Ohne konfiguriertes kategorie_repo wird nicht validiert.
+        """
+        if self._kategorie is None:
+            return
+        name = (kategorie or '').strip()
+        if not name:
+            return
+        if vorheriger_wert is not None and name == (vorheriger_wert or '').strip():
+            return
+        erlaubt = {k.name for k in self._kategorie.list_for_kasse(kasse_id)}
+        if name not in erlaubt:
+            raise KategorieUngueltigError(
+                f"Kategorie '{name}' ist für diese Kasse nicht zugelassen."
+            )
+
     # -----------------------------------
     # Kassen-Verwaltung (Admin-only)
     # -----------------------------------
@@ -204,6 +237,7 @@ class KassenbuchService:
             self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
 
         self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
+        self._validate_kategorie(buchung.kasse_id, buchung.kategorie)
 
         # Belegnummer: einfache laufende Nummer pro Kasse
         buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id)
@@ -240,9 +274,13 @@ class KassenbuchService:
 
         self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
 
+        alte_buchung = self._buchung.get_kassenbuchung(buchung.id)
+        self._validate_kategorie(
+            buchung.kasse_id, buchung.kategorie, vorheriger_wert=alte_buchung.kategorie
+        )
+
         # Bestandsprüfung: simulierter Bestand nach Update, geprüft am Buchungsdatum
         if buchung.ausgabe_cent > 0:
-            alte_buchung = self._buchung.get_kassenbuchung(buchung.id)
             # Bestand am Buchungsdatum ohne den Effekt der alten Buchung
             bestand_am_datum = self._kasse.get_bestand_zum_datum_cent(buchung.kasse_id, buchung.buchungsdatum)
             bestand_ohne_alte = bestand_am_datum + alte_buchung.ausgabe_cent - alte_buchung.einnahme_cent

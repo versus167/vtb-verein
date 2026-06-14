@@ -22,33 +22,14 @@
 - [ ] **History-Expander** im Ticket-Detail (lazy load der `*_history`-Daten)
 
 ### Kassenbuch
-- [ ] **Verwaltete Kassen-Kategorien statt Freitext** – aktuell ist `kassenbuchungen.kategorie`
-      ein freies Textfeld (`q-input`), das uneinheitliche Schreibweisen und damit zersplitterte
-      Kategorien-Summen im Bericht erlaubt. Stattdessen eigene Stammdaten-Tabelle
-      `kassen_kategorien` (analog `ticket_kategorien`) + Dropdown bei der Erfassung.
-  - [ ] **Konfiguration der Kategorien als eigene Berechtigung** (analog
-        `tickets.bereiche_verwalten`, z.B. `kassen.kategorien_verwalten`)
-  - [ ] **Pflicht zur Kategorieauswahl** bei der Kassenerfassung (Dropdown statt Freitext,
-        Validierung in Backend + Frontend; Migration der Bestands-Freitexte bedenken)
-
-### Berechtigungssystem (Ticket #22, Konzept: `BERECHTIGUNGEN.md`)
-Vollständig umgesetzt (Stufen A–E): Datenmodell v36, funktionsbasierte Rechte,
-Funktions- und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
-Personen-/Mitgliederliste.
-- [x] **Stufe A** – Datenmodell v35 + effektive Berechnung + Sockel
-- [x] **Stufe B** – Funktions-Matrix: GET/PUT `/api/funktionen/{id}/permissions`
-- [x] **Stufe C** – persönlicher Berechtigungsscreen: Herkunft + Tri-State `{grants,denies}`
-- [x] **Stufe D** – Rollen-Ablösung (v36): nur noch admin/mitglied,
-      `defaults_for_role` entfernt, harte `role=='admin'`-Checks ersetzt
-      (`funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien →
-      `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`),
-      Admin-Flag-Vergabe nur durch Admins (`backend/core/authz.py`)
-- [x] **Stufe E** – Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste via
-      `allowed_abteilungen('personen.read')` (`backend/core/scope.py`)
-
-Mögliche Folge-Arbeiten (kein Teil von #22): Scope auch auf Detail-/Schreib-
-Endpunkte ausweiten; Hinweis in der Funktions-Matrix-UI „Abteilungs-Scope wirkt
-in Listen".
+- [x] **Verwaltete Kassen-Kategorien statt Freitext** – Stammdaten-Tabelle `kassen_kategorien`
+      (allgemein für alle Kassen oder kassenspezifisch via `kasse_id`) + Dropdown bei der
+      Erfassung (Migration v38). Buchung speichert die Kategorie weiterhin als Text;
+      Bestands-Freitexte bleiben als Legacy erhalten.
+  - [x] **Pflicht zur Kategorieauswahl** – Frontend erzwingt die Auswahl, sobald Kategorien
+        existieren; Backend validiert die Zugehörigkeit (leer erlaubt, unveränderter
+        Legacy-Altwert beim Bearbeiten geschont).
+  - Bewusst **keine eigene Berechtigung**: Verwaltung läuft über `kassen.verwalten`.
 
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
