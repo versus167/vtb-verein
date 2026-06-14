@@ -107,6 +107,10 @@ class AnhangService:
 
         Das Bild wird auf max_dimension Pixel (längste Seite) skaliert,
         als JPEG mit Qualität 80 komprimiert und mittig auf einer A4-Seite eingebettet.
+
+        Hinweis: Aktuell ungenutzt – Kassenbuch-Belege werden seit der Umstellung
+        per ``bild_zu_jpeg`` direkt als JPEG gespeichert (kleiner, mobil-vorschaubar).
+        Bewusst als Fallback beibehalten, falls wieder auf PDF-Belege umgestellt wird.
         """
         from PIL import Image, ImageOps
         from reportlab.pdfgen import canvas
@@ -148,3 +152,26 @@ class AnhangService:
         c.save()
 
         return pdf_buf.getvalue()
+
+    def bild_zu_jpeg(
+        self, inhalt: bytes, max_dimension: int = 1800, qualitaet: int = 80
+    ) -> bytes:
+        """Skaliert ein Bild herunter und gibt es als komprimiertes JPEG zurück.
+
+        Das Bild wird EXIF-rotationskorrekt auf max_dimension Pixel an der
+        längsten Seite verkleinert und als JPEG (optimize=True) gespeichert.
+        """
+        from PIL import Image, ImageOps
+
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(inhalt))).convert('RGB')
+
+        ratio = min(1.0, max_dimension / max(img.width, img.height))
+        if ratio < 1.0:
+            img = img.resize(
+                (int(img.width * ratio), int(img.height * ratio)),
+                Image.LANCZOS,
+            )
+
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=qualitaet, optimize=True)
+        return buf.getvalue()
