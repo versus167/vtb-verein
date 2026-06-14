@@ -474,7 +474,7 @@ class KassenbuchService:
     ) -> KassenbuchungAnhang:
         """Speichert einen Datei-Anhang für eine Kassenbuchung.
 
-        Bilder werden automatisch zu komprimierten A4-PDFs konvertiert.
+        Bilder werden automatisch herunterskaliert und als JPEG gespeichert.
 
         Raises:
             DateitypNichtErlaubtError: Wenn der MIME-Typ nicht erlaubt ist.
@@ -482,9 +482,9 @@ class KassenbuchService:
             IOError: Wenn das Schreiben auf die Festplatte fehlschlägt.
         """
         if mime_type.startswith('image/'):
-            inhalt = self._anhang_service.bild_zu_pdf(inhalt)
-            original_name = os.path.splitext(original_name)[0] + '.pdf'
-            mime_type = 'application/pdf'
+            inhalt = self._anhang_service.bild_zu_jpeg(inhalt)
+            original_name = os.path.splitext(original_name)[0] + '.jpg'
+            mime_type = 'image/jpeg'
 
         self._anhang_service.validiere(mime_type, len(inhalt))
         db_anhang = self._anhang_repo.create(KassenbuchungAnhang(
