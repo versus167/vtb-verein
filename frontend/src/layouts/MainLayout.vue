@@ -3,7 +3,10 @@
     <q-header elevated>
       <q-toolbar>
         <q-btn flat dense round icon="menu" @click="drawer = !drawer" />
-        <q-toolbar-title>Vereinsverwaltung</q-toolbar-title>
+        <q-toolbar-title>
+          Vereinsverwaltung
+          <span v-if="appVersion" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
+        </q-toolbar-title>
         <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
@@ -257,6 +260,17 @@ function toggleDarkMode() {
 
 const hatKassenZugriff = ref(false)
 
+const appVersion = ref('')
+
+async function loadAppVersion() {
+  try {
+    const { data } = await api.get('/api/app-info')
+    appVersion.value = data.version ? `v.${data.version}` : ''
+  } catch {
+    appVersion.value = ''
+  }
+}
+
 async function loadKassenZugriff() {
   try {
     const { data } = await api.get('/api/kassen/')
@@ -301,6 +315,7 @@ function triggerInstall() {
 
 onMounted(() => {
   loadKassenZugriff()
+  loadAppVersion()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true
 
