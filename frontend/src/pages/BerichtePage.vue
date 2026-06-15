@@ -1,8 +1,27 @@
 <template>
   <q-page padding>
-    <div class="row items-center q-mb-md">
-      <div class="text-h4">Berichte &amp; Statistik</div>
+    <div class="row items-center q-mb-md q-gutter-sm">
+      <div>
+        <div class="text-h4">Berichte &amp; Statistik</div>
+        <div class="text-caption text-grey-7">
+          {{ abteilungId ? 'Abteilung: ' + aktuelleAbteilungName : 'Gesamtverein' }}
+        </div>
+      </div>
       <q-space />
+      <q-select
+        v-model="abteilungId"
+        :options="abteilungSelectOptions"
+        option-value="id"
+        option-label="name"
+        emit-value
+        map-options
+        dense
+        outlined
+        options-dense
+        label="Abteilung"
+        style="min-width: 200px"
+        @update:model-value="load"
+      />
       <q-btn flat round icon="refresh" :loading="loading" @click="load" />
     </div>
 
@@ -93,8 +112,8 @@
           </q-card>
         </div>
 
-        <!-- Abteilungsübersicht -->
-        <div class="col-12 col-md-6">
+        <!-- Abteilungsübersicht – nur im Gesamtverein-Modus (bei Filter redundant) -->
+        <div class="col-12 col-md-6" v-if="!abteilungId">
           <q-card flat bordered class="fit">
             <q-card-section>
               <div class="text-h6">Mitglieder je Abteilung</div>
@@ -135,8 +154,19 @@ const $q = useQuasar()
 const loading = ref(false)
 const data = ref(null)
 const entwicklungGran = ref('monat')
+const abteilungId = ref(null)
+const abteilungOptionen = ref([])
 
 const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
+
+const abteilungSelectOptions = computed(() => [
+  { id: null, name: 'Gesamtverein' },
+  ...abteilungOptionen.value,
+])
+
+const aktuelleAbteilungName = computed(
+  () => abteilungOptionen.value.find((a) => a.id === abteilungId.value)?.name || '',
+)
 
 const kpiCards = computed(() => {
   const k = data.value?.kpis
@@ -183,8 +213,10 @@ function barHeight(value, max) {
 async function load() {
   loading.value = true
   try {
-    const res = await api.get('/api/berichte/statistik')
+    const params = abteilungId.value ? { abteilung_id: abteilungId.value } : {}
+    const res = await api.get('/api/berichte/statistik', { params })
     data.value = res.data
+    abteilungOptionen.value = res.data.abteilung_optionen || []
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden der Statistik' })
   } finally {

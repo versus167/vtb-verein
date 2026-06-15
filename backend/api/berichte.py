@@ -15,19 +15,23 @@ def _require_read(user):
 
 
 @router.get("/statistik")
-def get_statistik(user: CurrentUser, db: DB):
-    """Aggregierte Vereins-Kennzahlen für das Statistik-Dashboard.
+def get_statistik(user: CurrentUser, db: DB, abteilung_id: int | None = None):
+    """Aggregierte Kennzahlen für das Statistik-Dashboard.
 
-    Bewusst ohne Zahlungsstatus (folgt separat).
+    Ohne ``abteilung_id`` vereinsweit; mit gesetzter ``abteilung_id`` auf die aktiven
+    Mitglieder dieser Abteilung gefiltert. Die Abteilungsliste fürs Dropdown wird
+    immer mitgeliefert (kein Zusatz-Recht nötig). Bewusst ohne Zahlungsstatus.
     """
     _require_read(user)
     return {
-        "kpis":                 db.statistik.kpis(),
+        "kpis":                 db.statistik.kpis(abteilung_id),
         "entwicklung": {
-            "jahr":  db.statistik.mitglieder_entwicklung("jahr", 12),
-            "monat": db.statistik.mitglieder_entwicklung("monat", 12),
+            "jahr":  db.statistik.mitglieder_entwicklung("jahr", 12, abteilung_id),
+            "monat": db.statistik.mitglieder_entwicklung("monat", 12, abteilung_id),
         },
-        "altersstruktur":       db.statistik.altersstruktur(),
-        "geschlechter":         db.statistik.geschlechterverteilung(),
-        "abteilungen":          db.statistik.abteilungsuebersicht(),
+        "altersstruktur":       db.statistik.altersstruktur(abteilung_id),
+        "geschlechter":         db.statistik.geschlechterverteilung(abteilung_id),
+        # Abteilungs-Übersicht nur vereinsweit (bei Filter auf eine Abteilung redundant).
+        "abteilungen":          db.statistik.abteilungsuebersicht() if abteilung_id is None else [],
+        "abteilung_optionen":   [{"id": a.id, "name": a.name} for a in db.list_abteilungen()],
     }

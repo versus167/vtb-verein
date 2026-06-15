@@ -19,31 +19,62 @@ from app.db.base_repository import BaseRepository
 class StatistikRepository(BaseRepository):
     """Aggregierte Vereins-Kennzahlen für Berichte."""
 
-    def kpis(self) -> dict:
-        """Eckdaten: Mitglieder nach Status, Zu-/Abgänge im laufenden Jahr, Ø-Alter."""
+    def _scope(self, abteilung_id: int | None):
+        """Geltungsbereich der mitgliederbasierten Aggregate.
+
+        Verein (``abteilung_id`` None) → ganze Mitglied-Tabelle, Vereins-Datumsfelder.
+        Abteilung → JOIN auf die aktive Zuordnung; Eintritt/Austritt nehmen das
+        Abteilungsdatum (``von``/``bis``) und fallen sonst auf das Vereinsdatum
+        zurück (``bis`` ist in den Bestandsdaten kaum gepflegt).
+
+        Liefert ``(join_sql, eintritt_expr, austritt_expr, params)``; die Mitglied-
+        Tabelle ist in allen Queries als ``m`` aliasiert.
+        """
+        if abteilung_id is None:
+            return "", "m.eintrittsdatum", "m.austrittsdatum", {}
+        join = (
+            "JOIN mitglied_abteilung ma "
+            "ON ma.mitglied_id = m.id AND ma.abteilung_id = %(aid)s "
+            "AND ma.deleted_at IS NULL AND ma.status = 'aktiv'"
+        )
+        return (
+            join,
+            "COALESCE(NULLIF(ma.von, ''), m.eintrittsdatum)",
+            "COALESCE(NULLIF(ma.bis, ''), m.austrittsdatum)",
+            {"aid": abteilung_id},
+        )
+
+    def kpis(self, abteilung_id: int | None = None) -> dict:
+        """Eckdaten: Mitglieder nach Status, Zu-/Abgänge im laufenden Jahr, Ø-Alter.
+
+        Mit ``abteilung_id`` auf die aktiven Mitglieder dieser Abteilung beschränkt;
+        Eintritte/Austritte zählen dann über das Abteilungsdatum (s. ``_scope``).
+        """
         jahr = date.today().year
+        join, ein, aus, params = self._scope(abteilung_id)
         with self.cursor() as cur:
             cur.execute(
-                r"""
+                f"""
                 SELECT
                     COUNT(*)                                              AS gesamt,
-                    COUNT(*) FILTER (WHERE status = 'aktiv')              AS aktiv,
-                    COUNT(*) FILTER (WHERE status = 'passiv')             AS passiv,
-                    COUNT(*) FILTER (WHERE status = 'inaktiv')            AS inaktiv,
-                    COUNT(*) FILTER (WHERE status = 'ausgetreten')        AS ausgetreten,
+                    COUNT(*) FILTER (WHERE m.status = 'aktiv')            AS aktiv,
+                    COUNT(*) FILTER (WHERE m.status = 'passiv')           AS passiv,
+                    COUNT(*) FILTER (WHERE m.status = 'inaktiv')          AS inaktiv,
+                    COUNT(*) FILTER (WHERE m.status = 'ausgetreten')      AS ausgetreten,
                     COUNT(*) FILTER (
-                        WHERE LEFT(eintrittsdatum, 4) = %(jahr)s
+                        WHERE LEFT(({ein}), 4) = %(jahr)s
                     )                                                     AS eintritte_jahr,
                     COUNT(*) FILTER (
-                        WHERE LEFT(austrittsdatum, 4) = %(jahr)s
+                        WHERE LEFT(({aus}), 4) = %(jahr)s
                     )                                                     AS austritte_jahr,
                     ROUND(AVG(
-                        date_part('year', age(safe_to_date(geburtsdatum)))
+                        date_part('year', age(safe_to_date(m.geburtsdatum)))
                     ))                                                    AS durchschnittsalter
-                FROM mitglied
-                WHERE deleted_at IS NULL
+                FROM mitglied m
+                {join}
+                WHERE m.deleted_at IS NULL
                 """,
-                {"jahr": str(jahr)},
+                {**params, "jahr": str(jahr)},
             )
             row = cur.fetchone()
         return {
@@ -58,12 +89,15 @@ class StatistikRepository(BaseRepository):
             "jahr":               jahr,
         }
 
-    def mitglieder_entwicklung(self, granularitaet: str = "jahr", anzahl: int = 12) -> list[dict]:
+    def mitglieder_entwicklung(self, granularitaet: str = "jahr", anzahl: int = 12,
+                               abteilung_id: int | None = None) -> list[dict]:
         """Zu- und Abgänge je Periode für die letzten `anzahl` Perioden.
 
         granularitaet='jahr'  → Kalenderjahre, periode 'YYYY'
         granularitaet='monat' → Monate,        periode 'YYYY-MM'
 
+        Mit ``abteilung_id`` zählen Ein-/Austritte über das Abteilungsdatum
+        (``von``/``bis``) mit Fallback auf das Vereinsdatum (s. ``_scope``).
         Leere/ungültige Datumsfelder werden per Regex-Guard ausgeklammert;
         die Periodenliste begrenzt das Fenster (zukünftige Daten fallen raus).
         """
@@ -74,25 +108,26 @@ class StatistikRepository(BaseRepository):
             laenge, guard = 4, r"^\d{4}$"
             perioden = self._letzte_jahre(anzahl)
         von = perioden[0]
+        join, ein, aus, scope_params = self._scope(abteilung_id)
 
-        def _zaehle(spalte: str) -> dict[str, int]:
-            # `spalte` ist eine interne Konstante (kein User-Input) – kein Injection-Risiko.
+        def _zaehle(datum_expr: str) -> dict[str, int]:
             with self.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT LEFT({spalte}, %(laenge)s) AS periode, COUNT(*) AS anzahl
-                    FROM mitglied
-                    WHERE deleted_at IS NULL
-                      AND LEFT({spalte}, %(laenge)s) ~ %(guard)s
-                      AND LEFT({spalte}, %(laenge)s) >= %(von)s
-                    GROUP BY LEFT({spalte}, %(laenge)s)
+                    SELECT LEFT(({datum_expr}), %(laenge)s) AS periode, COUNT(*) AS anzahl
+                    FROM mitglied m
+                    {join}
+                    WHERE m.deleted_at IS NULL
+                      AND LEFT(({datum_expr}), %(laenge)s) ~ %(guard)s
+                      AND LEFT(({datum_expr}), %(laenge)s) >= %(von)s
+                    GROUP BY LEFT(({datum_expr}), %(laenge)s)
                     """,
-                    {"laenge": laenge, "guard": guard, "von": von},
+                    {**scope_params, "laenge": laenge, "guard": guard, "von": von},
                 )
                 return {r["periode"]: int(r["anzahl"]) for r in cur.fetchall()}
 
-        eintritte = _zaehle("eintrittsdatum")
-        austritte = _zaehle("austrittsdatum")
+        eintritte = _zaehle(ein)
+        austritte = _zaehle(aus)
         return [
             {
                 "periode":   p,
@@ -120,17 +155,19 @@ class StatistikRepository(BaseRepository):
             monate.append(f"{jahr:04d}-{monat + 1:02d}")
         return monate
 
-    def altersstruktur(self) -> list[dict]:
+    def altersstruktur(self, abteilung_id: int | None = None) -> list[dict]:
         """Altersgruppen der nicht ausgetretenen Mitglieder mit hinterlegtem Geburtsdatum."""
+        join, _ein, _aus, params = self._scope(abteilung_id)
         with self.cursor() as cur:
             cur.execute(
-                r"""
+                f"""
                 WITH alter_cte AS (
-                    SELECT date_part('year', age(safe_to_date(geburtsdatum))) AS jahre
-                    FROM mitglied
-                    WHERE deleted_at IS NULL
-                      AND status <> 'ausgetreten'
-                      AND safe_to_date(geburtsdatum) IS NOT NULL
+                    SELECT date_part('year', age(safe_to_date(m.geburtsdatum))) AS jahre
+                    FROM mitglied m
+                    {join}
+                    WHERE m.deleted_at IS NULL
+                      AND m.status <> 'ausgetreten'
+                      AND safe_to_date(m.geburtsdatum) IS NOT NULL
                 )
                 SELECT gruppe, COUNT(*) AS anzahl
                 FROM (
@@ -144,23 +181,27 @@ class StatistikRepository(BaseRepository):
                     FROM alter_cte
                 ) g
                 GROUP BY gruppe
-                """
+                """,
+                params,
             )
             rows = {r["gruppe"]: int(r["anzahl"]) for r in cur.fetchall()}
         ordnung = ["0–17", "18–26", "27–40", "41–60", "61+"]
         return [{"gruppe": g, "anzahl": rows.get(g, 0)} for g in ordnung]
 
-    def geschlechterverteilung(self) -> list[dict]:
+    def geschlechterverteilung(self, abteilung_id: int | None = None) -> list[dict]:
         """Verteilung nach Geschlecht der nicht ausgetretenen Mitglieder."""
         labels = {"m": "männlich", "w": "weiblich", "d": "divers"}
+        join, _ein, _aus, params = self._scope(abteilung_id)
         with self.cursor() as cur:
             cur.execute(
-                """
-                SELECT COALESCE(NULLIF(geschlecht, ''), '?') AS geschlecht, COUNT(*) AS anzahl
-                FROM mitglied
-                WHERE deleted_at IS NULL AND status <> 'ausgetreten'
-                GROUP BY COALESCE(NULLIF(geschlecht, ''), '?')
-                """
+                f"""
+                SELECT COALESCE(NULLIF(m.geschlecht, ''), '?') AS geschlecht, COUNT(*) AS anzahl
+                FROM mitglied m
+                {join}
+                WHERE m.deleted_at IS NULL AND m.status <> 'ausgetreten'
+                GROUP BY COALESCE(NULLIF(m.geschlecht, ''), '?')
+                """,
+                params,
             )
             rows = {r["geschlecht"]: int(r["anzahl"]) for r in cur.fetchall()}
         result = [
