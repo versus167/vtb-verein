@@ -27,9 +27,26 @@
         <!-- Mitgliederentwicklung -->
         <div class="col-12 col-md-6">
           <q-card flat bordered class="fit">
-            <q-card-section>
-              <div class="text-h6">Mitgliederentwicklung</div>
-              <div class="text-caption text-grey-7">Zu- und Abgänge je Jahr</div>
+            <q-card-section class="row items-center q-gutter-sm no-wrap">
+              <div>
+                <div class="text-h6">Mitgliederentwicklung</div>
+                <div class="text-caption text-grey-7">
+                  Zu- und Abgänge je {{ entwicklungGran === 'monat' ? 'Monat' : 'Jahr' }}
+                </div>
+              </div>
+              <q-space />
+              <q-btn-toggle
+                v-model="entwicklungGran"
+                dense
+                no-caps
+                outline
+                size="sm"
+                toggle-color="primary"
+                :options="[
+                  { label: '12 Monate', value: 'monat' },
+                  { label: '12 Jahre', value: 'jahr' },
+                ]"
+              />
             </q-card-section>
             <q-separator />
             <q-card-section>
@@ -38,7 +55,7 @@
                 <div><q-badge rounded color="negative" /> Austritte</div>
               </div>
               <div class="entwicklung-chart">
-                <div v-for="e in data.entwicklung" :key="e.jahr" class="entwicklung-jahr">
+                <div v-for="e in entwicklungReihe" :key="e.periode" class="entwicklung-jahr">
                   <div class="entwicklung-bars">
                     <div
                       class="entwicklung-bar bg-positive"
@@ -55,7 +72,7 @@
                       <span v-if="e.austritte" class="entwicklung-wert">{{ e.austritte }}</span>
                     </div>
                   </div>
-                  <div class="text-caption text-grey-7 q-mt-xs">{{ e.jahr }}</div>
+                  <div class="text-caption text-grey-7 q-mt-xs">{{ e.label }}</div>
                 </div>
               </div>
             </q-card-section>
@@ -117,6 +134,9 @@ import StatBalken from 'src/components/StatBalken.vue'
 const $q = useQuasar()
 const loading = ref(false)
 const data = ref(null)
+const entwicklungGran = ref('monat')
+
+const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
 const kpiCards = computed(() => {
   const k = data.value?.kpis
@@ -130,8 +150,17 @@ const kpiCards = computed(() => {
   ]
 })
 
+const entwicklungReihe = computed(() =>
+  (data.value?.entwicklung?.[entwicklungGran.value] || []).map((e) => ({
+    ...e,
+    label: entwicklungGran.value === 'monat'
+      ? MONATE_KURZ[Number(e.periode.slice(5, 7)) - 1]
+      : e.periode,
+  })),
+)
+
 const entwicklungMax = computed(() =>
-  Math.max(1, ...(data.value?.entwicklung || []).flatMap((e) => [e.eintritte, e.austritte])),
+  Math.max(1, ...entwicklungReihe.value.flatMap((e) => [e.eintritte, e.austritte])),
 )
 
 const alterItems = computed(() =>

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 
 
 class Database:
@@ -100,6 +100,7 @@ class Database:
             36: self._migrate_v35_to_v36,
             37: self._migrate_v36_to_v37,
             38: self._migrate_v37_to_v38,
+            39: self._migrate_v38_to_v39,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1650,6 +1651,28 @@ class Database:
             )
             cur.execute("UPDATE schema_version SET version = 38 WHERE id = 1")
 
+    def _migrate_v38_to_v39(self) -> None:
+        """Robuster Text→Datum-Cast `safe_to_date(text)` für die Statistik-Queries.
+
+        Die Datumsfelder (geburtsdatum/eintrittsdatum/austrittsdatum) sind als TEXT
+        gespeichert. Die bisherigen Aggregat-Queries schützten den ::date-Cast nur per
+        Regex `^\\d{4}-\\d{2}-\\d{2}$`, der zwar das Format, aber nicht die kalendarische
+        Gültigkeit prüft: format-gültige Unmöglichkeiten wie '2026-02-30' passierten den
+        Guard und ließen den Cast – und damit die Query (HTTP 500) – fehlschlagen.
+        Die Funktion fängt das ab und liefert in solchen Fällen NULL.
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION safe_to_date(txt text) RETURNS date
+                LANGUAGE plpgsql STABLE STRICT AS $$
+                BEGIN
+                    RETURN txt::date;
+                EXCEPTION WHEN others THEN
+                    RETURN NULL;
+                END; $$;
+            """)
+            cur.execute("UPDATE schema_version SET version = 39 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2715,6 +2738,20 @@ class Database:
     # -----------------------------------
 
     def _create_trigger_functions(self, cur):
+        # Robuster Text→Datum-Cast: liefert NULL statt einer Exception, wenn der
+        # Wert leer/ungültig ist (format- ODER kalendarisch, z. B. '2026-02-30').
+        # Genutzt von Aggregat-Queries (StatistikRepository), die auf den als TEXT
+        # gespeicherten Datumsfeldern rechnen. STABLE, da der ::date-Cast vom
+        # DateStyle abhängen kann; STRICT → NULL-Eingabe ergibt NULL.
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION safe_to_date(txt text) RETURNS date
+            LANGUAGE plpgsql STABLE STRICT AS $$
+            BEGIN
+                RETURN txt::date;
+            EXCEPTION WHEN others THEN
+                RETURN NULL;
+            END; $$;
+        """)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_mitglied_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN

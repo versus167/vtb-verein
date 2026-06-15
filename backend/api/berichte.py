@@ -23,7 +23,10 @@ def get_statistik(user: CurrentUser, db: DB):
     _require_read(user)
     return {
         "kpis":                 db.statistik.kpis(),
-        "entwicklung":          db.statistik.mitglieder_entwicklung(),
+        "entwicklung": {
+            "jahr":  db.statistik.mitglieder_entwicklung("jahr", 12),
+            "monat": db.statistik.mitglieder_entwicklung("monat", 12),
+        },
         "altersstruktur":       db.statistik.altersstruktur(),
         "geschlechter":         db.statistik.geschlechterverteilung(),
         "abteilungen":          db.statistik.abteilungsuebersicht(),

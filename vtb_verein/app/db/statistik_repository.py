@@ -3,8 +3,10 @@ StatistikRepository – aggregierte Kennzahlen für das Berichte-/Statistik-Dash
 
 Liefert ausschließlich lesende Aggregat-Abfragen (keine personenbezogenen
 Einzeldaten). Datumsfelder (geburtsdatum/eintrittsdatum/austrittsdatum) sind im
-Schema TEXT im ISO-Format 'YYYY-MM-DD'; leere Strings werden vor dem Cast per
-NULLIF abgefangen.
+Schema TEXT im ISO-Format 'YYYY-MM-DD'. Wo gerechnet wird, läuft der Cast über
+die DB-Funktion `safe_to_date()` (Migration v39), die leere/ungültige Werte –
+auch format-gültige Unmöglichkeiten wie '2026-02-30' – als NULL liefert statt
+die Query abzubrechen. Reine Jahres-/Monats-Buckets nutzen LEFT()+Regex-Guard.
 
 Bewusst OHNE Zahlungsstatus-Auswertung (siehe TODO/Branch feature/statistik-dashboard).
 '''
@@ -36,9 +38,7 @@ class StatistikRepository(BaseRepository):
                         WHERE LEFT(austrittsdatum, 4) = %(jahr)s
                     )                                                     AS austritte_jahr,
                     ROUND(AVG(
-                        CASE WHEN geburtsdatum ~ '^\d{4}-\d{2}-\d{2}$'
-                             THEN date_part('year', age(geburtsdatum::date))
-                        END
+                        date_part('year', age(safe_to_date(geburtsdatum)))
                     ))                                                    AS durchschnittsalter
                 FROM mitglied
                 WHERE deleted_at IS NULL
@@ -58,46 +58,67 @@ class StatistikRepository(BaseRepository):
             "jahr":               jahr,
         }
 
-    def mitglieder_entwicklung(self, jahre: int = 6) -> list[dict]:
-        """Zu- und Abgänge je Kalenderjahr für die letzten `jahre` Jahre."""
-        bis = date.today().year
-        von = bis - jahre + 1
-        with self.cursor() as cur:
-            cur.execute(
-                r"""
-                SELECT LEFT(eintrittsdatum, 4) AS jahr, COUNT(*) AS anzahl
-                FROM mitglied
-                WHERE deleted_at IS NULL
-                  AND LEFT(eintrittsdatum, 4) ~ '^\d{4}$'
-                  AND LEFT(eintrittsdatum, 4) >= %s
-                GROUP BY LEFT(eintrittsdatum, 4)
-                """,
-                (str(von),),
-            )
-            eintritte = {int(r["jahr"]): int(r["anzahl"]) for r in cur.fetchall()}
+    def mitglieder_entwicklung(self, granularitaet: str = "jahr", anzahl: int = 12) -> list[dict]:
+        """Zu- und Abgänge je Periode für die letzten `anzahl` Perioden.
 
-            cur.execute(
-                r"""
-                SELECT LEFT(austrittsdatum, 4) AS jahr, COUNT(*) AS anzahl
-                FROM mitglied
-                WHERE deleted_at IS NULL
-                  AND LEFT(austrittsdatum, 4) ~ '^\d{4}$'
-                  AND LEFT(austrittsdatum, 4) >= %s
-                GROUP BY LEFT(austrittsdatum, 4)
-                """,
-                (str(von),),
-            )
-            austritte = {int(r["jahr"]): int(r["anzahl"]) for r in cur.fetchall()}
+        granularitaet='jahr'  → Kalenderjahre, periode 'YYYY'
+        granularitaet='monat' → Monate,        periode 'YYYY-MM'
 
+        Leere/ungültige Datumsfelder werden per Regex-Guard ausgeklammert;
+        die Periodenliste begrenzt das Fenster (zukünftige Daten fallen raus).
+        """
+        if granularitaet == "monat":
+            laenge, guard = 7, r"^\d{4}-\d{2}$"
+            perioden = self._letzte_monate(anzahl)
+        else:
+            laenge, guard = 4, r"^\d{4}$"
+            perioden = self._letzte_jahre(anzahl)
+        von = perioden[0]
+
+        def _zaehle(spalte: str) -> dict[str, int]:
+            # `spalte` ist eine interne Konstante (kein User-Input) – kein Injection-Risiko.
+            with self.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT LEFT({spalte}, %(laenge)s) AS periode, COUNT(*) AS anzahl
+                    FROM mitglied
+                    WHERE deleted_at IS NULL
+                      AND LEFT({spalte}, %(laenge)s) ~ %(guard)s
+                      AND LEFT({spalte}, %(laenge)s) >= %(von)s
+                    GROUP BY LEFT({spalte}, %(laenge)s)
+                    """,
+                    {"laenge": laenge, "guard": guard, "von": von},
+                )
+                return {r["periode"]: int(r["anzahl"]) for r in cur.fetchall()}
+
+        eintritte = _zaehle("eintrittsdatum")
+        austritte = _zaehle("austrittsdatum")
         return [
             {
-                "jahr":      j,
-                "eintritte": eintritte.get(j, 0),
-                "austritte": austritte.get(j, 0),
-                "saldo":     eintritte.get(j, 0) - austritte.get(j, 0),
+                "periode":   p,
+                "eintritte": eintritte.get(p, 0),
+                "austritte": austritte.get(p, 0),
+                "saldo":     eintritte.get(p, 0) - austritte.get(p, 0),
             }
-            for j in range(von, bis + 1)
+            for p in perioden
         ]
+
+    @staticmethod
+    def _letzte_jahre(anzahl: int) -> list[str]:
+        """Die letzten `anzahl` Kalenderjahre als 'YYYY', aufsteigend."""
+        bis = date.today().year
+        return [str(bis - i) for i in range(anzahl - 1, -1, -1)]
+
+    @staticmethod
+    def _letzte_monate(anzahl: int) -> list[str]:
+        """Die letzten `anzahl` Monate als 'YYYY-MM', aufsteigend (inkl. aktuellem Monat)."""
+        heute = date.today()
+        basis = heute.year * 12 + (heute.month - 1)
+        monate = []
+        for i in range(anzahl - 1, -1, -1):
+            jahr, monat = divmod(basis - i, 12)
+            monate.append(f"{jahr:04d}-{monat + 1:02d}")
+        return monate
 
     def altersstruktur(self) -> list[dict]:
         """Altersgruppen der nicht ausgetretenen Mitglieder mit hinterlegtem Geburtsdatum."""
@@ -105,11 +126,11 @@ class StatistikRepository(BaseRepository):
             cur.execute(
                 r"""
                 WITH alter_cte AS (
-                    SELECT date_part('year', age(geburtsdatum::date)) AS jahre
+                    SELECT date_part('year', age(safe_to_date(geburtsdatum))) AS jahre
                     FROM mitglied
                     WHERE deleted_at IS NULL
                       AND status <> 'ausgetreten'
-                      AND geburtsdatum ~ '^\d{4}-\d{2}-\d{2}$'
+                      AND safe_to_date(geburtsdatum) IS NOT NULL
                 )
                 SELECT gruppe, COUNT(*) AS anzahl
                 FROM (
