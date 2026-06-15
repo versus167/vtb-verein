@@ -34,7 +34,7 @@
       <div v-else-if="filteredPersonen.length === 0" class="text-center text-grey q-py-xl">
         Keine Personen gefunden.
       </div>
-      <q-card v-for="(p, index) in sortedPersonen" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'stripe' : ''"
+      <q-card v-for="(p, index) in sortierteKarten" :key="p.user_id ?? 'm_' + p.mitglied?.id" elevated class="q-mb-md" :class="index % 2 !== 0 ? 'stripe' : ''"
         style="border-radius:14px;overflow:hidden">
         <q-card-section class="q-py-sm q-px-md">
           <div class="row items-center no-wrap q-mb-xs">
@@ -125,9 +125,9 @@
     </template>
 
     <!-- Desktop: Tabelle -->
-    <q-table v-else :rows="sortedPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
+    <q-table v-else :rows="filteredPersonen" :columns="columns" :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
       flat bordered :loading="loading" :rows-per-page-options="[25, 50, 0]"
-      @update:sort="onSortChange">
+      v-model:pagination="pagination">
 
       <template #body-cell-name="props">
         <q-td :props="props">
@@ -756,8 +756,15 @@ const funktionFilter = ref(null)
 const alleAbteilungen = ref([])
 
 // ── Sortierung ─────────────────────────────────────────────
-const sortColumn = ref(null)
-const sortDirection = ref('asc')
+// Native Quasar-Tabellensortierung (über pagination). Start: Name aufsteigend.
+const pagination = ref({ sortBy: 'name', descending: false, page: 1, rowsPerPage: 25 })
+
+// Sortierschlüssel der Name-Spalte: Nachname + Vorname (Mitglied) bzw. Benutzername.
+function nameKey(p) {
+  return p.mitglied
+    ? `${p.mitglied.nachname} ${p.mitglied.vorname}`
+    : (p.username || '')
+}
 
 const filterOptions = [
   { label: 'Alle', value: 'alle' },
@@ -770,7 +777,9 @@ const filterOptions = [
 const columns = computed(() => {
   const istBenutzer = filter.value === 'benutzer'
   const cols = [
-    { name: 'name',  label: 'Name',   field: 'username', align: 'left', sortable: true },
+    { name: 'name', label: 'Name', align: 'left', sortable: true,
+      field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : r.username || ''),
+      sort: (a, b, rowA, rowB) => nameKey(rowA).localeCompare(nameKey(rowB), 'de', { sensitivity: 'base' }) },
     { name: 'email', label: 'E-Mail', field: 'email',    align: 'left', sortable: true },
   ]
   if (istBenutzer) {
@@ -831,62 +840,17 @@ const filteredPersonen = computed(() => {
   return list
 })
 
-// Sortierte Liste
-const sortedPersonen = computed(() => {
-  const list = filteredPersonen.value
-  if (!sortColumn.value) return list
-  
-  return [...list].sort((a, b) => {
-    let aVal, bVal
-    
-    // Spezialbehandlung für verschachtelte Felder
-    switch (sortColumn.value) {
-      case 'name':
-        aVal = (a.mitglied?.nachname || a.username || '').toLowerCase()
-        bVal = (b.mitglied?.nachname || b.username || '').toLowerCase()
-        break
-      case 'geburtsdatum':
-        aVal = a.mitglied?.geburtsdatum || ''
-        bVal = b.mitglied?.geburtsdatum || ''
-        break
-      case 'eintritt':
-        aVal = a.mitglied?.eintrittsdatum || ''
-        bVal = b.mitglied?.eintrittsdatum || ''
-        break
-      case 'last_edited':
-        aVal = a.last_edited || ''
-        bVal = b.last_edited || ''
-        break
-      case 'rolle':
-        aVal = a.role || ''
-        bVal = b.role || ''
-        break
-      case 'last_seen':
-        aVal = a.last_seen || ''
-        bVal = b.last_seen || ''
-        break
-      default:
-        aVal = a[sortColumn.value] ?? ''
-        bVal = b[sortColumn.value] ?? ''
-    }
-    
-    if (aVal < bVal) return sortDirection.value === 'asc' ? -1 : 1
-    if (aVal > bVal) return sortDirection.value === 'asc' ? 1 : -1
-    return 0
-  })
-})
+// Karten-Ansicht (mobil) hat keine Spaltenköpfe → fest nach Name sortiert.
+const sortierteKarten = computed(() =>
+  [...filteredPersonen.value].sort((a, b) =>
+    nameKey(a).localeCompare(nameKey(b), 'de', { sensitivity: 'base' })),
+)
 
 // Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
 function resetAllFilters() {
   abteilungFilter.value = null
   funktionFilter.value = null
   search.value = ''
-}
-
-// Sortierung ändern
-function onSortChange(details) {
-  sortColumn.value = details.sortBy
-  sortDirection.value = details.descending ? 'desc' : 'asc'
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────────
