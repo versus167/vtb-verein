@@ -30,6 +30,8 @@
         existieren; Backend validiert die Zugehörigkeit (leer erlaubt, unveränderter
         Legacy-Altwert beim Bearbeiten geschont).
   - Bewusst **keine eigene Berechtigung**: Verwaltung läuft über `kassen.verwalten`.
+- [ ] **Zählprotokoll** – Stückelung der Barkasse erfassen (Anzahl je Münz-/Scheinwert →
+      automatische Summe, Soll-/Ist-Abgleich mit dem Kassenstand)
 
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
