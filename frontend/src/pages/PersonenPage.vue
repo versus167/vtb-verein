@@ -1032,6 +1032,7 @@ const editMitgliedSaving = ref(false)
 const editMitgliedError  = ref('')
 const editMitgliedForm   = ref({})
 const editingMitgliedUserId = ref(null)
+const editingMitgliedId  = ref(null)
 const editMitgliedIsNew  = ref(false)
 
 function openAddMitgliedDialog(row) {
@@ -1051,6 +1052,7 @@ function openAddMitgliedDialog(row) {
 
 function openEditMitgliedDialog(row) {
   editingMitgliedUserId.value = row.user_id
+  editingMitgliedId.value = row.mitglied?.id
   editMitgliedIsNew.value = false
   editMitgliedError.value = ''
   const m = row.mitglied
@@ -1072,8 +1074,11 @@ async function onSaveMitglied() {
   try {
     if (editMitgliedIsNew.value) {
       await api.post(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
-    } else {
+    } else if (editingMitgliedUserId.value) {
       await api.put(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
+    } else {
+      // Mitglied ohne Login-Account → über mitglied_id statt user_id
+      await api.put(`/api/personen/mitglied/${editingMitgliedId.value}`, editMitgliedForm.value)
     }
     $q.notify({ type: 'positive', message: 'Gespeichert' })
     editMitgliedOpen.value = false

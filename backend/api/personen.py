@@ -435,6 +435,45 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
     return _person_row(u, mitglied, abteilungen, funktionen)
 
 
+@router.put("/mitglied/{mitglied_id}")
+def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
+    """Vereinsdaten eines Mitglieds direkt per mitglied_id bearbeiten.
+
+    Nötig für Mitglieder ohne Login-Account (user_id ist NULL), die nicht über
+    den user_id-basierten Endpoint /{user_id}/mitglied erreichbar sind.
+    """
+    _require_write(user)
+    try:
+        m = db.get_mitglied(mitglied_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    m.vorname = data.vorname
+    m.nachname = data.nachname
+    m.geburtsdatum = data.geburtsdatum
+    m.strasse = data.strasse
+    m.plz = data.plz
+    m.ort = data.ort
+    m.land = data.land
+    m.telefon = data.telefon
+    m.eintrittsdatum = data.eintrittsdatum
+    m.austrittsdatum = data.austrittsdatum
+    m.status = data.status
+    m.zahlungsart = data.zahlungsart
+    m.iban = data.iban
+    m.bic = data.bic
+    m.kontoinhaber = data.kontoinhaber
+    m.abgerechnet_bis = data.abgerechnet_bis
+    m.version = data.expected_version
+    ok = db.update_mitglied(m, updated_by=user.username)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
+    u = db.get_user_by_id(m.user_id) if m.user_id else None
+    abteilungen = db.list_mitglied_abteilungen(m.id)
+    funktionen = db.list_mitglied_funktionen(m.id)
+    return _person_row(u, db.get_mitglied(mitglied_id), abteilungen, funktionen)
+
+
 @router.post("/mitglied/{mitglied_id}/nutzer", status_code=status.HTTP_201_CREATED)
 def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate,
                                 user: CurrentUser, db: DB):
