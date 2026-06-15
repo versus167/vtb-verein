@@ -15,6 +15,20 @@ from datetime import date
 
 from app.db.base_repository import BaseRepository
 
+# "aktuell aktiv": Status aktiv UND Austritt nicht abgelaufen (am Austrittstag noch
+# Mitglied → >= CURRENT_DATE). Mitglieder mit künftigem Eintritt bleiben hier drin.
+_AKTIV = (
+    "m.status = 'aktiv' "
+    "AND (safe_to_date(m.austrittsdatum) IS NULL "
+    "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
+)
+# "zählt zum Bestand": Eintritt liegt nicht in der Zukunft (am Eintrittstag schon dabei,
+# fehlendes/ungültiges Datum = dabei). Ausgetretene bleiben im Bestand.
+_BESTAND = (
+    "(safe_to_date(m.eintrittsdatum) IS NULL "
+    " OR safe_to_date(m.eintrittsdatum) <= CURRENT_DATE)"
+)
+
 
 class StatistikRepository(BaseRepository):
     """Aggregierte Vereins-Kennzahlen für Berichte."""
@@ -47,7 +61,9 @@ class StatistikRepository(BaseRepository):
     def kpis(self, abteilung_id: int | None = None) -> dict:
         """Eckdaten: Mitglieder nach Status, Zu-/Abgänge im laufenden Jahr, Ø-Alter.
 
-        Mit ``abteilung_id`` auf die aktiven Mitglieder dieser Abteilung beschränkt;
+        ``gesamt`` = Bestand (ohne Zukunfts-Eintritte, s. ``_BESTAND``),
+        ``aktiv`` = aktuell aktiv (Austritt nicht abgelaufen, künftige Eintritte zählen
+        mit, s. ``_AKTIV``). Mit ``abteilung_id`` auf diese Abteilung beschränkt;
         Eintritte/Austritte zählen dann über das Abteilungsdatum (s. ``_scope``).
         """
         jahr = date.today().year
@@ -56,8 +72,8 @@ class StatistikRepository(BaseRepository):
             cur.execute(
                 f"""
                 SELECT
-                    COUNT(*)                                              AS gesamt,
-                    COUNT(*) FILTER (WHERE m.status = 'aktiv')            AS aktiv,
+                    COUNT(*) FILTER (WHERE {_BESTAND})                    AS gesamt,
+                    COUNT(*) FILTER (WHERE {_AKTIV})                      AS aktiv,
                     COUNT(*) FILTER (WHERE m.status = 'passiv')           AS passiv,
                     COUNT(*) FILTER (WHERE m.status = 'inaktiv')          AS inaktiv,
                     COUNT(*) FILTER (WHERE m.status = 'ausgetreten')      AS ausgetreten,
@@ -156,7 +172,7 @@ class StatistikRepository(BaseRepository):
         return monate
 
     def altersstruktur(self, abteilung_id: int | None = None) -> list[dict]:
-        """Altersgruppen der nicht ausgetretenen Mitglieder mit hinterlegtem Geburtsdatum."""
+        """Altersgruppen der aktuell aktiven Mitglieder mit hinterlegtem Geburtsdatum."""
         join, _ein, _aus, params = self._scope(abteilung_id)
         with self.cursor() as cur:
             cur.execute(
@@ -166,7 +182,7 @@ class StatistikRepository(BaseRepository):
                     FROM mitglied m
                     {join}
                     WHERE m.deleted_at IS NULL
-                      AND m.status <> 'ausgetreten'
+                      AND {_AKTIV}
                       AND safe_to_date(m.geburtsdatum) IS NOT NULL
                 )
                 SELECT gruppe, COUNT(*) AS anzahl
@@ -189,7 +205,7 @@ class StatistikRepository(BaseRepository):
         return [{"gruppe": g, "anzahl": rows.get(g, 0)} for g in ordnung]
 
     def geschlechterverteilung(self, abteilung_id: int | None = None) -> list[dict]:
-        """Verteilung nach Geschlecht der nicht ausgetretenen Mitglieder."""
+        """Verteilung nach Geschlecht der aktuell aktiven Mitglieder."""
         labels = {"m": "männlich", "w": "weiblich", "d": "divers"}
         join, _ein, _aus, params = self._scope(abteilung_id)
         with self.cursor() as cur:
@@ -198,7 +214,7 @@ class StatistikRepository(BaseRepository):
                 SELECT COALESCE(NULLIF(m.geschlecht, ''), '?') AS geschlecht, COUNT(*) AS anzahl
                 FROM mitglied m
                 {join}
-                WHERE m.deleted_at IS NULL AND m.status <> 'ausgetreten'
+                WHERE m.deleted_at IS NULL AND {_AKTIV}
                 GROUP BY COALESCE(NULLIF(m.geschlecht, ''), '?')
                 """,
                 params,
