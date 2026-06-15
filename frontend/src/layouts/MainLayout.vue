@@ -93,6 +93,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('berichte.read')"
+            clickable
+            :to="{ name: 'berichte' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="insights" /></q-item-section>
+            <q-item-section>Berichte</q-item-section>
+          </q-item>
+
+          <q-item
             clickable
             :to="{ name: 'tickets' }"
             active-class="bg-primary text-white"

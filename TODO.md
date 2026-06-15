@@ -45,9 +45,27 @@ Offen ist die Verdrahtung weiterer Ereignisse:
 
 ## 📊 Reporting
 
-- [ ] **Statistik-Dashboard / Kennzahlen** – Mitgliederentwicklung (Zu-/Abgänge),
-      Altersstruktur, Zahlungsstatus, Abteilungsübersicht; grafische Auswertungen
-      (`DashboardPage.vue` ist aktuell reine Navigation)
+- [x] **Statistik-Dashboard / Kennzahlen** – eigene Berichte-Seite (`BerichtePage.vue`,
+      Route `berichte`, Permission `berichte.read`) mit KPI-Karten, Mitgliederentwicklung
+      (Zu-/Abgänge je Jahr), Altersstruktur, Geschlechterverteilung und Abteilungsübersicht;
+      grafische Auswertungen ohne neue Dependency (CSS/Quasar). Backend:
+      `StatistikRepository` + `GET /api/berichte/statistik` (Branch `feature/statistik-dashboard`)
+- [ ] **Zahlungsstatus im Dashboard** – bewusst ausgeklammert; ergänzen, sobald die
+      Auswertung der offenen Beiträge/Sollstellungen definiert ist
+  - **Noch zu testen auf `feature/statistik-dashboard`** (am Testrechner mit echter DB,
+    da hier keine `VTB_DATABASE_URL`/Postgres verfügbar war):
+    - [ ] `GET /api/berichte/statistik` liefert ohne SQL-Fehler – alle Blöcke
+          (kpis, entwicklung, altersstruktur, geschlechter, abteilungen) plausibel
+    - [ ] Datums-Edge-Cases: Mitglieder mit leerem/ungültigem `geburtsdatum`/
+          `eintrittsdatum`/`austrittsdatum` brechen die Aggregat-Queries nicht
+          (Regex-Guards `~ '^\d{4}...'` greifen)
+    - [ ] Stichprobe: Ø-Alter, Altersgruppen und „Mitglieder je Abteilung" decken
+          sich mit den tatsächlichen Daten (aktive Zuordnungen, status ≠ ausgetreten)
+    - [ ] Berechtigung: User **ohne** `berichte.read` sieht weder Nav-Eintrag noch
+          Dashboard-Karte und erhält bei direktem API-Aufruf 403
+    - [ ] Frontend: Seite lädt, Balken-/Jahres-Chart rendern, im **Dark Mode** lesbar,
+          responsiv auf Mobilgerät (`quasar dev` – ggf. zuerst node_modules angleichen,
+          installiertes `@quasar/app-vite` v1.11.0 ≠ deklariertes `^2.0.0`)
 
 ## 🧹 Tech-Debt / bekannte Altlasten
 

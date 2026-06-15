@@ -92,6 +92,12 @@ const routes = [
         meta: { permission: 'gebuehren.read' },
       },
       {
+        path: 'berichte',
+        name: 'berichte',
+        component: () => import('pages/BerichtePage.vue'),
+        meta: { permission: 'berichte.read' },
+      },
+      {
         path: 'tickets',
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),
