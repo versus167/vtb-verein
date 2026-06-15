@@ -91,6 +91,11 @@ Erledigt (2026-06-11):
 - [ ] Trainingsplan-/Hallenplanung (Trainingszeiten, Trainer-Zuordnung)
 - [ ] Anwesenheitslisten (Check-in/-out, Statistik je Mitglied)
 - [ ] Dokumentenverwaltung pro Mitglied (Verträge, Bescheinigungen, Ablaufdatum-Tracking)
+- [ ] **Stundenabrechnung Übungsleiter** – Übungsleiter tragen geleistete Stunden ein,
+      Abteilungsleiter bestätigen sie in der App (Genehmigungs-Workflow). Voraussetzung:
+      hinterlegte **Stundenvergütung** je Übungsleiter (Stammdaten/Konfiguration, ggf.
+      abteilungs- oder personenabhängig). Auswertung: bestätigte Stunden × Satz →
+      Abrechnungsübersicht/Export pro Übungsleiter und Zeitraum.
 
 ### Infrastruktur
 - [ ] CI/CD (GitHub Actions): automatische Tests, Container-Registry-Push, Auto-Deploy auf Tag
