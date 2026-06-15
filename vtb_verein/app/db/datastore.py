@@ -51,6 +51,7 @@ from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.db.gebuehr_repository import GebuehrRepository
 from app.db.gebuehr_forderung_repository import GebuehrForderungRepository
+from app.db.statistik_repository import StatistikRepository
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
@@ -90,6 +91,7 @@ class VereinsDB:
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
         self._gebuehr_repo = GebuehrRepository(self.conn)
         self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
+        self._statistik_repo = StatistikRepository(self.conn)
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
@@ -196,6 +198,11 @@ class VereinsDB:
     @property
     def funktionen(self) -> FunktionRepository:
         return self._funktion_repo
+
+    @property
+    def statistik(self) -> StatistikRepository:
+        """Aggregierte Kennzahlen für das Berichte-/Statistik-Dashboard."""
+        return self._statistik_repo
 
     def cursor(self):
         return self._database.cursor()

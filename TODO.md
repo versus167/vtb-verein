@@ -45,9 +45,24 @@ Offen ist die Verdrahtung weiterer Ereignisse:
 
 ## 📊 Reporting
 
-- [ ] **Statistik-Dashboard / Kennzahlen** – Mitgliederentwicklung (Zu-/Abgänge),
-      Altersstruktur, Zahlungsstatus, Abteilungsübersicht; grafische Auswertungen
-      (`DashboardPage.vue` ist aktuell reine Navigation)
+- [x] **Statistik-Dashboard / Kennzahlen** – eigene Berichte-Seite (`BerichtePage.vue`,
+      Route `berichte`, Permission `berichte.read`) mit KPI-Karten, Mitgliederentwicklung
+      (Zu-/Abgänge, umschaltbar **letzte 12 Monate / letzte 12 Jahre**), Altersstruktur,
+      Geschlechterverteilung und Abteilungsübersicht; grafische Auswertungen ohne neue
+      Dependency (CSS/Quasar). Backend: `StatistikRepository` +
+      `GET /api/berichte/statistik` (Branch `feature/statistik-dashboard`)
+  - [x] **Getestet gegen echte DB (2026-06-15):** API ohne SQL-Fehler, alle Blöcke
+        plausibel; Stichprobe (Ø-Alter, Altersgruppen, Mitglieder je Abteilung) deckt
+        sich; Berechtigung (Backend 403 + Nav-/Dashboard-Karte/Route-Guard auf
+        `berichte.read`); Frontend rendert (eslint sauber, Umschalter im `outline`-Stil
+        Dark-Mode-tauglich, vom Nutzer visuell bestätigt).
+  - [x] **Datums-Edge-Cases abgesichert:** die Regex-Guards prüften nur das *Format*,
+        nicht die *Gültigkeit* – format-gültige Unmöglichkeiten (z. B. `2026-02-30`)
+        ließen den `::date`-Cast und damit die Query abstürzen (HTTP 500). Behoben mit
+        DB-Funktion `safe_to_date(text)` (Migration **v39**, Frischaufbau + Migrationspfad
+        im Wegwerf-Container getestet); `kpis()`/`altersstruktur()` casten darüber.
+- [ ] **Zahlungsstatus im Dashboard** – bewusst ausgeklammert; ergänzen, sobald die
+      Auswertung der offenen Beiträge/Sollstellungen definiert ist
 
 ## 🧹 Tech-Debt / bekannte Altlasten
 
