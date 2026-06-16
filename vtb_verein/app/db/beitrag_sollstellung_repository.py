@@ -67,6 +67,15 @@ class BeitragSollstellungRepository(BaseRepository):
             )
             return cur.fetchone() is not None
 
+    def list_zeitraeume(self) -> list[str]:
+        """Vorhandene Zeiträume (distinct) für das Filter-Dropdown, neueste zuerst."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT zeitraum FROM beitrag_sollstellung "
+                "WHERE deleted_at IS NULL ORDER BY zeitraum DESC"
+            )
+            return [row['zeitraum'] for row in cur.fetchall()]
+
     def create(self, s: BeitragSollstellung, created_by: str) -> BeitragSollstellung:
         with self.cursor() as cur:
             cur.execute(

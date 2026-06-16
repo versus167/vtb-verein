@@ -206,6 +206,13 @@ def list_sollstellungen(zeitraum: str, user: CurrentUser, db: DB):
     return [_soll_dict(s) for s in sollstellungen]
 
 
+@router.get("/sollstellungen/zeitraeume")
+def list_sollstellung_zeitraeume(user: CurrentUser, db: DB):
+    """Vorhandene Zeiträume für das Filter-Dropdown (neueste zuerst)."""
+    _require_read(user)
+    return db.sollstellungen.list_zeitraeume()
+
+
 @router.get("/sollstellungen/mitglied/{mitglied_id}")
 def list_sollstellungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
