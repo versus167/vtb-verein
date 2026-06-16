@@ -11,6 +11,8 @@
       konsistent zur Abteilungs-Wiederherstellung
 - [ ] **Export** – Mitgliederliste als CSV (konfigurierbare Spalten) und Excel
 - [ ] **Pagination / Lazy Loading** für große Listen (>1000 Mitglieder); Performance-Test
+- [ ] **IBAN-Prüfung bei Änderung** – beim Bearbeiten/Speichern der IBAN validieren
+      (Format + Prüfziffer nach ISO 13616/Modulo 97), ungültige Eingaben ablehnen
 
 ### Mitglieder-Import (SPG-Verein)
 - [x] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`
