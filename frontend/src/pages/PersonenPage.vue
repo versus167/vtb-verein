@@ -55,8 +55,17 @@
               <q-chip v-if="p.role" dense :color="rolleColor(p.role)" text-color="white" size="sm">
                 {{ rolleLabel(p.role) }}
               </q-chip>
-              <q-icon v-if="p.user_id && p.active" name="check_circle" color="positive" size="sm" />
-              <q-icon v-else-if="p.user_id" name="cancel" color="negative" size="sm" />
+              <q-chip v-if="p.mitglied" dense size="sm"
+                :color="mitgliedStatusColor(p.mitglied.status)" text-color="white">
+                {{ mitgliedStatusLabel(p.mitglied.status) }}
+                <q-tooltip>Vereinsstatus</q-tooltip>
+              </q-chip>
+              <q-icon v-if="p.user_id && p.active" name="check_circle" color="positive" size="sm">
+                <q-tooltip>Login aktiv</q-tooltip>
+              </q-icon>
+              <q-icon v-else-if="p.user_id" name="cancel" color="negative" size="sm">
+                <q-tooltip>Login inaktiv</q-tooltip>
+              </q-icon>
             </div>
           </div>
           <div v-if="p.email" class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
@@ -153,12 +162,20 @@
 
       <template #body-cell-status="props">
         <q-td :props="props" class="text-center">
-          <q-icon v-if="props.row.active" name="check_circle" color="positive" size="sm">
-            <q-tooltip>Aktiv</q-tooltip>
-          </q-icon>
-          <q-icon v-else name="cancel" color="negative" size="sm">
-            <q-tooltip>Inaktiv</q-tooltip>
-          </q-icon>
+          <div class="row items-center justify-center no-wrap" style="gap: 4px">
+            <!-- Login-Account-Status: nur bei Benutzer-Zeilen (sonst kein Login) -->
+            <q-icon v-if="props.row.user_id" :name="props.row.active ? 'check_circle' : 'cancel'"
+              :color="props.row.active ? 'positive' : 'negative'" size="sm">
+              <q-tooltip>Login {{ props.row.active ? 'aktiv' : 'inaktiv' }}</q-tooltip>
+            </q-icon>
+            <!-- Vereinsstatus: nur bei Mitglied-Zeilen -->
+            <q-chip v-if="props.row.mitglied" dense size="sm" class="q-ma-none"
+              :color="mitgliedStatusColor(props.row.mitglied.status)" text-color="white">
+              {{ mitgliedStatusLabel(props.row.mitglied.status) }}
+              <q-tooltip>Vereinsstatus</q-tooltip>
+            </q-chip>
+            <span v-if="!props.row.user_id && !props.row.mitglied" class="text-grey">—</span>
+          </div>
         </q-td>
       </template>
 
@@ -593,7 +610,8 @@ const columns = computed(() => {
       { name: 'eintritt',     label: 'Eintritt',   field: r => r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
     )
   }
-  cols.push({ name: 'status', label: 'Status', field: 'active', align: 'center', sortable: true })
+  cols.push({ name: 'status', label: 'Status', align: 'center', sortable: true,
+    field: r => (r.mitglied ? r.mitglied.status : (r.active ? 'aktiv' : 'inaktiv')) })
   if (istBenutzer) {
     cols.push({ name: 'last_seen', label: 'Zuletzt aktiv', field: 'last_seen', align: 'left', sortable: true })
   }
@@ -692,6 +710,15 @@ function rolleLabel(role) {
 }
 function rolleColor(role) {
   return { admin: 'negative', mitglied: 'teal' }[role] ?? 'grey'
+}
+
+// Vereinsstatus eines Mitglieds (aktiv/passiv/ausgetreten) – getrennt vom
+// Account-Aktiv-Flag (Login). 'aktiv' wird als "Vereinsmitglied" angezeigt.
+function mitgliedStatusLabel(s) {
+  return { aktiv: 'Vereinsmitglied', passiv: 'Passiv', ausgetreten: 'Ausgetreten' }[s] ?? (s || '—')
+}
+function mitgliedStatusColor(s) {
+  return { aktiv: 'positive', passiv: 'grey', ausgetreten: 'negative' }[s] ?? 'grey'
 }
 
 // Farbpalette für Abteilungs-IDs (deterministisch pro Abteilung)
