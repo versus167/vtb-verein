@@ -89,3 +89,23 @@ class FunktionRepository(BaseRepository):
                 (deleted_by, id),
             )
             return cur.rowcount == 1
+
+    def has_active_mitglied_funktion_references(self, id: int) -> bool:
+        """Prüft, ob es nicht-gelöschte mitglied_funktion-Zuordnungen gibt.
+
+        mitglied_funktion verweist über den Text-Key (funktion.key), nicht per FK.
+        Wie bei Abteilungen (has_active_mitglied_abteilung_references) werden auch
+        Zuordnungen soft-gelöschter Mitglieder gezählt (kein Join auf
+        mitglied.deleted_at) – endgültige Bereinigung übernimmt der Prune.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM mitglied_funktion mf
+                JOIN funktion f ON f.key = mf.funktion
+                WHERE f.id = %s AND mf.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (id,),
+            )
+            return cur.fetchone() is not None
