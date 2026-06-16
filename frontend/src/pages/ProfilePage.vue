@@ -218,7 +218,7 @@
               <q-input v-model="mitgliedForm.land" label="Land" outlined dense />
 
               <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Bankverbindung</div>
-              <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense />
+              <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
               <q-input v-model="mitgliedForm.bic" label="BIC" outlined dense />
               <q-input v-model="mitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
 
@@ -296,6 +296,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -436,6 +437,11 @@ async function onSendTest() {
 
 async function onSaveMitglied() {
   mitgliedError.value = ''
+  mitgliedForm.value.iban = normalizeIban(mitgliedForm.value.iban)
+  if (mitgliedForm.value.iban && !isValidIban(mitgliedForm.value.iban)) {
+    mitgliedError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
+    return
+  }
   savingMitglied.value = true
   try {
     await api.put('/api/personen/mein-mitglied', {

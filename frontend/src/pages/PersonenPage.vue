@@ -331,7 +331,7 @@
               <q-expansion-item label="Zahlung / SEPA" dense>
                 <div class="q-gutter-sm q-pt-sm">
                   <q-input v-model="createForm.zahlungsart" label="Zahlungsart" outlined dense />
-                  <q-input v-model="createForm.iban" label="IBAN" outlined dense />
+                  <q-input v-model="createForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
                   <q-input v-model="createForm.bic" label="BIC" outlined dense />
                   <q-input v-model="createForm.kontoinhaber" label="Kontoinhaber" outlined dense />
                 </div>
@@ -534,6 +534,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
+import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
 // damit der Listen-Zustand beim Zurückkehren erhalten bleibt.
@@ -805,6 +806,11 @@ async function onCreate() {
   createError.value = ''
   if (createTab.value === 'mitglied' && !createForm.value.eintrittsdatum) {
     createError.value = 'Eintrittsdatum ist erforderlich.'
+    return
+  }
+  createForm.value.iban = normalizeIban(createForm.value.iban)
+  if (createForm.value.iban && !isValidIban(createForm.value.iban)) {
+    createError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
     return
   }
   createSaving.value = true
