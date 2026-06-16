@@ -287,7 +287,29 @@ class UserRepository(BaseRepository):
                 (deleted_by, user_id)
             )
             return cur.rowcount == 1
-    
+
+    def restore_user(self, user_id: int, restored_by: str) -> bool:
+        """Hebt einen Soft-Delete eines Users auf (deleted_at/deleted_by → NULL).
+
+        Hinweis: Stellt KEINE entzogenen Berechtigungen wieder her – die müssen ggf.
+        neu vergeben werden. History wird per Trigger geschrieben.
+
+        Returns:
+            bool: True wenn wiederhergestellt, False wenn nicht gefunden oder nicht gelöscht
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE users
+                SET deleted_at = NULL,
+                    deleted_by = NULL,
+                    version = version + 1
+                WHERE id = %s AND deleted_at IS NOT NULL
+                """,
+                (restored_by, user_id)
+            )
+            return cur.rowcount == 1
+
     def _row_to_user(self, row) -> User:
         """Convert DB row to User object (ohne Permissions – die lädt _load_permissions)."""
         return User(
