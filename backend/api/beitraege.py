@@ -225,6 +225,21 @@ def update_sollstellung_status(soll_id: int, data: SollstellungStatusUpdate,
     return {'ok': True}
 
 
+@router.delete("/sollstellungen/{soll_id}")
+def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
+    """Soft-Delete: anders als Storno wird die Sollstellung bei einer erneuten
+    Abrechnung wieder neu angelegt. Nur offene/stornierte; bezahlte bleiben
+    vorerst gesperrt (bereits bezahlt)."""
+    _require_abrechnen(user)
+    ok = db.sollstellungen.soft_delete(soll_id, deleted_by=user.username)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Sollstellung nicht gefunden oder nicht löschbar (nur offene/stornierte – bezahlte werden nicht gelöscht)",
+        )
+    return {'ok': True}
+
+
 # ---------------------------------------------------------------------------
 # SEPA-Export (einfaches CSV-Format)
 # ---------------------------------------------------------------------------

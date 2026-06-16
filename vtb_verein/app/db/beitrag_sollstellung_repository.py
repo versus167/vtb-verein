@@ -115,6 +115,25 @@ class BeitragSollstellungRepository(BaseRepository):
             )
             return cur.rowcount > 0
 
+    def soft_delete(self, id: int, deleted_by: str) -> bool:
+        """Sollstellung soft-löschen (deleted_at), damit eine erneute Abrechnung
+        sie wieder neu anlegt. Im Gegensatz zum Storno (bleibt bestehen und
+        sperrt die Neu-Anlage über exists()). Nur offene/stornierte – bezahlte
+        bleiben vorerst gesperrt (bereits bezahlt; werden nicht neu abgerechnet).
+        Hinweis: Im Beitragsflow werden keine Kassenbuchungen erzeugt; wie
+        'bezahlt' hier abgebildet wird, ist noch offen."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE beitrag_sollstellung
+                SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
+                """,
+                (deleted_by, deleted_by, id),
+            )
+            return cur.rowcount > 0
+
     def set_kassenbuchung(self, id: int, kassenbuchung_id: int, updated_by: str) -> None:
         with self.cursor() as cur:
             cur.execute(

@@ -259,14 +259,18 @@
             </q-td>
           </template>
           <template #body-cell-actions="props">
-            <q-td :props="props" v-if="kannAbrechnen && props.row.status === 'offen'">
-              <q-btn flat dense round icon="check_circle" color="positive" size="sm"
+            <q-td :props="props" v-if="kannAbrechnen && props.row.status !== 'bezahlt'">
+              <q-btn v-if="props.row.status === 'offen'" flat dense round icon="check_circle" color="positive" size="sm"
                 @click="markBezahlt(props.row)">
                 <q-tooltip>Als bezahlt markieren</q-tooltip>
               </q-btn>
-              <q-btn flat dense round icon="block" color="negative" size="sm"
+              <q-btn v-if="props.row.status === 'offen'" flat dense round icon="block" color="negative" size="sm"
                 @click="markStorniert(props.row)">
-                <q-tooltip>Stornieren</q-tooltip>
+                <q-tooltip>Stornieren (bleibt bestehen, wird nicht neu abgerechnet)</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="delete" color="negative" size="sm"
+                @click="deleteSollstellung(props.row)">
+                <q-tooltip>Löschen (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
               </q-btn>
             </q-td>
             <q-td :props="props" v-else />
@@ -684,9 +688,26 @@ async function markBezahlt(s) {
 }
 
 async function markStorniert(s) {
-  $q.dialog({ title: 'Stornieren?', message: `Sollstellung für ${s.mitglied_name} stornieren?`, cancel: true })
+  $q.dialog({
+    title: 'Stornieren?',
+    message: `Sollstellung für ${s.mitglied_name} stornieren? Sie bleibt bestehen und wird bei einer erneuten Abrechnung nicht neu erzeugt.`,
+    cancel: true,
+  })
     .onOk(async () => {
       await api.patch(`/api/beitraege/sollstellungen/${s.id}`, { bezahlt_am: null })
+      await ladeSollstellungen()
+    })
+}
+
+async function deleteSollstellung(s) {
+  $q.dialog({
+    title: 'Löschen?',
+    message: `Sollstellung für ${s.mitglied_name} löschen? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
+    cancel: true,
+    ok: { label: 'Löschen', color: 'negative' },
+  })
+    .onOk(async () => {
+      await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
     })
 }
