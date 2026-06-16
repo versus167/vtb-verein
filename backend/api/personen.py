@@ -12,6 +12,7 @@ from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_role_assignment
 from ..core.scope import visible_mitglied_ids
+from ..core.validation import iban_or_422
 
 router = APIRouter(prefix="/personen", tags=["personen"])
 
@@ -377,6 +378,7 @@ def list_deleted_personen(user: CurrentUser, db: DB):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    data.iban = iban_or_422(data.iban)
     role = authorize_role_assignment(user, data.role)
     service = PersonService(db)
     try:
@@ -454,6 +456,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
 def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     _require_write(user)
     _require_eintrittsdatum(data.eintrittsdatum)
+    data.iban = iban_or_422(data.iban)
     m = db.get_mitglied_by_user_id(user_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Kein Mitglied-Datensatz für diesen User")
@@ -490,6 +493,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
     """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
     _require_write(user)
     _require_eintrittsdatum(data.eintrittsdatum)
+    data.iban = iban_or_422(data.iban)
     u = db.get_user_by_id(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
@@ -527,6 +531,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     """
     _require_write(user)
     _require_eintrittsdatum(data.eintrittsdatum)
+    data.iban = iban_or_422(data.iban)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:
@@ -726,6 +731,7 @@ def get_mein_mitglied(user: CurrentUser, db: DB):
 
 @router.put("/mein-mitglied")
 def update_mein_mitglied(data: MeinMitgliedUpdate, user: CurrentUser, db: DB):
+    data.iban = iban_or_422(data.iban)
     m = db.get_mitglied_by_user_id(user.id)
     if m is None:
         raise HTTPException(status_code=404, detail="Kein Mitglied-Datensatz für diesen Account")

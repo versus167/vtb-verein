@@ -5,6 +5,7 @@ from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_mitglied_ids
+from ..core.validation import iban_or_422
 
 router = APIRouter(prefix="/mitglieder", tags=["mitglieder"])
 
@@ -78,6 +79,7 @@ def get_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
 def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
     _require_eintrittsdatum(data.eintrittsdatum)
+    data.iban = iban_or_422(data.iban)
     from app.models.mitglied import Mitglied
     if data.mitgliedsnummer is None:
         data.mitgliedsnummer = db.get_next_mitgliedsnummer()
@@ -92,6 +94,7 @@ def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
 def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
     _require_eintrittsdatum(data.eintrittsdatum)
+    data.iban = iban_or_422(data.iban)
     existing = db.get_mitglied(mitglied_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")

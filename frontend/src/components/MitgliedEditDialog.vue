@@ -61,7 +61,7 @@
             <q-expansion-item label="Zahlung / SEPA" dense icon="payments">
               <div class="q-gutter-sm q-pt-sm">
                 <q-input v-model="form.zahlungsart" label="Zahlungsart" outlined dense :readonly="!canWrite" />
-                <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" />
+                <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" :rules="[ibanRule]" />
                 <q-input v-model="form.bic" label="BIC" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
               </div>
@@ -342,6 +342,7 @@ import { ref, computed, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -544,6 +545,11 @@ async function saveStammdaten() {
   stammError.value = ''
   if (!form.value.eintrittsdatum) {
     stammError.value = 'Eintrittsdatum ist erforderlich.'
+    return
+  }
+  form.value.iban = normalizeIban(form.value.iban)
+  if (form.value.iban && !isValidIban(form.value.iban)) {
+    stammError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
     return
   }
   savingStamm.value = true
