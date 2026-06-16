@@ -63,6 +63,7 @@ PERMISSION_GROUPS = [
             (Permission.FUNKTIONEN_VERWALTEN, 'Funktionen verwalten'),
             (Permission.KASSEN_VERWALTEN,     'Kassen verwalten'),
             (Permission.SYSTEM_CONFIG,        'System-Konfiguration'),
+            (Permission.SYSTEM_PROTOKOLL,     'Protokoll einsehen'),
         ],
     },
     {

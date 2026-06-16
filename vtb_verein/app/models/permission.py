@@ -58,6 +58,8 @@ class Permission:
     # Globaler Kassen-Admin: Kassen anlegen/bearbeiten/löschen, Kassen-Berechtigungen
     # vergeben und alle Kassen einsehen/bebuchen (umgeht die per-Kasse-ACL).
     KASSEN_VERWALTEN     = 'kassen.verwalten'
+    # Zugriffsprotokoll einsehen (Anmelde-Events + Seitenaufrufe).
+    SYSTEM_PROTOKOLL     = 'system.protokoll'
 
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben

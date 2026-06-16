@@ -20,6 +20,40 @@ def _client_ip(request: Request) -> str | None:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else None
 
+
+def _log_access(db, request: Request, event_type: str, **kwargs) -> None:
+    """Schreibt einen Auth-Eintrag ins Zugriffsprotokoll – best-effort.
+
+    Darf den Auth-Pfad niemals brechen (vgl. last_seen-Tracking in deps.py), daher
+    vollständig in try/except gekapselt. IP/User-Agent werden aus dem Request abgeleitet.
+    """
+    try:
+        db.access_log_repository.log(
+            event_type,
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            **kwargs,
+        )
+    except Exception:
+        pass
+
+
+def _classify_login_failure(db, username: str) -> str:
+    """Klassifiziert einen fehlgeschlagenen Login für das Protokoll (nicht für den Client).
+
+    'unknown_user' | 'inactive' | 'bad_password' – best-effort, fällt auf 'bad_password'
+    zurück. Die 401-Meldung an den Client bleibt davon unberührt generisch.
+    """
+    try:
+        user = db.users.get_by_username(username.lower().strip())
+        if user is None:
+            return "unknown_user"
+        if not user.active:
+            return "inactive"
+    except Exception:
+        pass
+    return "bad_password"
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -55,10 +89,16 @@ def login(
     service = UserService(db)
     user = service.authenticate(form_data.username, form_data.password)
     if user is None:
+        _log_access(
+            db, request, "login_failed",
+            username=form_data.username,
+            detail=_classify_login_failure(db, form_data.username),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Falscher Benutzername oder Passwort",
         )
+    _log_access(db, request, "login_success", user_id=user.id, username=user.username)
     expire = timedelta(days=30) if remember_me else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     sid = db.user_session_repository.create_session(
         user_id=user.id,
@@ -196,11 +236,12 @@ def list_my_sessions(user: CurrentUser, sid: CurrentSessionId, db: DB):
 
 
 @router.post("/logout")
-def logout_current(user: CurrentUser, sid: CurrentSessionId, db: DB):
+def logout_current(request: Request, user: CurrentUser, sid: CurrentSessionId, db: DB):
     """Normaler Logout: widerruft die aktuelle Server-Session (best effort),
     damit sie nicht als „Geist-Gerät" in der Liste verbleibt."""
     if sid is not None:
         db.user_session_repository.revoke_by_sid(sid, revoked_by=user.username)
+    _log_access(db, request, "logout", user_id=user.id, username=user.username)
     return {"ok": True}
 
 
@@ -289,7 +330,7 @@ Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.
 
 
 @router.post("/magic-link/request")
-def request_magic_link(data: MagicLinkRequest, db=Depends(get_db)):
+def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_db)):
     """Sendet einen Magic-Link an die angegebene E-Mail-Adresse.
 
     Gibt immer 200 zurück, um keine Informationen über vorhandene Adressen preiszugeben.
@@ -298,6 +339,14 @@ def request_magic_link(data: MagicLinkRequest, db=Depends(get_db)):
         raise HTTPException(status_code=503, detail="E-Mail-Versand nicht konfiguriert")
 
     user = db.get_user_by_email(data.email)
+    # Protokoll: ob eine passende (aktive) Adresse existierte, nur im detail-Feld –
+    # nach außen bleibt die Antwort einheitlich 200 (kein User-Enumeration-Leak).
+    _log_access(
+        db, request, "magic_link_request",
+        user_id=user.id if user else None,
+        username=user.username if user else None,
+        detail="match" if (user and user.active) else "no_match",
+    )
     if user and user.active:
         token = db.auth_token_repository.create_token(
             user_id=user.id,
@@ -316,12 +365,19 @@ def request_magic_link(data: MagicLinkRequest, db=Depends(get_db)):
 def validate_magic_link(data: MagicLinkValidate, request: Request, db=Depends(get_db)):
     result = db.auth_token_repository.validate_and_use_token(data.token)
     if not result or result.get("token_type") != "magic_link":
+        _log_access(db, request, "magic_link_failed", detail="invalid_or_used")
         raise HTTPException(status_code=401, detail="Link ungültig oder bereits verwendet")
 
     user = db.get_user_by_id(result["user_id"])
     if not user or not user.active:
+        _log_access(
+            db, request, "magic_link_failed",
+            user_id=result.get("user_id"),
+            detail="user_inactive_or_missing",
+        )
         raise HTTPException(status_code=401, detail="Benutzer nicht gefunden oder inaktiv")
 
+    _log_access(db, request, "magic_link_login", user_id=user.id, username=user.username)
     db.update_last_login(user.id)
     expire = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     sid = db.user_session_repository.create_session(
