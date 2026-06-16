@@ -7,7 +7,7 @@
 ## 🔥 Hohe Priorität
 
 ### Mitgliederverwaltung
-- [ ] **Papierkorb für Mitglieder** – gelöschte Mitglieder anzeigen + wiederherstellen,
+- [x] **Papierkorb für Mitglieder** – gelöschte Mitglieder anzeigen + wiederherstellen,
       konsistent zur Abteilungs-Wiederherstellung
 - [ ] **Export** – Mitgliederliste als CSV (konfigurierbare Spalten) und Excel
 - [ ] **Pagination / Lazy Loading** für große Listen (>1000 Mitglieder); Performance-Test
