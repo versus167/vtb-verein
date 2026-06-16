@@ -13,6 +13,11 @@
 - [ ] **Pagination / Lazy Loading** für große Listen (>1000 Mitglieder); Performance-Test
 - [ ] **IBAN-Prüfung bei Änderung** – beim Bearbeiten/Speichern der IBAN validieren
       (Format + Prüfziffer nach ISO 13616/Modulo 97), ungültige Eingaben ablehnen
+- [ ] **Umgang mit ausgetretenen Mitgliedern klären** – aktuell bleiben Mitglieder mit
+      Status „ausgetreten" zeitlich unbegrenzt in der Personenliste (nur Soft-Delete in
+      den Papierkorb blendet sie aus). Offen: sollen sie per Default ausgeblendet werden
+      (Filter „Ausgetretene anzeigen"), nach X Jahren automatisch archiviert/gelöscht
+      werden (DSGVO-Aufbewahrungsfristen?), o. Ä.
 
 ### Mitglieder-Import (SPG-Verein)
 - [x] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`
