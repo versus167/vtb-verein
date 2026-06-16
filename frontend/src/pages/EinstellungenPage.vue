@@ -216,7 +216,7 @@ async function savePermissions() {
 function confirmDelete(f) {
   $q.dialog({
     title: 'Funktion löschen',
-    message: `"${f.name}" wirklich löschen? Bestehende Zuordnungen bleiben erhalten.`,
+    message: `"${f.name}" wirklich löschen? Nur möglich, wenn die Funktion keinem Mitglied mehr zugeordnet ist.`,
     cancel: true,
     persistent: true,
   }).onOk(async () => {

@@ -70,9 +70,14 @@ def update_funktion(funktion_id: int, data: FunktionUpdate, user: CurrentUser, d
 @router.delete("/{funktion_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_funktion(funktion_id: int, user: CurrentUser, db: DB):
     _require_verwalten(user)
-    ok = db.funktionen.mark_deleted(funktion_id, deleted_by=user.username)
-    if not ok:
+    if db.funktionen.get(funktion_id) is None:
         raise HTTPException(status_code=404, detail="Funktion nicht gefunden")
+    if db.has_active_mitglied_funktion_references(funktion_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Funktion wird noch verwendet und kann nicht gelöscht werden",
+        )
+    db.funktionen.mark_deleted(funktion_id, deleted_by=user.username)
 
 
 # ---------------------------------------------------------------------------
