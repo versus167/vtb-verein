@@ -294,6 +294,80 @@ def list_personen(user: CurrentUser, db: DB):
     return result
 
 
+@router.get("/deleted")
+def list_deleted_personen(user: CurrentUser, db: DB):
+    """Papierkorb: soft-gelöschte Personen (User inkl. Mitglied) sowie gelöschte
+    Mitglieder ohne Login-Account. Erfordert Löschberechtigung (Papierkorb-Verwaltung)."""
+    _require_delete(user)
+    with db.conn.cursor() as cur:
+        cur.execute("""
+            SELECT * FROM (
+                SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.last_seen, u.version, u.updated_at,
+                       u.deleted_at AS del_at, u.deleted_by AS del_by,
+                       m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
+                       m.strasse, m.plz, m.ort, m.land,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
+                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
+                       m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
+                       m.user_id AS m_user_id, m.version AS m_version,
+                       m.created_at AS m_created_at, m.created_by AS m_created_by,
+                       m.updated_at AS m_updated_at, m.updated_by AS m_updated_by
+                FROM users u
+                LEFT JOIN mitglied m ON m.user_id = u.id
+                WHERE u.deleted_at IS NOT NULL
+                UNION ALL
+                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                       m.deleted_at, m.deleted_by,
+                       m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
+                       m.strasse, m.plz, m.ort, m.land,
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
+                       (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
+                       m.eintrittsdatum, m.austrittsdatum, m.status,
+                       m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
+                       NULL, m.version,
+                       m.created_at, m.created_by, m.updated_at, m.updated_by
+                FROM mitglied m
+                WHERE m.deleted_at IS NOT NULL AND m.user_id IS NULL
+            ) p
+            ORDER BY p.del_at DESC
+        """)
+        rows = cur.fetchall()
+
+    result = []
+    for row in rows:
+        r = dict(row)
+        u_obj = None
+        if r['id'] is not None:
+            u_obj = type('U', (), {
+                'id': r['id'], 'username': r['username'], 'email': r['email'],
+                'role': r['role'], 'active': r['active'], 'last_login': r['last_login'],
+                'last_seen': r['last_seen'], 'version': r['version'], 'updated_at': r['updated_at'],
+            })()
+        m_obj = None
+        if r['m_id'] is not None:
+            m_obj = Mitglied(
+                id=r['m_id'], mitgliedsnummer=r['mitgliedsnummer'],
+                vorname=r['vorname'], nachname=r['nachname'], geburtsdatum=r['geburtsdatum'],
+                strasse=r['strasse'], plz=r['plz'], ort=r['ort'], land=r['land'],
+                email=r['m_email'], telefon=r['telefon'],
+                eintrittsdatum=r['eintrittsdatum'], austrittsdatum=r['austrittsdatum'],
+                status=r['m_status'], zahlungsart=r['zahlungsart'],
+                iban=r['iban'], bic=r['bic'], kontoinhaber=r['kontoinhaber'],
+                abgerechnet_bis=r['abgerechnet_bis'], user_id=r['m_user_id'],
+                version=r['m_version'], created_at=r['m_created_at'],
+                created_by=r['m_created_by'], updated_at=r['m_updated_at'],
+                updated_by=r['m_updated_by'],
+            )
+        # Abteilungen/Funktionen im Papierkorb nicht nötig → leere Listen
+        person = _person_row(u_obj, m_obj, [], [])
+        del_at = r['del_at']
+        person['deleted_at'] = del_at[:19] if isinstance(del_at, str) else (del_at.isoformat(sep=' ')[:19] if del_at else None)
+        person['deleted_by'] = r['del_by']
+        result.append(person)
+    return result
+
+
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
     _require_write(user)
@@ -533,6 +607,33 @@ def delete_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
     if m.user_id is not None:
         raise HTTPException(status_code=400, detail="Mitglied hat einen User-Account — bitte über Person löschen")
     PersonService(db).delete_mitglied_ohne_user(mitglied_id, deleted_by=user.username)
+
+
+@router.post("/{user_id}/restore")
+def restore_person(user_id: int, user: CurrentUser, db: DB):
+    """Papierkorb: gelöschte Person (User + verknüpftes Mitglied) wiederherstellen."""
+    _require_delete(user)
+    PersonService(db).restore_person(user_id, restored_by=user.username)
+    u = db.get_user_by_id(user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="Person nicht gefunden oder bereits aktiv")
+    m = db.get_mitglied_by_user_id(user_id)
+    abteilungen = db.list_mitglied_abteilungen(m.id) if m else []
+    funktionen = db.list_mitglied_funktionen(m.id) if m else []
+    return _person_row(u, m, abteilungen, funktionen)
+
+
+@router.post("/mitglied/{mitglied_id}/restore")
+def restore_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
+    """Papierkorb: gelöschtes Mitglied ohne Login-Account wiederherstellen."""
+    _require_delete(user)
+    ok = PersonService(db).restore_mitglied_ohne_user(mitglied_id, restored_by=user.username)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Mitglied ist nicht gelöscht oder bereits wiederhergestellt")
+    m = db.get_mitglied(mitglied_id)
+    abteilungen = db.list_mitglied_abteilungen(m.id)
+    funktionen = db.list_mitglied_funktionen(m.id)
+    return _person_row(None, m, abteilungen, funktionen)
 
 
 @router.get("/{user_id}/history")

@@ -92,9 +92,13 @@ class PersonService:
             mitglied.telefon = telefon
 
     def delete_mitglied_ohne_user(self, mitglied_id: int, deleted_by: str) -> None:
-        """Soft-löscht einen Mitglied-Datensatz ohne User."""
-        for zuordnung in self.db.list_mitglied_abteilungen(mitglied_id):
-            self.db.mark_mitglied_abteilung_deleted(zuordnung.id, deleted_by)
+        """Soft-löscht einen Mitglied-Datensatz ohne User.
+
+        Abteilungs-Zuordnungen (und Funktionen) bleiben bestehen: alle relevanten
+        Abfragen filtern ohnehin über ``mitglied.deleted_at``; endgültig entfernt
+        werden sie später durch den Prune-Mechanismus. So bleibt das Verhalten zu
+        Funktionen konsistent und ein Restore holt die Person vollständig zurück.
+        """
         self.db.mark_mitglied_deleted(mitglied_id, deleted_by)
 
     def create_user_only(
@@ -122,14 +126,34 @@ class PersonService:
     # ------------------------------------------------------------------
 
     def delete_person(self, user_id: int, deleted_by: str) -> None:
-        """Soft-löscht User und verknüpften Mitglied-Datensatz (inkl. Abteilungs-Zuordnungen)."""
+        """Soft-löscht User und verknüpften Mitglied-Datensatz.
+
+        Abteilungs-Zuordnungen und Funktionen bleiben bestehen (s.
+        delete_mitglied_ohne_user) – Bereinigung erfolgt später per Prune.
+        """
         mitglied = self.db.get_mitglied_by_user_id(user_id)
         if mitglied:
-            for zuordnung in self.db.list_mitglied_abteilungen(mitglied.id):
-                self.db.mark_mitglied_abteilung_deleted(zuordnung.id, deleted_by)
             self.db.mark_mitglied_deleted(mitglied.id, deleted_by)
         # UserService.delete() beinhaltet last-admin-Check + Permissions-Bereinigung
         self.user_service.delete(user_id, deleted_by=deleted_by)
+
+    # ------------------------------------------------------------------
+    # Wiederherstellen (Papierkorb)
+    # ------------------------------------------------------------------
+
+    def restore_person(self, user_id: int, restored_by: str) -> None:
+        """Hebt den Soft-Delete eines Users und seines Mitglied-Datensatzes auf.
+
+        Abteilungs-Zuordnungen und Funktionen werden beim Löschen nicht angetastet
+        und kommen daher automatisch wieder mit. Entzogene Einzel-Berechtigungen
+        werden NICHT automatisch wiederhergestellt (rollenbasierte Rechte bleiben).
+        """
+        self.db.restore_user(user_id, restored_by)
+        self.db.restore_mitglied_by_user_id(user_id, restored_by)
+
+    def restore_mitglied_ohne_user(self, mitglied_id: int, restored_by: str) -> bool:
+        """Hebt den Soft-Delete eines Mitglieds ohne Login-Account auf."""
+        return self.db.restore_mitglied(mitglied_id, restored_by)
 
     # ------------------------------------------------------------------
     # Hilfsmethoden

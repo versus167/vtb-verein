@@ -1,8 +1,13 @@
 <template>
   <q-page padding :class="{ 'page--dark': $q.dark.isActive }">
     <!-- Kopfzeile -->
-    <div class="row items-center q-mb-md">
+    <div class="row items-center q-mb-md q-gutter-sm">
       <div class="text-h5 col">Personen</div>
+      <q-btn v-if="auth.hasPermission('personen.delete')" icon="delete_sweep"
+        :label="$q.screen.gt.xs ? 'Papierkorb' : undefined" :round="$q.screen.lt.sm"
+        flat color="secondary" @click="trashOpen = true">
+        <q-tooltip>Gelöschte Personen</q-tooltip>
+      </q-btn>
       <q-btn icon="add" :label="$q.screen.gt.xs ? 'Neue Person' : undefined"
         :round="$q.screen.lt.sm" color="primary" unelevated @click="openCreateDialog" />
     </div>
@@ -719,11 +724,55 @@
       </q-card>
     </q-dialog>
 
+    <!-- Papierkorb-Dialog: gelöschte Personen wiederherstellen -->
+    <q-dialog v-model="trashOpen" full-width>
+      <q-card>
+        <q-card-section class="row items-center">
+          <div class="text-h6">Gelöschte Personen</div>
+          <q-space />
+          <q-btn flat round icon="close" v-close-popup />
+        </q-card-section>
+        <q-separator />
+        <q-card-section>
+          <div v-if="deletedLoading" class="row justify-center q-py-lg">
+            <q-spinner size="32px" color="primary" />
+          </div>
+          <div v-else-if="deletedPersonen.length === 0" class="text-grey text-center q-py-lg">
+            Keine gelöschten Personen vorhanden.
+          </div>
+          <q-table
+            v-else
+            :rows="deletedPersonen"
+            :columns="deletedColumns"
+            :row-key="r => r.user_id ?? 'm_' + r.mitglied?.id"
+            flat
+            :rows-per-page-options="[10, 25, 0]"
+          >
+            <template #body-cell-login="props">
+              <q-td :props="props">
+                <span v-if="props.row.username">{{ props.row.username }}</span>
+                <span v-else class="text-grey-5">— kein Login —</span>
+              </q-td>
+            </template>
+            <template #body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn
+                  flat dense round icon="restore" color="positive" size="sm"
+                  title="Wiederherstellen"
+                  @click="confirmRestore(props.row)"
+                />
+              </q-td>
+            </template>
+          </q-table>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
   </q-page>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -754,6 +803,20 @@ const search = ref('')
 const abteilungFilter = ref(null)
 const funktionFilter = ref(null)
 const alleAbteilungen = ref([])
+
+// ── Papierkorb (gelöschte Personen) ────────────────────────
+const trashOpen = ref(false)
+const deletedPersonen = ref([])
+const deletedLoading = ref(false)
+const deletedColumns = [
+  { name: 'name', label: 'Name', align: 'left', sortable: true,
+    field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : (r.username || '')) },
+  { name: 'login', label: 'Login', align: 'left', field: r => r.username || '' },
+  { name: 'email', label: 'E-Mail', align: 'left', field: 'email' },
+  { name: 'deleted_at', label: 'Gelöscht am', align: 'left', field: 'deleted_at', sortable: true },
+  { name: 'deleted_by', label: 'Gelöscht von', align: 'left', field: 'deleted_by' },
+  { name: 'actions', label: '', align: 'right', field: 'actions' },
+]
 
 // ── Sortierung ─────────────────────────────────────────────
 // Native Quasar-Tabellensortierung (über pagination). Start: Name aufsteigend.
@@ -913,6 +976,46 @@ async function loadPersonen() {
   } finally {
     loading.value = false
   }
+}
+
+// ── Papierkorb ─────────────────────────────────────────────
+async function loadDeleted() {
+  deletedLoading.value = true
+  try {
+    const { data } = await api.get('/api/personen/deleted')
+    deletedPersonen.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Fehler beim Laden des Papierkorbs' })
+  } finally {
+    deletedLoading.value = false
+  }
+}
+
+// Papierkorb beim Öffnen laden
+watch(trashOpen, (open) => { if (open) loadDeleted() })
+
+function confirmRestore(row) {
+  const name = row.mitglied
+    ? `${row.mitglied.nachname}, ${row.mitglied.vorname}`
+    : (row.username || 'Person')
+  $q.dialog({
+    title: 'Wiederherstellen',
+    message: `"${name}" wiederherstellen?`,
+    cancel: true,
+  }).onOk(async () => {
+    try {
+      if (row.user_id) {
+        await api.post(`/api/personen/${row.user_id}/restore`)
+      } else {
+        await api.post(`/api/personen/mitglied/${row.mitglied.id}/restore`)
+      }
+      $q.notify({ type: 'positive', message: 'Wiederhergestellt' })
+      await Promise.all([loadPersonen(), loadDeleted()])
+      if (deletedPersonen.value.length === 0) trashOpen.value = false
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Wiederherstellen' })
+    }
+  })
 }
 
 // ── Anlegen ────────────────────────────────────────────────

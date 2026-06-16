@@ -238,6 +238,12 @@ class VereinsDB:
     def mark_mitglied_deleted(self, mitglied_id: int, deleted_by: str) -> bool:
         return self._mitglied_repo.mark_mitglied_deleted(mitglied_id, deleted_by)
 
+    def restore_mitglied(self, mitglied_id: int, restored_by: str) -> bool:
+        return self._mitglied_repo.restore_mitglied(mitglied_id, restored_by)
+
+    def restore_mitglied_by_user_id(self, user_id: int, restored_by: str) -> bool:
+        return self._mitglied_repo.restore_mitglied_by_user_id(user_id, restored_by)
+
     def get_mitglied_by_user_id(self, user_id: int) -> Optional[Mitglied]:
         return self._mitglied_repo.get_by_user_id(user_id)
 
@@ -455,6 +461,9 @@ class VereinsDB:
 
     def mark_user_deleted(self, user_id: int, deleted_by: str) -> bool:
         return self._user_repo.mark_user_deleted(user_id, deleted_by)
+
+    def restore_user(self, user_id: int, restored_by: str) -> bool:
+        return self._user_repo.restore_user(user_id, restored_by)
 
     # -----------------------------------
     # Beiträge

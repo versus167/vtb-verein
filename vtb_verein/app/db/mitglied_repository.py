@@ -300,3 +300,50 @@ class MitgliedRepository(BaseRepository):
                 (deleted_by, mitglied_id)
             )
             return cur.rowcount == 1
+
+    def restore_mitglied(self, mitglied_id: int, restored_by: str) -> bool:
+        """Hebt einen Soft-Delete eines Mitglieds auf (deleted_at/deleted_by → NULL).
+
+        History wird per Trigger geschrieben.
+
+        Returns:
+            bool: True wenn wiederhergestellt, False wenn nicht gefunden oder nicht gelöscht
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied
+                SET deleted_at = NULL,
+                    deleted_by = NULL,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = %s
+                WHERE id = %s AND deleted_at IS NOT NULL
+                """,
+                (restored_by, mitglied_id)
+            )
+            return cur.rowcount == 1
+
+    def restore_mitglied_by_user_id(self, user_id: int, restored_by: str) -> bool:
+        """Stellt den (gelöschten) Mitglied-Datensatz eines Users wieder her.
+
+        Nötig beim Wiederherstellen einer Person: get_by_user_id blendet gelöschte
+        Datensätze aus, daher hier direkt über user_id.
+
+        Returns:
+            bool: True wenn ein gelöschtes Mitglied reaktiviert wurde
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied
+                SET deleted_at = NULL,
+                    deleted_by = NULL,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = %s
+                WHERE user_id = %s AND deleted_at IS NOT NULL
+                """,
+                (restored_by, user_id)
+            )
+            return cur.rowcount == 1
