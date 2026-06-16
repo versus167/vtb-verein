@@ -19,7 +19,7 @@
         <q-tab v-if="!isNew" name="abteilungen" label="Abteilungen" icon="group" />
         <q-tab v-if="!isNew" name="funktionen" label="Funktionen" icon="badge" />
         <q-tab v-if="!isNew && personMode" name="kontakte" label="Kontakte" icon="contact_phone" />
-        <q-tab v-if="!isNew && personMode" name="mannschaften" label="Mannschaften" icon="groups" />
+        <q-tab v-if="!isNew && personMode && canSeeTeams" name="mannschaften" label="Mannschaften" icon="groups" />
       </q-tabs>
       <q-separator />
 
@@ -186,7 +186,7 @@
           </q-tab-panel>
 
           <!-- ── Mannschaften ─────────────────────────────────── -->
-          <q-tab-panel v-if="personMode" name="mannschaften" class="q-pa-none">
+          <q-tab-panel v-if="personMode && canSeeTeams" name="mannschaften" class="q-pa-none">
             <q-card-section class="row items-center q-pb-sm">
               <div class="text-subtitle2 col">Mannschaften</div>
               <q-btn v-if="canWrite" label="Hinzufügen" icon="add" color="primary"
@@ -361,6 +361,7 @@ const auth = useAuthStore()
 
 const canWrite = computed(() => auth.hasPermission('personen.write'))
 const canDelete = computed(() => auth.hasPermission('personen.delete'))
+const canSeeTeams = computed(() => auth.hasPermission('mannschaften.read'))
 
 const tab = ref('stammdaten')
 const loading = ref(false)
@@ -480,11 +481,7 @@ async function loadAll() {
       api.get(`/api/mitglieder/${props.mitgliedId}/abteilungen`),
     ]
     if (props.personMode) {
-      reqs.push(
-        api.get(`/api/mitglieder/${props.mitgliedId}/kontakte`),
-        api.get(`/api/mitglieder/${props.mitgliedId}/mannschaften`),
-        api.get('/api/mannschaften'),
-      )
+      reqs.push(api.get(`/api/mitglieder/${props.mitgliedId}/kontakte`))
     }
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
@@ -495,14 +492,30 @@ async function loadAll() {
     zuordnungen.value = z
     if (props.personMode) {
       kontakte.value = res[5].data
-      mitgliedTeams.value = res[6].data
-      alleMannschaftenAll.value = res[7].data
-      alleMannschaften.value = res[7].data
     }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden' })
   } finally {
     loading.value = false
+  }
+  // Mannschaften separat & fehlertolerant laden: fehlt mannschaften.read,
+  // darf der 403 nicht die übrigen Stammdaten blockieren (Ticket #30).
+  if (props.personMode && canSeeTeams.value) {
+    loadTeams()
+  }
+}
+
+async function loadTeams() {
+  try {
+    const [{ data: teams }, { data: alle }] = await Promise.all([
+      api.get(`/api/mitglieder/${props.mitgliedId}/mannschaften`),
+      api.get('/api/mannschaften'),
+    ])
+    mitgliedTeams.value = teams
+    alleMannschaftenAll.value = alle
+    alleMannschaften.value = alle
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden der Mannschaften' })
   }
 }
 
