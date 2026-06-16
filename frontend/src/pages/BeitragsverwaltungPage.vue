@@ -183,6 +183,8 @@
             <q-select v-model="vorschauFilterAbteilung" :options="vorschauAbteilungOptionen"
               emit-value map-options clearable dense outlined
               label="Abteilung filtern" style="min-width: 200px" />
+            <q-checkbox v-model="vorschauZeigeVorhandene" dense
+              :label="`Vorhandene anzeigen (${gefilterteVorschau.filter(p => p.bereits_vorhanden).length})`" />
             <div class="text-subtitle2 col-auto">
               {{ gefilterteVorschau.filter(p => !p.bereits_vorhanden).length }} neu,
               {{ gefilterteVorschau.filter(p => p.bereits_vorhanden).length }} vorhanden
@@ -191,7 +193,7 @@
               </span>
             </div>
           </div>
-          <q-table :rows="gefilterteVorschau" :columns="vorschauColumns" :row-key="vorschauRowKey"
+          <q-table :rows="sichtbareVorschau" :columns="vorschauColumns" :row-key="vorschauRowKey"
             flat bordered dense :rows-per-page-options="[0]" hide-bottom>
             <template #body-cell-status="props">
               <q-td :props="props">
@@ -572,6 +574,8 @@ const abrechnungLoading = ref(false)
 const abrechnungErgebnis = ref(null)
 const vorschauFilterName = ref('')
 const vorschauFilterAbteilung = ref(null)
+// Vorhandene (bereits_vorhanden) standardmäßig ausblenden, nur per Häkchen zeigen.
+const vorschauZeigeVorhandene = ref(false)
 
 const vorschauNeu = computed(() => vorschau.value.filter(p => !p.bereits_vorhanden))
 const vorschauDuplikate = computed(() => vorschau.value.filter(p => p.bereits_vorhanden))
@@ -608,6 +612,13 @@ const gefilterteVorschau = computed(() => {
   }
   return rows
 })
+
+// In der Tabelle gezeigte Zeilen: vorhandene nur, wenn das Häkchen gesetzt ist.
+const sichtbareVorschau = computed(() =>
+  vorschauZeigeVorhandene.value
+    ? gefilterteVorschau.value
+    : gefilterteVorschau.value.filter(p => !p.bereits_vorhanden),
+)
 
 const vorschauColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
