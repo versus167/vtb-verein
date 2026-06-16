@@ -103,6 +103,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('system.protokoll')"
+            clickable
+            :to="{ name: 'protokoll' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="fact_check" /></q-item-section>
+            <q-item-section>Protokoll</q-item-section>
+          </q-item>
+
+          <q-item
             clickable
             :to="{ name: 'tickets' }"
             active-class="bg-primary text-white"

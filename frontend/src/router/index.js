@@ -98,6 +98,12 @@ const routes = [
         meta: { permission: 'berichte.read' },
       },
       {
+        path: 'protokoll',
+        name: 'protokoll',
+        component: () => import('pages/ProtokollPage.vue'),
+        meta: { permission: 'system.protokoll' },
+      },
+      {
         path: 'tickets',
         name: 'tickets',
         component: () => import('pages/TicketsPage.vue'),

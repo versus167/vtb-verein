@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 39
+SCHEMA_VERSION = 40
 
 
 class Database:
@@ -101,6 +101,7 @@ class Database:
             37: self._migrate_v36_to_v37,
             38: self._migrate_v37_to_v38,
             39: self._migrate_v38_to_v39,
+            40: self._migrate_v39_to_v40,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1673,6 +1674,36 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 39 WHERE id = 1")
 
+    def _migrate_v39_to_v40(self) -> None:
+        """Zugriffsprotokoll `access_log` – append-only Log für Anmelde- und
+        Seitenaufruf-Ereignisse.
+
+        Erfasst erfolgreiche/fehlgeschlagene Logins, Magic-Link-Vorgänge, Logout
+        (category 'auth', dauerhaft) sowie Seitenaufrufe (category 'page', wird nach
+        90 Tagen geprunt). Bewusst KEIN *_history/Soft-Delete/Audit-Trigger – das Log
+        IST der Audit-Datensatz. Bei fehlgeschlagenem Login mit unbekanntem Benutzer
+        wird der eingegebene Name als Text gespeichert (user_id NULL); Passwörter nie.
+        """
+        with self.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS access_log (
+                  id          BIGSERIAL PRIMARY KEY,
+                  event_type  TEXT NOT NULL,
+                  category    TEXT NOT NULL DEFAULT 'auth',
+                  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                  username    TEXT,
+                  ip          TEXT,
+                  user_agent  TEXT,
+                  detail      TEXT,
+                  created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_access_log_created  ON access_log(created_at DESC)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_access_log_event    ON access_log(event_type)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_access_log_user     ON access_log(user_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_access_log_category ON access_log(category, created_at)")
+            cur.execute("UPDATE schema_version SET version = 40 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2127,6 +2158,19 @@ class Database:
               deleted_at   TEXT,
               deleted_by   TEXT,
               PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS access_log (
+              id          BIGSERIAL PRIMARY KEY,
+              event_type  TEXT NOT NULL,
+              category    TEXT NOT NULL DEFAULT 'auth',
+              user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+              username    TEXT,
+              ip          TEXT,
+              user_agent  TEXT,
+              detail      TEXT,
+              created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
         cur.execute("""
@@ -3659,6 +3703,10 @@ class Database:
             ("idx_user_permissions_permission",                     "user_permissions(permission)"),
             ("idx_user_permissions_deleted_at",                     "user_permissions(deleted_at)"),
             ("idx_user_permissions_history_id",                     "user_permissions_history(id)"),
+            ("idx_access_log_created",                              "access_log(created_at DESC)"),
+            ("idx_access_log_event",                                "access_log(event_type)"),
+            ("idx_access_log_user",                                 "access_log(user_id)"),
+            ("idx_access_log_category",                             "access_log(category, created_at)"),
             ("idx_funktion_permission_funktion_id",                 "funktion_permission(funktion_id)"),
             ("idx_funktion_permission_deleted_at",                  "funktion_permission(deleted_at)"),
             ("idx_funktion_permission_history_id",                  "funktion_permission_history(id)"),
