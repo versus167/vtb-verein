@@ -636,6 +636,28 @@ def restore_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
     return _person_row(None, m, abteilungen, funktionen)
 
 
+def _mitglied_abteilung_history(db, mitglied_id: int) -> list[dict]:
+    """Versionierte Abteilungs-Zuordnungen eines Mitglieds für die Historie."""
+    with db.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT mah.id, mah.version, mah.abteilung_id,
+                   COALESCE(a.name, mah.abteilung_id::text) AS abteilung_name,
+                   a.kuerzel AS abteilung_kuerzel,
+                   mah.status, mah.von, mah.bis,
+                   mah.created_at, mah.created_by,
+                   mah.updated_at, mah.updated_by,
+                   mah.deleted_at, mah.deleted_by
+            FROM mitglied_abteilung_history mah
+            LEFT JOIN abteilung a ON a.id = mah.abteilung_id
+            WHERE mah.mitglied_id = %s
+            ORDER BY mah.id, mah.version ASC
+            """,
+            (mitglied_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 @router.get("/{user_id}/history")
 def get_person_history(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -656,29 +678,30 @@ def get_person_history(user_id: int, user: CurrentUser, db: DB):
 
     mitglied = db.get_mitglied_by_user_id(user_id)
     mitglied_history = db.get_mitglied_history(mitglied.id) if mitglied else []
-
-    abteilung_history = []
-    if mitglied:
-        with db.conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT mah.id, mah.version, mah.abteilung_id,
-                       COALESCE(a.name, mah.abteilung_id::text) AS abteilung_name,
-                       a.kuerzel AS abteilung_kuerzel,
-                       mah.status, mah.von, mah.bis,
-                       mah.created_at, mah.created_by,
-                       mah.updated_at, mah.updated_by,
-                       mah.deleted_at, mah.deleted_by
-                FROM mitglied_abteilung_history mah
-                LEFT JOIN abteilung a ON a.id = mah.abteilung_id
-                WHERE mah.mitglied_id = %s
-                ORDER BY mah.id, mah.version ASC
-                """,
-                (mitglied.id,),
-            )
-            abteilung_history = [dict(r) for r in cur.fetchall()]
+    abteilung_history = _mitglied_abteilung_history(db, mitglied.id) if mitglied else []
 
     return {'user': user_history, 'mitglied': mitglied_history, 'abteilungen': abteilung_history}
+
+
+@router.get("/mitglied/{mitglied_id}/history")
+def get_mitglied_history_direkt(mitglied_id: int, user: CurrentUser, db: DB):
+    """Änderungshistorie eines Mitglieds ohne Login-Account (per mitglied_id).
+
+    Liefert dieselbe Struktur wie /{user_id}/history, nur ohne User-Teil –
+    so können auch Mitglieder ohne Login-Konto einen Verlauf bekommen.
+    """
+    _require_read(user)
+    try:
+        m = db.get_mitglied(mitglied_id)
+    except KeyError:
+        m = None
+    if m is None:
+        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    return {
+        'user': [],
+        'mitglied': db.get_mitglied_history(mitglied_id),
+        'abteilungen': _mitglied_abteilung_history(db, mitglied_id),
+    }
 
 
 # ---------------------------------------------------------------------------

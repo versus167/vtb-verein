@@ -115,7 +115,7 @@
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.user_id" flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="p.user_id || p.mitglied" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(p)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -251,7 +251,7 @@
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="props.row.user_id" flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="props.row.user_id || props.row.mitglied" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(props.row)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -403,280 +403,19 @@
     </q-dialog>
 
     <!-- ════════════════════════════════════════════════
-         Mitglied-Daten bearbeiten
+         Einheitlicher Mitglied-Bearbeiten-Dialog
+         (Stammdaten · Abteilungen · Funktionen · Kontakte · Mannschaften)
          ════════════════════════════════════════════════ -->
-    <q-dialog v-model="editMitgliedOpen" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:520px;max-width:680px'">
-        <q-card-section class="text-h6">{{ editMitgliedIsNew ? 'Als Vereinsmitglied erfassen' : 'Vereinsdaten bearbeiten' }}</q-card-section>
-        <q-separator />
-        <q-card-section class="q-gutter-sm" style="max-height:70vh;overflow-y:auto">
-          <div class="row q-gutter-sm">
-            <q-input v-model="editMitgliedForm.vorname" label="Vorname *" outlined dense class="col" />
-            <q-input v-model="editMitgliedForm.nachname" label="Nachname *" outlined dense class="col" />
-          </div>
-          <q-input v-model="editMitgliedForm.telefon" label="Telefon" outlined dense />
-          <q-input v-model="editMitgliedForm.geburtsdatum" label="Geburtsdatum" outlined dense type="date" />
-          <div class="row q-gutter-sm">
-            <q-input v-model="editMitgliedForm.eintrittsdatum" label="Eintrittsdatum" outlined dense type="date" class="col" />
-            <q-input v-model="editMitgliedForm.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" />
-          </div>
-          <q-select v-model="editMitgliedForm.status" :options="mitgliedStatusOptions"
-            label="Vereinsstatus" outlined dense emit-value map-options />
-          <q-input v-model="editMitgliedForm.strasse" label="Straße" outlined dense />
-          <div class="row q-gutter-sm">
-            <q-input v-model="editMitgliedForm.plz" label="PLZ" outlined dense style="width:100px" />
-            <q-input v-model="editMitgliedForm.ort" label="Ort" outlined dense class="col" />
-          </div>
-          <q-input v-model="editMitgliedForm.land" label="Land" outlined dense />
-          <q-input v-model="editMitgliedForm.zahlungsart" label="Zahlungsart" outlined dense />
-          <q-input v-model="editMitgliedForm.iban" label="IBAN" outlined dense />
-          <q-input v-model="editMitgliedForm.bic" label="BIC" outlined dense />
-          <q-input v-model="editMitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
-          <div v-if="editMitgliedError" class="text-negative text-caption">{{ editMitgliedError }}</div>
-        </q-card-section>
-        <q-separator />
-        <q-card-actions align="right">
-          <q-btn flat label="Abbrechen" v-close-popup />
-          <q-btn label="Speichern" color="primary" unelevated :loading="editMitgliedSaving" @click="onSaveMitglied" />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
-
-    <!-- ════════════════════════════════════════════════
-         Abteilungen-Dialog (übernommen aus MitgliederPage)
-         ════════════════════════════════════════════════ -->
-    <q-dialog v-model="abteilungenOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
-        <q-card-section class="row items-center q-pb-none">
-          <div class="text-h6">Abteilungen</div>
-          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
-            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
-          </div>
-          <q-space />
-          <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
-        <q-card-section>
-          <q-inner-loading :showing="abteilungenLoading" />
-          <div v-if="!abteilungenLoading && zuordnungen.length === 0"
-            class="text-grey text-center q-py-md">Keine Abteilungszuordnungen.</div>
-          <q-list separator>
-            <q-item v-for="z in zuordnungen" :key="z.id">
-              <q-item-section>
-                <q-item-label>{{ z.abteilung_name }}</q-item-label>
-                <q-item-label caption>
-                  <q-chip dense size="xs" :color="abteilungStatusColor(z.status)" text-color="white">{{ z.status }}</q-chip>
-                  <span v-if="z.von || z.bis" class="q-ml-xs">{{ z.von ?? '?' }} – {{ z.bis ?? 'heute' }}</span>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <div class="row q-gutter-xs">
-                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditZuordnung(z)" />
-                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteZuordnung(z)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
-          <q-btn flat icon="add" label="Abteilung hinzufügen" color="primary" class="q-mt-sm"
-            @click="openAddZuordnung" />
-          <!-- Formular -->
-          <div v-if="zuordnungFormOpen" class="q-mt-md q-gutter-sm">
-            <q-select v-model="zuordnungForm.abteilung_id" :options="alleAbteilungen"
-              :option-value="a => a.id" :option-label="a => a.name" emit-value map-options
-              label="Abteilung *" outlined dense :readonly="!!editingZuordnungId" />
-            <q-select v-model="zuordnungForm.status" :options="abteilungZuordnungStatusOptions"
-              label="Status" outlined dense emit-value map-options />
-            <div class="row q-gutter-sm">
-              <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" />
-              <q-input v-model="zuordnungForm.bis" label="Bis" outlined dense type="date" class="col" />
-            </div>
-            <div class="row q-gutter-sm">
-              <q-btn flat label="Abbrechen" @click="zuordnungFormOpen = false" />
-              <q-btn unelevated :label="editingZuordnungId ? 'Speichern' : 'Hinzufügen'"
-                color="primary" :loading="zuordnungSaving" @click="onSaveZuordnung" />
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
-
-    <!-- ════════════════════════════════════════════════
-         Funktionen-Dialog
-         ════════════════════════════════════════════════ -->
-    <q-dialog v-model="funktionenOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
-        <q-card-section class="row items-center q-pb-none">
-          <div class="text-h6">Funktionen</div>
-          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
-            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
-          </div>
-          <q-space />
-          <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
-        <q-card-section>
-          <q-inner-loading :showing="funktionenLoading" />
-          <div v-if="!funktionenLoading && funktionen.length === 0"
-            class="text-grey text-center q-py-md">Keine Funktionen zugewiesen.</div>
-          <q-list separator>
-            <q-item v-for="f in funktionen" :key="f.id">
-              <q-item-section>
-                <q-item-label>{{ funktionLabel(f.funktion) }}</q-item-label>
-                <q-item-label caption>
-                  <span v-if="f.abteilung_name" class="q-mr-sm">{{ f.abteilung_name }}</span>
-                  <span v-if="f.von || f.bis">{{ f.von ?? '?' }} – {{ f.bis ?? 'heute' }}</span>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <div class="row q-gutter-xs">
-                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditFunktion(f)" />
-                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteFunktion(f)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
-          <q-btn flat icon="add" label="Funktion hinzufügen" color="primary" class="q-mt-sm"
-            @click="openAddFunktion" />
-          <!-- Formular -->
-          <div v-if="funktionFormOpen" class="q-mt-md q-gutter-sm">
-            <q-select v-model="funktionForm.funktion" :options="funktionOptionen"
-              option-value="value" option-label="label" emit-value map-options
-              label="Funktion *" outlined dense :readonly="!!editingFunktionId" />
-            <q-select v-model="funktionForm.abteilung_id" :options="alleAbteilungen"
-              :option-value="a => a.id" :option-label="a => a.name" emit-value map-options
-              label="Abteilung (leer = vereinsweit)" outlined dense clearable />
-            <div class="row q-gutter-sm">
-              <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" />
-              <q-input v-model="funktionForm.bis" label="Bis" outlined dense type="date" class="col" />
-            </div>
-            <div class="row q-gutter-sm">
-              <q-btn flat label="Abbrechen" @click="funktionFormOpen = false" />
-              <q-btn unelevated :label="editingFunktionId ? 'Speichern' : 'Hinzufügen'"
-                color="primary" :loading="funktionSaving" @click="onSaveFunktion" />
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
-
-    <!-- ════════════════════════════════════════════════
-         Kontakte-Dialog (mehrere E-Mails/Telefonnummern)
-         ════════════════════════════════════════════════ -->
-    <q-dialog v-model="kontakteOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
-        <q-card-section class="row items-center q-pb-none">
-          <div class="text-h6">Kontaktdaten</div>
-          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
-            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
-          </div>
-          <q-space />
-          <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
-        <q-card-section>
-          <q-inner-loading :showing="kontakteLoading" />
-          <div v-if="!kontakteLoading && kontakte.length === 0"
-            class="text-grey text-center q-py-md">Keine Kontaktdaten erfasst.</div>
-          <q-list separator>
-            <q-item v-for="k in kontakte" :key="k.id">
-              <q-item-section avatar>
-                <q-icon :name="kontaktIcon(k.typ)" color="cyan-8" />
-              </q-item-section>
-              <q-item-section>
-                <q-item-label>
-                  {{ k.wert }}
-                  <q-chip v-if="k.ist_primaer" dense size="xs" color="cyan-8" text-color="white" class="q-ml-xs">primär</q-chip>
-                </q-item-label>
-                <q-item-label caption>
-                  {{ typLabel(k.typ) }}<span v-if="k.label"> · {{ k.label }}</span>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <div class="row q-gutter-xs">
-                  <q-btn v-if="!k.ist_primaer" flat dense round icon="star" color="amber-8" size="sm"
-                    @click="setPrimaer(k)"><q-tooltip>Als primär setzen</q-tooltip></q-btn>
-                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKontakt(k)" />
-                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteKontakt(k)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
-          <q-btn flat icon="add" label="Kontakt hinzufügen" color="primary" class="q-mt-sm"
-            @click="openAddKontakt" />
-          <!-- Formular -->
-          <div v-if="kontaktFormOpen" class="q-mt-md q-gutter-sm">
-            <q-select v-model="kontaktForm.typ" :options="kontaktTypOptionen"
-              option-value="value" option-label="label" emit-value map-options
-              label="Typ *" outlined dense />
-            <q-input v-model="kontaktForm.wert" label="Wert *" outlined dense
-              :type="kontaktForm.typ === 'email' ? 'email' : 'text'" />
-            <q-input v-model="kontaktForm.label" label="Bezeichnung (optional, z.B. privat)" outlined dense />
-            <q-toggle v-model="kontaktForm.ist_primaer" label="Primärer Kontakt dieses Typs" color="cyan-8" />
-            <div class="row q-gutter-sm">
-              <q-btn flat label="Abbrechen" @click="kontaktFormOpen = false" />
-              <q-btn unelevated :label="editingKontaktId ? 'Speichern' : 'Hinzufügen'"
-                color="primary" :loading="kontaktSaving" @click="onSaveKontakt" />
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
-
-    <!-- ════════════════════════════════════════════════
-         Mannschaften-Dialog (Teams eines Mitglieds)
-         ════════════════════════════════════════════════ -->
-    <q-dialog v-model="mannschaftenOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:500px'">
-        <q-card-section class="row items-center q-pb-none">
-          <div class="text-h6">Mannschaften</div>
-          <div v-if="aktivPerson" class="text-caption text-grey q-ml-sm">
-            {{ aktivPerson.mitglied?.nachname }}, {{ aktivPerson.mitglied?.vorname }}
-          </div>
-          <q-space />
-          <q-btn icon="close" flat round dense v-close-popup />
-        </q-card-section>
-        <q-card-section>
-          <q-inner-loading :showing="mannschaftenLoading" />
-          <div v-if="!mannschaftenLoading && mitgliedTeams.length === 0"
-            class="text-grey text-center q-py-md">In keiner Mannschaft.</div>
-          <q-list separator>
-            <q-item v-for="t in mitgliedTeams" :key="t.id">
-              <q-item-section avatar><q-icon name="groups" color="cyan-8" /></q-item-section>
-              <q-item-section>
-                <q-item-label>{{ t.mannschaft_name }}</q-item-label>
-                <q-item-label caption>
-                  <q-chip dense size="xs" :color="teamRolleColor(t.rolle)" text-color="white">{{ teamRolleLabel(t.rolle) }}</q-chip>
-                  <span v-if="t.abteilung_name" class="q-mx-xs">{{ t.abteilung_name }}</span>
-                  <span>{{ t.von }} – {{ t.bis ?? 'heute' }}</span>
-                </q-item-label>
-              </q-item-section>
-              <q-item-section side>
-                <div class="row q-gutter-xs">
-                  <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditTeam(t)" />
-                  <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeTeam(t)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
-          <q-btn flat icon="add" label="Zu Mannschaft hinzufügen" color="primary" class="q-mt-sm"
-            @click="openAddTeam" />
-          <!-- Formular -->
-          <div v-if="teamFormOpen" class="q-mt-md q-gutter-sm">
-            <q-select v-if="!editingTeamId" v-model="teamForm.mannschaft_id" :options="alleMannschaften"
-              option-value="id" :option-label="t => `${t.name} (${t.abteilung_name})`" emit-value map-options
-              use-input input-debounce="0" @filter="filterTeams" label="Mannschaft *" outlined dense />
-            <q-select v-model="teamForm.rolle" :options="teamRolleOptionen" option-value="value" option-label="label"
-              emit-value map-options label="Rolle *" outlined dense />
-            <div class="row q-gutter-sm">
-              <q-input v-model="teamForm.von" label="Von *" outlined dense type="date" class="col" />
-              <q-input v-model="teamForm.bis" label="Bis" outlined dense type="date" class="col" />
-            </div>
-            <div class="row q-gutter-sm">
-              <q-btn flat label="Abbrechen" @click="teamFormOpen = false" />
-              <q-btn unelevated :label="editingTeamId ? 'Speichern' : 'Hinzufügen'"
-                color="primary" :loading="teamSaving" @click="onSaveTeam" />
-            </div>
-          </div>
-        </q-card-section>
-      </q-card>
-    </q-dialog>
+    <MitgliedEditDialog
+      v-model="editOpen"
+      person-mode
+      :mitglied-id="editMitgliedId"
+      :user-id="editUserId"
+      :is-new="editIsNew"
+      :initial-tab="editTab"
+      :mitglied-name="editName"
+      @saved="loadPersonen"
+    />
 
     <!-- ════════════════════════════════════════════════
          History-Dialog
@@ -777,6 +516,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
 // damit der Listen-Zustand beim Zurückkehren erhalten bleibt.
@@ -931,7 +671,6 @@ const mitgliedStatusOptions = [
   { label: 'Passiv',          value: 'passiv' },
   { label: 'Ausgetreten',     value: 'ausgetreten' },
 ]
-const abteilungZuordnungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
 
 function formatLastLogin(iso) {
   const diff = Date.now() - new Date(iso).getTime()
@@ -953,9 +692,6 @@ function rolleLabel(role) {
 }
 function rolleColor(role) {
   return { admin: 'negative', mitglied: 'teal' }[role] ?? 'grey'
-}
-function abteilungStatusColor(s) {
-  return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber' }[s] ?? 'grey'
 }
 
 // Farbpalette für Abteilungs-IDs (deterministisch pro Abteilung)
@@ -1129,68 +865,40 @@ async function onSaveNutzer() {
   }
 }
 
-// ── Mitglied bearbeiten ────────────────────────────────────
-const editMitgliedOpen   = ref(false)
-const editMitgliedSaving = ref(false)
-const editMitgliedError  = ref('')
-const editMitgliedForm   = ref({})
-const editingMitgliedUserId = ref(null)
-const editingMitgliedId  = ref(null)
-const editMitgliedIsNew  = ref(false)
+// ── Mitglied bearbeiten (einheitlicher Dialog) ─────────────
+// Stammdaten/Abteilungen/Funktionen/Kontakte/Mannschaften laufen jetzt über die
+// gemeinsame Komponente MitgliedEditDialog (person-mode). Die Zeilen-Icons öffnen
+// denselben Dialog am jeweils passenden Tab.
+const editOpen       = ref(false)
+const editMitgliedId = ref(null)
+const editUserId     = ref(null)
+const editIsNew      = ref(false)
+const editTab        = ref('stammdaten')
+const editName       = ref('')
 
+function openMitgliedDialog(row, tabName) {
+  editMitgliedId.value = row.mitglied?.id ?? null
+  editUserId.value = row.user_id ?? null
+  editIsNew.value = false
+  editTab.value = tabName
+  editName.value = row.mitglied ? `${row.mitglied.nachname}, ${row.mitglied.vorname}` : (row.username ?? '')
+  editOpen.value = true
+}
+
+function openEditMitgliedDialog(row) { openMitgliedDialog(row, 'stammdaten') }
+function openAbteilungenDialog(row)  { openMitgliedDialog(row, 'abteilungen') }
+function openFunktionenDialog(row)   { openMitgliedDialog(row, 'funktionen') }
+function openKontakteDialog(row)     { openMitgliedDialog(row, 'kontakte') }
+function openMannschaftenDialog(row) { openMitgliedDialog(row, 'mannschaften') }
+
+// Neu-Anlage eines Mitgliedsatzes für einen bestehenden Login-User
 function openAddMitgliedDialog(row) {
-  editingMitgliedUserId.value = row.user_id
-  editMitgliedIsNew.value = true
-  editMitgliedError.value = ''
-  editMitgliedForm.value = {
-    vorname: '', nachname: '', geburtsdatum: '', telefon: '',
-    eintrittsdatum: '', austrittsdatum: '',
-    status: 'aktiv', zahlungsart: '',
-    strasse: '', plz: '', ort: '', land: '',
-    iban: '', bic: '', kontoinhaber: '',
-    expected_version: 1,
-  }
-  editMitgliedOpen.value = true
-}
-
-function openEditMitgliedDialog(row) {
-  editingMitgliedUserId.value = row.user_id
-  editingMitgliedId.value = row.mitglied?.id
-  editMitgliedIsNew.value = false
-  editMitgliedError.value = ''
-  const m = row.mitglied
-  editMitgliedForm.value = {
-    vorname: m.vorname, nachname: m.nachname, geburtsdatum: m.geburtsdatum ?? '',
-    telefon: m.telefon ?? '',
-    eintrittsdatum: m.eintrittsdatum ?? '', austrittsdatum: m.austrittsdatum ?? '',
-    status: m.status, zahlungsart: m.zahlungsart ?? '',
-    strasse: m.strasse ?? '', plz: m.plz ?? '', ort: m.ort ?? '', land: m.land ?? '',
-    iban: m.iban ?? '', bic: m.bic ?? '', kontoinhaber: m.kontoinhaber ?? '',
-    expected_version: m.version,
-  }
-  editMitgliedOpen.value = true
-}
-
-async function onSaveMitglied() {
-  editMitgliedSaving.value = true
-  editMitgliedError.value = ''
-  try {
-    if (editMitgliedIsNew.value) {
-      await api.post(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
-    } else if (editingMitgliedUserId.value) {
-      await api.put(`/api/personen/${editingMitgliedUserId.value}/mitglied`, editMitgliedForm.value)
-    } else {
-      // Mitglied ohne Login-Account → über mitglied_id statt user_id
-      await api.put(`/api/personen/mitglied/${editingMitgliedId.value}`, editMitgliedForm.value)
-    }
-    $q.notify({ type: 'positive', message: 'Gespeichert' })
-    editMitgliedOpen.value = false
-    await loadPersonen()
-  } catch (e) {
-    editMitgliedError.value = e.response?.data?.detail || 'Fehler beim Speichern'
-  } finally {
-    editMitgliedSaving.value = false
-  }
+  editMitgliedId.value = null
+  editUserId.value = row.user_id
+  editIsNew.value = true
+  editTab.value = 'stammdaten'
+  editName.value = row.username ?? ''
+  editOpen.value = true
 }
 
 // ── Löschen ────────────────────────────────────────────────
@@ -1212,100 +920,7 @@ function confirmDelete(row) {
     })
 }
 
-// ── Abteilungen ────────────────────────────────────────────
-const abteilungenOpen    = ref(false)
-const abteilungenLoading = ref(false)
-const aktivPerson        = ref(null)
-const zuordnungen        = ref([])
-const zuordnungFormOpen  = ref(false)
-const zuordnungSaving    = ref(false)
-const editingZuordnungId = ref(null)
-const editingZuordnungVersion = ref(null)
-const zuordnungForm      = ref({ abteilung_id: null, status: 'aktiv', von: '', bis: '' })
-
-async function openAbteilungenDialog(row) {
-  aktivPerson.value = row
-  zuordnungFormOpen.value = false
-  abteilungenOpen.value = true
-  abteilungenLoading.value = true
-  try {
-    const [{ data: z }, { data: ab }] = await Promise.all([
-      api.get(`/api/mitglieder/${row.mitglied.id}/abteilungen`),
-      api.get('/api/abteilungen/'),
-    ])
-    zuordnungen.value = z
-    if (alleAbteilungen.value.length === 0) {
-      alleAbteilungen.value = ab
-    }
-  } finally {
-    abteilungenLoading.value = false
-  }
-}
-
-function openAddZuordnung() {
-  editingZuordnungId.value = null
-  zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: '', bis: '' }
-  zuordnungFormOpen.value = true
-}
-
-function openEditZuordnung(z) {
-  editingZuordnungId.value = z.id
-  editingZuordnungVersion.value = z.version
-  zuordnungForm.value = { abteilung_id: z.abteilung_id, status: z.status, von: z.von ?? '', bis: z.bis ?? '' }
-  zuordnungFormOpen.value = true
-}
-
-async function onSaveZuordnung() {
-  zuordnungSaving.value = true
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    if (editingZuordnungId.value) {
-      await api.put(`/api/mitglieder/${mitgliedId}/abteilungen/${editingZuordnungId.value}`, {
-        status: zuordnungForm.value.status,
-        von: zuordnungForm.value.von || null,
-        bis: zuordnungForm.value.bis || null,
-        expected_version: editingZuordnungVersion.value,
-      })
-    } else {
-      await api.post(`/api/mitglieder/${mitgliedId}/abteilungen`, {
-        abteilung_id: zuordnungForm.value.abteilung_id,
-        status: zuordnungForm.value.status,
-        von: zuordnungForm.value.von || null,
-        bis: zuordnungForm.value.bis || null,
-      })
-    }
-    zuordnungFormOpen.value = false
-    const { data } = await api.get(`/api/mitglieder/${mitgliedId}/abteilungen`)
-    zuordnungen.value = data
-    await loadPersonen()
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  } finally {
-    zuordnungSaving.value = false
-  }
-}
-
-async function deleteZuordnung(z) {
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    await api.delete(`/api/mitglieder/${mitgliedId}/abteilungen/${z.id}`)
-    zuordnungen.value = zuordnungen.value.filter(x => x.id !== z.id)
-    await loadPersonen()
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  }
-}
-
-// ── Funktionen ─────────────────────────────────────────────
-const funktionenOpen    = ref(false)
-const funktionenLoading = ref(false)
-const funktionen        = ref([])
-const funktionFormOpen  = ref(false)
-const funktionSaving    = ref(false)
-const editingFunktionId      = ref(null)
-const editingFunktionVersion = ref(null)
-const funktionForm      = ref({ funktion: null, abteilung_id: null, von: '', bis: '' })
-
+// ── Funktions-/Abteilungs-Kataloge (Filter + Chip-Labels in der Liste) ──
 const funktionOptionen = ref([])
 
 async function loadFunktionOptionen() {
@@ -1330,302 +945,6 @@ function funktionLabel(f) {
   if (!f) return ''
   const found = funktionOptionen.value.find(o => o.value === f)
   return found?.label ?? f
-}
-
-async function openFunktionenDialog(row) {
-  aktivPerson.value = row
-  funktionFormOpen.value = false
-  funktionenOpen.value = true
-  funktionenLoading.value = true
-  try {
-    const [{ data: fns }, { data: ab }] = await Promise.all([
-      api.get(`/api/mitglieder/${row.mitglied.id}/funktionen`),
-      alleAbteilungen.value.length ? Promise.resolve({ data: alleAbteilungen.value }) : api.get('/api/abteilungen/'),
-    ])
-    funktionen.value = fns
-    if (alleAbteilungen.value.length === 0) {
-      alleAbteilungen.value = ab
-    }
-  } finally {
-    funktionenLoading.value = false
-  }
-}
-
-function openAddFunktion() {
-  editingFunktionId.value = null
-  funktionForm.value = { funktion: null, abteilung_id: null, von: '', bis: '' }
-  funktionFormOpen.value = true
-}
-
-function openEditFunktion(f) {
-  editingFunktionId.value = f.id
-  editingFunktionVersion.value = f.version
-  funktionForm.value = { funktion: f.funktion, abteilung_id: f.abteilung_id, von: f.von ?? '', bis: f.bis ?? '' }
-  funktionFormOpen.value = true
-}
-
-async function onSaveFunktion() {
-  if (!funktionForm.value.funktion) {
-    $q.notify({ type: 'negative', message: 'Bitte eine Funktion auswählen.' })
-    return
-  }
-  if (!funktionForm.value.von) {
-    $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben (Zeitraum ist Pflicht).' })
-    return
-  }
-  funktionSaving.value = true
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    if (editingFunktionId.value) {
-      await api.put(`/api/mitglieder/${mitgliedId}/funktionen/${editingFunktionId.value}`, {
-        funktion: funktionForm.value.funktion,
-        abteilung_id: funktionForm.value.abteilung_id || null,
-        von: funktionForm.value.von || null,
-        bis: funktionForm.value.bis || null,
-        expected_version: editingFunktionVersion.value,
-      })
-    } else {
-      await api.post(`/api/mitglieder/${mitgliedId}/funktionen`, {
-        funktion: funktionForm.value.funktion,
-        abteilung_id: funktionForm.value.abteilung_id || null,
-        von: funktionForm.value.von || null,
-        bis: funktionForm.value.bis || null,
-      })
-    }
-    funktionFormOpen.value = false
-    const { data } = await api.get(`/api/mitglieder/${mitgliedId}/funktionen`)
-    funktionen.value = data
-    await loadPersonen()   // Liste sofort aktualisieren
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  } finally {
-    funktionSaving.value = false
-  }
-}
-
-async function deleteFunktion(f) {
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    await api.delete(`/api/mitglieder/${mitgliedId}/funktionen/${f.id}`)
-    funktionen.value = funktionen.value.filter(x => x.id !== f.id)
-    await loadPersonen()   // Liste sofort aktualisieren
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  }
-}
-
-// ── Kontaktdaten (mehrere E-Mails/Telefonnummern) ──────────
-const kontakteOpen     = ref(false)
-const kontakteLoading  = ref(false)
-const kontakte         = ref([])
-const kontaktFormOpen  = ref(false)
-const kontaktSaving    = ref(false)
-const editingKontaktId      = ref(null)
-const editingKontaktVersion = ref(null)
-const kontaktForm = ref({ typ: 'email', wert: '', label: '', ist_primaer: false })
-
-const kontaktTypOptionen = [
-  { label: 'E-Mail', value: 'email' },
-  { label: 'Telefon', value: 'telefon' },
-  { label: 'Mobil', value: 'mobil' },
-  { label: 'Fax', value: 'fax' },
-]
-
-function typLabel(t) {
-  return kontaktTypOptionen.find(o => o.value === t)?.label ?? t
-}
-
-function kontaktIcon(t) {
-  return { email: 'mail', telefon: 'call', mobil: 'smartphone', fax: 'fax' }[t] ?? 'contact_phone'
-}
-
-async function openKontakteDialog(row) {
-  aktivPerson.value = row
-  kontaktFormOpen.value = false
-  kontakteOpen.value = true
-  kontakteLoading.value = true
-  try {
-    const { data } = await api.get(`/api/mitglieder/${row.mitglied.id}/kontakte`)
-    kontakte.value = data
-  } finally {
-    kontakteLoading.value = false
-  }
-}
-
-function openAddKontakt() {
-  editingKontaktId.value = null
-  kontaktForm.value = { typ: 'email', wert: '', label: '', ist_primaer: false }
-  kontaktFormOpen.value = true
-}
-
-function openEditKontakt(k) {
-  editingKontaktId.value = k.id
-  editingKontaktVersion.value = k.version
-  kontaktForm.value = { typ: k.typ, wert: k.wert, label: k.label ?? '', ist_primaer: k.ist_primaer }
-  kontaktFormOpen.value = true
-}
-
-async function reloadKontakte() {
-  const { data } = await api.get(`/api/mitglieder/${aktivPerson.value.mitglied.id}/kontakte`)
-  kontakte.value = data
-}
-
-async function onSaveKontakt() {
-  if (!kontaktForm.value.typ || !kontaktForm.value.wert.trim()) {
-    $q.notify({ type: 'negative', message: 'Typ und Wert sind erforderlich.' })
-    return
-  }
-  kontaktSaving.value = true
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    if (editingKontaktId.value) {
-      await api.put(`/api/mitglieder/${mitgliedId}/kontakte/${editingKontaktId.value}`, {
-        typ: kontaktForm.value.typ,
-        wert: kontaktForm.value.wert.trim(),
-        label: kontaktForm.value.label || null,
-        ist_primaer: kontaktForm.value.ist_primaer,
-        expected_version: editingKontaktVersion.value,
-      })
-    } else {
-      await api.post(`/api/mitglieder/${mitgliedId}/kontakte`, {
-        typ: kontaktForm.value.typ,
-        wert: kontaktForm.value.wert.trim(),
-        label: kontaktForm.value.label || null,
-        ist_primaer: kontaktForm.value.ist_primaer,
-      })
-    }
-    kontaktFormOpen.value = false
-    await reloadKontakte()
-    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  } finally {
-    kontaktSaving.value = false
-  }
-}
-
-async function setPrimaer(k) {
-  try {
-    await api.put(`/api/mitglieder/${aktivPerson.value.mitglied.id}/kontakte/${k.id}/primaer`)
-    await reloadKontakte()
-    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  }
-}
-
-async function deleteKontakt(k) {
-  const mitgliedId = aktivPerson.value.mitglied.id
-  try {
-    await api.delete(`/api/mitglieder/${mitgliedId}/kontakte/${k.id}`)
-    kontakte.value = kontakte.value.filter(x => x.id !== k.id)
-    await loadPersonen()   // primäre E-Mail/Telefon in der Liste aktualisieren
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  }
-}
-
-// ── Mannschaften (Teams eines Mitglieds) ───────────────────
-const mannschaftenOpen    = ref(false)
-const mannschaftenLoading = ref(false)
-const mitgliedTeams       = ref([])
-const alleMannschaften    = ref([])
-const alleMannschaftenAll = ref([])
-const teamFormOpen        = ref(false)
-const teamSaving          = ref(false)
-const editingTeamId       = ref(null)
-const editingTeamMannschaft = ref(null)
-const editingTeamVersion  = ref(null)
-const teamForm = ref({ mannschaft_id: null, rolle: 'spieler', von: '', bis: '' })
-
-const teamRolleOptionen = [
-  { label: 'Spieler', value: 'spieler' },
-  { label: 'Übungsleiter', value: 'uebungsleiter' },
-  { label: 'Trainer', value: 'trainer' },
-  { label: 'Betreuer', value: 'betreuer' },
-]
-function teamRolleLabel(r) { return teamRolleOptionen.find(o => o.value === r)?.label ?? r }
-function teamRolleColor(r) {
-  return { spieler: 'blue', uebungsleiter: 'indigo', trainer: 'deep-purple', betreuer: 'teal' }[r] ?? 'grey'
-}
-function filterTeams(val, update) {
-  const needle = val.toLowerCase()
-  update(() => {
-    alleMannschaften.value = !needle
-      ? alleMannschaftenAll.value
-      : alleMannschaftenAll.value.filter(t => `${t.name} ${t.abteilung_name}`.toLowerCase().includes(needle))
-  })
-}
-
-async function openMannschaftenDialog(row) {
-  aktivPerson.value = row
-  teamFormOpen.value = false
-  mannschaftenOpen.value = true
-  mannschaftenLoading.value = true
-  try {
-    const [{ data: teams }, { data: alle }] = await Promise.all([
-      api.get(`/api/mitglieder/${row.mitglied.id}/mannschaften`),
-      alleMannschaftenAll.value.length ? Promise.resolve({ data: null }) : api.get('/api/mannschaften'),
-    ])
-    mitgliedTeams.value = teams
-    if (alle) alleMannschaftenAll.value = alle
-    alleMannschaften.value = alleMannschaftenAll.value
-  } finally {
-    mannschaftenLoading.value = false
-  }
-}
-function openAddTeam() {
-  editingTeamId.value = null
-  teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: '', bis: '' }
-  teamFormOpen.value = true
-}
-function openEditTeam(t) {
-  editingTeamId.value = t.id
-  editingTeamMannschaft.value = t.mannschaft_id
-  editingTeamVersion.value = t.version
-  teamForm.value = { mannschaft_id: t.mannschaft_id, rolle: t.rolle, von: t.von ?? '', bis: t.bis ?? '' }
-  teamFormOpen.value = true
-}
-async function reloadTeams() {
-  const { data } = await api.get(`/api/mitglieder/${aktivPerson.value.mitglied.id}/mannschaften`)
-  mitgliedTeams.value = data
-}
-async function onSaveTeam() {
-  if (!editingTeamId.value && !teamForm.value.mannschaft_id) {
-    $q.notify({ type: 'negative', message: 'Bitte eine Mannschaft wählen.' }); return
-  }
-  if (!teamForm.value.von) {
-    $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben.' }); return
-  }
-  teamSaving.value = true
-  const mid = aktivPerson.value.mitglied.id
-  try {
-    if (editingTeamId.value) {
-      await api.put(`/api/mannschaften/${editingTeamMannschaft.value}/mitglieder/${editingTeamId.value}`, {
-        rolle: teamForm.value.rolle, von: teamForm.value.von || null,
-        bis: teamForm.value.bis || null, expected_version: editingTeamVersion.value,
-      })
-    } else {
-      await api.post(`/api/mannschaften/${teamForm.value.mannschaft_id}/mitglieder`, {
-        mitglied_id: mid, rolle: teamForm.value.rolle,
-        von: teamForm.value.von || null, bis: teamForm.value.bis || null,
-      })
-    }
-    teamFormOpen.value = false
-    await reloadTeams()
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  } finally {
-    teamSaving.value = false
-  }
-}
-async function removeTeam(t) {
-  try {
-    await api.delete(`/api/mannschaften/${t.mannschaft_id}/mitglieder/${t.id}`)
-    mitgliedTeams.value = mitgliedTeams.value.filter(x => x.id !== t.id)
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-  }
 }
 
 // ── History ────────────────────────────────────────────────
@@ -1673,7 +992,11 @@ async function openHistoryDialog(row) {
   historyOpen.value = true
   historyLoading.value = true
   try {
-    const { data } = await api.get(`/api/personen/${row.user_id}/history`)
+    // Mit Login-Account → user-basierte Historie, sonst (Mitglied ohne Login) per mitglied_id.
+    const url = row.user_id
+      ? `/api/personen/${row.user_id}/history`
+      : `/api/personen/mitglied/${row.mitglied.id}/history`
+    const { data } = await api.get(url)
 
     const userEvents = data.user.map((h, i) => ({
       _typ: 'user', _zeit: h.updated_at, _by: h.updated_by,
