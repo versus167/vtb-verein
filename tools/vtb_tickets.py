@@ -323,7 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    # 'pull' wird aus dem /tickets-Slash-Command mit einem (ggf. leeren oder
+    # vom Harness mit Fremdtext gefüllten) gequoteten Roh-Blob aufgerufen.
+    # Deshalb tolerant parsen: '--all' auch in unbekannten Argumenten erkennen,
+    # restlichen Müll ignorieren. Für alle anderen Befehle bleibt es strikt.
+    args, extra = parser.parse_known_args()
+    if getattr(args, "cmd", None) == "pull":
+        if any("--all" in tok.split() for tok in extra):
+            args.all = True
+    elif extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     cfg = get_config()
     client = Client(cfg)
     try:
