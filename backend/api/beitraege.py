@@ -206,6 +206,13 @@ def list_sollstellungen(zeitraum: str, user: CurrentUser, db: DB):
     return [_soll_dict(s) for s in sollstellungen]
 
 
+@router.get("/sollstellungen/zeitraeume")
+def list_sollstellung_zeitraeume(user: CurrentUser, db: DB):
+    """Vorhandene Zeiträume für das Filter-Dropdown (neueste zuerst)."""
+    _require_read(user)
+    return db.sollstellungen.list_zeitraeume()
+
+
 @router.get("/sollstellungen/mitglied/{mitglied_id}")
 def list_sollstellungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -222,6 +229,21 @@ def update_sollstellung_status(soll_id: int, data: SollstellungStatusUpdate,
         ok = db.sollstellungen.mark_storniert(soll_id, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail="Sollstellung nicht gefunden oder bereits abgeschlossen")
+    return {'ok': True}
+
+
+@router.delete("/sollstellungen/{soll_id}")
+def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
+    """Soft-Delete: anders als Storno wird die Sollstellung bei einer erneuten
+    Abrechnung wieder neu angelegt. Nur offene/stornierte; bezahlte bleiben
+    vorerst gesperrt (bereits bezahlt)."""
+    _require_abrechnen(user)
+    ok = db.sollstellungen.soft_delete(soll_id, deleted_by=user.username)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Sollstellung nicht gefunden oder nicht löschbar (nur offene/stornierte – bezahlte werden nicht gelöscht)",
+        )
     return {'ok': True}
 
 

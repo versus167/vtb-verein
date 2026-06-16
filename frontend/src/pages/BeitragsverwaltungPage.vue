@@ -241,15 +241,29 @@
            ════════════════════════════════════════════════ -->
       <q-tab-panel name="sollstellungen" class="q-pa-none">
         <div class="row q-gutter-sm q-mb-md items-center">
-          <q-input v-model="filterZeitraum" label="Zeitraum" outlined dense clearable
-            placeholder="z.B. 2026-Q4" style="min-width: 160px" />
-          <q-btn label="Laden" color="primary" outline dense @click="ladeSollstellungen" />
+          <q-select v-model="filterZeitraum" :options="zeitraumOptionen" label="Zeitraum"
+            outlined dense clearable style="min-width: 200px"
+            @update:model-value="ladeSollstellungen">
+            <template #no-option>
+              <q-item>
+                <q-item-section class="text-grey">Noch keine Abrechnung vorhanden</q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+          <q-btn label="Neu laden" color="primary" outline dense :disable="!filterZeitraum"
+            @click="ladeSollstellungen" />
           <q-btn v-if="kannAbrechnen && filterZeitraum && sollstellungen.some(s => s.status === 'offen' && s.zahler_typ === 'mitglied')"
             icon="download" label="SEPA-Export" color="secondary" outline dense
             @click="sepaExport" />
+          <q-space />
+          <q-input v-model="sollSuche" dense outlined clearable debounce="200"
+            placeholder="Suche (Name, Regel …)" style="min-width: 220px">
+            <template #prepend><q-icon name="search" /></template>
+          </q-input>
         </div>
 
         <q-table :rows="sollstellungen" :columns="sollColumns" row-key="id"
+          :filter="sollSuche"
           flat bordered :loading="sollLoading" :rows-per-page-options="[25, 50, 0]">
           <template #body-cell-status="props">
             <q-td :props="props">
@@ -259,14 +273,18 @@
             </q-td>
           </template>
           <template #body-cell-actions="props">
-            <q-td :props="props" v-if="kannAbrechnen && props.row.status === 'offen'">
-              <q-btn flat dense round icon="check_circle" color="positive" size="sm"
+            <q-td :props="props" v-if="kannAbrechnen && props.row.status !== 'bezahlt'">
+              <q-btn v-if="props.row.status === 'offen'" flat dense round icon="check_circle" color="positive" size="sm"
                 @click="markBezahlt(props.row)">
                 <q-tooltip>Als bezahlt markieren</q-tooltip>
               </q-btn>
-              <q-btn flat dense round icon="block" color="negative" size="sm"
+              <q-btn v-if="props.row.status === 'offen'" flat dense round icon="block" color="negative" size="sm"
                 @click="markStorniert(props.row)">
-                <q-tooltip>Stornieren</q-tooltip>
+                <q-tooltip>Stornieren (bleibt bestehen, wird nicht neu abgerechnet)</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="delete" color="negative" size="sm"
+                @click="deleteSollstellung(props.row)">
+                <q-tooltip>Löschen (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
               </q-btn>
             </q-td>
             <q-td :props="props" v-else />
@@ -653,6 +671,8 @@ async function confirmAbrechnung() {
 const sollstellungen = ref([])
 const sollLoading = ref(false)
 const filterZeitraum = ref('')
+const zeitraumOptionen = ref([])
+const sollSuche = ref('')
 
 const sollColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',    field: 'mitglied_name',     align: 'left' },
@@ -663,6 +683,19 @@ const sollColumns = [
   { name: 'bezahlt_am',        label: 'Bezahlt am',  field: 'bezahlt_am',        align: 'left' },
   { name: 'actions',           label: '',            field: 'actions',           align: 'right' },
 ]
+
+async function ladeZeitraeume() {
+  try {
+    const { data } = await api.get('/api/beitraege/sollstellungen/zeitraeume')
+    zeitraumOptionen.value = data
+    if (!filterZeitraum.value && data.length) {
+      filterZeitraum.value = data[0]
+      await ladeSollstellungen()
+    }
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zeiträume konnten nicht geladen werden' })
+  }
+}
 
 async function ladeSollstellungen() {
   if (!filterZeitraum.value) return
@@ -684,9 +717,26 @@ async function markBezahlt(s) {
 }
 
 async function markStorniert(s) {
-  $q.dialog({ title: 'Stornieren?', message: `Sollstellung für ${s.mitglied_name} stornieren?`, cancel: true })
+  $q.dialog({
+    title: 'Stornieren?',
+    message: `Sollstellung für ${s.mitglied_name} stornieren? Sie bleibt bestehen und wird bei einer erneuten Abrechnung nicht neu erzeugt.`,
+    cancel: true,
+  })
     .onOk(async () => {
       await api.patch(`/api/beitraege/sollstellungen/${s.id}`, { bezahlt_am: null })
+      await ladeSollstellungen()
+    })
+}
+
+async function deleteSollstellung(s) {
+  $q.dialog({
+    title: 'Löschen?',
+    message: `Sollstellung für ${s.mitglied_name} löschen? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
+    cancel: true,
+    ok: { label: 'Löschen', color: 'negative' },
+  })
+    .onOk(async () => {
+      await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
     })
 }
@@ -706,6 +756,6 @@ async function loadOptionen() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard()])
+  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard(), ladeZeitraeume()])
 })
 </script>
