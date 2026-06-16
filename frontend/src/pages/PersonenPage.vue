@@ -115,7 +115,7 @@
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.user_id" flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="p.user_id || p.mitglied" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(p)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -251,7 +251,7 @@
             @click="$router.push({ name: 'user-permissions', params: { id: props.row.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="props.row.user_id" flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="props.row.user_id || props.row.mitglied" flat dense round icon="history" color="grey" size="sm"
             @click="openHistoryDialog(props.row)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
@@ -992,7 +992,11 @@ async function openHistoryDialog(row) {
   historyOpen.value = true
   historyLoading.value = true
   try {
-    const { data } = await api.get(`/api/personen/${row.user_id}/history`)
+    // Mit Login-Account → user-basierte Historie, sonst (Mitglied ohne Login) per mitglied_id.
+    const url = row.user_id
+      ? `/api/personen/${row.user_id}/history`
+      : `/api/personen/mitglied/${row.mitglied.id}/history`
+    const { data } = await api.get(url)
 
     const userEvents = data.user.map((h, i) => ({
       _typ: 'user', _zeit: h.updated_at, _by: h.updated_by,
