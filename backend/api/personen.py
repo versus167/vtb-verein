@@ -122,6 +122,12 @@ def _require_delete(user):
         raise HTTPException(status_code=403, detail="Keine Löschberechtigung")
 
 
+def _require_eintrittsdatum(value):
+    """Ein Vereinsmitglied muss immer ein Eintrittsdatum haben (Ticket #29)."""
+    if not (value or '').strip():
+        raise HTTPException(status_code=422, detail="Eintrittsdatum ist erforderlich")
+
+
 def _mitglied_to_dict(m) -> dict:
     if m is None:
         return None
@@ -375,6 +381,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
     service = PersonService(db)
     try:
         if data.vorname and data.nachname:
+            _require_eintrittsdatum(data.eintrittsdatum)
             mitglied_data = {
                 'geburtsdatum': data.geburtsdatum,
                 'strasse': data.strasse, 'plz': data.plz, 'ort': data.ort, 'land': data.land,
@@ -446,6 +453,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
 @router.put("/{user_id}/mitglied")
 def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     _require_write(user)
+    _require_eintrittsdatum(data.eintrittsdatum)
     m = db.get_mitglied_by_user_id(user_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Kein Mitglied-Datensatz für diesen User")
@@ -481,6 +489,7 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
 def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
     _require_write(user)
+    _require_eintrittsdatum(data.eintrittsdatum)
     u = db.get_user_by_id(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
@@ -517,6 +526,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     den user_id-basierten Endpoint /{user_id}/mitglied erreichbar sind.
     """
     _require_write(user)
+    _require_eintrittsdatum(data.eintrittsdatum)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:

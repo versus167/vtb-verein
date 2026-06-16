@@ -41,7 +41,7 @@
             <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
             <q-input v-model="form.telefon" label="Telefon" outlined dense :readonly="!canWrite" />
             <div class="row q-gutter-sm">
-              <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-input v-model="form.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
             </div>
             <q-select
@@ -541,8 +541,12 @@ async function reloadTeams() {
 
 // ── Stammdaten speichern ─────────────────────────────────────
 async function saveStammdaten() {
-  savingStamm.value = true
   stammError.value = ''
+  if (!form.value.eintrittsdatum) {
+    stammError.value = 'Eintrittsdatum ist erforderlich.'
+    return
+  }
+  savingStamm.value = true
   try {
     if (props.personMode) {
       // E-Mail/Mitgliedsnr. werden im Personen-Kontext nicht hier gepflegt

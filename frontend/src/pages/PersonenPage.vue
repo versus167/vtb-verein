@@ -296,7 +296,7 @@
                 <q-space />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
               </div>
-              <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum" outlined dense type="date" />
+              <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" />
               <q-select v-model="createForm.mitglied_status" :options="mitgliedStatusOptions"
                 label="Vereinsstatus" outlined dense emit-value map-options />
               <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense
@@ -776,6 +776,10 @@ function openCreateDialog() {
 
 async function onCreate() {
   createError.value = ''
+  if (createTab.value === 'mitglied' && !createForm.value.eintrittsdatum) {
+    createError.value = 'Eintrittsdatum ist erforderlich.'
+    return
+  }
   createSaving.value = true
   try {
     const payload = { ...createForm.value, status: createForm.value.mitglied_status }
