@@ -4,7 +4,7 @@
       <q-toolbar>
         <q-btn flat dense round icon="menu" @click="drawer = !drawer" />
         <q-toolbar-title>
-          Vereinsverwaltung
+          VTB
           <span v-if="appVersion" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
         </q-toolbar-title>
         <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
