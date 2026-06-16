@@ -11,8 +11,14 @@
       konsistent zur Abteilungs-Wiederherstellung
 - [ ] **Export** – Mitgliederliste als CSV (konfigurierbare Spalten) und Excel
 - [ ] **Pagination / Lazy Loading** für große Listen (>1000 Mitglieder); Performance-Test
-- [ ] **IBAN-Prüfung bei Änderung** – beim Bearbeiten/Speichern der IBAN validieren
-      (Format + Prüfziffer nach ISO 13616/Modulo 97), ungültige Eingaben ablehnen
+- [x] **IBAN-Prüfung bei Änderung** – beim Bearbeiten/Speichern der IBAN validieren
+      (Format + Prüfziffer nach ISO 13616/Modulo 97), ungültige Eingaben ablehnen.
+      Kern `app/services/iban.py` (Struktur + Länderlänge + Modulo-97) → HTTP-Adapter
+      `iban_or_422` (422 bei Ungültig, kanonische Speicherung), verdrahtet an allen
+      Save-Endpoints (`personen.py`/`mitglieder.py`); Frontend-Inline-Prüfung
+      (`utils/iban.js`, `:rules`) in MitgliedEditDialog/Profil/Personen. **Immer strikt**
+      (Alt-IBANs müssen beim Speichern korrigiert/geleert werden). BIC + SPG-Import
+      bewusst ausgeklammert.
 - [ ] **Umgang mit ausgetretenen Mitgliedern klären** – aktuell bleiben Mitglieder mit
       Status „ausgetreten" zeitlich unbegrenzt in der Personenliste (nur Soft-Delete in
       den Papierkorb blendet sie aus). Offen: sollen sie per Default ausgeblendet werden
