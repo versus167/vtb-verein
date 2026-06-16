@@ -49,6 +49,12 @@ def _require_delete(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Löschberechtigung")
 
 
+def _require_eintrittsdatum(value):
+    """Ein Vereinsmitglied muss immer ein Eintrittsdatum haben (Ticket #29)."""
+    if not (value or '').strip():
+        raise HTTPException(status_code=422, detail="Eintrittsdatum ist erforderlich")
+
+
 @router.get("/")
 def list_mitglieder(user: CurrentUser, db: DB):
     _require_read(user)
@@ -71,6 +77,7 @@ def get_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    _require_eintrittsdatum(data.eintrittsdatum)
     from app.models.mitglied import Mitglied
     if data.mitgliedsnummer is None:
         data.mitgliedsnummer = db.get_next_mitgliedsnummer()
@@ -84,6 +91,7 @@ def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
 @router.put("/{mitglied_id}")
 def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    _require_eintrittsdatum(data.eintrittsdatum)
     existing = db.get_mitglied(mitglied_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
