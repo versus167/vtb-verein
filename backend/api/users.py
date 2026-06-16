@@ -27,11 +27,27 @@ PERMISSION_GROUPS = [
         ],
     },
     {
+        'label': 'Mannschaften', 'icon': 'groups',
+        'permissions': [
+            (Permission.MANNSCHAFTEN_READ,   'Ansehen'),
+            (Permission.MANNSCHAFTEN_WRITE,  'Bearbeiten'),
+            (Permission.MANNSCHAFTEN_DELETE, 'Löschen'),
+        ],
+    },
+    {
         'label': 'Beiträge', 'icon': 'euro',
         'permissions': [
             (Permission.BEITRAEGE_READ,      'Ansehen'),
             (Permission.BEITRAEGE_WRITE,     'Bearbeiten'),
             (Permission.BEITRAEGE_ABRECHNEN, 'Abrechnen'),
+        ],
+    },
+    {
+        'label': 'Gebühren', 'icon': 'receipt_long',
+        'permissions': [
+            (Permission.GEBUEHREN_READ,      'Ansehen'),
+            (Permission.GEBUEHREN_WRITE,     'Bearbeiten'),
+            (Permission.GEBUEHREN_ABRECHNEN, 'Abrechnen'),
         ],
     },
     {
