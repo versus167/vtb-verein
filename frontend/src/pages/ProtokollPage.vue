@@ -23,9 +23,10 @@
           emit-value map-options dense outline clearable
           class="col-12 col-sm-3" @update:model-value="reload"
         />
-        <q-input
-          v-model="filter.username" label="Benutzer" dense outline clearable
-          class="col-12 col-sm-2" debounce="400" @update:model-value="reload"
+        <q-select
+          v-model="filter.username" :options="usernameOptions" label="Benutzer"
+          dense outline clearable use-input input-debounce="0" @filter="filterUsernames"
+          class="col-12 col-sm-2" @update:model-value="reload"
         />
         <q-input
           v-model="filter.since" type="date" label="von" dense outline clearable
@@ -94,6 +95,29 @@ const pagination = ref({
   rowsNumber: 0,
 })
 
+// Benutzer-Dropdown: nur die im Protokoll vorkommenden Benutzer (Ticket #34).
+const allUsernames = ref([])
+const usernameOptions = ref([])
+
+async function loadUsernames() {
+  try {
+    const { data } = await api.get('/api/protokoll/benutzer')
+    allUsernames.value = data
+    usernameOptions.value = data
+  } catch {
+    // Dropdown bleibt leer; der Filter ist optional
+  }
+}
+
+function filterUsernames(val, update) {
+  update(() => {
+    const needle = val.toLowerCase()
+    usernameOptions.value = needle
+      ? allUsernames.value.filter((u) => u.toLowerCase().includes(needle))
+      : allUsernames.value
+  })
+}
+
 const categoryOptions = [
   { label: 'Anmeldung (auth)', value: 'auth' },
   { label: 'Seitenaufrufe (page)', value: 'page' },
@@ -155,5 +179,8 @@ function reload() {
   onRequest({ pagination: { ...pagination.value, page: 1 } })
 }
 
-onMounted(reload)
+onMounted(() => {
+  loadUsernames()
+  reload()
+})
 </script>
