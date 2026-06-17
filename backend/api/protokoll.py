@@ -78,3 +78,10 @@ def list_protokoll(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.get("/benutzer")
+def list_protokoll_benutzer(user: CurrentUser, db: DB) -> list[str]:
+    """Distinct-Liste der im Protokoll vorkommenden Benutzer (für den Filter)."""
+    _require_read(user)
+    return db.access_log_repository.distinct_usernames()

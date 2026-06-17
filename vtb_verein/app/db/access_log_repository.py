@@ -120,6 +120,23 @@ class AccessLogRepository:
             cur.execute(f"SELECT COUNT(*) AS n FROM access_log {where}", tuple(params))
             return cur.fetchone()["n"]
 
+    def distinct_usernames(self) -> List[str]:
+        """Alle im Protokoll vorkommenden Benutzernamen (alphabetisch, ohne NULL/leer).
+
+        Speist das Benutzer-Dropdown des Zugriffsprotokoll-Filters – zeigt nur
+        Benutzer, die tatsächlich Einträge haben (inkl. inzwischen gelöschter).
+        """
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT username
+                FROM access_log
+                WHERE username IS NOT NULL AND username <> ''
+                ORDER BY username
+                """
+            )
+            return [r["username"] for r in cur.fetchall()]
+
     def cleanup_page_views(self, days: int = 90) -> int:
         """Hard-Delete von Seitenaufrufen älter als `days` Tage (Prune-Job).
 

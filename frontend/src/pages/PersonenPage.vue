@@ -591,8 +591,8 @@ const deletedColumns = [
 ]
 
 // ── Sortierung ─────────────────────────────────────────────
-// Native Quasar-Tabellensortierung (über pagination). Start: Name aufsteigend.
-const pagination = ref({ sortBy: 'name', descending: false, page: 1, rowsPerPage: 25 })
+// Native Quasar-Tabellensortierung (über pagination). Start: „Zuletzt bearbeitet" absteigend (neueste zuerst).
+const pagination = ref({ sortBy: 'last_edited', descending: true, page: 1, rowsPerPage: 25 })
 
 // Sortierschlüssel der Name-Spalte: Nachname + Vorname (Mitglied) bzw. Benutzername.
 function nameKey(p) {
@@ -692,10 +692,10 @@ const filteredPersonen = computed(() => {
   return list
 })
 
-// Karten-Ansicht (mobil) hat keine Spaltenköpfe → fest nach Name sortiert.
+// Karten-Ansicht (mobil) hat keine Spaltenköpfe → fest nach „Zuletzt bearbeitet" absteigend (neueste zuerst).
 const sortierteKarten = computed(() =>
   [...filteredPersonen.value].sort((a, b) =>
-    nameKey(a).localeCompare(nameKey(b), 'de', { sensitivity: 'base' })),
+    String(b.last_edited || '').localeCompare(String(a.last_edited || ''))),
 )
 
 // Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
