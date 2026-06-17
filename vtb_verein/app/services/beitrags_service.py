@@ -340,7 +340,9 @@ class BeitragsService:
         - ausnahme_funktionen + ausnahme_abteilung_ids (index-gleich): je Paar eine Ausnahme
           (Funktion, optionale Abteilung; None = vereinsweit); ausgeschlossen wird, wer
           mindestens eine Ausnahme erfüllt
-        - bedingung_funktionen: nur Mitglieder mit (mind.) einer dieser Funktionen werden eingeschlossen
+        - bedingung_funktionen + bedingung_abteilung_ids (index-gleich): je Paar ein Einschluss
+          (Funktion, optionale Abteilung; None = vereinsweit); eingeschlossen wird, wer
+          mindestens einen Einschluss erfüllt
         - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
           ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
 
@@ -386,23 +388,28 @@ class BeitragsService:
                 params.extend(status_filter)
 
         if regel.bedingung_funktionen:
-            # Mitglied muss mindestens eine der gewählten Funktionen haben (ODER).
-            # DISTINCT im finalen SELECT entdoppelt Mehrfach-Treffer aus dem JOIN.
-            joins.append("JOIN mitglied_funktion mf_incl ON mf_incl.mitglied_id = m.id")
-            where += ["mf_incl.funktion = ANY(%s)", "mf_incl.deleted_at IS NULL",
-                      "(mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE)"]
-            params.append(regel.bedingung_funktionen)
-            # Abteilungs-Zusatz an der Funktions-Bedingung = MITGLIEDSCHAFT in dieser
-            # Abteilung (nicht: Funktion auf die Abteilung getaggt). Die Regel greift nur,
-            # wenn das Mitglied die Funktion hat UND in der Abteilung ist.
-            if regel.bedingung_funktion_abteilung_id is not None:
-                where.append(
-                    "EXISTS (SELECT 1 FROM mitglied_abteilung ma_bf "
-                    "WHERE ma_bf.mitglied_id = m.id AND ma_bf.abteilung_id = %s "
-                    "AND ma_bf.deleted_at IS NULL "
-                    "AND (ma_bf.bis IS NULL OR ma_bf.bis::date >= CURRENT_DATE))"
-                )
-                params.append(regel.bedingung_funktion_abteilung_id)
+            # Flexible Einschlüsse: index-gleiche Paare (Funktion, optionale Abteilung).
+            # Eingeschlossen wird, wer MINDESTENS einen Eintrag erfüllt (ODER über die Paare).
+            # Ein Eintrag erfüllt, wer die Funktion hat UND – falls eine Abteilung gesetzt
+            # ist – auch MITGLIED dieser Abteilung ist (None = vereinsweit). Spiegelbildlich
+            # zur Ausnahme-Logik; der frühere JOIN/ANY entfällt.
+            abteilung_ids = regel.bedingung_abteilung_ids or []
+            oder_teile: list[str] = []
+            for i, funktion in enumerate(regel.bedingung_funktionen):
+                teil = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_incl "
+                        "WHERE mf_incl.mitglied_id = m.id AND mf_incl.funktion = %s "
+                        "AND mf_incl.deleted_at IS NULL "
+                        "AND (mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE))")
+                params.append(funktion)
+                abt_id = abteilung_ids[i] if i < len(abteilung_ids) else None
+                if abt_id is not None:
+                    teil += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_incl "
+                             "WHERE ma_incl.mitglied_id = m.id AND ma_incl.abteilung_id = %s "
+                             "AND ma_incl.deleted_at IS NULL "
+                             "AND (ma_incl.bis IS NULL OR ma_incl.bis::date >= CURRENT_DATE))")
+                    params.append(abt_id)
+                oder_teile.append(f"({teil})")
+            where.append("(" + " OR ".join(oder_teile) + ")")
 
         if regel.ausnahme_funktionen:
             # Flexible Ausnahmen: index-gleiche Paare (Funktion, optionale Abteilung).

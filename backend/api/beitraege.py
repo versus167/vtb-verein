@@ -45,7 +45,8 @@ class RegelCreate(BaseModel):
     gueltig_bis: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None
     bedingung_funktionen: list[str] = []
-    bedingung_funktion_abteilung_id: Optional[int] = None
+    # Index-gleich zu bedingung_funktionen: je Einschluss eine optionale Abteilung (None = vereinsweit)
+    bedingung_abteilung_ids: list[Optional[int]] = []
     ausnahme_funktionen: list[str] = []
     # Index-gleich zu ausnahme_funktionen: je Ausnahme eine optionale Abteilung (None = vereinsweit)
     ausnahme_abteilung_ids: list[Optional[int]] = []
@@ -86,7 +87,7 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
         bedingung_abteilung_status=data.bedingung_abteilung_status,
         bedingung_funktionen=data.bedingung_funktionen,
-        bedingung_funktion_abteilung_id=data.bedingung_funktion_abteilung_id,
+        bedingung_abteilung_ids=data.bedingung_abteilung_ids,
         ausnahme_funktionen=data.ausnahme_funktionen,
         ausnahme_abteilung_ids=data.ausnahme_abteilung_ids,
         bedingung_alter_min=data.bedingung_alter_min,
@@ -111,7 +112,7 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.gueltig_bis = data.gueltig_bis
     r.bedingung_abteilung_status = data.bedingung_abteilung_status
     r.bedingung_funktionen = data.bedingung_funktionen
-    r.bedingung_funktion_abteilung_id = data.bedingung_funktion_abteilung_id
+    r.bedingung_abteilung_ids = data.bedingung_abteilung_ids
     r.ausnahme_funktionen = data.ausnahme_funktionen
     r.ausnahme_abteilung_ids = data.ausnahme_abteilung_ids
     r.bedingung_alter_min = data.bedingung_alter_min
@@ -292,7 +293,7 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'gueltig_ab': r.gueltig_ab, 'gueltig_bis': r.gueltig_bis,
         'bedingung_abteilung_status': r.bedingung_abteilung_status,
         'bedingung_funktionen': r.bedingung_funktionen,
-        'bedingung_funktion_abteilung_id': r.bedingung_funktion_abteilung_id,
+        'bedingung_abteilung_ids': r.bedingung_abteilung_ids,
         'ausnahme_funktionen': r.ausnahme_funktionen,
         'ausnahme_abteilung_ids': r.ausnahme_abteilung_ids,
         'bedingung_alter_min': r.bedingung_alter_min,

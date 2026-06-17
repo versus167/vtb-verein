@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 
 
 class Database:
@@ -103,6 +103,7 @@ class Database:
             39: self._migrate_v38_to_v39,
             40: self._migrate_v39_to_v40,
             41: self._migrate_v40_to_v41,
+            42: self._migrate_v41_to_v42,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1792,6 +1793,92 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 41 WHERE id = 1")
 
+    def _migrate_v41_to_v42(self) -> None:
+        """Flexible Beitrags-Einschlüsse: `bedingung_abteilung_ids INTEGER[]`.
+
+        Symmetrisch zu den flexiblen Ausnahmen (v41): bisher trug eine Regel EINE
+        Einschluss-Funktionsliste (`bedingung_funktionen`) mit EINEM gemeinsamen
+        Abteilungs-Bezug (`bedingung_funktion_abteilung_id`). Neu: ein zu
+        `bedingung_funktionen` **index-gleiches** Array `bedingung_abteilung_ids`
+        (NULL = vereinsweit). Eintrag i schließt (Funktion i, Abteilung i) ein;
+        eingeschlossen wird, wer MINDESTENS einen Eintrag erfüllt (ODER). So sind
+        z.B. „Trainer in Fußball" UND „Übungsleiter in Handball" in einer Regel
+        möglich.
+
+        Die alte Skalar-Spalte `bedingung_funktion_abteilung_id` bleibt (vestigial)
+        für Historie/Rollback erhalten; die App liest/schreibt sie nicht mehr.
+        """
+        with self.cursor() as cur:
+            for tbl in ("beitragsregel", "beitragsregel_history"):
+                cur.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS bedingung_abteilung_ids INTEGER[]"
+                )
+            # Backfill: pro vorhandener Einschluss-Funktion den alten gemeinsamen
+            # Abteilungs-Bezug übernehmen → semantisch identisch zur bisherigen Regel.
+            for tbl in ("beitragsregel", "beitragsregel_history"):
+                cur.execute(
+                    f"""
+                    UPDATE {tbl}
+                    SET bedingung_abteilung_ids = CASE
+                        WHEN bedingung_funktionen IS NULL
+                          OR cardinality(bedingung_funktionen) = 0 THEN NULL
+                        ELSE array_fill(bedingung_funktion_abteilung_id,
+                                        ARRAY[cardinality(bedingung_funktionen)])
+                    END
+                    WHERE bedingung_abteilung_ids IS NULL
+                    """
+                )
+            # Audit-Trigger neu definieren, damit die neue Spalte mit in die Historie wandert.
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ,
+                        bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
+                        ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+                        bedingung_alter_min, bedingung_alter_max,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ,
+                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
+                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+                        NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ,
+                            bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
+                            ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+                            bedingung_alter_min, bedingung_alter_max,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ,
+                            NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
+                            NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+                            NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("UPDATE schema_version SET version = 42 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2028,6 +2115,7 @@ class Database:
               bedingung_abteilung_status   TEXT,
               bedingung_funktionen         TEXT[],
               bedingung_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
+              bedingung_abteilung_ids      INTEGER[],
               ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
               ausnahme_abteilung_ids       INTEGER[],
@@ -2057,6 +2145,7 @@ class Database:
               bedingung_abteilung_status   TEXT,
               bedingung_funktionen         TEXT[],
               bedingung_funktion_abteilung_id INTEGER,
+              bedingung_abteilung_ids      INTEGER[],
               ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER,
               ausnahme_abteilung_ids       INTEGER[],
@@ -3597,7 +3686,7 @@ class Database:
                     id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                     zahler_typ,
-                    bedingung_funktionen, bedingung_funktion_abteilung_id,
+                    bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
                     ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
                     bedingung_alter_min, bedingung_alter_max,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
@@ -3605,7 +3694,7 @@ class Database:
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                     NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                     NEW.zahler_typ,
-                    NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                    NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
                     NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
                     NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
@@ -3621,7 +3710,7 @@ class Database:
                         id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
                         gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                         zahler_typ,
-                        bedingung_funktionen, bedingung_funktion_abteilung_id,
+                        bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
                         ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
                         bedingung_alter_min, bedingung_alter_max,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
@@ -3629,7 +3718,7 @@ class Database:
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
                         NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                         NEW.zahler_typ,
-                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
                         NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
                         NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
