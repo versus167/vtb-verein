@@ -15,7 +15,7 @@ from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
-from app.models.kasse import Kasse, Kassenbuchung, KassenKategorie
+from app.models.kasse import Kasse, Kassenbuchung, KassenKategorie, EURO_STUECKELUNG_CENT
 from app.services.kassenbuch_service import (
     BuchungGesperrtError,
     NegativerBestandError,
@@ -24,6 +24,7 @@ from app.services.kassenbuch_service import (
     KeinExportrechtError,
     DatumAusserhalbBereichError,
     KategorieUngueltigError,
+    ZaehlungUngueltigError,
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
@@ -87,6 +88,7 @@ class BerechtigungWrite(BaseModel):
 class KategorieWrite(BaseModel):
     name: str
     kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
+    loest_zaehlung_aus: bool = False    # True → Buchung mit dieser Kategorie fordert eine Kassenzählung an
 
     @field_validator("name")
     @classmethod
@@ -130,6 +132,8 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, DatumAusserhalbBereichError):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, KategorieUngueltigError):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, ZaehlungUngueltigError):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
@@ -439,6 +443,70 @@ def kassenbuch_pdf_bericht(
 
 
 # ---------------------------------------------------------------------------
+# Zählprotokoll (Kassenzählung / Stückelung)
+# ---------------------------------------------------------------------------
+
+class ZaehlungWrite(BaseModel):
+    stueckelung: dict[str, int] = {}        # {"5000": 2, ...} Cent-Wert (String) → Anzahl
+    notiz: Optional[str] = None
+    ausloesende_buchung_id: Optional[int] = None
+
+
+def _zaehlung_dict(z, belegnummer: Optional[str] = None) -> dict:
+    d = asdict(z)
+    d["belegnummer"] = belegnummer          # Beleg-Nr. der zugehörigen Zähl-Buchung (Anzeige)
+    return d
+
+
+def _beleg_fuer_buchung(db, buchung_id: Optional[int]) -> Optional[str]:
+    if buchung_id is None:
+        return None
+    try:
+        return db.kassenbuch._buchung.get_kassenbuchung(buchung_id).belegnummer
+    except KeyError:
+        return None
+
+
+@router.get("/stueckelung")
+def get_stueckelung(user: CurrentUser):
+    """Gültige Münz-/Scheinwerte (Cent, absteigend) für die Zähl-Erfassung."""
+    return {"werte_cent": list(EURO_STUECKELUNG_CENT)}
+
+
+@router.get("/{kasse_id}/zaehlungen")
+def list_zaehlungen(kasse_id: int, user: CurrentUser, db: DB):
+    """Zählprotokolle einer Kasse (neueste zuerst)."""
+    try:
+        zaehlungen = db.kassenbuch.list_zaehlungen(
+            kasse_id, user_id=user.id, is_admin=_kassen_admin(user)
+        )
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return [_zaehlung_dict(z, _beleg_fuer_buchung(db, z.buchung_id)) for z in zaehlungen]
+
+
+@router.post("/{kasse_id}/zaehlungen", status_code=201)
+def create_zaehlung(kasse_id: int, data: ZaehlungWrite, user: CurrentUser, db: DB):
+    """Erfasst eine Kassenzählung: legt die Zähl-/Differenzbuchung an, speichert das
+    Protokoll und hängt das Zählprotokoll-PDF an die Buchung."""
+    try:
+        zaehlung = db.kassenbuch.erstelle_zaehlung(
+            kasse_id,
+            stueckelung=data.stueckelung,
+            notiz=data.notiz,
+            ausloesende_buchung_id=data.ausloesende_buchung_id,
+            created_by=user.username,
+            user_id=user.id,
+            is_admin=_kassen_admin(user),
+        )
+    except Exception as exc:
+        raise _kassenbuch_error_to_http(exc)
+    return _zaehlung_dict(zaehlung, _beleg_fuer_buchung(db, zaehlung.buchung_id))
+
+
+# ---------------------------------------------------------------------------
 # Kategorien (Stammdaten für Buchungs-Kategorien)
 # ---------------------------------------------------------------------------
 
@@ -453,6 +521,7 @@ def _kategorie_dict(k: KassenKategorie, kasse_name: Optional[str]) -> dict:
         "kasse_id": k.kasse_id,
         "kasse_name": kasse_name,            # None bei allgemeiner Kategorie
         "ist_allgemein": k.kasse_id is None,
+        "loest_zaehlung_aus": k.loest_zaehlung_aus,
         "version": k.version,
     }
 
@@ -468,7 +537,8 @@ def list_kategorien_fuer_kasse(kasse_id: int, user: CurrentUser, db: DB):
     except KeinLesezugriffError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     return [
-        {"id": k.id, "name": k.name, "kasse_id": k.kasse_id, "ist_allgemein": k.kasse_id is None}
+        {"id": k.id, "name": k.name, "kasse_id": k.kasse_id,
+         "ist_allgemein": k.kasse_id is None, "loest_zaehlung_aus": k.loest_zaehlung_aus}
         for k in db.kassen_kategorien.list_for_kasse(kasse_id)
     ]
 
@@ -492,7 +562,9 @@ def create_kategorie(data: KategorieWrite, user: CurrentUser, db: DB):
     if db.kassen_kategorien.name_konflikt(data.kasse_id, data.name):
         raise HTTPException(status_code=409, detail="Eine Kategorie mit diesem Namen existiert hier bereits.")
     kat = db.kassen_kategorien.create(
-        KassenKategorie(name=data.name, kasse_id=data.kasse_id), created_by=user.username
+        KassenKategorie(name=data.name, kasse_id=data.kasse_id,
+                        loest_zaehlung_aus=data.loest_zaehlung_aus),
+        created_by=user.username,
     )
     return _kategorie_dict(kat, _kassen_namen(db).get(kat.kasse_id))
 
@@ -512,6 +584,7 @@ def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser
         raise HTTPException(status_code=409, detail="Eine Kategorie mit diesem Namen existiert hier bereits.")
     kat.name = data.name
     kat.kasse_id = data.kasse_id
+    kat.loest_zaehlung_aus = data.loest_zaehlung_aus
     kat.version = data.expected_version
     if not db.kassen_kategorien.update(kat, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")

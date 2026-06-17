@@ -78,6 +78,14 @@
               </q-chip>
             </q-td>
           </template>
+          <template #body-cell-zaehlung="props">
+            <q-td :props="props">
+              <q-icon v-if="props.row.loest_zaehlung_aus" name="pin" color="primary" size="20px">
+                <q-tooltip>Buchung mit dieser Kategorie fordert eine Kassenzählung an</q-tooltip>
+              </q-icon>
+              <span v-else class="text-grey-5">–</span>
+            </q-td>
+          </template>
           <template #body-cell-actions="props">
             <q-td :props="props">
               <q-btn flat dense round icon="edit" color="grey-7" size="sm" @click="openEditKategorie(props.row)">
@@ -110,6 +118,14 @@
             map-options
             hint="„Alle Kassen“ = allgemein; sonst nur bei der gewählten Kasse wählbar."
           />
+          <q-toggle
+            v-model="kategorieForm.loest_zaehlung_aus"
+            label="Zählung anfordern"
+            color="primary"
+          />
+          <div class="text-caption text-grey-7 q-pl-sm" style="margin-top: -8px">
+            Nach dem Speichern einer Buchung mit dieser Kategorie wird zum Zählen der Kasse aufgefordert.
+          </div>
         </q-card-section>
         <q-separator />
         <q-card-actions align="right">
@@ -269,11 +285,12 @@ const kategorieDialogOpen = ref(false)
 const savingKategorie = ref(false)
 const editingKategorieId = ref(null)
 const editingKategorieVersion = ref(null)
-const kategorieForm = ref({ name: '', kasse_id: null })
+const kategorieForm = ref({ name: '', kasse_id: null, loest_zaehlung_aus: false })
 
 const kategorieColumns = [
   { name: 'name', label: 'Name', field: 'name', align: 'left' },
   { name: 'geltungsbereich', label: 'Geltungsbereich', field: 'kasse_name', align: 'left' },
+  { name: 'zaehlung', label: 'Zählung', field: 'loest_zaehlung_aus', align: 'center' },
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
 
@@ -445,14 +462,14 @@ async function loadKategorien() {
 function openCreateKategorie() {
   editingKategorieId.value = null
   editingKategorieVersion.value = null
-  kategorieForm.value = { name: '', kasse_id: null }
+  kategorieForm.value = { name: '', kasse_id: null, loest_zaehlung_aus: false }
   kategorieDialogOpen.value = true
 }
 
 function openEditKategorie(kat) {
   editingKategorieId.value = kat.id
   editingKategorieVersion.value = kat.version
-  kategorieForm.value = { name: kat.name, kasse_id: kat.kasse_id }
+  kategorieForm.value = { name: kat.name, kasse_id: kat.kasse_id, loest_zaehlung_aus: !!kat.loest_zaehlung_aus }
   kategorieDialogOpen.value = true
 }
 
@@ -463,6 +480,7 @@ async function onSaveKategorie() {
     const payload = {
       name: kategorieForm.value.name.trim(),
       kasse_id: kategorieForm.value.kasse_id ?? null,
+      loest_zaehlung_aus: !!kategorieForm.value.loest_zaehlung_aus,
     }
     if (editingKategorieId.value) {
       await api.put(`/api/kassen/kategorien/${editingKategorieId.value}`, {

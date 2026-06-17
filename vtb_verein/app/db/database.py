@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
 
 
 class Database:
@@ -104,6 +104,7 @@ class Database:
             40: self._migrate_v39_to_v40,
             41: self._migrate_v40_to_v41,
             42: self._migrate_v41_to_v42,
+            43: self._migrate_v42_to_v43,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1879,6 +1880,151 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 42 WHERE id = 1")
 
+    def _migrate_v42_to_v43(self) -> None:
+        """Zählprotokoll (Kassenzählung / Stückelung) – TODO „Kassenbuch".
+
+        Neue Tabelle `kassen_zaehlungen` hält je Zählung die gezählte Stückelung
+        (JSONB: Cent-Wert → Anzahl) sowie den Soll-/Ist-Abgleich. `soll_cent` wird
+        beim Zählen eingefroren. Jede Zählung erzeugt eine „Zähl-Buchung"
+        (`buchung_id`), an der das Protokoll-PDF hängt und über die Uhrzeit/Ersteller
+        dokumentiert sind; eine evtl. auslösende Buchung (Kategorie-Trigger) wird in
+        `ausloesende_buchung_id` referenziert.
+
+        Außerdem Flag `loest_zaehlung_aus` auf `kassen_kategorien`: Buchungen mit so
+        markierter Kategorie fordern eine Kassenzählung an. Die Kategorie-Audit-
+        Funktionen werden um die neue Spalte ergänzt.
+
+        Soft-Delete-only; History via Trigger.
+        """
+        with self.cursor() as cur:
+            # --- Kategorie-Flag (+ History-Spalte + Audit-Funktionen) ---
+            cur.execute(
+                "ALTER TABLE kassen_kategorien "
+                "ADD COLUMN IF NOT EXISTS loest_zaehlung_aus BOOLEAN NOT NULL DEFAULT false"
+            )
+            cur.execute(
+                "ALTER TABLE kassen_kategorien_history "
+                "ADD COLUMN IF NOT EXISTS loest_zaehlung_aus BOOLEAN"
+            )
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO kassen_kategorien_history (
+                        id, version, kasse_id, name, loest_zaehlung_aus,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO kassen_kategorien_history (
+                            id, version, kasse_id, name, loest_zaehlung_aus,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+
+            # --- Zählungen ---
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_zaehlungen (
+                  id                     SERIAL PRIMARY KEY,
+                  kasse_id               INTEGER NOT NULL REFERENCES kassen(id),
+                  buchung_id             INTEGER REFERENCES kassenbuchungen(id),
+                  ausloesende_buchung_id INTEGER REFERENCES kassenbuchungen(id),
+                  stueckelung            JSONB NOT NULL DEFAULT '{}',
+                  ist_cent               INTEGER NOT NULL,
+                  soll_cent              INTEGER NOT NULL,
+                  differenz_cent         INTEGER NOT NULL,
+                  notiz                  TEXT,
+                  version                INTEGER NOT NULL DEFAULT 1,
+                  created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by             TEXT NOT NULL,
+                  updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_by             TEXT NOT NULL,
+                  deleted_at             TEXT,
+                  deleted_by             TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kassen_zaehlungen_history (
+                  id                     INTEGER NOT NULL,
+                  version                INTEGER NOT NULL,
+                  kasse_id               INTEGER,
+                  buchung_id             INTEGER,
+                  ausloesende_buchung_id INTEGER,
+                  stueckelung            JSONB,
+                  ist_cent               INTEGER,
+                  soll_cent              INTEGER,
+                  differenz_cent         INTEGER,
+                  notiz                  TEXT,
+                  created_at             TEXT,
+                  created_by             TEXT,
+                  updated_at             TEXT,
+                  updated_by             TEXT,
+                  deleted_at             TEXT,
+                  deleted_by             TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_zaehlungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO kassen_zaehlungen_history (
+                        id, version, kasse_id, buchung_id, ausloesende_buchung_id,
+                        stueckelung, ist_cent, soll_cent, differenz_cent, notiz,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchung_id, NEW.ausloesende_buchung_id,
+                        NEW.stueckelung, NEW.ist_cent, NEW.soll_cent, NEW.differenz_cent, NEW.notiz,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_zaehlungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO kassen_zaehlungen_history (
+                            id, version, kasse_id, buchung_id, ausloesende_buchung_id,
+                            stueckelung, ist_cent, soll_cent, differenz_cent, notiz,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.kasse_id, NEW.buchung_id, NEW.ausloesende_buchung_id,
+                            NEW.stueckelung, NEW.ist_cent, NEW.soll_cent, NEW.differenz_cent, NEW.notiz,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_kassen_zaehlungen_audit_insert
+                AFTER INSERT ON kassen_zaehlungen
+                FOR EACH ROW EXECUTE FUNCTION fn_kassen_zaehlungen_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_kassen_zaehlungen_audit_update
+                AFTER UPDATE ON kassen_zaehlungen
+                FOR EACH ROW EXECUTE FUNCTION fn_kassen_zaehlungen_audit_update();
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_zaehlungen_kasse_id ON kassen_zaehlungen(kasse_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_zaehlungen_deleted_at ON kassen_zaehlungen(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_zaehlungen_buchung_id ON kassen_zaehlungen(buchung_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_zaehlungen_history_id ON kassen_zaehlungen_history(id)")
+            cur.execute("UPDATE schema_version SET version = 43 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2504,6 +2650,7 @@ class Database:
               id          SERIAL PRIMARY KEY,
               kasse_id    INTEGER REFERENCES kassen(id),
               name        TEXT NOT NULL,
+              loest_zaehlung_aus BOOLEAN NOT NULL DEFAULT false,
               version     INTEGER NOT NULL DEFAULT 1,
               created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by  TEXT NOT NULL,
@@ -2519,12 +2666,54 @@ class Database:
               version     INTEGER NOT NULL,
               kasse_id    INTEGER,
               name        TEXT,
+              loest_zaehlung_aus BOOLEAN,
               created_at  TEXT,
               created_by  TEXT,
               updated_at  TEXT,
               updated_by  TEXT,
               deleted_at  TEXT,
               deleted_by  TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kassen_zaehlungen (
+              id                     SERIAL PRIMARY KEY,
+              kasse_id               INTEGER NOT NULL REFERENCES kassen(id),
+              buchung_id             INTEGER REFERENCES kassenbuchungen(id),
+              ausloesende_buchung_id INTEGER REFERENCES kassenbuchungen(id),
+              stueckelung            JSONB NOT NULL DEFAULT '{}',
+              ist_cent               INTEGER NOT NULL,
+              soll_cent              INTEGER NOT NULL,
+              differenz_cent         INTEGER NOT NULL,
+              notiz                  TEXT,
+              version                INTEGER NOT NULL DEFAULT 1,
+              created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by             TEXT NOT NULL,
+              updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_by             TEXT NOT NULL,
+              deleted_at             TEXT,
+              deleted_by             TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS kassen_zaehlungen_history (
+              id                     INTEGER NOT NULL,
+              version                INTEGER NOT NULL,
+              kasse_id               INTEGER,
+              buchung_id             INTEGER,
+              ausloesende_buchung_id INTEGER,
+              stueckelung            JSONB,
+              ist_cent               INTEGER,
+              soll_cent              INTEGER,
+              differenz_cent         INTEGER,
+              notiz                  TEXT,
+              created_at             TEXT,
+              created_by             TEXT,
+              updated_at             TEXT,
+              updated_by             TEXT,
+              deleted_at             TEXT,
+              deleted_by             TEXT,
               PRIMARY KEY (id, version)
             )
         """)
@@ -3474,10 +3663,10 @@ class Database:
             CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO kassen_kategorien_history (
-                    id, version, kasse_id, name,
+                    id, version, kasse_id, name, loest_zaehlung_aus,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
-                    NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                    NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -3488,10 +3677,42 @@ class Database:
             BEGIN
                 IF NEW.version != OLD.version THEN
                     INSERT INTO kassen_kategorien_history (
-                        id, version, kasse_id, name,
+                        id, version, kasse_id, name, loest_zaehlung_aus,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
-                        NEW.id, NEW.version, NEW.kasse_id, NEW.name,
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_kassen_zaehlungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO kassen_zaehlungen_history (
+                    id, version, kasse_id, buchung_id, ausloesende_buchung_id,
+                    stueckelung, ist_cent, soll_cent, differenz_cent, notiz,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.kasse_id, NEW.buchung_id, NEW.ausloesende_buchung_id,
+                    NEW.stueckelung, NEW.ist_cent, NEW.soll_cent, NEW.differenz_cent, NEW.notiz,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_kassen_zaehlungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO kassen_zaehlungen_history (
+                        id, version, kasse_id, buchung_id, ausloesende_buchung_id,
+                        stueckelung, ist_cent, soll_cent, differenz_cent, notiz,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.buchung_id, NEW.ausloesende_buchung_id,
+                        NEW.stueckelung, NEW.ist_cent, NEW.soll_cent, NEW.differenz_cent, NEW.notiz,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;
@@ -3831,6 +4052,8 @@ class Database:
             ('trig_kasse_berechtigungen_audit_update',              'UPDATE', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_update'),
             ('trig_kassen_kategorien_audit_insert',                 'INSERT', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_insert'),
             ('trig_kassen_kategorien_audit_update',                 'UPDATE', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_update'),
+            ('trig_kassen_zaehlungen_audit_insert',                 'INSERT', 'kassen_zaehlungen',                 'fn_kassen_zaehlungen_audit_insert'),
+            ('trig_kassen_zaehlungen_audit_update',                 'UPDATE', 'kassen_zaehlungen',                 'fn_kassen_zaehlungen_audit_update'),
             ('trig_ticket_bereiche_audit_insert',                   'INSERT', 'ticket_bereiche',                   'fn_ticket_bereiche_audit_insert'),
             ('trig_ticket_bereiche_audit_update',                   'UPDATE', 'ticket_bereiche',                   'fn_ticket_bereiche_audit_update'),
             ('trig_ticket_kategorien_audit_insert',                 'INSERT', 'ticket_kategorien',                 'fn_ticket_kategorien_audit_insert'),
@@ -3906,6 +4129,10 @@ class Database:
             ("idx_kassen_kategorien_kasse_id",                      "kassen_kategorien(kasse_id)"),
             ("idx_kassen_kategorien_deleted_at",                    "kassen_kategorien(deleted_at)"),
             ("idx_kassen_kategorien_history_id",                    "kassen_kategorien_history(id)"),
+            ("idx_kassen_zaehlungen_kasse_id",                      "kassen_zaehlungen(kasse_id)"),
+            ("idx_kassen_zaehlungen_deleted_at",                    "kassen_zaehlungen(deleted_at)"),
+            ("idx_kassen_zaehlungen_buchung_id",                    "kassen_zaehlungen(buchung_id)"),
+            ("idx_kassen_zaehlungen_history_id",                    "kassen_zaehlungen_history(id)"),
             ("idx_ticket_bereiche_deleted_at",                      "ticket_bereiche(deleted_at)"),
             ("idx_ticket_kategorien_deleted_at",                    "ticket_kategorien(deleted_at)"),
             ("idx_tickets_status",                                  "tickets(status)"),

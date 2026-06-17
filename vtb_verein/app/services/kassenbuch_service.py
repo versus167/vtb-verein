@@ -6,16 +6,27 @@ Kassenbuch Service – Business-Logik für das Kassenbuch.
 
 import csv
 import io
+import logging
 import os
 from datetime import date
-from app.models.kasse import Kasse, Kassenbuchung, KassenbuchExport, KassenbuchungAnhang
+from app.models.kasse import (
+    Kasse, Kassenbuchung, KassenbuchExport, KassenbuchungAnhang,
+    KassenZaehlung, EURO_STUECKELUNG_CENT,
+)
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
 from app.db.kassen_kategorie_repository import KassenKategorieRepository
+from app.db.kassen_zaehlung_repository import KassenZaehlungRepository
 from app.services.anhang_service import AnhangService, DateitypNichtErlaubtError, DateiZuGrossError
+from app.services.kassenbuch_pdf_service import erstelle_zaehlprotokoll_pdf
+
+logger = logging.getLogger(__name__)
+
+# System-Kategorie für die Differenzbuchung einer Kassenzählung ohne auslösende Kategorie.
+KASSENDIFFERENZ_KATEGORIE = "Kassendifferenz"
 
 
 class BuchungGesperrtError(Exception):
@@ -46,6 +57,12 @@ class KeinExportrechtError(Exception):
 class KategorieUngueltigError(Exception):
     """Wird geworfen wenn eine Buchungs-Kategorie nicht zu den für die Kasse
     zugelassenen Stammdaten-Kategorien gehört."""
+    pass
+
+
+class ZaehlungUngueltigError(Exception):
+    """Wird geworfen wenn die übergebene Stückelung ungültig ist
+    (unbekannter Münz-/Scheinwert oder negative Anzahl)."""
     pass
 
 
@@ -92,6 +109,7 @@ class KassenbuchService:
         anhang_repo: KassenbuchungAnhangRepository | None = None,
         anhang_service: AnhangService | None = None,
         kategorie_repo: KassenKategorieRepository | None = None,
+        zaehlung_repo: KassenZaehlungRepository | None = None,
     ):
         self._kasse = kasse_repo
         self._buchung = buchung_repo
@@ -100,6 +118,7 @@ class KassenbuchService:
         self._anhang_repo = anhang_repo
         self._anhang_service = anhang_service
         self._kategorie = kategorie_repo
+        self._zaehlung = zaehlung_repo
 
     # -----------------------------------
     # Berechtigungsprüfung
@@ -225,8 +244,12 @@ class KassenbuchService:
     def create_buchung(
         self, buchung: Kassenbuchung, created_by: str,
         user_id: int = None, is_admin: bool = False,
+        skip_kategorie_validierung: bool = False,
     ) -> Kassenbuchung:
         """Erstellt eine neue Buchung inkl. Datumsvalidierung, Bestandsprüfung und Belegnummer.
+
+        skip_kategorie_validierung: für system-erzeugte Buchungen (z.B. die
+        Differenzbuchung einer Kassenzählung mit Systemkategorie „Kassendifferenz").
 
         Raises:
             KeinSchreibzugriffError: Wenn kein Schreibzugriff auf die Kasse.
@@ -237,7 +260,8 @@ class KassenbuchService:
             self._pruefe_schreibzugriff(buchung.kasse_id, user_id, is_admin)
 
         self._validate_datum(buchung.buchungsdatum, buchung.kasse_id)
-        self._validate_kategorie(buchung.kasse_id, buchung.kategorie)
+        if not skip_kategorie_validierung:
+            self._validate_kategorie(buchung.kasse_id, buchung.kategorie)
 
         # Belegnummer: einfache laufende Nummer pro Kasse
         buchung.belegnummer = self._buchung.get_naechste_belegnummer(buchung.kasse_id)
@@ -544,3 +568,145 @@ class KassenbuchService:
 
     def mark_anhang_deleted(self, id: int, deleted_by: str) -> bool:
         return self._anhang_repo.mark_deleted(id, deleted_by)
+
+    # -----------------------------------
+    # Zählprotokoll (Kassenzählung / Stückelung)
+    # -----------------------------------
+
+    @staticmethod
+    def _normalisiere_stueckelung(stueckelung: dict) -> tuple[dict, int]:
+        """Validiert die Stückelung und gibt (normalisierte Stückelung, ist_cent) zurück.
+
+        Keys werden auf gültige EUR-Werte (in Cent) geprüft; nur Einträge mit Anzahl > 0
+        bleiben erhalten (Keys als Strings für JSONB).
+
+        Raises:
+            ZaehlungUngueltigError: Bei unbekanntem Wert oder negativer Anzahl.
+        """
+        erlaubt = set(EURO_STUECKELUNG_CENT)
+        norm: dict[str, int] = {}
+        ist_cent = 0
+        for wert, anzahl in (stueckelung or {}).items():
+            try:
+                w = int(wert)
+                a = int(anzahl)
+            except (TypeError, ValueError):
+                raise ZaehlungUngueltigError(f"Ungültiger Stückelungs-Eintrag: {wert!r} → {anzahl!r}")
+            if w not in erlaubt:
+                raise ZaehlungUngueltigError(f"Unbekannter Münz-/Scheinwert: {w} Cent.")
+            if a < 0:
+                raise ZaehlungUngueltigError("Anzahl darf nicht negativ sein.")
+            if a > 0:
+                norm[str(w)] = a
+                ist_cent += w * a
+        return norm, ist_cent
+
+    def erstelle_zaehlung(
+        self,
+        kasse_id: int,
+        stueckelung: dict,
+        created_by: str,
+        notiz: str | None = None,
+        ausloesende_buchung_id: int | None = None,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> KassenZaehlung:
+        """Erfasst eine Kassenzählung: legt die Zähl-/Differenzbuchung an, speichert das
+        Protokoll und hängt das Zählprotokoll-PDF an die Buchung.
+
+        Die Differenz (Ist − Soll) wird immer verbucht – unter der auslösenden Kategorie
+        (falls über eine Kategorie ausgelöst) sonst unter „Kassendifferenz". Bei Differenz 0
+        entsteht eine 0-€-Buchung als Träger des Protokolls. `soll_cent` wird eingefroren.
+
+        Raises:
+            KeinSchreibzugriffError, ZaehlungUngueltigError.
+        """
+        if self._zaehlung is None:
+            raise RuntimeError("Zählungs-Repository nicht konfiguriert.")
+        if user_id is not None:
+            self._pruefe_schreibzugriff(kasse_id, user_id, is_admin)
+
+        norm, ist_cent = self._normalisiere_stueckelung(stueckelung)
+        soll_cent = self._kasse.get_bestand_cent(kasse_id)
+        differenz_cent = ist_cent - soll_cent
+
+        # Kategorie der Differenzbuchung bestimmen: auslösende Kategorie sonst System-Kategorie.
+        kategorie = KASSENDIFFERENZ_KATEGORIE
+        if ausloesende_buchung_id is not None:
+            ausloeser = self._buchung.get_kassenbuchung(ausloesende_buchung_id)
+            if ausloeser.kasse_id != kasse_id:
+                raise ValueError("Auslösende Buchung gehört nicht zu dieser Kasse.")
+            if ausloeser.kategorie:
+                kategorie = ausloeser.kategorie
+
+        # Zähl-/Differenzbuchung anlegen (Systembuchung → Kategorie-Validierung umgehen).
+        # Schreibzugriff ist oben bereits geprüft → kein erneuter user_id-Check nötig.
+        buchung = Kassenbuchung(
+            kasse_id=kasse_id,
+            buchungsdatum=date.today().isoformat(),
+            buchungstext="Kassenzählung",
+            kategorie=kategorie,
+            einnahme_cent=differenz_cent if differenz_cent > 0 else 0,
+            ausgabe_cent=-differenz_cent if differenz_cent < 0 else 0,
+            notiz=notiz,
+        )
+        gespeicherte_buchung = self.create_buchung(
+            buchung, created_by, skip_kategorie_validierung=True
+        )
+
+        # Protokoll speichern (verknüpft mit der Zähl-Buchung + ggf. auslösender Buchung).
+        zaehlung = self._zaehlung.create(
+            KassenZaehlung(
+                kasse_id=kasse_id,
+                ist_cent=ist_cent,
+                soll_cent=soll_cent,
+                differenz_cent=differenz_cent,
+                stueckelung=norm,
+                buchung_id=gespeicherte_buchung.id,
+                ausloesende_buchung_id=ausloesende_buchung_id,
+                notiz=notiz,
+            ),
+            created_by,
+        )
+
+        # Zählprotokoll-PDF erzeugen und an die Zähl-Buchung hängen (best-effort).
+        if self._anhang_repo is not None and self._anhang_service is not None and user_id is not None:
+            try:
+                kasse = self._kasse.get_kasse(kasse_id)
+                pdf_bytes = erstelle_zaehlprotokoll_pdf(
+                    kasse_name=kasse.name,
+                    stueckelung=norm,
+                    ist_cent=ist_cent,
+                    soll_cent=soll_cent,
+                    differenz_cent=differenz_cent,
+                    gezaehlt_am=zaehlung.created_at or "",
+                    gezaehlt_von=created_by,
+                    belegnummer=gespeicherte_buchung.belegnummer or "",
+                    notiz=notiz or "",
+                )
+                self.add_anhang(
+                    buchung_id=gespeicherte_buchung.id,
+                    original_name=f"zaehlprotokoll-{zaehlung.id}.pdf",
+                    mime_type="application/pdf",
+                    inhalt=pdf_bytes,
+                    hochgeladen_von=user_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Zählprotokoll-PDF konnte nicht erzeugt/angehängt werden (Zählung %s).",
+                    zaehlung.id,
+                )
+
+        return zaehlung
+
+    def list_zaehlungen(
+        self, kasse_id: int, user_id: int = None, is_admin: bool = False,
+    ) -> list[KassenZaehlung]:
+        """Listet die Zählprotokolle einer Kasse (neueste zuerst).
+
+        Raises:
+            KeinLesezugriffError: Wenn kein Lesezugriff auf die Kasse.
+        """
+        if user_id is not None:
+            self._pruefe_lesezugriff(kasse_id, user_id, is_admin)
+        return self._zaehlung.list_for_kasse(kasse_id)

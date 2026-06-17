@@ -8,6 +8,14 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# Stückelung des Euro in Cent, absteigend (Scheine, dann Münzen).
+# Für die Zählprotokoll-Erfassung und die serverseitige Ist-Berechnung.
+EURO_STUECKELUNG_CENT: tuple[int, ...] = (
+    50000, 20000, 10000, 5000, 2000, 1000, 500,   # Scheine: 500 € … 5 €
+    200, 100, 50, 20, 10, 5, 2, 1,                 # Münzen:  2 € … 1 ct
+)
+
+
 @dataclass
 class Kasse:
     """Repräsentiert eine Barkasse des Vereins oder einer Abteilung."""
@@ -96,6 +104,7 @@ class KassenKategorie:
     """
     name: str
     kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
+    loest_zaehlung_aus: bool = False    # True → Buchung mit dieser Kategorie fordert eine Kassenzählung an
 
     id: Optional[int] = None
     version: int = 1
@@ -109,6 +118,52 @@ class KassenKategorie:
     @property
     def ist_allgemein(self) -> bool:
         return self.kasse_id is None
+
+
+@dataclass
+class KassenZaehlung:
+    """Ein Zählprotokoll (Kassensturz) einer Barkasse.
+
+    Hält die gezählte Stückelung sowie den Soll-/Ist-Abgleich. Jede Zählung erzeugt
+    eine zugehörige „Zähl-Buchung" (`buchung_id`), an der das Protokoll-PDF hängt und
+    über die Uhrzeit/Ersteller dokumentiert sind. `soll_cent` wird beim Zählen
+    eingefroren (spätere Buchungen ändern den Buchbestand, das Protokoll bleibt fix).
+
+    stueckelung: {wert_cent (als int): anzahl}, z.B. {5000: 2, 200: 13}.
+    """
+    kasse_id: int
+    ist_cent: int
+    soll_cent: int
+    differenz_cent: int
+    stueckelung: dict = field(default_factory=dict)
+    buchung_id: Optional[int] = None             # Zähl-Buchung (Träger des PDFs)
+    ausloesende_buchung_id: Optional[int] = None  # Kontext bei Kategorie-Trigger
+    notiz: Optional[str] = None
+
+    id: Optional[int] = None
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+    @property
+    def ist_euro(self) -> float:
+        return self.ist_cent / 100
+
+    @property
+    def soll_euro(self) -> float:
+        return self.soll_cent / 100
+
+    @property
+    def differenz_euro(self) -> float:
+        return self.differenz_cent / 100
+
+    @property
+    def stimmt_ueberein(self) -> bool:
+        return self.differenz_cent == 0
 
 
 @dataclass
