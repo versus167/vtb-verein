@@ -41,7 +41,22 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 ✅ **Kassenbuch**
 - Mehrere Barkassen (vereinsweit oder je Abteilung), Beträge in **Cent** (kein Float)
 - Belegnummer `YYYY-NNN`, Stornierung (Soft-Delete), Bestandsberechnung per SQL
+- Verwaltete Kassen-Kategorien statt Freitext *(Schema v38)*
 - Revisionssicherer CSV-Export mit Exportsperre
+
+✅ **Funktionsbasierte Berechtigungen** *(Schema v35/v36, siehe [BERECHTIGUNGEN.md](BERECHTIGUNGEN.md))*
+- Rechte hängen an Vereins-Funktionen statt an festen Rollen
+- Effektiv = Sockel ∪ Funktionsrechte ∪ individuelle Grants − Denies
+- Automatischer Rechteverlust beim Ablauf einer Funktions-Zuordnung
+
+✅ **Mitglieder-Import (SPG-Verein)** *(Schema v29)*
+- Eigene Import-Seite, idempotenter Abgleich, Zusatzfelder (Geschlecht, SEPA-Mandat, Bemerkungen)
+
+✅ **Eigene angemeldete Geräte** *(Schema v37)*
+- Serverseitige Sessions, im Profil einseh- und einzeln abmeldbar
+
+✅ **Zugriffsprotokoll** *(Schema v40)*
+- Append-only `access_log` für An-/Abmeldungen und Seitenaufrufe (Protokoll-Seite), 90-Tage-Prune
 
 ✅ **Tickets** & **Anhänge** (Fotos/PDFs), domänenspezifische Ablage
 
@@ -193,8 +208,8 @@ vtb-verein/
 ├── README.md                    # Diese Datei
 ├── TODO.md                      # Roadmap / offene Aufgaben
 ├── frontend/                    # Quasar/Vue Single-Page-App (PWA)
-│   ├── src/pages/               # Seiten (Personen, Abteilungen, Mannschaften,
-│   │                            #   Beiträge, Gebühren, Kassenbuch, Tickets …)
+│   ├── src/pages/               # Seiten (Personen, Abteilungen, Mannschaften, Beiträge,
+│   │                            #   Gebühren, Kassenbuch, Tickets, Import, Berichte, Protokoll …)
 │   ├── src/layouts/             # MainLayout (Navigation)
 │   ├── src/router/              # Routen (+ meta.permission)
 │   ├── src/stores/              # Pinia (auth)
@@ -218,7 +233,7 @@ vtb-verein/
 Das Schema wird **nicht** über Alembic zur Laufzeit verwaltet, sondern über eine eigene,
 versionierte Pipeline in `vtb_verein/app/db/database.py`:
 
-- `SCHEMA_VERSION` definiert die Zielversion (aktuell **28**).
+- `SCHEMA_VERSION` definiert die Zielversion (aktuell **40**).
 - Beim Backend-Start vergleicht `Database._init_schema()` die DB-Version und führt fehlende
   `_migrate_vX_to_vY()`-Schritte sequenziell aus (jeweils in eigener Transaktion).
 - Neue Migration = neue `_migrate_…`-Funktion + Eintrag in `migration_map` + `SCHEMA_VERSION`
@@ -230,18 +245,33 @@ Durchgängige Prinzipien: **Soft-Delete** (`deleted_at`/`deleted_by`, nie hart l
 INSERT/UPDATE-Trigger). Beträge im Kassenbuch in **Cent** (Integer).
 
 Jüngste Meilensteine: v24 mehrere Kontaktdaten · v25 Funktions-Pflichtzeitraum ·
-v26 altersabhängige Beitragsregeln · v27 Mannschaften · v28 Aufnahme-/Einmalgebühren.
+v26 altersabhängige Beitragsregeln · v27 Mannschaften · v28 Aufnahme-/Einmalgebühren ·
+v29 SPG-Import-Felder · v35/v36 funktionsbasierte Berechtigungen · v37 serverseitige
+Sessions · v38 verwaltete Kassen-Kategorien · v40 Zugriffsprotokoll (`access_log`).
 
 ## Permissions
 
 Feingranulare Permission-Matrix in der Form `ressource.aktion`, geprüft im API-Layer
 (`user.has_permission(...)` + `backend/core/deps.py`). Ressourcen u.a.:
 `personen.*`, `abteilungen.*`, `mannschaften.*`, `beitraege.*`, `gebuehren.*`,
-`berichte.*`, `tickets.*`, `system.config`.
+`kassen.*`, `berichte.*`, `tickets.*`, `protokoll.*`, `system.config`.
 
-Rollen vergeben Default-Permissions (`Permission.defaults_for_role`):
-`admin` = alle · `user` = Verwaltung (ohne System) · `readonly` = nur `*.read` ·
-`mitglied` = nur eigenes Profil/Tickets.
+Berechtigungen sind **funktionsbasiert**, nicht rollenbasiert (Umbau Ticket #22,
+Stufen A–E, Details in [BERECHTIGUNGEN.md](BERECHTIGUNGEN.md)):
+
+```
+effektiv = Sockel (BASE_PERMISSIONS) ∪ Funktionsrechte ∪ individuelle Grants − Denies
+```
+
+- **Sockel:** festes Grundpaket im Code (`BASE_PERMISSIONS`, aktuell `tickets.access`),
+  gilt für jeden aktiven, eingeloggten User.
+- **Funktionsrechte:** je Katalog-Funktion (`funktion_permission`); ein User erbt die
+  Rechte aller am heutigen Tag gültigen Funktions-Zuordnungen seines Mitglieds.
+  Endet eine Zuordnung, erlöschen die geerbten Rechte automatisch.
+- **Individuelle Overrides** (`user_permissions`, Tri-State `grant`/`deny`): **Deny
+  schlägt alles**, Grants sind sticky.
+- Die Rolle kennt nur noch **`admin`** (immer uneingeschränkt) und **`mitglied`**;
+  `defaults_for_role` wurde entfernt.
 
 ## Tests
 
@@ -250,13 +280,15 @@ Rollen vergeben Default-Permissions (`Permission.defaults_for_role`):
 ./venv/bin/python -m pytest vtb_verein/tests/ -q
 ```
 
-Aktuell sind nur wenige Unit-Tests vorhanden (`test_anhang_service`,
+Aktuell sind einige Unit-Tests vorhanden (`test_anhang_service`, `test_beitrags_service`,
+`test_effective_permissions`, `test_iban`, `test_kassen_kategorie`,
 `test_notification_services`). Eine PostgreSQL-Test-Fixture (conftest) existiert noch nicht;
 DB-nahe Tests werden derzeit gegen einen Wegwerf-PostgreSQL-Container gefahren.
 
 ## Roadmap
 
-Siehe [TODO.md](TODO.md). Nächster großer Schritt: Import der realen Mitgliederdaten.
+Siehe [TODO.md](TODO.md). Offene Schwerpunkte u.a.: Mitglieder-Export (CSV/Excel),
+Pagination für große Listen und Fibu-Export der Sollstellungen.
 
 ## Lizenz
 
