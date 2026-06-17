@@ -48,6 +48,15 @@
 - [ ] **Zählprotokoll** – Stückelung der Barkasse erfassen (Anzahl je Münz-/Scheinwert →
       automatische Summe, Soll-/Ist-Abgleich mit dem Kassenstand)
 
+### Beiträge / Gebühren
+- [ ] **Fibu-Export der Sollstellungen** – **kein** SEPA-Export in dem Sinne, sondern ein
+      **Delta-/Inkrement-Export**: ausgegeben werden alle bisher **nicht exportierten**
+      Sollstellungen. Statt der Markierung „bezahlt" bekommt eine Sollstellung beim Export
+      die Markierung **„exportiert"** (in die Finanzbuchhaltung exportiert). Auch
+      **Stornos/Löschungen** bereits exportierter Sollstellungen fließen in den nächsten
+      Export ein – als korrespondierende **Export-(Gegen-)Buchung** –, damit die Fibu
+      konsistent bleibt (kein stilles Verschwinden bereits exportierter Beträge).
+
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
 E-Mail + Matrix als Kanäle sind fertig; Ticket-Ereignisse lösen bereits Benachrichtigungen aus.
