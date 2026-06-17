@@ -127,7 +127,7 @@
                   Status: {{ r.bedingung_abteilung_status }}
                 </q-chip>
                 <q-chip v-if="r.bedingung_funktionen && r.bedingung_funktionen.length" dense size="sm" color="indigo" text-color="white">
-                  Funktion: {{ r.bedingung_funktionen.map(funktionLabel).join(', ') }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
+                  Funktion: {{ bedingungText(r) }}
                 </q-chip>
                 <q-chip v-if="r.ausnahme_funktionen && r.ausnahme_funktionen.length" dense size="sm" color="deep-orange" text-color="white">
                   Ausnahme: {{ ausnahmeText(r) }}
@@ -319,19 +319,28 @@
           <q-input v-model="regelForm.bedingung_abteilung_status"
             label="Nur für Abteilungs-Status (kommagetrennt, leer = alle)"
             outlined dense />
-          <q-select
-            v-model="regelForm.bedingung_funktionen"
-            :options="funktionOptionen" emit-value map-options
-            multiple use-chips
-            label="Bedingung: Nur für Funktionen (leer = alle)"
-            outlined dense clearable />
-          <q-select
-            v-if="regelForm.bedingung_funktionen && regelForm.bedingung_funktionen.length"
-            v-model="regelForm.bedingung_funktion_abteilung_id"
-            :options="abteilungOptions" option-value="id" option-label="name"
-            emit-value map-options
-            label="Bedingung gilt für Abteilung (leer = alle)"
-            outlined dense clearable />
+          <div>
+            <div class="text-caption text-grey-7 q-mb-xs">
+              Bedingung: nur für bestimmte Funktionen (leer = alle). Je Zeile eine
+              Funktion mit optionaler Abteilung – leer = vereinsweit.
+            </div>
+            <div v-for="(e, i) in regelForm.bedingung_eintraege" :key="i"
+                 class="row q-col-gutter-sm items-center q-mb-xs">
+              <q-select
+                v-model="e.funktion"
+                :options="funktionOptionen" emit-value map-options
+                label="Funktion" outlined dense class="col" />
+              <q-select
+                v-model="e.abteilung_id"
+                :options="abteilungOptions" option-value="id" option-label="name"
+                emit-value map-options
+                label="Abteilung (leer = vereinsweit)" outlined dense clearable class="col" />
+              <q-btn flat dense round icon="close" color="negative"
+                @click="regelForm.bedingung_eintraege.splice(i, 1)" />
+            </div>
+            <q-btn flat dense icon="add" label="Bedingung hinzufügen" color="primary"
+              @click="regelForm.bedingung_eintraege.push({ funktion: null, abteilung_id: null })" />
+          </div>
           <div>
             <div class="text-caption text-grey-7 q-mb-xs">
               Ausnahmen: Funktionen vom Beitrag ausschließen (leer = keine). Je Zeile eine
@@ -422,6 +431,13 @@ function funktionLabel(f) {
 function abteilungLabel(id) {
   return abteilungOptions.value.find(a => a.id === id)?.name ?? '?'
 }
+// Einschlüsse als Text: je Funktion mit optionaler Abteilung (index-gleiche Arrays).
+function bedingungText(r) {
+  const ids = r.bedingung_abteilung_ids || []
+  return (r.bedingung_funktionen || [])
+    .map((f, i) => funktionLabel(f) + (ids[i] != null ? ` (${abteilungLabel(ids[i])})` : ''))
+    .join(', ')
+}
 // Ausnahmen als Text: je Funktion mit optionaler Abteilung (index-gleiche Arrays).
 function ausnahmeText(r) {
   const ids = r.ausnahme_abteilung_ids || []
@@ -491,7 +507,7 @@ const gefilterteRegeln = computed(() => {
   // Abteilung (Einschluss) oder Ausnahme auf die Abteilung (Ausschluss)
   return regeln.value.filter(r =>
     r.abteilung_id === filterAbteilung.value ||
-    r.bedingung_funktion_abteilung_id === filterAbteilung.value ||
+    (r.bedingung_abteilung_ids || []).includes(filterAbteilung.value) ||
     (r.ausnahme_abteilung_ids || []).includes(filterAbteilung.value)
   )
 })
@@ -519,9 +535,11 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: r.betrag_pro_monat, einzug_turnus: r.einzug_turnus,
     gueltig_ab: r.gueltig_ab, gueltig_bis: r.gueltig_bis ?? '',
     bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
-    bedingung_funktionen: r.bedingung_funktionen ?? [],
-    bedingung_funktion_abteilung_id: r.bedingung_funktion_abteilung_id ?? null,
     // Index-gleiche Arrays in editierbare Zeilen {funktion, abteilung_id} zippen.
+    bedingung_eintraege: (r.bedingung_funktionen ?? []).map((f, i) => ({
+      funktion: f,
+      abteilung_id: (r.bedingung_abteilung_ids ?? [])[i] ?? null,
+    })),
     ausnahme_eintraege: (r.ausnahme_funktionen ?? []).map((f, i) => ({
       funktion: f,
       abteilung_id: (r.ausnahme_abteilung_ids ?? [])[i] ?? null,
@@ -535,8 +553,7 @@ function openRegelDialog(r = null) {
     betrag_pro_monat: 0, einzug_turnus: 'quartal',
     gueltig_ab: heute, gueltig_bis: '',
     bedingung_abteilung_status: '',
-    bedingung_funktionen: [],
-    bedingung_funktion_abteilung_id: null,
+    bedingung_eintraege: [],
     ausnahme_eintraege: [],
     bedingung_alter_min: null,
     bedingung_alter_max: null,
@@ -549,17 +566,16 @@ async function saveRegel() {
   regelSaving.value = true
   regelError.value = ''
   try {
-    // Ausnahme-Zeilen ohne gewählte Funktion verwerfen, dann in index-gleiche Arrays aufspalten.
+    // Bedingung-/Ausnahme-Zeilen ohne gewählte Funktion verwerfen, dann in index-gleiche Arrays aufspalten.
+    const bedingungen = (regelForm.value.bedingung_eintraege || []).filter(e => e.funktion)
     const ausnahmen = (regelForm.value.ausnahme_eintraege || []).filter(e => e.funktion)
     const payload = {
       ...regelForm.value,
       betrag_pro_monat: Number(regelForm.value.betrag_pro_monat),
       gueltig_bis: regelForm.value.gueltig_bis || null,
       bedingung_abteilung_status: regelForm.value.bedingung_abteilung_status || null,
-      bedingung_funktionen: regelForm.value.bedingung_funktionen || [],
-      // Bedingungs-Abteilung nur behalten, wenn überhaupt Funktionen gewählt sind
-      bedingung_funktion_abteilung_id: regelForm.value.bedingung_funktionen?.length
-        ? (regelForm.value.bedingung_funktion_abteilung_id || null) : null,
+      bedingung_funktionen: bedingungen.map(e => e.funktion),
+      bedingung_abteilung_ids: bedingungen.map(e => e.abteilung_id ?? null),
       ausnahme_funktionen: ausnahmen.map(e => e.funktion),
       ausnahme_abteilung_ids: ausnahmen.map(e => e.abteilung_id ?? null),
       bedingung_alter_min: regelForm.value.bedingung_alter_min === '' || regelForm.value.bedingung_alter_min == null ? null : Number(regelForm.value.bedingung_alter_min),

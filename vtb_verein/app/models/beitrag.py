@@ -19,7 +19,10 @@ class Beitragsregel:
     bedingung_raw: Optional[str] = None
     bedingung_abteilung_status: Optional[str] = None  # kommagetrennt, None = alle
     bedingung_funktionen: list[str] = field(default_factory=list)  # nur Mitglieder mit (mind.) einer dieser Funktionen
-    bedingung_funktion_abteilung_id: Optional[int] = None  # zusätzlich: Mitglied dieser Abteilung
+    # Index-gleich zu bedingung_funktionen: je Einschluss ein optionaler Abteilungs-Bezug
+    # (None = vereinsweit). Erlaubt mehrere, je eigen begrenzte Einschlüsse pro Regel.
+    bedingung_abteilung_ids: list[Optional[int]] = field(default_factory=list)
+    bedingung_funktion_abteilung_id: Optional[int] = None  # DEPRECATED (vor v42): ein gemeinsamer Bezug; ersetzt durch bedingung_abteilung_ids
     ausnahme_funktionen: list[str] = field(default_factory=list)   # Mitglieder mit (irgend)einer dieser Funktionen ausschließen
     # Index-gleich zu ausnahme_funktionen: je Ausnahme ein optionaler Abteilungs-Bezug
     # (None = vereinsweit). Erlaubt mehrere, je eigen begrenzte Ausnahmen pro Regel.
