@@ -19,11 +19,13 @@
       (`utils/iban.js`, `:rules`) in MitgliedEditDialog/Profil/Personen. **Immer strikt**
       (Alt-IBANs müssen beim Speichern korrigiert/geleert werden). BIC + SPG-Import
       bewusst ausgeklammert.
-- [ ] **Umgang mit ausgetretenen Mitgliedern klären** – aktuell bleiben Mitglieder mit
-      Status „ausgetreten" zeitlich unbegrenzt in der Personenliste (nur Soft-Delete in
-      den Papierkorb blendet sie aus). Offen: sollen sie per Default ausgeblendet werden
-      (Filter „Ausgetretene anzeigen"), nach X Jahren automatisch archiviert/gelöscht
-      werden (DSGVO-Aufbewahrungsfristen?), o. Ä.
+- [x] **Ausgetretene in der Personenliste standardmäßig ausblenden** – ausgetretene
+      Mitglieder (Austrittsdatum in der Vergangenheit) sind per Default ausgeblendet,
+      nur per Häkchen „Ausgetretene anzeigen" sichtbar (v2026.06.17.17). „Ausgetreten"-
+      Definition konsistent zum Statistik-Dashboard (am Austrittstag selbst noch Mitglied).
+      Spalte „Eintritt" → „Eintritt/Austritt" (Austrittsdatum weiß auf rot).
+- [ ] **Aufbewahrung/Archivierung ausgetretener Mitglieder** – offen: nach X Jahren
+      automatisch archivieren/löschen (DSGVO-Aufbewahrungsfristen?), o. Ä.
 
 ### Mitglieder-Import (SPG-Verein)
 - [x] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`
