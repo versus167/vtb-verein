@@ -26,6 +26,7 @@
         style="min-width: 200px">
         <template #prepend><q-icon name="search" /></template>
       </q-input>
+      <q-checkbox v-model="zeigeAusgetretene" label="Ausgetretene anzeigen" dense />
       <q-btn flat dense icon="filter_alt" color="primary" @click="resetAllFilters">
         <q-tooltip>Alle Filter zurücksetzen</q-tooltip>
       </q-btn>
@@ -156,6 +157,17 @@
       <template #body-cell-mitgliedsnr="props">
         <q-td :props="props">
           <span v-if="props.row.mitglied?.mitgliedsnummer">{{ props.row.mitglied.mitgliedsnummer }}</span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
+      <template #body-cell-eintritt="props">
+        <q-td :props="props">
+          <q-badge v-if="props.row.mitglied?.austrittsdatum" color="negative" text-color="white">
+            {{ props.row.mitglied.austrittsdatum }}
+            <q-tooltip>Ausgetreten</q-tooltip>
+          </q-badge>
+          <span v-else-if="props.row.mitglied?.eintrittsdatum">{{ props.row.mitglied.eintrittsdatum }}</span>
           <span v-else class="text-grey">—</span>
         </q-td>
       </template>
@@ -561,6 +573,8 @@ const search = ref('')
 const abteilungFilter = ref(null)
 const funktionFilter = ref(null)
 const alleAbteilungen = ref([])
+// Ausgetretene (Austritt in der Vergangenheit) standardmäßig ausblenden – nur per Häkchen sichtbar
+const zeigeAusgetretene = ref(false)
 
 // ── Papierkorb (gelöschte Personen) ────────────────────────
 const trashOpen = ref(false)
@@ -608,7 +622,7 @@ const columns = computed(() => {
   } else {
     cols.push(
       { name: 'geburtsdatum', label: 'Geburtstag', field: r => r.mitglied?.geburtsdatum, align: 'left', sortable: true },
-      { name: 'eintritt',     label: 'Eintritt',   field: r => r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
+      { name: 'eintritt',     label: 'Eintritt/Austritt', field: r => r.mitglied?.austrittsdatum || r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
     )
   }
   cols.push({ name: 'status', label: 'Status', align: 'center', sortable: true,
@@ -625,12 +639,28 @@ const columns = computed(() => {
   return cols
 })
 
+// Lokales Heute als ISO-Datum (YYYY-MM-DD) für den Austritts-Vergleich.
+function heuteIso() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Ausgetreten = Austrittsdatum gesetzt UND in der Vergangenheit (am Austrittstag
+// selbst noch Mitglied → `<` heute). Konsistent zur Statistik-Dashboard-Definition.
+function istAusgetreten(p) {
+  const aus = p.mitglied?.austrittsdatum
+  return !!aus && aus < heuteIso()
+}
+
 const filteredPersonen = computed(() => {
   let list = personen.value
-  
+
   // Basis-Filter
   if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
+
+  // Ausgetretene standardmäßig ausblenden (nur per Häkchen sichtbar)
+  if (!zeigeAusgetretene.value) list = list.filter(p => !istAusgetreten(p))
   
   // Abteilung-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Abteilungen haben)
   if (abteilungFilter.value != null) {
