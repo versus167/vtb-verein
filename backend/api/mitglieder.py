@@ -15,6 +15,7 @@ class MitgliedCreate(BaseModel):
     nachname: str
     mitgliedsnummer: Optional[int] = None
     geburtsdatum: Optional[str] = None
+    geschlecht: Optional[str] = None        # 'm' | 'w' | 'd'
     strasse: Optional[str] = None
     plz: Optional[str] = None
     ort: Optional[str] = None

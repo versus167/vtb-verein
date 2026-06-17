@@ -34,6 +34,7 @@ class PersonCreate(BaseModel):
     vorname: Optional[str] = None
     nachname: Optional[str] = None
     geburtsdatum: Optional[str] = None
+    geschlecht: Optional[str] = None        # 'm' | 'w' | 'd'
     strasse: Optional[str] = None
     plz: Optional[str] = None
     ort: Optional[str] = None
@@ -74,6 +75,7 @@ class PersonMitgliedUpdate(BaseModel):
     vorname: str
     nachname: str
     geburtsdatum: Optional[str] = None
+    geschlecht: Optional[str] = None        # 'm' | 'w' | 'd'
     strasse: Optional[str] = None
     plz: Optional[str] = None
     ort: Optional[str] = None
@@ -138,6 +140,7 @@ def _mitglied_to_dict(m) -> dict:
         'vorname': m.vorname,
         'nachname': m.nachname,
         'geburtsdatum': m.geburtsdatum,
+        'geschlecht': m.geschlecht,
         'strasse': m.strasse,
         'plz': m.plz,
         'ort': m.ort,
@@ -385,7 +388,7 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
         if data.vorname and data.nachname:
             _require_eintrittsdatum(data.eintrittsdatum)
             mitglied_data = {
-                'geburtsdatum': data.geburtsdatum,
+                'geburtsdatum': data.geburtsdatum, 'geschlecht': data.geschlecht,
                 'strasse': data.strasse, 'plz': data.plz, 'ort': data.ort, 'land': data.land,
                 'telefon': data.telefon,
                 'eintrittsdatum': data.eintrittsdatum, 'austrittsdatum': data.austrittsdatum,
@@ -463,6 +466,7 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     m.vorname = data.vorname
     m.nachname = data.nachname
     m.geburtsdatum = data.geburtsdatum
+    m.geschlecht = data.geschlecht
     m.strasse = data.strasse
     m.plz = data.plz
     m.ort = data.ort
@@ -501,7 +505,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         raise HTTPException(status_code=409, detail="Dieser User hat bereits einen Mitglied-Datensatz")
     m = Mitglied(
         vorname=data.vorname, nachname=data.nachname,
-        geburtsdatum=data.geburtsdatum,
+        geburtsdatum=data.geburtsdatum, geschlecht=data.geschlecht,
         strasse=data.strasse, plz=data.plz, ort=data.ort, land=data.land,
         eintrittsdatum=data.eintrittsdatum, austrittsdatum=data.austrittsdatum,
         status=data.status, zahlungsart=data.zahlungsart,
@@ -539,6 +543,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     m.vorname = data.vorname
     m.nachname = data.nachname
     m.geburtsdatum = data.geburtsdatum
+    m.geschlecht = data.geschlecht
     m.strasse = data.strasse
     m.plz = data.plz
     m.ort = data.ort

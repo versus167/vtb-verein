@@ -325,7 +325,11 @@
                 <q-space />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
               </div>
-              <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" />
+              <div class="row q-gutter-sm">
+                <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" />
+                <q-select v-model="createForm.geschlecht" :options="geschlechtOptions"
+                  label="Geschlecht" outlined dense emit-value map-options clearable class="col" />
+              </div>
               <q-select v-model="createForm.mitglied_status" :options="mitgliedStatusOptions"
                 label="Vereinsstatus" outlined dense emit-value map-options />
               <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense
@@ -721,6 +725,12 @@ const mitgliedStatusOptions = [
   { label: 'Ausgetreten',     value: 'ausgetreten' },
 ]
 
+const geschlechtOptions = [
+  { label: 'männlich', value: 'm' },
+  { label: 'weiblich', value: 'w' },
+  { label: 'divers',   value: 'd' },
+]
+
 function formatLastLogin(iso) {
   const diff = Date.now() - new Date(iso).getTime()
   const min  = Math.floor(diff / 60000)
@@ -825,7 +835,7 @@ function openCreateDialog() {
   createForm.value = {
     vorname: '', nachname: '', email: '', role: 'mitglied', active: true,
     password: '', username: '',
-    eintrittsdatum: '', mitglied_status: 'aktiv',
+    eintrittsdatum: '', mitglied_status: 'aktiv', geschlecht: null,
     strasse: '', plz: '', ort: '', land: '',
     zahlungsart: '', iban: '', bic: '', kontoinhaber: '',
   }

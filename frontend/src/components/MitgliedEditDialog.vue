@@ -36,6 +36,11 @@
             <div class="row q-gutter-sm">
               <q-input v-if="!personMode" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
               <q-input v-model="form.geburtsdatum" label="Geburtsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-select
+                v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
+                :options="geschlechtOptions" emit-value map-options clearable
+                :readonly="!canWrite"
+              />
             </div>
             <!-- E-Mail nur im Mitglieder-Kontext direkt; im Personen-Kontext über den Kontakte-Tab pflegen -->
             <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
@@ -373,9 +378,14 @@ const dirty = ref(false)
 // ── Stammdaten ───────────────────────────────────────────────
 const statusOptions = ['aktiv', 'passiv', 'ausgetreten']
 const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+const geschlechtOptions = [
+  { label: 'männlich', value: 'm' },
+  { label: 'weiblich', value: 'w' },
+  { label: 'divers', value: 'd' },
+]
 
 const emptyForm = () => ({
-  vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null,
+  vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
   eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: '',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
@@ -561,6 +571,7 @@ async function saveStammdaten() {
         vorname: form.value.vorname,
         nachname: form.value.nachname,
         geburtsdatum: form.value.geburtsdatum || null,
+        geschlecht: form.value.geschlecht || null,
         telefon: form.value.telefon || null,
         strasse: form.value.strasse || null,
         plz: form.value.plz || null,
