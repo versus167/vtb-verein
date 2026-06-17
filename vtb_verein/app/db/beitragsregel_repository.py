@@ -9,7 +9,7 @@ _SELECT = """
            r.gueltig_ab, r.gueltig_bis,
            r.bedingung_raw, r.bedingung_abteilung_status,
            r.bedingung_funktionen, r.bedingung_funktion_abteilung_id,
-           r.ausnahme_funktionen, r.ausnahme_funktion_abteilung_id,
+           r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
            r.bedingung_alter_min, r.bedingung_alter_max,
            r.zahler_typ,
            r.version, r.created_at, r.created_by, r.updated_at, r.updated_by
@@ -30,7 +30,7 @@ def _map(row) -> Beitragsregel:
         bedingung_funktionen=r['bedingung_funktionen'] or [],
         bedingung_funktion_abteilung_id=r['bedingung_funktion_abteilung_id'],
         ausnahme_funktionen=r['ausnahme_funktionen'] or [],
-        ausnahme_funktion_abteilung_id=r['ausnahme_funktion_abteilung_id'],
+        ausnahme_abteilung_ids=r['ausnahme_abteilung_ids'] or [],
         bedingung_alter_min=r['bedingung_alter_min'],
         bedingung_alter_max=r['bedingung_alter_max'],
         zahler_typ=r['zahler_typ'],
@@ -74,16 +74,16 @@ class BeitragsregelRepository(BaseRepository):
                     name, abteilung_id, betrag_pro_monat, einzug_turnus,
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                     bedingung_funktionen, bedingung_funktion_abteilung_id,
-                    ausnahme_funktionen, ausnahme_funktion_abteilung_id,
+                    ausnahme_funktionen, ausnahme_abteilung_ids,
                     bedingung_alter_min, bedingung_alter_max,
                     zahler_typ, created_by, updated_by
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::integer[],%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
                 (r.name, r.abteilung_id, r.betrag_pro_monat, r.einzug_turnus,
                  r.gueltig_ab, r.gueltig_bis, r.bedingung_raw, r.bedingung_abteilung_status,
                  r.bedingung_funktionen, r.bedingung_funktion_abteilung_id,
-                 r.ausnahme_funktionen, r.ausnahme_funktion_abteilung_id,
+                 r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,
                  r.zahler_typ, created_by, created_by),
             )
@@ -99,7 +99,7 @@ class BeitragsregelRepository(BaseRepository):
                     gueltig_ab=%s, gueltig_bis=%s,
                     bedingung_raw=%s, bedingung_abteilung_status=%s,
                     bedingung_funktionen=%s, bedingung_funktion_abteilung_id=%s,
-                    ausnahme_funktionen=%s, ausnahme_funktion_abteilung_id=%s,
+                    ausnahme_funktionen=%s, ausnahme_abteilung_ids=%s::integer[],
                     bedingung_alter_min=%s, bedingung_alter_max=%s,
                     zahler_typ=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
@@ -109,7 +109,7 @@ class BeitragsregelRepository(BaseRepository):
                  r.gueltig_ab, r.gueltig_bis,
                  r.bedingung_raw, r.bedingung_abteilung_status,
                  r.bedingung_funktionen, r.bedingung_funktion_abteilung_id,
-                 r.ausnahme_funktionen, r.ausnahme_funktion_abteilung_id,
+                 r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,
                  r.zahler_typ,
                  updated_by, r.id, r.version),
