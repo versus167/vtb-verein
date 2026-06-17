@@ -34,6 +34,7 @@ from app.db.kassenbuch_export_repository import KassenbuchExportRepository
 from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
 from app.db.kassen_kategorie_repository import KassenKategorieRepository
+from app.db.kassen_zaehlung_repository import KassenZaehlungRepository
 from app.db.ticket_repository import TicketRepository
 from app.db.ticket_kommentar_repository import TicketKommentarRepository
 from app.db.ticket_anhang_repository import TicketAnhangRepository
@@ -89,6 +90,7 @@ class VereinsDB:
         self._kasse_berechtigung_repo = KasseBerechtigungRepository(self.conn)
         self._kassenbuchung_anhang_repo = KassenbuchungAnhangRepository(self.conn)
         self._kassen_kategorie_repo = KassenKategorieRepository(self.conn)
+        self._kassen_zaehlung_repo = KassenZaehlungRepository(self.conn)
         self._beitragsregel_repo = BeitragsregelRepository(self.conn)
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
         self._gebuehr_repo = GebuehrRepository(self.conn)
@@ -108,6 +110,7 @@ class VereinsDB:
             anhang_repo=self._kassenbuchung_anhang_repo,
             anhang_service=self._anhang_service,
             kategorie_repo=self._kassen_kategorie_repo,
+            zaehlung_repo=self._kassen_zaehlung_repo,
         )
 
         self._ticket_repo = TicketRepository(self.conn)

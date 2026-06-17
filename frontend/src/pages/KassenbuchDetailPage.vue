@@ -46,7 +46,23 @@
           :round="$q.screen.lt.md"
           @click="openCreateDialog('ausgabe')"
         />
+        <q-btn
+          icon="pin"
+          :label="$q.screen.gt.sm ? 'Kasse zählen' : undefined"
+          color="primary"
+          outline
+          :round="$q.screen.lt.md"
+          @click="openZaehlDialog()"
+        />
       </template>
+      <q-btn
+        icon="fact_check"
+        :label="$q.screen.gt.sm ? 'Zählprotokolle' : undefined"
+        color="secondary"
+        outline
+        :round="$q.screen.lt.md"
+        @click="openZaehlungenListe"
+      />
       <q-btn
         v-if="kannExportieren"
         icon="download"
@@ -482,6 +498,121 @@
         </q-card-section>
       </q-card>
     </q-dialog>
+
+    <!-- Kassenzählung erfassen -->
+    <q-dialog v-model="zaehlDialogOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'" persistent>
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width: 560px; max-width: 640px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Kasse zählen</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section v-if="zaehlAusloeserText" class="q-pb-none">
+          <q-banner dense class="bg-blue-1 text-primary rounded-borders">
+            <template #avatar><q-icon name="info" /></template>
+            Ausgelöst durch Buchung: {{ zaehlAusloeserText }}
+          </q-banner>
+        </q-card-section>
+        <q-card-section>
+          <div class="row q-col-gutter-md">
+            <div class="col-12 col-sm-6">
+              <div class="text-subtitle2 q-mb-xs">Scheine</div>
+              <div v-for="w in scheineWerte" :key="w" class="row items-center q-mb-xs no-wrap">
+                <div class="text-right q-pr-sm" style="width: 60px">{{ stueckLabel(w) }}</div>
+                <q-input v-model.number="zaehlAnzahl[w]" type="number" min="0" dense outlined
+                         style="width: 84px" input-class="text-right" />
+                <div class="text-right text-grey q-pl-sm col">{{ formatEuro((zaehlAnzahl[w] || 0) * w) }}</div>
+              </div>
+            </div>
+            <div class="col-12 col-sm-6">
+              <div class="text-subtitle2 q-mb-xs">Münzen</div>
+              <div v-for="w in muenzenWerte" :key="w" class="row items-center q-mb-xs no-wrap">
+                <div class="text-right q-pr-sm" style="width: 60px">{{ stueckLabel(w) }}</div>
+                <q-input v-model.number="zaehlAnzahl[w]" type="number" min="0" dense outlined
+                         style="width: 84px" input-class="text-right" />
+                <div class="text-right text-grey q-pl-sm col">{{ formatEuro((zaehlAnzahl[w] || 0) * w) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <q-separator class="q-my-md" />
+
+          <div class="row items-center q-mb-xs">
+            <div class="col text-subtitle1">Gezählt (Ist)</div>
+            <div class="text-subtitle1 text-weight-bold">{{ formatEuro(zaehlIstCent) }}</div>
+          </div>
+          <div class="row items-center q-mb-xs text-grey-8">
+            <div class="col">Soll (Buchbestand)</div>
+            <div>{{ formatEuro(zaehlSollCent) }}</div>
+          </div>
+          <div class="row items-center q-py-sm q-px-sm rounded-borders" :class="zaehlDiffClass">
+            <div class="col text-weight-medium">Differenz ({{ zaehlDiffLabel }})</div>
+            <div class="text-weight-bold">{{ formatEuro(zaehlDifferenzCent) }}</div>
+          </div>
+          <div class="text-caption text-grey q-mt-sm">
+            Wird als Buchung „Kassenzählung" verbucht (Kategorie {{ zaehlBuchungKategorie }});
+            das Protokoll-PDF wird an die Buchung angehängt.
+          </div>
+
+          <q-input v-model="zaehlNotiz" label="Notiz (optional)" type="textarea" autogrow outlined class="q-mt-md" />
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Zählung speichern" color="primary" unelevated :loading="zaehlSaving" @click="onSaveZaehlung" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Zählprotokolle -->
+    <q-dialog v-model="zaehlungenDialogOpen" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width: 560px; max-width: 640px'">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Zählprotokolle</div>
+          <q-space />
+          <q-btn icon="close" flat round dense v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <div v-if="zaehlungenLoading" class="row justify-center q-py-md"><q-spinner color="primary" size="32px" /></div>
+          <div v-else-if="zaehlungen.length === 0" class="text-grey text-center q-py-md">Noch keine Zählungen erfasst.</div>
+          <q-list v-else separator>
+            <q-expansion-item v-for="z in zaehlungen" :key="z.id" expand-separator>
+              <template #header>
+                <q-item-section>
+                  <q-item-label>{{ formatZeit(z.created_at) }}</q-item-label>
+                  <q-item-label caption>{{ z.created_by }} · Beleg {{ z.belegnummer || '–' }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <q-chip dense square
+                          :color="z.differenz_cent === 0 ? 'green-2' : 'red-2'"
+                          :text-color="z.differenz_cent === 0 ? 'green-9' : 'red-9'">
+                    {{ z.differenz_cent === 0 ? 'stimmt' : formatEuro(z.differenz_cent) }}
+                  </q-chip>
+                </q-item-section>
+              </template>
+              <q-card>
+                <q-card-section class="q-pt-none">
+                  <div class="row text-caption text-grey-8 q-mb-xs">
+                    <div class="col">Soll: {{ formatEuro(z.soll_cent) }}</div>
+                    <div class="col">Ist: {{ formatEuro(z.ist_cent) }}</div>
+                  </div>
+                  <q-markup-table flat dense>
+                    <tbody>
+                      <tr v-for="w in werteMitAnzahl(z)" :key="w">
+                        <td>{{ stueckLabel(w) }}</td>
+                        <td class="text-right">× {{ z.stueckelung[String(w)] }}</td>
+                        <td class="text-right">{{ formatEuro(w * z.stueckelung[String(w)]) }}</td>
+                      </tr>
+                    </tbody>
+                  </q-markup-table>
+                  <div v-if="z.notiz" class="text-caption q-mt-sm"><b>Notiz:</b> {{ z.notiz }}</div>
+                </q-card-section>
+              </q-card>
+            </q-expansion-item>
+          </q-list>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -563,6 +694,44 @@ const historyBuchung = ref(null)
 const historyEntries = ref([])
 const historyLoading = ref(false)
 
+// --- Zählprotokoll (Kassenzählung / Stückelung) ---
+const STUECKELUNG_FALLBACK = [50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1]
+const stueckelungWerte = ref(STUECKELUNG_FALLBACK)
+const scheineWerte = computed(() => stueckelungWerte.value.filter(w => w >= 500))
+const muenzenWerte = computed(() => stueckelungWerte.value.filter(w => w < 500))
+
+const zaehlDialogOpen = ref(false)
+const zaehlSaving = ref(false)
+const zaehlAnzahl = ref({})              // { wert_cent: anzahl }
+const zaehlNotiz = ref('')
+const zaehlSollCent = ref(0)
+const zaehlAusloeserId = ref(null)       // ID der auslösenden Buchung (Kategorie-Trigger)
+const zaehlAusloeserText = ref('')
+
+const zaehlIstCent = computed(() =>
+  stueckelungWerte.value.reduce((s, w) => s + (Number(zaehlAnzahl.value[w]) || 0) * w, 0),
+)
+const zaehlDifferenzCent = computed(() => zaehlIstCent.value - zaehlSollCent.value)
+const zaehlDiffLabel = computed(() =>
+  zaehlDifferenzCent.value === 0 ? 'stimmt überein'
+    : zaehlDifferenzCent.value > 0 ? 'Überschuss' : 'Fehlbetrag',
+)
+const zaehlDiffClass = computed(() =>
+  zaehlDifferenzCent.value === 0 ? 'bg-green-1 text-green-9'
+    : zaehlDifferenzCent.value > 0 ? 'bg-blue-1 text-blue-9' : 'bg-red-1 text-red-9',
+)
+const zaehlBuchungKategorie = computed(() => {
+  if (zaehlAusloeserId.value) {
+    const b = buchungen.value.find(x => x.id === zaehlAusloeserId.value)
+    if (b?.kategorie) return `„${b.kategorie}“`
+  }
+  return '„Kassendifferenz“'
+})
+
+const zaehlungenDialogOpen = ref(false)
+const zaehlungen = ref([])
+const zaehlungenLoading = ref(false)
+
 // Laufenden Bestand je Buchung berechnen.
 // Strategie: rückwärts vom bekannten Gesamtbestand (bestandCent) — kein Extra-API-Aufruf nötig,
 // funktioniert auch wenn der Filter nur einen Ausschnitt zeigt.
@@ -632,7 +801,14 @@ async function applyFilter() {
 }
 
 async function loadAll() {
-  await Promise.all([loadKasse(), loadBuchungen(), loadBestand(), loadDatumBereich(), loadKategorien()])
+  await Promise.all([loadKasse(), loadBuchungen(), loadBestand(), loadDatumBereich(), loadKategorien(), loadStueckelung()])
+}
+
+async function loadStueckelung() {
+  try {
+    const { data } = await api.get('/api/kassen/stueckelung')
+    if (Array.isArray(data?.werte_cent) && data.werte_cent.length) stueckelungWerte.value = data.werte_cent
+  } catch { /* Fallback-Konstante bleibt */ }
 }
 
 async function loadKategorien() {
@@ -736,22 +912,37 @@ async function onSaveBuchung() {
     ausgabe_cent: buchungTyp.value === 'ausgabe' ? betragCent : 0,
   }
   try {
+    let createdBuchung = null
     if (editingBuchungId.value) {
       await api.put(
         `/api/kassen/${kasseId.value}/buchungen/${editingBuchungId.value}`,
         { ...payload, expected_version: editingBuchungVersion.value },
       )
     } else {
-      await api.post(`/api/kassen/${kasseId.value}/buchungen`, payload)
+      const { data } = await api.post(`/api/kassen/${kasseId.value}/buchungen`, payload)
+      createdBuchung = data
     }
     $q.notify({ type: 'positive', message: 'Gespeichert.' })
     buchungDialogOpen.value = false
     await Promise.all([loadBuchungen(), loadBestand()])
+    if (createdBuchung) maybePromptZaehlung(createdBuchung)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
   } finally {
     buchungSaving.value = false
   }
+}
+
+// Fordert nach dem Speichern einer Buchung zum Zählen auf, wenn deren Kategorie das Flag trägt.
+function maybePromptZaehlung(buchung) {
+  const kat = kategorien.value.find(k => k.name === buchung.kategorie)
+  if (!kat?.loest_zaehlung_aus) return
+  $q.dialog({
+    title: 'Kasse zählen?',
+    message: `Die Kategorie „${buchung.kategorie}“ fordert eine Kassenzählung an. Jetzt zählen?`,
+    ok: { label: 'Jetzt zählen', color: 'primary', unelevated: true },
+    cancel: { label: 'Später', flat: true },
+  }).onOk(() => openZaehlDialog(buchung))
 }
 
 function confirmStornieren(buchung) {
@@ -950,6 +1141,74 @@ async function doPdfDownload() {
     $q.notify({ type: 'negative', message: 'PDF konnte nicht erstellt werden.' })
   } finally {
     pdfLoading.value = false
+  }
+}
+
+function stueckLabel(wertCent) {
+  return wertCent >= 100 ? `${wertCent / 100} €` : `${wertCent} ct`
+}
+
+function formatZeit(ts) {
+  if (!ts) return ''
+  const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T'))
+  return isNaN(d) ? ts : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function werteMitAnzahl(z) {
+  const s = z.stueckelung || {}
+  return stueckelungWerte.value.filter(w => Number(s[String(w)]) > 0)
+}
+
+async function openZaehlDialog(ausloeser = null) {
+  zaehlAnzahl.value = Object.fromEntries(stueckelungWerte.value.map(w => [w, null]))
+  zaehlNotiz.value = ''
+  zaehlAusloeserId.value = ausloeser?.id ?? null
+  zaehlAusloeserText.value = ausloeser
+    ? `${ausloeser.belegnummer || ''} ${ausloeser.buchungstext || ''}`.trim()
+    : ''
+  // Soll = aktueller Buchbestand (frisch laden, damit eine eben erfasste Buchung enthalten ist)
+  await loadBestand()
+  zaehlSollCent.value = bestandCent.value
+  zaehlDialogOpen.value = true
+}
+
+async function onSaveZaehlung() {
+  const stueckelung = {}
+  for (const w of stueckelungWerte.value) {
+    const n = Number(zaehlAnzahl.value[w]) || 0
+    if (n > 0) stueckelung[String(w)] = n
+  }
+  zaehlSaving.value = true
+  try {
+    await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
+      stueckelung,
+      notiz: zaehlNotiz.value || null,
+      ausloesende_buchung_id: zaehlAusloeserId.value,
+    })
+    $q.notify({ type: 'positive', message: 'Zählung gespeichert.' })
+    zaehlDialogOpen.value = false
+    await Promise.all([loadBuchungen(), loadBestand()])
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern der Zählung.' })
+  } finally {
+    zaehlSaving.value = false
+  }
+}
+
+async function openZaehlungenListe() {
+  zaehlungenDialogOpen.value = true
+  await loadZaehlungen()
+}
+
+async function loadZaehlungen() {
+  zaehlungenLoading.value = true
+  try {
+    const { data } = await api.get(`/api/kassen/${kasseId.value}/zaehlungen`)
+    zaehlungen.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Zählprotokolle konnten nicht geladen werden.' })
+  } finally {
+    zaehlungenLoading.value = false
   }
 }
 

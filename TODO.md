@@ -45,8 +45,16 @@
         existieren; Backend validiert die Zugehörigkeit (leer erlaubt, unveränderter
         Legacy-Altwert beim Bearbeiten geschont).
   - Bewusst **keine eigene Berechtigung**: Verwaltung läuft über `kassen.verwalten`.
-- [ ] **Zählprotokoll** – Stückelung der Barkasse erfassen (Anzahl je Münz-/Scheinwert →
-      automatische Summe, Soll-/Ist-Abgleich mit dem Kassenstand)
+- [x] **Zählprotokoll** – Stückelung der Barkasse erfassen (Anzahl je Münz-/Scheinwert →
+      automatische Summe, Soll-/Ist-Abgleich mit dem Kassenstand). Umsetzung: eine Zählung
+      **ist eine Buchung** – jede Zählung erzeugt eine „Zähl-/Differenzbuchung", an die das
+      Protokoll-PDF gehängt wird (Uhrzeit/Ersteller über die Buchung dokumentiert). Die
+      Differenz (Ist−Soll) wird immer verbucht: unter der **auslösenden Kategorie**
+      (Kategorie-Trigger `loest_zaehlung_aus`) sonst unter **„Kassendifferenz"**; bei
+      Differenz 0 als 0-€-Buchung. `soll_cent` wird eingefroren. Auslöser: Button
+      „Kasse zählen" **+** Kategorie-Flag (Prompt nach der Buchung). Tabelle
+      `kassen_zaehlungen` (Stückelung als JSONB), Migration **v43**, keine eigene Permission
+      (Schreibzugriff auf die Kasse). Plan: `ZAEHLPROTOKOLL_PLAN.md`.
 
 ### Beiträge / Gebühren
 - [ ] **Fibu-Export der Sollstellungen** – **kein** SEPA-Export in dem Sinne, sondern ein

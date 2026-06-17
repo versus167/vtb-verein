@@ -45,6 +45,25 @@ def _fmt_datum(iso: str) -> str:
         return iso
 
 
+def _fmt_zeitstempel(ts: str) -> str:
+    """Formatiert einen TEXT-Zeitstempel (z.B. '2026-06-17 14:32:11.123') als TT.MM.JJJJ HH:MM."""
+    if not ts:
+        return ''
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(ts).strftime('%d.%m.%Y %H:%M')
+    except ValueError:
+        return ts
+
+
+def _stueckelung_label(wert_cent: int) -> str:
+    """Beschriftung eines Münz-/Scheinwerts, z.B. 5000 → '50 €', 50 → '50 ct'."""
+    if wert_cent >= 100:
+        euro = wert_cent / 100
+        return f"{euro:g} €"
+    return f"{wert_cent} ct"
+
+
 def erstelle_kassenbuch_pdf(
     kasse_name: str,
     von_datum: str,
@@ -316,6 +335,141 @@ def erstelle_kassenbuch_pdf(
     story.append(Spacer(1, 0.3 * cm))
     story.append(HRFlowable(width='100%', thickness=0.5, color=colors.HexColor('#cccccc'), spaceAfter=4))
     story.append(Paragraph(footer_text, style_footer))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def erstelle_zaehlprotokoll_pdf(
+    kasse_name: str,
+    stueckelung: dict,
+    ist_cent: int,
+    soll_cent: int,
+    differenz_cent: int,
+    gezaehlt_am: str = '',
+    gezaehlt_von: str = '',
+    belegnummer: str = '',
+    notiz: str = '',
+) -> bytes:
+    """Erstellt das Zählprotokoll-PDF (Stückelung + Soll-/Ist-Abgleich) einer Kassenzählung.
+
+    :param stueckelung: {wert_cent (str|int): anzahl} – z.B. {"5000": 2, "200": 13}
+    :return: PDF als bytes
+    """
+    from app.models.kasse import EURO_STUECKELUNG_CENT
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2.5 * cm, bottomMargin=2 * cm,
+        title=f'Zählprotokoll {kasse_name}',
+        author=gezaehlt_von or 'VTB-Vereinsverwaltung',
+    )
+
+    style_title = ParagraphStyle('ZPTitle', fontName='Helvetica-Bold', fontSize=16,
+                                 spaceAfter=4, textColor=colors.HexColor('#1a1a2e'))
+    style_subtitle = ParagraphStyle('ZPSubtitle', fontName='Helvetica', fontSize=10,
+                                    textColor=colors.HexColor('#555555'), spaceAfter=2)
+    style_section = ParagraphStyle('ZPSection', fontName='Helvetica-Bold', fontSize=10,
+                                   textColor=colors.HexColor('#1a1a2e'), spaceBefore=10, spaceAfter=4)
+    style_footer = ParagraphStyle('ZPFooter', fontName='Helvetica', fontSize=7,
+                                  textColor=colors.HexColor('#888888'), alignment=TA_CENTER)
+
+    COL_HEADER_BG = colors.HexColor('#2c3e50')
+    COL_SUMMARY_BG = colors.HexColor('#eaf0fb')
+    COL_POSITIVE = colors.HexColor('#1a7a3c')
+    COL_NEGATIVE = colors.HexColor('#b01020')
+
+    # Stückelung normalisieren: Cent-Wert (int) → Anzahl, nur Werte > 0
+    norm: dict[int, int] = {}
+    for wert, anzahl in (stueckelung or {}).items():
+        try:
+            w, a = int(wert), int(anzahl)
+        except (TypeError, ValueError):
+            continue
+        if a > 0:
+            norm[w] = a
+
+    story = []
+    story.append(Paragraph(f'Zählprotokoll – {kasse_name}', style_title))
+    story.append(Paragraph(f'Gezählt am {_fmt_zeitstempel(gezaehlt_am)}'
+                           + (f' von {gezaehlt_von}' if gezaehlt_von else ''), style_subtitle))
+    if belegnummer:
+        story.append(Paragraph(f'Zugehörige Buchung: Beleg-Nr. {belegnummer}', style_subtitle))
+    story.append(HRFlowable(width='100%', thickness=1, color=colors.HexColor('#cccccc'), spaceAfter=8))
+
+    # ------------------------------------------------------------------
+    # Stückelungstabelle
+    # ------------------------------------------------------------------
+    story.append(Paragraph('Stückelung', style_section))
+    table_data = [['Wert', 'Anzahl', 'Summe']]
+    for wert in EURO_STUECKELUNG_CENT:
+        anzahl = norm.get(wert, 0)
+        if anzahl == 0:
+            continue
+        table_data.append([_stueckelung_label(wert), str(anzahl), _fmt_euro(wert * anzahl)])
+    table_data.append(['Gezählt (Ist)', '', _fmt_euro(ist_cent)])
+
+    stueck_table = Table(table_data, colWidths=[6 * cm, 4 * cm, 4 * cm])
+    stueck_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), COL_HEADER_BG),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('BACKGROUND', (0, -1), (-1, -1), COL_SUMMARY_BG),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#4a90d9')),
+    ]))
+    story.append(stueck_table)
+    story.append(Spacer(1, 0.4 * cm))
+
+    # ------------------------------------------------------------------
+    # Soll-/Ist-Abgleich
+    # ------------------------------------------------------------------
+    story.append(Paragraph('Soll-/Ist-Abgleich', style_section))
+    differenz_label = 'stimmt überein' if differenz_cent == 0 else (
+        'Überschuss' if differenz_cent > 0 else 'Fehlbetrag')
+    abgleich_data = [
+        ['Soll (Buchbestand)', _fmt_euro(soll_cent)],
+        ['Ist (gezählt)', _fmt_euro(ist_cent)],
+        [f'Differenz ({differenz_label})', _fmt_euro(differenz_cent)],
+    ]
+    abgleich_table = Table(abgleich_data, colWidths=[10 * cm, 4 * cm])
+    diff_color = COL_POSITIVE if differenz_cent >= 0 else COL_NEGATIVE
+    abgleich_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), COL_SUMMARY_BG),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('TEXTCOLOR', (1, -1), (1, -1), diff_color),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#cccccc')),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#4a90d9')),
+    ]))
+    story.append(abgleich_table)
+
+    if notiz:
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph('Notiz', style_section))
+        story.append(Paragraph(notiz, style_subtitle))
+
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(HRFlowable(width='100%', thickness=0.5, color=colors.HexColor('#cccccc'), spaceAfter=4))
+    story.append(Paragraph(
+        f'Zählprotokoll "{kasse_name}" · Gezählt: {_fmt_zeitstempel(gezaehlt_am)}'
+        + (f' von {gezaehlt_von}' if gezaehlt_von else ''),
+        style_footer,
+    ))
 
     doc.build(story)
     return buffer.getvalue()
