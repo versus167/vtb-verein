@@ -130,7 +130,7 @@
                   Funktion: {{ r.bedingung_funktionen.map(funktionLabel).join(', ') }}{{ r.bedingung_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.bedingung_funktion_abteilung_id)?.name ?? '?'})` : '' }}
                 </q-chip>
                 <q-chip v-if="r.ausnahme_funktionen && r.ausnahme_funktionen.length" dense size="sm" color="deep-orange" text-color="white">
-                  Ausnahme: {{ r.ausnahme_funktionen.map(funktionLabel).join(', ') }}{{ r.ausnahme_funktion_abteilung_id ? ` (${abteilungOptions.find(a=>a.id===r.ausnahme_funktion_abteilung_id)?.name ?? '?'})` : '' }}
+                  Ausnahme: {{ ausnahmeText(r) }}
                 </q-chip>
                 <q-chip v-if="r.bedingung_alter_min != null || r.bedingung_alter_max != null" dense size="sm" color="blue-grey" text-color="white">
                   Alter {{ r.bedingung_alter_min ?? 0 }}–{{ r.bedingung_alter_max ?? '∞' }} J.
@@ -332,19 +332,28 @@
             emit-value map-options
             label="Bedingung gilt für Abteilung (leer = alle)"
             outlined dense clearable />
-          <q-select
-            v-model="regelForm.ausnahme_funktionen"
-            :options="funktionOptionen" emit-value map-options
-            multiple use-chips
-            label="Ausnahme: Funktionen ausschließen (leer = keine)"
-            outlined dense clearable />
-          <q-select
-            v-if="regelForm.ausnahme_funktionen && regelForm.ausnahme_funktionen.length"
-            v-model="regelForm.ausnahme_funktion_abteilung_id"
-            :options="abteilungOptions" option-value="id" option-label="name"
-            emit-value map-options
-            label="Ausnahme gilt für Abteilung (leer = alle)"
-            outlined dense clearable />
+          <div>
+            <div class="text-caption text-grey-7 q-mb-xs">
+              Ausnahmen: Funktionen vom Beitrag ausschließen (leer = keine). Je Zeile eine
+              Funktion mit optionaler Abteilung – leer = vereinsweit.
+            </div>
+            <div v-for="(e, i) in regelForm.ausnahme_eintraege" :key="i"
+                 class="row q-col-gutter-sm items-center q-mb-xs">
+              <q-select
+                v-model="e.funktion"
+                :options="funktionOptionen" emit-value map-options
+                label="Funktion" outlined dense class="col" />
+              <q-select
+                v-model="e.abteilung_id"
+                :options="abteilungOptions" option-value="id" option-label="name"
+                emit-value map-options
+                label="Abteilung (leer = vereinsweit)" outlined dense clearable class="col" />
+              <q-btn flat dense round icon="close" color="negative"
+                @click="regelForm.ausnahme_eintraege.splice(i, 1)" />
+            </div>
+            <q-btn flat dense icon="add" label="Ausnahme hinzufügen" color="primary"
+              @click="regelForm.ausnahme_eintraege.push({ funktion: null, abteilung_id: null })" />
+          </div>
           <div class="row q-gutter-sm">
             <q-input v-model.number="regelForm.bedingung_alter_min" label="Alter von (Jahre)"
               outlined dense type="number" min="0" clearable class="col" />
@@ -410,6 +419,16 @@ async function loadFunktionOptionen() {
 function funktionLabel(f) {
   return funktionOptionen.value.find(o => o.value === f)?.label ?? f
 }
+function abteilungLabel(id) {
+  return abteilungOptions.value.find(a => a.id === id)?.name ?? '?'
+}
+// Ausnahmen als Text: je Funktion mit optionaler Abteilung (index-gleiche Arrays).
+function ausnahmeText(r) {
+  const ids = r.ausnahme_abteilung_ids || []
+  return (r.ausnahme_funktionen || [])
+    .map((f, i) => funktionLabel(f) + (ids[i] != null ? ` (${abteilungLabel(ids[i])})` : ''))
+    .join(', ')
+}
 const turnusOptions = [
   { label: 'Monatlich',     value: 'monat' },
   { label: 'Vierteljährlich', value: 'quartal' },
@@ -473,7 +492,7 @@ const gefilterteRegeln = computed(() => {
   return regeln.value.filter(r =>
     r.abteilung_id === filterAbteilung.value ||
     r.bedingung_funktion_abteilung_id === filterAbteilung.value ||
-    r.ausnahme_funktion_abteilung_id === filterAbteilung.value
+    (r.ausnahme_abteilung_ids || []).includes(filterAbteilung.value)
   )
 })
 const regelDialogOpen = ref(false)
@@ -502,8 +521,11 @@ function openRegelDialog(r = null) {
     bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
     bedingung_funktionen: r.bedingung_funktionen ?? [],
     bedingung_funktion_abteilung_id: r.bedingung_funktion_abteilung_id ?? null,
-    ausnahme_funktionen: r.ausnahme_funktionen ?? [],
-    ausnahme_funktion_abteilung_id: r.ausnahme_funktion_abteilung_id ?? null,
+    // Index-gleiche Arrays in editierbare Zeilen {funktion, abteilung_id} zippen.
+    ausnahme_eintraege: (r.ausnahme_funktionen ?? []).map((f, i) => ({
+      funktion: f,
+      abteilung_id: (r.ausnahme_abteilung_ids ?? [])[i] ?? null,
+    })),
     bedingung_alter_min: r.bedingung_alter_min ?? null,
     bedingung_alter_max: r.bedingung_alter_max ?? null,
     zahler_typ: r.zahler_typ,
@@ -515,8 +537,7 @@ function openRegelDialog(r = null) {
     bedingung_abteilung_status: '',
     bedingung_funktionen: [],
     bedingung_funktion_abteilung_id: null,
-    ausnahme_funktionen: [],
-    ausnahme_funktion_abteilung_id: null,
+    ausnahme_eintraege: [],
     bedingung_alter_min: null,
     bedingung_alter_max: null,
     zahler_typ: 'mitglied',
@@ -528,18 +549,19 @@ async function saveRegel() {
   regelSaving.value = true
   regelError.value = ''
   try {
+    // Ausnahme-Zeilen ohne gewählte Funktion verwerfen, dann in index-gleiche Arrays aufspalten.
+    const ausnahmen = (regelForm.value.ausnahme_eintraege || []).filter(e => e.funktion)
     const payload = {
       ...regelForm.value,
       betrag_pro_monat: Number(regelForm.value.betrag_pro_monat),
       gueltig_bis: regelForm.value.gueltig_bis || null,
       bedingung_abteilung_status: regelForm.value.bedingung_abteilung_status || null,
       bedingung_funktionen: regelForm.value.bedingung_funktionen || [],
-      ausnahme_funktionen: regelForm.value.ausnahme_funktionen || [],
-      // Abteilungs-Qualifizierer nur behalten, wenn überhaupt Funktionen gewählt sind
+      // Bedingungs-Abteilung nur behalten, wenn überhaupt Funktionen gewählt sind
       bedingung_funktion_abteilung_id: regelForm.value.bedingung_funktionen?.length
         ? (regelForm.value.bedingung_funktion_abteilung_id || null) : null,
-      ausnahme_funktion_abteilung_id: regelForm.value.ausnahme_funktionen?.length
-        ? (regelForm.value.ausnahme_funktion_abteilung_id || null) : null,
+      ausnahme_funktionen: ausnahmen.map(e => e.funktion),
+      ausnahme_abteilung_ids: ausnahmen.map(e => e.abteilung_id ?? null),
       bedingung_alter_min: regelForm.value.bedingung_alter_min === '' || regelForm.value.bedingung_alter_min == null ? null : Number(regelForm.value.bedingung_alter_min),
       bedingung_alter_max: regelForm.value.bedingung_alter_max === '' || regelForm.value.bedingung_alter_max == null ? null : Number(regelForm.value.bedingung_alter_max),
     }

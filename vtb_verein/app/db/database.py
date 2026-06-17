@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 41
 
 
 class Database:
@@ -102,6 +102,7 @@ class Database:
             38: self._migrate_v37_to_v38,
             39: self._migrate_v38_to_v39,
             40: self._migrate_v39_to_v40,
+            41: self._migrate_v40_to_v41,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -1704,6 +1705,93 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_access_log_category ON access_log(category, created_at)")
             cur.execute("UPDATE schema_version SET version = 40 WHERE id = 1")
 
+    def _migrate_v40_to_v41(self) -> None:
+        """Flexible Beitrags-Ausnahmen: `ausnahme_abteilung_ids INTEGER[]`.
+
+        Bisher trug eine Regel EINE Ausnahme-Funktionsliste (`ausnahme_funktionen`)
+        mit EINEM gemeinsamen Abteilungs-Bezug (`ausnahme_funktion_abteilung_id`).
+        Das reichte für „Schiedsrichter nur Fußball", aber nicht für mehrere
+        unterschiedlich begrenzte Ausnahmen (z.B. zusätzlich „Ehrenmitglied
+        vereinsweit"). Neu: ein zu `ausnahme_funktionen` **index-gleiches** Array
+        `ausnahme_abteilung_ids` – Eintrag i gilt für (Funktion i, Abteilung i),
+        wobei NULL = vereinsweit. So sind beliebig viele, je eigen begrenzte
+        Ausnahmen pro Regel möglich.
+
+        Die alte Skalar-Spalte `ausnahme_funktion_abteilung_id` bleibt (vestigial,
+        wie schon `ausnahme_funktion`/`bedingung_funktion` seit der Array-Umstellung)
+        für Historie/Rollback erhalten; die App liest/schreibt sie nicht mehr.
+        """
+        with self.cursor() as cur:
+            for tbl in ("beitragsregel", "beitragsregel_history"):
+                cur.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS ausnahme_abteilung_ids INTEGER[]"
+                )
+            # Backfill: pro vorhandener Ausnahme-Funktion den alten gemeinsamen
+            # Abteilungs-Bezug übernehmen → semantisch identisch zur bisherigen Regel.
+            for tbl in ("beitragsregel", "beitragsregel_history"):
+                cur.execute(
+                    f"""
+                    UPDATE {tbl}
+                    SET ausnahme_abteilung_ids = CASE
+                        WHEN ausnahme_funktionen IS NULL
+                          OR cardinality(ausnahme_funktionen) = 0 THEN NULL
+                        ELSE array_fill(ausnahme_funktion_abteilung_id,
+                                        ARRAY[cardinality(ausnahme_funktionen)])
+                    END
+                    WHERE ausnahme_abteilung_ids IS NULL
+                    """
+                )
+            # Audit-Trigger neu definieren, damit die neue Spalte mit in die Historie wandert.
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO beitragsregel_history (
+                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                        zahler_typ,
+                        bedingung_funktionen, bedingung_funktion_abteilung_id,
+                        ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+                        bedingung_alter_min, bedingung_alter_max,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                        NEW.zahler_typ,
+                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+                        NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO beitragsregel_history (
+                            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                            zahler_typ,
+                            bedingung_funktionen, bedingung_funktion_abteilung_id,
+                            ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+                            bedingung_alter_min, bedingung_alter_max,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                            NEW.zahler_typ,
+                            NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
+                            NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+                            NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("UPDATE schema_version SET version = 41 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -1942,6 +2030,7 @@ class Database:
               bedingung_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
               ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
+              ausnahme_abteilung_ids       INTEGER[],
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT NOT NULL DEFAULT 'mitglied',
@@ -1970,6 +2059,7 @@ class Database:
               bedingung_funktion_abteilung_id INTEGER,
               ausnahme_funktionen          TEXT[],
               ausnahme_funktion_abteilung_id INTEGER,
+              ausnahme_abteilung_ids       INTEGER[],
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT,
@@ -3508,7 +3598,7 @@ class Database:
                     gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                     zahler_typ,
                     bedingung_funktionen, bedingung_funktion_abteilung_id,
-                    ausnahme_funktionen, ausnahme_funktion_abteilung_id,
+                    ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
                     bedingung_alter_min, bedingung_alter_max,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
@@ -3516,7 +3606,7 @@ class Database:
                     NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                     NEW.zahler_typ,
                     NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
-                    NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
+                    NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
                     NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
@@ -3532,7 +3622,7 @@ class Database:
                         gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
                         zahler_typ,
                         bedingung_funktionen, bedingung_funktion_abteilung_id,
-                        ausnahme_funktionen, ausnahme_funktion_abteilung_id,
+                        ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
                         bedingung_alter_min, bedingung_alter_max,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
@@ -3540,7 +3630,7 @@ class Database:
                         NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
                         NEW.zahler_typ,
                         NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id,
-                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id,
+                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
                         NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );

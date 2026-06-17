@@ -47,7 +47,8 @@ class RegelCreate(BaseModel):
     bedingung_funktionen: list[str] = []
     bedingung_funktion_abteilung_id: Optional[int] = None
     ausnahme_funktionen: list[str] = []
-    ausnahme_funktion_abteilung_id: Optional[int] = None
+    # Index-gleich zu ausnahme_funktionen: je Ausnahme eine optionale Abteilung (None = vereinsweit)
+    ausnahme_abteilung_ids: list[Optional[int]] = []
     bedingung_alter_min: Optional[int] = None
     bedingung_alter_max: Optional[int] = None
     zahler_typ: str = 'mitglied'
@@ -87,7 +88,7 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         bedingung_funktionen=data.bedingung_funktionen,
         bedingung_funktion_abteilung_id=data.bedingung_funktion_abteilung_id,
         ausnahme_funktionen=data.ausnahme_funktionen,
-        ausnahme_funktion_abteilung_id=data.ausnahme_funktion_abteilung_id,
+        ausnahme_abteilung_ids=data.ausnahme_abteilung_ids,
         bedingung_alter_min=data.bedingung_alter_min,
         bedingung_alter_max=data.bedingung_alter_max,
         zahler_typ=data.zahler_typ,
@@ -112,7 +113,7 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.bedingung_funktionen = data.bedingung_funktionen
     r.bedingung_funktion_abteilung_id = data.bedingung_funktion_abteilung_id
     r.ausnahme_funktionen = data.ausnahme_funktionen
-    r.ausnahme_funktion_abteilung_id = data.ausnahme_funktion_abteilung_id
+    r.ausnahme_abteilung_ids = data.ausnahme_abteilung_ids
     r.bedingung_alter_min = data.bedingung_alter_min
     r.bedingung_alter_max = data.bedingung_alter_max
     r.zahler_typ = data.zahler_typ
@@ -293,7 +294,7 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'bedingung_funktionen': r.bedingung_funktionen,
         'bedingung_funktion_abteilung_id': r.bedingung_funktion_abteilung_id,
         'ausnahme_funktionen': r.ausnahme_funktionen,
-        'ausnahme_funktion_abteilung_id': r.ausnahme_funktion_abteilung_id,
+        'ausnahme_abteilung_ids': r.ausnahme_abteilung_ids,
         'bedingung_alter_min': r.bedingung_alter_min,
         'bedingung_alter_max': r.bedingung_alter_max,
         'zahler_typ': r.zahler_typ,

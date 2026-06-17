@@ -21,7 +21,10 @@ class Beitragsregel:
     bedingung_funktionen: list[str] = field(default_factory=list)  # nur Mitglieder mit (mind.) einer dieser Funktionen
     bedingung_funktion_abteilung_id: Optional[int] = None  # zusätzlich: Mitglied dieser Abteilung
     ausnahme_funktionen: list[str] = field(default_factory=list)   # Mitglieder mit (irgend)einer dieser Funktionen ausschließen
-    ausnahme_funktion_abteilung_id: Optional[int] = None   # Ausschluss nur für Mitglieder dieser Abteilung
+    # Index-gleich zu ausnahme_funktionen: je Ausnahme ein optionaler Abteilungs-Bezug
+    # (None = vereinsweit). Erlaubt mehrere, je eigen begrenzte Ausnahmen pro Regel.
+    ausnahme_abteilung_ids: list[Optional[int]] = field(default_factory=list)
+    ausnahme_funktion_abteilung_id: Optional[int] = None   # DEPRECATED (vor v41): ein gemeinsamer Bezug; ersetzt durch ausnahme_abteilung_ids
     bedingung_alter_min: Optional[int] = None              # Mindestalter (Jahre), None = keine Untergrenze
     bedingung_alter_max: Optional[int] = None              # Höchstalter (Jahre), None = keine Obergrenze
     zahler_typ: str = "mitglied"                 # mitglied | abteilung

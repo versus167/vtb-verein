@@ -337,7 +337,9 @@ class BeitragsService:
 
         - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
         - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
-        - ausnahme_funktionen: Mitglieder mit (irgend)einer dieser Funktionen werden ausgeschlossen
+        - ausnahme_funktionen + ausnahme_abteilung_ids (index-gleich): je Paar eine Ausnahme
+          (Funktion, optionale Abteilung; None = vereinsweit); ausgeschlossen wird, wer
+          mindestens eine Ausnahme erfüllt
         - bedingung_funktionen: nur Mitglieder mit (mind.) einer dieser Funktionen werden eingeschlossen
         - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
           ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
@@ -403,20 +405,29 @@ class BeitragsService:
                 params.append(regel.bedingung_funktion_abteilung_id)
 
         if regel.ausnahme_funktionen:
-            # Ausschluss greift, wenn das Mitglied (irgend)eine der Funktionen hat; mit
-            # Abteilungs-Zusatz zusätzlich nur, wenn es auch Mitglied dieser Abteilung ist.
-            cond = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_excl "
-                    "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = ANY(%s) "
-                    "AND mf_excl.deleted_at IS NULL "
-                    "AND (mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE))")
-            params.append(regel.ausnahme_funktionen)
-            if regel.ausnahme_funktion_abteilung_id is not None:
-                cond += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_excl "
-                         "WHERE ma_excl.mitglied_id = m.id AND ma_excl.abteilung_id = %s "
-                         "AND ma_excl.deleted_at IS NULL "
-                         "AND (ma_excl.bis IS NULL OR ma_excl.bis::date >= CURRENT_DATE))")
-                params.append(regel.ausnahme_funktion_abteilung_id)
-            where.append(f"NOT ({cond})")
+            # Flexible Ausnahmen: index-gleiche Paare (Funktion, optionale Abteilung).
+            # Ausgeschlossen wird, wer IRGENDEINE Ausnahme erfüllt (ODER über die Paare).
+            # Eine Ausnahme erfüllt, wer die Funktion hat UND – falls eine Abteilung
+            # gesetzt ist – auch Mitglied dieser Abteilung ist (None = vereinsweit).
+            # So lassen sich „Schiedsrichter nur Fußball" und „Ehrenmitglied vereinsweit"
+            # nebeneinander abbilden.
+            abteilung_ids = regel.ausnahme_abteilung_ids or []
+            oder_teile: list[str] = []
+            for i, funktion in enumerate(regel.ausnahme_funktionen):
+                teil = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_excl "
+                        "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = %s "
+                        "AND mf_excl.deleted_at IS NULL "
+                        "AND (mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE))")
+                params.append(funktion)
+                abt_id = abteilung_ids[i] if i < len(abteilung_ids) else None
+                if abt_id is not None:
+                    teil += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_excl "
+                             "WHERE ma_excl.mitglied_id = m.id AND ma_excl.abteilung_id = %s "
+                             "AND ma_excl.deleted_at IS NULL "
+                             "AND (ma_excl.bis IS NULL OR ma_excl.bis::date >= CURRENT_DATE))")
+                    params.append(abt_id)
+                oder_teile.append(f"({teil})")
+            where.append("NOT (" + " OR ".join(oder_teile) + ")")
 
         if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
             # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
