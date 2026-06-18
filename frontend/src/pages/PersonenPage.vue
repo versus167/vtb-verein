@@ -466,8 +466,10 @@
                   <template v-if="h._diffs && h._diffs.length">
                     <div v-for="d in h._diffs" :key="d.feld">
                       <span class="text-grey">{{ d.feld }}: </span>
-                      <span class="text-strike text-grey-6">{{ d.alt }}</span>
-                      <q-icon name="arrow_forward" size="xs" class="q-mx-xs text-grey" />
+                      <template v-if="d.alt != null">
+                        <span class="text-strike text-grey-6">{{ d.alt }}</span>
+                        <q-icon name="arrow_forward" size="xs" class="q-mx-xs text-grey" />
+                      </template>
                       <span class="text-weight-medium">{{ d.neu }}</span>
                     </div>
                   </template>
@@ -1036,6 +1038,10 @@ const USER_DIFF_FIELDS = [
   { key: 'email',     label: 'E-Mail' },
   { key: 'role',      label: 'Rolle' },
   { key: 'active',    label: 'Status', fmt: v => v ? 'aktiv' : 'inaktiv' },
+  { key: 'telegram_id',       label: 'Telegram-ID' },
+  { key: 'matrix_id',         label: 'Matrix-ID' },
+  { key: 'preferred_contact', label: 'Bevorzugter Kanal',
+    fmt: v => ({ email: 'E-Mail', matrix: 'Matrix', telegram: 'Telegram' }[v] ?? (v || '—')) },
 ]
 const GESCHLECHT_LABELS = { m: 'männlich', w: 'weiblich', d: 'divers' }
 const MITGLIED_DIFF_FIELDS = [
@@ -1123,14 +1129,19 @@ async function openHistoryDialog(row) {
       : `/api/personen/mitglied/${row.mitglied.id}/history`
     const { data } = await api.get(url)
 
-    const userEvents = data.user.map((h, i) => ({
-      _typ: 'user', _zeit: h.updated_at, _by: h.updated_by,
-      _color: h.deleted_at ? 'negative' : h.version === 1 ? 'positive' : 'primary',
-      _icon: h.deleted_at ? 'person_off' : h.version === 1 ? 'person_add' : 'manage_accounts',
-      _label: h.deleted_at ? 'Account gelöscht' : h.version === 1 ? 'Account angelegt' : 'Account geändert',
-      _diffs: diffEntries(data.user[i - 1], h, USER_DIFF_FIELDS),
-      _full: h.version === 1 ? { Benutzername: h.username, 'E-Mail': h.email, Rolle: h.role } : null,
-    }))
+    const userEvents = data.user.map((h, i) => {
+      const diffs = diffEntries(data.user[i - 1], h, USER_DIFF_FIELDS)
+      // Passwortänderung als Hinweis (kein Wert, nur „geändert") – Flag kommt vom Backend.
+      if (h.passwort_geaendert) diffs.push({ feld: 'Passwort', alt: null, neu: 'geändert' })
+      return {
+        _typ: 'user', _zeit: h.updated_at, _by: h.updated_by,
+        _color: h.deleted_at ? 'negative' : h.version === 1 ? 'positive' : 'primary',
+        _icon: h.deleted_at ? 'person_off' : h.version === 1 ? 'person_add' : 'manage_accounts',
+        _label: h.deleted_at ? 'Account gelöscht' : h.version === 1 ? 'Account angelegt' : 'Account geändert',
+        _diffs: diffs,
+        _full: h.version === 1 ? { Benutzername: h.username, 'E-Mail': h.email, Rolle: h.role } : null,
+      }
+    })
 
     const mitgliedEvents = data.mitglied.map((h, i) => ({
       _typ: 'mitglied', _zeit: h.updated_at, _by: h.updated_by,

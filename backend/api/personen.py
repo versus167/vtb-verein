@@ -733,12 +733,20 @@ def get_person_history(user_id: int, user: CurrentUser, db: DB):
         cur.execute(
             """
             SELECT id, version, username, email, role, active, last_login, last_seen,
+                   telegram_id, matrix_id, preferred_contact, password_hash,
                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
             FROM users_history WHERE id = %s ORDER BY version ASC
             """,
             (user_id,),
         )
         user_history = [dict(r) for r in cur.fetchall()]
+        # Passwortänderung je Version ableiten (Hash-Vergleich zur Vorversion). Den Hash
+        # selbst NICHT ausliefern – nur das abgeleitete Flag passwort_geaendert.
+        prev_hash = None
+        for h in user_history:
+            cur_hash = h.pop('password_hash', None)
+            h['passwort_geaendert'] = prev_hash is not None and cur_hash != prev_hash
+            prev_hash = cur_hash
 
     mitglied = db.get_mitglied_by_user_id(user_id)
     mitglied_history = db.get_mitglied_history(mitglied.id) if mitglied else []
