@@ -313,18 +313,6 @@
                 <q-input v-model="createForm.vorname" label="Vorname *" outlined dense class="col" />
                 <q-input v-model="createForm.nachname" label="Nachname *" outlined dense class="col" />
               </div>
-              <q-input v-model="createForm.email" label="E-Mail (optional)" outlined dense type="email" />
-              <div v-if="!createForm.email" class="text-caption text-grey-6">
-                <q-icon name="info" size="xs" /> Ohne E-Mail: kein Login möglich, nur Mitglied-Datensatz
-              </div>
-              <div v-if="createForm.email" class="row items-center q-gutter-sm">
-                <q-toggle v-if="canAssignAdmin" class="self-center"
-                  :model-value="createForm.role === 'admin'"
-                  @update:model-value="v => createForm.role = v ? 'admin' : 'mitglied'"
-                  label="Administrator" />
-                <q-space />
-                <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
-              </div>
               <div class="row q-gutter-sm">
                 <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" />
                 <q-select v-model="createForm.geschlecht" :options="geschlechtOptions"
@@ -332,8 +320,10 @@
               </div>
               <q-select v-model="createForm.mitglied_status" :options="mitgliedStatusOptions"
                 label="Vereinsstatus" outlined dense emit-value map-options />
-              <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense
-                type="password" hint="Leer lassen → Login per Magic-Link" />
+              <div class="text-caption text-grey-6">
+                <q-icon name="info" size="xs" /> Es wird nur ein Mitglied-Datensatz angelegt – kein Benutzer/Login.
+                Kontaktdaten (E-Mail, Telefon) später über den Tab „Kontakte".
+              </div>
               <q-expansion-item label="Adresse" dense>
                 <div class="q-gutter-sm q-pt-sm">
                   <q-input v-model="createForm.strasse" label="Straße" outlined dense />
@@ -859,7 +849,12 @@ async function onCreate() {
     if (createTab.value === 'user') {
       delete payload.vorname; delete payload.nachname
     } else {
+      // Vereinsmitglied: nur Mitglied-Datensatz, kein Login/Benutzer – Login-Felder nicht senden
       delete payload.username
+      delete payload.email
+      delete payload.role
+      delete payload.active
+      delete payload.password
     }
     await api.post('/api/personen/', payload)
     $q.notify({ type: 'positive', message: 'Person angelegt' })
