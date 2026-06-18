@@ -16,10 +16,10 @@
 
       <q-tabs v-model="tab" dense align="left" class="q-px-md text-primary">
         <q-tab name="stammdaten" label="Stammdaten" icon="person" />
-        <q-tab v-if="!isNew" name="abteilungen" label="Abteilungen" icon="group" />
-        <q-tab v-if="!isNew" name="funktionen" label="Funktionen" icon="badge" />
-        <q-tab v-if="!isNew && personMode" name="kontakte" label="Kontakte" icon="contact_phone" />
-        <q-tab v-if="!isNew && personMode && canSeeTeams" name="mannschaften" label="Mannschaften" icon="groups" />
+        <q-tab v-if="!isNewLocal" name="abteilungen" label="Abteilungen" icon="group" />
+        <q-tab v-if="!isNewLocal" name="funktionen" label="Funktionen" icon="badge" />
+        <q-tab v-if="!isNewLocal && personMode" name="kontakte" label="Kontakte" icon="contact_phone" />
+        <q-tab v-if="!isNewLocal && personMode && canSeeTeams" name="mannschaften" label="Mannschaften" icon="groups" />
       </q-tabs>
       <q-separator />
 
@@ -374,6 +374,17 @@ const loading = ref(false)
 // Sammelt, ob in dieser Sitzung etwas geändert wurde – nur dann lohnt sich beim
 // Schließen ein 'saved' (damit der Aufrufer die Vorschau/Liste einmalig neu berechnet).
 const dirty = ref(false)
+// Lokale Kopie von props.isNew, damit wir nach dem ersten Speichern
+// die Zusatz-Tabs (Abteilungen, Funktionen, Kontakte, Mannschaften) aktivieren können.
+const isNewLocal = ref(props.isNew)
+// Lokale mitglied_id für Neuanlagen: nach dem ersten Speichern haben wir eine ID,
+// die wir für Abteilungen/Funktionen/Kontakte/Mannschaften benötigen.
+const localMitgliedId = ref(props.mitgliedId)
+
+// Hilfsfunktion: gibt die effektive mitglied_id zurück (lokal oder aus Props)
+function getMitgliedId() {
+  return localMitgliedId.value ?? props.mitgliedId
+}
 
 // ── Stammdaten ───────────────────────────────────────────────
 const statusOptions = ['aktiv', 'passiv', 'ausgetreten']
@@ -472,10 +483,12 @@ watch(() => props.modelValue, (open) => {
   tab.value = props.initialTab || 'stammdaten'
   dirty.value = false
   stammError.value = ''
+  isNewLocal.value = props.isNew
+  localMitgliedId.value = props.mitgliedId
   if (props.isNew) {
     // Neu-Anlage: nur Stammdaten, noch keine mitglied_id → nichts zu laden.
     form.value = emptyForm()
-  } else if (props.mitgliedId != null) {
+  } else if (getMitgliedId() != null) {
     loadAll()
   }
 })
@@ -485,14 +498,14 @@ async function loadAll() {
   stammError.value = ''
   try {
     const reqs = [
-      api.get(`/api/mitglieder/${props.mitgliedId}`),
+      api.get(`/api/mitglieder/${getMitgliedId()}`),
       api.get('/api/abteilungen/'),
-      api.get(`/api/mitglieder/${props.mitgliedId}/funktionen`),
+      api.get(`/api/mitglieder/${getMitgliedId()}/funktionen`),
       api.get('/api/funktionen'),
-      api.get(`/api/mitglieder/${props.mitgliedId}/abteilungen`),
+      api.get(`/api/mitglieder/${getMitgliedId()}/abteilungen`),
     ]
     if (props.personMode) {
-      reqs.push(api.get(`/api/mitglieder/${props.mitgliedId}/kontakte`))
+      reqs.push(api.get(`/api/mitglieder/${getMitgliedId()}/kontakte`))
     }
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
@@ -519,7 +532,7 @@ async function loadAll() {
 async function loadTeams() {
   try {
     const [{ data: teams }, { data: alle }] = await Promise.all([
-      api.get(`/api/mitglieder/${props.mitgliedId}/mannschaften`),
+      api.get(`/api/mitglieder/${getMitgliedId()}/mannschaften`),
       api.get('/api/mannschaften'),
     ])
     mitgliedTeams.value = teams
@@ -531,22 +544,22 @@ async function loadTeams() {
 }
 
 async function reloadZuordnungen() {
-  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/abteilungen`)
+  const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/abteilungen`)
   zuordnungen.value = data
 }
 
 async function reloadFunktionen() {
-  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/funktionen`)
+  const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/funktionen`)
   funktionen.value = data
 }
 
 async function reloadKontakte() {
-  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/kontakte`)
+  const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/kontakte`)
   kontakte.value = data
 }
 
 async function reloadTeams() {
-  const { data } = await api.get(`/api/mitglieder/${props.mitgliedId}/mannschaften`)
+  const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/mannschaften`)
   mitgliedTeams.value = data
 }
 
@@ -587,22 +600,28 @@ async function saveStammdaten() {
         abgerechnet_bis: form.value.abgerechnet_bis || null,
         expected_version: form.value.version ?? 1,
       }
+      let response
       if (props.isNew) {
-        await api.post(`/api/personen/${props.userId}/mitglied`, payload)
+        response = await api.post(`/api/personen/${props.userId}/mitglied`, payload)
       } else if (props.userId != null) {
-        await api.put(`/api/personen/${props.userId}/mitglied`, payload)
+        response = await api.put(`/api/personen/${props.userId}/mitglied`, payload)
       } else {
         // Mitglied ohne Login-Account → über mitglied_id
-        await api.put(`/api/personen/mitglied/${props.mitgliedId}`, payload)
+        response = await api.put(`/api/personen/mitglied/${getMitgliedId()}`, payload)
+      }
+      // Für Neuanlagen: mitglied_id aus der Antwort speichern
+      if (props.isNew && response?.data?.mitglied?.id) {
+        localMitgliedId.value = response.data.mitglied.id
       }
     } else {
-      await api.put(`/api/mitglieder/${props.mitgliedId}`, form.value)
+      await api.put(`/api/mitglieder/${getMitgliedId()}`, form.value)
     }
     dirty.value = true
     $q.notify({ type: 'positive', message: props.isNew ? 'Mitglied erfasst' : 'Stammdaten gespeichert' })
     if (props.isNew) {
-      // Mitglied existiert jetzt – Dialog schließen; zum Ergänzen erneut öffnen.
-      close()
+      // Mitglied existiert jetzt – Dialog bleibt offen, damit Zuordnungen/Kontakte
+      // direkt erfasst werden können (Ticket #43).
+      isNewLocal.value = false
     }
   } catch (e) {
     stammError.value = e.response?.data?.detail || 'Fehler beim Speichern'
@@ -629,14 +648,14 @@ async function saveZuordnung() {
   zuordnungSaving.value = true
   try {
     if (editingZuordnungId.value) {
-      await api.put(`/api/mitglieder/${props.mitgliedId}/abteilungen/${editingZuordnungId.value}`, {
+      await api.put(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}`, {
         status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
         bis: zuordnungForm.value.bis || null,
         expected_version: editingZuordnungVersion.value,
       })
     } else {
-      await api.post(`/api/mitglieder/${props.mitgliedId}/abteilungen`, {
+      await api.post(`/api/mitglieder/${getMitgliedId()}/abteilungen`, {
         abteilung_id: zuordnungForm.value.abteilung_id,
         status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
@@ -661,7 +680,7 @@ function deleteZuordnung(z) {
     cancel: true, persistent: true,
   }).onOk(async () => {
     try {
-      await api.delete(`/api/mitglieder/${props.mitgliedId}/abteilungen/${z.id}`)
+      await api.delete(`/api/mitglieder/${getMitgliedId()}/abteilungen/${z.id}`)
       dirty.value = true
       await reloadZuordnungen()
       $q.notify({ type: 'positive', message: 'Zuordnung entfernt' })
@@ -697,7 +716,7 @@ async function saveFunktion() {
   funktionSaving.value = true
   try {
     if (editingFunktionId.value) {
-      await api.put(`/api/mitglieder/${props.mitgliedId}/funktionen/${editingFunktionId.value}`, {
+      await api.put(`/api/mitglieder/${getMitgliedId()}/funktionen/${editingFunktionId.value}`, {
         funktion: funktionForm.value.funktion,
         abteilung_id: funktionForm.value.abteilung_id || null,
         von: funktionForm.value.von || null,
@@ -705,7 +724,7 @@ async function saveFunktion() {
         expected_version: editingFunktionVersion.value,
       })
     } else {
-      await api.post(`/api/mitglieder/${props.mitgliedId}/funktionen`, {
+      await api.post(`/api/mitglieder/${getMitgliedId()}/funktionen`, {
         funktion: funktionForm.value.funktion,
         abteilung_id: funktionForm.value.abteilung_id || null,
         von: funktionForm.value.von || null,
@@ -730,7 +749,7 @@ function deleteFunktion(f) {
     cancel: true, persistent: true,
   }).onOk(async () => {
     try {
-      await api.delete(`/api/mitglieder/${props.mitgliedId}/funktionen/${f.id}`)
+      await api.delete(`/api/mitglieder/${getMitgliedId()}/funktionen/${f.id}`)
       dirty.value = true
       await reloadFunktionen()
       $q.notify({ type: 'positive', message: 'Funktion entfernt' })
@@ -762,7 +781,7 @@ async function saveKontakt() {
   kontaktSaving.value = true
   try {
     if (editingKontaktId.value) {
-      await api.put(`/api/mitglieder/${props.mitgliedId}/kontakte/${editingKontaktId.value}`, {
+      await api.put(`/api/mitglieder/${getMitgliedId()}/kontakte/${editingKontaktId.value}`, {
         typ: kontaktForm.value.typ,
         wert: kontaktForm.value.wert.trim(),
         label: kontaktForm.value.label || null,
@@ -770,7 +789,7 @@ async function saveKontakt() {
         expected_version: editingKontaktVersion.value,
       })
     } else {
-      await api.post(`/api/mitglieder/${props.mitgliedId}/kontakte`, {
+      await api.post(`/api/mitglieder/${getMitgliedId()}/kontakte`, {
         typ: kontaktForm.value.typ,
         wert: kontaktForm.value.wert.trim(),
         label: kontaktForm.value.label || null,
@@ -790,7 +809,7 @@ async function saveKontakt() {
 
 async function setPrimaer(k) {
   try {
-    await api.put(`/api/mitglieder/${props.mitgliedId}/kontakte/${k.id}/primaer`)
+    await api.put(`/api/mitglieder/${getMitgliedId()}/kontakte/${k.id}/primaer`)
     dirty.value = true
     await reloadKontakte()
   } catch (e) {
@@ -805,7 +824,7 @@ function deleteKontakt(k) {
     cancel: true, persistent: true,
   }).onOk(async () => {
     try {
-      await api.delete(`/api/mitglieder/${props.mitgliedId}/kontakte/${k.id}`)
+      await api.delete(`/api/mitglieder/${getMitgliedId()}/kontakte/${k.id}`)
       dirty.value = true
       await reloadKontakte()
       $q.notify({ type: 'positive', message: 'Kontakt entfernt' })
@@ -852,7 +871,7 @@ async function saveTeam() {
       })
     } else {
       await api.post(`/api/mannschaften/${teamForm.value.mannschaft_id}/mitglieder`, {
-        mitglied_id: props.mitgliedId,
+        mitglied_id: getMitgliedId(),
         rolle: teamForm.value.rolle,
         von: teamForm.value.von || null,
         bis: teamForm.value.bis || null,
@@ -872,7 +891,7 @@ async function saveTeam() {
 function removeTeam(t) {
   $q.dialog({
     title: 'Aus Mannschaft entfernen',
-    message: `Aus „${t.mannschaft_name}" wirklich entfernen?`,
+    message: `Aus "${t.mannschaft_name}" wirklich entfernen?`,
     cancel: true, persistent: true,
   }).onOk(async () => {
     try {
