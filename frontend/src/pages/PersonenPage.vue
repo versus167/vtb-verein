@@ -1037,9 +1037,13 @@ const USER_DIFF_FIELDS = [
   { key: 'role',      label: 'Rolle' },
   { key: 'active',    label: 'Status', fmt: v => v ? 'aktiv' : 'inaktiv' },
 ]
+const GESCHLECHT_LABELS = { m: 'männlich', w: 'weiblich', d: 'divers' }
 const MITGLIED_DIFF_FIELDS = [
+  { key: 'mitgliedsnummer', label: 'Mitgliedsnummer' },
   { key: 'vorname',      label: 'Vorname' },
   { key: 'nachname',     label: 'Nachname' },
+  { key: 'geburtsdatum', label: 'Geburtsdatum' },
+  { key: 'geschlecht',   label: 'Geschlecht', fmt: v => v ? (GESCHLECHT_LABELS[v] ?? v) : '—' },
   { key: 'email',        label: 'Kontakt-E-Mail' },
   { key: 'telefon',      label: 'Telefon' },
   { key: 'strasse',      label: 'Straße' },
@@ -1047,10 +1051,13 @@ const MITGLIED_DIFF_FIELDS = [
   { key: 'ort',          label: 'Ort' },
   { key: 'land',         label: 'Land' },
   { key: 'status',       label: 'Vereinsstatus' },
+  { key: 'zahlungsart',  label: 'Zahlungsart' },
   { key: 'iban',         label: 'IBAN' },
+  { key: 'bic',          label: 'BIC' },
   { key: 'kontoinhaber', label: 'Kontoinhaber' },
   { key: 'eintrittsdatum', label: 'Eintrittsdatum' },
   { key: 'austrittsdatum', label: 'Austrittsdatum' },
+  { key: 'abgerechnet_bis', label: 'Abgerechnet bis' },
 ]
 
 function diffEntries(prev, curr, fields) {
@@ -1062,6 +1069,46 @@ function diffEntries(prev, curr, fields) {
       alt:  f.fmt ? f.fmt(prev[f.key]) : (prev[f.key] ?? '—'),
       neu:  f.fmt ? f.fmt(curr[f.key]) : (curr[f.key] ?? '—'),
     }))
+}
+
+const FUNKTION_DIFF_FIELDS = [
+  { key: 'funktion',       label: 'Funktion' },
+  { key: 'abteilung_name', label: 'Abteilung' },
+  { key: 'von',            label: 'Von' },
+  { key: 'bis',            label: 'Bis' },
+]
+const KONTAKT_DIFF_FIELDS = [
+  { key: 'typ',         label: 'Typ' },
+  { key: 'wert',        label: 'Wert' },
+  { key: 'label',       label: 'Bezeichnung' },
+  { key: 'ist_primaer', label: 'Primär', fmt: v => v ? 'ja' : 'nein' },
+]
+const MANNSCHAFT_DIFF_FIELDS = [
+  { key: 'rolle', label: 'Rolle' },
+  { key: 'von',   label: 'Von' },
+  { key: 'bis',   label: 'Bis' },
+]
+
+// Versionierte Zuordnungs-Historie (Funktion/Kontakt/Mannschaft): je Eintrag (id) die
+// Versionen gruppieren und in Timeline-Events (Hinzugefügt/Geändert/Entfernt + Diffs) wandeln.
+function versionedEvents(rows, fields, { icon, makeLabel, fullFn }) {
+  const byId = {}
+  for (const h of (rows ?? [])) (byId[h.id] ??= []).push(h)
+  const out = []
+  for (const versions of Object.values(byId)) {
+    versions.forEach((h, i) => {
+      const phase = h.deleted_at ? 'del' : h.version === 1 ? 'new' : 'chg'
+      out.push({
+        _zeit: h.updated_at, _by: h.updated_by,
+        _color: phase === 'del' ? 'negative' : phase === 'new' ? 'teal' : 'primary',
+        _icon: icon[phase],
+        _label: makeLabel(phase, h),
+        _diffs: diffEntries(versions[i - 1], h, fields),
+        _full: phase === 'new' && fullFn ? fullFn(h) : null,
+      })
+    })
+  }
+  return out
 }
 
 async function openHistoryDialog(row) {
@@ -1123,7 +1170,33 @@ async function openHistoryDialog(row) {
       })
     }
 
-    const all = [...userEvents, ...mitgliedEvents, ...abteilungEvents].sort((a, b) => {
+    const funktionEvents = versionedEvents(data.funktionen, FUNKTION_DIFF_FIELDS, {
+      icon: { del: 'badge', new: 'badge', chg: 'edit' },
+      makeLabel: (phase, h) => {
+        const name = h.abteilung_name ? `${h.funktion} (${h.abteilung_name})` : h.funktion
+        return phase === 'del' ? `Funktion entfernt: ${name}`
+          : phase === 'new' ? `Funktion hinzugefügt: ${name}` : `Funktion geändert: ${name}`
+      },
+      fullFn: h => ({ Abteilung: h.abteilung_name, Von: h.von, Bis: h.bis }),
+    })
+    const kontaktEvents = versionedEvents(data.kontakte, KONTAKT_DIFF_FIELDS, {
+      icon: { del: 'contact_phone', new: 'contact_phone', chg: 'edit' },
+      makeLabel: (phase, h) => {
+        const name = h.label ? `${h.typ} (${h.label})` : h.typ
+        return phase === 'del' ? `Kontakt entfernt: ${name}`
+          : phase === 'new' ? `Kontakt hinzugefügt: ${name}` : `Kontakt geändert: ${name}`
+      },
+      fullFn: h => ({ Wert: h.wert, Bezeichnung: h.label, Primär: h.ist_primaer ? 'ja' : '' }),
+    })
+    const mannschaftEvents = versionedEvents(data.mannschaften, MANNSCHAFT_DIFF_FIELDS, {
+      icon: { del: 'group_remove', new: 'group_add', chg: 'edit' },
+      makeLabel: (phase, h) => phase === 'del' ? `Mannschaft verlassen: ${h.mannschaft_name}`
+        : phase === 'new' ? `Mannschaft beigetreten: ${h.mannschaft_name}` : `Mannschaft geändert: ${h.mannschaft_name}`,
+      fullFn: h => ({ Rolle: h.rolle, Von: h.von, Bis: h.bis }),
+    })
+
+    const all = [...userEvents, ...mitgliedEvents, ...abteilungEvents,
+      ...funktionEvents, ...kontaktEvents, ...mannschaftEvents].sort((a, b) => {
       const ta = a._zeit ?? '', tb = b._zeit ?? ''
       return ta < tb ? -1 : ta > tb ? 1 : 0
     })

@@ -267,7 +267,7 @@ class MitgliedRepository(BaseRepository):
             cur.execute(
                 """
                 SELECT id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
-                       strasse, plz, ort, land, email, telefon,
+                       geschlecht, strasse, plz, ort, land, email, telefon,
                        eintrittsdatum, austrittsdatum, status,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                        user_id, created_at, created_by, updated_at, updated_by,

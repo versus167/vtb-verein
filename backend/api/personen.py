@@ -669,6 +669,59 @@ def _mitglied_abteilung_history(db, mitglied_id: int) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
 
 
+def _mitglied_funktion_history(db, mitglied_id: int) -> list[dict]:
+    """Versionierte Funktionen eines Mitglieds für die Historie."""
+    with db.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT mfh.id, mfh.version, mfh.funktion, mfh.abteilung_id,
+                   a.name AS abteilung_name, mfh.von, mfh.bis,
+                   mfh.updated_at, mfh.updated_by, mfh.deleted_at, mfh.deleted_by
+            FROM mitglied_funktion_history mfh
+            LEFT JOIN abteilung a ON a.id = mfh.abteilung_id
+            WHERE mfh.mitglied_id = %s
+            ORDER BY mfh.id, mfh.version ASC
+            """,
+            (mitglied_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _mitglied_kontakt_history(db, mitglied_id: int) -> list[dict]:
+    """Versionierte Kontakte eines Mitglieds für die Historie."""
+    with db.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, version, typ, wert, label, ist_primaer,
+                   updated_at, updated_by, deleted_at, deleted_by
+            FROM mitglied_kontakt_history
+            WHERE mitglied_id = %s
+            ORDER BY id, version ASC
+            """,
+            (mitglied_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _mitglied_mannschaft_history(db, mitglied_id: int) -> list[dict]:
+    """Versionierte Mannschafts-Zugehörigkeiten eines Mitglieds für die Historie."""
+    with db.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT mmh.id, mmh.version, mmh.mannschaft_id,
+                   COALESCE(m.name, mmh.mannschaft_id::text) AS mannschaft_name,
+                   mmh.rolle, mmh.von, mmh.bis,
+                   mmh.updated_at, mmh.updated_by, mmh.deleted_at, mmh.deleted_by
+            FROM mitglied_mannschaft_history mmh
+            LEFT JOIN mannschaft m ON m.id = mmh.mannschaft_id
+            WHERE mmh.mitglied_id = %s
+            ORDER BY mmh.id, mmh.version ASC
+            """,
+            (mitglied_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 @router.get("/{user_id}/history")
 def get_person_history(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -691,7 +744,15 @@ def get_person_history(user_id: int, user: CurrentUser, db: DB):
     mitglied_history = db.get_mitglied_history(mitglied.id) if mitglied else []
     abteilung_history = _mitglied_abteilung_history(db, mitglied.id) if mitglied else []
 
-    return {'user': user_history, 'mitglied': mitglied_history, 'abteilungen': abteilung_history}
+    mid = mitglied.id if mitglied else None
+    return {
+        'user': user_history,
+        'mitglied': mitglied_history,
+        'abteilungen': abteilung_history,
+        'funktionen': _mitglied_funktion_history(db, mid) if mid else [],
+        'kontakte': _mitglied_kontakt_history(db, mid) if mid else [],
+        'mannschaften': _mitglied_mannschaft_history(db, mid) if mid else [],
+    }
 
 
 @router.get("/mitglied/{mitglied_id}/history")
@@ -712,6 +773,9 @@ def get_mitglied_history_direkt(mitglied_id: int, user: CurrentUser, db: DB):
         'user': [],
         'mitglied': db.get_mitglied_history(mitglied_id),
         'abteilungen': _mitglied_abteilung_history(db, mitglied_id),
+        'funktionen': _mitglied_funktion_history(db, mitglied_id),
+        'kontakte': _mitglied_kontakt_history(db, mitglied_id),
+        'mannschaften': _mitglied_mannschaft_history(db, mitglied_id),
     }
 
 
