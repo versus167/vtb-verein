@@ -450,6 +450,10 @@ class ZaehlungWrite(BaseModel):
     stueckelung: dict[str, int] = {}        # {"5000": 2, ...} Cent-Wert (String) → Anzahl
     notiz: Optional[str] = None
     ausloesende_buchung_id: Optional[int] = None
+    # Kategorie-getriebene Zählung (Ticket #38): die Zählung IST die Buchung dieser Kategorie
+    # (Betrag = Zählung − Altbestand). Buchungstext ist der Text der erzeugten Buchung.
+    kategorie: Optional[str] = None
+    buchungstext: Optional[str] = None
 
 
 def _zaehlung_dict(z, belegnummer: Optional[str] = None) -> dict:
@@ -497,6 +501,8 @@ def create_zaehlung(kasse_id: int, data: ZaehlungWrite, user: CurrentUser, db: D
             stueckelung=data.stueckelung,
             notiz=data.notiz,
             ausloesende_buchung_id=data.ausloesende_buchung_id,
+            kategorie=data.kategorie,
+            buchungstext=data.buchungstext,
             created_by=user.username,
             user_id=user.id,
             is_admin=_kassen_admin(user),

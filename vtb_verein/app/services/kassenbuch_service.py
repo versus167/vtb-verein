@@ -608,18 +608,29 @@ class KassenbuchService:
         created_by: str,
         notiz: str | None = None,
         ausloesende_buchung_id: int | None = None,
+        kategorie: str | None = None,
+        buchungstext: str | None = None,
         user_id: int = None,
         is_admin: bool = False,
     ) -> KassenZaehlung:
         """Erfasst eine Kassenzählung: legt die Zähl-/Differenzbuchung an, speichert das
         Protokoll und hängt das Zählprotokoll-PDF an die Buchung.
 
-        Die Differenz (Ist − Soll) wird immer verbucht – unter der auslösenden Kategorie
-        (falls über eine Kategorie ausgelöst) sonst unter „Kassendifferenz". Bei Differenz 0
-        entsteht eine 0-€-Buchung als Träger des Protokolls. `soll_cent` wird eingefroren.
+        Die Differenz (Ist − Soll, mit Soll = aktueller Buchbestand = „Altbestand") wird
+        immer verbucht; `soll_cent` wird dabei eingefroren. Die Kategorie der Buchung ergibt
+        sich nach Priorität:
+
+        - `kategorie` gesetzt (Ticket #38, kategorie-getriebene Zählung): die Zählung *ist*
+          die Buchung dieser Kategorie (z. B. Imbiss-Tageseinnahmen = Zählung − Altbestand).
+          Die Kategorie muss zu den Stammdaten der Kasse gehören (wird validiert);
+          `buchungstext` ist der Text der Buchung.
+        - sonst `ausloesende_buchung_id` gesetzt: deren Kategorie (Kategorie-Trigger).
+        - sonst: System-Kategorie „Kassendifferenz" (reiner Kassensturz/Abgleich).
+
+        Bei Differenz 0 entsteht eine 0-€-Buchung als Träger des Protokolls.
 
         Raises:
-            KeinSchreibzugriffError, ZaehlungUngueltigError.
+            KeinSchreibzugriffError, ZaehlungUngueltigError, KategorieUngueltigError.
         """
         if self._zaehlung is None:
             raise RuntimeError("Zählungs-Repository nicht konfiguriert.")
@@ -630,22 +641,28 @@ class KassenbuchService:
         soll_cent = self._kasse.get_bestand_cent(kasse_id)
         differenz_cent = ist_cent - soll_cent
 
-        # Kategorie der Differenzbuchung bestimmen: auslösende Kategorie sonst System-Kategorie.
-        kategorie = KASSENDIFFERENZ_KATEGORIE
-        if ausloesende_buchung_id is not None:
+        # Kategorie + Buchungstext der Zähl-Buchung bestimmen (Priorität siehe Docstring).
+        text = (buchungstext or "").strip() or "Kassenzählung"
+        if kategorie is not None:
+            # Kategorie-getrieben: Membership gegen die Stammdaten prüfen (vor jeder Buchung,
+            # damit bei ungültiger Kategorie nichts angelegt wird).
+            self._validate_kategorie(kasse_id, kategorie)
+            buchung_kategorie = kategorie
+        elif ausloesende_buchung_id is not None:
             ausloeser = self._buchung.get_kassenbuchung(ausloesende_buchung_id)
             if ausloeser.kasse_id != kasse_id:
                 raise ValueError("Auslösende Buchung gehört nicht zu dieser Kasse.")
-            if ausloeser.kategorie:
-                kategorie = ausloeser.kategorie
+            buchung_kategorie = ausloeser.kategorie or KASSENDIFFERENZ_KATEGORIE
+        else:
+            buchung_kategorie = KASSENDIFFERENZ_KATEGORIE
 
-        # Zähl-/Differenzbuchung anlegen (Systembuchung → Kategorie-Validierung umgehen).
-        # Schreibzugriff ist oben bereits geprüft → kein erneuter user_id-Check nötig.
+        # Zähl-/Differenzbuchung anlegen (Kategorie oben bereits validiert bzw. Systemkategorie
+        # → create_buchung soll nicht erneut prüfen). Schreibzugriff ist oben geprüft.
         buchung = Kassenbuchung(
             kasse_id=kasse_id,
             buchungsdatum=date.today().isoformat(),
-            buchungstext="Kassenzählung",
-            kategorie=kategorie,
+            buchungstext=text,
+            kategorie=buchung_kategorie,
             einnahme_cent=differenz_cent if differenz_cent > 0 else 0,
             ausgabe_cent=-differenz_cent if differenz_cent < 0 else 0,
             notiz=notiz,

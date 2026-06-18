@@ -166,3 +166,43 @@ class TestErstelleZaehlung:
             svc.erstelle_zaehlung(1, {"999": 1}, created_by="vsuess")
         assert svc._buchung.created == []
         assert svc._zaehlung.created == []
+
+
+class TestKategorieGetriebeneZaehlung:
+    """Ticket #38: Wählt man eine „mit Zählung"-Kategorie, IST die Zählung die Buchung
+    dieser Kategorie – Betrag = Zählung (Ist) − Altbestand (Soll)."""
+
+    def test_zaehlung_bucht_unter_gewaehlter_kategorie(self):
+        svc = _service(bestand_cent=10000, kategorie_repo=FakeKategorieRepo())  # Altbestand 100 €
+        z = svc.erstelle_zaehlung(
+            1, {"5000": 3}, created_by="vsuess",          # Ist 150 €
+            kategorie="Spende", buchungstext="Imbiss Tageseinnahmen",
+        )
+        assert z.ist_cent == 15000
+        assert z.soll_cent == 10000           # Altbestand eingefroren
+        assert z.differenz_cent == 5000       # = Tageseinnahmen
+        b = svc._buchung.created[0]
+        assert b.kategorie == "Spende"
+        assert b.buchungstext == "Imbiss Tageseinnahmen"
+        assert b.einnahme_cent == 5000 and b.ausgabe_cent == 0
+
+    def test_negative_differenz_wird_ausgabe(self):
+        svc = _service(bestand_cent=15000, kategorie_repo=FakeKategorieRepo())  # Altbestand 150 €
+        z = svc.erstelle_zaehlung(
+            1, {"5000": 2}, created_by="vsuess",          # Ist 100 €
+            kategorie="Spende", buchungstext="Korrektur",
+        )
+        assert z.differenz_cent == -5000
+        b = svc._buchung.created[0]
+        assert b.ausgabe_cent == 5000 and b.einnahme_cent == 0
+
+    def test_unzulaessige_kategorie_wirft_und_legt_nichts_an(self):
+        svc = _service(bestand_cent=10000, kategorie_repo=FakeKategorieRepo())
+        with pytest.raises(KategorieUngueltigError):
+            svc.erstelle_zaehlung(
+                1, {"5000": 3}, created_by="vsuess",
+                kategorie="Imbiss",            # nicht in der erlaubten Auswahl (nur „Spende")
+                buchungstext="x",
+            )
+        assert svc._buchung.created == []
+        assert svc._zaehlung.created == []
