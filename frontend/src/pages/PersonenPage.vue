@@ -856,10 +856,16 @@ async function onCreate() {
       delete payload.active
       delete payload.password
     }
-    await api.post('/api/personen/', payload)
+    const { data } = await api.post('/api/personen/', payload)
     $q.notify({ type: 'positive', message: 'Person angelegt' })
     createOpen.value = false
     await loadPersonen()
+    // Ticket #43: nach der Grundanlage eines Vereinsmitglieds direkt in den erweiterten
+    // Dialog wechseln, damit Abteilungen/Funktionen/Kontakte/Mannschaften sofort erfasst
+    // werden können (nur wenn ein Mitglied-Datensatz entstanden ist – nicht beim User-Tab).
+    if (data?.mitglied?.id) {
+      openMitgliedDialog(data, 'stammdaten')
+    }
   } catch (e) {
     createError.value = e.response?.data?.detail || 'Fehler beim Anlegen'
   } finally {
