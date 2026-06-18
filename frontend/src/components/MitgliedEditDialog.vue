@@ -8,7 +8,7 @@
     <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:560px;max-width:720px'">
       <q-card-section class="row items-center q-pb-none">
         <div class="text-h6 col">
-          {{ isNew ? 'Als Vereinsmitglied erfassen' : 'Mitglied bearbeiten' }}
+          {{ isNewLocal ? 'Als Vereinsmitglied erfassen' : 'Mitglied bearbeiten' }}
           <span v-if="mitgliedName" class="text-weight-regular">– {{ mitgliedName }}</span>
         </div>
         <q-btn flat dense round icon="close" @click="close" />
@@ -73,7 +73,7 @@
             </q-expansion-item>
             <div v-if="stammError" class="text-negative text-caption">{{ stammError }}</div>
             <div v-if="canWrite" class="row justify-end">
-              <q-btn :label="isNew ? 'Erfassen' : 'Stammdaten speichern'" color="primary" unelevated
+              <q-btn :label="isNewLocal ? 'Erfassen' : 'Stammdaten speichern'" color="primary" unelevated
                 :loading="savingStamm" @click="saveStammdaten" />
             </div>
           </q-tab-panel>
@@ -601,7 +601,7 @@ async function saveStammdaten() {
         expected_version: form.value.version ?? 1,
       }
       let response
-      if (props.isNew) {
+      if (isNewLocal.value) {
         response = await api.post(`/api/personen/${props.userId}/mitglied`, payload)
       } else if (props.userId != null) {
         response = await api.put(`/api/personen/${props.userId}/mitglied`, payload)
@@ -610,18 +610,22 @@ async function saveStammdaten() {
         response = await api.put(`/api/personen/mitglied/${getMitgliedId()}`, payload)
       }
       // Für Neuanlagen: mitglied_id aus der Antwort speichern
-      if (props.isNew && response?.data?.mitglied?.id) {
+      if (isNewLocal.value && response?.data?.mitglied?.id) {
         localMitgliedId.value = response.data.mitglied.id
       }
     } else {
       await api.put(`/api/mitglieder/${getMitgliedId()}`, form.value)
     }
     dirty.value = true
-    $q.notify({ type: 'positive', message: props.isNew ? 'Mitglied erfasst' : 'Stammdaten gespeichert' })
-    if (props.isNew) {
+    const wasNew = isNewLocal.value
+    $q.notify({ type: 'positive', message: wasNew ? 'Mitglied erfasst' : 'Stammdaten gespeichert' })
+    if (wasNew) {
       // Mitglied existiert jetzt – Dialog bleibt offen, damit Zuordnungen/Kontakte
-      // direkt erfasst werden können (Ticket #43).
+      // direkt erfasst werden können (Ticket #43). Zusatz-Tabs aktivieren und die
+      // Kataloge/Listen (Abteilungen, Funktionen, Kontakte, Mannschaften) nachladen,
+      // sonst sind die Auswahllisten leer und der Datensatz hätte keine version.
       isNewLocal.value = false
+      await loadAll()
     }
   } catch (e) {
     stammError.value = e.response?.data?.detail || 'Fehler beim Speichern'
@@ -891,7 +895,7 @@ async function saveTeam() {
 function removeTeam(t) {
   $q.dialog({
     title: 'Aus Mannschaft entfernen',
-    message: `Aus "${t.mannschaft_name}" wirklich entfernen?`,
+    message: `Aus „${t.mannschaft_name}" wirklich entfernen?`,
     cancel: true, persistent: true,
   }).onOk(async () => {
     try {
