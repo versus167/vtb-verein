@@ -386,7 +386,7 @@ class TicketRepository:
     def list_teilnehmer(self, ticket_id: int) -> list[TicketTeilnehmer]:
         cursor = self.conn.execute(
             "SELECT ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am "
-            "FROM ticket_teilnehmer WHERE ticket_id = %s",
+            "FROM ticket_teilnehmer WHERE ticket_id = %s AND deleted_at IS NULL",
             (ticket_id,)
         )
         return [
@@ -397,21 +397,27 @@ class TicketRepository:
             for row in cursor.fetchall()
         ]
 
-    def add_teilnehmer(self, ticket_id: int, user_id: int, hinzugefuegt_von: int) -> bool:
+    def add_teilnehmer(self, ticket_id: int, user_id: int, hinzugefuegt_von: int, by: str) -> bool:
         try:
             self.conn.execute(
-                "INSERT INTO ticket_teilnehmer (ticket_id, user_id, hinzugefuegt_von) VALUES (%s, %s, %s)",
-                (ticket_id, user_id, hinzugefuegt_von)
+                "INSERT INTO ticket_teilnehmer "
+                "(ticket_id, user_id, hinzugefuegt_von, created_by, updated_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (ticket_id, user_id, hinzugefuegt_von, by, by)
             )
             self.conn.commit()
             return True
         except Exception:
+            self.conn.rollback()
             return False
 
-    def remove_teilnehmer(self, ticket_id: int, user_id: int) -> bool:
+    def remove_teilnehmer(self, ticket_id: int, user_id: int, by: str) -> bool:
         cursor = self.conn.execute(
-            "DELETE FROM ticket_teilnehmer WHERE ticket_id = %s AND user_id = %s",
-            (ticket_id, user_id)
+            "UPDATE ticket_teilnehmer "
+            "SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+            "    updated_at = CURRENT_TIMESTAMP, updated_by = %s, version = version + 1 "
+            "WHERE ticket_id = %s AND user_id = %s AND deleted_at IS NULL",
+            (by, by, ticket_id, user_id)
         )
         self.conn.commit()
         return cursor.rowcount > 0

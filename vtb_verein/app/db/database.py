@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 
 
 class Database:
@@ -105,6 +105,7 @@ class Database:
             41: self._migrate_v40_to_v41,
             42: self._migrate_v41_to_v42,
             43: self._migrate_v42_to_v43,
+            44: self._migrate_v43_to_v44,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2025,6 +2026,121 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_kassen_zaehlungen_history_id ON kassen_zaehlungen_history(id)")
             cur.execute("UPDATE schema_version SET version = 43 WHERE id = 1")
 
+    def _migrate_v43_to_v44(self) -> None:
+        """Audit/History für ticket_teilnehmer (TODO „nicht versionierte Tabellen").
+
+        ticket_teilnehmer war ein reines Join-Table mit Hard-Delete. Umstellung auf das
+        Standard-Muster (analog ticket_bereich_berechtigungen): Surrogat-`id` + `version`
+        + Soft-Delete + Audit-Trigger. Aktive Teilnahme bleibt eindeutig über einen
+        partiellen Unique-Index; nach Soft-Delete ist erneutes Hinzufügen möglich.
+
+        Bestehende Zeilen werden mit created_*/updated_* befüllt (created_by = Username
+        zu hinzugefuegt_von) und als v1 in die History übernommen.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS id SERIAL")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS created_at TEXT")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS created_by TEXT")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS updated_at TEXT")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS updated_by TEXT")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS deleted_at TEXT")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD COLUMN IF NOT EXISTS deleted_by TEXT")
+            # Audit-Felder aus den vorhandenen Hinzufügungs-Daten backfillen.
+            cur.execute("""
+                UPDATE ticket_teilnehmer t
+                SET created_at = COALESCE(t.created_at, t.hinzugefuegt_am),
+                    updated_at = COALESCE(t.updated_at, t.hinzugefuegt_am),
+                    created_by = COALESCE(t.created_by,
+                                          (SELECT u.username FROM users u WHERE u.id = t.hinzugefuegt_von),
+                                          'SYSTEM'),
+                    updated_by = COALESCE(t.updated_by,
+                                          (SELECT u.username FROM users u WHERE u.id = t.hinzugefuegt_von),
+                                          'SYSTEM')
+            """)
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN created_at SET NOT NULL")
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN updated_at SET NOT NULL")
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN created_by SET NOT NULL")
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN updated_by SET NOT NULL")
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP")
+            cur.execute("ALTER TABLE ticket_teilnehmer ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP")
+            # PK von (ticket_id, user_id) auf die Surrogat-id umstellen.
+            cur.execute("ALTER TABLE ticket_teilnehmer DROP CONSTRAINT IF EXISTS ticket_teilnehmer_pkey")
+            cur.execute("ALTER TABLE ticket_teilnehmer ADD PRIMARY KEY (id)")
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uix_ticket_teilnehmer_active
+                ON ticket_teilnehmer (ticket_id, user_id) WHERE deleted_at IS NULL
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_teilnehmer_history (
+                  id               INTEGER NOT NULL,
+                  version          INTEGER NOT NULL,
+                  ticket_id        INTEGER,
+                  user_id          INTEGER,
+                  hinzugefuegt_von INTEGER,
+                  hinzugefuegt_am  TEXT,
+                  created_at       TEXT,
+                  created_by       TEXT,
+                  updated_at       TEXT,
+                  updated_by       TEXT,
+                  deleted_at       TEXT,
+                  deleted_by       TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_ticket_teilnehmer_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO ticket_teilnehmer_history (
+                        id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.ticket_id, NEW.user_id, NEW.hinzugefuegt_von, NEW.hinzugefuegt_am,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_ticket_teilnehmer_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO ticket_teilnehmer_history (
+                            id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.ticket_id, NEW.user_id, NEW.hinzugefuegt_von, NEW.hinzugefuegt_am,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_ticket_teilnehmer_audit_insert
+                AFTER INSERT ON ticket_teilnehmer
+                FOR EACH ROW EXECUTE FUNCTION fn_ticket_teilnehmer_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_ticket_teilnehmer_audit_update
+                AFTER UPDATE ON ticket_teilnehmer
+                FOR EACH ROW EXECUTE FUNCTION fn_ticket_teilnehmer_audit_update();
+            """)
+            # Bestehende Zeilen als v1 in die History übernehmen (Trigger feuern nur auf neue Writes).
+            cur.execute("""
+                INSERT INTO ticket_teilnehmer_history (
+                    id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                )
+                SELECT id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                       created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                FROM ticket_teilnehmer
+                ON CONFLICT (id, version) DO NOTHING
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_teilnehmer_deleted_at ON ticket_teilnehmer(deleted_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_teilnehmer_history_id ON ticket_teilnehmer_history(id)")
+            cur.execute("UPDATE schema_version SET version = 44 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2875,11 +2991,40 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
+              id               SERIAL PRIMARY KEY,
               ticket_id        INTEGER NOT NULL REFERENCES tickets(id),
               user_id          INTEGER NOT NULL REFERENCES users(id),
               hinzugefuegt_von INTEGER NOT NULL REFERENCES users(id),
               hinzugefuegt_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              PRIMARY KEY (ticket_id, user_id)
+              version          INTEGER NOT NULL DEFAULT 1,
+              created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by       TEXT NOT NULL,
+              updated_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_by       TEXT NOT NULL,
+              deleted_at       TEXT,
+              deleted_by       TEXT
+            )
+        """)
+        # Aktive Teilnahme eindeutig; nach Soft-Delete ist erneutes Hinzufügen möglich.
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uix_ticket_teilnehmer_active
+            ON ticket_teilnehmer (ticket_id, user_id) WHERE deleted_at IS NULL
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_teilnehmer_history (
+              id               INTEGER NOT NULL,
+              version          INTEGER NOT NULL,
+              ticket_id        INTEGER,
+              user_id          INTEGER,
+              hinzugefuegt_von INTEGER,
+              hinzugefuegt_am  TEXT,
+              created_at       TEXT,
+              created_by       TEXT,
+              updated_at       TEXT,
+              updated_by       TEXT,
+              deleted_at       TEXT,
+              deleted_by       TEXT,
+              PRIMARY KEY (id, version)
             )
         """)
         cur.execute("""
@@ -3873,6 +4018,35 @@ class Database:
         """)
 
         cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_ticket_teilnehmer_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                INSERT INTO ticket_teilnehmer_history (
+                    id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                ) VALUES (
+                    NEW.id, NEW.version, NEW.ticket_id, NEW.user_id, NEW.hinzugefuegt_von, NEW.hinzugefuegt_am,
+                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                );
+                RETURN NEW;
+            END; $$;
+        """)
+        cur.execute("""
+            CREATE OR REPLACE FUNCTION fn_ticket_teilnehmer_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.version != OLD.version THEN
+                    INSERT INTO ticket_teilnehmer_history (
+                        id, version, ticket_id, user_id, hinzugefuegt_von, hinzugefuegt_am,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.ticket_id, NEW.user_id, NEW.hinzugefuegt_von, NEW.hinzugefuegt_am,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                END IF;
+                RETURN NEW;
+            END; $$;
+        """)
+
+        cur.execute("""
             CREATE OR REPLACE FUNCTION fn_mitglied_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO mitglied_funktion_history (
@@ -4064,6 +4238,8 @@ class Database:
             ('trig_ticket_kommentare_audit_update',                 'UPDATE', 'ticket_kommentare',                 'fn_ticket_kommentare_audit_update'),
             ('trig_ticket_bereich_berechtigungen_audit_insert',     'INSERT', 'ticket_bereich_berechtigungen',     'fn_ticket_bereich_berechtigungen_audit_insert'),
             ('trig_ticket_bereich_berechtigungen_audit_update',     'UPDATE', 'ticket_bereich_berechtigungen',     'fn_ticket_bereich_berechtigungen_audit_update'),
+            ('trig_ticket_teilnehmer_audit_insert',                 'INSERT', 'ticket_teilnehmer',                 'fn_ticket_teilnehmer_audit_insert'),
+            ('trig_ticket_teilnehmer_audit_update',                 'UPDATE', 'ticket_teilnehmer',                 'fn_ticket_teilnehmer_audit_update'),
             ('trig_beitragsregel_audit_insert',                     'INSERT', 'beitragsregel',                     'fn_beitragsregel_audit_insert'),
             ('trig_beitragsregel_audit_update',                     'UPDATE', 'beitragsregel',                     'fn_beitragsregel_audit_update'),
             ('trig_beitrag_sollstellung_audit_insert',              'INSERT', 'beitrag_sollstellung',              'fn_beitrag_sollstellung_audit_insert'),

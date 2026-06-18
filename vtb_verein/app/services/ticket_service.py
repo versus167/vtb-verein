@@ -288,11 +288,11 @@ class TicketService:
     def get_teilnehmer(self, ticket_id: int) -> list[TicketTeilnehmer]:
         return self._teilnehmer_repo.list_by_ticket(ticket_id)
 
-    def add_teilnehmer(self, ticket_id: int, member_id: int, added_by: int) -> bool:
-        return self._teilnehmer_repo.add(ticket_id, member_id, added_by)
+    def add_teilnehmer(self, ticket_id: int, member_id: int, added_by: int, by: str) -> bool:
+        return self._teilnehmer_repo.add(ticket_id, member_id, added_by, by)
 
-    def remove_teilnehmer(self, ticket_id: int, member_id: int) -> bool:
-        return self._teilnehmer_repo.remove(ticket_id, member_id)
+    def remove_teilnehmer(self, ticket_id: int, member_id: int, by: str) -> bool:
+        return self._teilnehmer_repo.remove(ticket_id, member_id, by)
 
     # -----------------------------------
     # Bereiche & Kategorien
