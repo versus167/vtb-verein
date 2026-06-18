@@ -106,10 +106,15 @@ Offen:
       (Stammdaten + Abteilungen + Funktionen, eingebunden in die Abrechnungsvorschau)
       auch in `PersonenPage.vue` und `MitgliederPage.vue` nutzen, damit die
       Mitglieds-Bearbeitung eine Single-Source ist (aktuell dort dupliziert)
-- [ ] **Beitragslogik: CURRENT_DATE statt Stichtag** – `beitrags_service.py`
-      wertet Funktions-Bedingungen mit `CURRENT_DATE` statt dem Abrechnungs-
-      Stichtag aus; bei rückwirkender Abrechnung zählen aktuelle statt
-      historischer Funktionen
+- [x] **Beitragslogik: Funktions-/Ausnahme-Bedingungen zeitraumgenau** – früher
+      werteten die Funktions-/Ausnahme-Bedingungen `CURRENT_DATE` statt des Abrechnungs-
+      Stichtags aus (bei rückwirkender Abrechnung zählten *aktuelle* statt *historischer*
+      Funktionen). Jetzt gehen die Funktions-/Ausnahme-Intervalle in die **anteilige
+      Monatsberechnung** ein: Einschluss schränkt die abgerechneten Monate ein
+      (Schnittmenge), Ausnahme zieht Monate ab – „angefangener Monat zählt voll",
+      konsistent zu Mitgliedschaften/Alter (am Stichtag). Reine Logik in
+      `funktions_monats_restriktion` (unit-getestet); der frühere SQL-`EXISTS`/
+      `CURRENT_DATE`-Filter in `_betroffene_mitglieder` entfällt.
 - [ ] **mitglied_funktion.funktion → funktion_id umstellen** – echter FK statt
       String-Key (FK auf partiellen Unique-Index nicht möglich); betrifft
       Repository, API, Frontend und Beitragsregeln (`bedingung_funktionen`);
