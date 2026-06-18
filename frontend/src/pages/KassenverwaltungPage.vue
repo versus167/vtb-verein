@@ -81,7 +81,7 @@
           <template #body-cell-zaehlung="props">
             <q-td :props="props">
               <q-icon v-if="props.row.loest_zaehlung_aus" name="pin" color="primary" size="20px">
-                <q-tooltip>Buchung mit dieser Kategorie fordert eine Kassenzählung an</q-tooltip>
+                <q-tooltip>Betrag per Kassenzählung (Zählung − Altbestand)</q-tooltip>
               </q-icon>
               <span v-else class="text-grey-5">–</span>
             </q-td>
@@ -120,11 +120,12 @@
           />
           <q-toggle
             v-model="kategorieForm.loest_zaehlung_aus"
-            label="Zählung anfordern"
+            label="Betrag per Zählung"
             color="primary"
           />
           <div class="text-caption text-grey-7 q-pl-sm" style="margin-top: -8px">
-            Nach dem Speichern einer Buchung mit dieser Kategorie wird zum Zählen der Kasse aufgefordert.
+            Statt eines Betrags wird im Buchungsdialog die Kasse gezählt; gebucht wird
+            Zählung − Altbestand (z. B. Imbiss-Tageseinnahmen).
           </div>
         </q-card-section>
         <q-separator />

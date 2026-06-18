@@ -263,11 +263,12 @@
     >
       <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 460px'">
         <q-card-section class="text-h6">
-          {{ editingBuchungId ? 'Buchung bearbeiten' : (buchungTyp === 'einnahme' ? 'Neue Einnahme' : 'Neue Ausgabe') }}
+          {{ editingBuchungId ? 'Buchung bearbeiten' : (zaehlModus ? 'Kassenzählung buchen' : (buchungTyp === 'einnahme' ? 'Neue Einnahme' : 'Neue Ausgabe')) }}
         </q-card-section>
         <q-separator />
         <q-card-section class="q-gutter-sm">
           <q-input
+            v-if="!zaehlModus"
             v-model="buchungForm.buchungsdatum"
             type="date"
             label="Datum *"
@@ -285,30 +286,78 @@
             options-dense
           />
           <q-input v-else v-model="buchungForm.kategorie" label="Kategorie" outlined />
-          <q-btn-toggle
-            v-model="buchungTyp"
-            :options="[{ label: 'Einnahme', value: 'einnahme' }, { label: 'Ausgabe', value: 'ausgabe' }]"
-            unelevated
-            spread
-            :toggle-color="buchungTyp === 'einnahme' ? 'positive' : 'negative'"
-          />
-          <q-input
-            v-model.number="buchungBetragEuro"
-            :label="buchungTyp === 'einnahme' ? 'Einnahme (€)' : 'Ausgabe (€)'"
-            outlined
-            type="number"
-            step="0.01"
-            min="0"
-            inputmode="decimal"
-          />
+          <!-- Normaler Betrag (Einnahme/Ausgabe) – für Nicht-Zähl-Kategorien -->
+          <template v-if="!zaehlModus">
+            <q-btn-toggle
+              v-model="buchungTyp"
+              :options="[{ label: 'Einnahme', value: 'einnahme' }, { label: 'Ausgabe', value: 'ausgabe' }]"
+              unelevated
+              spread
+              :toggle-color="buchungTyp === 'einnahme' ? 'positive' : 'negative'"
+            />
+            <q-input
+              v-model.number="buchungBetragEuro"
+              :label="buchungTyp === 'einnahme' ? 'Einnahme (€)' : 'Ausgabe (€)'"
+              outlined
+              type="number"
+              step="0.01"
+              min="0"
+              inputmode="decimal"
+            />
+          </template>
+
+          <!-- Zähl-Modus: Stückelung ersetzt den Betrag (Ticket #38) -->
+          <template v-else>
+            <div class="text-subtitle2 q-mt-xs">Bargeld zählen</div>
+            <div class="row q-col-gutter-md">
+              <div class="col-12 col-sm-6">
+                <div class="text-caption text-grey q-mb-xs">Scheine</div>
+                <div v-for="w in scheineWerte" :key="w" class="row items-center q-mb-xs no-wrap">
+                  <div class="text-right q-pr-sm" style="width: 60px">{{ stueckLabel(w) }}</div>
+                  <q-input v-model.number="buchungZaehlAnzahl[w]" type="number" min="0" dense outlined
+                           style="width: 84px" input-class="text-right" />
+                  <div class="text-right text-grey q-pl-sm col">{{ formatEuro((buchungZaehlAnzahl[w] || 0) * w) }}</div>
+                </div>
+              </div>
+              <div class="col-12 col-sm-6">
+                <div class="text-caption text-grey q-mb-xs">Münzen</div>
+                <div v-for="w in muenzenWerte" :key="w" class="row items-center q-mb-xs no-wrap">
+                  <div class="text-right q-pr-sm" style="width: 60px">{{ stueckLabel(w) }}</div>
+                  <q-input v-model.number="buchungZaehlAnzahl[w]" type="number" min="0" dense outlined
+                           style="width: 84px" input-class="text-right" />
+                  <div class="text-right text-grey q-pl-sm col">{{ formatEuro((buchungZaehlAnzahl[w] || 0) * w) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <q-separator class="q-my-sm" />
+
+            <div class="row items-center q-mb-xs">
+              <div class="col text-subtitle1">Gezählt (Ist)</div>
+              <div class="text-subtitle1 text-weight-bold">{{ formatEuro(buchungIstCent) }}</div>
+            </div>
+            <div class="row items-center q-mb-xs text-grey-8">
+              <div class="col">Altbestand (Buchbestand)</div>
+              <div>{{ formatEuro(buchungAltbestandCent) }}</div>
+            </div>
+            <div class="row items-center q-py-sm q-px-sm rounded-borders" :class="buchungZaehlBetragClass">
+              <div class="col text-weight-medium">{{ buchungZaehlBetragLabel }}</div>
+              <div class="text-weight-bold">{{ formatEuro(buchungZaehlBetragCent) }}</div>
+            </div>
+            <div class="text-caption text-grey q-mt-sm">
+              Wird unter „{{ buchungForm.kategorie }}“ gebucht (Betrag = Zählung − Altbestand),
+              auf heute datiert; das Zählprotokoll-PDF wird an die Buchung gehängt.
+            </div>
+          </template>
+
           <q-input v-model="buchungForm.notiz" label="Notiz" outlined type="textarea" rows="2" />
         </q-card-section>
         <q-separator />
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn
-            :label="editingBuchungId ? 'Speichern' : (buchungTyp === 'einnahme' ? 'Einnahme buchen' : 'Ausgabe buchen')"
-            :color="buchungTyp === 'einnahme' ? 'positive' : 'negative'"
+            :label="editingBuchungId ? 'Speichern' : (zaehlModus ? 'Zählung buchen' : (buchungTyp === 'einnahme' ? 'Einnahme buchen' : 'Ausgabe buchen'))"
+            :color="zaehlModus ? 'primary' : (buchungTyp === 'einnahme' ? 'positive' : 'negative')"
             unelevated
             :loading="buchungSaving"
             @click="onSaveBuchung"
@@ -676,6 +725,28 @@ const buchungTyp = ref('einnahme')
 const buchungBetragEuro = ref(0)
 const buchungForm = ref(emptyBuchungForm())
 
+// --- Zähl-Modus im Buchungsdialog (Ticket #38): bei „mit Zählung"-Kategorie ersetzt
+//     die Stückelung den Betrag; gebucht wird Zählung − Altbestand unter der Kategorie. ---
+const buchungZaehlAnzahl = ref({})          // { wert_cent: anzahl }
+const buchungAltbestandCent = ref(0)        // Buchbestand zum Zeitpunkt des Öffnens
+const aktiveKategorieObj = computed(() =>
+  kategorien.value.find(k => k.name === buchungForm.value.kategorie) || null,
+)
+// Nur beim Neuanlegen (nicht beim Bearbeiten) wird gezählt statt Betrag eingegeben.
+const zaehlModus = computed(() => !editingBuchungId.value && !!aktiveKategorieObj.value?.loest_zaehlung_aus)
+const buchungIstCent = computed(() =>
+  stueckelungWerte.value.reduce((s, w) => s + (Number(buchungZaehlAnzahl.value[w]) || 0) * w, 0),
+)
+const buchungZaehlBetragCent = computed(() => buchungIstCent.value - buchungAltbestandCent.value)
+const buchungZaehlBetragLabel = computed(() =>
+  buchungZaehlBetragCent.value > 0 ? 'Einnahme'
+    : buchungZaehlBetragCent.value < 0 ? 'Ausgabe' : 'Keine Differenz',
+)
+const buchungZaehlBetragClass = computed(() =>
+  buchungZaehlBetragCent.value > 0 ? 'bg-green-1 text-green-9'
+    : buchungZaehlBetragCent.value < 0 ? 'bg-red-1 text-red-9' : 'bg-grey-2 text-grey-8',
+)
+
 const exportDialog = ref(false)
 const exportLoading = ref(false)
 const exportBisDatum = ref(today)
@@ -872,6 +943,9 @@ function openCreateDialog(typ) {
   buchungTyp.value = typ
   buchungBetragEuro.value = 0
   buchungForm.value = emptyBuchungForm()
+  // Zähl-Felder zurücksetzen + Altbestand (aktueller Buchbestand) einfrieren.
+  buchungZaehlAnzahl.value = Object.fromEntries(stueckelungWerte.value.map(w => [w, null]))
+  buchungAltbestandCent.value = bestandCent.value
   buchungDialogOpen.value = true
 }
 
@@ -901,6 +975,11 @@ async function onSaveBuchung() {
     $q.notify({ type: 'warning', message: 'Bitte eine Kategorie wählen.' })
     return
   }
+  // „mit Zählung"-Kategorie: über den Zählungs-Endpunkt buchen (Betrag = Zählung − Altbestand).
+  if (zaehlModus.value) {
+    await onSaveZaehlBuchung()
+    return
+  }
   buchungSaving.value = true
   const betragCent = Math.round(buchungBetragEuro.value * 100)
   const payload = {
@@ -912,20 +991,17 @@ async function onSaveBuchung() {
     ausgabe_cent: buchungTyp.value === 'ausgabe' ? betragCent : 0,
   }
   try {
-    let createdBuchung = null
     if (editingBuchungId.value) {
       await api.put(
         `/api/kassen/${kasseId.value}/buchungen/${editingBuchungId.value}`,
         { ...payload, expected_version: editingBuchungVersion.value },
       )
     } else {
-      const { data } = await api.post(`/api/kassen/${kasseId.value}/buchungen`, payload)
-      createdBuchung = data
+      await api.post(`/api/kassen/${kasseId.value}/buchungen`, payload)
     }
     $q.notify({ type: 'positive', message: 'Gespeichert.' })
     buchungDialogOpen.value = false
     await Promise.all([loadBuchungen(), loadBestand()])
-    if (createdBuchung) maybePromptZaehlung(createdBuchung)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
   } finally {
@@ -933,16 +1009,30 @@ async function onSaveBuchung() {
   }
 }
 
-// Fordert nach dem Speichern einer Buchung zum Zählen auf, wenn deren Kategorie das Flag trägt.
-function maybePromptZaehlung(buchung) {
-  const kat = kategorien.value.find(k => k.name === buchung.kategorie)
-  if (!kat?.loest_zaehlung_aus) return
-  $q.dialog({
-    title: 'Kasse zählen?',
-    message: `Die Kategorie „${buchung.kategorie}“ fordert eine Kassenzählung an. Jetzt zählen?`,
-    ok: { label: 'Jetzt zählen', color: 'primary', unelevated: true },
-    cancel: { label: 'Später', flat: true },
-  }).onOk(() => openZaehlDialog(buchung))
+// Bucht eine „mit Zählung"-Kategorie: die Zählung IST die Buchung dieser Kategorie
+// (Betrag = Zählung − Altbestand). Der Endpunkt erzeugt Buchung + Zählprotokoll-PDF.
+async function onSaveZaehlBuchung() {
+  const stueckelung = {}
+  for (const w of stueckelungWerte.value) {
+    const n = Number(buchungZaehlAnzahl.value[w]) || 0
+    if (n > 0) stueckelung[String(w)] = n
+  }
+  buchungSaving.value = true
+  try {
+    await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
+      stueckelung,
+      kategorie: buchungForm.value.kategorie.trim(),
+      buchungstext: buchungForm.value.buchungstext.trim(),
+      notiz: buchungForm.value.notiz || null,
+    })
+    $q.notify({ type: 'positive', message: 'Zählung gebucht.' })
+    buchungDialogOpen.value = false
+    await Promise.all([loadBuchungen(), loadBestand()])
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern der Zählung.' })
+  } finally {
+    buchungSaving.value = false
+  }
 }
 
 function confirmStornieren(buchung) {
