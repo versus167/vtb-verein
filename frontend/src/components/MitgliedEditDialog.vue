@@ -643,7 +643,8 @@ function openZuordnungForm(z) {
   } else {
     editingZuordnungId.value = null
     editingZuordnungVersion.value = null
-    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: null, bis: null }
+    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
+    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: new Date().toISOString().slice(0, 10), bis: null }
   }
   zuordnungFormOpen.value = true
 }
@@ -703,7 +704,8 @@ function openFunktionForm(f) {
   } else {
     editingFunktionId.value = null
     editingFunktionVersion.value = null
-    funktionForm.value = { funktion: null, abteilung_id: null, von: null, bis: null }
+    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
+    funktionForm.value = { funktion: null, abteilung_id: null, von: new Date().toISOString().slice(0, 10), bis: null }
   }
   funktionFormOpen.value = true
 }
@@ -849,7 +851,8 @@ function openTeamForm(t) {
     editingTeamId.value = null
     editingTeamMannschaft.value = null
     editingTeamVersion.value = null
-    teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: '', bis: '' }
+    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
+    teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: new Date().toISOString().slice(0, 10), bis: '' }
     alleMannschaften.value = alleMannschaftenAll.value
   }
   teamFormOpen.value = true
