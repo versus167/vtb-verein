@@ -395,25 +395,16 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
                 'status': data.mitglied_status, 'zahlungsart': data.zahlungsart,
                 'iban': data.iban, 'bic': data.bic, 'kontoinhaber': data.kontoinhaber,
                 'abgerechnet_bis': data.abgerechnet_bis,
+                'email': data.email,  # Für _create_initial_kontakte in create_mitglied_ohne_user
             }
-            if data.email:
-                u, m = service.create_vereinsmitglied(
-                    vorname=data.vorname, nachname=data.nachname,
-                    email=data.email, role=role, active=data.active,
-                    created_by=user.username, mitglied_data=mitglied_data,
-                    password=data.password,
-                )
-                abteilungen = db.list_mitglied_abteilungen(m.id)
-                funktionen = db.list_mitglied_funktionen(m.id)
-                return _person_row(u, m, abteilungen, funktionen)
-            else:
-                m = service.create_mitglied_ohne_user(
-                    vorname=data.vorname, nachname=data.nachname,
-                    created_by=user.username, mitglied_data=mitglied_data,
-                )
-                abteilungen = db.list_mitglied_abteilungen(m.id)
-                funktionen = db.list_mitglied_funktionen(m.id)
-                return _person_row(None, m, abteilungen, funktionen)
+            # Immer nur Mitglied erstellen, kein User – auch bei E-Mail-Angabe
+            m = service.create_mitglied_ohne_user(
+                vorname=data.vorname, nachname=data.nachname,
+                created_by=user.username, mitglied_data=mitglied_data,
+            )
+            abteilungen = db.list_mitglied_abteilungen(m.id)
+            funktionen = db.list_mitglied_funktionen(m.id)
+            return _person_row(None, m, abteilungen, funktionen)
         else:
             if not data.username:
                 raise HTTPException(status_code=400, detail="Username ist pflicht für Benutzer ohne Mitglied-Datensatz")
