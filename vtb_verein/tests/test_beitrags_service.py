@@ -18,6 +18,7 @@ from app.services.beitrags_service import (
     faelligkeitsdatum,
     parse_datum,
     aktive_monate_menge,
+    funktions_monats_restriktion,
     _letzter_tag,
 )
 
@@ -226,6 +227,111 @@ class TestVorschauAnteilig:
         assert len(positionen) == 1
         assert positionen[0].anzahl_monate == 2
         assert positionen[0].betrag == 20.0
+
+
+class TestFunktionsMonatsRestriktion:
+    """Reine Berechnung der Einschluss-/Ausnahme-Monate je Mitglied (zeitraumgenau)."""
+
+    def test_einschluss_zeitraumgenau(self):
+        # Trainer-Funktion endet 10.11. → Einschluss-Monate = Okt + Nov (Austrittsmonat zählt)
+        regel = Beitragsregel(id=1, bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
+        rows = [{'mitglied_id': 1, 'funktion': 'Trainer', 'von': '2020-01-01', 'bis': '2026-11-10'}]
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        assert res[1]['incl'] == {(2026, 10), (2026, 11)}
+        assert res[1]['excl'] == set()
+
+    def test_einschluss_ohne_funktion_leer_schliesst_aus(self):
+        # Bedingung gesetzt, Mitglied hat die Funktion nie → incl leer (nicht None) → 0 Monate
+        regel = Beitragsregel(id=1, bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
+        res = funktions_monats_restriktion(regel, {7}, Q4, [], [])
+        assert res[7]['incl'] == set()
+
+    def test_keine_einschluss_funktion_incl_none(self):
+        # Nur Ausnahme: incl None (= keine Einschränkung über Einschlüsse), excl zeitraumgenau
+        regel = Beitragsregel(id=1, ausnahme_funktionen=['Ehrenmitglied'], ausnahme_abteilung_ids=[None])
+        rows = [{'mitglied_id': 1, 'funktion': 'Ehrenmitglied', 'von': '2026-11-15', 'bis': None}]
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        assert res[1]['incl'] is None
+        assert res[1]['excl'] == {(2026, 11), (2026, 12)}
+
+    def test_einschluss_paar_mit_abteilung_schnittmenge(self):
+        # Funktion das ganze Quartal, Abteilung 5 aber erst ab Dez → Schnitt = nur Dez
+        regel = Beitragsregel(id=1, bedingung_funktionen=['Spieler'], bedingung_abteilung_ids=[5])
+        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Spieler', 'von': '2020-01-01', 'bis': None}]
+        abteilung_rows = [{'mitglied_id': 1, 'abteilung_id': 5, 'von': '2026-12-01', 'bis': None}]
+        res = funktions_monats_restriktion(regel, {1}, Q4, funktion_rows, abteilung_rows)
+        assert res[1]['incl'] == {(2026, 12)}
+
+    def test_mehrere_einschluesse_vereinigt(self):
+        # Funktion A nur Okt, Funktion B nur Dez → Vereinigung Okt + Dez
+        regel = Beitragsregel(id=1, bedingung_funktionen=['A', 'B'], bedingung_abteilung_ids=[None, None])
+        rows = [
+            {'mitglied_id': 1, 'funktion': 'A', 'von': '2026-10-01', 'bis': '2026-10-31'},
+            {'mitglied_id': 1, 'funktion': 'B', 'von': '2026-12-01', 'bis': None},
+        ]
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        assert res[1]['incl'] == {(2026, 10), (2026, 12)}
+
+
+class TestVorschauMitFunktionen:
+    """Integration: vorschau() mit zeitraumgenauen Funktions-/Ausnahme-Bedingungen (Fake-DB)."""
+
+    def _service(self, regel, rows, funktion_rows, abteilung_rows=None):
+        db = SimpleNamespace(
+            beitragsregeln=SimpleNamespace(list_aktive=lambda s: [regel]),
+            sollstellungen=SimpleNamespace(exists=lambda mid, rid, z: False),
+        )
+        svc = BeitragsService(db)
+        svc._betroffene_mitglieder = lambda r, s, ps, pe: rows
+        svc._mitglied_abteilungen = lambda ids: {}
+        svc._funktion_intervalle = lambda ids, fn: [
+            r for r in funktion_rows if r['mitglied_id'] in ids and r['funktion'] in fn]
+        svc._abteilung_intervalle = lambda ids, abt: [
+            r for r in (abteilung_rows or []) if r['mitglied_id'] in ids and r['abteilung_id'] in abt]
+        return svc
+
+    def test_einschluss_funktion_schraenkt_monate_ein(self):
+        # Vereinsbeitrag nur für Trainer; Funktion endet 10.11. → Okt+Nov = 2 Monate = 20 €
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0, einzug_turnus='quartal',
+                              bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
+        rows = [{'id': 1, 'vorname': 'A', 'nachname': 'T', 'iban': None,
+                 'aktiv_von': '2020-01-01', 'aktiv_bis': None}]
+        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Trainer',
+                          'von': '2020-01-01', 'bis': '2026-11-10'}]
+        positionen = self._service(regel, rows, funktion_rows).vorschau('2026-10-01')
+        assert len(positionen) == 1
+        assert (positionen[0].anzahl_monate, positionen[0].betrag) == (2, 20.0)
+
+    def test_ohne_geforderte_funktion_keine_position(self):
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0, einzug_turnus='quartal',
+                              bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
+        rows = [{'id': 2, 'vorname': 'B', 'nachname': 'K', 'iban': None,
+                 'aktiv_von': '2020-01-01', 'aktiv_bis': None}]
+        assert self._service(regel, rows, funktion_rows=[]).vorschau('2026-10-01') == []
+
+    def test_ausnahme_funktion_zieht_monate_ab(self):
+        # Ehrenmitglied ab 15.11. → Nov+Dez fallen weg → nur Okt = 1 Monat = 10 €
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0, einzug_turnus='quartal',
+                              ausnahme_funktionen=['Ehrenmitglied'], ausnahme_abteilung_ids=[None])
+        rows = [{'id': 1, 'vorname': 'A', 'nachname': 'E', 'iban': None,
+                 'aktiv_von': '2020-01-01', 'aktiv_bis': None}]
+        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Ehrenmitglied',
+                          'von': '2026-11-15', 'bis': None}]
+        positionen = self._service(regel, rows, funktion_rows).vorschau('2026-10-01')
+        assert (positionen[0].anzahl_monate, positionen[0].betrag) == (1, 10.0)
+
+    def test_ausnahme_ganzer_zeitraum_keine_position(self):
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0, einzug_turnus='quartal',
+                              ausnahme_funktionen=['Ehrenmitglied'], ausnahme_abteilung_ids=[None])
+        rows = [{'id': 1, 'vorname': 'A', 'nachname': 'E', 'iban': None,
+                 'aktiv_von': '2020-01-01', 'aktiv_bis': None}]
+        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Ehrenmitglied',
+                          'von': '2020-01-01', 'bis': None}]
+        assert self._service(regel, rows, funktion_rows).vorschau('2026-10-01') == []
 
 
 class _FakeCursor:

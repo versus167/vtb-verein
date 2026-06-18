@@ -151,6 +151,69 @@ def aktive_monate_menge(monate: list[tuple[int, int]],
     return treffer
 
 
+def _monate_je_schluessel(monate: list[tuple[int, int]], rows, schluessel: str
+                          ) -> dict[int, dict]:
+    """Aggregiert Intervall-Zeilen (`von`/`bis`) je Mitglied und `schluessel`-Wert zu
+    Monatsmengen.
+
+    rows: Iterable von dicts mit 'mitglied_id', `schluessel`, 'von', 'bis'.
+    Returns {mitglied_id: {schluessel_wert: set[(jahr, monat)]}}.
+    """
+    result: dict[int, dict] = {}
+    for r in rows:
+        menge = aktive_monate_menge(monate, parse_datum(r.get('von')), parse_datum(r.get('bis')))
+        if not menge:
+            continue
+        result.setdefault(r['mitglied_id'], {}).setdefault(r[schluessel], set()).update(menge)
+    return result
+
+
+def funktions_monats_restriktion(regel, mitglied_ids, monate: list[tuple[int, int]],
+                                 funktion_rows, abteilung_rows) -> dict[int, dict]:
+    """Bestimmt je Mitglied die Monats-Restriktion aus Funktions-Einschlüssen/-Ausnahmen.
+
+    Funktions-/Ausnahme-Bedingungen wirken **zeitraumgenau**: ein Monat zählt für die
+    Beitragsauswirkung, wenn die Funktion – und, falls index-gleich eine Abteilung
+    gepaart ist, auch die Abteilungsmitgliedschaft – in diesem Monat mindestens einen
+    Tag bestand („angefangener Monat zählt voll", analog zu `aktive_monate_menge`).
+
+    Mehrere Einschlüsse bzw. Ausnahmen werden je Mitglied **vereinigt** (ODER über die
+    Paare). Ein Paar mit Abteilungsbezug zählt nur in Monaten, in denen Funktion **und**
+    Abteilungsmitgliedschaft bestanden (None = vereinsweit).
+
+    Returns {mid: {'incl': set | None, 'excl': set}}:
+      - 'incl' None  → die Regel hat keine Einschluss-Funktionen (keine Einschränkung).
+      - 'incl' set   → nur diese Monate dürfen verbleiben (Schnittmenge im Service).
+      - 'excl' set   → diese Monate werden abgezogen.
+    """
+    funktion_monate = _monate_je_schluessel(monate, funktion_rows, 'funktion')
+    abteilung_monate = _monate_je_schluessel(monate, abteilung_rows, 'abteilung_id')
+
+    def _paar_monate(mid: int, funktion: str, abt_id) -> set:
+        fm = funktion_monate.get(mid, {}).get(funktion, set())
+        if abt_id is None:
+            return set(fm)
+        return fm & abteilung_monate.get(mid, {}).get(abt_id, set())
+
+    bed_abt = regel.bedingung_abteilung_ids or []
+    aus_abt = regel.ausnahme_abteilung_ids or []
+
+    result: dict[int, dict] = {}
+    for mid in mitglied_ids:
+        incl = None
+        if regel.bedingung_funktionen:
+            incl = set()
+            for i, funktion in enumerate(regel.bedingung_funktionen):
+                abt_id = bed_abt[i] if i < len(bed_abt) else None
+                incl |= _paar_monate(mid, funktion, abt_id)
+        excl: set = set()
+        for i, funktion in enumerate(regel.ausnahme_funktionen or []):
+            abt_id = aus_abt[i] if i < len(aus_abt) else None
+            excl |= _paar_monate(mid, funktion, abt_id)
+        result[mid] = {'incl': incl, 'excl': excl}
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -191,6 +254,19 @@ class BeitragsService:
                 eintrag = aktiv_pro_mitglied.setdefault(
                     mitglied['id'], {'mitglied': mitglied, 'monate': set()})
                 eintrag['monate'] |= aktive_monate_menge(monate, von, bis)
+
+            # Funktions-/Ausnahme-Bedingungen wirken zeitraumgenau auf die Monate
+            # (nicht mehr als Ja/Nein-Filter zum heutigen Tag): Einschluss schränkt die
+            # berechneten Monate ein, Ausnahme zieht Monate ab.
+            if regel.bedingung_funktionen or regel.ausnahme_funktionen:
+                restriktion = self._funktions_restriktion(
+                    regel, set(aktiv_pro_mitglied), monate)
+                for mid, eintrag in aktiv_pro_mitglied.items():
+                    r = restriktion.get(mid, {})
+                    if r.get('incl') is not None:
+                        eintrag['monate'] &= r['incl']
+                    if r.get('excl'):
+                        eintrag['monate'] -= r['excl']
 
             for mid, eintrag in aktiv_pro_mitglied.items():
                 anzahl = len(eintrag['monate'])
@@ -329,6 +405,44 @@ class BeitragsService:
                 result.setdefault(row['mitglied_id'], []).append(row['abteilung_id'])
         return result
 
+    def _funktion_intervalle(self, mitglied_ids: set[int], funktionen: set[str]) -> list[dict]:
+        """Funktions-Intervalle (`von`/`bis`) der Mitglieder für die genannten Funktionen."""
+        if not mitglied_ids or not funktionen:
+            return []
+        mid_ph = ','.join(['%s'] * len(mitglied_ids))
+        fn_ph = ','.join(['%s'] * len(funktionen))
+        sql = (f"SELECT mitglied_id, funktion, von, bis FROM mitglied_funktion "
+               f"WHERE deleted_at IS NULL AND mitglied_id IN ({mid_ph}) "
+               f"AND funktion IN ({fn_ph})")
+        with self.db.conn.cursor() as cur:
+            cur.execute(sql, list(mitglied_ids) + list(funktionen))
+            return [dict(r) for r in cur.fetchall()]
+
+    def _abteilung_intervalle(self, mitglied_ids: set[int], abteilung_ids: set[int]) -> list[dict]:
+        """Abteilungs-Mitgliedschafts-Intervalle für die (in Funktions-Paaren) genannten Abteilungen."""
+        if not mitglied_ids or not abteilung_ids:
+            return []
+        mid_ph = ','.join(['%s'] * len(mitglied_ids))
+        abt_ph = ','.join(['%s'] * len(abteilung_ids))
+        sql = (f"SELECT mitglied_id, abteilung_id, von, bis FROM mitglied_abteilung "
+               f"WHERE deleted_at IS NULL AND mitglied_id IN ({mid_ph}) "
+               f"AND abteilung_id IN ({abt_ph})")
+        with self.db.conn.cursor() as cur:
+            cur.execute(sql, list(mitglied_ids) + list(abteilung_ids))
+            return [dict(r) for r in cur.fetchall()]
+
+    def _funktions_restriktion(self, regel: Beitragsregel, mitglied_ids: set[int],
+                               monate: list[tuple[int, int]]) -> dict[int, dict]:
+        """Lädt die nötigen Funktions-/Abteilungs-Intervalle und delegiert an die reine
+        Berechnung `funktions_monats_restriktion` (Einschluss-/Ausnahme-Monate je Mitglied)."""
+        funktionen = set(regel.bedingung_funktionen or []) | set(regel.ausnahme_funktionen or [])
+        abteilung_ids = {a for a in
+                         (list(regel.bedingung_abteilung_ids or []) + list(regel.ausnahme_abteilung_ids or []))
+                         if a is not None}
+        funktion_rows = self._funktion_intervalle(mitglied_ids, funktionen)
+        abteilung_rows = self._abteilung_intervalle(mitglied_ids, abteilung_ids)
+        return funktions_monats_restriktion(regel, mitglied_ids, monate, funktion_rows, abteilung_rows)
+
     def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str,
                                periode_start: date, periode_ende: date) -> list[dict]:
         """
@@ -337,18 +451,17 @@ class BeitragsService:
 
         - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
         - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
-        - ausnahme_funktionen + ausnahme_abteilung_ids (index-gleich): je Paar eine Ausnahme
-          (Funktion, optionale Abteilung; None = vereinsweit); ausgeschlossen wird, wer
-          mindestens eine Ausnahme erfüllt
-        - bedingung_funktionen + bedingung_abteilung_ids (index-gleich): je Paar ein Einschluss
-          (Funktion, optionale Abteilung; None = vereinsweit); eingeschlossen wird, wer
-          mindestens einen Einschluss erfüllt
         - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
           ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
 
+        Funktions-Einschlüsse/-Ausnahmen werden hier NICHT mehr gefiltert: sie wirken
+        zeitraumgenau auf die abgerechneten Monate und rechnet der Service über
+        `funktions_monats_restriktion` (Einschluss = Schnittmenge, Ausnahme = Abzug).
+        Diese Methode liefert daher alle Mitgliedschaften der Regel; die maßgebliche
+        Monatsüberlappung bestimmt der Service.
+
         Der Datums-Vorfilter grenzt nur grob auf den Zeitraum ein (string-Vergleich,
-        regex-geschützt gegen ungültige Werte); die maßgebliche Monatsüberlappung
-        bestimmt der Service über `aktive_monate_menge`.
+        regex-geschützt gegen ungültige Werte).
         """
         joins: list[str] = []
         where: list[str] = ["m.deleted_at IS NULL"]
@@ -387,54 +500,8 @@ class BeitragsService:
                 where.append(f"ma.status IN ({placeholders})")
                 params.extend(status_filter)
 
-        if regel.bedingung_funktionen:
-            # Flexible Einschlüsse: index-gleiche Paare (Funktion, optionale Abteilung).
-            # Eingeschlossen wird, wer MINDESTENS einen Eintrag erfüllt (ODER über die Paare).
-            # Ein Eintrag erfüllt, wer die Funktion hat UND – falls eine Abteilung gesetzt
-            # ist – auch MITGLIED dieser Abteilung ist (None = vereinsweit). Spiegelbildlich
-            # zur Ausnahme-Logik; der frühere JOIN/ANY entfällt.
-            abteilung_ids = regel.bedingung_abteilung_ids or []
-            oder_teile: list[str] = []
-            for i, funktion in enumerate(regel.bedingung_funktionen):
-                teil = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_incl "
-                        "WHERE mf_incl.mitglied_id = m.id AND mf_incl.funktion = %s "
-                        "AND mf_incl.deleted_at IS NULL "
-                        "AND (mf_incl.bis IS NULL OR mf_incl.bis::date >= CURRENT_DATE))")
-                params.append(funktion)
-                abt_id = abteilung_ids[i] if i < len(abteilung_ids) else None
-                if abt_id is not None:
-                    teil += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_incl "
-                             "WHERE ma_incl.mitglied_id = m.id AND ma_incl.abteilung_id = %s "
-                             "AND ma_incl.deleted_at IS NULL "
-                             "AND (ma_incl.bis IS NULL OR ma_incl.bis::date >= CURRENT_DATE))")
-                    params.append(abt_id)
-                oder_teile.append(f"({teil})")
-            where.append("(" + " OR ".join(oder_teile) + ")")
-
-        if regel.ausnahme_funktionen:
-            # Flexible Ausnahmen: index-gleiche Paare (Funktion, optionale Abteilung).
-            # Ausgeschlossen wird, wer IRGENDEINE Ausnahme erfüllt (ODER über die Paare).
-            # Eine Ausnahme erfüllt, wer die Funktion hat UND – falls eine Abteilung
-            # gesetzt ist – auch Mitglied dieser Abteilung ist (None = vereinsweit).
-            # So lassen sich „Schiedsrichter nur Fußball" und „Ehrenmitglied vereinsweit"
-            # nebeneinander abbilden.
-            abteilung_ids = regel.ausnahme_abteilung_ids or []
-            oder_teile: list[str] = []
-            for i, funktion in enumerate(regel.ausnahme_funktionen):
-                teil = ("EXISTS (SELECT 1 FROM mitglied_funktion mf_excl "
-                        "WHERE mf_excl.mitglied_id = m.id AND mf_excl.funktion = %s "
-                        "AND mf_excl.deleted_at IS NULL "
-                        "AND (mf_excl.bis IS NULL OR mf_excl.bis::date >= CURRENT_DATE))")
-                params.append(funktion)
-                abt_id = abteilung_ids[i] if i < len(abteilung_ids) else None
-                if abt_id is not None:
-                    teil += (" AND EXISTS (SELECT 1 FROM mitglied_abteilung ma_excl "
-                             "WHERE ma_excl.mitglied_id = m.id AND ma_excl.abteilung_id = %s "
-                             "AND ma_excl.deleted_at IS NULL "
-                             "AND (ma_excl.bis IS NULL OR ma_excl.bis::date >= CURRENT_DATE))")
-                    params.append(abt_id)
-                oder_teile.append(f"({teil})")
-            where.append("NOT (" + " OR ".join(oder_teile) + ")")
+        # Funktions-Einschlüsse/-Ausnahmen werden bewusst NICHT hier gefiltert (siehe
+        # Docstring): der Service wertet sie zeitraumgenau über die Monate aus.
 
         if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
             # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
