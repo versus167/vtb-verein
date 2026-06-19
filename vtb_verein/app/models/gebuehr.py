@@ -19,6 +19,8 @@ class Gebuehr:
     gueltig_ab: str = ""
     gueltig_bis: Optional[str] = None
     zahler_typ: str = "mitglied"                  # mitglied | abteilung
+    bedingung_alter_min: Optional[int] = None     # Mindestalter (Jahre) am Stichtag, None = keine Untergrenze
+    bedingung_alter_max: Optional[int] = None     # Höchstalter (Jahre) am Stichtag, None = keine Obergrenze
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
