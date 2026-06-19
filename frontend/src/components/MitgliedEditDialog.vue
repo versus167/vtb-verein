@@ -8,8 +8,9 @@
     <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:560px;max-width:720px'">
       <q-card-section class="row items-center q-pb-none">
         <div class="text-h6 col">
-          {{ isNewLocal ? 'Als Vereinsmitglied erfassen' : 'Mitglied bearbeiten' }}
-          <span v-if="mitgliedName" class="text-weight-regular">– {{ mitgliedName }}</span>
+          <template v-if="isNewLocal">Als Vereinsmitglied erfassen</template>
+          <template v-else>{{ form.mitgliedsnummer != null ? 'Mitglied ' + form.mitgliedsnummer : 'Mitglied' }}</template>
+          <span v-if="mitgliedName" class="text-weight-regular">{{ ' – ' + mitgliedName }}</span>
         </div>
         <q-btn flat dense round icon="close" @click="requestClose" />
       </q-card-section>
@@ -35,12 +36,6 @@
             </div>
             <div class="row q-gutter-sm">
               <q-input v-if="!personMode" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
-              <!-- Im Personen-Kontext wird die Mitgliedsnr. nicht gepflegt, aber rein
-                   informativ angezeigt (interne, automatisch vergebene Nummer). -->
-              <q-input v-if="personMode && form.mitgliedsnummer != null" :model-value="form.mitgliedsnummer"
-                label="Mitgliedsnr." outlined dense readonly class="col">
-                <q-tooltip>Interne Mitgliedsnummer (automatisch vergeben)</q-tooltip>
-              </q-input>
               <q-input v-model="form.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-select
                 v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
