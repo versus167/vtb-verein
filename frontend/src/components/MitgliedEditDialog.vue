@@ -11,7 +11,7 @@
           {{ isNewLocal ? 'Als Vereinsmitglied erfassen' : 'Mitglied bearbeiten' }}
           <span v-if="mitgliedName" class="text-weight-regular">– {{ mitgliedName }}</span>
         </div>
-        <q-btn flat dense round icon="close" @click="close" />
+        <q-btn flat dense round icon="close" @click="requestClose" />
       </q-card-section>
 
       <q-tabs v-model="tab" dense align="left" class="q-px-md text-primary">
@@ -228,9 +228,28 @@
 
       <q-separator />
       <q-card-actions align="right">
-        <q-btn flat label="Schließen" @click="close" />
+        <q-btn flat label="Schließen" @click="requestClose" />
       </q-card-actions>
     </q-card>
+
+    <!-- Nachfrage beim Schließen mit ungespeicherten Stammdaten -->
+    <q-dialog v-model="closeConfirmOpen">
+      <q-card style="min-width: 360px">
+        <q-card-section class="row items-center no-wrap">
+          <q-avatar icon="warning" color="warning" text-color="white" />
+          <span class="q-ml-sm text-subtitle1">Ungespeicherte Änderungen</span>
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          Die Stammdaten wurden geändert. Möchtest du die Änderungen speichern?
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn flat label="Verwerfen" color="negative" @click="discardAndClose" />
+          <q-btn unelevated label="Speichern" color="primary" :loading="savingStamm" @click="saveAndClose" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <!-- Abteilungs-Zuordnung anlegen / bearbeiten -->
     <q-dialog v-model="zuordnungFormOpen" persistent>
@@ -406,8 +425,19 @@ const emptyForm = () => ({
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
 })
 const form = ref(emptyForm())
+// Snapshot des zuletzt geladenen/gespeicherten Stands – Basis für die
+// Erkennung ungespeicherter Stammdaten-Änderungen beim Schließen.
+const pristineForm = ref(emptyForm())
 const savingStamm = ref(false)
 const stammError = ref('')
+// Steuert den Nachfrage-Dialog beim Schließen mit ungespeicherten Stammdaten.
+const closeConfirmOpen = ref(false)
+
+function snapshotForm() {
+  pristineForm.value = JSON.parse(JSON.stringify(form.value))
+}
+// true, sobald sich ein Stammdaten-Feld gegenüber dem Snapshot unterscheidet.
+const stammDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(pristineForm.value))
 
 function abteilungStatusColor(s) {
   return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber-8' }[s] ?? 'grey'
@@ -487,11 +517,13 @@ watch(() => props.modelValue, (open) => {
   tab.value = props.initialTab || 'stammdaten'
   dirty.value = false
   stammError.value = ''
+  closeConfirmOpen.value = false
   isNewLocal.value = props.isNew
   localMitgliedId.value = props.mitgliedId
   if (props.isNew) {
     // Neu-Anlage: nur Stammdaten, noch keine mitglied_id → nichts zu laden.
     form.value = emptyForm()
+    snapshotForm()
   } else if (getMitgliedId() != null) {
     loadAll()
   }
@@ -514,6 +546,7 @@ async function loadAll() {
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
     form.value = { ...emptyForm(), ...m }
+    snapshotForm()
     abteilungOptions.value = ab
     funktionen.value = fns
     funktionOptionen.value = katalog.map(f => ({ label: f.name, value: f.key }))
@@ -572,16 +605,16 @@ async function saveStammdaten() {
   stammError.value = ''
   if (!form.value.eintrittsdatum) {
     stammError.value = 'Eintrittsdatum ist erforderlich.'
-    return
+    return false
   }
   if (!form.value.geburtsdatum) {
     stammError.value = 'Geburtsdatum ist erforderlich.'
-    return
+    return false
   }
   form.value.iban = normalizeIban(form.value.iban)
   if (form.value.iban && !isValidIban(form.value.iban)) {
     stammError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
-    return
+    return false
   }
   savingStamm.value = true
   try {
@@ -632,11 +665,16 @@ async function saveStammdaten() {
       // direkt erfasst werden können (Ticket #43). Zusatz-Tabs aktivieren und die
       // Kataloge/Listen (Abteilungen, Funktionen, Kontakte, Mannschaften) nachladen,
       // sonst sind die Auswahllisten leer und der Datensatz hätte keine version.
+      // loadAll() setzt dabei auch den Snapshot neu.
       isNewLocal.value = false
       await loadAll()
+    } else {
+      snapshotForm()
     }
+    return true
   } catch (e) {
     stammError.value = e.response?.data?.detail || 'Fehler beim Speichern'
+    return false
   } finally {
     savingStamm.value = false
   }
@@ -935,14 +973,40 @@ function removeTeam(t) {
 
 // ── Schließen ────────────────────────────────────────────────
 function onDialogToggle(val) {
-  if (!val) close()
+  if (!val) requestClose()
 }
 
-function close() {
+// Einstieg für X-Button und „Schließen": bei ungespeicherten Stammdaten-
+// Änderungen erst nachfragen, sonst direkt schließen.
+function requestClose() {
+  if (canWrite.value && stammDirty.value) {
+    closeConfirmOpen.value = true
+    return
+  }
+  doClose()
+}
+
+function doClose() {
+  closeConfirmOpen.value = false
   emit('update:modelValue', false)
   if (dirty.value) {
     emit('saved')
     dirty.value = false
   }
+}
+
+async function saveAndClose() {
+  const ok = await saveStammdaten()
+  if (ok) {
+    doClose()
+  } else {
+    // Speichern fehlgeschlagen → Nachfrage schließen, damit der Fehler im
+    // Formular sichtbar wird; der Edit-Dialog bleibt offen.
+    closeConfirmOpen.value = false
+  }
+}
+
+function discardAndClose() {
+  doClose()
 }
 </script>
