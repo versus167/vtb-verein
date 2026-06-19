@@ -64,6 +64,7 @@
       **Stornos/Löschungen** bereits exportierter Sollstellungen fließen in den nächsten
       Export ein – als korrespondierende **Export-(Gegen-)Buchung** –, damit die Fibu
       konsistent bleibt (kein stilles Verschwinden bereits exportierter Beträge).
+  [ ] Sollstellungen von Beiträgen und Gebühren sollen auch irgendwo bei der einzelnen Person sichtbar werden - vlt. allgemein im Mitglied-Editor
 
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
