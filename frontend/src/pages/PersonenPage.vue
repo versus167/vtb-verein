@@ -315,6 +315,7 @@
               </div>
               <div class="row q-gutter-sm">
                 <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" />
+                <q-input v-model="createForm.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" />
                 <q-select v-model="createForm.geschlecht" :options="geschlechtOptions"
                   label="Geschlecht" outlined dense emit-value map-options clearable class="col" />
               </div>
@@ -828,7 +829,7 @@ function openCreateDialog() {
   createForm.value = {
     vorname: '', nachname: '', email: '', role: 'mitglied', active: true,
     password: '', username: '',
-    eintrittsdatum: '', mitglied_status: 'aktiv', geschlecht: null,
+    eintrittsdatum: '', geburtsdatum: '', mitglied_status: 'aktiv', geschlecht: null,
     strasse: '', plz: '', ort: '', land: '',
     zahlungsart: '', iban: '', bic: '', kontoinhaber: '',
   }
@@ -839,6 +840,10 @@ async function onCreate() {
   createError.value = ''
   if (createTab.value === 'mitglied' && !createForm.value.eintrittsdatum) {
     createError.value = 'Eintrittsdatum ist erforderlich.'
+    return
+  }
+  if (createTab.value === 'mitglied' && !createForm.value.geburtsdatum) {
+    createError.value = 'Geburtsdatum ist erforderlich.'
     return
   }
   createForm.value.iban = normalizeIban(createForm.value.iban)

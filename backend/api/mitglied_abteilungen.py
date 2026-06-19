@@ -5,6 +5,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.db.mitglied_abteilung_repository import VALID_STATUS
 from ..core.deps import CurrentUser, DB
+from ..core.validation import zuordnungsbeginn_or_400
 
 router = APIRouter(tags=["mitglied-abteilungen"])
 
@@ -51,10 +52,7 @@ def create_zuordnung(mitglied_id: int, data: ZuordnungWrite, user: CurrentUser, 
         raise HTTPException(status_code=422, detail=f"Ungültiger Status. Erlaubt: {VALID_STATUS}")
     if db.mitglied_abteilung_exists_active(mitglied_id, data.abteilung_id):
         raise HTTPException(status_code=409, detail="Mitglied ist dieser Abteilung bereits zugeordnet")
-    try:
-        db.get_mitglied(mitglied_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    zuordnungsbeginn_or_400(db, mitglied_id, data.von)
     zuordnung = db.create_mitglied_abteilung(
         mitglied_id, data.abteilung_id, data.status, data.von, data.bis,
         created_by=user.username,
@@ -71,6 +69,7 @@ def update_zuordnung(mitglied_id: int, zuordnung_id: int, data: ZuordnungUpdate,
     zuordnung = db.get_mitglied_abteilung(zuordnung_id)
     if zuordnung is None or zuordnung.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Zuordnung nicht gefunden")
+    zuordnungsbeginn_or_400(db, mitglied_id, data.von)
     success = db.update_mitglied_abteilung(
         zuordnung_id, data.status, data.von, data.bis,
         updated_by=user.username, expected_version=data.expected_version,

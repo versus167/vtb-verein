@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 45
 
 
 class Database:
@@ -106,6 +106,7 @@ class Database:
             42: self._migrate_v41_to_v42,
             43: self._migrate_v42_to_v43,
             44: self._migrate_v43_to_v44,
+            45: self._migrate_v44_to_v45,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2141,6 +2142,68 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_teilnehmer_history_id ON ticket_teilnehmer_history(id)")
             cur.execute("UPDATE schema_version SET version = 44 WHERE id = 1")
 
+    def _migrate_v44_to_v45(self) -> None:
+        """Altersbedingung für Aufnahmegebühren (Ticket #42).
+
+        Gebühren erhalten – analog zu beitragsregel – `bedingung_alter_min`/`max`
+        (Alter in Jahren am Stichtag). Damit kann bei Neuanlage/Neuzuordnung anhand
+        des Geburtsdatums die altersrichtige Aufnahmegebühr vorgeschlagen werden.
+
+        Bestehender Katalog kodiert Erwachsene/Kinder nur im Namen → Best-Effort-
+        Backfill: „Kinder"/„Jugend" → bis 17 Jahre, „Erwachsene" → ab 18 Jahre.
+        Der Backfill läuft ohne Versions-Bump (kein History-Eintrag).
+        """
+        with self.cursor() as cur:
+            for tbl in ('gebuehr', 'gebuehr_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS bedingung_alter_min INTEGER")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS bedingung_alter_max INTEGER")
+            # Audit-Trigger neu anlegen, damit die neuen Spalten mitgeschrieben werden.
+            # Spaltensatz wie seit v30 (ohne zahler_kasse_id) + die neuen Felder.
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO gebuehr_history (
+                        id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                        zahler_typ, bedingung_alter_min, bedingung_alter_max,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                        NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO gebuehr_history (
+                            id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                            zahler_typ, bedingung_alter_min, bedingung_alter_max,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                            NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            # Best-Effort-Backfill aus dem Namen – ohne Versions-Bump (kein History-Rauschen).
+            cur.execute("""
+                UPDATE gebuehr SET bedingung_alter_max = 17
+                WHERE bedingung_alter_max IS NULL AND bedingung_alter_min IS NULL
+                  AND (name ILIKE '%kinder%' OR name ILIKE '%jugend%')
+            """)
+            cur.execute("""
+                UPDATE gebuehr SET bedingung_alter_min = 18
+                WHERE bedingung_alter_max IS NULL AND bedingung_alter_min IS NULL
+                  AND name ILIKE '%erwachsene%'
+            """)
+            cur.execute("UPDATE schema_version SET version = 45 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -3155,6 +3218,8 @@ class Database:
               gueltig_ab      TEXT NOT NULL,
               gueltig_bis     TEXT,
               zahler_typ      TEXT NOT NULL DEFAULT 'mitglied',
+              bedingung_alter_min INTEGER,
+              bedingung_alter_max INTEGER,
               version         INTEGER NOT NULL DEFAULT 1,
               created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by      TEXT,
@@ -3169,6 +3234,7 @@ class Database:
               id INTEGER NOT NULL, version INTEGER NOT NULL,
               name TEXT, abteilung_id INTEGER, betrag REAL, anlass TEXT,
               gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT,
+              bedingung_alter_min INTEGER, bedingung_alter_max INTEGER,
               created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
               deleted_at TEXT, deleted_by TEXT,
               PRIMARY KEY (id, version)
@@ -3442,11 +3508,11 @@ class Database:
             BEGIN
                 INSERT INTO gebuehr_history (
                     id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                    zahler_typ,
+                    zahler_typ, bedingung_alter_min, bedingung_alter_max,
                     created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                 ) VALUES (
                     NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                    NEW.zahler_typ,
+                    NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                     NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                 );
                 RETURN NEW;
@@ -3458,11 +3524,11 @@ class Database:
                 IF NEW.version != OLD.version THEN
                     INSERT INTO gebuehr_history (
                         id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                        zahler_typ,
+                        zahler_typ, bedingung_alter_min, bedingung_alter_max,
                         created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
                     ) VALUES (
                         NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                        NEW.zahler_typ,
+                        NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
                         NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
                     );
                 END IF;

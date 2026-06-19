@@ -29,6 +29,10 @@
               <q-chip v-if="g.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
                 Zahlung: {{ g.abteilung_name ?? 'Abteilung' }}
               </q-chip>
+              <q-chip v-if="g.bedingung_alter_min != null || g.bedingung_alter_max != null"
+                dense size="sm" color="indigo" text-color="white" icon="cake">
+                {{ g.bedingung_alter_min != null ? `ab ${g.bedingung_alter_min} J.` : '' }}{{ g.bedingung_alter_min != null && g.bedingung_alter_max != null ? ' ' : '' }}{{ g.bedingung_alter_max != null ? `bis ${g.bedingung_alter_max} J.` : '' }}
+              </q-chip>
             </q-item-label>
           </q-item-section>
           <q-item-section side v-if="auth.hasPermission('gebuehren.write')">
@@ -94,6 +98,16 @@
           <q-select v-model="gForm.zahler_typ"
             :options="[{label:'Mitglied zahlt (SEPA)',value:'mitglied'},{label:'Abteilung zahlt',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
+          <div class="row q-gutter-sm">
+            <q-input v-model.number="gForm.bedingung_alter_min" label="Alter ab (Jahre)" outlined dense
+              type="number" min="0" clearable class="col" />
+            <q-input v-model.number="gForm.bedingung_alter_max" label="Alter bis (Jahre)" outlined dense
+              type="number" min="0" clearable class="col" />
+          </div>
+          <div class="text-caption text-grey-6">
+            <q-icon name="info" size="xs" /> Altersgrenzen steuern den automatischen Vorschlag bei Neuanlage/Zuordnung
+            (leer = ohne Altersbeschränkung).
+          </div>
           <div v-if="gError" class="text-negative text-caption">{{ gError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -182,11 +196,12 @@ function openGebuehr(g = null) {
   gForm.value = g ? {
     id: g.id, name: g.name, abteilung_id: g.abteilung_id, betrag: g.betrag, anlass: g.anlass,
     gueltig_ab: g.gueltig_ab, gueltig_bis: g.gueltig_bis ?? '', zahler_typ: g.zahler_typ,
+    bedingung_alter_min: g.bedingung_alter_min ?? null, bedingung_alter_max: g.bedingung_alter_max ?? null,
     version: g.version,
   } : {
     id: null, name: '', abteilung_id: null, betrag: 0, anlass: 'aufnahme',
     gueltig_ab: new Date().toISOString().slice(0, 10), gueltig_bis: '',
-    zahler_typ: 'mitglied',
+    zahler_typ: 'mitglied', bedingung_alter_min: null, bedingung_alter_max: null,
   }
   gebuehrOpen.value = true
 }
@@ -201,6 +216,8 @@ async function saveGebuehr() {
       betrag: Number(gForm.value.betrag), anlass: gForm.value.anlass || 'aufnahme',
       gueltig_ab: gForm.value.gueltig_ab, gueltig_bis: gForm.value.gueltig_bis || null,
       zahler_typ: gForm.value.zahler_typ,
+      bedingung_alter_min: gForm.value.bedingung_alter_min ?? null,
+      bedingung_alter_max: gForm.value.bedingung_alter_max ?? null,
     }
     if (gForm.value.id) {
       await api.put(`/api/gebuehren/${gForm.value.id}`, { ...payload, expected_version: gForm.value.version })

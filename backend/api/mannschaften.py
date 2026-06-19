@@ -9,6 +9,7 @@ from app.models.permission import Permission
 from app.db.mannschaft_repository import Mannschaft
 from app.db.mitglied_mannschaft_repository import VALID_ROLLEN
 from ..core.deps import CurrentUser, DB
+from ..core.validation import zuordnungsbeginn_or_400
 
 router = APIRouter(tags=["mannschaften"])
 
@@ -171,10 +172,7 @@ def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
         raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
     if db.get_mannschaft(mannschaft_id) is None:
         raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
-    try:
-        db.get_mitglied(data.mitglied_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    zuordnungsbeginn_or_400(db, data.mitglied_id, data.von)
     z = db.create_mitglied_mannschaft(
         data.mitglied_id, mannschaft_id, data.rolle, data.von, data.bis,
         created_by=user.username,
@@ -197,6 +195,7 @@ def add_kader_bulk(mannschaft_id: int, data: BulkKaderCreate, user: CurrentUser,
         if mid in existing:
             skipped += 1
             continue
+        zuordnungsbeginn_or_400(db, mid, data.von)
         db.create_mitglied_mannschaft(mid, mannschaft_id, data.rolle, data.von, None,
                                       created_by=user.username)
         existing.add(mid)
@@ -214,6 +213,7 @@ def update_kader(mannschaft_id: int, zuordnung_id: int, data: KaderUpdate,
     z = db.get_mitglied_mannschaft(zuordnung_id)
     if z is None or z.mannschaft_id != mannschaft_id:
         raise HTTPException(status_code=404, detail="Kader-Zuordnung nicht gefunden")
+    zuordnungsbeginn_or_400(db, z.mitglied_id, data.von)
     ok = db.update_mitglied_mannschaft(
         zuordnung_id, data.rolle, data.von, data.bis,
         updated_by=user.username, expected_version=data.expected_version,
