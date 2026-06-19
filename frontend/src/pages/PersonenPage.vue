@@ -543,6 +543,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
+import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
 // damit der Listen-Zustand beim Zurückkehren erhalten bleibt.
@@ -858,6 +859,7 @@ async function onCreate() {
       delete payload.active
       delete payload.password
     }
+    const eintritt = createForm.value.eintrittsdatum
     const { data } = await api.post('/api/personen/', payload)
     $q.notify({ type: 'positive', message: 'Person angelegt' })
     createOpen.value = false
@@ -867,6 +869,8 @@ async function onCreate() {
     // werden können (nur wenn ein Mitglied-Datensatz entstanden ist – nicht beim User-Tab).
     if (data?.mitglied?.id) {
       openMitgliedDialog(data, 'stammdaten')
+      // Ticket #42: passende Vereins-Aufnahmegebühr zum Eintrittsdatum vorschlagen.
+      await proposeAufnahmegebuehr($q, { mitgliedId: data.mitglied.id, abteilungId: null, datum: eintritt })
     }
   } catch (e) {
     createError.value = e.response?.data?.detail || 'Fehler beim Anlegen'

@@ -348,6 +348,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
+import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -651,6 +652,9 @@ function openZuordnungForm(z) {
 
 async function saveZuordnung() {
   zuordnungSaving.value = true
+  const istNeu = !editingZuordnungId.value
+  const neueAbteilungId = zuordnungForm.value.abteilung_id
+  const von = zuordnungForm.value.von || new Date().toISOString().slice(0, 10)
   try {
     if (editingZuordnungId.value) {
       await api.put(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}`, {
@@ -671,6 +675,10 @@ async function saveZuordnung() {
     zuordnungFormOpen.value = false
     await reloadZuordnungen()
     $q.notify({ type: 'positive', message: 'Gespeichert' })
+    // Ticket #42: bei NEUER Abteilungs-Zuordnung passende Aufnahmegebühr vorschlagen.
+    if (istNeu) {
+      await proposeAufnahmegebuehr($q, { mitgliedId: getMitgliedId(), abteilungId: neueAbteilungId, datum: von })
+    }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern' })
   } finally {

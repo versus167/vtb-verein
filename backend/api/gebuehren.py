@@ -134,6 +134,18 @@ def list_forderungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     return [asdict(f) for f in db.gebuehr_forderungen.list_for_mitglied(mitglied_id)]
 
 
+@router.get("/vorschlag")
+def vorschlag_aufnahme(mitglied_id: int, datum: str, user: CurrentUser, db: DB,
+                       abteilung_id: Optional[int] = None):
+    """Schlägt passende Aufnahmegebühren vor (Ticket #42): bei Neuanlage eines
+    Mitglieds (abteilung_id leer → Vereinsgebühr) bzw. bei Abteilungs-Neuzuordnung
+    (abteilung_id gesetzt). Liefert nur Gebühren, für die noch keine Forderung besteht.
+    """
+    _require_write(user)
+    kandidaten = GebuehrenService(db).vorschlag_aufnahmegebuehren(mitglied_id, abteilung_id, datum)
+    return [_gebuehr_dict(g) for g in kandidaten]
+
+
 @router.post("/forderungen", status_code=status.HTTP_201_CREATED)
 def create_forderung(data: ForderungCreate, user: CurrentUser, db: DB):
     _require_write(user)
