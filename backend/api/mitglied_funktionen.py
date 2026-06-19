@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
+from ..core.validation import zuordnungsbeginn_or_400
 
 router = APIRouter(tags=["mitglied-funktionen"])
 
@@ -48,10 +49,7 @@ def create_funktion(mitglied_id: int, data: FunktionWrite, user: CurrentUser, db
         raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
     if not (data.von or '').strip():
         raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
-    try:
-        db.get_mitglied(mitglied_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    zuordnungsbeginn_or_400(db, mitglied_id, data.von)
     funktion = db.create_mitglied_funktion(
         mitglied_id, data.abteilung_id, data.funktion, data.von, data.bis,
         created_by=user.username,
@@ -71,6 +69,7 @@ def update_funktion(mitglied_id: int, funktion_id: int, data: FunktionUpdate,
     eintrag = db.get_mitglied_funktion(funktion_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Funktionszuordnung nicht gefunden")
+    zuordnungsbeginn_or_400(db, mitglied_id, data.von)
     success = db.update_mitglied_funktion(
         funktion_id, data.abteilung_id, data.funktion, data.von, data.bis,
         updated_by=user.username, expected_version=data.expected_version,

@@ -35,7 +35,7 @@
             </div>
             <div class="row q-gutter-sm">
               <q-input v-if="!personMode" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
-              <q-input v-model="form.geburtsdatum" label="Geburtsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-select
                 v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
                 :options="geschlechtOptions" emit-value map-options clearable
@@ -248,7 +248,8 @@
           />
           <q-select v-model="zuordnungForm.status" label="Status *" outlined dense :options="abteilungStatusOptions" />
           <div class="row q-gutter-sm">
-            <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" clearable />
+            <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" clearable
+              :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
             <q-input v-model="zuordnungForm.bis" label="Bis" outlined dense type="date" class="col" clearable />
           </div>
         </q-card-section>
@@ -279,7 +280,8 @@
             emit-value map-options clearable
           />
           <div class="row q-gutter-sm">
-            <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" clearable />
+            <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" clearable
+              :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
             <q-input v-model="funktionForm.bis" label="Bis" outlined dense type="date" class="col" clearable />
           </div>
         </q-card-section>
@@ -328,7 +330,8 @@
           <q-select v-model="teamForm.rolle" :options="teamRolleOptionen" option-value="value" option-label="label"
             emit-value map-options label="Rolle *" outlined dense />
           <div class="row q-gutter-sm">
-            <q-input v-model="teamForm.von" label="Von *" outlined dense type="date" class="col" clearable />
+            <q-input v-model="teamForm.von" label="Von *" outlined dense type="date" class="col" clearable
+              :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
             <q-input v-model="teamForm.bis" label="Bis" outlined dense type="date" class="col" clearable />
           </div>
         </q-card-section>
@@ -571,6 +574,10 @@ async function saveStammdaten() {
     stammError.value = 'Eintrittsdatum ist erforderlich.'
     return
   }
+  if (!form.value.geburtsdatum) {
+    stammError.value = 'Geburtsdatum ist erforderlich.'
+    return
+  }
   form.value.iban = normalizeIban(form.value.iban)
   if (form.value.iban && !isValidIban(form.value.iban)) {
     stammError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
@@ -635,6 +642,15 @@ async function saveStammdaten() {
   }
 }
 
+// Standard-Beginn einer Zuordnung: heute – aber nie vor dem Vereinseintritt.
+// Bei zukünftigem Eintrittsdatum wird dieses vorbelegt (Zuordnung kann nicht vor
+// der Mitgliedschaft beginnen).
+function defaultVon() {
+  const heute = new Date().toISOString().slice(0, 10)
+  const eintritt = form.value?.eintrittsdatum
+  return (eintritt && eintritt > heute) ? eintritt : heute
+}
+
 // ── Abteilungs-Zuordnungen ───────────────────────────────────
 function openZuordnungForm(z) {
   if (z) {
@@ -644,8 +660,7 @@ function openZuordnungForm(z) {
   } else {
     editingZuordnungId.value = null
     editingZuordnungVersion.value = null
-    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
-    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: new Date().toISOString().slice(0, 10), bis: null }
+    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: defaultVon(), bis: null }
   }
   zuordnungFormOpen.value = true
 }
@@ -654,7 +669,7 @@ async function saveZuordnung() {
   zuordnungSaving.value = true
   const istNeu = !editingZuordnungId.value
   const neueAbteilungId = zuordnungForm.value.abteilung_id
-  const von = zuordnungForm.value.von || new Date().toISOString().slice(0, 10)
+  const von = zuordnungForm.value.von || defaultVon()
   try {
     if (editingZuordnungId.value) {
       await api.put(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}`, {
@@ -712,8 +727,7 @@ function openFunktionForm(f) {
   } else {
     editingFunktionId.value = null
     editingFunktionVersion.value = null
-    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
-    funktionForm.value = { funktion: null, abteilung_id: null, von: new Date().toISOString().slice(0, 10), bis: null }
+    funktionForm.value = { funktion: null, abteilung_id: null, von: defaultVon(), bis: null }
   }
   funktionFormOpen.value = true
 }
@@ -859,8 +873,7 @@ function openTeamForm(t) {
     editingTeamId.value = null
     editingTeamMannschaft.value = null
     editingTeamVersion.value = null
-    // Standard-Beginn = heute (meist passend; bei Bedarf änderbar)
-    teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: new Date().toISOString().slice(0, 10), bis: '' }
+    teamForm.value = { mannschaft_id: null, rolle: 'spieler', von: defaultVon(), bis: '' }
     alleMannschaften.value = alleMannschaftenAll.value
   }
   teamFormOpen.value = true
