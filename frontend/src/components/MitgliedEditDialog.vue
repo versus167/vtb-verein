@@ -35,6 +35,12 @@
             </div>
             <div class="row q-gutter-sm">
               <q-input v-if="!personMode" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
+              <!-- Im Personen-Kontext wird die Mitgliedsnr. nicht gepflegt, aber rein
+                   informativ angezeigt (interne, automatisch vergebene Nummer). -->
+              <q-input v-if="personMode && form.mitgliedsnummer != null" :model-value="form.mitgliedsnummer"
+                label="Mitgliedsnr." outlined dense readonly class="col">
+                <q-tooltip>Interne Mitgliedsnummer (automatisch vergeben)</q-tooltip>
+              </q-input>
               <q-input v-model="form.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-select
                 v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
