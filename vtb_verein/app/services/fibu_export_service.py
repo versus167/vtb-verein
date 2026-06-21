@@ -18,11 +18,31 @@ Konten-Auflösung:
 - Kostenträger (Feld 08)  = Gebühr-Override → default_kostentraeger (1)
 - Mandatsreferenz (Feld 47) = mitglied.sepa_mandatsref (Altsystem-Import), sonst
   automatisch = Mitgliedsnummer; Mandatsdatum (Feld 48) sonst = Eintrittsdatum.
+- Belegdatum (Feld 10) = Abrechnungsdatum (Beitrag: created_at der Sollstellung,
+  Gebühr: forderung.datum); Fälligkeit (Feld 11) = Belegdatum + NETTOTAGE (10).
 """
-from datetime import date
+from datetime import date, timedelta
 
 from app.models.fibu import FibuExport, FibuExportPosition, FibuEinstellungen
 from app.services import fibu_formatter
+
+# Zahlungsziel: Fälligkeit = Belegdatum + NETTOTAGE.
+NETTOTAGE = 10
+
+
+def _date_only(s):
+    """Datumsanteil (YYYY-MM-DD) eines ISO-Werts (auch Timestamp); leer → None."""
+    return s[:10] if s else None
+
+
+def _plus_tage(iso, tage):
+    """ISO-Datum + n Tage als ISO; leer/ungültig → None."""
+    if not iso:
+        return None
+    try:
+        return (date.fromisoformat(iso[:10]) + timedelta(days=tage)).isoformat()
+    except (ValueError, TypeError):
+        return None
 
 
 class FibuExportFehler(Exception):
@@ -121,6 +141,11 @@ class FibuExportService:
         mandatsref = row.get('sepa_mandatsref') or (str(nummer) if nummer is not None else None)
         mandatsdatum = row.get('sepa_mandatsdatum') or row.get('eintrittsdatum')
 
+        # Belegdatum = Abrechnungsdatum (Beitrag: created_at, Gebühr: forderung.datum),
+        # Fälligkeit = Belegdatum + NETTOTAGE.
+        belegdatum = _date_only(row.get('belegdatum'))
+        faelligkeitsdatum = _plus_tage(belegdatum, NETTOTAGE)
+
         return FibuExportPosition(
             quelle_typ=row['quelle_typ'],
             quelle_id=row['quelle_id'],
@@ -136,8 +161,8 @@ class FibuExportService:
             steuerschluessel=steuerschluessel,
             kostenstelle=kostenstelle,
             kostentraeger=kostentraeger,
-            belegdatum=row.get('datum'),
-            faelligkeitsdatum=row.get('datum'),
+            belegdatum=belegdatum,
+            faelligkeitsdatum=faelligkeitsdatum,
             buchungstext=bezeichnung,
             lastschrifteinzug=1 if (iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',

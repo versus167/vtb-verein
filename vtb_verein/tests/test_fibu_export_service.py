@@ -92,7 +92,7 @@ class TestFormatterRender:
 def _row(**kw):
     base = dict(
         quelle_typ='beitrag', quelle_id=1, periode='2026-Q4', betrag_soll=30.0,
-        datum='2026-12-31', mitglied_id=10, mitgliedsnummer=5, vorname='Anna',
+        belegdatum='2026-06-21', mitglied_id=10, mitgliedsnummer=5, vorname='Anna',
         nachname='Müller', strasse='Weg 1', plz='12345', ort='Stadt', land='DE',
         iban='DE00', bic='XBIC', sepa_mandatsref='M1', sepa_mandatsdatum='2025-01-02',
         eintrittsdatum='2024-03-15',
@@ -177,6 +177,14 @@ class TestAufloesung:
         svc, _ = _service(neu=[_row(quelle_typ='gebuehr', abteilung_id=3,
                                     abteilung_kostenstelle=44, quelle_kostenstelle=99)])
         assert svc.vorschau()['forderungen'][0].kostenstelle == 99
+
+    def test_belegdatum_abrechnung_und_faelligkeit_plus_10(self):
+        # Belegdatum = Abrechnungsdatum (hier created_at als Timestamp -> nur Datumsanteil),
+        # Fälligkeit = Belegdatum + 10 Tage.
+        svc, _ = _service(neu=[_row(belegdatum='2026-06-21 17:30:00.123+00')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.belegdatum == '2026-06-21'
+        assert p.faelligkeitsdatum == '2026-07-01'
 
     def test_lastschrift_ohne_iban_leer(self):
         svc, _ = _service(neu=[_row(iban=None, sepa_mandatsref=None)])

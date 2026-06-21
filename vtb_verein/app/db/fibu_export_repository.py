@@ -11,7 +11,7 @@ from app.db.base_repository import BaseRepository
 # Gemeinsame Spaltenprojektion je Quelle. {cond} = WHERE-Fragment (fest, kein User-Input).
 _SQL_BEITRAG = """
     SELECT 'beitrag' AS quelle_typ, s.id AS quelle_id,
-           s.zeitraum AS periode, s.betrag_soll, s.faelligkeitsdatum AS datum,
+           s.zeitraum AS periode, s.betrag_soll, s.created_at AS belegdatum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
@@ -28,7 +28,7 @@ _SQL_BEITRAG = """
 
 _SQL_GEBUEHR = """
     SELECT 'gebuehr' AS quelle_typ, f.id AS quelle_id,
-           NULL AS periode, f.betrag_soll, f.datum AS datum,
+           NULL AS periode, f.betrag_soll, f.datum AS belegdatum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
