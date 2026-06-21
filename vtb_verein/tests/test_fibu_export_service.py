@@ -95,6 +95,7 @@ def _row(**kw):
         datum='2026-12-31', mitglied_id=10, mitgliedsnummer=5, vorname='Anna',
         nachname='Müller', strasse='Weg 1', plz='12345', ort='Stadt', land='DE',
         iban='DE00', bic='XBIC', sepa_mandatsref='M1', sepa_mandatsdatum='2025-01-02',
+        eintrittsdatum='2024-03-15',
         quelle_name='Vereinsbeitrag', zahler_typ='mitglied', gegenkonto='4000',
         steuerschluessel=None, abteilung_id=None, abteilung_kostenstelle=None,
         quelle_kostenstelle=None, quelle_kostentraeger=None,
@@ -177,9 +178,24 @@ class TestAufloesung:
                                     abteilung_kostenstelle=44, quelle_kostenstelle=99)])
         assert svc.vorschau()['forderungen'][0].kostenstelle == 99
 
-    def test_lastschrift_nur_mit_iban_und_mandat(self):
+    def test_lastschrift_ohne_iban_leer(self):
         svc, _ = _service(neu=[_row(iban=None, sepa_mandatsref=None)])
         assert svc.vorschau()['forderungen'][0].lastschrifteinzug is None
+
+    def test_mandatsref_gespeichert_hat_vorrang(self):
+        svc, _ = _service(neu=[_row(sepa_mandatsref='ALT-9', sepa_mandatsdatum='2020-01-01')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.mandatsref == 'ALT-9' and p.mandatsdatum == '2020-01-01'
+
+    def test_mandatsref_fallback_aus_mitgliedsnummer(self):
+        # Neues Mitglied ohne gespeichertes Mandat: Referenz = Mitgliedsnummer,
+        # Datum = Eintrittsdatum, Lastschrift-Kennzeichen gesetzt (IBAN vorhanden).
+        svc, _ = _service(neu=[_row(mitgliedsnummer=42, sepa_mandatsref=None,
+                                    sepa_mandatsdatum=None, eintrittsdatum='2026-05-01')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.mandatsref == '42'
+        assert p.mandatsdatum == '2026-05-01'
+        assert p.lastschrifteinzug == 1
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,8 @@ Konten-Auflösung:
 - Gegenkonto (Feld 01)    = Regel/Gebühr.gegenkonto, sonst default_gegenkonto
 - Kostenstelle (Feld 07)  = Gebühr-Override → Abteilung → Verein-Default (12)
 - Kostenträger (Feld 08)  = Gebühr-Override → default_kostentraeger (1)
+- Mandatsreferenz (Feld 47) = mitglied.sepa_mandatsref (Altsystem-Import), sonst
+  automatisch = Mitgliedsnummer; Mandatsdatum (Feld 48) sonst = Eintrittsdatum.
 """
 from datetime import date
 
@@ -113,7 +115,11 @@ class FibuExportService:
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
         iban = row.get('iban')
-        mandatsref = row.get('sepa_mandatsref')
+        # Mandatsreferenz: gespeicherter Wert (z.B. aus dem Altsystem-Import) hat Vorrang;
+        # sonst – insb. für neu angelegte Mitglieder – automatisch aus der Mitgliedsnummer
+        # ableiten. Mandatsdatum fällt auf das Eintrittsdatum zurück.
+        mandatsref = row.get('sepa_mandatsref') or (str(nummer) if nummer is not None else None)
+        mandatsdatum = row.get('sepa_mandatsdatum') or row.get('eintrittsdatum')
 
         return FibuExportPosition(
             quelle_typ=row['quelle_typ'],
@@ -144,7 +150,7 @@ class FibuExportService:
             iban=iban,
             bic=row.get('bic'),
             mandatsref=mandatsref,
-            mandatsdatum=row.get('sepa_mandatsdatum'),
+            mandatsdatum=mandatsdatum,
         )
 
     @staticmethod

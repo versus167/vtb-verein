@@ -14,7 +14,7 @@ _SQL_BEITRAG = """
            s.zeitraum AS periode, s.betrag_soll, s.faelligkeitsdatum AS datum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
-           m.sepa_mandatsref, m.sepa_mandatsdatum,
+           m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
            r.name AS quelle_name, r.zahler_typ, r.gegenkonto, r.steuerschluessel,
            r.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
            NULL::integer AS quelle_kostenstelle, NULL::integer AS quelle_kostentraeger
@@ -31,7 +31,7 @@ _SQL_GEBUEHR = """
            NULL AS periode, f.betrag_soll, f.datum AS datum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
-           m.sepa_mandatsref, m.sepa_mandatsdatum,
+           m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
            g.name AS quelle_name, g.zahler_typ, g.gegenkonto, g.steuerschluessel,
            g.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
            g.kostenstelle AS quelle_kostenstelle, g.kostentraeger AS quelle_kostentraeger
