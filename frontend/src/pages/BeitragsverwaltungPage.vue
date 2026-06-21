@@ -138,6 +138,9 @@
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
                   Zahlung: {{ r.abteilung_name ?? 'Abteilung' }}
                 </q-chip>
+                <q-chip v-if="r.gegenkonto" dense size="sm" color="green-8" text-color="white" icon="account_balance">
+                  Konto: {{ r.gegenkonto }}
+                </q-chip>
               </q-item-label>
             </q-item-section>
             <q-item-section side v-if="kannSchreiben">

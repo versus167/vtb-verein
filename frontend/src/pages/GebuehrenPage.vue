@@ -33,6 +33,9 @@
                 dense size="sm" color="indigo" text-color="white" icon="cake">
                 {{ g.bedingung_alter_min != null ? `ab ${g.bedingung_alter_min} J.` : '' }}{{ g.bedingung_alter_min != null && g.bedingung_alter_max != null ? ' ' : '' }}{{ g.bedingung_alter_max != null ? `bis ${g.bedingung_alter_max} J.` : '' }}
               </q-chip>
+              <q-chip v-if="g.gegenkonto" dense size="sm" color="green-8" text-color="white" icon="account_balance">
+                Konto: {{ g.gegenkonto }}
+              </q-chip>
             </q-item-label>
           </q-item-section>
           <q-item-section side v-if="auth.hasPermission('gebuehren.write')">
