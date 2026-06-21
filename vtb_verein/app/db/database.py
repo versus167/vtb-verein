@@ -2490,7 +2490,7 @@ class Database:
                   CHECK (id = 1)
                 )
             """)
-            cur.execute("INSERT INTO fibu_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+            cur.execute("INSERT INTO fibu_einstellungen (id, debitor_konto_basis) VALUES (1, 200000) ON CONFLICT (id) DO NOTHING")
 
             # --- Konten-Spalten an den Stammdaten ----------------------------------
             for tbl in ('abteilung', 'abteilung_history'):
@@ -3738,7 +3738,7 @@ class Database:
               CHECK (id = 1)
             )
         """)
-        cur.execute("INSERT INTO fibu_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING")
+        cur.execute("INSERT INTO fibu_einstellungen (id, debitor_konto_basis) VALUES (1, 200000) ON CONFLICT (id) DO NOTHING")
 
         # Forward-Referenzen: Diese FKs werden erst NACH allen CREATE TABLE gesetzt,
         # weil ihre Ziel-Tabelle in der Erzeugungsreihenfolge später kommt
