@@ -8,8 +8,25 @@
       </q-card-section>
 
       <q-card-section class="text-center q-gutter-md">
+        <!-- Auswahl: Sitzungsdauer -->
+        <template v-if="state === 'prompt'">
+          <q-icon name="login" size="3rem" color="primary" />
+          <div class="text-h6">Fast geschafft</div>
+          <div class="text-body2 text-grey-7">
+            Klicke auf „Einloggen“, um fortzufahren.
+          </div>
+          <q-checkbox v-model="rememberMe" label="30 Tage eingeloggt bleiben" />
+          <q-btn
+            unelevated
+            color="primary"
+            label="Einloggen"
+            class="full-width q-mt-sm"
+            @click="doLogin"
+          />
+        </template>
+
         <!-- Prüfung läuft -->
-        <template v-if="state === 'loading'">
+        <template v-else-if="state === 'loading'">
           <q-spinner-dots color="primary" size="3rem" />
           <div class="text-body2 text-grey-7">Link wird geprüft …</div>
         </template>
@@ -50,17 +67,25 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const state = ref('loading')
+const state = ref('prompt')
+const rememberMe = ref(false)
 const errorMsg = ref('Der Link ist ungültig oder wurde bereits verwendet.')
 
-onMounted(async () => {
+onMounted(() => {
+  if (!route.query.token) {
+    state.value = 'error'
+  }
+})
+
+async function doLogin() {
   const token = route.query.token
   if (!token) {
     state.value = 'error'
     return
   }
+  state.value = 'loading'
   try {
-    await auth.loginWithMagicToken(token)
+    await auth.loginWithMagicToken(token, rememberMe.value)
     state.value = 'success'
     setTimeout(() => router.push({ name: 'dashboard' }), 1000)
   } catch (err) {
@@ -68,7 +93,7 @@ onMounted(async () => {
       err.response?.data?.detail || 'Der Link ist ungültig oder wurde bereits verwendet.'
     state.value = 'error'
   }
-})
+}
 </script>
 
 <style scoped>

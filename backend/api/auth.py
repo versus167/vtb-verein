@@ -274,6 +274,7 @@ class MagicLinkRequest(BaseModel):
 
 class MagicLinkValidate(BaseModel):
     token: str
+    remember: bool = False
 
 
 def _smtp_configured() -> bool:
@@ -379,7 +380,7 @@ def validate_magic_link(data: MagicLinkValidate, request: Request, db=Depends(ge
 
     _log_access(db, request, "magic_link_login", user_id=user.id, username=user.username)
     db.update_last_login(user.id)
-    expire = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = timedelta(days=30) if data.remember else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     sid = db.user_session_repository.create_session(
         user_id=user.id,
         expires_at=datetime.now(timezone.utc) + expire,

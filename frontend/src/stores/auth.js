@@ -21,8 +21,8 @@ export const useAuthStore = defineStore('auth', {
       this._applyToken(data)
     },
 
-    async loginWithMagicToken(token) {
-      const { data } = await api.post('/api/auth/magic-link/validate', { token })
+    async loginWithMagicToken(token, remember = false) {
+      const { data } = await api.post('/api/auth/magic-link/validate', { token, remember })
       this._applyToken(data)
     },
 
