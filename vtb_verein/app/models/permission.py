@@ -46,6 +46,9 @@ class Permission:
     GEBUEHREN_WRITE     = 'gebuehren.write'
     GEBUEHREN_ABRECHNEN = 'gebuehren.abrechnen'
 
+    # --- Finanzbuchhaltung (Fibu-Delta-Export der Sollstellungen, Format FBASC) ---
+    FIBU_EXPORT = 'fibu.export'
+
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'

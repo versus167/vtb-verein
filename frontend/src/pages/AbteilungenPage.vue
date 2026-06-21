@@ -65,6 +65,8 @@
           <q-input v-model="form.kuerzel" label="Kürzel" outlined />
           <q-input v-model="form.beschreibung" label="Beschreibung" outlined type="textarea"
             rows="3" />
+          <q-input v-model.number="form.kostenstelle" label="Kostenstelle (Fibu)" outlined
+            type="number" clearable hint="für den Fibu-Export der Beiträge dieser Abteilung" />
           <div v-if="formError" class="text-negative">{{ formError }}</div>
         </q-card-section>
         <q-separator />
@@ -86,6 +88,8 @@
           <q-input v-model="form.kuerzel" label="Kürzel" outlined />
           <q-input v-model="form.beschreibung" label="Beschreibung" outlined type="textarea"
             rows="3" />
+          <q-input v-model.number="form.kostenstelle" label="Kostenstelle (Fibu)" outlined
+            type="number" clearable hint="für den Fibu-Export der Beiträge dieser Abteilung" />
           <div v-if="formError" class="text-negative">{{ formError }}</div>
         </q-card-section>
         <q-separator />
@@ -153,7 +157,7 @@ const createOpen = ref(false)
 const editOpen = ref(false)
 const trashOpen = ref(false)
 
-const emptyForm = () => ({ name: '', kuerzel: '', beschreibung: '', id: null, version: null })
+const emptyForm = () => ({ name: '', kuerzel: '', beschreibung: '', kostenstelle: null, id: null, version: null })
 const form = ref(emptyForm())
 
 const columns = [
@@ -206,6 +210,7 @@ async function onCreate() {
       name: form.value.name,
       kuerzel: form.value.kuerzel || null,
       beschreibung: form.value.beschreibung || null,
+      kostenstelle: form.value.kostenstelle ?? null,
     })
     $q.notify({ type: 'positive', message: 'Abteilung angelegt' })
     createOpen.value = false
@@ -232,6 +237,7 @@ async function onEdit() {
       name: form.value.name,
       kuerzel: form.value.kuerzel || null,
       beschreibung: form.value.beschreibung || null,
+      kostenstelle: form.value.kostenstelle ?? null,
       expected_version: form.value.version,
     })
     $q.notify({ type: 'positive', message: 'Gespeichert' })

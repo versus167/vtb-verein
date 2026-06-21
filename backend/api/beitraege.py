@@ -1,11 +1,8 @@
-from dataclasses import asdict
 from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import io
 
 from app.models.beitrag import Beitragsregel
 from app.models.permission import Permission
@@ -53,6 +50,8 @@ class RegelCreate(BaseModel):
     bedingung_alter_min: Optional[int] = None
     bedingung_alter_max: Optional[int] = None
     zahler_typ: str = 'mitglied'
+    gegenkonto: Optional[str] = None
+    steuerschluessel: Optional[str] = None
 
 
 class RegelUpdate(RegelCreate):
@@ -93,6 +92,8 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
         bedingung_alter_min=data.bedingung_alter_min,
         bedingung_alter_max=data.bedingung_alter_max,
         zahler_typ=data.zahler_typ,
+        gegenkonto=(data.gegenkonto or None),
+        steuerschluessel=(data.steuerschluessel or None),
     )
     created = db.beitragsregeln.create(r, created_by=user.username)
     return _regel_dict(created)
@@ -118,6 +119,8 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.bedingung_alter_min = data.bedingung_alter_min
     r.bedingung_alter_max = data.bedingung_alter_max
     r.zahler_typ = data.zahler_typ
+    r.gegenkonto = (data.gegenkonto or None)
+    r.steuerschluessel = (data.steuerschluessel or None)
     r.version = data.expected_version
     ok = db.beitragsregeln.update(r, updated_by=user.username)
     if not ok:
@@ -250,36 +253,6 @@ def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
 
 
 # ---------------------------------------------------------------------------
-# SEPA-Export (einfaches CSV-Format)
-# ---------------------------------------------------------------------------
-
-@router.get("/sepa-export/{zeitraum}")
-def sepa_export(zeitraum: str, user: CurrentUser, db: DB):
-    _require_abrechnen(user)
-    sollstellungen = db.sollstellungen.list_offen_fuer_sepa(zeitraum)
-    if not sollstellungen:
-        raise HTTPException(status_code=404, detail="Keine offenen SEPA-Lastschriften für diesen Zeitraum")
-
-    lines = ["Name;IBAN;Kontoinhaber;Betrag;Zeitraum;Regel"]
-    for s in sollstellungen:
-        lines.append(
-            f"{s.mitglied_nachname} {s.mitglied_vorname};"
-            f"{s.mitglied_iban or ''};"
-            f"{s.mitglied_kontoinhaber or ''};"
-            f"{s.betrag_soll:.2f};"
-            f"{s.zeitraum};"
-            f"{s.beitragsregel_name}"
-        )
-
-    content = "\n".join(lines)
-    return StreamingResponse(
-        io.BytesIO(content.encode("utf-8")),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="sepa_{zeitraum}.csv"'},
-    )
-
-
-# ---------------------------------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
@@ -299,6 +272,8 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'bedingung_alter_min': r.bedingung_alter_min,
         'bedingung_alter_max': r.bedingung_alter_max,
         'zahler_typ': r.zahler_typ,
+        'gegenkonto': r.gegenkonto,
+        'steuerschluessel': r.steuerschluessel,
         'version': r.version,
     }
 
@@ -318,5 +293,7 @@ def _soll_dict(s) -> dict:
         'bezahlt_am': s.bezahlt_am,
         'zahler_typ': s.zahler_typ,
         'kassenbuchung_id': s.kassenbuchung_id,
+        'exportiert_in_export_id': s.exportiert_in_export_id,
+        'storno_exportiert_in_export_id': s.storno_exportiert_in_export_id,
         'version': s.version,
     }

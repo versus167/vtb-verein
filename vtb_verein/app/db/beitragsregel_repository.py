@@ -11,7 +11,7 @@ _SELECT = """
            r.bedingung_funktionen, r.bedingung_abteilung_ids,
            r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
            r.bedingung_alter_min, r.bedingung_alter_max,
-           r.zahler_typ,
+           r.zahler_typ, r.gegenkonto, r.steuerschluessel,
            r.version, r.created_at, r.created_by, r.updated_at, r.updated_by
     FROM beitragsregel r
     LEFT JOIN abteilung a ON a.id = r.abteilung_id AND a.deleted_at IS NULL
@@ -34,6 +34,7 @@ def _map(row) -> Beitragsregel:
         bedingung_alter_min=r['bedingung_alter_min'],
         bedingung_alter_max=r['bedingung_alter_max'],
         zahler_typ=r['zahler_typ'],
+        gegenkonto=r['gegenkonto'], steuerschluessel=r['steuerschluessel'],
         version=r['version'], created_at=r['created_at'], created_by=r['created_by'],
         updated_at=r['updated_at'], updated_by=r['updated_by'],
     )
@@ -76,8 +77,8 @@ class BeitragsregelRepository(BaseRepository):
                     bedingung_funktionen, bedingung_abteilung_ids,
                     ausnahme_funktionen, ausnahme_abteilung_ids,
                     bedingung_alter_min, bedingung_alter_max,
-                    zahler_typ, created_by, updated_by
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::integer[],%s,%s::integer[],%s,%s,%s,%s,%s)
+                    zahler_typ, gegenkonto, steuerschluessel, created_by, updated_by
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::integer[],%s,%s::integer[],%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
                 (r.name, r.abteilung_id, r.betrag_pro_monat, r.einzug_turnus,
@@ -85,7 +86,7 @@ class BeitragsregelRepository(BaseRepository):
                  r.bedingung_funktionen, r.bedingung_abteilung_ids,
                  r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,
-                 r.zahler_typ, created_by, created_by),
+                 r.zahler_typ, r.gegenkonto, r.steuerschluessel, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -101,7 +102,7 @@ class BeitragsregelRepository(BaseRepository):
                     bedingung_funktionen=%s, bedingung_abteilung_ids=%s::integer[],
                     ausnahme_funktionen=%s, ausnahme_abteilung_ids=%s::integer[],
                     bedingung_alter_min=%s, bedingung_alter_max=%s,
-                    zahler_typ=%s,
+                    zahler_typ=%s, gegenkonto=%s, steuerschluessel=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND version=%s AND deleted_at IS NULL
                 """,
@@ -111,7 +112,7 @@ class BeitragsregelRepository(BaseRepository):
                  r.bedingung_funktionen, r.bedingung_abteilung_ids,
                  r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,
-                 r.zahler_typ,
+                 r.zahler_typ, r.gegenkonto, r.steuerschluessel,
                  updated_by, r.id, r.version),
             )
             return cur.rowcount > 0

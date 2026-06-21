@@ -52,8 +52,6 @@
         <q-select v-model="statusFilter" :options="statusFilterOptionen" option-value="value" option-label="label"
           emit-value map-options dense outlined label="Status" style="min-width:160px" @update:model-value="loadForderungen" />
         <q-space />
-        <q-btn v-if="auth.hasPermission('gebuehren.abrechnen')" flat icon="download"
-          label="SEPA-Export" @click="sepaExport" />
         <q-btn v-if="auth.hasPermission('gebuehren.write')" color="primary" unelevated
           icon="add" label="Forderung anlegen" @click="openForderung" />
       </div>
@@ -107,6 +105,20 @@
           <div class="text-caption text-grey-6">
             <q-icon name="info" size="xs" /> Altersgrenzen steuern den automatischen Vorschlag bei Neuanlage/Zuordnung
             (leer = ohne Altersbeschränkung).
+          </div>
+          <q-separator class="q-my-sm" />
+          <div class="text-caption text-grey-7">Finanzbuchhaltung (Fibu-Export)</div>
+          <div class="row q-gutter-sm">
+            <q-input v-model="gForm.gegenkonto" label="Gegenkonto (Erlöskonto)" outlined dense
+              clearable class="col" hint="leer = globaler Default" />
+            <q-input v-model="gForm.steuerschluessel" label="Steuerschlüssel" outlined dense
+              clearable class="col" />
+          </div>
+          <div class="row q-gutter-sm">
+            <q-input v-model.number="gForm.kostenstelle" label="Kostenstelle (Override)" outlined dense
+              type="number" clearable class="col" hint="leer = aus Abteilung" />
+            <q-input v-model.number="gForm.kostentraeger" label="Kostenträger (Override)" outlined dense
+              type="number" clearable class="col" hint="leer = Default (1)" />
           </div>
           <div v-if="gError" class="text-negative text-caption">{{ gError }}</div>
         </q-card-section>
@@ -197,11 +209,14 @@ function openGebuehr(g = null) {
     id: g.id, name: g.name, abteilung_id: g.abteilung_id, betrag: g.betrag, anlass: g.anlass,
     gueltig_ab: g.gueltig_ab, gueltig_bis: g.gueltig_bis ?? '', zahler_typ: g.zahler_typ,
     bedingung_alter_min: g.bedingung_alter_min ?? null, bedingung_alter_max: g.bedingung_alter_max ?? null,
+    gegenkonto: g.gegenkonto ?? '', steuerschluessel: g.steuerschluessel ?? '',
+    kostenstelle: g.kostenstelle ?? null, kostentraeger: g.kostentraeger ?? null,
     version: g.version,
   } : {
     id: null, name: '', abteilung_id: null, betrag: 0, anlass: 'aufnahme',
     gueltig_ab: new Date().toISOString().slice(0, 10), gueltig_bis: '',
     zahler_typ: 'mitglied', bedingung_alter_min: null, bedingung_alter_max: null,
+    gegenkonto: '', steuerschluessel: '', kostenstelle: null, kostentraeger: null,
   }
   gebuehrOpen.value = true
 }
@@ -218,6 +233,10 @@ async function saveGebuehr() {
       zahler_typ: gForm.value.zahler_typ,
       bedingung_alter_min: gForm.value.bedingung_alter_min ?? null,
       bedingung_alter_max: gForm.value.bedingung_alter_max ?? null,
+      gegenkonto: gForm.value.gegenkonto || null,
+      steuerschluessel: gForm.value.steuerschluessel || null,
+      kostenstelle: gForm.value.kostenstelle ?? null,
+      kostentraeger: gForm.value.kostentraeger ?? null,
     }
     if (gForm.value.id) {
       await api.put(`/api/gebuehren/${gForm.value.id}`, { ...payload, expected_version: gForm.value.version })
@@ -342,16 +361,5 @@ function storno(f) {
       try { await api.patch(`/api/gebuehren/forderungen/${f.id}`, { bezahlt_am: null }); await loadForderungen() }
       catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' }) }
     })
-}
-async function sepaExport() {
-  try {
-    const res = await api.get('/api/gebuehren/sepa-export', { responseType: 'blob' })
-    const url = URL.createObjectURL(res.data)
-    const a = document.createElement('a')
-    a.href = url; a.download = 'sepa_gebuehren.csv'; a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    $q.notify({ type: 'negative', message: e.response?.status === 404 ? 'Keine offenen SEPA-Gebühren' : 'Fehler' })
-  }
 }
 </script>

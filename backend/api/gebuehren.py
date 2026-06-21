@@ -1,9 +1,7 @@
 from dataclasses import asdict
 from typing import Optional
-import io
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.models.gebuehr import Gebuehr
@@ -28,6 +26,10 @@ class GebuehrCreate(BaseModel):
     zahler_typ: str = 'mitglied'
     bedingung_alter_min: Optional[int] = None
     bedingung_alter_max: Optional[int] = None
+    gegenkonto: Optional[str] = None
+    steuerschluessel: Optional[str] = None
+    kostenstelle: Optional[int] = None
+    kostentraeger: Optional[int] = None
 
 
 class GebuehrUpdate(GebuehrCreate):
@@ -70,6 +72,10 @@ def _gebuehr_dict(g: Gebuehr) -> dict:
         'zahler_typ': g.zahler_typ,
         'bedingung_alter_min': g.bedingung_alter_min,
         'bedingung_alter_max': g.bedingung_alter_max,
+        'gegenkonto': g.gegenkonto,
+        'steuerschluessel': g.steuerschluessel,
+        'kostenstelle': g.kostenstelle,
+        'kostentraeger': g.kostentraeger,
         'version': g.version,
     }
 
@@ -94,7 +100,9 @@ def create_gebuehr(data: GebuehrCreate, user: CurrentUser, db: DB):
     g = Gebuehr(name=data.name.strip(), abteilung_id=data.abteilung_id, betrag=data.betrag,
                 anlass=data.anlass, gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
                 zahler_typ=data.zahler_typ,
-                bedingung_alter_min=data.bedingung_alter_min, bedingung_alter_max=data.bedingung_alter_max)
+                bedingung_alter_min=data.bedingung_alter_min, bedingung_alter_max=data.bedingung_alter_max,
+                gegenkonto=(data.gegenkonto or None), steuerschluessel=(data.steuerschluessel or None),
+                kostenstelle=data.kostenstelle, kostentraeger=data.kostentraeger)
     return _gebuehr_dict(db.gebuehren.create(g, created_by=user.username))
 
 
@@ -113,6 +121,10 @@ def update_gebuehr(gebuehr_id: int, data: GebuehrUpdate, user: CurrentUser, db: 
     g.zahler_typ = data.zahler_typ
     g.bedingung_alter_min = data.bedingung_alter_min
     g.bedingung_alter_max = data.bedingung_alter_max
+    g.gegenkonto = (data.gegenkonto or None)
+    g.steuerschluessel = (data.steuerschluessel or None)
+    g.kostenstelle = data.kostenstelle
+    g.kostentraeger = data.kostentraeger
     g.version = data.expected_version
     if not db.gebuehren.update(g, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
@@ -185,25 +197,3 @@ def update_forderung_status(forderung_id: int, data: ForderungStatusUpdate,
     return asdict(db.get_gebuehr_forderung(forderung_id))
 
 
-@router.get("/sepa-export")
-def sepa_export(user: CurrentUser, db: DB):
-    _require_abrechnen(user)
-    offen = [f for f in db.gebuehr_forderungen.list_all('offen') if f.zahler_typ == 'mitglied']
-    if not offen:
-        raise HTTPException(status_code=404, detail="Keine offenen SEPA-Gebühren")
-    lines = ["Name;IBAN;Kontoinhaber;Betrag;Datum;Gebuehr"]
-    for f in offen:
-        lines.append(
-            f"{f.mitglied_nachname} {f.mitglied_vorname};"
-            f"{f.mitglied_iban or ''};"
-            f"{f.mitglied_kontoinhaber or ''};"
-            f"{f.betrag_soll:.2f};"
-            f"{f.datum};"
-            f"{f.gebuehr_name}"
-        )
-    content = "\n".join(lines)
-    return StreamingResponse(
-        io.BytesIO(content.encode("utf-8")),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="sepa_gebuehren.csv"'},
-    )

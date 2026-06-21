@@ -12,6 +12,7 @@ class AbteilungWrite(BaseModel):
     name: str
     kuerzel: Optional[str] = None
     beschreibung: Optional[str] = None
+    kostenstelle: Optional[int] = None   # Fibu-Kostenstelle (FBASC Feld 07)
 
 
 class AbteilungUpdate(AbteilungWrite):
@@ -76,7 +77,8 @@ def get_abteilung(abteilung_id: int, user: CurrentUser, db: DB):
 def create_abteilung(data: AbteilungWrite, user: CurrentUser, db: DB):
     _require_write(user)
     from app.models.abteilung import Abteilung
-    abt = Abteilung(name=data.name, kuerzel=data.kuerzel, beschreibung=data.beschreibung)
+    abt = Abteilung(name=data.name, kuerzel=data.kuerzel, beschreibung=data.beschreibung,
+                    kostenstelle=data.kostenstelle)
     created = db.create_abteilung(abt, created_by=user.username)
     return asdict(created)
 
@@ -90,6 +92,7 @@ def update_abteilung(abteilung_id: int, data: AbteilungUpdate, user: CurrentUser
     abt.name = data.name
     abt.kuerzel = data.kuerzel
     abt.beschreibung = data.beschreibung
+    abt.kostenstelle = data.kostenstelle
     abt.version = data.expected_version
     success = db.update_abteilung(abt, updated_by=user.username)
     if not success:

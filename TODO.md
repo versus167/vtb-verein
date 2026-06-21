@@ -57,14 +57,20 @@
       (Schreibzugriff auf die Kasse). Plan: `ZAEHLPROTOKOLL_PLAN.md`.
 
 ### Beiträge / Gebühren
-- [ ] **Fibu-Export der Sollstellungen** – **kein** SEPA-Export in dem Sinne, sondern ein
+- [x] **Fibu-Export der Sollstellungen** – **kein** SEPA-Export in dem Sinne, sondern ein
       **Delta-/Inkrement-Export**: ausgegeben werden alle bisher **nicht exportierten**
       Sollstellungen. Statt der Markierung „bezahlt" bekommt eine Sollstellung beim Export
       die Markierung **„exportiert"** (in die Finanzbuchhaltung exportiert). Auch
       **Stornos/Löschungen** bereits exportierter Sollstellungen fließen in den nächsten
       Export ein – als korrespondierende **Export-(Gegen-)Buchung** –, damit die Fibu
       konsistent bleibt (kein stilles Verschwinden bereits exportierter Beträge).
-  [ ] Sollstellungen von Beiträgen und Gebühren sollen auch irgendwo bei der einzelnen Person sichtbar werden - vlt. allgemein im Mitglied-Editor
+      Umgesetzt im Format **hmd FBASC** (`fbasc.hia`, Migration **v46**, Permission
+      `fibu.export`, Seite „Fibu-Export"). Konten: Debitor = Basis + Mitgliedsnr.,
+      Gegenkonto je Regel/Gebühr, Kostenstelle aus Abteilung (Verein = 12), Kostenträger 1.
+      Bisherige Platzhalter-SEPA-CSV-Exporte (Beiträge/Gebühren) entfernt. Offen: echte
+      Kontenrahmen-Werte (SKR49 o.Ä.) sind als Daten zu pflegen, nicht im Code.
+  - [x] Sollstellungen von Beiträgen und Gebühren je Person sichtbar (Tab „Beiträge &
+        Gebühren" im Mitglied-Editor, read-only inkl. Export-Status)
 
 ## 🔔 Benachrichtigungen (Phase 3 – Automatisierung)
 
@@ -162,8 +168,9 @@ Erledigt (2026-06-11):
 
 Personen-/Benutzerverwaltung (Rollen + Permission-Matrix, Magic-Link, Self-Service-Profil) ·
 mehrfache Kontaktdaten (v24) · Abteilungen + Funktionen (v25) · Mitglied-Abteilung-Zuordnung ·
-Mannschaften (v27) · Beiträge inkl. Sollstellung, altersabhängige Regeln (v26) & SEPA-Export ·
-Gebühren (v28) · Kassenbuch (Multi-Kasse, Storno, CSV-Export, PDF-Bericht, kassenspezifische
+Mannschaften (v27) · Beiträge inkl. Sollstellung, altersabhängige Regeln (v26) ·
+Gebühren (v28) · Fibu-Export der Sollstellungen (FBASC, v46) · Kassenbuch (Multi-Kasse,
+Storno, CSV-Export, PDF-Bericht, kassenspezifische
 Berechtigungen) · Tickets (vollständig, inkl. Bereichs-Berechtigungen) · domänen-isolierte
 Anhänge · Audit-Trail & Soft-Delete durchgängig · E-Mail- + Matrix-Benachrichtigungen ·
 PWA · Personen-Liste mit Filter (Status/Abteilung/Funktion) + Volltextsuche ·

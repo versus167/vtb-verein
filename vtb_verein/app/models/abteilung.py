@@ -13,6 +13,7 @@ class Abteilung:
     name: str = ""
     kuerzel: Optional[str] = None
     beschreibung: Optional[str] = None
+    kostenstelle: Optional[int] = None   # Fibu-Kostenstelle (FBASC Feld 07)
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

@@ -254,9 +254,6 @@
           </q-select>
           <q-btn label="Neu laden" color="primary" outline dense :disable="!filterZeitraum"
             @click="ladeSollstellungen" />
-          <q-btn v-if="kannAbrechnen && filterZeitraum && sollstellungen.some(s => s.status === 'offen' && s.zahler_typ === 'mitglied')"
-            icon="download" label="SEPA-Export" color="secondary" outline dense
-            @click="sepaExport" />
           <q-space />
           <q-input v-model="sollSuche" dense outlined clearable debounce="200"
             placeholder="Suche (Name, Regel …)" style="min-width: 220px">
@@ -376,6 +373,14 @@
           <q-select v-model="regelForm.zahler_typ"
             :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
+          <q-separator class="q-my-sm" />
+          <div class="text-caption text-grey-7">Finanzbuchhaltung (Fibu-Export)</div>
+          <div class="row q-gutter-sm">
+            <q-input v-model="regelForm.gegenkonto" label="Gegenkonto (Erlöskonto)" outlined dense
+              clearable class="col" hint="leer = globaler Default" />
+            <q-input v-model="regelForm.steuerschluessel" label="Steuerschlüssel" outlined dense
+              clearable class="col" />
+          </div>
           <div v-if="regelError" class="text-negative text-caption">{{ regelError }}</div>
         </q-card-section>
         <q-separator />
@@ -547,6 +552,8 @@ function openRegelDialog(r = null) {
     bedingung_alter_min: r.bedingung_alter_min ?? null,
     bedingung_alter_max: r.bedingung_alter_max ?? null,
     zahler_typ: r.zahler_typ,
+    gegenkonto: r.gegenkonto ?? '',
+    steuerschluessel: r.steuerschluessel ?? '',
     expected_version: r.version,
   } : {
     name: '', abteilung_id: null,
@@ -558,6 +565,8 @@ function openRegelDialog(r = null) {
     bedingung_alter_min: null,
     bedingung_alter_max: null,
     zahler_typ: 'mitglied',
+    gegenkonto: '',
+    steuerschluessel: '',
   }
   regelDialogOpen.value = true
 }
@@ -788,15 +797,6 @@ async function deleteSollstellung(s) {
       await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
     })
-}
-
-async function sepaExport() {
-  const url = `/api/beitraege/sepa-export/${filterZeitraum.value}`
-  const response = await api.get(url, { responseType: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(response.data)
-  link.download = `sepa_${filterZeitraum.value}.csv`
-  link.click()
 }
 
 async function loadOptionen() {

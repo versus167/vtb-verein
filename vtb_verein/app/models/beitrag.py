@@ -31,6 +31,8 @@ class Beitragsregel:
     bedingung_alter_min: Optional[int] = None              # Mindestalter (Jahre), None = keine Untergrenze
     bedingung_alter_max: Optional[int] = None              # Höchstalter (Jahre), None = keine Obergrenze
     zahler_typ: str = "mitglied"                 # mitglied | abteilung
+    gegenkonto: Optional[str] = None             # Fibu-Erlöskonto (FBASC Feld 01)
+    steuerschluessel: Optional[str] = None       # Fibu-Steuerschlüssel (FBASC Feld 06), i.d.R. leer
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -63,6 +65,8 @@ class BeitragSollstellung:
     status: str = "offen"                        # offen | bezahlt | storniert
     bezahlt_am: Optional[str] = None
     kassenbuchung_id: Optional[int] = None
+    exportiert_in_export_id: Optional[int] = None          # Forderung in Fibu-Lauf exportiert
+    storno_exportiert_in_export_id: Optional[int] = None   # Gegenbuchung exportiert
     # Per JOIN befüllt
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None

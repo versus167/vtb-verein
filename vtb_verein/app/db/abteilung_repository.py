@@ -26,7 +26,7 @@ class AbteilungRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, kuerzel, beschreibung,
+                SELECT id, name, kuerzel, beschreibung, kostenstelle,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE id = %s AND deleted_at IS NULL
@@ -43,7 +43,7 @@ class AbteilungRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, kuerzel, beschreibung,
+                SELECT id, name, kuerzel, beschreibung, kostenstelle,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE deleted_at IS NULL
@@ -63,7 +63,7 @@ class AbteilungRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, kuerzel, beschreibung,
+                SELECT id, name, kuerzel, beschreibung, kostenstelle,
                        version, created_at, created_by, updated_at, updated_by,
                        deleted_at, deleted_by
                 FROM abteilung
@@ -78,17 +78,17 @@ class AbteilungRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO abteilung (name, kuerzel, beschreibung, created_by, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                INSERT INTO abteilung (name, kuerzel, beschreibung, kostenstelle, created_by, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
-                (abt.name, abt.kuerzel, abt.beschreibung, created_by, created_by),
+                (abt.name, abt.kuerzel, abt.beschreibung, abt.kostenstelle, created_by, created_by),
             )
             abt.id = cur.fetchone()['id']
     
             cur.execute(
                 """
-                SELECT id, name, kuerzel, beschreibung,
+                SELECT id, name, kuerzel, beschreibung, kostenstelle,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE id = %s
@@ -108,13 +108,13 @@ class AbteilungRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE abteilung
-                SET name = %s, kuerzel = %s, beschreibung = %s,
+                SET name = %s, kuerzel = %s, beschreibung = %s, kostenstelle = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = %s
                 WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
-                (abt.name, abt.kuerzel, abt.beschreibung,
+                (abt.name, abt.kuerzel, abt.beschreibung, abt.kostenstelle,
                  updated_by, abt.id, abt.version),
             )
             if cur.rowcount == 0:
@@ -123,7 +123,7 @@ class AbteilungRepository(BaseRepository):
             # Get new state for return
             cur.execute(
                 """
-                SELECT id, name, kuerzel, beschreibung,
+                SELECT id, name, kuerzel, beschreibung, kostenstelle,
                        version, created_at, created_by, updated_at, updated_by
                 FROM abteilung
                 WHERE id = %s
