@@ -277,6 +277,15 @@ class MagicLinkValidate(BaseModel):
     remember: bool = False
 
 
+# Rate-Limiting für Magic-Link-Anforderungen (Ticket #48) – gegen Mail-Bombing
+# und Brute-Force/Enumeration. Gezählt wird über das Zugriffsprotokoll (access_log),
+# das ohnehin jeden 'magic_link_request' festhält – kein Extra-State, übersteht Neustarts.
+MAGIC_LINK_IP_WINDOW_MIN = 15      # Zeitfenster für das Pro-IP-Limit
+MAGIC_LINK_MAX_PER_IP = 5          # max. Anfragen je IP im Fenster → danach 429
+MAGIC_LINK_USER_WINDOW_MIN = 60    # Zeitfenster für das Pro-Empfänger-Limit
+MAGIC_LINK_MAX_PER_USER = 3        # max. Mails an dieselbe Adresse im Fenster
+
+
 def _smtp_configured() -> bool:
     return bool(settings.SMTP_USERNAME and settings.SMTP_PASSWORD)
 
@@ -339,6 +348,23 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
     if not _smtp_configured():
         raise HTTPException(status_code=503, detail="E-Mail-Versand nicht konfiguriert")
 
+    ip = _client_ip(request)
+    now = datetime.now(timezone.utc)
+
+    # Pro-IP-Gate zuerst: rein volumenbasiert und ohne User-Bezug, daher verrät die
+    # 429-Antwort nichts über vorhandene Adressen. Bremst Mail-Bombing/Enumeration
+    # von einer Quelle aus.
+    if ip and db.access_log_repository.count(
+        event_type="magic_link_request",
+        ip=ip,
+        since=(now - timedelta(minutes=MAGIC_LINK_IP_WINDOW_MIN)).isoformat(),
+    ) >= MAGIC_LINK_MAX_PER_IP:
+        _log_access(db, request, "magic_link_rate_limited", detail="ip")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Anfragen. Bitte versuche es später erneut.",
+        )
+
     user = db.get_user_by_email(data.email)
     # Protokoll: ob eine passende (aktive) Adresse existierte, nur im detail-Feld –
     # nach außen bleibt die Antwort einheitlich 200 (kein User-Enumeration-Leak).
@@ -348,7 +374,24 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
         username=user.username if user else None,
         detail="match" if (user and user.active) else "no_match",
     )
-    if user and user.active:
+    should_send = bool(user and user.active)
+
+    # Pro-Empfänger-Limit: schützt das Postfach eines echten Nutzers auch dann,
+    # wenn der Angreifer die IP wechselt. Bei Überschreitung wird *still* nicht
+    # versendet (Antwort bleibt 200) – kein Enumeration-Oracle. Der gerade
+    # protokollierte Request ist mitgezählt, daher '>' statt '>='.
+    if should_send and db.access_log_repository.count(
+        event_type="magic_link_request",
+        user_id=user.id,
+        since=(now - timedelta(minutes=MAGIC_LINK_USER_WINDOW_MIN)).isoformat(),
+    ) > MAGIC_LINK_MAX_PER_USER:
+        _log_access(
+            db, request, "magic_link_rate_limited",
+            user_id=user.id, username=user.username, detail="user",
+        )
+        should_send = False
+
+    if should_send:
         token = db.auth_token_repository.create_token(
             user_id=user.id,
             token_type="magic_link",
