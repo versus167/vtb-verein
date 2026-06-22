@@ -17,6 +17,13 @@ Buchungslogik:
 - Forderung = noch nicht exportierte, lebende Sollstellung → Debitor im Soll (S).
 - Gegenbuchung = bereits exportierte, danach stornierte/gelöschte Sollstellung → Haben (H),
   damit bereits an die Fibu übergebene Beträge nicht still verschwinden.
+- Abteilungs-getragene Posten (zahler_typ='abteilung', z.B. Schiedsrichter-Beiträge):
+  erzeugen ZWEI Zeilen mit demselben Erlöskonto, getauschter Kostenstelle und gleicher
+  Belegnummer (sich ausgleichendes OPOS-Paar auf dem Debitor → kein SEPA-Einzug):
+    1. Einbuchung  – Debitor S gegen Erlöskonto, Kostenstelle = Verein  → Verein bekommt Beitrag.
+    2. Gegenbuchung – Debitor H gegen Erlöskonto, Kostenstelle = Abteilung → Abteilung zahlt Beitrag.
+  Netto fließt kein Geld; der Beitrag wird per Kostenstelle vom Verein auf die Abteilung
+  umgebucht. Im Storno-Pfad dreht der S↔H-Tausch beide Zeilen des Paars um.
 
 Konten-Auflösung:
 - Debitor-Konto (Feld 00) = einstellungen.debitor_konto_basis + mitgliedsnummer
@@ -29,6 +36,7 @@ Konten-Auflösung:
 - Belegdatum (Feld 10) = Abrechnungsdatum (Beitrag: created_at der Sollstellung,
   Gebühr: forderung.datum); Fälligkeit (Feld 11) = Belegdatum + NETTOTAGE (10).
 """
+import dataclasses
 from datetime import date, timedelta
 
 from app.models.fibu import FibuExport, FibuExportPosition, FibuEinstellungen
@@ -58,6 +66,18 @@ def _summe_cent(positionen) -> int:
     return sum((1 if p.soll_haben == 'S' else -1) * round(p.betrag * 100) for p in positionen)
 
 
+def _dedup_fehler(fehler: list[dict]) -> list[dict]:
+    """Entfernt Duplikate (gleiche Quelle erzeugt über die zwei Abteilungs-Positionen
+    sonst denselben Konto-/Gegenkonto-Fehler doppelt). Reihenfolge bleibt erhalten."""
+    gesehen, eindeutig = set(), []
+    for f in fehler:
+        key = (f['quelle_typ'], f['quelle_id'], f['art'], f['problem'])
+        if key not in gesehen:
+            gesehen.add(key)
+            eindeutig.append(f)
+    return eindeutig
+
+
 class FibuExportFehler(Exception):
     """Export abgebrochen, weil Positionen unvollständig konfiguriert sind."""
 
@@ -78,12 +98,16 @@ class FibuExportService:
     def vorschau(self) -> dict:
         """Liefert die zu exportierenden Positionen + Validierungsfehler (ohne DB-Schreibzugriff)."""
         einst = self.db.fibu_einstellungen.get()
-        forderungen = [self._position(r, 'forderung', einst)
-                       for r in self.db.fibu_exporte.list_neue_positionen()]
-        gegenbuchungen = [self._position(r, 'gegenbuchung', einst)
-                          for r in self.db.fibu_exporte.list_gegenbuchungen()]
+        neu_rows = self.db.fibu_exporte.list_neue_positionen()
+        gegen_rows = self.db.fibu_exporte.list_gegenbuchungen()
+        forderungen = [p for r in neu_rows
+                       for p in self._positionen_fuer_row(r, 'forderung', einst)]
+        gegenbuchungen = [p for r in gegen_rows
+                          for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)]
         fehler = self._validieren(forderungen + gegenbuchungen, einst)
-        return {'forderungen': forderungen, 'gegenbuchungen': gegenbuchungen, 'fehler': fehler}
+        fehler += self._abteilung_fehler(neu_rows + gegen_rows)
+        return {'forderungen': forderungen, 'gegenbuchungen': gegenbuchungen,
+                'fehler': _dedup_fehler(fehler)}
 
     def exportieren(self, erstellt_von: str) -> tuple[FibuExport, bytes]:
         """Führt den Export-Lauf aus: validiert, rendert fbasc.hia, stempelt die Quellzeilen."""
@@ -97,14 +121,14 @@ class FibuExportService:
         positionen = forderungen + gegenbuchungen
         content = fibu_formatter.render(positionen)
 
-        neu_ids = {
-            'beitrag': [p.quelle_id for p in forderungen if p.quelle_typ == 'beitrag'],
-            'gebuehr': [p.quelle_id for p in forderungen if p.quelle_typ == 'gebuehr'],
-        }
-        storno_ids = {
-            'beitrag': [p.quelle_id for p in gegenbuchungen if p.quelle_typ == 'beitrag'],
-            'gebuehr': [p.quelle_id for p in gegenbuchungen if p.quelle_typ == 'gebuehr'],
-        }
+        # Abteilungs-Posten liefern zwei Positionen mit gleicher quelle_id → deduplizieren,
+        # die Quellzeile wird genau einmal als exportiert gestempelt.
+        def _ids(positionen, quelle):
+            return sorted({p.quelle_id for p in positionen if p.quelle_typ == quelle})
+
+        neu_ids = {'beitrag': _ids(forderungen, 'beitrag'), 'gebuehr': _ids(forderungen, 'gebuehr')}
+        storno_ids = {'beitrag': _ids(gegenbuchungen, 'beitrag'),
+                      'gebuehr': _ids(gegenbuchungen, 'gebuehr')}
         dateiname = f"fbasc_{date.today().isoformat()}.hia"
 
         export = self.db.fibu_exporte.create_export(
@@ -157,8 +181,10 @@ class FibuExportService:
         else:
             einst = self.db.fibu_einstellungen.get()
             neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(export_id)
-            positionen = ([self._position(r, 'forderung', einst) for r in neu_rows]
-                          + [self._position(r, 'gegenbuchung', einst) for r in storno_rows])
+            positionen = ([p for r in neu_rows
+                           for p in self._positionen_fuer_row(r, 'forderung', einst)]
+                          + [p for r in storno_rows
+                             for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)])
         return fibu_formatter.render(positionen)
 
     def _storno_positionen(self, original_id: int) -> list[FibuExportPosition]:
@@ -166,12 +192,34 @@ class FibuExportService:
         Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S)."""
         einst = self.db.fibu_einstellungen.get()
         neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(original_id)
-        return ([self._position(r, 'gegenbuchung', einst) for r in neu_rows]
-                + [self._position(r, 'forderung', einst) for r in storno_rows])
+        return ([p for r in neu_rows
+                 for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)]
+                + [p for r in storno_rows
+                   for p in self._positionen_fuer_row(r, 'forderung', einst)])
 
     # ------------------------------------------------------------------
     # Interne Hilfsmethoden
     # ------------------------------------------------------------------
+
+    def _positionen_fuer_row(self, row: dict, art: str,
+                             einst: FibuEinstellungen) -> list[FibuExportPosition]:
+        """Expandiert eine Buchungs-Rohzeile zu FBASC-Positionen.
+
+        Normalfall (zahler_typ='mitglied'): genau eine Position.
+        Abteilungs-getragen (zahler_typ='abteilung'): zwei Positionen mit demselben
+        Erlöskonto und gleicher Belegnummer (sich ausgleichendes Debitor-OPOS-Paar):
+        Einbuchung (Kostenstelle Verein) und Gegenbuchung (S↔H, Kostenstelle Abteilung).
+        Im Storno-Pfad (art='gegenbuchung') sind beide Zeilen bereits invertiert."""
+        basis = self._position(row, art, einst)
+        if row.get('zahler_typ') != 'abteilung':
+            return [basis]
+        # Beträge fließen nicht real (reine Kostenstellen-Umbuchung) → kein Lastschrifteinzug.
+        einbuchung = dataclasses.replace(
+            basis, kostenstelle=einst.verein_kostenstelle, lastschrifteinzug=None)
+        gegenbuchung = dataclasses.replace(
+            basis, soll_haben=('H' if basis.soll_haben == 'S' else 'S'),
+            kostenstelle=row.get('abteilung_kostenstelle'), lastschrifteinzug=None)
+        return [einbuchung, gegenbuchung]
 
     def _position(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
         """Baut aus einer Buchungs-Rohzeile eine FBASC-Position (Forderung=S / Gegenbuchung=H)."""
@@ -286,4 +334,30 @@ class FibuExportService:
                     'art': p.art,
                     'problem': "; ".join(probleme),
                 })
+        return fehler
+
+    @staticmethod
+    def _abteilung_fehler(rows: list[dict]) -> list[dict]:
+        """Prüft Abteilungs-getragene Posten (zahler_typ='abteilung'): sie brauchen eine
+        Abteilung mit Kostenstelle, sonst lässt sich die Gegenbuchung nicht zuordnen."""
+        fehler: list[dict] = []
+        for r in rows:
+            if r.get('zahler_typ') != 'abteilung':
+                continue
+            if r.get('abteilung_id') is None:
+                problem = "Zahler 'Abteilung', aber Regel/Gebühr hat keine Abteilung"
+            elif r.get('abteilung_kostenstelle') is None:
+                problem = "Abteilung ohne Kostenstelle (für die Gegenbuchung erforderlich)"
+            else:
+                continue
+            nachname = r.get('nachname') or ''
+            vorname = r.get('vorname')
+            fehler.append({
+                'quelle_typ': r['quelle_typ'],
+                'quelle_id': r['quelle_id'],
+                'mitglied_name': f"{nachname}, {vorname}" if vorname else nachname,
+                'bezeichnung': r.get('quelle_name') or '',
+                'art': 'forderung',
+                'problem': problem,
+            })
         return fehler

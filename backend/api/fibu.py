@@ -121,8 +121,11 @@ def vorschau(user: CurrentUser, db: DB):
     v = FibuExportService(db).vorschau()
     forderungen = [_pos_dict(p) for p in v['forderungen']]
     gegenbuchungen = [_pos_dict(p) for p in v['gegenbuchungen']]
-    summe = (sum(p.betrag for p in v['forderungen'])
-             - sum(p.betrag for p in v['gegenbuchungen']))
+    # Vorzeichenbehaftete Netto-Summe (Soll +, Haben −) über alle Positionen. Abteilungs-
+    # Umbuchungen liegen als S/H-Paar in den Forderungen und heben sich so korrekt auf.
+    def _signiert(p):
+        return p.betrag if p.soll_haben == 'S' else -p.betrag
+    summe = sum(_signiert(p) for p in v['forderungen'] + v['gegenbuchungen'])
     return {
         'forderungen': forderungen,
         'gegenbuchungen': gegenbuchungen,
