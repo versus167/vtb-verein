@@ -191,6 +191,16 @@ def test_einstellungen_override_roundtrip(db):
     assert reset["retention_days"] == default["retention_days"]
 
 
+def test_history_gesamt_im_report(db):
+    """report() zählt alle aktuell vorhandenen History-Zeilen je Bereich."""
+    from app.services.prune_service import PruneService
+    m = _ins_mitglied(db)
+    for _ in range(3):
+        _ins_kontakt(db, m)   # je INSERT eine History-Zeile
+    rep = {e["name"]: e for e in PruneService(db).report()["entities"]}
+    assert rep["mitglied_kontakt"]["history_gesamt"] == 3
+
+
 def test_papierkorb_zaehler(db):
     """Papierkorb zählt nur soft-deleted, nicht aktive Datensätze."""
     m = _ins_mitglied(db)

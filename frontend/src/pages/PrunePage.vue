@@ -99,7 +99,8 @@
     <div class="row q-mt-md text-grey-8" v-if="report">
       <div class="col">
         Insgesamt löschbar: <b>{{ report.summe_loeschbar }}</b> Einträge,
-        History: <b>{{ report.summe_history_loeschbar }}</b> Zeilen.
+        History: <b>{{ report.summe_history_loeschbar }}</b> von
+        {{ report.summe_history_gesamt }} Zeilen löschbar.
       </div>
       <div class="col-auto" v-if="report.generated_at">
         Stand: {{ fmtDate(report.generated_at) }}
@@ -125,6 +126,7 @@ const columns = [
   { name: 'label', label: 'Bereich', field: 'label', align: 'left' },
   { name: 'im_papierkorb', label: 'Im Papierkorb', field: 'im_papierkorb', align: 'right' },
   { name: 'loeschbar', label: 'Jetzt löschbar', field: 'loeschbar', align: 'right' },
+  { name: 'history_gesamt', label: 'History gesamt', field: (r) => r.history_gesamt ?? '–', align: 'right' },
   { name: 'history_loeschbar', label: 'History löschbar', field: (r) => r.history_loeschbar ?? '–', align: 'right' },
   { name: 'retention_days', label: 'Tage im Papierkorb', field: 'retention_days', align: 'center' },
   { name: 'keep_min', label: 'Min. behalten', field: 'keep_min', align: 'center' },

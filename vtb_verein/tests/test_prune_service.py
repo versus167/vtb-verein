@@ -9,6 +9,7 @@ from app.services.prune_service import (
     PruneEntity,
     PRUNE_REGISTRY,
     build_history_prune_count_sql,
+    build_history_total_count_sql,
     build_original_candidate_count_sql,
     build_papierkorb_count_sql,
     DEFAULT_HISTORY_RETENTION_DAYS,
@@ -83,4 +84,10 @@ class TestHistoryAndPapierkorbSql:
         sql, params = build_papierkorb_count_sql(_entity("mannschaft"))
         assert "FROM mannschaft " in sql
         assert "deleted_at IS NOT NULL" in sql
+        assert params == []
+
+    def test_history_total_zaehlt_alle_history_zeilen(self):
+        sql, params = build_history_total_count_sql(_entity("mitglied"))
+        assert "FROM mitglied_history" in sql
+        assert "WHERE" not in sql           # Gesamtzahl, keine Filterung
         assert params == []

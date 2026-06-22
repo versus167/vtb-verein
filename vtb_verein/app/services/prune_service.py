@@ -175,6 +175,12 @@ def build_history_prune_count_sql(entity: PruneEntity) -> tuple[str, list]:
     return sql, []  # history_retention_days wird vom Service als Param ergänzt
 
 
+def build_history_total_count_sql(entity: PruneEntity) -> tuple[str, list]:
+    """Gesamtzahl der aktuell vorhandenen History-Zeilen (Kontext für den Report)."""
+    assert entity.history_table is not None
+    return f"SELECT COUNT(*) AS n FROM {entity.history_table}", []
+
+
 class PruneService:
     """Orchestriert die Prune-Registry. Phase 0: ausschließlich Dry-Run-Report.
 
@@ -227,6 +233,7 @@ class PruneService:
         entities: list[dict] = []
         summe_loeschbar = 0
         summe_history = 0
+        summe_history_gesamt = 0
 
         for entity in PRUNE_REGISTRY:
             c = cfg[entity.name]
@@ -239,10 +246,14 @@ class PruneService:
             loeschbar = self._count(cand_sql, cand_params)
 
             history_loeschbar: Optional[int] = None
+            history_gesamt: Optional[int] = None
             if entity.history_table:
+                ht_sql, ht_params = build_history_total_count_sql(entity)
+                history_gesamt = self._count(ht_sql, ht_params)
                 h_sql, h_params = build_history_prune_count_sql(entity)
                 history_loeschbar = self._count(h_sql, h_params + [c["history_retention_days"]])
                 summe_history += history_loeschbar
+                summe_history_gesamt += history_gesamt
 
             summe_loeschbar += loeschbar
             entities.append({
@@ -256,6 +267,7 @@ class PruneService:
                 "im_papierkorb": im_papierkorb,
                 "loeschbar": loeschbar,
                 "history_table": entity.history_table,
+                "history_gesamt": history_gesamt,
                 "history_loeschbar": history_loeschbar,
             })
 
@@ -265,4 +277,5 @@ class PruneService:
             "entities": entities,
             "summe_loeschbar": summe_loeschbar,
             "summe_history_loeschbar": summe_history,
+            "summe_history_gesamt": summe_history_gesamt,
         }
