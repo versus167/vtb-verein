@@ -53,6 +53,8 @@ from app.db.beitragsregel_repository import BeitragsregelRepository
 from app.db.beitrag_sollstellung_repository import BeitragSollstellungRepository
 from app.db.gebuehr_repository import GebuehrRepository
 from app.db.gebuehr_forderung_repository import GebuehrForderungRepository
+from app.db.fibu_export_repository import FibuExportRepository
+from app.db.fibu_einstellungen_repository import FibuEinstellungenRepository
 from app.db.statistik_repository import StatistikRepository
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
@@ -95,6 +97,8 @@ class VereinsDB:
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
         self._gebuehr_repo = GebuehrRepository(self.conn)
         self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
+        self._fibu_export_repo = FibuExportRepository(self.conn)
+        self._fibu_einstellungen_repo = FibuEinstellungenRepository(self.conn)
         self._statistik_repo = StatistikRepository(self.conn)
 
         self._anhang_service = AnhangService(
@@ -496,6 +500,14 @@ class VereinsDB:
     @property
     def gebuehr_forderungen(self) -> GebuehrForderungRepository:
         return self._gebuehr_forderung_repo
+
+    @property
+    def fibu_exporte(self) -> FibuExportRepository:
+        return self._fibu_export_repo
+
+    @property
+    def fibu_einstellungen(self) -> FibuEinstellungenRepository:
+        return self._fibu_einstellungen_repo
 
     # --- Gebühren-Delegationen (für Service/API) ---
     def get_gebuehr(self, id: int) -> Optional[Gebuehr]:

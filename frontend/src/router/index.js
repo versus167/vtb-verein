@@ -92,6 +92,12 @@ const routes = [
         meta: { permission: 'gebuehren.read' },
       },
       {
+        path: 'fibu-export',
+        name: 'fibu-export',
+        component: () => import('pages/FibuExportPage.vue'),
+        meta: { permission: 'fibu.export' },
+      },
+      {
         path: 'berichte',
         name: 'berichte',
         component: () => import('pages/BerichtePage.vue'),

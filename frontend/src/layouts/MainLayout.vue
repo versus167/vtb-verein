@@ -152,6 +152,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('fibu.export')"
+            clickable
+            :to="{ name: 'fibu-export' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="account_balance" /></q-item-section>
+            <q-item-section>Fibu-Export</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('kassen.verwalten')"
             clickable
             :to="{ name: 'kassenverwaltung' }"

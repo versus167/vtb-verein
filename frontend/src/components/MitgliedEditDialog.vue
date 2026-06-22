@@ -21,6 +21,7 @@
         <q-tab v-if="!isNewLocal" name="funktionen" label="Funktionen" icon="badge" />
         <q-tab v-if="!isNewLocal && personMode" name="kontakte" label="Kontakte" icon="contact_phone" />
         <q-tab v-if="!isNewLocal && personMode && canSeeTeams" name="mannschaften" label="Mannschaften" icon="groups" />
+        <q-tab v-if="!isNewLocal && canSeeFinanzen" name="finanzen" label="Beiträge &amp; Gebühren" icon="euro" />
       </q-tabs>
       <q-separator />
 
@@ -66,7 +67,8 @@
             </q-expansion-item>
             <q-expansion-item label="Zahlung / SEPA" dense icon="payments">
               <div class="q-gutter-sm q-pt-sm">
-                <q-input v-model="form.zahlungsart" label="Zahlungsart" outlined dense :readonly="!canWrite" />
+                <q-select v-model="form.zahlungsart" :options="zahlungsartOptionen"
+                  emit-value map-options label="Zahlungsart" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" :rules="[ibanRule]" />
                 <q-input v-model="form.bic" label="BIC" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
@@ -219,6 +221,41 @@
                       <q-btn v-if="canWrite" flat dense round icon="edit" color="primary" size="sm" @click="openTeamForm(t)" />
                       <q-btn v-if="canDelete" flat dense round icon="delete" color="negative" size="sm" @click="removeTeam(t)" />
                     </div>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </q-card-section>
+          </q-tab-panel>
+
+          <!-- Beiträge & Gebühren (read-only) -->
+          <q-tab-panel v-if="canSeeFinanzen" name="finanzen" class="q-pa-none">
+            <q-card-section>
+              <div class="text-subtitle2 q-mb-xs">Beitrags-Sollstellungen</div>
+              <div v-if="mitgliedSollstellungen.length === 0" class="text-grey q-py-sm">Keine Sollstellungen.</div>
+              <q-list v-else separator dense>
+                <q-item v-for="s in mitgliedSollstellungen" :key="'s'+s.id">
+                  <q-item-section>
+                    <q-item-label>{{ s.beitragsregel_name }} · {{ s.zeitraum }}</q-item-label>
+                    <q-item-label caption>{{ Number(s.betrag_soll).toFixed(2) }} €<span v-if="s.faelligkeitsdatum"> · fällig {{ s.faelligkeitsdatum }}</span></q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-badge :color="fibuStatus(s).color" text-color="white">{{ fibuStatus(s).label }}</q-badge>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+
+              <q-separator class="q-my-md" />
+
+              <div class="text-subtitle2 q-mb-xs">Gebühren-Forderungen</div>
+              <div v-if="mitgliedForderungen.length === 0" class="text-grey q-py-sm">Keine Forderungen.</div>
+              <q-list v-else separator dense>
+                <q-item v-for="f in mitgliedForderungen" :key="'f'+f.id">
+                  <q-item-section>
+                    <q-item-label>{{ f.gebuehr_name }}</q-item-label>
+                    <q-item-label caption>{{ Number(f.betrag_soll).toFixed(2) }} € · {{ f.datum }}</q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-badge :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-badge>
                   </q-item-section>
                 </q-item>
               </q-list>
@@ -392,6 +429,7 @@ const auth = useAuthStore()
 const canWrite = computed(() => auth.hasPermission('personen.write'))
 const canDelete = computed(() => auth.hasPermission('personen.delete'))
 const canSeeTeams = computed(() => auth.hasPermission('mannschaften.read'))
+const canSeeFinanzen = computed(() => auth.hasPermission('beitraege.read') || auth.hasPermission('gebuehren.read'))
 
 const tab = ref('stammdaten')
 const loading = ref(false)
@@ -419,10 +457,16 @@ const geschlechtOptions = [
   { label: 'divers', value: 'd' },
 ]
 
+// Lastschrift steuert den SEPA-Einzug im Fibu-Export (Feld 36); Standard = Lastschrift.
+const zahlungsartOptionen = [
+  { label: 'Lastschrift', value: 'lastschrift' },
+  { label: 'Sonstiges', value: 'sonstiges' },
+]
+
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
-  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: '',
+  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
 })
 const form = ref(emptyForm())
@@ -547,6 +591,10 @@ async function loadAll() {
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
     form.value = { ...emptyForm(), ...m }
+    // Zahlungsart auf das Dropdown normalisieren: ein expliziter Nicht-Lastschrift-Wert
+    // (Altwert 'ueberweisung' o.Ä.) wird zu 'sonstiges'; alles übrige (auch leer) ist
+    // 'lastschrift' (Standard).
+    form.value.zahlungsart = m.zahlungsart && m.zahlungsart !== 'lastschrift' ? 'sonstiges' : 'lastschrift'
     snapshotForm()
     abteilungOptions.value = ab
     funktionen.value = fns
@@ -565,6 +613,39 @@ async function loadAll() {
   if (props.personMode && canSeeTeams.value) {
     loadTeams()
   }
+  if (canSeeFinanzen.value) {
+    loadFinanzen()
+  }
+}
+
+// Beiträge/Gebühren der Person (read-only) – fehlertolerant nachladen.
+const mitgliedSollstellungen = ref([])
+const mitgliedForderungen = ref([])
+// Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
+// übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
+function fibuStatus(item) {
+  if (item.status === 'storniert') {
+    return item.exportiert_in_export_id
+      ? { label: 'storniert (Gegenbuchung an Fibu)', color: 'grey' }
+      : { label: 'storniert', color: 'grey' }
+  }
+  if (item.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
+  return { label: 'offen', color: 'orange' }
+}
+
+async function loadFinanzen() {
+  const id = getMitgliedId()
+  if (id == null) return
+  try {
+    if (auth.hasPermission('beitraege.read')) {
+      const { data } = await api.get(`/api/beitraege/sollstellungen/mitglied/${id}`)
+      mitgliedSollstellungen.value = data
+    }
+    if (auth.hasPermission('gebuehren.read')) {
+      const { data } = await api.get(`/api/gebuehren/forderungen/mitglied/${id}`)
+      mitgliedForderungen.value = data
+    }
+  } catch { /* still: read-only Zusatzsicht, blockiert die Stammdaten nicht */ }
 }
 
 async function loadTeams() {

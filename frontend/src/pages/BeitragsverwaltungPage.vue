@@ -138,6 +138,9 @@
                 <q-chip v-if="r.zahler_typ === 'abteilung'" dense size="sm" color="teal" text-color="white">
                   Zahlung: {{ r.abteilung_name ?? 'Abteilung' }}
                 </q-chip>
+                <q-chip v-if="r.gegenkonto" dense size="sm" color="green-8" text-color="white" icon="account_balance">
+                  Konto: {{ r.gegenkonto }}
+                </q-chip>
               </q-item-label>
             </q-item-section>
             <q-item-section side v-if="kannSchreiben">
@@ -254,9 +257,6 @@
           </q-select>
           <q-btn label="Neu laden" color="primary" outline dense :disable="!filterZeitraum"
             @click="ladeSollstellungen" />
-          <q-btn v-if="kannAbrechnen && filterZeitraum && sollstellungen.some(s => s.status === 'offen' && s.zahler_typ === 'mitglied')"
-            icon="download" label="SEPA-Export" color="secondary" outline dense
-            @click="sepaExport" />
           <q-space />
           <q-input v-model="sollSuche" dense outlined clearable debounce="200"
             placeholder="Suche (Name, Regel …)" style="min-width: 220px">
@@ -269,17 +269,13 @@
           flat bordered :loading="sollLoading" :rows-per-page-options="[25, 50, 0]">
           <template #body-cell-status="props">
             <q-td :props="props">
-              <q-chip dense size="sm" :color="statusColor(props.row.status)" text-color="white">
-                {{ props.row.status }}
+              <q-chip dense size="sm" :color="fibuStatus(props.row).color" text-color="white">
+                {{ fibuStatus(props.row).label }}
               </q-chip>
             </q-td>
           </template>
           <template #body-cell-actions="props">
-            <q-td :props="props" v-if="kannAbrechnen && props.row.status !== 'bezahlt'">
-              <q-btn v-if="props.row.status === 'offen'" flat dense round icon="check_circle" color="positive" size="sm"
-                @click="markBezahlt(props.row)">
-                <q-tooltip>Als bezahlt markieren</q-tooltip>
-              </q-btn>
+            <q-td :props="props" v-if="kannAbrechnen">
               <q-btn v-if="props.row.status === 'offen'" flat dense round icon="block" color="negative" size="sm"
                 @click="markStorniert(props.row)">
                 <q-tooltip>Stornieren (bleibt bestehen, wird nicht neu abgerechnet)</q-tooltip>
@@ -376,6 +372,14 @@
           <q-select v-model="regelForm.zahler_typ"
             :options="[{label:'Mitglied zahlt selbst (SEPA)',value:'mitglied'},{label:'Abteilung zahlt',value:'abteilung'}]"
             emit-value map-options label="Zahler" outlined dense />
+          <q-separator class="q-my-sm" />
+          <div class="text-caption text-grey-7">Finanzbuchhaltung (Fibu-Export)</div>
+          <div class="row q-gutter-sm">
+            <q-input v-model="regelForm.gegenkonto" label="Gegenkonto (Erlöskonto)" outlined dense
+              clearable class="col" hint="leer = globaler Default" />
+            <q-input v-model="regelForm.steuerschluessel" label="Steuerschlüssel" outlined dense
+              clearable class="col" />
+          </div>
           <div v-if="regelError" class="text-negative text-caption">{{ regelError }}</div>
         </q-card-section>
         <q-separator />
@@ -454,8 +458,16 @@ const turnusOptions = [
 function turnusLabel(t) {
   return { monat: 'Monat', quartal: 'Quartal', halbjahr: 'Halbjahr', jahr: 'Jahr' }[t] ?? t
 }
-function statusColor(s) {
-  return { offen: 'warning', bezahlt: 'positive', storniert: 'negative' }[s] ?? 'grey'
+// Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
+// übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
+function fibuStatus(row) {
+  if (row.status === 'storniert') {
+    return row.exportiert_in_export_id
+      ? { label: 'storniert (Gegenbuchung an Fibu)', color: 'grey' }
+      : { label: 'storniert', color: 'grey' }
+  }
+  if (row.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
+  return { label: 'offen', color: 'orange' }
 }
 
 // ── Dashboard (Projektion aktuelles Quartal) ───────────────
@@ -547,6 +559,8 @@ function openRegelDialog(r = null) {
     bedingung_alter_min: r.bedingung_alter_min ?? null,
     bedingung_alter_max: r.bedingung_alter_max ?? null,
     zahler_typ: r.zahler_typ,
+    gegenkonto: r.gegenkonto ?? '',
+    steuerschluessel: r.steuerschluessel ?? '',
     expected_version: r.version,
   } : {
     name: '', abteilung_id: null,
@@ -558,6 +572,8 @@ function openRegelDialog(r = null) {
     bedingung_alter_min: null,
     bedingung_alter_max: null,
     zahler_typ: 'mitglied',
+    gegenkonto: '',
+    steuerschluessel: '',
   }
   regelDialogOpen.value = true
 }
@@ -728,8 +744,7 @@ const sollColumns = [
   { name: 'beitragsregel_name',label: 'Regel',       field: 'beitragsregel_name',align: 'left' },
   { name: 'betrag_soll',       label: 'Betrag',      field: r => r.betrag_soll.toFixed(2) + ' €', align: 'right' },
   { name: 'faelligkeitsdatum', label: 'Fällig',      field: 'faelligkeitsdatum', align: 'left' },
-  { name: 'status',            label: 'Status',      field: 'status',            align: 'left' },
-  { name: 'bezahlt_am',        label: 'Bezahlt am',  field: 'bezahlt_am',        align: 'left' },
+  { name: 'status',            label: 'Fibu',        field: 'status',            align: 'left' },
   { name: 'actions',           label: '',            field: 'actions',           align: 'right' },
 ]
 
@@ -759,12 +774,6 @@ async function ladeSollstellungen() {
   }
 }
 
-async function markBezahlt(s) {
-  const heute = new Date().toISOString().slice(0, 10)
-  await api.patch(`/api/beitraege/sollstellungen/${s.id}`, { bezahlt_am: heute })
-  await ladeSollstellungen()
-}
-
 async function markStorniert(s) {
   $q.dialog({
     title: 'Stornieren?',
@@ -772,7 +781,7 @@ async function markStorniert(s) {
     cancel: true,
   })
     .onOk(async () => {
-      await api.patch(`/api/beitraege/sollstellungen/${s.id}`, { bezahlt_am: null })
+      await api.patch(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
     })
 }
@@ -788,15 +797,6 @@ async function deleteSollstellung(s) {
       await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
     })
-}
-
-async function sepaExport() {
-  const url = `/api/beitraege/sepa-export/${filterZeitraum.value}`
-  const response = await api.get(url, { responseType: 'blob' })
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(response.data)
-  link.download = `sepa_${filterZeitraum.value}.csv`
-  link.click()
 }
 
 async function loadOptionen() {

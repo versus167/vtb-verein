@@ -6,6 +6,7 @@ from app.db.base_repository import BaseRepository
 _SELECT = """
     SELECT f.id, f.mitglied_id, f.gebuehr_id, f.datum, f.betrag_soll,
            f.status, f.bezahlt_am, f.kassenbuchung_id,
+           f.exportiert_in_export_id, f.storno_exportiert_in_export_id,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            m.iban AS mitglied_iban, m.kontoinhaber AS mitglied_kontoinhaber,
            g.name AS gebuehr_name, g.zahler_typ AS zahler_typ,

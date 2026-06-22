@@ -58,6 +58,12 @@ PERMISSION_GROUPS = [
         ],
     },
     {
+        'label': 'Finanzbuchhaltung', 'icon': 'account_balance',
+        'permissions': [
+            (Permission.FIBU_EXPORT, 'Fibu-Export (Sollstellungen)'),
+        ],
+    },
+    {
         'label': 'Verwaltung', 'icon': 'admin_panel_settings',
         'permissions': [
             (Permission.FUNKTIONEN_VERWALTEN, 'Funktionen verwalten'),

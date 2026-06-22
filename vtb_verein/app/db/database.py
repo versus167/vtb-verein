@@ -13,7 +13,239 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 46
+
+
+# ---------------------------------------------------------------------------
+# Audit-Trigger-Funktionen, die zwischen Frischaufbau (_create_trigger_functions)
+# und der Migration v45→v46 geteilt werden, damit beide Pfade garantiert die
+# gleiche Spaltenmenge schreiben (Fibu-Export-Spalten + Konten-Stammdaten).
+# ---------------------------------------------------------------------------
+
+_FN_FIBU_EXPORTE_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_fibu_exporte_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO fibu_exporte_history (
+            id, version, exportiert_am, exportiert_von, dateiname, format,
+            anzahl_positionen, summe_cent, storno_von_export_id,
+            created_at, created_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
+            NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
+            NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+# Un-Export nimmt einen Lauf zurück (Soft-Delete des Headers) → UPDATE muss in die History.
+_FN_FIBU_EXPORTE_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_fibu_exporte_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO fibu_exporte_history (
+                id, version, exportiert_am, exportiert_von, dateiname, format,
+                anzahl_positionen, summe_cent, storno_von_export_id,
+                created_at, created_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
+                NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
+                NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_ABTEILUNG_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_abteilung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO abteilung_history (
+            id, version, name, kuerzel, beschreibung, kostenstelle,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung, NEW.kostenstelle,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_ABTEILUNG_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_abteilung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO abteilung_history (
+                id, version, name, kuerzel, beschreibung, kostenstelle,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung, NEW.kostenstelle,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAGSREGEL_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO beitragsregel_history (
+            id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+            zahler_typ,
+            bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
+            ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+            bedingung_alter_min, bedingung_alter_max, gegenkonto, steuerschluessel,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+            NEW.zahler_typ,
+            NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
+            NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+            NEW.bedingung_alter_min, NEW.bedingung_alter_max, NEW.gegenkonto, NEW.steuerschluessel,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAGSREGEL_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO beitragsregel_history (
+                id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
+                gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                zahler_typ,
+                bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
+                ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
+                bedingung_alter_min, bedingung_alter_max, gegenkonto, steuerschluessel,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
+                NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                NEW.zahler_typ,
+                NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
+                NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
+                NEW.bedingung_alter_min, NEW.bedingung_alter_max, NEW.gegenkonto, NEW.steuerschluessel,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_GEBUEHR_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO gebuehr_history (
+            id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+            zahler_typ, bedingung_alter_min, bedingung_alter_max,
+            gegenkonto, steuerschluessel, kostenstelle, kostentraeger,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+            NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+            NEW.gegenkonto, NEW.steuerschluessel, NEW.kostenstelle, NEW.kostentraeger,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_GEBUEHR_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO gebuehr_history (
+                id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
+                zahler_typ, bedingung_alter_min, bedingung_alter_max,
+                gegenkonto, steuerschluessel, kostenstelle, kostentraeger,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
+                NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
+                NEW.gegenkonto, NEW.steuerschluessel, NEW.kostenstelle, NEW.kostentraeger,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAG_SOLLSTELLUNG_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO beitrag_sollstellung_history (
+            id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+            faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+            exportiert_in_export_id, storno_exportiert_in_export_id,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+            NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+            NEW.exportiert_in_export_id, NEW.storno_exportiert_in_export_id,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAG_SOLLSTELLUNG_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO beitrag_sollstellung_history (
+                id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
+                faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
+                exportiert_in_export_id, storno_exportiert_in_export_id,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
+                NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                NEW.exportiert_in_export_id, NEW.storno_exportiert_in_export_id,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_GEBUEHR_FORDERUNG_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO gebuehr_forderung_history (
+            id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+            exportiert_in_export_id, storno_exportiert_in_export_id,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+            NEW.exportiert_in_export_id, NEW.storno_exportiert_in_export_id,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO gebuehr_forderung_history (
+                id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
+                exportiert_in_export_id, storno_exportiert_in_export_id,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
+                NEW.exportiert_in_export_id, NEW.storno_exportiert_in_export_id,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
 
 
 class Database:
@@ -107,6 +339,7 @@ class Database:
             43: self._migrate_v42_to_v43,
             44: self._migrate_v43_to_v44,
             45: self._migrate_v44_to_v45,
+            46: self._migrate_v45_to_v46,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2204,6 +2437,135 @@ class Database:
             """)
             cur.execute("UPDATE schema_version SET version = 45 WHERE id = 1")
 
+    def _migrate_v45_to_v46(self) -> None:
+        """Fibu-Delta-Export der Sollstellungen (Format hmd FBASC).
+
+        - Export-Lauf-Header `fibu_exporte` (+ History, Insert-Audit) analog kassenbuch_exporte.
+        - Export-Markierungen an beitrag_sollstellung UND gebuehr_forderung:
+          `exportiert_in_export_id` (Forderung exportiert) + `storno_exportiert_in_export_id`
+          (Gegenbuchung exportiert) → voll rekonstruierbarer Re-Download je Lauf.
+        - Konten-Stammdaten: `gegenkonto`/`steuerschluessel` an beitragsregel + gebuehr,
+          zusätzlich `kostenstelle`/`kostentraeger` an gebuehr, `kostenstelle` an abteilung.
+        - Globale Konfiguration `fibu_einstellungen` (Single-Row): Debitor-Konto-Basis,
+          Default-Gegenkonto/-Steuerschlüssel, Verein-Kostenstelle (12), Kostenträger (1).
+        Audit-Trigger-Funktionen werden um die neuen Spalten ergänzt.
+        """
+        with self.cursor() as cur:
+            # --- Export-Lauf-Header -------------------------------------------------
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fibu_exporte (
+                  id                  SERIAL PRIMARY KEY,
+                  exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  exportiert_von      TEXT NOT NULL,
+                  dateiname           TEXT NOT NULL,
+                  format              TEXT NOT NULL DEFAULT 'fbasc',
+                  anzahl_positionen   INTEGER NOT NULL DEFAULT 0,
+                  summe_cent          INTEGER NOT NULL DEFAULT 0,
+                  storno_von_export_id INTEGER REFERENCES fibu_exporte(id),
+                  version             INTEGER NOT NULL DEFAULT 1,
+                  created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by          TEXT NOT NULL,
+                  deleted_at          TEXT,
+                  deleted_by          TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fibu_exporte_history (
+                  id                  INTEGER NOT NULL,
+                  version             INTEGER NOT NULL,
+                  exportiert_am       TEXT,
+                  exportiert_von      TEXT,
+                  dateiname           TEXT,
+                  format              TEXT,
+                  anzahl_positionen   INTEGER,
+                  summe_cent          INTEGER,
+                  storno_von_export_id INTEGER,
+                  created_at          TEXT,
+                  created_by          TEXT,
+                  deleted_at          TEXT,
+                  deleted_by          TEXT,
+                  PRIMARY KEY (id, version)
+                )
+            """)
+            # Idempotent für bereits angelegte v46-Tabellen (Storno-Verknüpfung des Gegenbuchungs-Laufs).
+            cur.execute("ALTER TABLE fibu_exporte ADD COLUMN IF NOT EXISTS storno_von_export_id INTEGER REFERENCES fibu_exporte(id)")
+            cur.execute("ALTER TABLE fibu_exporte_history ADD COLUMN IF NOT EXISTS storno_von_export_id INTEGER")
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_fibu_exporte_audit_insert
+                AFTER INSERT ON fibu_exporte
+                FOR EACH ROW EXECUTE FUNCTION fn_fibu_exporte_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_fibu_exporte_audit_update
+                AFTER UPDATE ON fibu_exporte
+                FOR EACH ROW EXECUTE FUNCTION fn_fibu_exporte_audit_update();
+            """)
+
+            # --- Globale Konfiguration (Single-Row) --------------------------------
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS fibu_einstellungen (
+                  id                       INTEGER PRIMARY KEY DEFAULT 1,
+                  debitor_konto_basis      INTEGER,
+                  default_gegenkonto       TEXT,
+                  default_steuerschluessel TEXT,
+                  verein_kostenstelle      INTEGER NOT NULL DEFAULT 12,
+                  default_kostentraeger    INTEGER NOT NULL DEFAULT 1,
+                  version                  INTEGER NOT NULL DEFAULT 1,
+                  created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by               TEXT,
+                  updated_at               TEXT,
+                  updated_by               TEXT,
+                  CHECK (id = 1)
+                )
+            """)
+            cur.execute("INSERT INTO fibu_einstellungen (id, debitor_konto_basis) VALUES (1, 200000) ON CONFLICT (id) DO NOTHING")
+
+            # --- Konten-Spalten an den Stammdaten ----------------------------------
+            for tbl in ('abteilung', 'abteilung_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS kostenstelle INTEGER")
+            for tbl in ('beitragsregel', 'beitragsregel_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS gegenkonto TEXT")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS steuerschluessel TEXT")
+            for tbl in ('gebuehr', 'gebuehr_history'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS gegenkonto TEXT")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS steuerschluessel TEXT")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS kostenstelle INTEGER")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS kostentraeger INTEGER")
+
+            # --- Export-Markierungen an den Sollstellungen -------------------------
+            for tbl in ('beitrag_sollstellung', 'gebuehr_forderung'):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS exportiert_in_export_id INTEGER REFERENCES fibu_exporte(id)")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS storno_exportiert_in_export_id INTEGER REFERENCES fibu_exporte(id)")
+                cur.execute(f"ALTER TABLE {tbl}_history ADD COLUMN IF NOT EXISTS exportiert_in_export_id INTEGER")
+                cur.execute(f"ALTER TABLE {tbl}_history ADD COLUMN IF NOT EXISTS storno_exportiert_in_export_id INTEGER")
+
+            # --- Audit-Trigger-Funktionen mit den neuen Spalten --------------------
+            cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
+            cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
+            cur.execute(_FN_BEITRAGSREGEL_AUDIT_INSERT)
+            cur.execute(_FN_BEITRAGSREGEL_AUDIT_UPDATE)
+            cur.execute(_FN_GEBUEHR_AUDIT_INSERT)
+            cur.execute(_FN_GEBUEHR_AUDIT_UPDATE)
+            cur.execute(_FN_BEITRAG_SOLLSTELLUNG_AUDIT_INSERT)
+            cur.execute(_FN_BEITRAG_SOLLSTELLUNG_AUDIT_UPDATE)
+            cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_INSERT)
+            cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE)
+
+            # --- Indizes -----------------------------------------------------------
+            for name, target in [
+                ("idx_beitrag_sollstellung_export_id",        "beitrag_sollstellung(exportiert_in_export_id)"),
+                ("idx_beitrag_sollstellung_storno_export_id", "beitrag_sollstellung(storno_exportiert_in_export_id)"),
+                ("idx_gebuehr_forderung_export_id",           "gebuehr_forderung(exportiert_in_export_id)"),
+                ("idx_gebuehr_forderung_storno_export_id",    "gebuehr_forderung(storno_exportiert_in_export_id)"),
+                ("idx_fibu_exporte_storno_von_export_id",     "fibu_exporte(storno_von_export_id)"),
+                ("idx_fibu_exporte_history_id",               "fibu_exporte_history(id)"),
+            ]:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+
+            cur.execute("UPDATE schema_version SET version = 46 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2332,6 +2694,7 @@ class Database:
               name          TEXT NOT NULL,
               kuerzel       TEXT,
               beschreibung  TEXT,
+              kostenstelle  INTEGER,
               version       INTEGER NOT NULL DEFAULT 1,
               created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by    TEXT,
@@ -2348,6 +2711,7 @@ class Database:
               name          TEXT,
               kuerzel       TEXT,
               beschreibung  TEXT,
+              kostenstelle  INTEGER,
               created_at    TEXT,
               created_by    TEXT,
               updated_at    TEXT,
@@ -2447,6 +2811,8 @@ class Database:
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT NOT NULL DEFAULT 'mitglied',
+              gegenkonto                   TEXT,
+              steuerschluessel             TEXT,
               version        INTEGER NOT NULL DEFAULT 1,
               created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by     TEXT,
@@ -2477,6 +2843,8 @@ class Database:
               bedingung_alter_min          INTEGER,
               bedingung_alter_max          INTEGER,
               zahler_typ                   TEXT,
+              gegenkonto                   TEXT,
+              steuerschluessel             TEXT,
               created_at     TEXT,
               created_by     TEXT,
               updated_at     TEXT,
@@ -2497,6 +2865,8 @@ class Database:
               status            TEXT NOT NULL DEFAULT 'offen',
               bezahlt_am        TEXT,
               kassenbuchung_id  INTEGER,
+              exportiert_in_export_id        INTEGER,
+              storno_exportiert_in_export_id INTEGER,
               version          INTEGER NOT NULL DEFAULT 1,
               created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by       TEXT,
@@ -2518,6 +2888,8 @@ class Database:
               status            TEXT,
               bezahlt_am        TEXT,
               kassenbuchung_id  INTEGER,
+              exportiert_in_export_id        INTEGER,
+              storno_exportiert_in_export_id INTEGER,
               created_at       TEXT,
               created_by       TEXT,
               updated_at       TEXT,
@@ -3220,6 +3592,10 @@ class Database:
               zahler_typ      TEXT NOT NULL DEFAULT 'mitglied',
               bedingung_alter_min INTEGER,
               bedingung_alter_max INTEGER,
+              gegenkonto      TEXT,
+              steuerschluessel TEXT,
+              kostenstelle    INTEGER,
+              kostentraeger   INTEGER,
               version         INTEGER NOT NULL DEFAULT 1,
               created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by      TEXT,
@@ -3235,6 +3611,7 @@ class Database:
               name TEXT, abteilung_id INTEGER, betrag REAL, anlass TEXT,
               gueltig_ab TEXT, gueltig_bis TEXT, zahler_typ TEXT,
               bedingung_alter_min INTEGER, bedingung_alter_max INTEGER,
+              gegenkonto TEXT, steuerschluessel TEXT, kostenstelle INTEGER, kostentraeger INTEGER,
               created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
               deleted_at TEXT, deleted_by TEXT,
               PRIMARY KEY (id, version)
@@ -3250,6 +3627,8 @@ class Database:
               status            TEXT NOT NULL DEFAULT 'offen',
               bezahlt_am        TEXT,
               kassenbuchung_id  INTEGER REFERENCES kassenbuchungen(id),
+              exportiert_in_export_id        INTEGER,
+              storno_exportiert_in_export_id INTEGER,
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by        TEXT,
@@ -3264,6 +3643,7 @@ class Database:
               id INTEGER NOT NULL, version INTEGER NOT NULL,
               mitglied_id INTEGER, gebuehr_id INTEGER, datum TEXT, betrag_soll REAL,
               status TEXT, bezahlt_am TEXT, kassenbuchung_id INTEGER,
+              exportiert_in_export_id INTEGER, storno_exportiert_in_export_id INTEGER,
               created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
               deleted_at TEXT, deleted_by TEXT,
               PRIMARY KEY (id, version)
@@ -3339,6 +3719,60 @@ class Database:
             )
         """)
 
+        # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fibu_exporte (
+              id                  SERIAL PRIMARY KEY,
+              exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              exportiert_von      TEXT NOT NULL,
+              dateiname           TEXT NOT NULL,
+              format              TEXT NOT NULL DEFAULT 'fbasc',
+              anzahl_positionen   INTEGER NOT NULL DEFAULT 0,
+              summe_cent          INTEGER NOT NULL DEFAULT 0,
+              storno_von_export_id INTEGER REFERENCES fibu_exporte(id),
+              version             INTEGER NOT NULL DEFAULT 1,
+              created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by          TEXT NOT NULL,
+              deleted_at          TEXT,
+              deleted_by          TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fibu_exporte_history (
+              id                  INTEGER NOT NULL,
+              version             INTEGER NOT NULL,
+              exportiert_am       TEXT,
+              exportiert_von      TEXT,
+              dateiname           TEXT,
+              format              TEXT,
+              anzahl_positionen   INTEGER,
+              summe_cent          INTEGER,
+              storno_von_export_id INTEGER,
+              created_at          TEXT,
+              created_by          TEXT,
+              deleted_at          TEXT,
+              deleted_by          TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fibu_einstellungen (
+              id                       INTEGER PRIMARY KEY DEFAULT 1,
+              debitor_konto_basis      INTEGER,
+              default_gegenkonto       TEXT,
+              default_steuerschluessel TEXT,
+              verein_kostenstelle      INTEGER NOT NULL DEFAULT 12,
+              default_kostentraeger    INTEGER NOT NULL DEFAULT 1,
+              version                  INTEGER NOT NULL DEFAULT 1,
+              created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by               TEXT,
+              updated_at               TEXT,
+              updated_by               TEXT,
+              CHECK (id = 1)
+            )
+        """)
+        cur.execute("INSERT INTO fibu_einstellungen (id, debitor_konto_basis) VALUES (1, 200000) ON CONFLICT (id) DO NOTHING")
+
         # Forward-Referenzen: Diese FKs werden erst NACH allen CREATE TABLE gesetzt,
         # weil ihre Ziel-Tabelle in der Erzeugungsreihenfolge später kommt
         # (mitglied vor users, beitrag_sollstellung vor kassenbuchungen).
@@ -3355,6 +3789,17 @@ class Database:
             ADD CONSTRAINT beitrag_sollstellung_kassenbuchung_id_fkey
             FOREIGN KEY (kassenbuchung_id) REFERENCES kassenbuchungen(id)
         """)
+        for tbl in ('beitrag_sollstellung', 'gebuehr_forderung'):
+            cur.execute(f"""
+                ALTER TABLE {tbl}
+                ADD CONSTRAINT {tbl}_exportiert_in_export_id_fkey
+                FOREIGN KEY (exportiert_in_export_id) REFERENCES fibu_exporte(id)
+            """)
+            cur.execute(f"""
+                ALTER TABLE {tbl}
+                ADD CONSTRAINT {tbl}_storno_exportiert_in_export_id_fkey
+                FOREIGN KEY (storno_exportiert_in_export_id) REFERENCES fibu_exporte(id)
+            """)
 
     # -----------------------------------
     # Trigger-Funktionen (PL/pgSQL)
@@ -3503,94 +3948,12 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_gebuehr_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO gebuehr_history (
-                    id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                    zahler_typ, bedingung_alter_min, bedingung_alter_max,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                    NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_gebuehr_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO gebuehr_history (
-                        id, version, name, abteilung_id, betrag, anlass, gueltig_ab, gueltig_bis,
-                        zahler_typ, bedingung_alter_min, bedingung_alter_max,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag, NEW.anlass, NEW.gueltig_ab, NEW.gueltig_bis,
-                        NEW.zahler_typ, NEW.bedingung_alter_min, NEW.bedingung_alter_max,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO gebuehr_forderung_history (
-                    id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_gebuehr_forderung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO gebuehr_forderung_history (
-                        id, version, mitglied_id, gebuehr_id, datum, betrag_soll, status, bezahlt_am, kassenbuchung_id,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.mitglied_id, NEW.gebuehr_id, NEW.datum, NEW.betrag_soll, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_abteilung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO abteilung_history (
-                    id, version, name, kuerzel, beschreibung,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_abteilung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO abteilung_history (
-                        id, version, name, kuerzel, beschreibung,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.name, NEW.kuerzel, NEW.beschreibung,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_GEBUEHR_AUDIT_INSERT)
+        cur.execute(_FN_GEBUEHR_AUDIT_UPDATE)
+        cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_INSERT)
+        cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE)
+        cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
+        cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_mitglied_abteilung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -3838,6 +4201,8 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
+        cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+        cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_kasse_berechtigungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -4140,86 +4505,10 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO beitragsregel_history (
-                    id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
-                    gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
-                    zahler_typ,
-                    bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
-                    ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
-                    bedingung_alter_min, bedingung_alter_max,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
-                    NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
-                    NEW.zahler_typ,
-                    NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
-                    NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
-                    NEW.bedingung_alter_min, NEW.bedingung_alter_max,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO beitragsregel_history (
-                        id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
-                        gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
-                        zahler_typ,
-                        bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
-                        ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
-                        bedingung_alter_min, bedingung_alter_max,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
-                        NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
-                        NEW.zahler_typ,
-                        NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
-                        NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
-                        NEW.bedingung_alter_min, NEW.bedingung_alter_max,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO beitrag_sollstellung_history (
-                    id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
-                    faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
-                    NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_beitrag_sollstellung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO beitrag_sollstellung_history (
-                        id, version, mitglied_id, beitragsregel_id, zeitraum, betrag_soll,
-                        faelligkeitsdatum, status, bezahlt_am, kassenbuchung_id,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.mitglied_id, NEW.beitragsregel_id, NEW.zeitraum, NEW.betrag_soll,
-                        NEW.faelligkeitsdatum, NEW.status, NEW.bezahlt_am, NEW.kassenbuchung_id,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_BEITRAGSREGEL_AUDIT_INSERT)
+        cur.execute(_FN_BEITRAGSREGEL_AUDIT_UPDATE)
+        cur.execute(_FN_BEITRAG_SOLLSTELLUNG_AUDIT_INSERT)
+        cur.execute(_FN_BEITRAG_SOLLSTELLUNG_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_funktion_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -4288,6 +4577,8 @@ class Database:
             ('trig_kassenbuchungen_audit_insert',                   'INSERT', 'kassenbuchungen',                   'fn_kassenbuchungen_audit_insert'),
             ('trig_kassenbuchungen_audit_update',                   'UPDATE', 'kassenbuchungen',                   'fn_kassenbuchungen_audit_update'),
             ('trig_kassenbuch_exporte_audit_insert',                'INSERT', 'kassenbuch_exporte',                'fn_kassenbuch_exporte_audit_insert'),
+            ('trig_fibu_exporte_audit_insert',                      'INSERT', 'fibu_exporte',                      'fn_fibu_exporte_audit_insert'),
+            ('trig_fibu_exporte_audit_update',                      'UPDATE', 'fibu_exporte',                      'fn_fibu_exporte_audit_update'),
             ('trig_kasse_berechtigungen_audit_insert',              'INSERT', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_insert'),
             ('trig_kasse_berechtigungen_audit_update',              'UPDATE', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_update'),
             ('trig_kassen_kategorien_audit_insert',                 'INSERT', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_insert'),
@@ -4418,6 +4709,12 @@ class Database:
             ("idx_gebuehr_forderung_status",                        "gebuehr_forderung(status)"),
             ("idx_gebuehr_forderung_deleted_at",                    "gebuehr_forderung(deleted_at)"),
             ("idx_gebuehr_forderung_history_id",                    "gebuehr_forderung_history(id)"),
+            ("idx_beitrag_sollstellung_export_id",                  "beitrag_sollstellung(exportiert_in_export_id)"),
+            ("idx_beitrag_sollstellung_storno_export_id",           "beitrag_sollstellung(storno_exportiert_in_export_id)"),
+            ("idx_gebuehr_forderung_export_id",                     "gebuehr_forderung(exportiert_in_export_id)"),
+            ("idx_gebuehr_forderung_storno_export_id",              "gebuehr_forderung(storno_exportiert_in_export_id)"),
+            ("idx_fibu_exporte_storno_von_export_id",               "fibu_exporte(storno_von_export_id)"),
+            ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -4440,6 +4737,7 @@ class Database:
             'mannschaften.read', 'mannschaften.write', 'mannschaften.delete',
             'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
             'gebuehren.read', 'gebuehren.write', 'gebuehren.abrechnen',
+            'fibu.export',
             'berichte.read', 'berichte.export',
             'system.config',
             'tickets.access',

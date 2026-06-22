@@ -337,7 +337,8 @@
               </q-expansion-item>
               <q-expansion-item label="Zahlung / SEPA" dense>
                 <div class="q-gutter-sm q-pt-sm">
-                  <q-input v-model="createForm.zahlungsart" label="Zahlungsart" outlined dense />
+                  <q-select v-model="createForm.zahlungsart" :options="zahlungsartOptionen"
+                    emit-value map-options label="Zahlungsart" outlined dense />
                   <q-input v-model="createForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
                   <q-input v-model="createForm.bic" label="BIC" outlined dense />
                   <q-input v-model="createForm.kontoinhaber" label="Kontoinhaber" outlined dense />
@@ -725,6 +726,12 @@ const geschlechtOptions = [
   { label: 'divers',   value: 'd' },
 ]
 
+// Lastschrift steuert den SEPA-Einzug im Fibu-Export (Feld 36); Standard = Lastschrift.
+const zahlungsartOptionen = [
+  { label: 'Lastschrift', value: 'lastschrift' },
+  { label: 'Sonstiges', value: 'sonstiges' },
+]
+
 function formatLastLogin(iso) {
   const diff = Date.now() - new Date(iso).getTime()
   const min  = Math.floor(diff / 60000)
@@ -831,7 +838,7 @@ function openCreateDialog() {
     password: '', username: '',
     eintrittsdatum: '', geburtsdatum: '', mitglied_status: 'aktiv', geschlecht: null,
     strasse: '', plz: '', ort: '', land: '',
-    zahlungsart: '', iban: '', bic: '', kontoinhaber: '',
+    zahlungsart: 'lastschrift', iban: '', bic: '', kontoinhaber: '',
   }
   createOpen.value = true
 }

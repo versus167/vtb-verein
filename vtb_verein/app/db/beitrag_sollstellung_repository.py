@@ -7,6 +7,7 @@ _SELECT = """
     SELECT s.id, s.mitglied_id, s.beitragsregel_id, s.zeitraum,
            s.betrag_soll, s.faelligkeitsdatum, s.status, s.bezahlt_am,
            s.kassenbuchung_id,
+           s.exportiert_in_export_id, s.storno_exportiert_in_export_id,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            m.iban AS mitglied_iban, m.kontoinhaber AS mitglied_kontoinhaber,
            r.name AS beitragsregel_name, r.zahler_typ,
@@ -24,6 +25,8 @@ def _map(row) -> BeitragSollstellung:
         zeitraum=r['zeitraum'], betrag_soll=r['betrag_soll'],
         faelligkeitsdatum=r['faelligkeitsdatum'], status=r['status'],
         bezahlt_am=r['bezahlt_am'], kassenbuchung_id=r['kassenbuchung_id'],
+        exportiert_in_export_id=r['exportiert_in_export_id'],
+        storno_exportiert_in_export_id=r['storno_exportiert_in_export_id'],
         mitglied_vorname=r['mitglied_vorname'], mitglied_nachname=r['mitglied_nachname'],
         mitglied_iban=r['mitglied_iban'], mitglied_kontoinhaber=r['mitglied_kontoinhaber'],
         beitragsregel_name=r['beitragsregel_name'], zahler_typ=r['zahler_typ'],
@@ -42,20 +45,6 @@ class BeitragSollstellungRepository(BaseRepository):
     def list_by_mitglied(self, mitglied_id: int) -> list[BeitragSollstellung]:
         with self.cursor() as cur:
             cur.execute(_SELECT + " WHERE s.mitglied_id=%s AND s.deleted_at IS NULL ORDER BY s.zeitraum DESC", (mitglied_id,))
-            return [_map(row) for row in cur.fetchall()]
-
-    def list_offen_fuer_sepa(self, zeitraum: str) -> list[BeitragSollstellung]:
-        """Offene Sollstellungen mit zahler_typ='mitglied' für SEPA-Export."""
-        with self.cursor() as cur:
-            cur.execute(
-                _SELECT + """
-                WHERE s.zeitraum=%s AND s.deleted_at IS NULL
-                  AND s.status='offen' AND r.zahler_typ='mitglied'
-                  AND m.iban IS NOT NULL
-                ORDER BY m.nachname, m.vorname
-                """,
-                (zeitraum,),
-            )
             return [_map(row) for row in cur.fetchall()]
 
     def exists(self, mitglied_id: int, beitragsregel_id: int, zeitraum: str) -> bool:
