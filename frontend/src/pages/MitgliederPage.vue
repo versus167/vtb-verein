@@ -383,7 +383,7 @@ const zuordnungForm = ref(emptyZuordnungForm())
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
-  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: '',
+  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
 })
 

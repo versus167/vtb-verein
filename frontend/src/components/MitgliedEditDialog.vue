@@ -67,7 +67,8 @@
             </q-expansion-item>
             <q-expansion-item label="Zahlung / SEPA" dense icon="payments">
               <div class="q-gutter-sm q-pt-sm">
-                <q-input v-model="form.zahlungsart" label="Zahlungsart" outlined dense :readonly="!canWrite" />
+                <q-select v-model="form.zahlungsart" :options="zahlungsartOptionen"
+                  emit-value map-options label="Zahlungsart" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" :rules="[ibanRule]" />
                 <q-input v-model="form.bic" label="BIC" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
@@ -456,10 +457,16 @@ const geschlechtOptions = [
   { label: 'divers', value: 'd' },
 ]
 
+// Lastschrift steuert den SEPA-Einzug im Fibu-Export (Feld 36); Standard = Lastschrift.
+const zahlungsartOptionen = [
+  { label: 'Lastschrift', value: 'lastschrift' },
+  { label: 'Sonstiges', value: 'sonstiges' },
+]
+
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
-  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: '',
+  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
 })
 const form = ref(emptyForm())
@@ -584,6 +591,10 @@ async function loadAll() {
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
     form.value = { ...emptyForm(), ...m }
+    // Zahlungsart auf das Dropdown normalisieren: ein expliziter Nicht-Lastschrift-Wert
+    // (Altwert 'ueberweisung' o.Ä.) wird zu 'sonstiges'; alles übrige (auch leer) ist
+    // 'lastschrift' (Standard).
+    form.value.zahlungsart = m.zahlungsart && m.zahlungsart !== 'lastschrift' ? 'sonstiges' : 'lastschrift'
     snapshotForm()
     abteilungOptions.value = ab
     funktionen.value = fns
