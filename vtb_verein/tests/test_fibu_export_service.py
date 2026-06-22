@@ -23,7 +23,7 @@ def _pos(**kw):
                 buchungstext='Beitrag 2026-Q4', suchname='5', nachname='Müller',
                 vorname='Anna', strasse='Weg 1', plz='12345', ort='Stadt', land='DE',
                 iban='DE00', bic='XBIC', mandatsref='M1', mandatsdatum='2025-01-02',
-                lastschrifteinzug=1)
+                lastschrifteinzug=1, mailadresse='anna@example.org', kontoinhaber='Max Vormund')
     base.update(kw)
     return FibuExportPosition(**base)
 
@@ -31,7 +31,7 @@ def _pos(**kw):
 class TestFormatterFelder:
     def test_feldanzahl_und_positionen(self):
         f = ff.felder(_pos())
-        assert len(f) == 49
+        assert len(f) == 71
         assert f[0] == '70005'        # Kontonummer
         assert f[1] == '4000'         # Gegenkonto
         assert f[2] == '10,00'        # Betrag mit Komma
@@ -49,6 +49,12 @@ class TestFormatterFelder:
         assert f[43] == 'Anna'        # Vorname
         assert f[47] == 'M1'          # Mandatsreferenz
         assert f[48] == '02.01.2025'  # Datum Mandatsreferenz
+        assert f[59] == 'anna@example.org'  # Mailadresse
+        assert f[70] == 'Max Vormund'       # abweichender Kontoinhaber
+
+    def test_gesperrte_felder_52_bis_58_leer(self):
+        f = ff.felder(_pos())
+        assert all(f[i] == '' for i in range(52, 59))
 
     def test_betrag_immer_positiv(self):
         assert ff.felder(_pos(betrag=-7.5))[2] == '7,50'
@@ -94,7 +100,9 @@ def _row(**kw):
         quelle_typ='beitrag', quelle_id=1, periode='2026-Q4', betrag_soll=30.0,
         belegdatum='2026-06-21', mitglied_id=10, mitgliedsnummer=5, vorname='Anna',
         nachname='Müller', strasse='Weg 1', plz='12345', ort='Stadt', land='DE',
-        iban='DE00', bic='XBIC', sepa_mandatsref='M1', sepa_mandatsdatum='2025-01-02',
+        iban='DE00', bic='XBIC', zahlungsart='lastschrift', kontoinhaber=None,
+        email='anna@example.org',
+        sepa_mandatsref='M1', sepa_mandatsdatum='2025-01-02',
         eintrittsdatum='2024-03-15',
         quelle_name='Vereinsbeitrag', zahler_typ='mitglied', gegenkonto='4000',
         steuerschluessel=None, abteilung_id=None, abteilung_kostenstelle=None,
@@ -223,7 +231,7 @@ class TestAufloesung:
         assert p.mandatsref == 'ALT-9' and p.mandatsdatum == '2020-01-01'
 
     def test_mandatsref_fallback_aus_mitgliedsnummer(self):
-        # Neues Mitglied ohne gespeichertes Mandat: Referenz = Mitgliedsnummer,
+        # Neues Lastschrift-Mitglied ohne gespeichertes Mandat: Referenz = Mitgliedsnummer,
         # Datum = Eintrittsdatum, Lastschrift-Kennzeichen gesetzt (IBAN vorhanden).
         svc, _ = _service(neu=[_row(mitgliedsnummer=42, sepa_mandatsref=None,
                                     sepa_mandatsdatum=None, eintrittsdatum='2026-05-01')])
@@ -231,6 +239,35 @@ class TestAufloesung:
         assert p.mandatsref == '42'
         assert p.mandatsdatum == '2026-05-01'
         assert p.lastschrifteinzug == 1
+
+    def test_ueberweiser_ohne_lastschrift_und_ohne_mandatsfallback(self):
+        # Überweiser mit IBAN: KEIN Lastschrift-Kennzeichen (Feld 36) und keine aus der
+        # Mitgliedsnummer abgeleitete Mandatsreferenz.
+        svc, _ = _service(neu=[_row(zahlungsart='ueberweisung', sepa_mandatsref=None,
+                                    sepa_mandatsdatum=None)])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.lastschrifteinzug is None
+        assert p.mandatsref is None
+        assert p.mandatsdatum is None
+
+    def test_ueberweiser_behaelt_echtes_gespeichertes_mandat(self):
+        # Ein real gespeichertes Mandat bleibt erhalten, aber ohne Lastschrift-Kennzeichen.
+        svc, _ = _service(neu=[_row(zahlungsart='ueberweisung', sepa_mandatsref='ECHT-7')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.mandatsref == 'ECHT-7'
+        assert p.lastschrifteinzug is None
+
+    def test_mailadresse_wird_uebernommen(self):
+        svc, _ = _service(neu=[_row(email='kontakt@example.org')])
+        assert svc.vorschau()['forderungen'][0].mailadresse == 'kontakt@example.org'
+
+    def test_abw_kontoinhaber_nur_wenn_abweichend(self):
+        # Kontoinhaber gleich Mitgliedsname -> kein abweichender Kontoinhaber (Feld 70 leer).
+        svc, _ = _service(neu=[_row(vorname='Anna', nachname='Müller', kontoinhaber='Anna Müller')])
+        assert svc.vorschau()['forderungen'][0].kontoinhaber is None
+        # Abweichender Name -> wird übernommen.
+        svc, _ = _service(neu=[_row(vorname='Anna', nachname='Müller', kontoinhaber='Max Vormund')])
+        assert svc.vorschau()['forderungen'][0].kontoinhaber == 'Max Vormund'
 
 
 # ---------------------------------------------------------------------------

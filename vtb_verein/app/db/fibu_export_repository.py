@@ -13,8 +13,11 @@ _SQL_BEITRAG = """
     SELECT 'beitrag' AS quelle_typ, s.id AS quelle_id,
            s.zeitraum AS periode, s.betrag_soll, s.created_at AS belegdatum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
-           m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
+           m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.zahlungsart, m.kontoinhaber,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
+           (SELECT k.wert FROM mitglied_kontakt k
+            WHERE k.mitglied_id = m.id AND k.typ = 'email' AND k.ist_primaer
+              AND k.deleted_at IS NULL LIMIT 1) AS email,
            r.name AS quelle_name, r.zahler_typ, r.gegenkonto, r.steuerschluessel,
            r.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
            NULL::integer AS quelle_kostenstelle, NULL::integer AS quelle_kostentraeger
@@ -30,8 +33,11 @@ _SQL_GEBUEHR = """
     SELECT 'gebuehr' AS quelle_typ, f.id AS quelle_id,
            NULL AS periode, f.betrag_soll, f.datum AS belegdatum,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
-           m.strasse, m.plz, m.ort, m.land, m.iban, m.bic,
+           m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.zahlungsart, m.kontoinhaber,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
+           (SELECT k.wert FROM mitglied_kontakt k
+            WHERE k.mitglied_id = m.id AND k.typ = 'email' AND k.ist_primaer
+              AND k.deleted_at IS NULL LIMIT 1) AS email,
            g.name AS quelle_name, g.zahler_typ, g.gegenkonto, g.steuerschluessel,
            g.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
            g.kostenstelle AS quelle_kostenstelle, g.kostentraeger AS quelle_kostentraeger

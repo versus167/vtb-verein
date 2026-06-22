@@ -83,3 +83,5 @@ class FibuExportPosition:
     bic: Optional[str] = None          # Feld 41
     mandatsref: Optional[str] = None   # Feld 47
     mandatsdatum: Optional[str] = None  # Feld 48 (ISO)
+    mailadresse: Optional[str] = None  # Feld 59 (Mailadresse Personenkonto)
+    kontoinhaber: Optional[str] = None  # Feld 70 (abweichender Kontoinhaber zur IBAN)

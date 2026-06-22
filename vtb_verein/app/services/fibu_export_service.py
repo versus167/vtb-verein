@@ -23,7 +23,8 @@ Konten-Auflösung:
 - Gegenkonto (Feld 01)    = Regel/Gebühr.gegenkonto, sonst default_gegenkonto
 - Kostenstelle (Feld 07)  = Gebühr-Override → Abteilung → Verein-Default (12)
 - Kostenträger (Feld 08)  = Gebühr-Override → default_kostentraeger (1)
-- Mandatsreferenz (Feld 47) = mitglied.sepa_mandatsref (Altsystem-Import), sonst
+- Lastschrift-Kennzeichen (Feld 36) + Mandatsdaten nur bei zahlungsart='lastschrift'.
+  Mandatsreferenz (Feld 47) = mitglied.sepa_mandatsref (Altsystem-Import), sonst
   automatisch = Mitgliedsnummer; Mandatsdatum (Feld 48) sonst = Eintrittsdatum.
 - Belegdatum (Feld 10) = Abrechnungsdatum (Beitrag: created_at der Sollstellung,
   Gebühr: forderung.datum); Fälligkeit (Feld 11) = Belegdatum + NETTOTAGE (10).
@@ -192,16 +193,31 @@ class FibuExportService:
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
         iban = row.get('iban')
+        # SEPA-/Lastschrift-Daten nur für Mitglieder mit zahlungsart='lastschrift' –
+        # ein Überweiser bekommt weder das Lastschrift-Kennzeichen (Feld 36) noch eine
+        # (ggf. aus der Mitgliedsnummer abgeleitete) Mandatsreferenz.
+        ist_lastschrift = row.get('zahlungsart') == 'lastschrift'
         # Mandatsreferenz: gespeicherter Wert (z.B. aus dem Altsystem-Import) hat Vorrang;
-        # sonst – insb. für neu angelegte Mitglieder – automatisch aus der Mitgliedsnummer
-        # ableiten. Mandatsdatum fällt auf das Eintrittsdatum zurück.
-        mandatsref = row.get('sepa_mandatsref') or (str(nummer) if nummer is not None else None)
-        mandatsdatum = row.get('sepa_mandatsdatum') or row.get('eintrittsdatum')
+        # sonst – insb. für neu angelegte Lastschrift-Mitglieder – automatisch aus der
+        # Mitgliedsnummer ableiten. Mandatsdatum fällt auf das Eintrittsdatum zurück.
+        if ist_lastschrift:
+            mandatsref = row.get('sepa_mandatsref') or (str(nummer) if nummer is not None else None)
+            mandatsdatum = row.get('sepa_mandatsdatum') or row.get('eintrittsdatum')
+        else:
+            mandatsref = row.get('sepa_mandatsref')
+            mandatsdatum = row.get('sepa_mandatsdatum')
 
         # Belegdatum = Abrechnungsdatum (Beitrag: created_at, Gebühr: forderung.datum),
         # Fälligkeit = Belegdatum + NETTOTAGE.
         belegdatum = _date_only(row.get('belegdatum'))
         faelligkeitsdatum = _plus_tage(belegdatum, NETTOTAGE)
+
+        # Abweichender Kontoinhaber (Feld 70) nur, wenn er tatsächlich vom Mitgliedsnamen
+        # abweicht – sonst meldet die Fibu einen Abweichler, den es nicht gibt.
+        voller_name = f"{vorname or ''} {nachname}".strip()
+        kontoinhaber = (row.get('kontoinhaber') or '').strip()
+        abw_kontoinhaber = (kontoinhaber if kontoinhaber
+                            and kontoinhaber.casefold() != voller_name.casefold() else None)
 
         return FibuExportPosition(
             quelle_typ=row['quelle_typ'],
@@ -221,7 +237,7 @@ class FibuExportService:
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
             buchungstext=bezeichnung,
-            lastschrifteinzug=1 if (iban and mandatsref) else None,
+            lastschrifteinzug=1 if (ist_lastschrift and iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
             vorname=vorname,
@@ -233,6 +249,8 @@ class FibuExportService:
             bic=row.get('bic'),
             mandatsref=mandatsref,
             mandatsdatum=mandatsdatum,
+            mailadresse=row.get('email'),
+            kontoinhaber=abw_kontoinhaber,
         )
 
     @staticmethod

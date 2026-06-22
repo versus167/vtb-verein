@@ -1,6 +1,7 @@
 """FBASC-Formatter (hmd.rewe): rendert FibuExportPosition-Listen zur Datei `fbasc.hia`.
 
-Aufbau laut „Beschreibung FBASC Schnittstelle": Felder 00..48, Trennzeichen `;`,
+Aufbau laut „Schnittstellenbeschreibung FBASC Format" (hmd, Stand 21.11.2025): Felder
+00..70 (genutzt bis 48 + 59 Mailadresse + 70 abw. Kontoinhaber), Trennzeichen `;`,
 Zeilenende CR+LF, leere Felder bleiben leer (`;;`), Betrag `n,nn` (Komma), Datum
 `TT.MM.JJJJ`. Encoding UTF-8 (mit dem Nutzer abgestimmt). Beträge sind immer positiv –
 das Vorzeichen steckt im S/H-Kennzeichen (Feld 03).
@@ -11,7 +12,7 @@ from typing import Optional
 from app.models.fibu import FibuExportPosition
 
 FBASC_DATEINAME = "fbasc.hia"
-_FELD_ANZAHL = 49          # Felder 00..48
+_FELD_ANZAHL = 71          # Felder 00..70 (59 Mailadresse, 70 abw. Kontoinhaber)
 _SEP = ";"
 _EOL = "\r\n"
 
@@ -75,6 +76,8 @@ def felder(p: FibuExportPosition) -> list[str]:
     f[43] = _clean(p.vorname)           # Vorname (Erweiterung zu Feld 22)
     f[47] = _clean(p.mandatsref)        # Mandatsreferenznummer
     f[48] = _datum(p.mandatsdatum)      # Datum der Mandatsreferenz
+    f[59] = _clean(p.mailadresse)       # Mailadresse Personenkonto
+    f[70] = _clean(p.kontoinhaber)      # Abweichender Kontoinhaber (zur IBAN)
     return f
 
 
