@@ -42,6 +42,22 @@ class TestRegistry:
             assert e.history_table is None        # keine History
             assert e.children == ()               # reines Blatt
 
+    def test_stammdaten_und_ticket_entitaeten_registriert(self):
+        names = {e.name for e in PRUNE_REGISTRY}
+        assert {"abteilung", "funktion", "funktion_permission",
+                "ticket", "ticket_kommentar", "ticket_bereich", "ticket_kategorie",
+                "ticket_teilnehmer", "ticket_bereich_berechtigung"} <= names
+
+    def test_kinder_stehen_vor_dem_elternteil(self):
+        """Invariante: ist eine Kind-Tabelle selbst eine Prune-Entität, kommt sie früher
+        (Blatt → Wurzel) – sonst stimmt die Löschreihenfolge im Report nicht."""
+        pos_by_table = {e.table: i for i, e in enumerate(PRUNE_REGISTRY)}
+        for i, e in enumerate(PRUNE_REGISTRY):
+            for child in e.children:
+                if child.table in pos_by_table:
+                    assert pos_by_table[child.table] < i, \
+                        f"{child.table} muss vor {e.name} stehen"
+
 
 class TestOriginalCandidateSql:
     def test_leaf_hat_keine_kind_klausel_aber_history_gate(self):
@@ -116,3 +132,9 @@ class TestCandidateIds:
         assert ids_sql in cnt_sql          # COUNT umschließt exakt das ID-SELECT
         assert cnt_sql.startswith("SELECT COUNT(*) AS n FROM (")
         assert ids_params == cnt_params    # identische Tor-Parameter
+
+    def test_key_basierter_child_ref_nutzt_korrelierte_subquery(self):
+        sql, _ = build_original_candidate_ids_sql(_entity("funktion"), 90, 10, 365)
+        assert "FROM funktion_permission c WHERE c.funktion_id = r.id" in sql   # id-basiert
+        assert ("FROM mitglied_funktion c WHERE c.funktion = "
+                "(SELECT p.key FROM funktion p WHERE p.id = r.id)") in sql      # key-basiert

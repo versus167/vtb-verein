@@ -43,12 +43,12 @@ def clean(db):
         cur.execute(
             "TRUNCATE mitglied, mannschaft, mitglied_kontakt, mitglied_abteilung, "
             "mitglied_funktion, mitglied_mannschaft, beitrag_sollstellung, "
-            "gebuehr_forderung, users, tickets, ticket_anhaenge "
+            "gebuehr_forderung, users, tickets, ticket_anhaenge, abteilung "
             "RESTART IDENTITY CASCADE"
         )
         cur.execute(
             "TRUNCATE mitglied_history, mitglied_kontakt_history, users_history, "
-            "tickets_history RESTART IDENTITY"
+            "tickets_history, abteilung_history RESTART IDENTITY"
         )
         cur.execute("TRUNCATE prune_einstellungen")
     yield
@@ -339,6 +339,46 @@ def test_prune_loescht_anhang_datensatz_und_datei(db):
 
     assert not _row_exists(db, "ticket_anhaenge", aid)   # DB-Zeile weg
     assert not db.anhang_service.existiert(stored)        # Datei von Platte weg
+
+
+def _ins_abteilung(db, name="Abt"):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO abteilung (name) VALUES (%s) RETURNING id", (name,))
+        return cur.fetchone()["id"]
+
+
+def test_prune_abteilung_timestamp_und_child_gate(db):
+    """Stammdaten: abteilung hat TIMESTAMP-deleted_at + komplexe Child-Map.
+
+    Prüft den ganzen Pfad: durch ein Kind (mitglied_abteilung) blockiert, nach dessen
+    Entfernung löschbar – und dass das TIMESTAMP-deleted_at korrekt verarbeitet wird."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("abteilung", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+
+    a = _ins_abteilung(db)
+    m = _ins_mitglied(db)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO mitglied_abteilung (mitglied_id, abteilung_id) VALUES (%s,%s) RETURNING id",
+            (m, a),
+        )
+        ma_id = cur.fetchone()["id"]
+    _soft_delete(db, "abteilung", a, 60)                 # version-Bump -> abteilung_history
+    _age_history(db, "abteilung_history", a, 60)
+
+    # Durch das (noch existierende) mitglied_abteilung-Kind blockiert
+    assert {e["name"]: e for e in svc.report()["entities"]}["abteilung"]["loeschbar"] == 0
+    svc.prune(dry_run=False)
+    assert _row_exists(db, "abteilung", a)
+
+    # Kind entfernen -> abteilung wird löschbar
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM mitglied_abteilung WHERE id=%s", (ma_id,))
+    assert {e["name"]: e for e in svc.report()["entities"]}["abteilung"]["loeschbar"] == 1
+    res = {e["name"]: e for e in svc.prune(dry_run=False)["entities"]}["abteilung"]
+    assert res["geloescht"] == 1
+    assert not _row_exists(db, "abteilung", a)
 
 
 def test_papierkorb_zaehler(db):

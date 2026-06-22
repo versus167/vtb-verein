@@ -40,9 +40,15 @@ DEFAULT_HISTORY_RETENTION_DAYS = 365   # History: eigenes, längeres Fenster
 
 @dataclass(frozen=True)
 class ChildRef:
-    """Eine Live-Tabelle, die per FK auf die Eltern-Tabelle zeigt."""
+    """Eine Live-Tabelle, die auf die Eltern-Tabelle zeigt.
+
+    Standard: ``child.fk == parent.id`` (echte FK). Manche Bezüge laufen aber NICHT über
+    die id, sondern über eine andere Eltern-Spalte (z.B. mitglied_funktion.funktion ==
+    funktion.key, lose ohne FK) – dafür ``parent_col`` setzen.
+    """
     table: str
     fk: str
+    parent_col: str = "id"
 
 
 @dataclass(frozen=True)
@@ -69,17 +75,20 @@ class PruneEntity:
 # Reihenfolge: Blatt → Wurzel. So sind beim echten Lauf die Kinder schon weg, bevor
 # das Eltern-Element drankommt. History wird je Entität separat (und vorgelagert) geprunt.
 #
-# Phase 0 deckt die Mitglied-Domäne ab, Phase 4 die Anhang-Domänen (mit Disk-Datei).
-# TODO (spätere Phasen): abteilung (entkoppelt von beitragsregel/kassen/funktion),
-# users (verflochten mit Auth/Audit + Last-Admin-Schutz).
+# Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten.
+# TODO (bewusst NICHT drin): Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren –
+# Aufbewahrungspflicht) und users (Auth-/Audit-verflochten, Last-Admin-Schutz).
 #
-# Anhänge sind reine Blätter (kein FK zeigt auf sie, keine History/Version). Beim Prune
-# muss zusätzlich die Datei von der Platte – stored_name_col aktiviert das.
+# Child-Refs listen ALLE eingehenden FKs (auch aus nicht-geprunten Tabellen) – fehlt
+# einer, würde der DB-FK (RESTRICT) das echte Löschen blockieren. Anhänge sind reine
+# Blätter ohne History/Version; stored_name_col aktiviert das Datei-Löschen.
 PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
+    # --- Anhänge (Blätter mit Disk-Datei) ---
     PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
                 stored_name_col="stored_name"),
     PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
                 stored_name_col="stored_name"),
+    # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
     PruneEntity("mitglied_abteilung", "Abteilungs-Zuordnungen", "mitglied_abteilung",
@@ -101,14 +110,63 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_kontakt", "mitglied_id"),
                     ChildRef("mitglied_mannschaft", "mitglied_id"),
                 )),
+    # --- Tickets-Domäne (Blatt → Wurzel) ---
+    PruneEntity("ticket_teilnehmer", "Ticket-Teilnehmer", "ticket_teilnehmer",
+                history_table="ticket_teilnehmer_history"),
+    PruneEntity("ticket_bereich_berechtigung", "Ticket-Bereichsrechte",
+                "ticket_bereich_berechtigungen",
+                history_table="ticket_bereich_berechtigungen_history"),
+    PruneEntity("ticket_kommentar", "Ticket-Kommentare", "ticket_kommentare",
+                history_table="ticket_kommentare_history",
+                children=(ChildRef("ticket_anhaenge", "kommentar_id"),)),
+    PruneEntity("ticket", "Tickets", "tickets",
+                history_table="tickets_history",
+                children=(
+                    ChildRef("ticket_kommentare", "ticket_id"),
+                    ChildRef("ticket_anhaenge", "ticket_id"),
+                    ChildRef("ticket_teilnehmer", "ticket_id"),
+                )),
+    PruneEntity("ticket_kategorie", "Ticket-Kategorien", "ticket_kategorien",
+                history_table="ticket_kategorien_history",
+                children=(ChildRef("tickets", "kategorie_id"),)),
+    PruneEntity("ticket_bereich", "Ticket-Bereiche", "ticket_bereiche",
+                history_table="ticket_bereiche_history",
+                children=(
+                    ChildRef("tickets", "bereich_id"),
+                    ChildRef("ticket_bereich_berechtigungen", "bereich_id"),
+                )),
+    # --- Stammdaten (Blatt → Wurzel) ---
+    PruneEntity("funktion_permission", "Funktionsrechte", "funktion_permission",
+                history_table="funktion_permission_history"),
+    PruneEntity("funktion", "Funktionen", "funktion",
+                history_table="funktion_history",
+                children=(
+                    ChildRef("funktion_permission", "funktion_id"),       # FK auf funktion.id
+                    ChildRef("mitglied_funktion", "funktion", parent_col="key"),  # lose über key
+                )),
+    PruneEntity("abteilung", "Abteilungen", "abteilung",
+                history_table="abteilung_history",
+                children=(
+                    ChildRef("mitglied_abteilung", "abteilung_id"),
+                    ChildRef("mitglied_funktion", "abteilung_id"),
+                    ChildRef("mannschaft", "abteilung_id"),
+                    ChildRef("beitragsregel", "abteilung_id"),
+                    ChildRef("beitragsregel", "ausnahme_funktion_abteilung_id"),
+                    ChildRef("beitragsregel", "bedingung_funktion_abteilung_id"),
+                    ChildRef("gebuehr", "abteilung_id"),
+                    ChildRef("kassen", "abteilung_id"),
+                    ChildRef("user_permissions", "abteilung_id"),
+                )),
 )
 
 
 # --- Reine SQL-Bausteine (ohne DB testbar) ----------------------------------------
-# Hilfsausdruck: TEXT- wie TIMESTAMP-Spalten robust nach timestamptz casten. Viele
-# deleted_at/created_at-Spalten sind TEXT (ISO-Strings); leere Strings -> NULL.
+# Hilfsausdruck: deleted_at/created_at-Spalten sind teils TEXT (ISO-Strings), teils
+# TIMESTAMP. Erst nach ::text casten – dann ist NULLIF(...,'') für beide Typen gültig
+# (bei TIMESTAMP gäbe der direkte Vergleich mit '' einen Cast-Fehler) – und zurück nach
+# timestamptz. Leere Strings (TEXT) werden zu NULL.
 def _ts(col: str) -> str:
-    return f"NULLIF({col}, '')::timestamptz"
+    return f"NULLIF({col}::text, '')::timestamptz"
 
 
 def _history_effective_ts(prefix: str = "") -> str:
@@ -123,7 +181,7 @@ def build_papierkorb_count_sql(entity: PruneEntity) -> tuple[str, list]:
     """Gesamtzahl im Papierkorb (soft-deleted) – Kontext für den Report."""
     sql = (
         f"SELECT COUNT(*) AS n FROM {entity.table} "
-        f"WHERE deleted_at IS NOT NULL AND deleted_at <> ''"
+        f"WHERE deleted_at IS NOT NULL AND deleted_at::text <> ''"
     )
     return sql, []
 
@@ -148,9 +206,14 @@ def build_original_candidate_ids_sql(
     params.append(keep_min)
 
     for child in entity.children:                         # Tor 4: keine Kind-Referenz
-        where.append(
-            f"NOT EXISTS (SELECT 1 FROM {child.table} c WHERE c.{child.fk} = r.id)"
-        )
+        if child.parent_col == "id":
+            cond = "c.{fk} = r.id".format(fk=child.fk)
+        else:                                             # Bezug über andere Eltern-Spalte
+            cond = (
+                f"c.{child.fk} = (SELECT p.{child.parent_col} "
+                f"FROM {entity.table} p WHERE p.id = r.id)"
+            )
+        where.append(f"NOT EXISTS (SELECT 1 FROM {child.table} c WHERE {cond})")
 
     if entity.history_table:                              # Tor 5: history-frei
         where.append(
@@ -165,7 +228,7 @@ def build_original_candidate_ids_sql(
         f"  SELECT id, {_ts('deleted_at')} AS del, "
         f"         ROW_NUMBER() OVER (ORDER BY {_ts('deleted_at')} DESC NULLS LAST, id DESC) AS rn "
         f"  FROM {entity.table} "
-        "   WHERE deleted_at IS NOT NULL AND deleted_at <> '' "
+        "   WHERE deleted_at IS NOT NULL AND deleted_at::text <> '' "
         ") "
         "SELECT r.id FROM ranked r WHERE " + " AND ".join(where)
     )
