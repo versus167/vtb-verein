@@ -109,10 +109,11 @@ Offen:
 - [ ] PostgreSQL-Test-Fixture/conftest etablieren (es gibt keine DB-nahe Test-Infra;
       bewährter manueller Weg bisher: Dev-DB-Dump → Wegwerf-Container postgres:18 → migrieren)
 - [ ] Stale SQLite-Erwähnung in `vtb_verein/tests/README.md` bereinigen
-- [ ] **Einheitliche Mitglied-Edit-Komponente** – die neue `MitgliedEditDialog.vue`
-      (Stammdaten + Abteilungen + Funktionen, eingebunden in die Abrechnungsvorschau)
-      auch in `PersonenPage.vue` und `MitgliederPage.vue` nutzen, damit die
-      Mitglieds-Bearbeitung eine Single-Source ist (aktuell dort dupliziert)
+- [x] **Einheitliche Mitglied-Edit-Komponente** – `MitgliedEditDialog.vue` (Stammdaten +
+      Abteilungen + Funktionen) ist Single-Source und wird in `PersonenPage.vue` +
+      `BeitragsverwaltungPage.vue` genutzt. Die alte, dupliziert pflegende
+      `MitgliederPage.vue` war eine verwaiste Seite (nur per direkter URL `/mitglieder`
+      erreichbar, nirgends verlinkt) und wurde samt Route entfernt.
 - [x] **Beitragslogik: Funktions-/Ausnahme-Bedingungen zeitraumgenau** – früher
       werteten die Funktions-/Ausnahme-Bedingungen `CURRENT_DATE` statt des Abrechnungs-
       Stichtags aus (bei rückwirkender Abrechnung zählten *aktuelle* statt *historischer*
@@ -126,8 +127,8 @@ Offen:
       String-Key (FK auf partiellen Unique-Index nicht möglich); betrifft
       Repository, API, Frontend und Beitragsregeln (`bedingung_funktionen`);
       v35 loggt verwaiste Keys nur als WARN
-- [ ] Tote Konstante `VALID_FUNKTIONEN` in `mitglied_funktion_repository.py`
-      entfernen (Katalog validiert längst über die `funktion`-Tabelle)
+- [x] Tote Konstante `VALID_FUNKTIONEN` in `mitglied_funktion_repository.py`
+      entfernt (Katalog validiert längst über die `funktion`-Tabelle)
 
 Erledigt (2026-06-11):
 - [x] Frischaufbau-FK-Bug behoben – `mitglied→users` / `beitrag_sollstellung→kassenbuchungen`
@@ -174,4 +175,7 @@ Storno, CSV-Export, PDF-Bericht, kassenspezifische
 Berechtigungen) · Tickets (vollständig, inkl. Bereichs-Berechtigungen) · domänen-isolierte
 Anhänge · Audit-Trail & Soft-Delete durchgängig · E-Mail- + Matrix-Benachrichtigungen ·
 PWA · Personen-Liste mit Filter (Status/Abteilung/Funktion) + Volltextsuche ·
-Mobile-Optimierung (Kassenbuch + Tickets) · Dark Mode.
+Mobile-Optimierung (Kassenbuch + Tickets) · Dark Mode ·
+Auth-Härtung (Ticket #48): Magic-Link-Token nur als SHA-256-Hash, Single-Use
+(`UPDATE … RETURNING`) + Rate-Limit (v47); JWT im HttpOnly-Cookie statt localStorage;
+Ticket-Tool auf Cookie-Auth umgestellt.

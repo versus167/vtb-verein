@@ -28,12 +28,6 @@ const routes = [
         component: () => import('pages/ProfilePage.vue'),
       },
       {
-        path: 'mitglieder',
-        name: 'mitglieder',
-        component: () => import('pages/MitgliederPage.vue'),
-        meta: { permission: 'personen.read' },
-      },
-      {
         path: 'abteilungen',
         name: 'abteilungen',
         component: () => import('pages/AbteilungenPage.vue'),

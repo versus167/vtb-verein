@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
-VALID_FUNKTIONEN = ('schiedsrichter', 'uebungsleiter', 'abteilungsleiter')
-
 
 @dataclass
 class MitgliedFunktion:
