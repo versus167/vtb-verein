@@ -21,6 +21,7 @@ Beispiele:
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
 import json
 import os
 import sys
@@ -28,6 +29,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+# Opener mit Cookie-Jar: seit v2026.06.22.40 (Ticket #48) transportiert die App
+# das Session-JWT in einem HttpOnly-Cookie. Der Jar nimmt das Set-Cookie vom Login
+# automatisch auf und schickt es bei Folge-Requests mit. Der Bearer-Header bleibt
+# als Fallback für ältere Server-Stände (die das Token noch im Body liefern).
+_COOKIE_JAR = http.cookiejar.CookieJar()
+_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_COOKIE_JAR))
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / "tools" / "tickets.local.env"
@@ -102,7 +110,7 @@ def _request(method: str, url: str, *, token: str | None = None,
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with _OPENER.open(req, timeout=60) as resp:
             roh = resp.read()
             if raw:
                 return roh
@@ -128,7 +136,9 @@ class Client:
     def login(self) -> None:
         res = _request("POST", f"{self.base}/auth/login",
                        form_body={"username": self.cfg["user"], "password": self.cfg["pass"]})
-        self.token = res["access_token"]
+        # Neuer Server (v40+) setzt nur das Session-Cookie (im Jar) und liefert kein
+        # access_token mehr; älterer Server liefert es weiter im Body → als Bearer nutzen.
+        self.token = res.get("access_token") if isinstance(res, dict) else None
 
     def get(self, pfad: str) -> object:
         return _request("GET", f"{self.base}{pfad}", token=self.token)
