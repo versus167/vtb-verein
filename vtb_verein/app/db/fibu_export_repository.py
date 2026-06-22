@@ -19,12 +19,24 @@ _SQL_BEITRAG = """
             WHERE k.mitglied_id = m.id AND k.typ = 'email' AND k.ist_primaer
               AND k.deleted_at IS NULL LIMIT 1) AS email,
            r.name AS quelle_name, r.zahler_typ, r.gegenkonto, r.steuerschluessel,
-           r.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
+           -- Getragene Beiträge (zahler_typ='abteilung'): hat die Regel keine eigene
+           -- Abteilung (Vereinsbeitrag), wird die für die Gegenbuchung tragende Abteilung
+           -- aus der Bedingung abgeleitet (bedingung_abteilung_ids). Genau eine Abteilung →
+           -- eindeutig; mehrere verschiedene → mehrdeutig (der Service meldet das als Fehler).
+           COALESCE(r.abteilung_id, bed.einzel_abteilung_id) AS abteilung_id,
+           COALESCE(a.kostenstelle, abed.kostenstelle) AS abteilung_kostenstelle,
+           COALESCE(bed.anzahl_abteilungen > 1, FALSE) AS abteilung_mehrdeutig,
            NULL::integer AS quelle_kostenstelle, NULL::integer AS quelle_kostentraeger
     FROM beitrag_sollstellung s
     JOIN mitglied m ON m.id = s.mitglied_id
     JOIN beitragsregel r ON r.id = s.beitragsregel_id
     LEFT JOIN abteilung a ON a.id = r.abteilung_id
+    LEFT JOIN LATERAL (
+        SELECT COUNT(DISTINCT x) AS anzahl_abteilungen,
+               CASE WHEN COUNT(DISTINCT x) = 1 THEN MIN(x) END AS einzel_abteilung_id
+        FROM unnest(r.bedingung_abteilung_ids) AS x WHERE x IS NOT NULL
+    ) bed ON (r.zahler_typ = 'abteilung' AND r.abteilung_id IS NULL)
+    LEFT JOIN abteilung abed ON abed.id = bed.einzel_abteilung_id
     WHERE {cond}
     ORDER BY m.nachname, m.vorname, s.id
 """
@@ -40,6 +52,8 @@ _SQL_GEBUEHR = """
               AND k.deleted_at IS NULL LIMIT 1) AS email,
            g.name AS quelle_name, g.zahler_typ, g.gegenkonto, g.steuerschluessel,
            g.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
+           -- Gebühren haben keine Funktions-/Abteilungs-Bedingung → nie mehrdeutig.
+           FALSE AS abteilung_mehrdeutig,
            g.kostenstelle AS quelle_kostenstelle, g.kostentraeger AS quelle_kostentraeger
     FROM gebuehr_forderung f
     JOIN mitglied m ON m.id = f.mitglied_id
