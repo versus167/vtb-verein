@@ -49,6 +49,28 @@ def prune_vorschau(user: CurrentUser, db: DB):
     return PruneService(db).report()
 
 
+@router.post("/ausfuehren")
+def prune_ausfuehren(request: Request, user: CurrentUser, db: DB, dry_run: bool = True):
+    """Führt die Bereinigung aus. Sicherheits-Default ``dry_run=True``.
+
+    Erst mit ``?dry_run=false`` wird tatsächlich (atomar) gelöscht – dann wird der Lauf
+    mit Summen ins access_log (category 'prune') protokolliert.
+    """
+    _require_admin(user)
+    ergebnis = PruneService(db).prune(dry_run=dry_run)
+    if not dry_run:
+        try:
+            db.access_log_repository.log(
+                "prune_executed", category="prune",
+                user_id=user.id, username=user.username, ip=_client_ip(request),
+                detail=f"{ergebnis['summe_geloescht']} Datensätze, "
+                       f"{ergebnis['summe_history_geloescht']} History-Zeilen gelöscht",
+            )
+        except Exception:
+            pass
+    return ergebnis
+
+
 @router.get("/einstellungen")
 def prune_einstellungen(user: CurrentUser, db: DB):
     """Wirksame Tunables je Entität (Override oder Code-Default)."""

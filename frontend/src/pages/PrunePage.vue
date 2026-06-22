@@ -4,6 +4,11 @@
       <div class="text-h5">Datenbereinigung</div>
       <q-space />
       <q-btn
+        color="negative" icon="delete_sweep" label="Bereinigung ausführen"
+        :disable="nothingToDelete || loading" :loading="executing"
+        class="q-mr-sm" @click="confirmOpen = true"
+      />
+      <q-btn
         flat round icon="refresh" :loading="loading"
         @click="reload" aria-label="Aktualisieren"
       >
@@ -106,19 +111,47 @@
         Stand: {{ fmtDate(report.generated_at) }}
       </div>
     </div>
+
+    <q-dialog v-model="confirmOpen">
+      <q-card style="min-width: 360px">
+        <q-card-section class="row items-center">
+          <q-icon name="warning" color="negative" size="sm" class="q-mr-sm" />
+          <span class="text-h6">Endgültig löschen?</span>
+        </q-card-section>
+        <q-card-section v-if="report">
+          Es werden <b>{{ report.summe_loeschbar }}</b> Datensätze und
+          <b>{{ report.summe_history_loeschbar }}</b> History-Zeilen
+          <b>unwiderruflich</b> gelöscht. Eine Wiederherstellung ist danach nicht
+          mehr möglich.
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn
+            color="negative" label="Endgültig löschen" :loading="executing"
+            @click="execute"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 
 const $q = useQuasar()
 const loading = ref(false)
 const saving = ref(null)
+const executing = ref(false)
+const confirmOpen = ref(false)
 const rows = ref([])
 const report = ref(null)
+
+const nothingToDelete = computed(() =>
+  !report.value || (report.value.summe_loeschbar + report.value.summe_history_loeschbar) === 0,
+)
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
 
@@ -176,6 +209,23 @@ async function reset(row) {
     $q.notify({ type: 'negative', message: 'Zurücksetzen fehlgeschlagen' })
   } finally {
     saving.value = null
+  }
+}
+
+async function execute() {
+  executing.value = true
+  try {
+    const { data } = await api.post('/api/prune/ausfuehren', null, { params: { dry_run: false } })
+    confirmOpen.value = false
+    $q.notify({
+      type: 'positive',
+      message: `Bereinigt: ${data.summe_geloescht} Datensätze, ${data.summe_history_geloescht} History-Zeilen`,
+    })
+    await reload()
+  } catch {
+    $q.notify({ type: 'negative', message: 'Bereinigung fehlgeschlagen' })
+  } finally {
+    executing.value = false
   }
 }
 
