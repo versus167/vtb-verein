@@ -57,9 +57,11 @@
       <template #body-cell-keep_min="props">
         <q-td :props="props">
           <q-input
+            v-if="props.row.keep_min !== null"
             v-model.number="props.row.keep_min" type="number" dense outlined
             min="0" style="max-width: 80px"
           />
+          <span v-else class="text-grey-6">–</span>
         </q-td>
       </template>
 
@@ -159,7 +161,8 @@ const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
 
 const columns = [
   { name: 'label', label: 'Bereich', field: 'label', align: 'left' },
-  { name: 'im_papierkorb', label: 'Im Papierkorb', field: 'im_papierkorb', align: 'right' },
+  { name: 'eintraege', label: 'Einträge', field: (r) => r.eintraege ?? '–', align: 'right' },
+  { name: 'im_papierkorb', label: 'Im Papierkorb', field: (r) => r.im_papierkorb ?? '–', align: 'right' },
   { name: 'loeschbar', label: 'Jetzt löschbar', field: 'loeschbar', align: 'right' },
   { name: 'history_gesamt', label: 'History gesamt', field: (r) => r.history_gesamt ?? '–', align: 'right' },
   { name: 'history_loeschbar', label: 'History löschbar', field: (r) => r.history_loeschbar ?? '–', align: 'right' },
@@ -188,8 +191,8 @@ async function save(row) {
   try {
     await api.put(`/api/prune/einstellungen/${row.name}`, {
       retention_days: row.retention_days,
-      keep_min: row.keep_min,
-      history_retention_days: row.history_retention_days,
+      keep_min: row.keep_min ?? 0,                      // Protokoll-Zeile hat keine Mindestanzahl
+      history_retention_days: row.history_retention_days ?? 1,  // … und keine History
     })
     $q.notify({ type: 'positive', message: `${row.label}: Werte gespeichert` })
     await reload()

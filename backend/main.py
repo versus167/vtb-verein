@@ -52,18 +52,10 @@ async def lifespan(app: FastAPI):
 
     # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
     from backend.core.db import get_db
-    db = get_db()
+    get_db()
 
-    # Retention: alte Seitenaufrufe (category 'page') beim Start prunen – best-effort.
-    # Auth-Events bleiben dauerhaft. Reicht für ein Single-Instance-Deployment ohne
-    # Scheduler; läuft bei jedem Neustart.
-    try:
-        geprunt = db.access_log_repository.cleanup_page_views(90)
-        if geprunt:
-            logging.getLogger("app").info("Zugriffsprotokoll: %d alte Seitenaufrufe geprunt.", geprunt)
-    except Exception:
-        logging.getLogger("app").warning("Zugriffsprotokoll-Prune übersprungen.", exc_info=True)
-
+    # Hinweis: Das frühere Startup-Pruning der Protokoll-Seitenaufrufe entfällt – die
+    # Bereinigung läuft jetzt manuell über die Datenbereinigungs-Seite (und künftig per Cron).
     yield
 
 

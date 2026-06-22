@@ -37,6 +37,13 @@ DEFAULT_RETENTION_DAYS = 90      # Original: Mindest-Verweildauer im Papierkorb
 DEFAULT_KEEP_MIN = 10            # Original: so viele zuletzt Gelöschte bleiben immer
 DEFAULT_HISTORY_RETENTION_DAYS = 365   # History: eigenes, längeres Fenster
 
+# Zugriffsprotokoll-Seitenaufrufe: KEIN Soft-Delete-Eintrag, sondern eigene Retention –
+# Hard-Delete nach created_at-Alter, nur category 'page' (auth/prune bleiben dauerhaft).
+# Als Sonder-Bereich in Report/Prune geführt, damit es auf der Bereinigungs-Seite sichtbar
+# und einstellbar ist (Schlüssel auch in der Override-Tabelle prune_einstellungen nutzbar).
+ACCESS_LOG_PAGE = "access_log_page"
+DEFAULT_PAGE_VIEW_RETENTION_DAYS = 90
+
 
 @dataclass(frozen=True)
 class ChildRef:
@@ -186,6 +193,15 @@ def build_papierkorb_count_sql(entity: PruneEntity) -> tuple[str, list]:
     return sql, []
 
 
+def build_active_count_sql(entity: PruneEntity) -> tuple[str, list]:
+    """Zahl der aktiven (nicht gelöschten) Einträge – reines Mengengefühl, wird nie geprunt."""
+    sql = (
+        f"SELECT COUNT(*) AS n FROM {entity.table} "
+        f"WHERE deleted_at IS NULL OR deleted_at::text = ''"
+    )
+    return sql, []
+
+
 def build_original_candidate_ids_sql(
     entity: PruneEntity,
     retention_days: int,
@@ -310,19 +326,49 @@ class PruneService:
             }
         return result
 
+    def page_view_retention(self) -> tuple[int, bool]:
+        """Aufbewahrung der Protokoll-Seitenaufrufe in Tagen + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(ACCESS_LOG_PAGE)
+        if o:
+            return o["retention_days"], True
+        return DEFAULT_PAGE_VIEW_RETENTION_DAYS, False
+
+    def _access_log_report_row(self) -> dict:
+        """Sonder-Bereich „Seitenaufrufe (Protokoll)": Hard-Delete nach Alter, kein Soft-Delete."""
+        days, is_override = self.page_view_retention()
+        return {
+            "name": ACCESS_LOG_PAGE,
+            "label": "Seitenaufrufe (Protokoll)",
+            "table": "access_log",
+            "soft_delete": False,            # kein Papierkorb/keep_min/History
+            "retention_days": days,
+            "keep_min": None,
+            "history_retention_days": None,
+            "is_override": is_override,
+            "eintraege": self._db.access_log_repository.count(category="page"),
+            "im_papierkorb": None,
+            "loeschbar": self._db.access_log_repository.count_page_views_older_than(days),
+            "history_table": None,
+            "history_gesamt": None,
+            "history_loeschbar": None,
+        }
+
     def einstellungen(self) -> list[dict]:
         """Konfigurations-Sicht für die Admin-UI: Struktur + wirksame Tunables je Entität."""
         cfg = self.effective_config()
-        return [
+        rows = [
             {
                 "name": e.name,
                 "label": e.label,
                 "table": e.table,
                 "history_table": e.history_table,
+                "soft_delete": True,
                 **cfg[e.name],
             }
             for e in PRUNE_REGISTRY
         ]
+        rows.append(self._access_log_report_row())
+        return rows
 
     def report(self) -> dict:
         """Dry-Run: was *würde* ein vollständiger Prune-Lauf entfernen? Löscht NICHTS."""
@@ -336,6 +382,8 @@ class PruneService:
             c = cfg[entity.name]
             pk_sql, pk_params = build_papierkorb_count_sql(entity)
             im_papierkorb = self._count(pk_sql, pk_params)
+            akt_sql, akt_params = build_active_count_sql(entity)
+            eintraege = self._count(akt_sql, akt_params)
 
             cand_sql, cand_params = build_original_candidate_count_sql(
                 entity, c["retention_days"], c["keep_min"], c["history_retention_days"]
@@ -357,16 +405,23 @@ class PruneService:
                 "name": entity.name,
                 "label": entity.label,
                 "table": entity.table,
+                "soft_delete": True,
                 "retention_days": c["retention_days"],
                 "keep_min": c["keep_min"],
                 "history_retention_days": c["history_retention_days"],
                 "is_override": c["is_override"],
+                "eintraege": eintraege,
                 "im_papierkorb": im_papierkorb,
                 "loeschbar": loeschbar,
                 "history_table": entity.history_table,
                 "history_gesamt": history_gesamt,
                 "history_loeschbar": history_loeschbar,
             })
+
+        # Sonder-Bereich: Protokoll-Seitenaufrufe (Hard-Delete nach Alter)
+        protokoll = self._access_log_report_row()
+        summe_loeschbar += protokoll["loeschbar"]
+        entities.append(protokoll)
 
         return {
             "dry_run": True,
@@ -462,6 +517,18 @@ class PruneService:
             anzahl = sum(1 for sn in namen if self._db.anhang_service.loesche(sn))
             eintrag_by_name[name]["dateien_geloescht"] = anzahl
             summe_dateien += anzahl
+
+        # 5) Sonder-Bereich: Protokoll-Seitenaufrufe (eigene Transaktion, best-effort).
+        page_days, _ = self.page_view_retention()
+        page_geloescht = self._db.access_log_repository.cleanup_page_views(page_days)
+        summe_loeschbar += page_geloescht
+        entities.append({
+            "name": ACCESS_LOG_PAGE,
+            "label": "Seitenaufrufe (Protokoll)",
+            "geloescht": page_geloescht,
+            "history_geloescht": None,
+            "dateien_geloescht": 0,
+        })
 
         return {
             "dry_run": False,

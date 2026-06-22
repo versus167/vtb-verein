@@ -381,6 +381,29 @@ def test_prune_abteilung_timestamp_und_child_gate(db):
     assert not _row_exists(db, "abteilung", a)
 
 
+def test_protokoll_seitenaufrufe_retention(db):
+    """Sonder-Bereich: nur alte category='page' werden gelöscht; auth/page-frisch bleiben."""
+    from app.services.prune_service import PruneService, ACCESS_LOG_PAGE
+    db.prune_einstellungen.upsert(ACCESS_LOG_PAGE, 30, 0, 1, updated_by="t")  # retention 30 Tage
+    svc = PruneService(db)
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO access_log (event_type,category,created_at) "
+                    "VALUES ('page_view','page', now()-make_interval(days=>60))")  # alt -> weg
+        cur.execute("INSERT INTO access_log (event_type,category,created_at) "
+                    "VALUES ('page_view','page', now()-make_interval(days=>5))")   # frisch -> bleibt
+        cur.execute("INSERT INTO access_log (event_type,category,created_at) "
+                    "VALUES ('login_success','auth', now()-make_interval(days=>60))")  # auth -> bleibt
+
+    rep = {e["name"]: e for e in svc.report()["entities"]}[ACCESS_LOG_PAGE]
+    assert rep["loeschbar"] == 1 and rep["soft_delete"] is False
+
+    res = {e["name"]: e for e in svc.prune(dry_run=False)["entities"]}[ACCESS_LOG_PAGE]
+    assert res["geloescht"] == 1
+    with db.cursor() as cur:
+        cur.execute("SELECT count(*) n FROM access_log")
+        assert cur.fetchone()["n"] == 2     # frischer Seitenaufruf + Auth-Event bleiben
+
+
 def test_papierkorb_zaehler(db):
     """Papierkorb zählt nur soft-deleted, nicht aktive Datensätze."""
     m = _ins_mitglied(db)

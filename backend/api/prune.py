@@ -11,13 +11,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.models.permission import Permission
-from app.services.prune_service import PRUNE_REGISTRY, PruneService
+from app.services.prune_service import ACCESS_LOG_PAGE, PRUNE_REGISTRY, PruneService
 from ..core.deps import CurrentUser, DB
 from .auth import _client_ip
 
 router = APIRouter(prefix="/prune", tags=["prune"])
 
-_ENTITY_NAMES = {e.name for e in PRUNE_REGISTRY}
+# Konfigurierbar sind die Soft-Delete-Bereiche plus der Sonder-Bereich Protokoll-Seitenaufrufe.
+_ENTITY_NAMES = {e.name for e in PRUNE_REGISTRY} | {ACCESS_LOG_PAGE}
 
 
 def _require_admin(user) -> None:
