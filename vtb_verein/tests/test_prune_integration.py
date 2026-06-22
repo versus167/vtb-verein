@@ -43,9 +43,13 @@ def clean(db):
         cur.execute(
             "TRUNCATE mitglied, mannschaft, mitglied_kontakt, mitglied_abteilung, "
             "mitglied_funktion, mitglied_mannschaft, beitrag_sollstellung, "
-            "gebuehr_forderung RESTART IDENTITY CASCADE"
+            "gebuehr_forderung, users, tickets, ticket_anhaenge "
+            "RESTART IDENTITY CASCADE"
         )
-        cur.execute("TRUNCATE mitglied_history, mitglied_kontakt_history RESTART IDENTITY")
+        cur.execute(
+            "TRUNCATE mitglied_history, mitglied_kontakt_history, users_history, "
+            "tickets_history RESTART IDENTITY"
+        )
         cur.execute("TRUNCATE prune_einstellungen")
     yield
 
@@ -74,6 +78,15 @@ def _soft_delete(db, table, id_, days_ago):
         cur.execute(
             f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s))::text, "
             f"deleted_by='t', version=version+1 WHERE id=%s", (days_ago, id_)
+        )
+
+
+def _soft_delete_plain(db, table, id_, days_ago):
+    """Soft-Delete für Tabellen OHNE version/History (z.B. Anhänge): nur deleted_at."""
+    with db.cursor() as cur:
+        cur.execute(
+            f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s))::text, "
+            f"deleted_by='t' WHERE id=%s", (days_ago, id_)
         )
 
 
@@ -284,6 +297,48 @@ def test_prune_kein_cascade_in_einem_lauf(db):
 
     svc.prune(dry_run=False)                              # zweiter Lauf
     assert not _row_exists(db, "mitglied", m)            # jetzt kinderlos -> entfernt
+
+
+def test_prune_loescht_anhang_datensatz_und_datei(db):
+    """Phase 4: ein geprunter Anhang verschwindet aus DB UND von der Platte."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("ticket_anhang", 30, 0, 365, updated_by="t")
+    svc = PruneService(db)
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
+            "VALUES ('u1','u1@x.de','h','admin','t','t') RETURNING id"
+        )
+        uid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO tickets (titel,beschreibung,gemeldet_von,created_by,updated_by) "
+            "VALUES ('T','B',%s,'t','t') RETURNING id", (uid,)
+        )
+        tid = cur.fetchone()["id"]
+
+    stored = "att_prunetest_1.bin"
+    db.anhang_service.schreibe(stored, b"inhalt")
+    assert db.anhang_service.existiert(stored)
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ticket_anhaenge "
+            "(ticket_id,original_name,stored_name,mime_type,dateigroesse,hochgeladen_von) "
+            "VALUES (%s,'x.bin',%s,'application/octet-stream',6,%s) RETURNING id",
+            (tid, stored, uid),
+        )
+        aid = cur.fetchone()["id"]
+    _soft_delete_plain(db, "ticket_anhaenge", aid, 60)
+
+    assert {e["name"]: e for e in svc.report()["entities"]}["ticket_anhang"]["loeschbar"] == 1
+
+    res = {e["name"]: e for e in svc.prune(dry_run=False)["entities"]}["ticket_anhang"]
+    assert res["geloescht"] == 1
+    assert res["dateien_geloescht"] == 1
+
+    assert not _row_exists(db, "ticket_anhaenge", aid)   # DB-Zeile weg
+    assert not db.anhang_service.existiert(stored)        # Datei von Platte weg
 
 
 def test_papierkorb_zaehler(db):

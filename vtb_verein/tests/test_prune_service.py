@@ -35,8 +35,12 @@ class TestRegistry:
         assert {"mitglied_kontakt", "mitglied_abteilung", "mitglied_funktion",
                 "mitglied_mannschaft", "beitrag_sollstellung", "gebuehr_forderung"} <= kinder
 
-    def test_jede_entitaet_hat_history(self):
-        assert all(e.history_table for e in PRUNE_REGISTRY)
+    def test_anhang_entitaeten_sind_dateibehaftete_blaetter(self):
+        for name in ("ticket_anhang", "kassenbuchung_anhang"):
+            e = _entity(name)
+            assert e.stored_name_col == "stored_name"
+            assert e.history_table is None        # keine History
+            assert e.children == ()               # reines Blatt
 
 
 class TestOriginalCandidateSql:

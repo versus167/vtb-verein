@@ -58,6 +58,9 @@ class PruneEntity:
     history_table: Optional[str] = None
     history_id_col: str = "id"      # Spalte in der History, die auf table.id zeigt
     children: tuple[ChildRef, ...] = field(default_factory=tuple)
+    # Spalte mit dem Datei-Namen auf der Platte (Anhänge); gesetzt -> beim Prune wird
+    # die Datei via AnhangService zusätzlich gelöscht. Domänen-unabhängiger Storage-Layer.
+    stored_name_col: Optional[str] = None
     retention_days: int = DEFAULT_RETENTION_DAYS
     keep_min: int = DEFAULT_KEEP_MIN
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
@@ -66,9 +69,17 @@ class PruneEntity:
 # Reihenfolge: Blatt → Wurzel. So sind beim echten Lauf die Kinder schon weg, bevor
 # das Eltern-Element drankommt. History wird je Entität separat (und vorgelagert) geprunt.
 #
-# Phase 0 deckt die Mitglied-Domäne ab. TODO (spätere Phasen): abteilung (entkoppelt von
-# beitragsregel/kassen/funktion), users (verflochten mit Auth/Audit + Last-Admin-Schutz).
+# Phase 0 deckt die Mitglied-Domäne ab, Phase 4 die Anhang-Domänen (mit Disk-Datei).
+# TODO (spätere Phasen): abteilung (entkoppelt von beitragsregel/kassen/funktion),
+# users (verflochten mit Auth/Audit + Last-Admin-Schutz).
+#
+# Anhänge sind reine Blätter (kein FK zeigt auf sie, keine History/Version). Beim Prune
+# muss zusätzlich die Datei von der Platte – stored_name_col aktiviert das.
 PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
+    PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
+                stored_name_col="stored_name"),
+    PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
+                stored_name_col="stored_name"),
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
     PruneEntity("mitglied_abteilung", "Abteilungs-Zuordnungen", "mitglied_abteilung",
@@ -311,8 +322,12 @@ class PruneService:
 
           1. History zuerst (datums-only) – ändert keine der Original-Tore (Tor 5 prüft nur
              Zeilen NEUER als der History-Cutoff, die hier nicht angefasst werden).
-          2. Kandidaten-IDs je Entität einmalig einsammeln (= Snapshot, = Report-Zahlen).
+          2. Kandidaten-IDs je Entität einmalig einsammeln (= Snapshot, = Report-Zahlen);
+             bei Anhang-Entitäten zusätzlich die Datei-Namen der Kandidaten.
           3. Diese IDs Blatt→Wurzel löschen.
+          4. NACH dem Commit die zugehörigen Dateien von der Platte entfernen (best-effort):
+             eine verwaiste Datei ist der harmlosere Fehlerfall als eine fehlende Datei zu
+             einer noch existierenden Zeile.
 
         Durch das Einsammeln VOR dem Löschen gilt „Vorschau = Aktion": es wird genau das
         entfernt, was der Report zeigte – ein in diesem Lauf kinderlos gewordenes Eltern-
@@ -325,6 +340,8 @@ class PruneService:
         entities: list[dict] = []
         summe_loeschbar = 0
         summe_history = 0
+        # Datei-Namen je Entität, die nach erfolgreichem Commit von Platte sollen.
+        dateien: dict[str, list] = {}
 
         with self._db.cursor() as cur:
             # 1) History prunen (datums-only)
@@ -343,7 +360,16 @@ class PruneService:
                     entity, c["retention_days"], c["keep_min"], c["history_retention_days"]
                 )
                 cur.execute(ids_sql, tuple(params))
-                kandidaten[entity.name] = [row["id"] for row in cur.fetchall()]
+                ids = [row["id"] for row in cur.fetchall()]
+                kandidaten[entity.name] = ids
+                # Datei-Namen der Kandidaten merken (vor dem Löschen lesbar)
+                if entity.stored_name_col and ids:
+                    cur.execute(
+                        f"SELECT {entity.stored_name_col} AS sn FROM {entity.table} "
+                        f"WHERE id = ANY(%s) AND {entity.stored_name_col} IS NOT NULL",
+                        (ids,),
+                    )
+                    dateien[entity.name] = [r["sn"] for r in cur.fetchall()]
 
             # 3) Originale löschen – Blatt→Wurzel (Registry-Reihenfolge)
             for entity in PRUNE_REGISTRY:
@@ -363,7 +389,16 @@ class PruneService:
                     "label": entity.label,
                     "geloescht": geloescht,
                     "history_geloescht": hist,
+                    "dateien_geloescht": 0,  # wird nach Commit gesetzt
                 })
+
+        # 4) Dateien NACH dem Commit löschen (best-effort, no-raise im AnhangService).
+        summe_dateien = 0
+        eintrag_by_name = {e["name"]: e for e in entities}
+        for name, namen in dateien.items():
+            anzahl = sum(1 for sn in namen if self._db.anhang_service.loesche(sn))
+            eintrag_by_name[name]["dateien_geloescht"] = anzahl
+            summe_dateien += anzahl
 
         return {
             "dry_run": False,
@@ -371,4 +406,5 @@ class PruneService:
             "entities": entities,
             "summe_geloescht": summe_loeschbar,
             "summe_history_geloescht": summe_history,
+            "summe_dateien_geloescht": summe_dateien,
         }

@@ -66,9 +66,11 @@
       <template #body-cell-history_retention_days="props">
         <q-td :props="props">
           <q-input
+            v-if="props.row.history_table"
             v-model.number="props.row.history_retention_days" type="number" dense outlined
             min="1" style="max-width: 90px" :suffix="'T'"
           />
+          <span v-else class="text-grey-6">–</span>
         </q-td>
       </template>
 
