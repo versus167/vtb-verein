@@ -36,6 +36,7 @@ from backend.api.uploads import router as uploads_router
 from backend.api.imports import router as imports_router
 from backend.api.berichte import router as berichte_router
 from backend.api.protokoll import router as protokoll_router
+from backend.api.prune import router as prune_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -112,6 +113,7 @@ app.include_router(uploads_router, prefix="/api")
 app.include_router(imports_router, prefix="/api")
 app.include_router(berichte_router, prefix="/api")
 app.include_router(protokoll_router, prefix="/api")
+app.include_router(prune_router, prefix="/api")
 
 
 
