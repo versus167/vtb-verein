@@ -350,9 +350,34 @@ class TestAbteilungUmbuchung:
         assert len(fehler) == 1 and 'Kostenstelle' in fehler[0]['problem']
 
     def test_fehler_ohne_abteilung(self):
+        # Beitragsregel: weder eigene Abteilung noch über die Bedingung ableitbar.
         svc, _ = _service(neu=[_abt_row(abteilung_id=None, abteilung_kostenstelle=None)])
         fehler = svc.vorschau()['fehler']
-        assert len(fehler) == 1 and 'keine Abteilung' in fehler[0]['problem']
+        assert len(fehler) == 1 and 'weder die Regel' in fehler[0]['problem']
+
+    def test_abteilung_aus_bedingung_abgeleitet_bucht_paar(self):
+        # Vereinsbeitrag ohne eigene Abteilung: das Repository hat die tragende Abteilung aus
+        # der Bedingung aufgelöst (abteilung_id/-kostenstelle gesetzt) → Paar wie gewohnt,
+        # keine Fehler.
+        svc, _ = _service(neu=[_abt_row(abteilung_id=7, abteilung_kostenstelle=20)])
+        v = svc.vorschau()
+        assert v['fehler'] == []
+        ein, gegen = v['forderungen']
+        assert ein.kostenstelle == 12 and gegen.kostenstelle == 20
+
+    def test_fehler_bei_mehrdeutiger_abteilung(self):
+        # Bedingung nennt mehrere Abteilungen → nicht eindeutig zuordenbar (Repository-Flag).
+        svc, _ = _service(neu=[_abt_row(abteilung_id=None, abteilung_kostenstelle=None,
+                                        abteilung_mehrdeutig=True)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'mehrere' in fehler[0]['problem']
+
+    def test_fehler_gebuehr_ohne_abteilung_nennt_gebuehr(self):
+        # Gebühren haben keine Bedingung → eigene, gebührenspezifische Fehlermeldung.
+        svc, _ = _service(neu=[_abt_row(quelle_typ='gebuehr', quelle_id=4,
+                                        abteilung_id=None, abteilung_kostenstelle=None)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Gebühr' in fehler[0]['problem']
 
     def test_konto_fehler_nicht_doppelt_gemeldet(self):
         # Beide Positionen teilen denselben Konto-Fehler → darf nur einmal erscheinen.

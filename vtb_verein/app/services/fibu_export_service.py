@@ -24,6 +24,11 @@ Buchungslogik:
     2. Gegenbuchung – Debitor H gegen Erlöskonto, Kostenstelle = Abteilung → Abteilung zahlt Beitrag.
   Netto fließt kein Geld; der Beitrag wird per Kostenstelle vom Verein auf die Abteilung
   umgebucht. Im Storno-Pfad dreht der S↔H-Tausch beide Zeilen des Paars um.
+  Die tragende Abteilung stammt von der Regel/Gebühr selbst; bei Vereinsbeiträgen ohne
+  eigene Abteilung (z.B. „Schiedsrichter-Beitrag", der per Bedingung Funktion+Abteilung
+  greift) wird sie aus der Bedingung der Regel abgeleitet (bedingung_abteilung_ids, vom
+  Repository nach abteilung_id/abteilung_kostenstelle aufgelöst). Nennt die Bedingung
+  mehrere verschiedene Abteilungen, ist die Zuordnung nicht eindeutig → Validierungsfehler.
 
 Konten-Auflösung:
 - Debitor-Konto (Feld 00) = einstellungen.debitor_konto_basis + mitgliedsnummer
@@ -338,14 +343,21 @@ class FibuExportService:
 
     @staticmethod
     def _abteilung_fehler(rows: list[dict]) -> list[dict]:
-        """Prüft Abteilungs-getragene Posten (zahler_typ='abteilung'): sie brauchen eine
-        Abteilung mit Kostenstelle, sonst lässt sich die Gegenbuchung nicht zuordnen."""
+        """Prüft Abteilungs-getragene Posten (zahler_typ='abteilung'): sie brauchen GENAU EINE
+        tragende Abteilung mit Kostenstelle, sonst lässt sich die Gegenbuchung nicht zuordnen.
+        Die Abteilung stammt von der Regel/Gebühr selbst oder – bei Vereinsbeiträgen ohne eigene
+        Abteilung – aus der Bedingung der Regel (vom Repository nach abteilung_id aufgelöst)."""
         fehler: list[dict] = []
         for r in rows:
             if r.get('zahler_typ') != 'abteilung':
                 continue
-            if r.get('abteilung_id') is None:
-                problem = "Zahler 'Abteilung', aber Regel/Gebühr hat keine Abteilung"
+            if r.get('abteilung_mehrdeutig'):
+                problem = ("Zahler 'Abteilung', aber die Bedingung der Regel nennt mehrere "
+                           "Abteilungen – nicht eindeutig zuordenbar (je Abteilung eine eigene Regel)")
+            elif r.get('abteilung_id') is None:
+                problem = ("Zahler 'Abteilung', aber weder die Regel noch ihre Bedingung nennt "
+                           "eine Abteilung" if r['quelle_typ'] == 'beitrag'
+                           else "Zahler 'Abteilung', aber die Gebühr hat keine Abteilung")
             elif r.get('abteilung_kostenstelle') is None:
                 problem = "Abteilung ohne Kostenstelle (für die Gegenbuchung erforderlich)"
             else:
