@@ -2,13 +2,17 @@ import { defineStore } from 'pinia'
 import { api } from 'src/boot/axios'
 
 export const useAuthStore = defineStore('auth', {
+  // Das JWT liegt seit Ticket #48 im HttpOnly-Cookie (für JS unlesbar). Der Store
+  // kennt nur noch das (unkritische) User-Objekt: es dient ausschließlich dem
+  // UI-Gating, durchgesetzt wird die Berechtigung serverseitig je Request. Der
+  // localStorage-Cache erlaubt „eingeloggt bleiben“ über Reloads; Quelle der
+  // Wahrheit ist die Cookie-validierte /me-Antwort beim Bootstrap.
   state: () => ({
-    token: localStorage.getItem('vtb_token') || null,
     user: JSON.parse(localStorage.getItem('vtb_user') || 'null'),
   }),
 
   getters: {
-    isAuthenticated: (state) => !!state.token,
+    isAuthenticated: (state) => !!state.user,
     hasPermission: (state) => (permission) => state.user?.role === 'admin' || state.user?.permissions?.includes(permission) || false,
   },
 
@@ -18,20 +22,18 @@ export const useAuthStore = defineStore('auth', {
       form.append('username', username)
       form.append('password', password)
       const { data } = await api.post(`/api/auth/login?remember_me=${rememberMe}`, form)
-      this._applyToken(data)
+      this._applyUser(data)
     },
 
     async loginWithMagicToken(token, remember = false) {
       const { data } = await api.post('/api/auth/magic-link/validate', { token, remember })
-      this._applyToken(data)
+      this._applyUser(data)
     },
 
-    _applyToken(data) {
-      this.token = data.access_token
+    _applyUser(data) {
+      // Server setzt das Session-Cookie; hier nur die User-Infos übernehmen.
       this.user = { id: data.id, username: data.username, role: data.role, permissions: data.permissions }
-      localStorage.setItem('vtb_token', this.token)
       localStorage.setItem('vtb_user', JSON.stringify(this.user))
-      api.defaults.headers.common['Authorization'] = `Bearer ${this.token}`
     },
 
     async loadMe() {
@@ -41,11 +43,9 @@ export const useAuthStore = defineStore('auth', {
     },
 
     logout() {
-      this.token = null
       this.user = null
-      localStorage.removeItem('vtb_token')
       localStorage.removeItem('vtb_user')
-      delete api.defaults.headers.common['Authorization']
+      localStorage.removeItem('vtb_token') // Altlast aus der localStorage-Token-Ära
     },
 
     // Vom Nutzer ausgelöster Logout: zuerst die Server-Session widerrufen

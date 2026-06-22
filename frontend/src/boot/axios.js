@@ -3,16 +3,14 @@ import axios from 'axios'
 import { pinia } from 'src/boot/pinia'
 import { useAuthStore } from 'src/stores/auth'
 
-const api = axios.create({ baseURL: '' })
+// withCredentials: das HttpOnly-Session-Cookie (Ticket #48) wird automatisch
+// mitgeschickt. Dev (Quasar-Proxy) wie Prod (SPA-Mount) sind same-origin, daher
+// genügt das ohne CORS-Sonderfälle. Kein Authorization-Header mehr – das JWT ist
+// für JS bewusst unlesbar.
+const api = axios.create({ baseURL: '', withCredentials: true })
 
 export default boot(({ app, router }) => {
-  // Token aus localStorage wiederherstellen
-  const token = localStorage.getItem('vtb_token')
-  if (token) {
-    api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-  }
-
-  // 401 → Store + localStorage leeren, dann per Router zur Login-Seite
+  // 401 → Store leeren, dann per Router zur Login-Seite
   api.interceptors.response.use(
     (response) => response,
     (error) => {

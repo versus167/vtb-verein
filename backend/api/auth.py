@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from app.services.user_service import UserService
@@ -57,13 +57,38 @@ def _classify_login_failure(db, username: str) -> str:
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+class SessionUser(BaseModel):
+    """Login-Antwort (Ticket #48): das JWT geht ins HttpOnly-Cookie, NICHT mehr in
+    den Body. Hier stehen nur noch die unkritischen User-Infos fürs UI-Gating –
+    durchgesetzt wird die Berechtigung ohnehin serverseitig je Request."""
     id: int
     username: str
     role: str
     permissions: list[str]
+
+
+def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
+    """Setzt das Session-JWT als HttpOnly-Cookie (für JS unlesbar)."""
+    response.set_cookie(
+        key=settings.COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    """Löscht das Session-Cookie (Logout) – Attribute müssen zum Setzen passen."""
+    response.delete_cookie(
+        key=settings.COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+    )
 
 
 class UserInfo(BaseModel):
@@ -79,9 +104,10 @@ class UserInfo(BaseModel):
     preferred_contact: str = 'email'
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=SessionUser)
 def login(
     request: Request,
+    response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     remember_me: bool = False,
     db=Depends(get_db),
@@ -108,8 +134,8 @@ def login(
     )
     token = create_access_token(user.id, expires_delta=expire, session_id=sid)
     db.update_last_login(user.id)
-    return Token(
-        access_token=token,
+    _set_session_cookie(response, token, max_age=int(expire.total_seconds()))
+    return SessionUser(
         id=user.id,
         username=user.username,
         role=user.role,
@@ -236,11 +262,13 @@ def list_my_sessions(user: CurrentUser, sid: CurrentSessionId, db: DB):
 
 
 @router.post("/logout")
-def logout_current(request: Request, user: CurrentUser, sid: CurrentSessionId, db: DB):
+def logout_current(request: Request, response: Response, user: CurrentUser, sid: CurrentSessionId, db: DB):
     """Normaler Logout: widerruft die aktuelle Server-Session (best effort),
-    damit sie nicht als „Geist-Gerät" in der Liste verbleibt."""
+    damit sie nicht als „Geist-Gerät" in der Liste verbleibt, und löscht das
+    Session-Cookie im Browser."""
     if sid is not None:
         db.user_session_repository.revoke_by_sid(sid, revoked_by=user.username)
+    _clear_session_cookie(response)
     _log_access(db, request, "logout", user_id=user.id, username=user.username)
     return {"ok": True}
 
@@ -405,8 +433,8 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
     return {"ok": True}
 
 
-@router.post("/magic-link/validate", response_model=Token)
-def validate_magic_link(data: MagicLinkValidate, request: Request, db=Depends(get_db)):
+@router.post("/magic-link/validate", response_model=SessionUser)
+def validate_magic_link(data: MagicLinkValidate, request: Request, response: Response, db=Depends(get_db)):
     result = db.auth_token_repository.validate_and_use_token(data.token)
     if not result or result.get("token_type") != "magic_link":
         _log_access(db, request, "magic_link_failed", detail="invalid_or_used")
@@ -431,8 +459,8 @@ def validate_magic_link(data: MagicLinkValidate, request: Request, db=Depends(ge
         ip=_client_ip(request),
     )
     token = create_access_token(user.id, expires_delta=expire, session_id=sid)
-    return Token(
-        access_token=token,
+    _set_session_cookie(response, token, max_age=int(expire.total_seconds()))
+    return SessionUser(
         id=user.id,
         username=user.username,
         role=user.role,
