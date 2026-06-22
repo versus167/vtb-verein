@@ -296,6 +296,72 @@ class TestValidierung:
 
 
 # ---------------------------------------------------------------------------
+# Abteilungs-getragene Beiträge (zahler_typ='abteilung') – Kostenstellen-Umbuchung
+# ---------------------------------------------------------------------------
+
+def _abt_row(**kw):
+    base = dict(zahler_typ='abteilung', abteilung_id=3, abteilung_kostenstelle=20, betrag_soll=30.0)
+    base.update(kw)
+    return _row(**base)
+
+
+class TestAbteilungUmbuchung:
+    def test_einbuchung_und_gegenbuchung_als_paar(self):
+        svc, _ = _service(neu=[_abt_row(quelle_id=1)])
+        f = svc.vorschau()['forderungen']
+        assert len(f) == 2
+        ein, gegen = f
+        # Einbuchung: Soll, Kostenstelle Verein (12), kein Lastschrifteinzug (kein Geld fließt).
+        assert ein.soll_haben == 'S' and ein.kostenstelle == 12
+        assert ein.lastschrifteinzug is None
+        # Gegenbuchung: Haben, Kostenstelle Abteilung (20).
+        assert gegen.soll_haben == 'H' and gegen.kostenstelle == 20
+        assert gegen.lastschrifteinzug is None
+        # Gleiches Erlöskonto/Debitor/Betrag/Belegnummer → ausgleichendes OPOS-Paar.
+        assert ein.konto == gegen.konto == 70005
+        assert ein.gegenkonto == gegen.gegenkonto == '4000'
+        assert ein.betrag == gegen.betrag == 30.0
+        assert ein.belegnummer == gegen.belegnummer == 'B1'
+
+    def test_export_rendert_zwei_zeilen_mit_getauschter_kostenstelle(self):
+        svc, stub = _service(neu=[_abt_row(quelle_id=1)])
+        export, content = svc.exportieren(erstellt_von='admin')
+        zeilen = content.decode('utf-8').strip().split('\r\n')
+        assert len(zeilen) == 2
+        assert zeilen[0].split(';')[3] == 'S' and zeilen[0].split(';')[7] == '12'  # Einbuchung/Verein
+        assert zeilen[1].split(';')[3] == 'H' and zeilen[1].split(';')[7] == '20'  # Gegenb./Abteilung
+        # Netto fließt nichts; Quellzeile genau einmal gestempelt.
+        assert stub.calls[0]['summe_cent'] == 0
+        assert stub.calls[0]['anzahl_positionen'] == 2
+        assert stub.calls[0]['neu_ids'] == {'beitrag': [1], 'gebuehr': []}
+
+    def test_storno_dreht_beide_zeilen_um(self):
+        # Stornierter/gelöschter Abteilungs-Posten → Gegenbuchungs-Paar mit invertiertem S/H.
+        svc, _ = _service(gegen=[_abt_row(quelle_id=1)])
+        g = svc.vorschau()['gegenbuchungen']
+        assert len(g) == 2
+        ein, gegen = g
+        assert ein.soll_haben == 'H' and ein.kostenstelle == 12
+        assert gegen.soll_haben == 'S' and gegen.kostenstelle == 20
+
+    def test_fehler_ohne_abteilungskostenstelle(self):
+        svc, _ = _service(neu=[_abt_row(abteilung_kostenstelle=None)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Kostenstelle' in fehler[0]['problem']
+
+    def test_fehler_ohne_abteilung(self):
+        svc, _ = _service(neu=[_abt_row(abteilung_id=None, abteilung_kostenstelle=None)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'keine Abteilung' in fehler[0]['problem']
+
+    def test_konto_fehler_nicht_doppelt_gemeldet(self):
+        # Beide Positionen teilen denselben Konto-Fehler → darf nur einmal erscheinen.
+        svc, _ = _service(neu=[_abt_row(mitgliedsnummer=None)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Mitgliedsnummer' in fehler[0]['problem']
+
+
+# ---------------------------------------------------------------------------
 # Export-Lauf
 # ---------------------------------------------------------------------------
 

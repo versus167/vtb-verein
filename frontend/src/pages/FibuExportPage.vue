@@ -36,6 +36,11 @@
 
       <div v-if="vorschau && vorschau.forderungen.length" class="q-mb-md">
         <div class="text-subtitle2 q-mb-xs">Forderungen (Soll)</div>
+        <div class="text-caption text-grey-7 q-mb-xs">
+          Abteilungs-getragene Beiträge erscheinen als Paar: Einbuchung (Soll, Kostenstelle
+          Verein) und <q-badge color="teal" text-color="white">Abteilung trägt</q-badge>
+          Gegenbuchung (Haben, Kostenstelle Abteilung) – Mitglied wird netto nicht belastet.
+        </div>
         <q-markup-table flat bordered dense>
           <thead>
             <tr>
@@ -46,10 +51,18 @@
           </thead>
           <tbody>
             <tr v-for="(p, i) in vorschau.forderungen" :key="'f'+i">
-              <td>{{ p.mitglied_name }}</td><td>{{ p.bezeichnung }}</td>
+              <td>{{ p.mitglied_name }}</td>
+              <td>
+                {{ p.bezeichnung }}
+                <q-badge v-if="istAbteilungUmbuchung(p)" color="teal" text-color="white"
+                  class="q-ml-xs">Abteilung trägt</q-badge>
+              </td>
               <td>{{ p.konto ?? '–' }}</td><td>{{ p.gegenkonto ?? '–' }}</td>
               <td>{{ p.kostenstelle ?? '–' }} / {{ p.kostentraeger ?? '–' }}</td>
-              <td class="text-right">{{ fmt(p.betrag) }} €</td><td>{{ p.belegnummer }}</td>
+              <td class="text-right">
+                {{ istAbteilungUmbuchung(p) ? '−' : '' }}{{ fmt(p.betrag) }} €
+              </td>
+              <td>{{ p.belegnummer }}</td>
             </tr>
           </tbody>
         </q-markup-table>
@@ -160,6 +173,9 @@ const kannExportieren = computed(() =>
   !!vorschau.value && vorschau.value.anzahl > 0 && vorschau.value.fehler.length === 0)
 
 function fmt(n) { return (Number(n) || 0).toFixed(2) }
+
+// Abteilungs-Gegenbuchung: liegt als Haben-Zeile in den Forderungen (zahler_typ='abteilung').
+function istAbteilungUmbuchung(p) { return p.art === 'forderung' && p.soll_haben === 'H' }
 
 function downloadBlob(data, filename) {
   const url = URL.createObjectURL(data)
