@@ -42,8 +42,6 @@ class ForderungCreate(BaseModel):
     datum: str
 
 
-class ForderungStatusUpdate(BaseModel):
-    bezahlt_am: Optional[str] = None   # ISO-Datum -> bezahlt; None -> stornieren
 
 
 # ---------------------------------------------------------------------------
@@ -182,16 +180,15 @@ def create_forderung(data: ForderungCreate, user: CurrentUser, db: DB):
 
 
 @router.patch("/forderungen/{forderung_id}")
-def update_forderung_status(forderung_id: int, data: ForderungStatusUpdate,
-                            user: CurrentUser, db: DB):
+def storniere_forderung(forderung_id: int, user: CurrentUser, db: DB):
+    """Storniert eine Gebühren-Forderung. Eine bereits an die Fibu übergebene
+    Forderung fließt nach dem Storno als Gegenbuchung in den nächsten Export.
+    Zahlung/Ausgleich kennt die VTB-App nicht – das passiert in der Fibu."""
     _require_abrechnen(user)
     f = db.get_gebuehr_forderung(forderung_id)
     if f is None:
         raise HTTPException(status_code=404, detail="Forderung nicht gefunden")
-    if data.bezahlt_am:
-        ok = db.gebuehr_forderungen.set_status(forderung_id, 'bezahlt', data.bezahlt_am, user.username)
-    else:
-        ok = db.gebuehr_forderungen.set_status(forderung_id, 'storniert', None, user.username)
+    ok = db.gebuehr_forderungen.set_status(forderung_id, 'storniert', None, user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Aktualisierung fehlgeschlagen")
     return asdict(db.get_gebuehr_forderung(forderung_id))

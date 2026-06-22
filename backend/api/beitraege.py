@@ -62,8 +62,6 @@ class AbrechnungRequest(BaseModel):
     stichtag: str    # ISO-Datum, z.B. "2026-10-01"
 
 
-class SollstellungStatusUpdate(BaseModel):
-    bezahlt_am: Optional[str] = None   # ISO-Datum; None → stornieren
 
 
 # ---------------------------------------------------------------------------
@@ -225,13 +223,13 @@ def list_sollstellungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
 
 
 @router.patch("/sollstellungen/{soll_id}")
-def update_sollstellung_status(soll_id: int, data: SollstellungStatusUpdate,
-                                user: CurrentUser, db: DB):
+def storniere_sollstellung(soll_id: int, user: CurrentUser, db: DB):
+    """Storniert eine Sollstellung. Sie bleibt bestehen und wird bei einer erneuten
+    Abrechnung nicht neu erzeugt. Eine bereits an die Fibu übergebene Sollstellung
+    fließt nach dem Storno als Gegenbuchung in den nächsten Export.
+    Zahlung/Ausgleich kennt die VTB-App nicht – das passiert in der Fibu."""
     _require_abrechnen(user)
-    if data.bezahlt_am:
-        ok = db.sollstellungen.mark_bezahlt(soll_id, data.bezahlt_am, updated_by=user.username)
-    else:
-        ok = db.sollstellungen.mark_storniert(soll_id, updated_by=user.username)
+    ok = db.sollstellungen.mark_storniert(soll_id, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=404, detail="Sollstellung nicht gefunden oder bereits abgeschlossen")
     return {'ok': True}

@@ -20,6 +20,7 @@ class FibuExport:
     format: str = "fbasc"
     anzahl_positionen: int = 0
     summe_cent: int = 0
+    storno_von_export_id: Optional[int] = None  # gesetzt → dieser Lauf bucht einen früheren gegen
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

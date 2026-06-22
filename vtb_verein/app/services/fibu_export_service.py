@@ -6,6 +6,13 @@ Ablauf:
 2. exportieren(...) → Lauf anlegen, fbasc.hia rendern, Quellzeilen als „exportiert" stempeln
 3. re_download(id)  → einen früheren Lauf erneut rendern
 
+Lauf-Storno (zwei Wege, weil die App nicht weiß, ob die Datei schon in die Fibu
+eingelesen wurde):
+- zuruecknehmen(id) → Un-Export des JÜNGSTEN, noch nicht eingelesenen Laufs: Stempel der
+  Quellzeilen lösen, Header soft-deleten → Positionen erscheinen wieder in der Vorschau.
+- stornieren(id)    → Gegenbuchungs-Lauf für einen bereits eingelesenen Lauf: neuer Lauf,
+  der das Original komplett gegenbucht (S↔H). Original + Storno bleiben rekonstruierbar.
+
 Buchungslogik:
 - Forderung = noch nicht exportierte, lebende Sollstellung → Debitor im Soll (S).
 - Gegenbuchung = bereits exportierte, danach stornierte/gelöschte Sollstellung → Haben (H),
@@ -43,6 +50,11 @@ def _plus_tage(iso, tage):
         return (date.fromisoformat(iso[:10]) + timedelta(days=tage)).isoformat()
     except (ValueError, TypeError):
         return None
+
+
+def _summe_cent(positionen) -> int:
+    """Vorzeichenbehaftete Summe in Cent: Soll positiv, Haben negativ."""
+    return sum((1 if p.soll_haben == 'S' else -1) * round(p.betrag * 100) for p in positionen)
 
 
 class FibuExportFehler(Exception):
@@ -92,24 +104,69 @@ class FibuExportService:
             'beitrag': [p.quelle_id for p in gegenbuchungen if p.quelle_typ == 'beitrag'],
             'gebuehr': [p.quelle_id for p in gegenbuchungen if p.quelle_typ == 'gebuehr'],
         }
-        summe_cent = (sum(round(p.betrag * 100) for p in forderungen)
-                      - sum(round(p.betrag * 100) for p in gegenbuchungen))
         dateiname = f"fbasc_{date.today().isoformat()}.hia"
 
         export = self.db.fibu_exporte.create_export(
             exportiert_von=erstellt_von, dateiname=dateiname, format='fbasc',
-            anzahl_positionen=len(positionen), summe_cent=summe_cent,
+            anzahl_positionen=len(positionen), summe_cent=_summe_cent(positionen),
             neu_ids=neu_ids, storno_ids=storno_ids,
         )
         return export, content
 
+    def zuruecknehmen(self, export_id: int, benutzer: str) -> dict:
+        """Un-Export: den jüngsten, noch NICHT in die Fibu eingelesenen Lauf zurücknehmen.
+
+        Die Quellzeilen werden wieder „offen" (erscheinen in der nächsten Vorschau),
+        der Lauf-Header wird soft-deleted. Nur für den jüngsten Lauf erlaubt – ältere
+        haben Folge-Abhängigkeiten."""
+        self.db.fibu_exporte.get_export(export_id)  # KeyError → 404
+        if not self.db.fibu_exporte.is_latest(export_id):
+            raise ValueError("Nur der jüngste Lauf kann zurückgenommen werden "
+                             "(ältere bitte über einen Storno-/Gegenbuchungs-Lauf korrigieren).")
+        anzahl = self.db.fibu_exporte.un_export(export_id, benutzer=benutzer)
+        return {'zurueckgenommen': export_id, 'positionen_wieder_offen': anzahl}
+
+    def stornieren(self, export_id: int, benutzer: str) -> tuple[FibuExport, bytes]:
+        """Gegenbuchungs-Lauf: bucht einen bereits in die Fibu eingelesenen Lauf komplett
+        gegen (jede Soll-Buchung als Haben und umgekehrt). Original und Storno-Lauf bleiben
+        in der Historie und rekonstruierbar; die Quellzeilen bleiben unverändert."""
+        original = self.db.fibu_exporte.get_export(export_id)  # KeyError → 404
+        if original.storno_von_export_id is not None:
+            raise ValueError("Ein Gegenbuchungs-Lauf kann nicht selbst storniert werden.")
+        if self.db.fibu_exporte.find_storno_lauf(export_id) is not None:
+            raise ValueError("Dieser Lauf wurde bereits storniert.")
+
+        positionen = self._storno_positionen(export_id)
+        if not positionen:
+            raise ValueError("Der Lauf enthält keine Positionen zum Gegenbuchen.")
+        content = fibu_formatter.render(positionen)
+        dateiname = f"fbasc_storno_{date.today().isoformat()}.hia"
+        export = self.db.fibu_exporte.create_storno_lauf(
+            original_id=export_id, exportiert_von=benutzer, dateiname=dateiname,
+            anzahl_positionen=len(positionen), summe_cent=_summe_cent(positionen),
+        )
+        return export, content
+
     def re_download(self, export_id: int) -> bytes:
-        """Rendert einen früheren Lauf erneut aus den gestempelten Quellzeilen."""
-        einst = self.db.fibu_einstellungen.get()
-        neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(export_id)
-        positionen = ([self._position(r, 'forderung', einst) for r in neu_rows]
-                      + [self._position(r, 'gegenbuchung', einst) for r in storno_rows])
+        """Rendert einen früheren Lauf erneut. Ein Gegenbuchungs-Lauf wird aus dem Original
+        (S↔H getauscht) rekonstruiert, ein normaler Lauf aus seinen gestempelten Quellzeilen."""
+        export = self.db.fibu_exporte.get_export(export_id)
+        if export.storno_von_export_id is not None:
+            positionen = self._storno_positionen(export.storno_von_export_id)
+        else:
+            einst = self.db.fibu_einstellungen.get()
+            neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(export_id)
+            positionen = ([self._position(r, 'forderung', einst) for r in neu_rows]
+                          + [self._position(r, 'gegenbuchung', einst) for r in storno_rows])
         return fibu_formatter.render(positionen)
+
+    def _storno_positionen(self, original_id: int) -> list[FibuExportPosition]:
+        """Positionen, die ein Original gegenbuchen: dessen Forderungen (S) werden zu
+        Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S)."""
+        einst = self.db.fibu_einstellungen.get()
+        neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(original_id)
+        return ([self._position(r, 'gegenbuchung', einst) for r in neu_rows]
+                + [self._position(r, 'forderung', einst) for r in storno_rows])
 
     # ------------------------------------------------------------------
     # Interne Hilfsmethoden

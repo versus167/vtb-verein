@@ -116,6 +116,11 @@ class _FibuExporteStub:
     def __init__(self, neu, gegen):
         self._neu, self._gegen = neu, gegen
         self.calls = []
+        self.storno_calls = []
+        self.un_export_calls = []
+        self.exporte = {}          # id -> FibuExport (für get_export)
+        self.latest_id = None      # is_latest()-Antwort
+        self.storno_lauf = None    # find_storno_lauf()-Antwort
 
     def list_neue_positionen(self):
         return self._neu
@@ -131,6 +136,28 @@ class _FibuExporteStub:
         return FibuExport(id=1, dateiname=kw['dateiname'],
                           anzahl_positionen=kw['anzahl_positionen'],
                           summe_cent=kw['summe_cent'])
+
+    def get_export(self, export_id):
+        if export_id in self.exporte:
+            return self.exporte[export_id]
+        raise KeyError(export_id)
+
+    def is_latest(self, export_id):
+        return export_id == self.latest_id
+
+    def find_storno_lauf(self, original_id):
+        return self.storno_lauf
+
+    def un_export(self, export_id, *, benutzer):
+        self.un_export_calls.append((export_id, benutzer))
+        return 3
+
+    def create_storno_lauf(self, **kw):
+        self.storno_calls.append(kw)
+        return FibuExport(id=99, dateiname=kw['dateiname'],
+                          anzahl_positionen=kw['anzahl_positionen'],
+                          summe_cent=kw['summe_cent'],
+                          storno_von_export_id=kw['original_id'])
 
 
 def _service(neu=None, gegen=None, einst=None):
@@ -267,3 +294,69 @@ class TestExportieren:
         svc, _ = _service(neu=[], gegen=[])
         with pytest.raises(ValueError):
             svc.exportieren(erstellt_von='admin')
+
+
+# ---------------------------------------------------------------------------
+# Lauf-Storno: Un-Export (Rücknahme) und Gegenbuchungs-Lauf
+# ---------------------------------------------------------------------------
+
+class TestZuruecknehmen:
+    def test_un_export_des_juengsten_laufs(self):
+        svc, stub = _service(neu=[_row()])
+        stub.exporte = {5: FibuExport(id=5)}
+        stub.latest_id = 5
+        result = svc.zuruecknehmen(5, benutzer='admin')
+        assert result == {'zurueckgenommen': 5, 'positionen_wieder_offen': 3}
+        assert stub.un_export_calls == [(5, 'admin')]
+
+    def test_nicht_juengster_lauf_abgelehnt(self):
+        svc, stub = _service(neu=[_row()])
+        stub.exporte = {5: FibuExport(id=5)}
+        stub.latest_id = 7  # 5 ist nicht der jüngste
+        with pytest.raises(ValueError):
+            svc.zuruecknehmen(5, benutzer='admin')
+        assert stub.un_export_calls == []
+
+    def test_unbekannter_lauf(self):
+        svc, stub = _service(neu=[_row()])
+        with pytest.raises(KeyError):
+            svc.zuruecknehmen(123, benutzer='admin')
+
+
+class TestGegenbuchungsLauf:
+    def test_storno_tauscht_soll_haben_und_summe(self):
+        # Original: eine Forderung (S) über 30 € → Gegenbuchung (H), Netto-Summe negativ.
+        svc, stub = _service(neu=[_row(quelle_typ='beitrag', quelle_id=1, betrag_soll=30.0)])
+        stub.exporte = {5: FibuExport(id=5)}
+        export, content = svc.stornieren(5, benutzer='admin')
+        assert export.storno_von_export_id == 5
+        assert stub.storno_calls[0]['original_id'] == 5
+        assert stub.storno_calls[0]['summe_cent'] == -3000
+        # Erste Buchungszeile muss Haben sein (Feld 03), Original war Soll.
+        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+
+    def test_re_download_storno_lauf_rekonstruiert_aus_original(self):
+        svc, stub = _service(neu=[_row(quelle_typ='beitrag', quelle_id=1)])
+        stub.exporte = {99: FibuExport(id=99, storno_von_export_id=5)}
+        content = svc.re_download(99)
+        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+
+    def test_doppel_storno_abgelehnt(self):
+        svc, stub = _service(neu=[_row()])
+        stub.exporte = {5: FibuExport(id=5)}
+        stub.storno_lauf = FibuExport(id=99, storno_von_export_id=5)  # schon storniert
+        with pytest.raises(ValueError):
+            svc.stornieren(5, benutzer='admin')
+        assert stub.storno_calls == []
+
+    def test_storno_eines_storno_laufs_abgelehnt(self):
+        svc, stub = _service(neu=[_row()])
+        stub.exporte = {9: FibuExport(id=9, storno_von_export_id=5)}  # selbst ein Storno-Lauf
+        with pytest.raises(ValueError):
+            svc.stornieren(9, benutzer='admin')
+
+    def test_storno_ohne_positionen_abgelehnt(self):
+        svc, stub = _service(neu=[], gegen=[])
+        stub.exporte = {5: FibuExport(id=5)}
+        with pytest.raises(ValueError):
+            svc.stornieren(5, benutzer='admin')

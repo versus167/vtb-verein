@@ -27,13 +27,32 @@ _FN_FIBU_EXPORTE_AUDIT_INSERT = """
     BEGIN
         INSERT INTO fibu_exporte_history (
             id, version, exportiert_am, exportiert_von, dateiname, format,
-            anzahl_positionen, summe_cent,
+            anzahl_positionen, summe_cent, storno_von_export_id,
             created_at, created_by, deleted_at, deleted_by
         ) VALUES (
             NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
-            NEW.anzahl_positionen, NEW.summe_cent,
+            NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
             NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
         );
+        RETURN NEW;
+    END; $$;
+"""
+
+# Un-Export nimmt einen Lauf zurück (Soft-Delete des Headers) → UPDATE muss in die History.
+_FN_FIBU_EXPORTE_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_fibu_exporte_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO fibu_exporte_history (
+                id, version, exportiert_am, exportiert_von, dateiname, format,
+                anzahl_positionen, summe_cent, storno_von_export_id,
+                created_at, created_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
+                NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
+                NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
         RETURN NEW;
     END; $$;
 """
@@ -2435,42 +2454,53 @@ class Database:
             # --- Export-Lauf-Header -------------------------------------------------
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS fibu_exporte (
-                  id                SERIAL PRIMARY KEY,
-                  exportiert_am     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  exportiert_von    TEXT NOT NULL,
-                  dateiname         TEXT NOT NULL,
-                  format            TEXT NOT NULL DEFAULT 'fbasc',
-                  anzahl_positionen INTEGER NOT NULL DEFAULT 0,
-                  summe_cent        INTEGER NOT NULL DEFAULT 0,
-                  version           INTEGER NOT NULL DEFAULT 1,
-                  created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  created_by        TEXT NOT NULL,
-                  deleted_at        TEXT,
-                  deleted_by        TEXT
+                  id                  SERIAL PRIMARY KEY,
+                  exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  exportiert_von      TEXT NOT NULL,
+                  dateiname           TEXT NOT NULL,
+                  format              TEXT NOT NULL DEFAULT 'fbasc',
+                  anzahl_positionen   INTEGER NOT NULL DEFAULT 0,
+                  summe_cent          INTEGER NOT NULL DEFAULT 0,
+                  storno_von_export_id INTEGER REFERENCES fibu_exporte(id),
+                  version             INTEGER NOT NULL DEFAULT 1,
+                  created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  created_by          TEXT NOT NULL,
+                  deleted_at          TEXT,
+                  deleted_by          TEXT
                 )
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS fibu_exporte_history (
-                  id                INTEGER NOT NULL,
-                  version           INTEGER NOT NULL,
-                  exportiert_am     TEXT,
-                  exportiert_von    TEXT,
-                  dateiname         TEXT,
-                  format            TEXT,
-                  anzahl_positionen INTEGER,
-                  summe_cent        INTEGER,
-                  created_at        TEXT,
-                  created_by        TEXT,
-                  deleted_at        TEXT,
-                  deleted_by        TEXT,
+                  id                  INTEGER NOT NULL,
+                  version             INTEGER NOT NULL,
+                  exportiert_am       TEXT,
+                  exportiert_von      TEXT,
+                  dateiname           TEXT,
+                  format              TEXT,
+                  anzahl_positionen   INTEGER,
+                  summe_cent          INTEGER,
+                  storno_von_export_id INTEGER,
+                  created_at          TEXT,
+                  created_by          TEXT,
+                  deleted_at          TEXT,
+                  deleted_by          TEXT,
                   PRIMARY KEY (id, version)
                 )
             """)
+            # Idempotent für bereits angelegte v46-Tabellen (Storno-Verknüpfung des Gegenbuchungs-Laufs).
+            cur.execute("ALTER TABLE fibu_exporte ADD COLUMN IF NOT EXISTS storno_von_export_id INTEGER REFERENCES fibu_exporte(id)")
+            cur.execute("ALTER TABLE fibu_exporte_history ADD COLUMN IF NOT EXISTS storno_von_export_id INTEGER")
             cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
             cur.execute("""
                 CREATE OR REPLACE TRIGGER trig_fibu_exporte_audit_insert
                 AFTER INSERT ON fibu_exporte
                 FOR EACH ROW EXECUTE FUNCTION fn_fibu_exporte_audit_insert();
+            """)
+            cur.execute("""
+                CREATE OR REPLACE TRIGGER trig_fibu_exporte_audit_update
+                AFTER UPDATE ON fibu_exporte
+                FOR EACH ROW EXECUTE FUNCTION fn_fibu_exporte_audit_update();
             """)
 
             # --- Globale Konfiguration (Single-Row) --------------------------------
@@ -2529,6 +2559,7 @@ class Database:
                 ("idx_beitrag_sollstellung_storno_export_id", "beitrag_sollstellung(storno_exportiert_in_export_id)"),
                 ("idx_gebuehr_forderung_export_id",           "gebuehr_forderung(exportiert_in_export_id)"),
                 ("idx_gebuehr_forderung_storno_export_id",    "gebuehr_forderung(storno_exportiert_in_export_id)"),
+                ("idx_fibu_exporte_storno_von_export_id",     "fibu_exporte(storno_von_export_id)"),
                 ("idx_fibu_exporte_history_id",               "fibu_exporte_history(id)"),
             ]:
                 cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
@@ -3691,34 +3722,36 @@ class Database:
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fibu_exporte (
-              id                SERIAL PRIMARY KEY,
-              exportiert_am     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              exportiert_von    TEXT NOT NULL,
-              dateiname         TEXT NOT NULL,
-              format            TEXT NOT NULL DEFAULT 'fbasc',
-              anzahl_positionen INTEGER NOT NULL DEFAULT 0,
-              summe_cent        INTEGER NOT NULL DEFAULT 0,
-              version           INTEGER NOT NULL DEFAULT 1,
-              created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              created_by        TEXT NOT NULL,
-              deleted_at        TEXT,
-              deleted_by        TEXT
+              id                  SERIAL PRIMARY KEY,
+              exportiert_am       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              exportiert_von      TEXT NOT NULL,
+              dateiname           TEXT NOT NULL,
+              format              TEXT NOT NULL DEFAULT 'fbasc',
+              anzahl_positionen   INTEGER NOT NULL DEFAULT 0,
+              summe_cent          INTEGER NOT NULL DEFAULT 0,
+              storno_von_export_id INTEGER REFERENCES fibu_exporte(id),
+              version             INTEGER NOT NULL DEFAULT 1,
+              created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by          TEXT NOT NULL,
+              deleted_at          TEXT,
+              deleted_by          TEXT
             )
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fibu_exporte_history (
-              id                INTEGER NOT NULL,
-              version           INTEGER NOT NULL,
-              exportiert_am     TEXT,
-              exportiert_von    TEXT,
-              dateiname         TEXT,
-              format            TEXT,
-              anzahl_positionen INTEGER,
-              summe_cent        INTEGER,
-              created_at        TEXT,
-              created_by        TEXT,
-              deleted_at        TEXT,
-              deleted_by        TEXT,
+              id                  INTEGER NOT NULL,
+              version             INTEGER NOT NULL,
+              exportiert_am       TEXT,
+              exportiert_von      TEXT,
+              dateiname           TEXT,
+              format              TEXT,
+              anzahl_positionen   INTEGER,
+              summe_cent          INTEGER,
+              storno_von_export_id INTEGER,
+              created_at          TEXT,
+              created_by          TEXT,
+              deleted_at          TEXT,
+              deleted_by          TEXT,
               PRIMARY KEY (id, version)
             )
         """)
@@ -4169,6 +4202,7 @@ class Database:
             END; $$;
         """)
         cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+        cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_kasse_berechtigungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -4544,6 +4578,7 @@ class Database:
             ('trig_kassenbuchungen_audit_update',                   'UPDATE', 'kassenbuchungen',                   'fn_kassenbuchungen_audit_update'),
             ('trig_kassenbuch_exporte_audit_insert',                'INSERT', 'kassenbuch_exporte',                'fn_kassenbuch_exporte_audit_insert'),
             ('trig_fibu_exporte_audit_insert',                      'INSERT', 'fibu_exporte',                      'fn_fibu_exporte_audit_insert'),
+            ('trig_fibu_exporte_audit_update',                      'UPDATE', 'fibu_exporte',                      'fn_fibu_exporte_audit_update'),
             ('trig_kasse_berechtigungen_audit_insert',              'INSERT', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_insert'),
             ('trig_kasse_berechtigungen_audit_update',              'UPDATE', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_update'),
             ('trig_kassen_kategorien_audit_insert',                 'INSERT', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_insert'),
@@ -4678,6 +4713,7 @@ class Database:
             ("idx_beitrag_sollstellung_storno_export_id",           "beitrag_sollstellung(storno_exportiert_in_export_id)"),
             ("idx_gebuehr_forderung_export_id",                     "gebuehr_forderung(exportiert_in_export_id)"),
             ("idx_gebuehr_forderung_storno_export_id",              "gebuehr_forderung(storno_exportiert_in_export_id)"),
+            ("idx_fibu_exporte_storno_von_export_id",               "fibu_exporte(storno_von_export_id)"),
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")

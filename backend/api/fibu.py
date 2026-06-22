@@ -76,6 +76,7 @@ def _export_dict(x: FibuExport) -> dict:
         'format': x.format,
         'anzahl_positionen': x.anzahl_positionen,
         'summe_cent': x.summe_cent,
+        'storno_von_export_id': x.storno_von_export_id,
     }
 
 
@@ -160,4 +161,29 @@ def download_export(export_id: int, user: CurrentUser, db: DB):
     except KeyError:
         raise HTTPException(status_code=404, detail="Export nicht gefunden")
     content = FibuExportService(db).re_download(export_id)
+    return _datei_response(content)
+
+
+@router.post("/exporte/{export_id}/zuruecknehmen")
+def zuruecknehmen(export_id: int, user: CurrentUser, db: DB):
+    """Un-Export: jüngsten, noch nicht in die Fibu eingelesenen Lauf zurücknehmen."""
+    _require_export(user)
+    try:
+        return FibuExportService(db).zuruecknehmen(export_id, benutzer=user.username)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Export nicht gefunden")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/exporte/{export_id}/storno")
+def storno_lauf(export_id: int, user: CurrentUser, db: DB):
+    """Gegenbuchungs-Lauf für einen bereits eingelesenen Lauf (bucht ihn komplett gegen)."""
+    _require_export(user)
+    try:
+        _, content = FibuExportService(db).stornieren(export_id, benutzer=user.username)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Export nicht gefunden")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return _datei_response(content)

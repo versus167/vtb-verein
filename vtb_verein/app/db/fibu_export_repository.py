@@ -51,8 +51,8 @@ _COND_STORNO = ("{p}.exportiert_in_export_id IS NOT NULL "
                 "AND ({p}.status = 'storniert' OR {p}.deleted_at IS NOT NULL)")
 
 _EXPORT_COLS = """id, exportiert_am, exportiert_von, dateiname, format,
-                  anzahl_positionen, summe_cent, version, created_at, created_by,
-                  deleted_at, deleted_by"""
+                  anzahl_positionen, summe_cent, storno_von_export_id,
+                  version, created_at, created_by, deleted_at, deleted_by"""
 
 
 def _map_export(row) -> FibuExport:
@@ -154,3 +154,69 @@ class FibuExportRepository(BaseRepository):
             cur.execute(f"SELECT {_EXPORT_COLS} FROM fibu_exporte WHERE deleted_at IS NULL "
                         f"ORDER BY id DESC")
             return [_map_export(r) for r in cur.fetchall()]
+
+    # ---- Storno eines ganzen Laufs ----------------------------------------
+
+    def is_latest(self, export_id: int) -> bool:
+        """True, wenn export_id der jüngste nicht gelöschte Lauf ist (Un-Export-Bedingung)."""
+        with self.cursor() as cur:
+            cur.execute("SELECT MAX(id) AS max_id FROM fibu_exporte WHERE deleted_at IS NULL")
+            row = cur.fetchone()
+            return row is not None and row['max_id'] == export_id
+
+    def find_storno_lauf(self, original_id: int) -> FibuExport | None:
+        """Liefert den (lebenden) Gegenbuchungs-Lauf zu einem Original – oder None."""
+        with self.cursor() as cur:
+            cur.execute(f"SELECT {_EXPORT_COLS} FROM fibu_exporte "
+                        f"WHERE storno_von_export_id = %s AND deleted_at IS NULL "
+                        f"ORDER BY id DESC LIMIT 1", (original_id,))
+            row = cur.fetchone()
+            return _map_export(row) if row else None
+
+    def un_export(self, export_id: int, *, benutzer: str) -> int:
+        """Nimmt den jüngsten, noch nicht in die Fibu eingelesenen Lauf zurück:
+        löst die Export-Stempel der Quellzeilen wieder und soft-deletet den Header.
+        Liefert die Anzahl wieder freigegebener Quellzeilen."""
+        with self.cursor() as cur:
+            geloest = 0
+            for tbl in ('beitrag_sollstellung', 'gebuehr_forderung'):
+                cur.execute(
+                    f"""UPDATE {tbl}
+                        SET exportiert_in_export_id = NULL, version = version+1,
+                            updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                        WHERE exportiert_in_export_id = %s""",
+                    (benutzer, export_id))
+                geloest += cur.rowcount
+                cur.execute(
+                    f"""UPDATE {tbl}
+                        SET storno_exportiert_in_export_id = NULL, version = version+1,
+                            updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                        WHERE storno_exportiert_in_export_id = %s""",
+                    (benutzer, export_id))
+                geloest += cur.rowcount
+            cur.execute(
+                """UPDATE fibu_exporte
+                   SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, version = version+1
+                   WHERE id = %s AND deleted_at IS NULL""",
+                (benutzer, export_id))
+            return geloest
+
+    def create_storno_lauf(self, *, original_id: int, exportiert_von: str, dateiname: str,
+                           anzahl_positionen: int, summe_cent: int) -> FibuExport:
+        """Legt einen Gegenbuchungs-Lauf an, der `original_id` komplett gegenbucht (S↔H).
+        Die Quellzeilen bleiben unangetastet, damit Original und Storno rekonstruierbar bleiben."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO fibu_exporte (exportiert_von, dateiname, format,
+                                          anzahl_positionen, summe_cent,
+                                          storno_von_export_id, created_by)
+                VALUES (%s,%s,'fbasc',%s,%s,%s,%s)
+                RETURNING id
+                """,
+                (exportiert_von, dateiname, anzahl_positionen, summe_cent,
+                 original_id, exportiert_von),
+            )
+            new_id = cur.fetchone()['id']
+            cur.execute(f"SELECT {_EXPORT_COLS} FROM fibu_exporte WHERE id = %s", (new_id,))
+            return _map_export(cur.fetchone())

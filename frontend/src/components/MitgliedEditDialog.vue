@@ -238,10 +238,7 @@
                     <q-item-label caption>{{ Number(s.betrag_soll).toFixed(2) }} €<span v-if="s.faelligkeitsdatum"> · fällig {{ s.faelligkeitsdatum }}</span></q-item-label>
                   </q-item-section>
                   <q-item-section side>
-                    <div class="row q-gutter-xs">
-                      <q-badge :color="statusFarbe(s.status)" text-color="white">{{ s.status }}</q-badge>
-                      <q-badge v-if="s.exportiert_in_export_id" color="indigo" text-color="white">exportiert</q-badge>
-                    </div>
+                    <q-badge :color="fibuStatus(s).color" text-color="white">{{ fibuStatus(s).label }}</q-badge>
                   </q-item-section>
                 </q-item>
               </q-list>
@@ -257,10 +254,7 @@
                     <q-item-label caption>{{ Number(f.betrag_soll).toFixed(2) }} € · {{ f.datum }}</q-item-label>
                   </q-item-section>
                   <q-item-section side>
-                    <div class="row q-gutter-xs">
-                      <q-badge :color="statusFarbe(f.status)" text-color="white">{{ f.status }}</q-badge>
-                      <q-badge v-if="f.exportiert_in_export_id" color="indigo" text-color="white">exportiert</q-badge>
-                    </div>
+                    <q-badge :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-badge>
                   </q-item-section>
                 </q-item>
               </q-list>
@@ -616,7 +610,17 @@ async function loadAll() {
 // Beiträge/Gebühren der Person (read-only) – fehlertolerant nachladen.
 const mitgliedSollstellungen = ref([])
 const mitgliedForderungen = ref([])
-function statusFarbe(s) { return { offen: 'orange', bezahlt: 'positive', storniert: 'grey' }[s] ?? 'blue-grey' }
+// Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
+// übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
+function fibuStatus(item) {
+  if (item.status === 'storniert') {
+    return item.exportiert_in_export_id
+      ? { label: 'storniert (Gegenbuchung an Fibu)', color: 'grey' }
+      : { label: 'storniert', color: 'grey' }
+  }
+  if (item.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
+  return { label: 'offen', color: 'orange' }
+}
 
 async function loadFinanzen() {
   const id = getMitgliedId()

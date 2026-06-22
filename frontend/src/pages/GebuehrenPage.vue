@@ -64,18 +64,13 @@
             <q-item-label>{{ f.mitglied_nachname }}, {{ f.mitglied_vorname }} — {{ f.gebuehr_name }}</q-item-label>
             <q-item-label caption>
               {{ f.betrag_soll.toFixed(2) }} € · {{ f.datum }}
-              <q-chip dense size="sm" :color="statusColor(f.status)" text-color="white">{{ f.status }}</q-chip>
+              <q-chip dense size="sm" :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-chip>
             </q-item-label>
           </q-item-section>
           <q-item-section side v-if="auth.hasPermission('gebuehren.abrechnen') && f.status === 'offen'">
-            <div class="row q-gutter-xs">
-              <q-btn flat dense round icon="check" color="positive" size="sm" @click="markBezahlt(f)">
-                <q-tooltip>Als bezahlt markieren</q-tooltip>
-              </q-btn>
-              <q-btn flat dense round icon="block" color="negative" size="sm" @click="storno(f)">
-                <q-tooltip>Stornieren</q-tooltip>
-              </q-btn>
-            </div>
+            <q-btn flat dense round icon="block" color="negative" size="sm" @click="storno(f)">
+              <q-tooltip>Stornieren</q-tooltip>
+            </q-btn>
           </q-item-section>
         </q-item>
       </q-list>
@@ -175,13 +170,22 @@ const abteilungen = ref([])
 const statusFilter = ref('offen')
 const statusFilterOptionen = [
   { label: 'Offen', value: 'offen' },
-  { label: 'Bezahlt', value: 'bezahlt' },
   { label: 'Storniert', value: 'storniert' },
   { label: 'Alle', value: '' },
 ]
 const forderungen = ref([])
 
-function statusColor(s) { return { offen: 'orange', bezahlt: 'positive', storniert: 'grey' }[s] ?? 'grey' }
+// Die VTB-App kennt zur Forderung nur: erzeugt (offen) und ob sie an die Fibu
+// übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
+function fibuStatus(f) {
+  if (f.status === 'storniert') {
+    return f.exportiert_in_export_id
+      ? { label: 'storniert (Gegenbuchung an Fibu)', color: 'grey' }
+      : { label: 'storniert', color: 'grey' }
+  }
+  if (f.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
+  return { label: 'offen', color: 'orange' }
+}
 
 async function loadKatalog() {
   const [{ data: g }, { data: ab }] = await Promise.all([
@@ -352,16 +356,10 @@ async function saveForderung() {
     fSaving.value = false
   }
 }
-async function markBezahlt(f) {
-  try {
-    await api.patch(`/api/gebuehren/forderungen/${f.id}`, { bezahlt_am: new Date().toISOString().slice(0, 10) })
-    await loadForderungen()
-  } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' }) }
-}
 function storno(f) {
   $q.dialog({ title: 'Forderung stornieren', message: 'Wirklich stornieren?', cancel: true })
     .onOk(async () => {
-      try { await api.patch(`/api/gebuehren/forderungen/${f.id}`, { bezahlt_am: null }); await loadForderungen() }
+      try { await api.patch(`/api/gebuehren/forderungen/${f.id}`); await loadForderungen() }
       catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' }) }
     })
 }
