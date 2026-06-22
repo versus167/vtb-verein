@@ -235,7 +235,10 @@
               <q-list v-else separator dense>
                 <q-item v-for="s in mitgliedSollstellungen" :key="'s'+s.id">
                   <q-item-section>
-                    <q-item-label>{{ s.beitragsregel_name }} · {{ s.zeitraum }}</q-item-label>
+                    <q-item-label>
+                      {{ s.beitragsregel_name }} · {{ s.zeitraum }}
+                      <q-badge v-if="s.zahler_typ === 'abteilung'" color="teal" text-color="white" class="q-ml-xs">Abteilung trägt</q-badge>
+                    </q-item-label>
                     <q-item-label caption>{{ Number(s.betrag_soll).toFixed(2) }} €<span v-if="s.faelligkeitsdatum"> · fällig {{ s.faelligkeitsdatum }}</span></q-item-label>
                   </q-item-section>
                   <q-item-section side>
@@ -251,7 +254,10 @@
               <q-list v-else separator dense>
                 <q-item v-for="f in mitgliedForderungen" :key="'f'+f.id">
                   <q-item-section>
-                    <q-item-label>{{ f.gebuehr_name }}</q-item-label>
+                    <q-item-label>
+                      {{ f.gebuehr_name }}
+                      <q-badge v-if="f.zahler_typ === 'abteilung'" color="teal" text-color="white" class="q-ml-xs">Abteilung trägt</q-badge>
+                    </q-item-label>
                     <q-item-label caption>{{ Number(f.betrag_soll).toFixed(2) }} € · {{ f.datum }}</q-item-label>
                   </q-item-section>
                   <q-item-section side>
