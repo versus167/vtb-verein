@@ -117,16 +117,16 @@ def build_papierkorb_count_sql(entity: PruneEntity) -> tuple[str, list]:
     return sql, []
 
 
-def build_original_candidate_count_sql(
+def build_original_candidate_ids_sql(
     entity: PruneEntity,
     retention_days: int,
     keep_min: int,
     history_retention_days: int,
 ) -> tuple[str, list]:
-    """Zahl der endgültig löschbaren Original-Datensätze (alle 5 Tore).
+    """SELECT der IDs aller endgültig löschbaren Original-Datensätze (alle 5 Tore).
 
-    Tunables (retention_days/keep_min/history_retention_days) werden explizit übergeben –
-    der Aufrufer löst Override-vs-Default vorher auf.
+    Einzige Quelle der Tor-Logik – COUNT (Report) und DELETE (Prune) bauen beide darauf
+    auf, damit „Vorschau = Aktion" garantiert ist. Tunables werden explizit übergeben.
     """
     params: list = []
     where = [
@@ -156,9 +156,22 @@ def build_original_candidate_count_sql(
         f"  FROM {entity.table} "
         "   WHERE deleted_at IS NOT NULL AND deleted_at <> '' "
         ") "
-        "SELECT COUNT(*) AS n FROM ranked r WHERE " + " AND ".join(where)
+        "SELECT r.id FROM ranked r WHERE " + " AND ".join(where)
     )
     return sql, params
+
+
+def build_original_candidate_count_sql(
+    entity: PruneEntity,
+    retention_days: int,
+    keep_min: int,
+    history_retention_days: int,
+) -> tuple[str, list]:
+    """Zahl der endgültig löschbaren Original-Datensätze (zählt das ID-SELECT)."""
+    ids_sql, params = build_original_candidate_ids_sql(
+        entity, retention_days, keep_min, history_retention_days
+    )
+    return f"SELECT COUNT(*) AS n FROM ({ids_sql}) c", params
 
 
 def build_history_prune_count_sql(entity: PruneEntity) -> tuple[str, list]:
@@ -179,6 +192,16 @@ def build_history_total_count_sql(entity: PruneEntity) -> tuple[str, list]:
     """Gesamtzahl der aktuell vorhandenen History-Zeilen (Kontext für den Report)."""
     assert entity.history_table is not None
     return f"SELECT COUNT(*) AS n FROM {entity.history_table}", []
+
+
+def build_history_prune_delete_sql(entity: PruneEntity) -> tuple[str, list]:
+    """DELETE der abgeflossenen History-Zeilen – gleiche WHERE-Logik wie der Zähler."""
+    assert entity.history_table is not None
+    sql = (
+        f"DELETE FROM {entity.history_table} "
+        f"WHERE {_history_effective_ts()} < now() - make_interval(days => %s)"
+    )
+    return sql, []  # history_retention_days wird vom Service als Param ergänzt
 
 
 class PruneService:
@@ -278,4 +301,74 @@ class PruneService:
             "summe_loeschbar": summe_loeschbar,
             "summe_history_loeschbar": summe_history,
             "summe_history_gesamt": summe_history_gesamt,
+        }
+
+    def prune(self, dry_run: bool = True) -> dict:
+        """Führt die Bereinigung aus (oder zeigt sie als Dry-Run).
+
+        ``dry_run=True`` liefert exakt den ``report()``. Bei ``dry_run=False`` wird in EINER
+        Transaktion gelöscht – atomar, bei Fehler vollständiger Rollback. Reihenfolge:
+
+          1. History zuerst (datums-only) – ändert keine der Original-Tore (Tor 5 prüft nur
+             Zeilen NEUER als der History-Cutoff, die hier nicht angefasst werden).
+          2. Kandidaten-IDs je Entität einmalig einsammeln (= Snapshot, = Report-Zahlen).
+          3. Diese IDs Blatt→Wurzel löschen.
+
+        Durch das Einsammeln VOR dem Löschen gilt „Vorschau = Aktion": es wird genau das
+        entfernt, was der Report zeigte – ein in diesem Lauf kinderlos gewordenes Eltern-
+        Element wird NICHT mitgerissen, sondern erst im nächsten Lauf entfernt.
+        """
+        if dry_run:
+            return self.report()
+
+        cfg = self.effective_config()
+        entities: list[dict] = []
+        summe_loeschbar = 0
+        summe_history = 0
+
+        with self._db.cursor() as cur:
+            # 1) History prunen (datums-only)
+            history_geloescht: dict[str, int] = {}
+            for entity in PRUNE_REGISTRY:
+                if entity.history_table:
+                    hsql, hparams = build_history_prune_delete_sql(entity)
+                    cur.execute(hsql, tuple(hparams + [cfg[entity.name]["history_retention_days"]]))
+                    history_geloescht[entity.name] = cur.rowcount
+
+            # 2) Kandidaten-IDs einsammeln (Snapshot vor jeglicher Original-Löschung)
+            kandidaten: dict[str, list] = {}
+            for entity in PRUNE_REGISTRY:
+                c = cfg[entity.name]
+                ids_sql, params = build_original_candidate_ids_sql(
+                    entity, c["retention_days"], c["keep_min"], c["history_retention_days"]
+                )
+                cur.execute(ids_sql, tuple(params))
+                kandidaten[entity.name] = [row["id"] for row in cur.fetchall()]
+
+            # 3) Originale löschen – Blatt→Wurzel (Registry-Reihenfolge)
+            for entity in PRUNE_REGISTRY:
+                ids = kandidaten[entity.name]
+                geloescht = 0
+                if ids:
+                    cur.execute(
+                        f"DELETE FROM {entity.table} WHERE id = ANY(%s)", (ids,)
+                    )
+                    geloescht = cur.rowcount
+                summe_loeschbar += geloescht
+                hist = history_geloescht.get(entity.name)
+                if hist is not None:
+                    summe_history += hist
+                entities.append({
+                    "name": entity.name,
+                    "label": entity.label,
+                    "geloescht": geloescht,
+                    "history_geloescht": hist,
+                })
+
+        return {
+            "dry_run": False,
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "entities": entities,
+            "summe_geloescht": summe_loeschbar,
+            "summe_history_geloescht": summe_history,
         }

@@ -9,8 +9,10 @@ from app.services.prune_service import (
     PruneEntity,
     PRUNE_REGISTRY,
     build_history_prune_count_sql,
+    build_history_prune_delete_sql,
     build_history_total_count_sql,
     build_original_candidate_count_sql,
+    build_original_candidate_ids_sql,
     build_papierkorb_count_sql,
     DEFAULT_HISTORY_RETENTION_DAYS,
 )
@@ -91,3 +93,22 @@ class TestHistoryAndPapierkorbSql:
         assert "FROM mitglied_history" in sql
         assert "WHERE" not in sql           # Gesamtzahl, keine Filterung
         assert params == []
+
+    def test_history_delete_gleiche_logik_wie_zaehler(self):
+        d_sql, d_params = build_history_prune_delete_sql(_entity("mitglied"))
+        c_sql, _ = build_history_prune_count_sql(_entity("mitglied"))
+        assert d_sql.startswith("DELETE FROM mitglied_history")
+        # gleiche WHERE-Klausel wie der Zähler (nur SELECT vs DELETE davor)
+        assert d_sql.split("WHERE", 1)[1] == c_sql.split("WHERE", 1)[1]
+        assert d_params == []
+
+
+class TestCandidateIds:
+    def test_count_baut_auf_id_select_auf(self):
+        ent = _entity("mitglied")
+        ids_sql, ids_params = build_original_candidate_ids_sql(ent, 90, 10, 365)
+        cnt_sql, cnt_params = build_original_candidate_count_sql(ent, 90, 10, 365)
+        assert "SELECT r.id FROM ranked r WHERE" in ids_sql
+        assert ids_sql in cnt_sql          # COUNT umschließt exakt das ID-SELECT
+        assert cnt_sql.startswith("SELECT COUNT(*) AS n FROM (")
+        assert ids_params == cnt_params    # identische Tor-Parameter

@@ -201,6 +201,91 @@ def test_history_gesamt_im_report(db):
     assert rep["mitglied_kontakt"]["history_gesamt"] == 3
 
 
+def _row_exists(db, table, id_):
+    with db.cursor() as cur:
+        cur.execute(f"SELECT 1 FROM {table} WHERE id=%s", (id_,))
+        return cur.fetchone() is not None
+
+
+def _live_count(db, table):
+    with db.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) n FROM {table}")
+        return cur.fetchone()["n"]
+
+
+def test_prune_loescht_genau_die_kandidaten(db):
+    """prune() entfernt exakt die Kandidaten des Reports – nicht mehr, nicht weniger."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k_recent = _ins_kontakt(db, m); _soft_delete(db, "mitglied_kontakt", k_recent, 5)
+    k_fresh = _ins_kontakt(db, m); _soft_delete(db, "mitglied_kontakt", k_fresh, 60)
+    k_drained = _ins_kontakt(db, m); _soft_delete(db, "mitglied_kontakt", k_drained, 60)
+    _age_history(db, "mitglied_kontakt_history", k_drained, 60)
+    k_active = _ins_kontakt(db, m)
+
+    rep = {e["name"]: e for e in svc.report()["entities"]}["mitglied_kontakt"]
+    assert rep["loeschbar"] == 1
+
+    res = {e["name"]: e for e in svc.prune(dry_run=False)["entities"]}["mitglied_kontakt"]
+    assert res["geloescht"] == 1
+
+    assert not _row_exists(db, "mitglied_kontakt", k_drained)
+    for k in (k_recent, k_fresh, k_active):
+        assert _row_exists(db, "mitglied_kontakt", k)
+
+
+def test_prune_dry_run_loescht_nichts(db):
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m); _soft_delete(db, "mitglied_kontakt", k, 60)
+    _age_history(db, "mitglied_kontakt_history", k, 60)
+
+    out = svc.prune(dry_run=True)
+    assert out["dry_run"] is True
+    assert _row_exists(db, "mitglied_kontakt", k)   # nichts gelöscht
+
+
+def test_prune_idempotent(db):
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m); _soft_delete(db, "mitglied_kontakt", k, 60)
+    _age_history(db, "mitglied_kontakt_history", k, 60)
+
+    assert svc.prune(dry_run=False)["summe_geloescht"] == 1
+    assert svc.prune(dry_run=False)["summe_geloescht"] == 0   # zweiter Lauf: nichts mehr
+
+
+def test_prune_kein_cascade_in_einem_lauf(db):
+    """Vorschau = Aktion: ein erst durch Blatt-Löschung kinderloses Elternteil bleibt
+    diesen Lauf stehen und wird erst im nächsten entfernt."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 10, updated_by="t")
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+    _soft_delete(db, "mitglied_kontakt", k, 60); _age_history(db, "mitglied_kontakt_history", k, 60)
+    _soft_delete(db, "mitglied", m, 60); _age_history(db, "mitglied_history", m, 60)
+
+    # Snapshot vor Lauf: mitglied ist durch das (noch existierende) Kind blockiert
+    rep = {e["name"]: e for e in svc.report()["entities"]}
+    assert rep["mitglied_kontakt"]["loeschbar"] == 1
+    assert rep["mitglied"]["loeschbar"] == 0
+
+    svc.prune(dry_run=False)
+    assert not _row_exists(db, "mitglied_kontakt", k)   # Blatt weg
+    assert _row_exists(db, "mitglied", m)               # Elternteil bleibt
+
+    svc.prune(dry_run=False)                              # zweiter Lauf
+    assert not _row_exists(db, "mitglied", m)            # jetzt kinderlos -> entfernt
+
+
 def test_papierkorb_zaehler(db):
     """Papierkorb zählt nur soft-deleted, nicht aktive Datensätze."""
     m = _ins_mitglied(db)

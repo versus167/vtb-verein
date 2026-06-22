@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +342,7 @@ class Database:
             46: self._migrate_v45_to_v46,
             47: self._migrate_v46_to_v47,
             48: self._migrate_v47_to_v48,
+            49: self._migrate_v48_to_v49,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2682,6 +2683,20 @@ class Database:
             )
         """)
 
+    def _migrate_v48_to_v49(self) -> None:
+        """Prune Phase 1: fehlende deleted_at-Indizes für die Kandidaten-Scans (Performance)."""
+        with self.cursor() as cur:
+            self._create_prune_indexes(cur)
+            cur.execute("UPDATE schema_version SET version = 49 WHERE id = 1")
+
+    @staticmethod
+    def _create_prune_indexes(cur) -> None:
+        """deleted_at-Indizes für Prune-Bereiche, die noch keinen haben (idempotent)."""
+        for table in ("mitglied", "mitglied_abteilung", "mitglied_funktion"):
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_deleted_at ON {table}(deleted_at)"
+            )
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2690,6 +2705,7 @@ class Database:
             self._create_trigger_functions(cur)
             self._create_triggers(cur)
             self._create_indexes(cur)
+            self._create_prune_indexes(cur)
             self._seed_data(cur)
             cur.execute(
                 "INSERT INTO schema_version (id, version) VALUES (1, %s)",
