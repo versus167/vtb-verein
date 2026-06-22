@@ -121,6 +121,7 @@ function filterUsernames(val, update) {
 const categoryOptions = [
   { label: 'Anmeldung (auth)', value: 'auth' },
   { label: 'Seitenaufrufe (page)', value: 'page' },
+  { label: 'Datenbereinigung (prune)', value: 'prune' },
 ]
 
 const EVENT_META = {
@@ -131,6 +132,9 @@ const EVENT_META = {
   magic_link_login: { label: 'Magic-Link Login', color: 'positive' },
   magic_link_failed: { label: 'Magic-Link fehlgeschlagen', color: 'negative' },
   page_view: { label: 'Seitenaufruf', color: 'primary' },
+  prune_executed: { label: 'Bereinigung ausgeführt', color: 'negative' },
+  prune_config_changed: { label: 'Bereinigung: Einstellung geändert', color: 'warning' },
+  prune_config_reset: { label: 'Bereinigung: Einstellung zurückgesetzt', color: 'grey' },
 }
 
 const eventTypeOptions = Object.entries(EVENT_META).map(([value, m]) => ({ label: m.label, value }))

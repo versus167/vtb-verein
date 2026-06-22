@@ -192,6 +192,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('system.config')"
+            clickable
+            :to="{ name: 'prune' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="cleaning_services" /></q-item-section>
+            <q-item-section>Datenbereinigung</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="false"
             clickable
             :to="{ name: 'users' }"

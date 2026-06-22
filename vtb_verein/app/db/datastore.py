@@ -28,6 +28,7 @@ from app.db.permission_repository import PermissionRepository
 from app.db.auth_token_repository import AuthTokenRepository
 from app.db.user_session_repository import UserSessionRepository
 from app.db.access_log_repository import AccessLogRepository
+from app.db.prune_einstellungen_repository import PruneEinstellungenRepository
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
@@ -86,6 +87,7 @@ class VereinsDB:
         self._auth_token_repo = AuthTokenRepository(self._database)
         self._user_session_repo = UserSessionRepository(self._database)
         self._access_log_repo = AccessLogRepository(self._database)
+        self._prune_einstellungen_repo = PruneEinstellungenRepository(self.conn)
         self._kasse_repo = KasseRepository(self.conn)
         self._kassenbuchung_repo = KassenbuchungRepository(self.conn)
         self._kassenbuch_export_repo = KassenbuchExportRepository(self.conn)
@@ -164,6 +166,10 @@ class VereinsDB:
     @property
     def access_log_repository(self) -> AccessLogRepository:
         return self._access_log_repo
+
+    @property
+    def prune_einstellungen(self) -> PruneEinstellungenRepository:
+        return self._prune_einstellungen_repo
 
     @property
     def kassenbuch(self) -> "KassenbuchService":

@@ -143,6 +143,18 @@ class AccessLogRepository:
             )
             return [r["username"] for r in cur.fetchall()]
 
+    def count_page_views_older_than(self, days: int = 90) -> int:
+        """Zahl der Seitenaufrufe (category 'page') älter als `days` Tage – für die Vorschau."""
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM access_log
+                WHERE category = 'page' AND created_at < now() - make_interval(days => %s)
+                """,
+                (days,),
+            )
+            return cur.fetchone()["n"]
+
     def cleanup_page_views(self, days: int = 90) -> int:
         """Hard-Delete von Seitenaufrufen älter als `days` Tage (Prune-Job).
 
