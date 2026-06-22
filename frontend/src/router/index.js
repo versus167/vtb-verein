@@ -121,6 +121,12 @@ const routes = [
         meta: { permission: 'funktionen.verwalten' },
       },
       {
+        path: 'datenbereinigung',
+        name: 'prune',
+        component: () => import('pages/PrunePage.vue'),
+        meta: { permission: 'system.config' },
+      },
+      {
         path: 'import',
         name: 'import',
         component: () => import('pages/ImportPage.vue'),
