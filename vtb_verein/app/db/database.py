@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +340,7 @@ class Database:
             44: self._migrate_v43_to_v44,
             45: self._migrate_v44_to_v45,
             46: self._migrate_v45_to_v46,
+            47: self._migrate_v46_to_v47,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2566,6 +2567,93 @@ class Database:
 
             cur.execute("UPDATE schema_version SET version = 46 WHERE id = 1")
 
+    def _migrate_v46_to_v47(self) -> None:
+        """Magic-Link-Härtung (Ticket #48): Auth-Tokens nur noch als Hash speichern.
+
+        Bisher lag der Token im Klartext in `auth_tokens.token` (und via Audit-Trigger
+        gespiegelt in `auth_tokens_history`) – bei einem DB-Leak sofort missbrauchbar.
+        Ab v47:
+        - Spalte `token` → `token_hash` (in beiden Tabellen), Inhalt ist der
+          SHA-256-Hex-Hash des Tokens.
+        - Vorhandene Klartext-Tokens werden in-place gehasht, damit bereits
+          verschickte Magic-Links bis zum Ablauf gültig bleiben.
+        - Audit-Trigger-Funktionen + Index auf die neue Spalte umgestellt.
+
+        Atomares Single-Use (UPDATE … RETURNING) und das Rate-Limiting sitzen im
+        Repository bzw. im Auth-Endpoint und brauchen keine Schema-Änderung.
+        """
+        import hashlib
+
+        def _sha256(value: str) -> str:
+            return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+        with self.cursor() as cur:
+            # 1) Spalte token → token_hash (idempotent: nur wenn 'token' noch existiert).
+            #    Tabellennamen stammen aus dieser festen Liste, daher f-String unkritisch.
+            for table in ("auth_tokens", "auth_tokens_history"):
+                cur.execute(
+                    """
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = %s AND column_name = 'token'
+                    """,
+                    (table,),
+                )
+                if cur.fetchone():
+                    cur.execute(f"ALTER TABLE {table} RENAME COLUMN token TO token_hash")
+
+            # 2) Audit-Trigger-Funktionen auf token_hash umstellen (vor dem Daten-Update,
+            #    damit ein evtl. feuernder Trigger nicht die alte Spalte referenziert).
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_auth_tokens_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO auth_tokens_history (
+                        id, version, user_id, token_hash, token_type, expires_at, used_at, created_at
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.user_id, NEW.token_hash, NEW.token_type,
+                        NEW.expires_at, NEW.used_at, NEW.created_at
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_auth_tokens_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO auth_tokens_history (
+                            id, version, user_id, token_hash, token_type, expires_at, used_at, created_at
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.user_id, NEW.token_hash, NEW.token_type,
+                            NEW.expires_at, NEW.used_at, NEW.created_at
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+
+            # 3) Bestehende Klartext-Werte hashen. Hash ist 64 Hex-Zeichen lang,
+            #    token_urlsafe(32) nie → length(...) <> 64 erkennt noch ungehashte Zeilen
+            #    und macht den Schritt re-run-sicher.
+            cur.execute("SELECT id, token_hash FROM auth_tokens WHERE length(token_hash) <> 64")
+            for row in cur.fetchall():
+                cur.execute(
+                    "UPDATE auth_tokens SET token_hash = %s WHERE id = %s",
+                    (_sha256(row["token_hash"]), row["id"]),
+                )
+            cur.execute(
+                "SELECT id, version, token_hash FROM auth_tokens_history WHERE length(token_hash) <> 64"
+            )
+            for row in cur.fetchall():
+                cur.execute(
+                    "UPDATE auth_tokens_history SET token_hash = %s WHERE id = %s AND version = %s",
+                    (_sha256(row["token_hash"]), row["id"], row["version"]),
+                )
+
+            # 4) Indizes auf die neue Spalte ausrichten (Namensgleichheit mit Fresh-Schema).
+            cur.execute("ALTER INDEX IF EXISTS idx_auth_tokens_token RENAME TO idx_auth_tokens_token_hash")
+            cur.execute("ALTER INDEX IF EXISTS auth_tokens_token_key RENAME TO auth_tokens_token_hash_key")
+
+            cur.execute("UPDATE schema_version SET version = 47 WHERE id = 1")
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
@@ -2948,7 +3036,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS auth_tokens (
               id          SERIAL PRIMARY KEY,
               user_id     INTEGER NOT NULL REFERENCES users(id),
-              token       TEXT UNIQUE NOT NULL,
+              token_hash  TEXT UNIQUE NOT NULL,
               token_type  TEXT NOT NULL CHECK(token_type IN ('magic_link', 'remember_me')),
               expires_at  TEXT NOT NULL,
               used_at     TEXT,
@@ -2961,7 +3049,7 @@ class Database:
               id          INTEGER NOT NULL,
               version     INTEGER NOT NULL,
               user_id     INTEGER NOT NULL,
-              token       TEXT NOT NULL,
+              token_hash  TEXT NOT NULL,
               token_type  TEXT NOT NULL,
               expires_at  TEXT NOT NULL,
               used_at     TEXT,
@@ -4018,9 +4106,9 @@ class Database:
             CREATE OR REPLACE FUNCTION fn_auth_tokens_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
                 INSERT INTO auth_tokens_history (
-                    id, version, user_id, token, token_type, expires_at, used_at, created_at
+                    id, version, user_id, token_hash, token_type, expires_at, used_at, created_at
                 ) VALUES (
-                    NEW.id, NEW.version, NEW.user_id, NEW.token, NEW.token_type,
+                    NEW.id, NEW.version, NEW.user_id, NEW.token_hash, NEW.token_type,
                     NEW.expires_at, NEW.used_at, NEW.created_at
                 );
                 RETURN NEW;
@@ -4031,9 +4119,9 @@ class Database:
             BEGIN
                 IF NEW.version != OLD.version THEN
                     INSERT INTO auth_tokens_history (
-                        id, version, user_id, token, token_type, expires_at, used_at, created_at
+                        id, version, user_id, token_hash, token_type, expires_at, used_at, created_at
                     ) VALUES (
-                        NEW.id, NEW.version, NEW.user_id, NEW.token, NEW.token_type,
+                        NEW.id, NEW.version, NEW.user_id, NEW.token_hash, NEW.token_type,
                         NEW.expires_at, NEW.used_at, NEW.created_at
                     );
                 END IF;
@@ -4624,7 +4712,7 @@ class Database:
             ("idx_users_active",                                    "users(active)"),
             ("idx_users_deleted_at",                                "users(deleted_at)"),
             ("idx_users_history_id",                                "users_history(id)"),
-            ("idx_auth_tokens_token",                               "auth_tokens(token)"),
+            ("idx_auth_tokens_token_hash",                          "auth_tokens(token_hash)"),
             ("idx_auth_tokens_user_id",                             "auth_tokens(user_id)"),
             ("idx_auth_tokens_expires_at",                          "auth_tokens(expires_at)"),
             ("idx_auth_tokens_token_type",                          "auth_tokens(token_type)"),

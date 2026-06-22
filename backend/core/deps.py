@@ -1,16 +1,30 @@
 from typing import Annotated, Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from .security import decode_token
+from .config import settings
 from .db import get_db
 from app.models.user import User
 from app.db.datastore import VereinsDB
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+# auto_error=False: der Bearer-Header ist nur noch optionaler Fallback (Übergang).
+# Hauptquelle des Tokens ist das HttpOnly-Cookie (Ticket #48). Fehlt das Token
+# überall, werfen unsere Dependencies selbst die 401.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+def _token_from_request(request: Request, header_token: Optional[str]) -> Optional[str]:
+    """Session-Token bevorzugt aus dem HttpOnly-Cookie, sonst aus dem Bearer-Header.
+
+    Der Header-Fallback ist nur für den Übergang (offene Sessions mit altem
+    Frontend) – Zielzustand ist Cookie-only.
+    """
+    return request.cookies.get(settings.COOKIE_NAME) or header_token
 
 
 def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    request: Request,
+    token: Annotated[Optional[str], Depends(oauth2_scheme)],
     db: Annotated[VereinsDB, Depends(get_db)],
 ) -> User:
     exc = HTTPException(
@@ -18,6 +32,9 @@ def get_current_user(
         detail="Ungültige Anmeldedaten",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    token = _token_from_request(request, token)
+    if token is None:
+        raise exc
     payload = decode_token(token)
     if payload is None:
         raise exc
@@ -49,9 +66,13 @@ def get_current_user(
 
 
 def get_current_session_id(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    request: Request,
+    token: Annotated[Optional[str], Depends(oauth2_scheme)],
 ) -> Optional[str]:
     """sid des aktuellen Tokens (oder None bei Legacy-Token ohne Session)."""
+    token = _token_from_request(request, token)
+    if token is None:
+        return None
     payload = decode_token(token)
     if payload is None:
         return None

@@ -16,6 +16,14 @@ class Settings:
         "VTB_FRONTEND_ORIGINS", "http://localhost:9000,http://localhost:8080"
     ).split(",")
 
+    # Session-Cookie (Ticket #48, Punkt 4): das JWT wird in einem HttpOnly-Cookie
+    # transportiert statt im localStorage. Dev (Quasar-Proxy) wie Prod (SPA-Mount)
+    # sind same-origin → SameSite=Strict genügt. Secure muss in Dev (http) auf
+    # false stehen, sonst verwirft der Browser das Cookie.
+    COOKIE_NAME: str = os.getenv("VTB_COOKIE_NAME", "vtb_session")
+    COOKIE_SECURE: bool = os.getenv("VTB_COOKIE_SECURE", "true").lower() == "true"
+    COOKIE_SAMESITE: str = os.getenv("VTB_COOKIE_SAMESITE", "strict")
+
     # SMTP / Magic-Link
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))

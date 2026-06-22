@@ -51,6 +51,7 @@ class AccessLogRepository:
         user_id: Optional[int],
         since: Optional[str],
         until: Optional[str],
+        ip: Optional[str] = None,
     ) -> tuple[str, list]:
         """Baut die gemeinsame WHERE-Klausel für list()/count()."""
         clauses: list[str] = []
@@ -67,6 +68,9 @@ class AccessLogRepository:
         if user_id is not None:
             clauses.append("user_id = %s")
             params.append(user_id)
+        if ip:
+            clauses.append("ip = %s")
+            params.append(ip)
         if since:
             clauses.append("created_at >= %s")
             params.append(since)
@@ -87,9 +91,10 @@ class AccessLogRepository:
         user_id: Optional[int] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
+        ip: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Protokollzeilen (neueste zuerst), gefiltert + paginiert."""
-        where, params = self._filters(event_type, category, username, user_id, since, until)
+        where, params = self._filters(event_type, category, username, user_id, since, until, ip)
         with self.db.cursor() as cur:
             cur.execute(
                 f"""
@@ -113,9 +118,10 @@ class AccessLogRepository:
         user_id: Optional[int] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
+        ip: Optional[str] = None,
     ) -> int:
-        """Gesamtzahl passender Zeilen (für die Pagination)."""
-        where, params = self._filters(event_type, category, username, user_id, since, until)
+        """Gesamtzahl passender Zeilen (für die Pagination / Rate-Limiting)."""
+        where, params = self._filters(event_type, category, username, user_id, since, until, ip)
         with self.db.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) AS n FROM access_log {where}", tuple(params))
             return cur.fetchone()["n"]
