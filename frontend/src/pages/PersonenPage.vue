@@ -585,7 +585,7 @@ const deletedColumns = [
     field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : (r.username || '')) },
   { name: 'login', label: 'Login', align: 'left', field: r => r.username || '' },
   { name: 'email', label: 'E-Mail', align: 'left', field: 'email' },
-  { name: 'deleted_at', label: 'Gelöscht am', align: 'left', field: 'deleted_at', sortable: true },
+  { name: 'deleted_at', label: 'Gelöscht am', align: 'left', field: 'deleted_at', sortable: true, format: v => formatDateTime(v) },
   { name: 'deleted_by', label: 'Gelöscht von', align: 'left', field: 'deleted_by' },
   { name: 'actions', label: '', align: 'right', field: 'actions' },
 ]

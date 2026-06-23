@@ -142,6 +142,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -170,7 +171,7 @@ const columns = [
 const deletedColumns = [
   { name: 'name',       label: 'Name',          field: 'name',       sortable: true, align: 'left' },
   { name: 'kuerzel',    label: 'Kürzel',        field: 'kuerzel',    align: 'left' },
-  { name: 'deleted_at', label: 'Gelöscht am',   field: 'deleted_at', align: 'left' },
+  { name: 'deleted_at', label: 'Gelöscht am',   field: 'deleted_at', align: 'left', format: v => formatDateTime(v) },
   { name: 'deleted_by', label: 'Gelöscht von',  field: 'deleted_by', align: 'left' },
   { name: 'actions',    label: '',              field: 'actions',    align: 'right' },
 ]

@@ -376,8 +376,7 @@ def list_deleted_personen(user: CurrentUser, db: DB):
             )
         # Abteilungen/Funktionen im Papierkorb nicht nötig → leere Listen
         person = _person_row(u_obj, m_obj, [], [])
-        del_at = r['del_at']
-        person['deleted_at'] = del_at[:19] if isinstance(del_at, str) else (del_at.isoformat(sep=' ')[:19] if del_at else None)
+        person['deleted_at'] = r['del_at']
         person['deleted_by'] = r['del_by']
         result.append(person)
     return result

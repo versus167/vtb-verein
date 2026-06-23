@@ -491,7 +491,7 @@
               <!-- Buchungs-Events -->
               <q-timeline-entry
                 v-else
-                :subtitle="`v${h.version} · ${h.updated_at?.slice(0,16).replace('T',' ')} · ${h.updated_by}`"
+                :subtitle="`v${h.version} · ${formatDateTime(h.updated_at)} · ${h.updated_by}`"
                 :color="h.deleted_at ? 'negative' : h.version === 1 ? 'positive' : 'primary'"
                 :icon="h.deleted_at ? 'block' : h.version === 1 ? 'add_circle' : 'edit'"
               >

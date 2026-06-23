@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +344,7 @@ class Database:
             48: self._migrate_v47_to_v48,
             49: self._migrate_v48_to_v49,
             50: self._migrate_v49_to_v50,
+            51: self._migrate_v50_to_v51,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2730,8 +2731,76 @@ class Database:
             "INSERT INTO beitrag_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
         )
 
+    def _migrate_v50_to_v51(self) -> None:
+        """Zeitstempel-Stringenz: Audit-/Aktivitäts-Instants tabellenweit auf TIMESTAMPTZ.
+
+        Bisher lagen created_at/updated_at/deleted_at (sowie exportiert_am, hochgeladen_am,
+        hinzugefuegt_am, last_login, last_seen) je nach Tabelle als TEXT (timestamptz::text
+        mit '+00') oder als naives TIMESTAMP vor. Dadurch trug der serialisierte Wert mal
+        einen Offset, mal nicht – im Frontend führte das zu UTC-/GMT-Anzeige. Die Konvertierung
+        auf TIMESTAMPTZ liefert über psycopg überall ein aware datetime mit Offset.
+
+        Bewusst NICHT angefasst: reine Datumsfelder sowie die Auth-Token-/Session-Spalten
+        (expires_at, used_at, revoked_at, last_seen_at), die im SQL bereits per
+        ::timestamptz-Cast arbeiten und nicht angezeigt werden.
+        """
+        with self.cursor() as cur:
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 51 WHERE id = 1")
+
+    # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
+    _AUDIT_TS_COLUMNS = (
+        "created_at", "updated_at", "deleted_at",
+        "exportiert_am", "hochgeladen_am", "hinzugefuegt_am",
+        "last_login", "last_seen",
+    )
+
+    def _normalize_audit_timestamps(self, cur) -> None:
+        """Zieht alle Audit-Zeitstempel (TEXT/naives TIMESTAMP) auf TIMESTAMPTZ.
+
+        Einzige Quelle der Wahrheit für Fresh-Schema UND Migration: beide Pfade rufen diese
+        Routine, damit neue und migrierte Datenbanken garantiert identische Spaltentypen
+        haben. Idempotent – bereits konvertierte (timestamptz) Spalten fallen über den
+        data_type-Filter heraus.
+
+        Werte gelten als UTC: Strings mit Offset ('…+00') tragen ihn explizit; offsetlose
+        Strings und naive Timestamps werden dank fixer Session-TZ ebenfalls als UTC gelesen
+        (so wurden sie via CURRENT_TIMESTAMP auch geschrieben).
+        """
+        cur.execute("SET LOCAL TIME ZONE 'UTC'")
+        cur.execute(
+            """
+            SELECT table_name, column_name, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND column_name = ANY(%s)
+              AND data_type IN ('text', 'timestamp without time zone')
+            ORDER BY table_name, column_name
+            """,
+            (list(self._AUDIT_TS_COLUMNS),),
+        )
+        for r in cur.fetchall():
+            tbl, col = r["table_name"], r["column_name"]
+            has_default = r["column_default"] is not None
+            if has_default:
+                cur.execute(f'ALTER TABLE "{tbl}" ALTER COLUMN "{col}" DROP DEFAULT')
+            cur.execute(
+                f'ALTER TABLE "{tbl}" ALTER COLUMN "{col}" '
+                f"TYPE TIMESTAMPTZ USING NULLIF({col}::text, '')::timestamptz"
+            )
+            if has_default:
+                cur.execute(
+                    f'ALTER TABLE "{tbl}" ALTER COLUMN "{col}" SET DEFAULT CURRENT_TIMESTAMP'
+                )
+
     def _create_schema(self):
-        """Erstellt das vollständige Schema auf einer frischen Datenbank."""
+        """Erstellt das vollständige Schema auf einer frischen Datenbank.
+
+        Hinweis: created_at/updated_at/deleted_at (u. a.) werden in den CREATE-Statements
+        unten noch als TEXT deklariert und am Ende durch `_normalize_audit_timestamps`
+        einheitlich auf TIMESTAMPTZ gezogen – dieselbe Routine wie in der Migration, damit
+        frische und migrierte Datenbanken garantiert identische Spaltentypen haben.
+        """
         with self.cursor() as cur:
             self._create_tables(cur)
             self._create_prune_einstellungen(cur)
@@ -2741,6 +2810,7 @@ class Database:
             self._create_indexes(cur)
             self._create_prune_indexes(cur)
             self._seed_data(cur)
+            self._normalize_audit_timestamps(cur)
             cur.execute(
                 "INSERT INTO schema_version (id, version) VALUES (1, %s)",
                 (SCHEMA_VERSION,),

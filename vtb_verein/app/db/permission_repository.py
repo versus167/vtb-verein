@@ -11,7 +11,7 @@ Users werden in get_effective_permissions berechnet:
     (Sockel ∪ Funktionsrechte ∪ Grants) − Denies
 """
 from psycopg import Connection as PgConnection
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from app.db.base_repository import BaseRepository
 from app.models.permission import (
     Permission, UserPermission,
@@ -125,7 +125,7 @@ class PermissionRepository(BaseRepository):
         """
         desired: dict[str, str] = {p: 'grant' for p in grants}
         desired.update({p: 'deny' for p in denies})  # deny schlägt grant
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
 
         with self.cursor() as cur:
             cur.execute(
@@ -192,7 +192,7 @@ class PermissionRepository(BaseRepository):
         permissions: set[str],
         actor: str,
     ) -> None:
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         current = self.get_permissions_for_user(user_id)
 
         to_add    = permissions - current
@@ -254,7 +254,7 @@ class PermissionRepository(BaseRepository):
         current = self.get_permissions_for_user(user_id)
         if permission in current:
             return
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -294,7 +294,7 @@ class PermissionRepository(BaseRepository):
         actor: str,
     ) -> None:
         """Entzieht eine einzelne Permission (Soft-Delete)."""
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -309,7 +309,7 @@ class PermissionRepository(BaseRepository):
 
     def revoke_all_permissions_for_user(self, user_id: int, actor: str) -> None:
         """Entzieht alle aktiven Permissions eines Users."""
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         with self.cursor() as cur:
             cur.execute(
                 """

@@ -101,7 +101,7 @@
             <q-item-label>
               <span v-if="istStornoLauf(x)">Storno-Lauf #{{ x.id }} <span class="text-grey-7">→ bucht #{{ x.storno_von_export_id }} gegen</span></span>
               <span v-else>Export #{{ x.id }}</span>
-              · {{ (x.exportiert_am || '').slice(0, 19) }}
+              · {{ formatDateTime(x.exportiert_am) }}
               <q-badge v-if="istStorniert(x)" color="grey-7" text-color="white" class="q-ml-xs">storniert durch #{{ stornoLaufId(x) }}</q-badge>
             </q-item-label>
             <q-item-label caption>
@@ -155,6 +155,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 
