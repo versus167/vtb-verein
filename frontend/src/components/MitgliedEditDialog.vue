@@ -231,7 +231,8 @@
           <q-tab-panel v-if="canSeeFinanzen" name="finanzen" class="q-pa-none">
             <q-card-section>
               <div class="text-subtitle2 q-mb-xs">Beitrags-Sollstellungen</div>
-              <div v-if="mitgliedSollstellungen.length === 0" class="text-grey q-py-sm">Keine Sollstellungen.</div>
+              <div v-if="mitgliedSollstellungen.length === 0 && vorschauPositionen.length === 0"
+                class="text-grey q-py-sm">Keine Sollstellungen.</div>
               <q-list v-else separator dense>
                 <q-item v-for="s in mitgliedSollstellungen" :key="'s'+s.id">
                   <q-item-section>
@@ -255,7 +256,27 @@
                     </div>
                   </q-item-section>
                 </q-item>
+                <!-- Beitragsvorschau aktuelles Quartal: projiziert, noch nicht abgerechnet (Ticket #53) -->
+                <q-item v-for="(p, i) in vorschauPositionen" :key="'v'+i" class="bg-blue-grey-1">
+                  <q-item-section>
+                    <q-item-label class="text-grey-8">
+                      {{ p.beitragsregel_name }} · {{ p.zeitraum }}
+                      <q-badge v-if="p.zahler_typ === 'abteilung'" color="teal" text-color="white" class="q-ml-xs">Abteilung trägt</q-badge>
+                    </q-item-label>
+                    <q-item-label caption>
+                      {{ Number(p.betrag).toFixed(2) }} €<span v-if="p.faelligkeitsdatum"> · fällig {{ p.faelligkeitsdatum }}</span><span v-if="p.anzahl_monate && p.monate_im_zeitraum && p.anzahl_monate < p.monate_im_zeitraum"> · anteilig {{ p.anzahl_monate }}/{{ p.monate_im_zeitraum }} Mon.</span>
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-badge color="blue-grey" text-color="white">
+                      <q-icon name="visibility" size="xs" class="q-mr-xs" />Vorschau
+                    </q-badge>
+                  </q-item-section>
+                </q-item>
               </q-list>
+              <div v-if="vorschauPositionen.length" class="text-caption text-grey-6 q-mt-xs">
+                „Vorschau" = Projektion fürs aktuelle Quartal, noch nicht abgerechnet.
+              </div>
 
               <q-separator class="q-my-md" />
 
@@ -707,6 +728,11 @@ async function loadAll() {
 // Beiträge/Gebühren der Person (read-only) – fehlertolerant nachladen.
 const mitgliedSollstellungen = ref([])
 const mitgliedForderungen = ref([])
+// Beitragsvorschau aktuelles Quartal (Ticket #53): projizierte Positionen, für die
+// noch keine Sollstellung existiert – als "Vorschau" zusätzlich zur realen Liste.
+const mitgliedVorschau = ref([])
+const vorschauPositionen = computed(() =>
+  mitgliedVorschau.value.filter((p) => !p.bereits_vorhanden))
 // Storno/Löschen/Wiederherstellen sind finanzwirksam → an das jeweilige Abrechnen-Recht gebunden.
 const kannBeitragAbrechnen = computed(() => auth.hasPermission('beitraege.abrechnen'))
 const kannGebuehrAbrechnen = computed(() => auth.hasPermission('gebuehren.abrechnen'))
@@ -737,6 +763,10 @@ async function loadFinanzen() {
     if (auth.hasPermission('beitraege.read')) {
       const { data } = await api.get(`/api/beitraege/sollstellungen/mitglied/${id}`)
       mitgliedSollstellungen.value = data
+      try {
+        const { data: vs } = await api.get(`/api/beitraege/vorschau/mitglied/${id}`)
+        mitgliedVorschau.value = vs
+      } catch { mitgliedVorschau.value = [] }
     }
     if (auth.hasPermission('gebuehren.read')) {
       const { data } = await api.get(`/api/gebuehren/forderungen/mitglied/${id}`)

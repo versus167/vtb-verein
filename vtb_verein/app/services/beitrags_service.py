@@ -279,15 +279,17 @@ class BeitragsService:
     def __init__(self, db):
         self.db = db
 
-    def vorschau(self, stichtag_str: str) -> list[VorschauPosition]:
+    def vorschau(self, stichtag_str: str,
+                 mitglied_id: Optional[int] = None) -> list[VorschauPosition]:
         """
         Berechnet welche Sollstellungen für die EINE Periode des Stichtags erzeugt
         würden (je Regel ein Zeitraum). Schreibt nichts in die DB. Genutzt vom
-        Dashboard (Projektion aktuelles Quartal).
+        Dashboard (Projektion aktuelles Quartal) und – mit ``mitglied_id`` – für die
+        Beitragsvorschau eines einzelnen Mitglieds (Mitglied-Editor).
         """
         positionen: list[VorschauPosition] = []
         for regel in self.db.beitragsregeln.list_aktive(stichtag_str):
-            positionen.extend(self._positionen_fuer_regel(regel, stichtag_str))
+            positionen.extend(self._positionen_fuer_regel(regel, stichtag_str, mitglied_id))
         self._attach_mitglied_abteilungen(positionen)
         return positionen
 
@@ -324,10 +326,11 @@ class BeitragsService:
         self._attach_mitglied_abteilungen(eindeutig)
         return eindeutig
 
-    def _positionen_fuer_regel(self, regel: Beitragsregel,
-                               stichtag_str: str) -> list[VorschauPosition]:
+    def _positionen_fuer_regel(self, regel: Beitragsregel, stichtag_str: str,
+                               mitglied_id: Optional[int] = None) -> list[VorschauPosition]:
         """Vorschau-Positionen einer Regel für die Periode des Stichtags (anteilige
-        Monate, Funktions-/Ausnahme-/Alters-Bedingungen). Ohne DB-Schreibzugriff."""
+        Monate, Funktions-/Ausnahme-/Alters-Bedingungen). Ohne DB-Schreibzugriff.
+        Mit ``mitglied_id`` auf dieses eine Mitglied beschränkt."""
         stichtag = date.fromisoformat(stichtag_str)
         zeitraum = zeitraum_label(regel.einzug_turnus, stichtag)
         faellig = faelligkeitsdatum(regel.einzug_turnus, stichtag)
@@ -339,7 +342,7 @@ class BeitragsService:
         # Abteilungs-Mitgliedschaften); Treffer-Monate werden vereinigt.
         aktiv_pro_mitglied: dict[int, dict] = {}
         for mitglied in self._betroffene_mitglieder(
-                regel, stichtag_str, periode_start, periode_ende):
+                regel, stichtag_str, periode_start, periode_ende, mitglied_id):
             von = parse_datum(mitglied.get('aktiv_von'))
             bis = parse_datum(mitglied.get('aktiv_bis'))
             # Vereinsaustritt deckelt das Abteilungs-Intervall, auch wenn die
@@ -550,10 +553,12 @@ class BeitragsService:
         return funktions_monats_restriktion(regel, mitglied_ids, monate, funktion_rows, abteilung_rows)
 
     def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str,
-                               periode_start: date, periode_ende: date) -> list[dict]:
+                               periode_start: date, periode_ende: date,
+                               mitglied_id: Optional[int] = None) -> list[dict]:
         """
         Ermittelt alle Mitglieder auf die eine Regel zutrifft, inkl. ihres Aktiv-
         Intervalls (`aktiv_von`/`aktiv_bis`) für die anteilige Monatsberechnung.
+        Mit ``mitglied_id`` auf dieses eine Mitglied beschränkt (Einzel-Vorschau).
 
         - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
         - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
@@ -572,6 +577,12 @@ class BeitragsService:
         joins: list[str] = []
         where: list[str] = ["m.deleted_at IS NULL"]
         params: list = []
+
+        # Einzel-Vorschau: nur dieses Mitglied (Klausel + Param zusammen, damit die
+        # Param-Reihenfolge zu den folgenden %s passt).
+        if mitglied_id is not None:
+            where.append("m.id = %s")
+            params.append(mitglied_id)
 
         # Datums-Vorfilter: NULL/leer/ungültig immer einschließen (die maßgebliche
         # Monatsüberlappung rechnet der Service); nur gültige Daten ausserhalb des
