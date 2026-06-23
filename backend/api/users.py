@@ -204,7 +204,8 @@ def create_user(data: UserCreate, user: CurrentUser, db: DB):
 
 @router.put("/{user_id}")
 def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
-    _require_write(user)
+    # Account-Daten ändern: nur mit dem Recht, Berechtigungen zu vergeben.
+    _require_permissions(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
@@ -227,7 +228,8 @@ def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
 
 @router.post("/{user_id}/password")
 def change_password(user_id: int, data: PasswordChange, user: CurrentUser, db: DB):
-    _require_write(user)
+    # Fremdes Account-Passwort setzen: nur mit dem Recht, Berechtigungen zu vergeben.
+    _require_permissions(user)
     service = UserService(db)
     try:
         service.change_password(user_id, data.new_password, updated_by=user.username)

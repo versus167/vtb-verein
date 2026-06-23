@@ -43,7 +43,7 @@ const routes = [
         path: 'users',
         name: 'users',
         component: () => import('pages/UsersPage.vue'),
-        meta: { permission: 'personen.read' },
+        meta: { permission: 'personen.permissions' },
       },
       {
         path: 'personen',
