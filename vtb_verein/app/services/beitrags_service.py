@@ -40,9 +40,10 @@ class VorschauPosition:
 
 @dataclass
 class AbrechnungErgebnis:
-    zeitraum: str
+    zeitraum: str                     # zusammengefasstes Label, z.B. "2026-Q1 – 2026-Q2"
     angelegt: int
     uebersprungen: int                # Duplikate
+    zeitraeume: list[str] = field(default_factory=list)  # tatsächlich neu angelegte Zeiträume
 
 
 @dataclass
@@ -122,6 +123,61 @@ def zeitraum_monate(turnus: str, stichtag: date) -> list[tuple[int, int]]:
         return [(stichtag.year, start + i) for i in range(6)]
     # jahr
     return [(stichtag.year, m) for m in range(1, 13)]
+
+
+# ---------------------------------------------------------------------------
+# Aufhol-Abrechnung: Quartals-Fenster mit harter Untergrenze
+# ---------------------------------------------------------------------------
+
+# Hartes Mindest-Rückgriffsdatum: vor diesem Tag wird NIE eine Sollstellung
+# erzeugt, egal wie weit die Quartals-Rückschau (Einstellung) zurückreicht.
+# Einmaliger Stichtag der Beitrags-Ersterfassung – bewusst Code-Konstante, kein
+# Setting (kann später zum Setting werden, wenn nötig).
+RUECKGRIFF_MINIMUM = date(2026, 4, 1)
+
+
+def quartal_start(d: date) -> date:
+    """Erster Tag des Quartals, in dem `d` liegt."""
+    monat = ((d.month - 1) // 3) * 3 + 1
+    return date(d.year, monat, 1)
+
+
+def quartal_verschieben(q_start: date, anzahl: int) -> date:
+    """Verschiebt einen Quartals-Start um `anzahl` Quartale (negativ = zurück)."""
+    monate = q_start.year * 12 + (q_start.month - 1) + anzahl * 3
+    return date(monate // 12, monate % 12 + 1, 1)
+
+
+def aufhol_quartale(bis: date, quartale_rueckschau: int) -> list[date]:
+    """Quartals-Startdaten vom (aktuellen Quartal − Rückschau) bis zum aktuellen
+    Quartal des Stichtags `bis` – nie vor `RUECKGRIFF_MINIMUM`.
+
+    `quartale_rueckschau` = Anzahl der Quartale VOR dem aktuellen, die mitgenommen
+    werden (0 = nur aktuelles Quartal). Negative Werte zählen wie 0.
+    """
+    aktuell = quartal_start(bis)
+    start = max(quartal_verschieben(aktuell, -max(quartale_rueckschau, 0)),
+                quartal_start(RUECKGRIFF_MINIMUM))
+    quartale: list[date] = []
+    q = start
+    while q <= aktuell:
+        quartale.append(q)
+        q = quartal_verschieben(q, 1)
+    return quartale
+
+
+def perioden_im_quartal(turnus: str, q_start: date) -> list[date]:
+    """Stichtage (je ein Periodenstart) des Turnus, die in das Quartal `q_start` fallen.
+
+    - monat        → die drei Monatsanfänge des Quartals
+    - quartal      → der Quartalsanfang
+    - halbjahr/jahr→ der Quartalsanfang (degeneriert; die exists()-Duplikatsperre
+      verhindert Mehrfach-Sollstellungen für denselben Halbjahres-/Jahres-Zeitraum).
+      Kommt im Verein nicht vor – Quartal ist der längste genutzte Turnus.
+    """
+    if turnus == 'monat':
+        return [date(q_start.year, q_start.month + i, 1) for i in range(3)]
+    return [q_start]
 
 
 def parse_datum(s: Optional[str]) -> Optional[date]:
@@ -225,93 +281,140 @@ class BeitragsService:
 
     def vorschau(self, stichtag_str: str) -> list[VorschauPosition]:
         """
-        Berechnet welche Sollstellungen für den Stichtag erzeugt werden würden.
-        Schreibt nichts in die DB.
+        Berechnet welche Sollstellungen für die EINE Periode des Stichtags erzeugt
+        würden (je Regel ein Zeitraum). Schreibt nichts in die DB. Genutzt vom
+        Dashboard (Projektion aktuelles Quartal).
         """
-        stichtag = date.fromisoformat(stichtag_str)
-        regeln = self.db.beitragsregeln.list_aktive(stichtag_str)
-        positionen = []
-
-        for regel in regeln:
-            zeitraum = zeitraum_label(regel.einzug_turnus, stichtag)
-            faellig = faelligkeitsdatum(regel.einzug_turnus, stichtag)
-            monate = zeitraum_monate(regel.einzug_turnus, stichtag)
-            periode_start = date(monate[0][0], monate[0][1], 1)
-            periode_ende = _letzter_tag(monate[-1][0], monate[-1][1])
-
-            # Ein Mitglied kann mehrere Aktiv-Intervalle haben (z.B. mehrere
-            # Abteilungs-Mitgliedschaften); Treffer-Monate werden vereinigt.
-            aktiv_pro_mitglied: dict[int, dict] = {}
-            for mitglied in self._betroffene_mitglieder(
-                    regel, stichtag_str, periode_start, periode_ende):
-                von = parse_datum(mitglied.get('aktiv_von'))
-                bis = parse_datum(mitglied.get('aktiv_bis'))
-                # Vereinsaustritt deckelt das Abteilungs-Intervall, auch wenn die
-                # Mitgliedschaft selbst kein Ende-Datum hat.
-                verein_bis = parse_datum(mitglied.get('verein_bis'))
-                if verein_bis is not None and (bis is None or verein_bis < bis):
-                    bis = verein_bis
-                eintrag = aktiv_pro_mitglied.setdefault(
-                    mitglied['id'], {'mitglied': mitglied, 'monate': set()})
-                eintrag['monate'] |= aktive_monate_menge(monate, von, bis)
-
-            # Funktions-/Ausnahme-Bedingungen wirken zeitraumgenau auf die Monate
-            # (nicht mehr als Ja/Nein-Filter zum heutigen Tag): Einschluss schränkt die
-            # berechneten Monate ein, Ausnahme zieht Monate ab.
-            if regel.bedingung_funktionen or regel.ausnahme_funktionen:
-                restriktion = self._funktions_restriktion(
-                    regel, set(aktiv_pro_mitglied), monate)
-                for mid, eintrag in aktiv_pro_mitglied.items():
-                    r = restriktion.get(mid, {})
-                    if r.get('incl') is not None:
-                        eintrag['monate'] &= r['incl']
-                    if r.get('excl'):
-                        eintrag['monate'] -= r['excl']
-
-            for mid, eintrag in aktiv_pro_mitglied.items():
-                anzahl = len(eintrag['monate'])
-                if anzahl == 0:
-                    continue  # im Abrechnungszeitraum nicht aktiv → keine Forderung
-                mitglied = eintrag['mitglied']
-                # betrag_pro_monat × volle Monate – immer ganze Cent, keine Rundung nötig.
-                betrag = round(regel.betrag_pro_monat * anzahl, 2)
-                bereits = self.db.sollstellungen.exists(mid, regel.id, zeitraum)
-                positionen.append(VorschauPosition(
-                    mitglied_id=mid,
-                    mitglied_vorname=mitglied['vorname'],
-                    mitglied_nachname=mitglied['nachname'],
-                    mitglied_iban=mitglied.get('iban'),
-                    beitragsregel_id=regel.id,
-                    beitragsregel_name=regel.name,
-                    beitragsregel_abteilung_id=regel.abteilung_id,
-                    beitragsregel_abteilung_name=regel.abteilung_name,
-                    betrag=betrag,
-                    zahler_typ=regel.zahler_typ,
-                    zeitraum=zeitraum,
-                    faelligkeitsdatum=faellig,
-                    bereits_vorhanden=bereits,
-                    anzahl_monate=anzahl,
-                    monate_im_zeitraum=len(monate),
-                ))
-
-        # Abteilungs-Mitgliedschaften der betroffenen Mitglieder nachladen, damit
-        # das Frontend nach "Mitglied gehört zu Abteilung X" filtern kann.
-        mitglied_ids = {p.mitglied_id for p in positionen}
-        if mitglied_ids:
-            mitgliedschaften = self._mitglied_abteilungen(mitglied_ids)
-            for p in positionen:
-                p.mitglied_abteilung_ids = mitgliedschaften.get(p.mitglied_id, [])
-
+        positionen: list[VorschauPosition] = []
+        for regel in self.db.beitragsregeln.list_aktive(stichtag_str):
+            positionen.extend(self._positionen_fuer_regel(regel, stichtag_str))
+        self._attach_mitglied_abteilungen(positionen)
         return positionen
 
-    def abrechnen(self, stichtag_str: str, erstellt_von: str) -> AbrechnungErgebnis:
+    def vorschau_aufholen(self, bis_stichtag_str: str,
+                          quartale_rueckschau: int) -> list[VorschauPosition]:
         """
-        Legt Sollstellungen für den Stichtag an. Überspringt bereits vorhandene
-        Einträge (Duplikat-Schutz). Beiträge werden nie auf Kassen gebucht.
+        Aufhol-Vorschau: alle (noch nicht abgerechneten) Perioden vom (aktuellen
+        Quartal − `quartale_rueckschau`) bis zum Quartal des Stichtags `bis_stichtag_str`
+        – nie vor `RUECKGRIFF_MINIMUM`. Schreibt nichts in die DB.
+
+        Bereits vorhandene Sollstellungen sind als `bereits_vorhanden` markiert; der
+        eigentliche Duplikatschutz greift beim Anlegen in `abrechnen`. Mehrfach
+        erzeugte Positionen (z.B. degenerierter Halbjahres-Turnus über zwei Quartale)
+        werden je (Mitglied, Regel, Zeitraum) entdoppelt.
         """
-        positionen = self.vorschau(stichtag_str)
+        bis = date.fromisoformat(bis_stichtag_str)
+        positionen: list[VorschauPosition] = []
+        for q_start in aufhol_quartale(bis, quartale_rueckschau):
+            q_start_str = q_start.isoformat()
+            for regel in self.db.beitragsregeln.list_aktive(q_start_str):
+                for periode in perioden_im_quartal(regel.einzug_turnus, q_start):
+                    positionen.extend(
+                        self._positionen_fuer_regel(regel, periode.isoformat()))
+
+        gesehen: set[tuple] = set()
+        eindeutig: list[VorschauPosition] = []
+        for p in positionen:
+            schluessel = (p.mitglied_id, p.beitragsregel_id, p.zeitraum)
+            if schluessel in gesehen:
+                continue
+            gesehen.add(schluessel)
+            eindeutig.append(p)
+
+        self._attach_mitglied_abteilungen(eindeutig)
+        return eindeutig
+
+    def _positionen_fuer_regel(self, regel: Beitragsregel,
+                               stichtag_str: str) -> list[VorschauPosition]:
+        """Vorschau-Positionen einer Regel für die Periode des Stichtags (anteilige
+        Monate, Funktions-/Ausnahme-/Alters-Bedingungen). Ohne DB-Schreibzugriff."""
+        stichtag = date.fromisoformat(stichtag_str)
+        zeitraum = zeitraum_label(regel.einzug_turnus, stichtag)
+        faellig = faelligkeitsdatum(regel.einzug_turnus, stichtag)
+        monate = zeitraum_monate(regel.einzug_turnus, stichtag)
+        periode_start = date(monate[0][0], monate[0][1], 1)
+        periode_ende = _letzter_tag(monate[-1][0], monate[-1][1])
+
+        # Ein Mitglied kann mehrere Aktiv-Intervalle haben (z.B. mehrere
+        # Abteilungs-Mitgliedschaften); Treffer-Monate werden vereinigt.
+        aktiv_pro_mitglied: dict[int, dict] = {}
+        for mitglied in self._betroffene_mitglieder(
+                regel, stichtag_str, periode_start, periode_ende):
+            von = parse_datum(mitglied.get('aktiv_von'))
+            bis = parse_datum(mitglied.get('aktiv_bis'))
+            # Vereinsaustritt deckelt das Abteilungs-Intervall, auch wenn die
+            # Mitgliedschaft selbst kein Ende-Datum hat.
+            verein_bis = parse_datum(mitglied.get('verein_bis'))
+            if verein_bis is not None and (bis is None or verein_bis < bis):
+                bis = verein_bis
+            eintrag = aktiv_pro_mitglied.setdefault(
+                mitglied['id'], {'mitglied': mitglied, 'monate': set()})
+            eintrag['monate'] |= aktive_monate_menge(monate, von, bis)
+
+        # Funktions-/Ausnahme-Bedingungen wirken zeitraumgenau auf die Monate
+        # (nicht mehr als Ja/Nein-Filter zum heutigen Tag): Einschluss schränkt die
+        # berechneten Monate ein, Ausnahme zieht Monate ab.
+        if regel.bedingung_funktionen or regel.ausnahme_funktionen:
+            restriktion = self._funktions_restriktion(
+                regel, set(aktiv_pro_mitglied), monate)
+            for mid, eintrag in aktiv_pro_mitglied.items():
+                r = restriktion.get(mid, {})
+                if r.get('incl') is not None:
+                    eintrag['monate'] &= r['incl']
+                if r.get('excl'):
+                    eintrag['monate'] -= r['excl']
+
+        positionen: list[VorschauPosition] = []
+        for mid, eintrag in aktiv_pro_mitglied.items():
+            anzahl = len(eintrag['monate'])
+            if anzahl == 0:
+                continue  # im Abrechnungszeitraum nicht aktiv → keine Forderung
+            mitglied = eintrag['mitglied']
+            # betrag_pro_monat × volle Monate – immer ganze Cent, keine Rundung nötig.
+            betrag = round(regel.betrag_pro_monat * anzahl, 2)
+            bereits = self.db.sollstellungen.exists(mid, regel.id, zeitraum)
+            positionen.append(VorschauPosition(
+                mitglied_id=mid,
+                mitglied_vorname=mitglied['vorname'],
+                mitglied_nachname=mitglied['nachname'],
+                mitglied_iban=mitglied.get('iban'),
+                beitragsregel_id=regel.id,
+                beitragsregel_name=regel.name,
+                beitragsregel_abteilung_id=regel.abteilung_id,
+                beitragsregel_abteilung_name=regel.abteilung_name,
+                betrag=betrag,
+                zahler_typ=regel.zahler_typ,
+                zeitraum=zeitraum,
+                faelligkeitsdatum=faellig,
+                bereits_vorhanden=bereits,
+                anzahl_monate=anzahl,
+                monate_im_zeitraum=len(monate),
+            ))
+        return positionen
+
+    def _attach_mitglied_abteilungen(self, positionen: list[VorschauPosition]) -> None:
+        """Abteilungs-Mitgliedschaften der betroffenen Mitglieder nachladen, damit
+        das Frontend nach "Mitglied gehört zu Abteilung X" filtern kann."""
+        mitglied_ids = {p.mitglied_id for p in positionen}
+        if not mitglied_ids:
+            return
+        mitgliedschaften = self._mitglied_abteilungen(mitglied_ids)
+        for p in positionen:
+            p.mitglied_abteilung_ids = mitgliedschaften.get(p.mitglied_id, [])
+
+    def abrechnen(self, bis_stichtag_str: str, erstellt_von: str,
+                  quartale_rueckschau: int) -> AbrechnungErgebnis:
+        """
+        Holt alle noch nicht abgerechneten Perioden bis zum Quartal des Stichtags
+        nach (Rückschau = `quartale_rueckschau` Quartale, frühestens
+        `RUECKGRIFF_MINIMUM`) und legt die fehlenden Sollstellungen an. Bereits
+        vorhandene werden übersprungen (Duplikat-Schutz). Beiträge werden nie auf
+        Kassen gebucht.
+        """
+        positionen = self.vorschau_aufholen(bis_stichtag_str, quartale_rueckschau)
         angelegt = 0
         uebersprungen = 0
+        zeitraeume: set[str] = set()
 
         for pos in positionen:
             if pos.bereits_vorhanden:
@@ -327,15 +430,18 @@ class BeitragsService:
             )
             self.db.sollstellungen.create(s, created_by=erstellt_von)
             angelegt += 1
+            zeitraeume.add(pos.zeitraum)
 
+        sortiert = sorted(zeitraeume)
+        if len(sortiert) > 1:
+            label = f"{sortiert[0]} – {sortiert[-1]}"
+        else:
+            label = sortiert[0] if sortiert else ''
         return AbrechnungErgebnis(
-            zeitraum=zeitraum_label(
-                self.db.beitragsregeln.list_aktive(stichtag_str)[0].einzug_turnus
-                if positionen else 'quartal',
-                date.fromisoformat(stichtag_str),
-            ),
+            zeitraum=label,
             angelegt=angelegt,
             uebersprungen=uebersprungen,
+            zeitraeume=sortiert,
         )
 
     def dashboard(self, stichtag_str: str) -> DashboardErgebnis:

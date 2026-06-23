@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +343,7 @@ class Database:
             47: self._migrate_v46_to_v47,
             48: self._migrate_v47_to_v48,
             49: self._migrate_v48_to_v49,
+            50: self._migrate_v49_to_v50,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2697,11 +2698,44 @@ class Database:
                 f"CREATE INDEX IF NOT EXISTS idx_{table}_deleted_at ON {table}(deleted_at)"
             )
 
+    def _migrate_v49_to_v50(self) -> None:
+        """Beitragsabrechnung: einstellbare Quartals-Rückschau (Aufhol-Abrechnung).
+
+        Legt die globale Single-Row-Konfig `beitrag_einstellungen` an. `quartale_rueckschau`
+        steuert, wie viele Quartale VOR dem aktuellen eine Abrechnung mitnimmt (Default 1 =
+        Vorquartal als Sicherheitsnetz). Die harte Untergrenze 2026-04-01 lebt als Code-
+        Konstante im BeitragsService und ist hier bewusst nicht abgebildet.
+        """
+        with self.cursor() as cur:
+            self._create_beitrag_einstellungen(cur)
+            cur.execute("UPDATE schema_version SET version = 50 WHERE id = 1")
+
+    @staticmethod
+    def _create_beitrag_einstellungen(cur) -> None:
+        """CREATE der Beitrags-Konfig (Single-Row, idempotent; Fresh-Schema + Migration)."""
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS beitrag_einstellungen (
+              id                  INTEGER PRIMARY KEY DEFAULT 1,
+              quartale_rueckschau INTEGER NOT NULL DEFAULT 1,
+              version             INTEGER NOT NULL DEFAULT 1,
+              created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by          TEXT,
+              updated_at          TEXT,
+              updated_by          TEXT,
+              CHECK (id = 1),
+              CHECK (quartale_rueckschau >= 0)
+            )
+        """)
+        cur.execute(
+            "INSERT INTO beitrag_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
+        )
+
     def _create_schema(self):
         """Erstellt das vollständige Schema auf einer frischen Datenbank."""
         with self.cursor() as cur:
             self._create_tables(cur)
             self._create_prune_einstellungen(cur)
+            self._create_beitrag_einstellungen(cur)
             self._create_trigger_functions(cur)
             self._create_triggers(cur)
             self._create_indexes(cur)
