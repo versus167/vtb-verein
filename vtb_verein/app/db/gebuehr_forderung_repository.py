@@ -32,7 +32,12 @@ class GebuehrForderungRepository(BaseRepository):
     def list_all(self, status: Optional[str] = None) -> list[GebuehrForderung]:
         where = "WHERE f.deleted_at IS NULL"
         params: list = []
-        if status:
+        if status == 'exportiert':
+            # "an Fibu übergeben": exportiert und (noch) nicht storniert – deckt sich
+            # mit dem indigofarbenen Status-Chip in der Forderungsliste. 'offen'/'storniert'
+            # bleiben reine status-Filter.
+            where += " AND f.exportiert_in_export_id IS NOT NULL AND f.status <> 'storniert'"
+        elif status:
             where += " AND f.status = %s"
             params.append(status)
         with self.cursor() as cur:
@@ -118,7 +123,12 @@ class GebuehrForderungRepository(BaseRepository):
     def soft_delete(self, id: int, deleted_by: str) -> bool:
         """Soft-Delete (Papierkorb). Nur offene/stornierte – bezahlte bleiben
         gesperrt. Anders als beim Storno verschwindet die Forderung damit aus
-        der aktiven Sicht und kann über den Papierkorb wiederhergestellt werden."""
+        der aktiven Sicht und kann über den Papierkorb wiederhergestellt werden.
+
+        Bereits an die Fibu übergebene Forderungen (exportiert_in_export_id gesetzt)
+        sind gesperrt: deren Rücknahme läuft ausschließlich über Storno
+        (Gegenbuchung im nächsten Export), sonst gäbe es eine Fibu-Buchung ohne
+        passenden VTB-Beleg."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -126,6 +136,7 @@ class GebuehrForderungRepository(BaseRepository):
                 SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
+                  AND exportiert_in_export_id IS NULL
                 """,
                 (deleted_by, deleted_by, id),
             )

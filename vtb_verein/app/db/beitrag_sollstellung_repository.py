@@ -130,7 +130,12 @@ class BeitragSollstellungRepository(BaseRepository):
         sperrt die Neu-Anlage über exists()). Nur offene/stornierte – bezahlte
         bleiben vorerst gesperrt (bereits bezahlt; werden nicht neu abgerechnet).
         Hinweis: Im Beitragsflow werden keine Kassenbuchungen erzeugt; wie
-        'bezahlt' hier abgebildet wird, ist noch offen."""
+        'bezahlt' hier abgebildet wird, ist noch offen.
+
+        Bereits an die Fibu übergebene Sollstellungen (exportiert_in_export_id
+        gesetzt) sind gesperrt: deren Rücknahme läuft ausschließlich über Storno
+        (Gegenbuchung im nächsten Export), sonst gäbe es eine Fibu-Buchung ohne
+        passenden VTB-Beleg."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -138,6 +143,7 @@ class BeitragSollstellungRepository(BaseRepository):
                 SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
+                  AND exportiert_in_export_id IS NULL
                 """,
                 (deleted_by, deleted_by, id),
             )
