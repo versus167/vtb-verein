@@ -72,9 +72,18 @@
               <div class="row q-gutter-md q-mb-md text-caption">
                 <div><q-badge rounded color="positive" /> Eintritte</div>
                 <div><q-badge rounded color="negative" /> Austritte</div>
+                <div v-if="hatZukunft" class="text-grey-6">
+                  <q-badge rounded color="grey-5" /> Vorschau (geplant)
+                </div>
               </div>
               <div class="entwicklung-chart">
-                <div v-for="e in entwicklungReihe" :key="e.periode" class="entwicklung-jahr">
+                <div
+                  v-for="e in entwicklungReihe"
+                  :key="e.periode"
+                  class="entwicklung-jahr"
+                  :class="{ 'ist-zukunft': e.istZukunft }"
+                  :title="e.istZukunft ? 'geplant / Vorschau' : undefined"
+                >
                   <div class="entwicklung-bars">
                     <div
                       class="entwicklung-bar bg-positive"
@@ -91,7 +100,7 @@
                       <span v-if="e.austritte" class="entwicklung-wert">{{ e.austritte }}</span>
                     </div>
                   </div>
-                  <div class="text-caption text-grey-7 q-mt-xs">{{ e.label }}</div>
+                  <div class="text-caption q-mt-xs" :class="e.istZukunft ? 'text-grey-5' : 'text-grey-7'">{{ e.label }}</div>
                 </div>
               </div>
             </q-card-section>
@@ -180,14 +189,27 @@ const kpiCards = computed(() => {
   ]
 })
 
+// Periode-Schlüssel des aktuellen Monats ('YYYY-MM'); Monate danach sind Vorschau.
+// Nur die Monatsansicht blickt in die Zukunft (Backend: _MONATS_VORLAUF), die
+// Jahresansicht endet im laufenden Jahr – daher dort nie 'istZukunft'.
+function istZukunftsperiode(periode) {
+  if (entwicklungGran.value !== 'monat') return false
+  const now = new Date()
+  const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  return periode > key
+}
+
 const entwicklungReihe = computed(() =>
   (data.value?.entwicklung?.[entwicklungGran.value] || []).map((e) => ({
     ...e,
+    istZukunft: istZukunftsperiode(e.periode),
     label: entwicklungGran.value === 'monat'
       ? MONATE_KURZ[Number(e.periode.slice(5, 7)) - 1]
       : e.periode,
   })),
 )
+
+const hatZukunft = computed(() => entwicklungReihe.value.some((e) => e.istZukunft))
 
 const entwicklungMax = computed(() =>
   Math.max(1, ...entwicklungReihe.value.flatMap((e) => [e.eintritte, e.austritte])),
@@ -263,5 +285,22 @@ onMounted(load)
   font-size: 0.7rem;
   color: white;
   padding-top: 2px;
+}
+/* Vorschau-Monate (Zukunft): gedimmt + gestrichelte Trennlinie zum "Heute"-Übergang.
+   (opacity am Balken vererbt sich auf die Wert-Beschriftung.) */
+.entwicklung-jahr.ist-zukunft .entwicklung-bar {
+  opacity: 0.4;
+}
+.entwicklung-jahr.ist-zukunft {
+  position: relative;
+}
+/* Trennlinie nur am ersten Zukunftsmonat (Übergang Gegenwart → Vorschau). */
+.entwicklung-jahr:not(.ist-zukunft) + .entwicklung-jahr.ist-zukunft::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 18px;
+  border-left: 1px dashed #9e9e9e;
 }
 </style>
