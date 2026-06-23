@@ -15,6 +15,11 @@ from datetime import date
 
 from app.db.base_repository import BaseRepository
 
+# Die 12-Monats-Entwicklung blickt bewusst 3 Monate in die Zukunft (Ticket #56):
+# vorerfasste Ein-/Austritte (Kündigung zum Quartals-/Jahresende, geplanter Eintritt)
+# sollen sichtbar sein. Fenster damit: aktueller Monat -8 … +3 (weiterhin 12 Monate).
+_MONATS_VORLAUF = 3
+
 # "aktuell aktiv": Status aktiv UND Austritt nicht abgelaufen (am Austrittstag noch
 # Mitglied → >= CURRENT_DATE). Mitglieder mit künftigem Eintritt bleiben hier drin.
 _AKTIV = (
@@ -107,19 +112,20 @@ class StatistikRepository(BaseRepository):
 
     def mitglieder_entwicklung(self, granularitaet: str = "jahr", anzahl: int = 12,
                                abteilung_id: int | None = None) -> list[dict]:
-        """Zu- und Abgänge je Periode für die letzten `anzahl` Perioden.
+        """Zu- und Abgänge je Periode.
 
-        granularitaet='jahr'  → Kalenderjahre, periode 'YYYY'
-        granularitaet='monat' → Monate,        periode 'YYYY-MM'
+        granularitaet='jahr'  → die letzten `anzahl` Kalenderjahre, periode 'YYYY'
+        granularitaet='monat' → `anzahl` Monate, periode 'YYYY-MM'; das Fenster reicht
+                                 ``_MONATS_VORLAUF`` Monate in die Zukunft (aktuell -8 … +3).
 
         Mit ``abteilung_id`` zählen Ein-/Austritte über das Abteilungsdatum
         (``von``/``bis``) mit Fallback auf das Vereinsdatum (s. ``_scope``).
-        Leere/ungültige Datumsfelder werden per Regex-Guard ausgeklammert;
-        die Periodenliste begrenzt das Fenster (zukünftige Daten fallen raus).
+        Leere/ungültige Datumsfelder werden per Regex-Guard ausgeklammert; die
+        Periodenliste begrenzt das Fenster (Daten außerhalb fallen raus).
         """
         if granularitaet == "monat":
             laenge, guard = 7, r"^\d{4}-\d{2}$"
-            perioden = self._letzte_monate(anzahl)
+            perioden = self._monatsfenster(anzahl, _MONATS_VORLAUF)
         else:
             laenge, guard = 4, r"^\d{4}$"
             perioden = self._letzte_jahre(anzahl)
@@ -161,10 +167,14 @@ class StatistikRepository(BaseRepository):
         return [str(bis - i) for i in range(anzahl - 1, -1, -1)]
 
     @staticmethod
-    def _letzte_monate(anzahl: int) -> list[str]:
-        """Die letzten `anzahl` Monate als 'YYYY-MM', aufsteigend (inkl. aktuellem Monat)."""
+    def _monatsfenster(anzahl: int, vorlauf: int = 0) -> list[str]:
+        """`anzahl` Monate als 'YYYY-MM', aufsteigend; das Fenster endet `vorlauf`
+        Monate in der Zukunft (vorlauf=0 → bis einschließlich aktuellem Monat).
+
+        Beispiel: anzahl=12, vorlauf=3 → aktueller Monat -8 … +3.
+        """
         heute = date.today()
-        basis = heute.year * 12 + (heute.month - 1)
+        basis = heute.year * 12 + (heute.month - 1) + vorlauf
         monate = []
         for i in range(anzahl - 1, -1, -1):
             jahr, monat = divmod(basis - i, 12)
