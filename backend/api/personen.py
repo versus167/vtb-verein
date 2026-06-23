@@ -124,6 +124,11 @@ def _require_delete(user):
     if not user.has_permission(Permission.PERSONEN_DELETE):
         raise HTTPException(status_code=403, detail="Keine Löschberechtigung")
 
+def _require_permissions(user):
+    """Recht, Berechtigungen zu vergeben – Gate für das Anlegen von Login-Accounts."""
+    if not user.has_permission(Permission.PERSONEN_PERMISSIONS):
+        raise HTTPException(status_code=403, detail="Nur mit dem Recht, Berechtigungen zu vergeben, dürfen Login-Accounts angelegt werden")
+
 
 def _require_eintrittsdatum(value):
     """Ein Vereinsmitglied muss immer ein Eintrittsdatum haben (Ticket #29)."""
@@ -380,12 +385,13 @@ def list_deleted_personen(user: CurrentUser, db: DB):
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
-    _require_write(user)
     data.iban = iban_or_422(data.iban)
     role = authorize_role_assignment(user, data.role)
     service = PersonService(db)
     try:
         if data.vorname and data.nachname:
+            # Reine Mitglieds-Anlage (kein Login-Account) – Schreibrecht genügt.
+            _require_write(user)
             _require_eintrittsdatum(data.eintrittsdatum)
             mitglied_data = {
                 'geburtsdatum': data.geburtsdatum, 'geschlecht': data.geschlecht,
@@ -406,6 +412,8 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
             funktionen = db.list_mitglied_funktionen(m.id)
             return _person_row(None, m, abteilungen, funktionen)
         else:
+            # Login-Account anlegen: nur mit dem Recht, Berechtigungen zu vergeben.
+            _require_permissions(user)
             if not data.username:
                 raise HTTPException(status_code=400, detail="Username ist pflicht für Benutzer ohne Mitglied-Datensatz")
             u = service.create_user_only(
@@ -563,7 +571,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
 def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate,
                                 user: CurrentUser, db: DB):
     """Legt einen Login-Account für ein bestehendes Mitglied ohne User-Konto an."""
-    _require_write(user)
+    _require_permissions(user)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:
