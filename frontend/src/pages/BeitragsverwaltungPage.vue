@@ -454,6 +454,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -953,6 +954,8 @@ async function loadOptionen() {
   abteilungOptions.value = ab
 }
 
+usePageRefresh(() => Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard(),
+  ladeZeitraeume(), ladeEinstellungen()]))
 onMounted(async () => {
   await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard(),
     ladeZeitraeume(), ladeEinstellungen()])

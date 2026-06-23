@@ -155,6 +155,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import StatBalken from 'src/components/StatBalken.vue'
@@ -246,6 +247,7 @@ async function load() {
   }
 }
 
+usePageRefresh(load)
 onMounted(load)
 </script>
 

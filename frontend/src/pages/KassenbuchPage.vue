@@ -46,6 +46,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 
@@ -70,5 +71,6 @@ async function loadKassen() {
   }
 }
 
+usePageRefresh(loadKassen)
 onMounted(loadKassen)
 </script>

@@ -72,6 +72,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 
@@ -183,6 +184,7 @@ function reload() {
   onRequest({ pagination: { ...pagination.value, page: 1 } })
 }
 
+usePageRefresh(reload)
 onMounted(() => {
   loadUsernames()
   reload()

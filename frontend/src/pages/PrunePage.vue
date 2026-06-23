@@ -142,6 +142,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 
@@ -234,5 +235,6 @@ async function execute() {
   }
 }
 
+usePageRefresh(reload)
 onMounted(reload)
 </script>

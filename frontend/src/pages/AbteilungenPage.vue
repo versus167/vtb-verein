@@ -139,6 +139,7 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -287,5 +288,6 @@ function confirmRestore(row) {
   })
 }
 
+usePageRefresh(load)
 onMounted(load)
 </script>

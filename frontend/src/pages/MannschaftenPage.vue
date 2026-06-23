@@ -182,6 +182,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -248,6 +249,7 @@ async function load() {
     loading.value = false
   }
 }
+usePageRefresh(load)
 onMounted(load)
 
 // ── Mannschaft anlegen/bearbeiten ──────────────────────────

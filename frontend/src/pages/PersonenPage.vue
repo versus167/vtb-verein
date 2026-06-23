@@ -539,6 +539,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -1238,6 +1239,7 @@ async function openHistoryDialog(row) {
   }
 }
 
+usePageRefresh(() => Promise.all([loadPersonen(), loadFunktionOptionen(), loadAlleAbteilungen()]))
 onMounted(() => {
   loadPersonen()
   loadFunktionOptionen()

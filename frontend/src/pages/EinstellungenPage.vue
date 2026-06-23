@@ -107,6 +107,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import PermissionMatrix from 'src/components/PermissionMatrix.vue'
@@ -229,5 +230,6 @@ function confirmDelete(f) {
   })
 }
 
+usePageRefresh(loadFunktionen)
 onMounted(loadFunktionen)
 </script>

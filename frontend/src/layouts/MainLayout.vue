@@ -7,6 +7,14 @@
           VTB
           <span v-if="appVersion" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
         </q-toolbar-title>
+        <q-btn
+          v-if="hasHandler"
+          flat dense round icon="refresh"
+          :loading="refreshing"
+          @click="triggerRefresh"
+        >
+          <q-tooltip>Aktualisieren</q-tooltip>
+        </q-btn>
         <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
@@ -268,11 +276,15 @@ import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
+import { useRefreshControl, installAutoRefresh } from 'src/composables/useRefresh'
 
 const router = useRouter()
 const auth = useAuthStore()
 const $q = useQuasar()
 const drawer = ref($q.screen.gt.sm)
+
+// Refresh der aktuell sichtbaren Listen-Seite (Button + Auto bei App-Fokus).
+const { refreshing, hasHandler, triggerRefresh } = useRefreshControl()
 
 const darkModeIcon = computed(() => {
   const v = $q.dark.mode
@@ -354,6 +366,7 @@ function triggerInstall() {
 }
 
 onMounted(() => {
+  installAutoRefresh()
   loadKassenZugriff()
   loadAppVersion()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches

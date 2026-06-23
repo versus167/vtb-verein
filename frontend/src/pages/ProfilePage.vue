@@ -292,6 +292,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -541,6 +542,7 @@ function onRevokeOthers() {
   })
 }
 
+usePageRefresh(() => Promise.all([load(), loadSessions()]))
 onMounted(() => {
   load()
   loadSessions()
