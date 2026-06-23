@@ -524,7 +524,7 @@ function fibuStatus(row) {
       : { label: 'storniert', color: 'grey' }
   }
   if (row.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
-  return { label: 'offen', color: 'orange' }
+  return { label: 'erstellt', color: 'orange' }
 }
 
 // ── Dashboard (Projektion aktuelles Quartal) ───────────────
@@ -834,7 +834,7 @@ const sollSuche = ref('')
 const sollFibuFilter = ref('')
 const sollFibuFilterOptionen = [
   { label: 'Alle', value: '' },
-  { label: 'Offen', value: 'offen' },
+  { label: 'Erstellt', value: 'offen' },
   { label: 'An Fibu übergeben', value: 'exportiert' },
   { label: 'Storniert', value: 'storniert' },
 ]

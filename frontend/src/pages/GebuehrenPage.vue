@@ -203,7 +203,7 @@ const abteilungen = ref([])
 
 const statusFilter = ref('offen')
 const statusFilterOptionen = [
-  { label: 'Offen', value: 'offen' },
+  { label: 'Erstellt', value: 'offen' },
   { label: 'An Fibu übergeben', value: 'exportiert' },
   { label: 'Storniert', value: 'storniert' },
   { label: 'Alle', value: '' },
@@ -219,7 +219,7 @@ function fibuStatus(f) {
       : { label: 'storniert', color: 'grey' }
   }
   if (f.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
-  return { label: 'offen', color: 'orange' }
+  return { label: 'erstellt', color: 'orange' }
 }
 
 async function loadKatalog() {
