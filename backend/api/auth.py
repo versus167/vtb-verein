@@ -21,6 +21,17 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _ts_iso(v):
+    """Zeitstempel robust als ISO-String fürs JSON.
+
+    Seit der TIMESTAMPTZ-Umstellung (Schema v51) liefern die migrierten Audit-Spalten
+    (z.B. users.last_login/last_seen, user_sessions.created_at) datetime-Objekte,
+    verbliebene TEXT-Spalten weiterhin Strings. Die str-typisierten Response-Modelle
+    (UserInfo/SessionInfo) würden an einem datetime scheitern – hier vereinheitlicht.
+    Das Frontend (formatDateTime) versteht beide ISO-Varianten."""
+    return v.isoformat() if isinstance(v, datetime) else v
+
+
 def _log_access(db, request: Request, event_type: str, **kwargs) -> None:
     """Schreibt einen Auth-Eintrag ins Zugriffsprotokoll – best-effort.
 
@@ -158,8 +169,8 @@ def get_me(user: CurrentUser, db: DB):
         email=fresh.email,
         role=fresh.role,
         permissions=list(fresh.permissions),
-        last_login=fresh.last_login,
-        last_seen=fresh.last_seen,
+        last_login=_ts_iso(fresh.last_login),
+        last_seen=_ts_iso(fresh.last_seen),
         version=fresh.version,
         matrix_id=fresh.matrix_id,
         preferred_contact=fresh.preferred_contact,
@@ -252,9 +263,9 @@ def list_my_sessions(user: CurrentUser, sid: CurrentSessionId, db: DB):
             device_label=row["device_label"],
             user_agent=row["user_agent"],
             ip=row["ip"],
-            created_at=row["created_at"],
-            last_seen_at=row["last_seen_at"],
-            expires_at=row["expires_at"],
+            created_at=_ts_iso(row["created_at"]),
+            last_seen_at=_ts_iso(row["last_seen_at"]),
+            expires_at=_ts_iso(row["expires_at"]),
             current=(sid is not None and row["sid"] == sid),
         )
         for row in db.user_session_repository.list_active_for_user(user.id)

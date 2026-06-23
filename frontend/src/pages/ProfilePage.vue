@@ -32,7 +32,7 @@
                 <q-item-section side style="min-width: 140px">
                   <span class="text-weight-medium">Letzter Login</span>
                 </q-item-section>
-                <q-item-section>{{ me?.last_login ?? 'Noch nie' }}</q-item-section>
+                <q-item-section>{{ me?.last_login ? fmt(me.last_login) : 'Noch nie' }}</q-item-section>
               </q-item>
             </q-list>
           </q-card-section>
