@@ -186,6 +186,37 @@ def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
     ]
 
 
+@router.get("/vorschau/mitglied/{mitglied_id}")
+def vorschau_mitglied(mitglied_id: int, user: CurrentUser, db: DB,
+                      stichtag: Optional[str] = None):
+    """Beitragsvorschau eines Mitglieds für die aktuelle Periode (Projektion
+    aktuelles Quartal, je Regel deren laufende Periode) – ohne DB-Schreibzugriff.
+
+    ``bereits_vorhanden`` markiert Positionen, für die schon eine Sollstellung
+    existiert; das Frontend zeigt nur die übrigen als „Vorschau" zusätzlich zur
+    realen Sollstellungsliste an."""
+    _require_read(user)
+    if not stichtag:
+        stichtag = date.today().isoformat()
+    positionen = BeitragsService(db).vorschau(stichtag, mitglied_id=mitglied_id)
+    return [
+        {
+            'beitragsregel_id': p.beitragsregel_id,
+            'beitragsregel_name': p.beitragsregel_name,
+            'abteilung_id': p.beitragsregel_abteilung_id,
+            'abteilung_name': p.beitragsregel_abteilung_name,
+            'betrag': p.betrag,
+            'zahler_typ': p.zahler_typ,
+            'zeitraum': p.zeitraum,
+            'faelligkeitsdatum': p.faelligkeitsdatum,
+            'bereits_vorhanden': p.bereits_vorhanden,
+            'anzahl_monate': p.anzahl_monate,
+            'monate_im_zeitraum': p.monate_im_zeitraum,
+        }
+        for p in positionen
+    ]
+
+
 @router.get("/dashboard")
 def dashboard(user: CurrentUser, db: DB, stichtag: Optional[str] = None):
     _require_read(user)

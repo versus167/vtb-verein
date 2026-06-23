@@ -145,7 +145,7 @@ class TestVorschauAnteilig:
         )
         svc = BeitragsService(db)
         # DB-abhängige Helfer durch die vorbereiteten Daten ersetzen.
-        svc._betroffene_mitglieder = lambda r, s, ps, pe: rows
+        svc._betroffene_mitglieder = lambda r, s, ps, pe, mid=None: rows
         svc._mitglied_abteilungen = lambda ids: {}
         return svc
 
@@ -287,7 +287,7 @@ class TestVorschauMitFunktionen:
             sollstellungen=SimpleNamespace(exists=lambda mid, rid, z: False),
         )
         svc = BeitragsService(db)
-        svc._betroffene_mitglieder = lambda r, s, ps, pe: rows
+        svc._betroffene_mitglieder = lambda r, s, ps, pe, mid=None: rows
         svc._mitglied_abteilungen = lambda ids: {}
         svc._funktion_intervalle = lambda ids, fn: [
             r for r in funktion_rows if r['mitglied_id'] in ids and r['funktion'] in fn]
@@ -393,6 +393,21 @@ class TestBetroffeneMitgliederSQL:
         assert 'm.austrittsdatum IS NULL' in sql
         assert 'm.eintrittsdatum IS NULL' in sql
         assert 'NOT (m.austrittsdatum' not in sql
+
+    def test_einzel_vorschau_filtert_auf_mitglied(self):
+        # Einzel-Vorschau (Ticket #53): mitglied_id grenzt direkt in der SQL ein,
+        # als erster Parameter (Klausel direkt nach 'm.deleted_at IS NULL').
+        cur = _FakeCursor()
+        db = SimpleNamespace(conn=SimpleNamespace(cursor=lambda: cur))
+        BeitragsService(db)._betroffene_mitglieder(
+            Beitragsregel(id=2, abteilung_id=None, einzug_turnus='quartal'),
+            '2026-04-15', date(2026, 4, 1), date(2026, 6, 30), 42)
+        assert 'm.id = %s' in cur.sql
+        assert cur.params[0] == 42
+
+    def test_ohne_mitglied_kein_id_filter(self):
+        sql = self._sql_fuer(Beitragsregel(id=2, abteilung_id=None, einzug_turnus='quartal'))
+        assert 'm.id = %s' not in sql
 
 
 class TestDashboardAggregation:
@@ -515,7 +530,7 @@ class TestVorschauAufholen:
             sollstellungen=SimpleNamespace(exists=lambda mid, rid, z: z in vorhanden),
         )
         svc = BeitragsService(db)
-        svc._betroffene_mitglieder = lambda r, s, ps, pe: rows
+        svc._betroffene_mitglieder = lambda r, s, ps, pe, mid=None: rows
         svc._mitglied_abteilungen = lambda ids: {}
         return svc
 
