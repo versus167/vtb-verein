@@ -2,7 +2,7 @@
   <q-page padding>
     <div class="row items-center q-mb-md">
       <div class="text-h5 col">Benutzerverwaltung</div>
-      <q-btn label="Neu" icon="add" color="primary" unelevated @click="openCreateDialog" />
+      <q-btn v-if="canManageUsers" label="Neu" icon="add" color="primary" unelevated @click="openCreateDialog" />
     </div>
 
     <q-table
@@ -148,6 +148,8 @@ import { useAuthStore } from 'src/stores/auth'
 const $q = useQuasar()
 const router = useRouter()
 const auth = useAuthStore()
+// Login-Accounts darf nur anlegen, wer Berechtigungen vergeben darf.
+const canManageUsers = computed(() => auth.hasPermission('personen.permissions'))
 
 const users = ref([])
 const loading = ref(false)

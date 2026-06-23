@@ -183,7 +183,8 @@ def get_user(user_id: int, user: CurrentUser, db: DB):
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_user(data: UserCreate, user: CurrentUser, db: DB):
-    _require_write(user)
+    # Login-Account anlegen: nur mit dem Recht, Berechtigungen zu vergeben.
+    _require_permissions(user)
     role = authorize_role_assignment(user, data.role)
     service = UserService(db)
     try:

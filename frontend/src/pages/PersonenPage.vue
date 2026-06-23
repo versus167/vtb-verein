@@ -93,7 +93,7 @@
             @click="openEditUserDialog(p)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied && !p.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
+          <q-btn v-if="canManageUsers && p.mitglied && !p.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
             @click="openNutzerDialog(p)">
             <q-tooltip>Login-Account anlegen</q-tooltip>
           </q-btn>
@@ -248,7 +248,7 @@
             @click="openEditUserDialog(props.row)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-if="props.row.mitglied && !props.row.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
+          <q-btn v-if="canManageUsers && props.row.mitglied && !props.row.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
             @click="openNutzerDialog(props.row)">
             <q-tooltip>Login-Account anlegen</q-tooltip>
           </q-btn>
@@ -302,7 +302,7 @@
         <q-separator />
         <q-tabs v-model="createTab" dense align="left" class="q-px-md">
           <q-tab name="mitglied" label="Vereinsmitglied" icon="person" />
-          <q-tab name="user" label="Benutzer/Admin" icon="manage_accounts" />
+          <q-tab v-if="canManageUsers" name="user" label="Benutzer/Admin" icon="manage_accounts" />
         </q-tabs>
         <q-separator />
         <q-card-section class="q-gutter-sm" style="max-height:70vh;overflow-y:auto">
@@ -714,6 +714,8 @@ function formatDate(iso) {
 // Seit Stufe D (siehe BERECHTIGUNGEN.md) gibt es nur noch 'admin'/'mitglied'.
 // Statt einer Rollen-Auswahl ein Administrator-Schalter (nur für Admins sichtbar).
 const canAssignAdmin = computed(() => auth.user?.role === 'admin')
+// Login-Accounts darf nur anlegen, wer Berechtigungen vergeben darf.
+const canManageUsers = computed(() => auth.hasPermission('personen.permissions'))
 const mitgliedStatusOptions = [
   { label: 'Aktiv',           value: 'aktiv' },
   { label: 'Passiv',          value: 'passiv' },
