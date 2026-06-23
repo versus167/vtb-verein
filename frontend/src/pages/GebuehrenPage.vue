@@ -189,6 +189,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -234,6 +235,7 @@ async function loadForderungen() {
   const { data } = await api.get('/api/gebuehren/forderungen', { params })
   forderungen.value = data
 }
+usePageRefresh(() => Promise.all([loadKatalog(), loadForderungen()]))
 onMounted(async () => {
   try { await loadKatalog(); await loadForderungen() }
   catch { $q.notify({ type: 'negative', message: 'Fehler beim Laden' }) }

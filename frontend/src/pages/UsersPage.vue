@@ -140,6 +140,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -319,5 +320,6 @@ function goToPermissions(row) {
   router.push({ name: 'user-permissions', params: { id: row.id } })
 }
 
+usePageRefresh(loadUsers)
 onMounted(loadUsers)
 </script>

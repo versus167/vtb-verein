@@ -428,6 +428,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -853,19 +854,25 @@ async function doStatusChange(newStatus) {
 }
 
 // ── Anhänge ────────────────────────────────────────────────────────────────
+// Hilfsfunktion: anhang_count im selektierten Ticket UND in der Listenzeile
+// synchron halten (sonst zeigt die Liste einen veralteten Zähler – siehe #54).
+function setAnhangCount(count) {
+  if (!selectedTicket.value) return
+  const safe = Math.max(0, count)
+  selectedTicket.value = { ...selectedTicket.value, anhang_count: safe }
+  const idx = tickets.value.findIndex(t => t.id === selectedTicket.value.id)
+  if (idx >= 0) tickets.value[idx] = { ...tickets.value[idx], anhang_count: safe }
+}
+
 function onAnhangUploaded(newAnhang) {
   isDraftTicket.value = false
   detailAnhaenge.value = [...detailAnhaenge.value, newAnhang]
-  if (selectedTicket.value) {
-    selectedTicket.value = { ...selectedTicket.value, anhang_count: (selectedTicket.value.anhang_count || 0) + 1 }
-  }
+  setAnhangCount((selectedTicket.value?.anhang_count || 0) + 1)
 }
 
 function onAnhangDeleted(anhangId) {
   detailAnhaenge.value = detailAnhaenge.value.filter(a => a.id !== anhangId)
-  if (selectedTicket.value?.anhang_count > 0) {
-    selectedTicket.value = { ...selectedTicket.value, anhang_count: selectedTicket.value.anhang_count - 1 }
-  }
+  setAnhangCount((selectedTicket.value?.anhang_count || 0) - 1)
 }
 
 // ── Kommentare ─────────────────────────────────────────────────────────────
@@ -917,6 +924,7 @@ async function deleteKommentar(k) {
     })
 }
 
+usePageRefresh(loadAll)
 onMounted(() => {
   loadAll()
   window.addEventListener('vtb:ticket-created', loadAll)

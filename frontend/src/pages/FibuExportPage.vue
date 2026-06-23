@@ -153,6 +153,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { formatDateTime } from 'src/utils/datetime'
@@ -295,6 +296,7 @@ async function saveEinstellungen() {
   finally { speichere.value = false }
 }
 
+usePageRefresh(() => Promise.all([loadVorschau(), loadExporte(), loadEinstellungen()]))
 onMounted(async () => {
   try { await Promise.all([loadVorschau(), loadExporte(), loadEinstellungen()]) }
   catch { $q.notify({ type: 'negative', message: 'Fehler beim Laden' }) }
