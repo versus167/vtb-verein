@@ -415,8 +415,11 @@
       </q-card>
     </q-dialog>
 
-    <!-- Mitglied-Bearbeiten-Dialog (Schlüsselung direkt in der Vorschau korrigieren) -->
-    <MitgliedEditDialog v-model="editMitgliedOpen" :mitglied-id="editMitgliedId"
+    <!-- Mitglied-Bearbeiten-Dialog (Schlüsselung direkt in der Vorschau korrigieren).
+         person-mode: identischer Dialog wie in der Personenliste (Kontakte/Mannschaften-Tabs,
+         Mitgliedsnr./E-Mail auf Personenebene ausgeblendet). Ohne userId speichert er über
+         den direkten /api/personen/mitglied/{id}-Endpoint (deckt Login- und Nicht-Login-Mitglieder ab). -->
+    <MitgliedEditDialog v-model="editMitgliedOpen" person-mode :mitglied-id="editMitgliedId"
       :mitglied-name="editMitgliedName" @saved="ladeVorschau" />
   </q-page>
 </template>
