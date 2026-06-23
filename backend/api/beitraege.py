@@ -249,6 +249,19 @@ def list_sollstellungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     return [_soll_dict(s) for s in db.sollstellungen.list_by_mitglied(mitglied_id)]
 
 
+@router.get("/sollstellungen/papierkorb")
+def list_sollstellungen_papierkorb(user: CurrentUser, db: DB):
+    """Papierkorb: gelöschte Sollstellungen (vereinsweit)."""
+    _require_read(user)
+    return [_soll_dict(s) for s in db.sollstellungen.list_deleted()]
+
+
+@router.get("/sollstellungen/papierkorb/mitglied/{mitglied_id}")
+def list_sollstellungen_papierkorb_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
+    _require_read(user)
+    return [_soll_dict(s) for s in db.sollstellungen.list_deleted_by_mitglied(mitglied_id)]
+
+
 @router.patch("/sollstellungen/{soll_id}")
 def storniere_sollstellung(soll_id: int, user: CurrentUser, db: DB):
     """Storniert eine Sollstellung. Sie bleibt bestehen und wird bei einer erneuten
@@ -273,6 +286,21 @@ def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
         raise HTTPException(
             status_code=409,
             detail="Sollstellung nicht gefunden oder nicht löschbar (nur offene/stornierte – bezahlte werden nicht gelöscht)",
+        )
+    return {'ok': True}
+
+
+@router.post("/sollstellungen/{soll_id}/restore")
+def restore_sollstellung(soll_id: int, user: CurrentUser, db: DB):
+    """Sollstellung aus dem Papierkorb wiederherstellen. Verweigert, wenn für
+    (Mitglied, Regel, Zeitraum) zwischenzeitlich wieder eine aktive Sollstellung
+    besteht (etwa durch erneute Abrechnung)."""
+    _require_abrechnen(user)
+    ok = db.sollstellungen.restore(soll_id, restored_by=user.username)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Wiederherstellen nicht möglich (nicht im Papierkorb oder es besteht bereits eine aktive Sollstellung für diesen Zeitraum)",
         )
     return {'ok': True}
 

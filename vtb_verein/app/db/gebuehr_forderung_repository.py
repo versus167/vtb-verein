@@ -47,6 +47,22 @@ class GebuehrForderungRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def list_deleted(self) -> list[GebuehrForderung]:
+        """Papierkorb: soft-gelöschte Forderungen (neueste Löschung zuerst)."""
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE f.deleted_at IS NOT NULL ORDER BY f.deleted_at DESC, m.nachname, m.vorname"
+            )
+            return [_map(r) for r in cur.fetchall()]
+
+    def list_deleted_for_mitglied(self, mitglied_id: int) -> list[GebuehrForderung]:
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE f.mitglied_id = %s AND f.deleted_at IS NOT NULL ORDER BY f.deleted_at DESC",
+                (mitglied_id,),
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def exists(self, mitglied_id: int, gebuehr_id: int) -> bool:
         """True, wenn bereits eine (nicht stornierte) Forderung dieser Gebühr für das Mitglied existiert."""
         with self.cursor() as cur:
@@ -98,3 +114,44 @@ class GebuehrForderungRepository(BaseRepository):
                 (kassenbuchung_id, updated_by, id),
             )
             return cur.rowcount == 1
+
+    def soft_delete(self, id: int, deleted_by: str) -> bool:
+        """Soft-Delete (Papierkorb). Nur offene/stornierte – bezahlte bleiben
+        gesperrt. Anders als beim Storno verschwindet die Forderung damit aus
+        der aktiven Sicht und kann über den Papierkorb wiederhergestellt werden."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE gebuehr_forderung
+                SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
+                """,
+                (deleted_by, deleted_by, id),
+            )
+            return cur.rowcount > 0
+
+    def restore(self, id: int, restored_by: str) -> bool:
+        """Aus dem Papierkorb wiederherstellen. Verweigert, wenn dadurch ein
+        Duplikat entstünde (für dieselbe Gebühr besteht bereits eine aktive,
+        nicht stornierte Forderung) – stornierte Forderungen sind immer
+        wiederherstellbar."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE gebuehr_forderung f
+                SET deleted_at=NULL, deleted_by=NULL,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE f.id=%s AND f.deleted_at IS NOT NULL
+                  AND (
+                    f.status = 'storniert'
+                    OR NOT EXISTS (
+                        SELECT 1 FROM gebuehr_forderung d
+                        WHERE d.mitglied_id = f.mitglied_id AND d.gebuehr_id = f.gebuehr_id
+                          AND d.status <> 'storniert' AND d.deleted_at IS NULL
+                    )
+                  )
+                """,
+                (restored_by, id),
+            )
+            return cur.rowcount > 0

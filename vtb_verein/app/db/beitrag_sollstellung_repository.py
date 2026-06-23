@@ -47,6 +47,17 @@ class BeitragSollstellungRepository(BaseRepository):
             cur.execute(_SELECT + " WHERE s.mitglied_id=%s AND s.deleted_at IS NULL ORDER BY s.zeitraum DESC", (mitglied_id,))
             return [_map(row) for row in cur.fetchall()]
 
+    def list_deleted(self) -> list[BeitragSollstellung]:
+        """Papierkorb: soft-gelöschte Sollstellungen (neueste Löschung zuerst)."""
+        with self.cursor() as cur:
+            cur.execute(_SELECT + " WHERE s.deleted_at IS NOT NULL ORDER BY s.deleted_at DESC, m.nachname, m.vorname")
+            return [_map(row) for row in cur.fetchall()]
+
+    def list_deleted_by_mitglied(self, mitglied_id: int) -> list[BeitragSollstellung]:
+        with self.cursor() as cur:
+            cur.execute(_SELECT + " WHERE s.mitglied_id=%s AND s.deleted_at IS NOT NULL ORDER BY s.deleted_at DESC", (mitglied_id,))
+            return [_map(row) for row in cur.fetchall()]
+
     def exists(self, mitglied_id: int, beitragsregel_id: int, zeitraum: str) -> bool:
         """Duplikat-Schutz: wurde diese Sollstellung bereits angelegt?"""
         with self.cursor() as cur:
@@ -129,6 +140,28 @@ class BeitragSollstellungRepository(BaseRepository):
                 WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
                 """,
                 (deleted_by, deleted_by, id),
+            )
+            return cur.rowcount > 0
+
+    def restore(self, id: int, restored_by: str) -> bool:
+        """Aus dem Papierkorb wiederherstellen (deleted_at zurücksetzen).
+        Verweigert, wenn dadurch ein Duplikat entstünde, d. h. für
+        (Mitglied, Regel, Zeitraum) bereits eine aktive Sollstellung besteht –
+        etwa weil zwischenzeitlich neu abgerechnet wurde."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE beitrag_sollstellung s
+                SET deleted_at=NULL, deleted_by=NULL,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE s.id=%s AND s.deleted_at IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM beitrag_sollstellung d
+                    WHERE d.mitglied_id=s.mitglied_id AND d.beitragsregel_id=s.beitragsregel_id
+                      AND d.zeitraum=s.zeitraum AND d.deleted_at IS NULL
+                  )
+                """,
+                (restored_by, id),
             )
             return cur.rowcount > 0
 
