@@ -310,12 +310,16 @@
             <q-td :props="props" v-if="kannAbrechnen">
               <q-btn v-if="props.row.status === 'offen'" flat dense round icon="block" color="negative" size="sm"
                 @click="markStorniert(props.row)">
-                <q-tooltip>Stornieren (bleibt bestehen, wird nicht neu abgerechnet)</q-tooltip>
+                <q-tooltip>{{ props.row.exportiert_in_export_id ? 'Stornieren (Gegenbuchung im nächsten Fibu-Export)' : 'Stornieren (bleibt bestehen, wird nicht neu abgerechnet)' }}</q-tooltip>
               </q-btn>
-              <q-btn flat dense round icon="delete" color="negative" size="sm"
+              <!-- An die Fibu übergebene Sollstellungen nicht löschbar – Rücknahme nur per Storno. -->
+              <q-btn v-if="!props.row.exportiert_in_export_id" flat dense round icon="delete" color="negative" size="sm"
                 @click="deleteSollstellung(props.row)">
                 <q-tooltip>In den Papierkorb (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
               </q-btn>
+              <q-icon v-else name="lock" size="xs" color="grey-6">
+                <q-tooltip>An Fibu übergeben – Rücknahme nur per Storno (Gegenbuchung)</q-tooltip>
+              </q-icon>
             </q-td>
             <q-td :props="props" v-else />
           </template>
