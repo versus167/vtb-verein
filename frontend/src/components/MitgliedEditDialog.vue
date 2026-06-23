@@ -5,7 +5,7 @@
     persistent
     :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
   >
-    <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:560px;max-width:720px'">
+    <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:680px;max-width:900px'">
       <q-card-section class="row items-center q-pb-none">
         <div class="text-h6 col">
           <template v-if="isNewLocal">Als Vereinsmitglied erfassen</template>
@@ -249,7 +249,11 @@
 
               <q-separator class="q-my-md" />
 
-              <div class="text-subtitle2 q-mb-xs">Gebühren-Forderungen</div>
+              <div class="row items-center q-mb-xs">
+                <div class="text-subtitle2 col">Gebühren-Forderungen</div>
+                <q-btn v-if="canWriteGebuehren" label="Anlegen" icon="add" color="primary"
+                  unelevated dense size="sm" @click="openForderungForm()" />
+              </div>
               <div v-if="mitgliedForderungen.length === 0" class="text-grey q-py-sm">Keine Forderungen.</div>
               <q-list v-else separator dense>
                 <q-item v-for="f in mitgliedForderungen" :key="'f'+f.id">
@@ -402,6 +406,26 @@
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn label="Speichern" color="primary" unelevated :loading="teamSaving" @click="saveTeam" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Gebühren-Forderung für dieses Mitglied anlegen (Ticket #50) -->
+    <q-dialog v-model="forderungFormOpen" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="text-h6">Gebühr anlegen</q-card-section>
+        <q-separator />
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="forderungForm.datum" label="Datum *" outlined dense type="date" />
+          <q-select v-model="forderungForm.gebuehr_id" :options="passendeGebuehren" option-value="id"
+            :option-label="g => `${g.name} (${Number(g.betrag).toFixed(2)} €)`" emit-value map-options
+            label="Gebühr *" outlined dense
+            :hint="passendeGebuehren.length === 0 ? 'Keine passende Gebühr (Verein/Abteilung/Gültigkeit)' : ''" />
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn label="Anlegen" color="primary" unelevated :loading="forderungSaving" @click="saveForderung" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -652,6 +676,70 @@ async function loadFinanzen() {
       mitgliedForderungen.value = data
     }
   } catch { /* still: read-only Zusatzsicht, blockiert die Stammdaten nicht */ }
+}
+
+// ── Gebühren-Forderung anlegen (Ticket #50) ──────────────────
+// Direkt aus dem Mitglieds-Editor eine Forderung für dieses Mitglied erfassen –
+// als Abkürzung zum Menüpunkt „Gebühren → Forderungen" (der bestehen bleibt).
+const gebuehrenKatalog = ref([])
+const forderungFormOpen = ref(false)
+const forderungSaving = ref(false)
+const forderungForm = ref({ gebuehr_id: null, datum: '' })
+const canWriteGebuehren = computed(() => auth.hasPermission('gebuehren.write'))
+
+// Nur Gebühren, die für dieses Mitglied passen: Verein (ohne Abteilung) oder eine
+// Abteilung des Mitglieds, und am Forderungsdatum gültig. Altersbedingungen steuern
+// nur den Auto-Vorschlag, nicht die manuelle Auswahl (analog GebuehrenPage).
+const passendeGebuehren = computed(() => {
+  const datum = forderungForm.value.datum || new Date().toISOString().slice(0, 10)
+  const abt = new Set(zuordnungen.value.map(z => z.abteilung_id))
+  return gebuehrenKatalog.value.filter(g => {
+    if (g.gueltig_ab && g.gueltig_ab > datum) return false
+    if (g.gueltig_bis && g.gueltig_bis < datum) return false
+    return g.abteilung_id == null || abt.has(g.abteilung_id)
+  })
+})
+
+// Gewählte Gebühr verwerfen, wenn sie nach Datumswechsel nicht mehr passt.
+watch(passendeGebuehren, (list) => {
+  if (forderungForm.value.gebuehr_id && !list.some(g => g.id === forderungForm.value.gebuehr_id)) {
+    forderungForm.value.gebuehr_id = null
+  }
+})
+
+async function openForderungForm() {
+  forderungForm.value = { gebuehr_id: null, datum: new Date().toISOString().slice(0, 10) }
+  try {
+    const { data } = await api.get('/api/gebuehren')
+    gebuehrenKatalog.value = data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden der Gebühren' })
+    return
+  }
+  forderungFormOpen.value = true
+}
+
+async function saveForderung() {
+  if (!forderungForm.value.gebuehr_id || !forderungForm.value.datum) {
+    $q.notify({ type: 'negative', message: 'Gebühr und Datum sind erforderlich.' })
+    return
+  }
+  forderungSaving.value = true
+  try {
+    await api.post('/api/gebuehren/forderungen', {
+      gebuehr_id: forderungForm.value.gebuehr_id,
+      mitglied_id: getMitgliedId(),
+      datum: forderungForm.value.datum,
+    })
+    dirty.value = true
+    forderungFormOpen.value = false
+    await loadFinanzen()
+    $q.notify({ type: 'positive', message: 'Forderung angelegt' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Anlegen' })
+  } finally {
+    forderungSaving.value = false
+  }
 }
 
 async function loadTeams() {
