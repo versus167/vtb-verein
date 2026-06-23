@@ -427,7 +427,9 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
 
 @router.put("/{user_id}/user")
 def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, db: DB):
-    _require_write(user)
+    # Account-Daten (Benutzername/E-Mail/aktiv) ändern: nur mit dem Recht,
+    # Berechtigungen zu vergeben – wie das Anlegen von Login-Accounts.
+    _require_permissions(user)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")

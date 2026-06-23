@@ -89,7 +89,7 @@
         </q-card-section>
         <q-separator />
         <q-card-actions class="q-px-sm q-py-xs">
-          <q-btn v-if="p.user_id" flat dense round icon="edit" color="primary" size="sm"
+          <q-btn v-if="canManageUsers && p.user_id" flat dense round icon="edit" color="primary" size="sm"
             @click="openEditUserDialog(p)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
@@ -244,7 +244,7 @@
 
       <template #body-cell-actions="props">
         <q-td :props="props" style="white-space: nowrap">
-          <q-btn v-if="props.row.user_id" flat dense round icon="edit" color="primary" size="sm"
+          <q-btn v-if="canManageUsers && props.row.user_id" flat dense round icon="edit" color="primary" size="sm"
             @click="openEditUserDialog(props.row)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
