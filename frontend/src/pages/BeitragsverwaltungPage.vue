@@ -282,6 +282,9 @@
           </q-select>
           <q-btn label="Neu laden" color="primary" outline dense :disable="!filterZeitraum"
             @click="ladeSollstellungen" />
+          <q-select v-model="sollFibuFilter" :options="sollFibuFilterOptionen"
+            option-value="value" option-label="label" emit-value map-options dense outlined
+            label="Status" style="min-width: 180px" />
           <q-btn v-if="kannAbrechnen" dense icon="delete_sweep"
             :color="papierkorbOffen ? 'primary' : 'grey-7'" :outline="!papierkorbOffen" :unelevated="papierkorbOffen"
             :label="`Papierkorb${papierkorbRows.length ? ' (' + papierkorbRows.length + ')' : ''}`"
@@ -293,7 +296,7 @@
           </q-input>
         </div>
 
-        <q-table :rows="sollstellungen" :columns="sollColumns" row-key="id"
+        <q-table :rows="gefilterteSollstellungen" :columns="sollColumns" row-key="id"
           :filter="sollSuche"
           flat bordered :loading="sollLoading" :rows-per-page-options="[25, 50, 0]">
           <template #body-cell-status="props">
@@ -820,6 +823,26 @@ const sollLoading = ref(false)
 const filterZeitraum = ref('')
 const zeitraumOptionen = ref([])
 const sollSuche = ref('')
+
+// Client-seitiger Fibu-Status-Filter (die Liste ist je Zeitraum bereits vollständig
+// geladen). Semantik deckt sich mit fibuStatus()/dem Status-Chip.
+const sollFibuFilter = ref('')
+const sollFibuFilterOptionen = [
+  { label: 'Alle', value: '' },
+  { label: 'Offen', value: 'offen' },
+  { label: 'An Fibu übergeben', value: 'exportiert' },
+  { label: 'Storniert', value: 'storniert' },
+]
+const gefilterteSollstellungen = computed(() => {
+  const f = sollFibuFilter.value
+  if (!f) return sollstellungen.value
+  return sollstellungen.value.filter((s) => {
+    if (f === 'storniert') return s.status === 'storniert'
+    if (f === 'exportiert') return s.status !== 'storniert' && s.exportiert_in_export_id != null
+    if (f === 'offen') return s.status !== 'storniert' && s.exportiert_in_export_id == null
+    return true
+  })
+})
 
 const sollColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',    field: 'mitglied_name',     align: 'left' },

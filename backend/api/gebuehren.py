@@ -209,14 +209,16 @@ def storniere_forderung(forderung_id: int, user: CurrentUser, db: DB):
 
 @router.delete("/forderungen/{forderung_id}")
 def delete_forderung(forderung_id: int, user: CurrentUser, db: DB):
-    """Soft-Delete (Papierkorb): nur offene/stornierte Forderungen – bezahlte
-    bleiben gesperrt. Wiederherstellbar über den Papierkorb."""
+    """Soft-Delete (Papierkorb): nur offene/stornierte und noch nicht an die Fibu
+    übergebene Forderungen – bezahlte und bereits exportierte bleiben gesperrt.
+    Wiederherstellbar über den Papierkorb."""
     _require_abrechnen(user)
     ok = db.gebuehr_forderungen.soft_delete(forderung_id, deleted_by=user.username)
     if not ok:
         raise HTTPException(
             status_code=409,
-            detail="Forderung nicht gefunden oder nicht löschbar (nur offene/stornierte – bezahlte werden nicht gelöscht)",
+            detail="Forderung nicht löschbar: bereits an die Fibu übergeben "
+                   "(Rücknahme nur per Storno → Gegenbuchung) oder bezahlt.",
         )
     return {'ok': True}
 

@@ -74,11 +74,15 @@
           <q-item-section side v-if="auth.hasPermission('gebuehren.abrechnen')">
             <div class="row items-center no-wrap q-gutter-xs">
               <q-btn v-if="f.status === 'offen'" flat dense round icon="block" color="negative" size="sm" @click="storno(f)">
-                <q-tooltip>Stornieren</q-tooltip>
+                <q-tooltip>{{ f.exportiert_in_export_id ? 'Stornieren (Gegenbuchung im nächsten Fibu-Export)' : 'Stornieren' }}</q-tooltip>
               </q-btn>
-              <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteForderung(f)">
+              <!-- An die Fibu übergebene Forderungen nicht löschbar – Rücknahme nur per Storno. -->
+              <q-btn v-if="!f.exportiert_in_export_id" flat dense round icon="delete" color="negative" size="sm" @click="deleteForderung(f)">
                 <q-tooltip>In den Papierkorb</q-tooltip>
               </q-btn>
+              <q-icon v-else name="lock" size="xs" color="grey-6">
+                <q-tooltip>An Fibu übergeben – Rücknahme nur per Storno (Gegenbuchung)</q-tooltip>
+              </q-icon>
             </div>
           </q-item-section>
         </q-item>
@@ -199,6 +203,7 @@ const abteilungen = ref([])
 const statusFilter = ref('offen')
 const statusFilterOptionen = [
   { label: 'Offen', value: 'offen' },
+  { label: 'An Fibu übergeben', value: 'exportiert' },
   { label: 'Storniert', value: 'storniert' },
   { label: 'Alle', value: '' },
 ]
