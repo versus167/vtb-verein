@@ -151,6 +151,19 @@ def list_forderungen_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     return [asdict(f) for f in db.gebuehr_forderungen.list_for_mitglied(mitglied_id)]
 
 
+@router.get("/forderungen/papierkorb")
+def list_forderungen_papierkorb(user: CurrentUser, db: DB):
+    """Papierkorb: gelöschte Forderungen (vereinsweit)."""
+    _require_read(user)
+    return [asdict(f) for f in db.gebuehr_forderungen.list_deleted()]
+
+
+@router.get("/forderungen/papierkorb/mitglied/{mitglied_id}")
+def list_forderungen_papierkorb_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
+    _require_read(user)
+    return [asdict(f) for f in db.gebuehr_forderungen.list_deleted_for_mitglied(mitglied_id)]
+
+
 @router.get("/vorschlag")
 def vorschlag_aufnahme(mitglied_id: int, datum: str, user: CurrentUser, db: DB,
                        abteilung_id: Optional[int] = None):
@@ -191,6 +204,33 @@ def storniere_forderung(forderung_id: int, user: CurrentUser, db: DB):
     ok = db.gebuehr_forderungen.set_status(forderung_id, 'storniert', None, user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Aktualisierung fehlgeschlagen")
+    return asdict(db.get_gebuehr_forderung(forderung_id))
+
+
+@router.delete("/forderungen/{forderung_id}")
+def delete_forderung(forderung_id: int, user: CurrentUser, db: DB):
+    """Soft-Delete (Papierkorb): nur offene/stornierte Forderungen – bezahlte
+    bleiben gesperrt. Wiederherstellbar über den Papierkorb."""
+    _require_abrechnen(user)
+    ok = db.gebuehr_forderungen.soft_delete(forderung_id, deleted_by=user.username)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Forderung nicht gefunden oder nicht löschbar (nur offene/stornierte – bezahlte werden nicht gelöscht)",
+        )
+    return {'ok': True}
+
+
+@router.post("/forderungen/{forderung_id}/restore")
+def restore_forderung(forderung_id: int, user: CurrentUser, db: DB):
+    """Forderung aus dem Papierkorb wiederherstellen."""
+    _require_abrechnen(user)
+    ok = db.gebuehr_forderungen.restore(forderung_id, restored_by=user.username)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Wiederherstellen nicht möglich (nicht im Papierkorb oder es besteht bereits eine aktive Forderung dieser Gebühr)",
+        )
     return asdict(db.get_gebuehr_forderung(forderung_id))
 
 

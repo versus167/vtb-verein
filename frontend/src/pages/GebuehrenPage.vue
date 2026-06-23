@@ -54,6 +54,10 @@
       <div class="row items-center q-mb-sm q-gutter-sm">
         <q-select v-model="statusFilter" :options="statusFilterOptionen" option-value="value" option-label="label"
           emit-value map-options dense outlined label="Status" style="min-width:160px" @update:model-value="loadForderungen" />
+        <q-btn v-if="auth.hasPermission('gebuehren.abrechnen')" dense icon="delete_sweep"
+          :color="papierkorbOffen ? 'primary' : 'grey-7'" :outline="!papierkorbOffen" :unelevated="papierkorbOffen"
+          :label="`Papierkorb${papierkorbForderungen.length ? ' (' + papierkorbForderungen.length + ')' : ''}`"
+          @click="togglePapierkorb" />
         <q-space />
         <q-btn v-if="auth.hasPermission('gebuehren.write')" color="primary" unelevated
           icon="add" label="Forderung anlegen" @click="openForderung" />
@@ -67,14 +71,39 @@
               <q-chip dense size="sm" :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-chip>
             </q-item-label>
           </q-item-section>
-          <q-item-section side v-if="auth.hasPermission('gebuehren.abrechnen') && f.status === 'offen'">
-            <q-btn flat dense round icon="block" color="negative" size="sm" @click="storno(f)">
-              <q-tooltip>Stornieren</q-tooltip>
-            </q-btn>
+          <q-item-section side v-if="auth.hasPermission('gebuehren.abrechnen')">
+            <div class="row items-center no-wrap q-gutter-xs">
+              <q-btn v-if="f.status === 'offen'" flat dense round icon="block" color="negative" size="sm" @click="storno(f)">
+                <q-tooltip>Stornieren</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="delete" color="negative" size="sm" @click="deleteForderung(f)">
+                <q-tooltip>In den Papierkorb</q-tooltip>
+              </q-btn>
+            </div>
           </q-item-section>
         </q-item>
       </q-list>
       <div v-if="forderungen.length === 0" class="text-grey text-center q-py-lg">Keine Forderungen.</div>
+
+      <!-- Papierkorb: gelöschte Forderungen wiederherstellen (Ticket #52) -->
+      <div v-if="auth.hasPermission('gebuehren.abrechnen') && papierkorbOffen" class="q-mt-md">
+        <div class="text-subtitle2 q-mb-xs row items-center">
+          <q-icon name="delete_outline" class="q-mr-xs" /> Papierkorb – gelöschte Forderungen
+        </div>
+        <q-list bordered separator>
+          <q-item v-for="f in papierkorbForderungen" :key="'p'+f.id">
+            <q-item-section>
+              <q-item-label class="text-grey-8">{{ f.mitglied_nachname }}, {{ f.mitglied_vorname }} — {{ f.gebuehr_name }}</q-item-label>
+              <q-item-label caption>{{ f.betrag_soll.toFixed(2) }} € · {{ f.datum }}</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <q-btn flat dense size="sm" icon="restore" color="primary" label="Wiederherstellen"
+                no-caps @click="restoreForderung(f)" />
+            </q-item-section>
+          </q-item>
+        </q-list>
+        <div v-if="papierkorbForderungen.length === 0" class="text-grey text-center q-py-md">Papierkorb ist leer.</div>
+      </div>
     </div>
 
     <!-- Gebühr anlegen/bearbeiten -->
@@ -362,5 +391,49 @@ function storno(f) {
       try { await api.patch(`/api/gebuehren/forderungen/${f.id}`); await loadForderungen() }
       catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' }) }
     })
+}
+
+// ── Papierkorb (Tickets #51/#52) ───────────────────────────
+const papierkorbOffen = ref(false)
+const papierkorbForderungen = ref([])
+
+async function ladePapierkorb() {
+  try {
+    const { data } = await api.get('/api/gebuehren/forderungen/papierkorb')
+    papierkorbForderungen.value = data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden des Papierkorbs' })
+  }
+}
+
+async function togglePapierkorb() {
+  papierkorbOffen.value = !papierkorbOffen.value
+  if (papierkorbOffen.value) await ladePapierkorb()
+}
+
+function deleteForderung(f) {
+  $q.dialog({
+    title: 'Forderung löschen',
+    message: `Forderung „${f.gebuehr_name}" für ${f.mitglied_nachname}, ${f.mitglied_vorname} in den Papierkorb verschieben?`,
+    cancel: true, ok: { label: 'Löschen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/gebuehren/forderungen/${f.id}`)
+      await loadForderungen()
+      if (papierkorbOffen.value) await ladePapierkorb()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen' })
+    }
+  })
+}
+
+async function restoreForderung(f) {
+  try {
+    await api.post(`/api/gebuehren/forderungen/${f.id}/restore`)
+    await Promise.all([ladePapierkorb(), loadForderungen()])
+    $q.notify({ type: 'positive', message: 'Forderung wiederhergestellt' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Wiederherstellen nicht möglich' })
+  }
 }
 </script>

@@ -227,7 +227,7 @@
             </q-card-section>
           </q-tab-panel>
 
-          <!-- Beiträge & Gebühren (read-only) -->
+          <!-- Beiträge & Gebühren – Anzeige + Storno/Löschen + Papierkorb (Tickets #51/#52) -->
           <q-tab-panel v-if="canSeeFinanzen" name="finanzen" class="q-pa-none">
             <q-card-section>
               <div class="text-subtitle2 q-mb-xs">Beitrags-Sollstellungen</div>
@@ -242,7 +242,17 @@
                     <q-item-label caption>{{ Number(s.betrag_soll).toFixed(2) }} €<span v-if="s.faelligkeitsdatum"> · fällig {{ s.faelligkeitsdatum }}</span></q-item-label>
                   </q-item-section>
                   <q-item-section side>
-                    <q-badge :color="fibuStatus(s).color" text-color="white">{{ fibuStatus(s).label }}</q-badge>
+                    <div class="row items-center no-wrap q-gutter-xs">
+                      <q-badge :color="fibuStatus(s).color" text-color="white">{{ fibuStatus(s).label }}</q-badge>
+                      <q-btn v-if="kannBeitragAbrechnen && s.status === 'offen'" flat dense round icon="block"
+                        color="negative" size="sm" @click="stornoSollstellung(s)">
+                        <q-tooltip>Stornieren (bleibt bestehen, wird nicht neu abgerechnet)</q-tooltip>
+                      </q-btn>
+                      <q-btn v-if="kannBeitragAbrechnen" flat dense round icon="delete"
+                        color="negative" size="sm" @click="deleteSollstellung(s)">
+                        <q-tooltip>In den Papierkorb (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
+                      </q-btn>
+                    </div>
                   </q-item-section>
                 </q-item>
               </q-list>
@@ -265,10 +275,56 @@
                     <q-item-label caption>{{ Number(f.betrag_soll).toFixed(2) }} € · {{ f.datum }}</q-item-label>
                   </q-item-section>
                   <q-item-section side>
-                    <q-badge :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-badge>
+                    <div class="row items-center no-wrap q-gutter-xs">
+                      <q-badge :color="fibuStatus(f).color" text-color="white">{{ fibuStatus(f).label }}</q-badge>
+                      <q-btn v-if="kannGebuehrAbrechnen && f.status === 'offen'" flat dense round icon="block"
+                        color="negative" size="sm" @click="stornoForderung(f)">
+                        <q-tooltip>Stornieren</q-tooltip>
+                      </q-btn>
+                      <q-btn v-if="kannGebuehrAbrechnen" flat dense round icon="delete"
+                        color="negative" size="sm" @click="deleteForderung(f)">
+                        <q-tooltip>In den Papierkorb</q-tooltip>
+                      </q-btn>
+                    </div>
                   </q-item-section>
                 </q-item>
               </q-list>
+
+              <!-- Papierkorb: gelöschte Sollstellungen/Forderungen wiederherstellen -->
+              <template v-if="kannBeitragAbrechnen || kannGebuehrAbrechnen">
+                <q-separator class="q-my-md" />
+                <q-btn flat dense no-caps size="sm" color="grey-8"
+                  :icon="papierkorbOffen ? 'expand_less' : 'expand_more'"
+                  :label="`Papierkorb${papierkorbAnzahl ? ' (' + papierkorbAnzahl + ')' : ''}`"
+                  @click="togglePapierkorb" />
+                <div v-if="papierkorbOffen" class="q-mt-sm">
+                  <div v-if="papierkorbAnzahl === 0" class="text-grey q-py-sm">Papierkorb ist leer.</div>
+                  <q-list v-else separator dense>
+                    <q-item v-for="s in papierkorbSollstellungen" :key="'ps'+s.id">
+                      <q-item-section avatar><q-icon name="euro" color="grey" /></q-item-section>
+                      <q-item-section>
+                        <q-item-label class="text-grey-8">{{ s.beitragsregel_name }} · {{ s.zeitraum }}</q-item-label>
+                        <q-item-label caption>Beitrag · {{ Number(s.betrag_soll).toFixed(2) }} €</q-item-label>
+                      </q-item-section>
+                      <q-item-section side>
+                        <q-btn flat dense size="sm" icon="restore" color="primary" label="Wiederherstellen"
+                          no-caps @click="restoreSollstellung(s)" />
+                      </q-item-section>
+                    </q-item>
+                    <q-item v-for="f in papierkorbForderungen" :key="'pf'+f.id">
+                      <q-item-section avatar><q-icon name="receipt_long" color="grey" /></q-item-section>
+                      <q-item-section>
+                        <q-item-label class="text-grey-8">{{ f.gebuehr_name }}</q-item-label>
+                        <q-item-label caption>Gebühr · {{ Number(f.betrag_soll).toFixed(2) }} € · {{ f.datum }}</q-item-label>
+                      </q-item-section>
+                      <q-item-section side>
+                        <q-btn flat dense size="sm" icon="restore" color="primary" label="Wiederherstellen"
+                          no-caps @click="restoreForderung(f)" />
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                </div>
+              </template>
             </q-card-section>
           </q-tab-panel>
         </q-tab-panels>
@@ -651,6 +707,14 @@ async function loadAll() {
 // Beiträge/Gebühren der Person (read-only) – fehlertolerant nachladen.
 const mitgliedSollstellungen = ref([])
 const mitgliedForderungen = ref([])
+// Storno/Löschen/Wiederherstellen sind finanzwirksam → an das jeweilige Abrechnen-Recht gebunden.
+const kannBeitragAbrechnen = computed(() => auth.hasPermission('beitraege.abrechnen'))
+const kannGebuehrAbrechnen = computed(() => auth.hasPermission('gebuehren.abrechnen'))
+// Papierkorb (Ticket #52): gelöschte Sollstellungen/Forderungen dieses Mitglieds.
+const papierkorbOffen = ref(false)
+const papierkorbSollstellungen = ref([])
+const papierkorbForderungen = ref([])
+const papierkorbAnzahl = computed(() => papierkorbSollstellungen.value.length + papierkorbForderungen.value.length)
 // Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
 // übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
 function fibuStatus(item) {
@@ -666,6 +730,9 @@ function fibuStatus(item) {
 async function loadFinanzen() {
   const id = getMitgliedId()
   if (id == null) return
+  papierkorbOffen.value = false
+  papierkorbSollstellungen.value = []
+  papierkorbForderungen.value = []
   try {
     if (auth.hasPermission('beitraege.read')) {
       const { data } = await api.get(`/api/beitraege/sollstellungen/mitglied/${id}`)
@@ -676,6 +743,123 @@ async function loadFinanzen() {
       mitgliedForderungen.value = data
     }
   } catch { /* still: read-only Zusatzsicht, blockiert die Stammdaten nicht */ }
+}
+
+// ── Storno / Löschen / Papierkorb (Tickets #51/#52) ──────────
+async function loadPapierkorb() {
+  const id = getMitgliedId()
+  if (id == null) return
+  try {
+    if (kannBeitragAbrechnen.value) {
+      const { data } = await api.get(`/api/beitraege/sollstellungen/papierkorb/mitglied/${id}`)
+      papierkorbSollstellungen.value = data
+    }
+    if (kannGebuehrAbrechnen.value) {
+      const { data } = await api.get(`/api/gebuehren/forderungen/papierkorb/mitglied/${id}`)
+      papierkorbForderungen.value = data
+    }
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden des Papierkorbs' })
+  }
+}
+
+async function togglePapierkorb() {
+  papierkorbOffen.value = !papierkorbOffen.value
+  if (papierkorbOffen.value) await loadPapierkorb()
+}
+
+function stornoSollstellung(s) {
+  $q.dialog({
+    title: 'Sollstellung stornieren',
+    message: `Sollstellung „${s.beitragsregel_name} · ${s.zeitraum}" stornieren? Sie bleibt bestehen und wird bei einer erneuten Abrechnung nicht neu erzeugt.`,
+    cancel: true, persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.patch(`/api/beitraege/sollstellungen/${s.id}`)
+      dirty.value = true
+      await loadFinanzen()
+      $q.notify({ type: 'positive', message: 'Sollstellung storniert' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Stornieren' })
+    }
+  })
+}
+
+function deleteSollstellung(s) {
+  $q.dialog({
+    title: 'Sollstellung löschen',
+    message: `Sollstellung „${s.beitragsregel_name} · ${s.zeitraum}" in den Papierkorb verschieben? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
+    cancel: true, persistent: true, ok: { label: 'Löschen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
+      dirty.value = true
+      await loadFinanzen()
+      $q.notify({ type: 'positive', message: 'In den Papierkorb verschoben' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen' })
+    }
+  })
+}
+
+async function restoreSollstellung(s) {
+  try {
+    await api.post(`/api/beitraege/sollstellungen/${s.id}/restore`)
+    dirty.value = true
+    await loadFinanzen()
+    papierkorbOffen.value = true
+    await loadPapierkorb()
+    $q.notify({ type: 'positive', message: 'Sollstellung wiederhergestellt' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Wiederherstellen' })
+  }
+}
+
+function stornoForderung(f) {
+  $q.dialog({
+    title: 'Forderung stornieren',
+    message: `Forderung „${f.gebuehr_name}" wirklich stornieren?`,
+    cancel: true, persistent: true,
+  }).onOk(async () => {
+    try {
+      await api.patch(`/api/gebuehren/forderungen/${f.id}`)
+      dirty.value = true
+      await loadFinanzen()
+      $q.notify({ type: 'positive', message: 'Forderung storniert' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Stornieren' })
+    }
+  })
+}
+
+function deleteForderung(f) {
+  $q.dialog({
+    title: 'Forderung löschen',
+    message: `Forderung „${f.gebuehr_name}" in den Papierkorb verschieben?`,
+    cancel: true, persistent: true, ok: { label: 'Löschen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/gebuehren/forderungen/${f.id}`)
+      dirty.value = true
+      await loadFinanzen()
+      $q.notify({ type: 'positive', message: 'In den Papierkorb verschoben' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Löschen' })
+    }
+  })
+}
+
+async function restoreForderung(f) {
+  try {
+    await api.post(`/api/gebuehren/forderungen/${f.id}/restore`)
+    dirty.value = true
+    await loadFinanzen()
+    papierkorbOffen.value = true
+    await loadPapierkorb()
+    $q.notify({ type: 'positive', message: 'Forderung wiederhergestellt' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Wiederherstellen' })
+  }
 }
 
 // ── Gebühren-Forderung anlegen (Ticket #50) ──────────────────

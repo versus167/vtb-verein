@@ -282,6 +282,10 @@
           </q-select>
           <q-btn label="Neu laden" color="primary" outline dense :disable="!filterZeitraum"
             @click="ladeSollstellungen" />
+          <q-btn v-if="kannAbrechnen" dense icon="delete_sweep"
+            :color="papierkorbOffen ? 'primary' : 'grey-7'" :outline="!papierkorbOffen" :unelevated="papierkorbOffen"
+            :label="`Papierkorb${papierkorbRows.length ? ' (' + papierkorbRows.length + ')' : ''}`"
+            @click="togglePapierkorb" />
           <q-space />
           <q-input v-model="sollSuche" dense outlined clearable debounce="200"
             placeholder="Suche (Name, Regel …)" style="min-width: 220px">
@@ -307,12 +311,29 @@
               </q-btn>
               <q-btn flat dense round icon="delete" color="negative" size="sm"
                 @click="deleteSollstellung(props.row)">
-                <q-tooltip>Löschen (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
+                <q-tooltip>In den Papierkorb (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
               </q-btn>
             </q-td>
             <q-td :props="props" v-else />
           </template>
         </q-table>
+
+        <!-- Papierkorb: gelöschte Sollstellungen wiederherstellen (Ticket #52) -->
+        <div v-if="kannAbrechnen && papierkorbOffen" class="q-mt-md">
+          <div class="text-subtitle2 q-mb-xs row items-center">
+            <q-icon name="delete_outline" class="q-mr-xs" /> Papierkorb – gelöschte Sollstellungen
+          </div>
+          <q-table :rows="papierkorbRows" :columns="papierkorbColumns" row-key="id"
+            flat bordered :loading="papierkorbLoading" :rows-per-page-options="[10, 25, 0]"
+            no-data-label="Papierkorb ist leer">
+            <template #body-cell-actions="props">
+              <q-td :props="props">
+                <q-btn flat dense size="sm" icon="restore" color="primary" label="Wiederherstellen"
+                  no-caps @click="restoreSollstellung(props.row)" />
+              </q-td>
+            </template>
+          </q-table>
+        </div>
       </q-tab-panel>
     </q-tab-panels>
 
@@ -850,14 +871,54 @@ async function markStorniert(s) {
 async function deleteSollstellung(s) {
   $q.dialog({
     title: 'Löschen?',
-    message: `Sollstellung für ${s.mitglied_name} löschen? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
+    message: `Sollstellung für ${s.mitglied_name} in den Papierkorb verschieben? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
     cancel: true,
     ok: { label: 'Löschen', color: 'negative' },
   })
     .onOk(async () => {
       await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
       await ladeSollstellungen()
+      if (papierkorbOffen.value) await ladePapierkorb()
     })
+}
+
+// ── Papierkorb (Ticket #52) ────────────────────────────────
+const papierkorbOffen = ref(false)
+const papierkorbRows = ref([])
+const papierkorbLoading = ref(false)
+const papierkorbColumns = [
+  { name: 'mitglied_name',      label: 'Mitglied',  field: 'mitglied_name',      align: 'left' },
+  { name: 'beitragsregel_name', label: 'Regel',     field: 'beitragsregel_name', align: 'left' },
+  { name: 'zeitraum',           label: 'Zeitraum',  field: 'zeitraum',           align: 'left' },
+  { name: 'betrag_soll',        label: 'Betrag',    field: r => r.betrag_soll.toFixed(2) + ' €', align: 'right' },
+  { name: 'actions',            label: '',          field: 'actions',            align: 'right' },
+]
+
+async function ladePapierkorb() {
+  papierkorbLoading.value = true
+  try {
+    const { data } = await api.get('/api/beitraege/sollstellungen/papierkorb')
+    papierkorbRows.value = data
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden des Papierkorbs' })
+  } finally {
+    papierkorbLoading.value = false
+  }
+}
+
+async function togglePapierkorb() {
+  papierkorbOffen.value = !papierkorbOffen.value
+  if (papierkorbOffen.value) await ladePapierkorb()
+}
+
+async function restoreSollstellung(s) {
+  try {
+    await api.post(`/api/beitraege/sollstellungen/${s.id}/restore`)
+    await Promise.all([ladePapierkorb(), ladeSollstellungen(), ladeZeitraeume()])
+    $q.notify({ type: 'positive', message: 'Sollstellung wiederhergestellt' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Wiederherstellen nicht möglich' })
+  }
 }
 
 async function loadOptionen() {
