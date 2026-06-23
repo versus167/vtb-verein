@@ -17,12 +17,17 @@ _SEP = ";"
 _EOL = "\r\n"
 
 
-def _datum(iso: Optional[str]) -> str:
-    """ISO-Datum (YYYY-MM-DD…) → TT.MM.JJJJ; leer/ungültig → ''."""
+def _datum(iso) -> str:
+    """Datum → TT.MM.JJJJ; leer/ungültig → ''.
+
+    Akzeptiert ISO-Strings ebenso wie date/datetime-Objekte (Postgres liefert für
+    DATE/TIMESTAMP-Spalten Objekte statt Strings)."""
     if not iso:
         return ""
+    if isinstance(iso, date):  # datetime ist Subklasse von date
+        return iso.strftime("%d.%m.%Y")
     try:
-        return date.fromisoformat(iso[:10]).strftime("%d.%m.%Y")
+        return date.fromisoformat(str(iso)[:10]).strftime("%d.%m.%Y")
     except (ValueError, TypeError):
         return ""
 

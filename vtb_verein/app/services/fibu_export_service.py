@@ -51,9 +51,17 @@ from app.services import fibu_formatter
 NETTOTAGE = 10
 
 
-def _date_only(s):
-    """Datumsanteil (YYYY-MM-DD) eines ISO-Werts (auch Timestamp); leer → None."""
-    return s[:10] if s else None
+def _date_only(value):
+    """Datumsanteil (YYYY-MM-DD) eines Werts; leer → None.
+
+    Akzeptiert ISO-Strings ebenso wie date/datetime-Objekte: Postgres liefert für
+    DATE/TIMESTAMP(TZ)-Spalten (z. B. created_at seit v51) date/datetime statt String.
+    """
+    if not value:
+        return None
+    if isinstance(value, date):  # datetime ist Subklasse von date
+        return value.isoformat()[:10]
+    return str(value)[:10]
 
 
 def _plus_tage(iso, tage):
@@ -255,10 +263,10 @@ class FibuExportService:
         # Mitgliedsnummer ableiten. Mandatsdatum fällt auf das Eintrittsdatum zurück.
         if ist_lastschrift:
             mandatsref = row.get('sepa_mandatsref') or (str(nummer) if nummer is not None else None)
-            mandatsdatum = row.get('sepa_mandatsdatum') or row.get('eintrittsdatum')
+            mandatsdatum = _date_only(row.get('sepa_mandatsdatum') or row.get('eintrittsdatum'))
         else:
             mandatsref = row.get('sepa_mandatsref')
-            mandatsdatum = row.get('sepa_mandatsdatum')
+            mandatsdatum = _date_only(row.get('sepa_mandatsdatum'))
 
         # Belegdatum = Abrechnungsdatum (Beitrag: created_at, Gebühr: forderung.datum),
         # Fälligkeit = Belegdatum + NETTOTAGE.
