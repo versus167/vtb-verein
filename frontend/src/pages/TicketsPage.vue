@@ -432,6 +432,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
+import { formatDate as fmtDate, formatDateTime as fmtDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -615,13 +616,10 @@ function prioritaetBorderColor(p) { return { niedrig: '#9e9e9e', normal: 'var(--
 function statusBgClass(s) { return { offen: 'bg-blue-1', in_pruefung: 'bg-orange-1', eingeplant: 'bg-purple-1', rueckfrage: 'bg-amber-1', erledigt: 'bg-green-1', abgelehnt: 'bg-red-1' }[s] ?? '' }
 
 function formatDate(iso) {
-  if (!iso) return '—'
-  return iso.substring(0, 10).split('-').reverse().join('.')
+  return fmtDate(iso, { placeholder: '—' })
 }
 function formatDateTime(iso) {
-  if (!iso) return '—'
-  const [date, time] = iso.split(' ')
-  return `${date.split('-').reverse().join('.')} ${(time ?? '').substring(0, 5)}`
+  return fmtDateTime(iso, { placeholder: '—' })
 }
 
 function emptyCreateForm() {

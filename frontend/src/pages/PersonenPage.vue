@@ -461,7 +461,7 @@
           <q-timeline v-else color="grey" layout="dense">
             <template v-for="(h, idx) in historyEntries" :key="idx">
               <q-timeline-entry
-                :subtitle="`${h._zeit?.slice(0,16).replace('T',' ')} · ${h._by}`"
+                :subtitle="`${formatDateTime(h._zeit)} · ${h._by}`"
                 :color="h._color" :icon="h._icon">
                 <div class="text-caption">
                   <div class="text-weight-medium text-grey-6 q-mb-xs">{{ h._label }}</div>
@@ -546,6 +546,7 @@ import { useAuthStore } from 'src/stores/auth'
 import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
+import { formatDateTime } from 'src/utils/datetime'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
 // damit der Listen-Zustand beim Zurückkehren erhalten bleibt.

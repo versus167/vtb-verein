@@ -672,6 +672,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
+import { formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -1239,9 +1240,7 @@ function stueckLabel(wertCent) {
 }
 
 function formatZeit(ts) {
-  if (!ts) return ''
-  const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T'))
-  return isNaN(d) ? ts : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+  return ts ? formatDateTime(ts) : ''
 }
 
 function werteMitAnzahl(z) {

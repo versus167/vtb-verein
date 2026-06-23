@@ -297,6 +297,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
+import { formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -473,11 +474,7 @@ function deviceIcon(s) {
 }
 
 function fmt(ts) {
-  if (!ts) return '–'
-  const d = new Date(ts)
-  return isNaN(d.getTime())
-    ? ts
-    : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+  return formatDateTime(ts)
 }
 
 async function loadSessions() {
