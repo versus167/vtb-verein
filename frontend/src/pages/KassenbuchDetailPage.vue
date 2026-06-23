@@ -491,7 +491,7 @@
               <!-- Buchungs-Events -->
               <q-timeline-entry
                 v-else
-                :subtitle="`v${h.version} · ${h.updated_at?.slice(0,16).replace('T',' ')} · ${h.updated_by}`"
+                :subtitle="`v${h.version} · ${formatDateTime(h.updated_at)} · ${h.updated_by}`"
                 :color="h.deleted_at ? 'negative' : h.version === 1 ? 'positive' : 'primary'"
                 :icon="h.deleted_at ? 'block' : h.version === 1 ? 'add_circle' : 'edit'"
               >
@@ -672,6 +672,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
+import { formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const route = useRoute()
@@ -1239,9 +1240,7 @@ function stueckLabel(wertCent) {
 }
 
 function formatZeit(ts) {
-  if (!ts) return ''
-  const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T'))
-  return isNaN(d) ? ts : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })
+  return ts ? formatDateTime(ts) : ''
 }
 
 function werteMitAnzahl(z) {

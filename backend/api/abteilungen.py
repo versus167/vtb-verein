@@ -57,7 +57,7 @@ def list_deleted(user: CurrentUser, db: DB):
             'name':        r['name'],
             'kuerzel':     r['kuerzel'],
             'beschreibung': r['beschreibung'],
-            'deleted_at':  r['deleted_at'][:19] if r['deleted_at'] else None,
+            'deleted_at':  r['deleted_at'],
             'deleted_by':  r['deleted_by'],
         }
         for r in rows

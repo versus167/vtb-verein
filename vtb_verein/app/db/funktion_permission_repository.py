@@ -9,7 +9,7 @@ Alle Schreiboperationen erfolgen mit Soft-Delete und Versionierung
 Siehe BERECHTIGUNGEN.md: Mitglieder erben diese Rechte über ihre aktiven
 Funktions-Zuordnungen (mitglied_funktion, von/bis-gültig).
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.base_repository import BaseRepository
 
@@ -35,7 +35,7 @@ class FunktionPermissionRepository(BaseRepository):
         permissions: set[str],
         actor: str,
     ) -> None:
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         current = self.get_permissions_for_funktion(funktion_id)
 
         to_add    = permissions - current
