@@ -162,21 +162,46 @@
            Tab: Abrechnung
            ════════════════════════════════════════════════ -->
       <q-tab-panel name="abrechnung" class="q-pa-none">
-        <q-card flat bordered class="q-mb-md" style="max-width: 480px">
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-bold q-mb-sm">Abrechnung starten</div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              Das System berechnet alle fälligen Beiträge zum gewählten Stichtag.
-              Bitte erst Vorschau prüfen, dann bestätigen.
-            </div>
-            <q-input v-model="stichtag" type="date" label="Stichtag *" outlined dense
-              :max="heute" class="q-mb-sm" />
-            <div class="row q-gutter-sm">
-              <q-btn label="Vorschau berechnen" outline color="primary" :loading="vorschauLoading"
-                :disable="!stichtag" @click="ladeVorschau" />
-            </div>
-          </q-card-section>
-        </q-card>
+        <div class="row q-col-gutter-md q-mb-md items-stretch">
+          <div class="col-12 col-md-auto">
+            <q-card flat bordered style="max-width: 480px; height: 100%">
+              <q-card-section>
+                <div class="text-subtitle1 text-weight-bold q-mb-sm">Abrechnung starten</div>
+                <div class="text-caption text-grey-7 q-mb-md">
+                  Abgerechnet werden alle noch nicht abgerechneten Beiträge bis zum Quartal
+                  des Stichtags – inklusive bis zu {{ quartaleRueckschau }}
+                  {{ quartaleRueckschau === 1 ? 'Quartal' : 'Quartalen' }} davor (Rückschau).
+                  Frühestens ab dem 01.04.2026. Bitte erst Vorschau prüfen, dann bestätigen.
+                </div>
+                <q-input v-model="stichtag" type="date" label="Stichtag (bis) *" outlined dense
+                  :max="heute" class="q-mb-sm" />
+                <div class="row q-gutter-sm">
+                  <q-btn label="Vorschau berechnen" outline color="primary" :loading="vorschauLoading"
+                    :disable="!stichtag" @click="ladeVorschau" />
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <div v-if="kannSchreiben" class="col-12 col-md-auto">
+            <q-card flat bordered style="max-width: 480px; height: 100%">
+              <q-card-section>
+                <div class="text-subtitle1 text-weight-bold q-mb-sm">Rückschau-Einstellung</div>
+                <div class="text-caption text-grey-7 q-mb-md">
+                  Wie viele Quartale vor dem aktuellen eine Abrechnung mitnimmt (Sicherheitsnetz
+                  für verpasste Läufe). Im Dauerbetrieb meist 1. Die harte Untergrenze 01.04.2026
+                  wird nie unterschritten.
+                </div>
+                <div class="row items-center q-gutter-sm">
+                  <q-input v-model.number="quartaleRueckschau" type="number" min="0" max="40"
+                    label="Quartale Rückschau" outlined dense style="width: 160px" />
+                  <q-btn label="Speichern" color="primary" unelevated
+                    :loading="einstellungenLoading" @click="speichereEinstellungen" />
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
 
         <!-- Vorschau-Tabelle -->
         <template v-if="vorschau.length > 0">
@@ -235,7 +260,7 @@
         <!-- Ergebnis -->
         <q-banner v-if="abrechnungErgebnis" class="bg-positive text-white q-mt-md" rounded>
           <template #avatar><q-icon name="check_circle" /></template>
-          <strong>{{ abrechnungErgebnis.zeitraum }}</strong> abgerechnet:
+          <strong>{{ abrechnungErgebnis.zeitraum || 'Keine neuen Zeiträume' }}</strong> abgerechnet:
           {{ abrechnungErgebnis.angelegt }} Sollstellungen angelegt
           ({{ abrechnungErgebnis.uebersprungen }} übersprungen).
         </q-banner>
@@ -626,6 +651,37 @@ const vorschau = ref([])
 const vorschauLoading = ref(false)
 const abrechnungLoading = ref(false)
 const abrechnungErgebnis = ref(null)
+
+// Rückschau-Einstellung: Quartale vor dem aktuellen, die mitabgerechnet werden.
+const quartaleRueckschau = ref(1)
+const einstellungenLoading = ref(false)
+
+async function ladeEinstellungen() {
+  try {
+    const { data } = await api.get('/api/beitraege/einstellungen')
+    quartaleRueckschau.value = data.quartale_rueckschau
+  } catch {
+    quartaleRueckschau.value = 1
+  }
+}
+
+async function speichereEinstellungen() {
+  const wert = Number(quartaleRueckschau.value)
+  if (!Number.isInteger(wert) || wert < 0) {
+    $q.notify({ type: 'negative', message: 'Quartale-Rückschau muss eine Zahl ≥ 0 sein' })
+    return
+  }
+  einstellungenLoading.value = true
+  try {
+    const { data } = await api.put('/api/beitraege/einstellungen', { quartale_rueckschau: wert })
+    quartaleRueckschau.value = data.quartale_rueckschau
+    $q.notify({ type: 'positive', message: 'Rückschau gespeichert' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+  } finally {
+    einstellungenLoading.value = false
+  }
+}
 const vorschauFilterName = ref('')
 const vorschauFilterAbteilung = ref(null)
 // Vorhandene (bereits_vorhanden) standardmäßig ausblenden, nur per Häkchen zeigen.
@@ -711,9 +767,11 @@ async function ladeVorschau() {
 }
 
 async function confirmAbrechnung() {
+  const zeitraeume = [...new Set(vorschauNeu.value.map(p => p.zeitraum))].sort()
+  const zrText = zeitraeume.length ? ` (${zeitraeume.join(', ')})` : ''
   $q.dialog({
     title: 'Abrechnung bestätigen',
-    message: `${vorschauNeu.value.length} Sollstellungen anlegen?`,
+    message: `${vorschauNeu.value.length} Sollstellungen anlegen${zrText}?`,
     cancel: true, persistent: true,
   }).onOk(async () => {
     abrechnungLoading.value = true
@@ -805,6 +863,7 @@ async function loadOptionen() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard(), ladeZeitraeume()])
+  await Promise.all([loadRegeln(), loadOptionen(), loadFunktionOptionen(), ladeDashboard(),
+    ladeZeitraeume(), ladeEinstellungen()])
 })
 </script>

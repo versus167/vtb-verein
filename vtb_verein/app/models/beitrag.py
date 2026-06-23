@@ -54,6 +54,20 @@ class Beitragsregel:
 
 
 @dataclass
+class BeitragEinstellungen:
+    """Globale Einstellungen der Beitragsabrechnung (Single-Row, id=1)."""
+    id: int = 1
+    # Anzahl Quartale VOR dem aktuellen, die eine Abrechnung mitnimmt (0 = nur
+    # aktuelles Quartal). Sicherheitsnetz für verpasste Läufe; im Dauerbetrieb i.d.R. 1.
+    quartale_rueckschau: int = 1
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
+@dataclass
 class BeitragSollstellung:
     """Konkrete Beitragsforderung für ein Mitglied."""
     id: Optional[int] = None

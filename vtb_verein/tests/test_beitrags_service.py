@@ -19,6 +19,11 @@ from app.services.beitrags_service import (
     parse_datum,
     aktive_monate_menge,
     funktions_monats_restriktion,
+    aufhol_quartale,
+    perioden_im_quartal,
+    quartal_start,
+    quartal_verschieben,
+    RUECKGRIFF_MINIMUM,
     _letzter_tag,
 )
 
@@ -447,3 +452,97 @@ class TestZeitraumLabelUndFaelligkeit:
 
     def test_faelligkeit_jahr(self):
         assert faelligkeitsdatum('jahr', date(2026, 5, 1)) == '2026-12-31'
+
+
+class TestQuartalsHelfer:
+    def test_quartal_start(self):
+        assert quartal_start(date(2026, 6, 23)) == date(2026, 4, 1)
+        assert quartal_start(date(2026, 1, 1)) == date(2026, 1, 1)
+        assert quartal_start(date(2026, 12, 31)) == date(2026, 10, 1)
+
+    def test_quartal_verschieben(self):
+        assert quartal_verschieben(date(2026, 4, 1), 1) == date(2026, 7, 1)
+        assert quartal_verschieben(date(2026, 1, 1), -1) == date(2025, 10, 1)
+        assert quartal_verschieben(date(2026, 10, 1), 1) == date(2027, 1, 1)
+        assert quartal_verschieben(date(2026, 7, 1), 0) == date(2026, 7, 1)
+
+
+class TestAufholQuartale:
+    def test_untergrenze_dominiert_zum_start(self):
+        # Heute Q2 2026: selbst große Rückschau reicht nie vor RUECKGRIFF_MINIMUM.
+        assert aufhol_quartale(date(2026, 6, 23), 4) == [date(2026, 4, 1)]
+        assert RUECKGRIFF_MINIMUM == date(2026, 4, 1)
+
+    def test_rueckschau_eins_nimmt_vorquartal_mit(self):
+        # Q4 2026, eine Quartals-Rückschau → Q3 + Q4.
+        assert aufhol_quartale(date(2026, 11, 1), 1) == [date(2026, 7, 1), date(2026, 10, 1)]
+
+    def test_rueckschau_null_nur_aktuelles_quartal(self):
+        assert aufhol_quartale(date(2026, 11, 1), 0) == [date(2026, 10, 1)]
+
+    def test_negative_rueckschau_wie_null(self):
+        assert aufhol_quartale(date(2026, 11, 1), -5) == [date(2026, 10, 1)]
+
+    def test_grosse_rueckschau_clamped_auf_untergrenze(self):
+        # Q1 2027, Rückschau 8 → würde bis 2025 reichen, wird auf Q2 2026 begrenzt.
+        assert aufhol_quartale(date(2027, 2, 1), 8) == [
+            date(2026, 4, 1), date(2026, 7, 1), date(2026, 10, 1), date(2027, 1, 1)]
+
+
+class TestPeriodenImQuartal:
+    def test_quartal(self):
+        assert perioden_im_quartal('quartal', date(2026, 4, 1)) == [date(2026, 4, 1)]
+
+    def test_monat(self):
+        assert perioden_im_quartal('monat', date(2026, 4, 1)) == [
+            date(2026, 4, 1), date(2026, 5, 1), date(2026, 6, 1)]
+        # Auch das letzte Quartal bleibt im Jahr (Okt/Nov/Dez).
+        assert perioden_im_quartal('monat', date(2026, 10, 1)) == [
+            date(2026, 10, 1), date(2026, 11, 1), date(2026, 12, 1)]
+
+    def test_halbjahr_und_jahr_degenerieren_auf_quartalsstart(self):
+        assert perioden_im_quartal('halbjahr', date(2026, 7, 1)) == [date(2026, 7, 1)]
+        assert perioden_im_quartal('jahr', date(2026, 7, 1)) == [date(2026, 7, 1)]
+
+
+class TestVorschauAufholen:
+    """Aufhol-Vorschau über mehrere Quartale (Fake-DB)."""
+
+    def _service(self, regel, rows, vorhanden=()):
+        vorhanden = set(vorhanden)   # Menge der bereits abgerechneten Zeiträume
+        db = SimpleNamespace(
+            beitragsregeln=SimpleNamespace(list_aktive=lambda s: [regel]),
+            sollstellungen=SimpleNamespace(exists=lambda mid, rid, z: z in vorhanden),
+        )
+        svc = BeitragsService(db)
+        svc._betroffene_mitglieder = lambda r, s, ps, pe: rows
+        svc._mitglied_abteilungen = lambda ids: {}
+        return svc
+
+    def _regel(self):
+        return Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                             betrag_pro_monat=10.0, einzug_turnus='quartal')
+
+    def _rows(self):  # durchgehend aktiv → 3 Monate je Quartal → 30 €
+        return [{'id': 1, 'vorname': 'A', 'nachname': 'Voll', 'iban': None,
+                 'aktiv_von': '2020-01-01', 'aktiv_bis': None}]
+
+    def test_holt_alle_quartale_im_fenster(self):
+        # bis Q4 2026, Rückschau 4 → Untergrenze greift: Q2, Q3, Q4 2026.
+        positionen = self._service(self._regel(), self._rows()).vorschau_aufholen('2026-10-01', 4)
+        assert sorted(p.zeitraum for p in positionen) == ['2026-Q2', '2026-Q3', '2026-Q4']
+        assert all(p.betrag == 30.0 for p in positionen)
+
+    def test_bereits_vorhandene_markiert(self):
+        positionen = self._service(self._regel(), self._rows(),
+                                   vorhanden={'2026-Q3'}).vorschau_aufholen('2026-10-01', 4)
+        by_zr = {p.zeitraum: p for p in positionen}
+        assert by_zr['2026-Q3'].bereits_vorhanden is True
+        assert by_zr['2026-Q2'].bereits_vorhanden is False
+        assert by_zr['2026-Q4'].bereits_vorhanden is False
+
+    def test_keine_doppelten_positionen(self):
+        # Pro (Mitglied, Regel, Zeitraum) genau eine Position.
+        positionen = self._service(self._regel(), self._rows()).vorschau_aufholen('2026-10-01', 4)
+        schluessel = [(p.mitglied_id, p.beitragsregel_id, p.zeitraum) for p in positionen]
+        assert len(schluessel) == len(set(schluessel))

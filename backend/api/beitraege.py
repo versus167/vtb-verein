@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from app.models.beitrag import Beitragsregel
+from app.models.beitrag import Beitragsregel, BeitragEinstellungen
 from app.models.permission import Permission
 from app.services.beitrags_service import BeitragsService
 from ..core.deps import CurrentUser, DB
@@ -59,7 +59,11 @@ class RegelUpdate(RegelCreate):
 
 
 class AbrechnungRequest(BaseModel):
-    stichtag: str    # ISO-Datum, z.B. "2026-10-01"
+    stichtag: str    # ISO-Datum = "bis"-Grenze; abgerechnet wird bis zu dessen Quartal
+
+
+class EinstellungenUpdate(BaseModel):
+    quartale_rueckschau: int    # Quartale vor dem aktuellen, die mitabgerechnet werden (>= 0)
 
 
 
@@ -136,10 +140,30 @@ def delete_regel(regel_id: int, user: CurrentUser, db: DB):
 # Abrechnung
 # ---------------------------------------------------------------------------
 
+@router.get("/einstellungen")
+def get_einstellungen(user: CurrentUser, db: DB):
+    _require_read(user)
+    e = db.beitrag_einstellungen.get()
+    return {'quartale_rueckschau': e.quartale_rueckschau, 'version': e.version}
+
+
+@router.put("/einstellungen")
+def update_einstellungen(data: EinstellungenUpdate, user: CurrentUser, db: DB):
+    _require_write(user)
+    if data.quartale_rueckschau < 0:
+        raise HTTPException(status_code=422, detail="Quartale-Rückschau darf nicht negativ sein")
+    e = db.beitrag_einstellungen.update(
+        BeitragEinstellungen(quartale_rueckschau=data.quartale_rueckschau),
+        updated_by=user.username,
+    )
+    return {'quartale_rueckschau': e.quartale_rueckschau, 'version': e.version}
+
+
 @router.post("/vorschau")
 def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
     _require_read(user)
-    positionen = BeitragsService(db).vorschau(data.stichtag)
+    rueckschau = db.beitrag_einstellungen.get().quartale_rueckschau
+    positionen = BeitragsService(db).vorschau_aufholen(data.stichtag, rueckschau)
     return [
         {
             'mitglied_id': p.mitglied_id,
@@ -190,11 +214,14 @@ def dashboard(user: CurrentUser, db: DB, stichtag: Optional[str] = None):
 @router.post("/abrechnen", status_code=status.HTTP_201_CREATED)
 def abrechnen(data: AbrechnungRequest, user: CurrentUser, db: DB):
     _require_abrechnen(user)
-    ergebnis = BeitragsService(db).abrechnen(data.stichtag, erstellt_von=user.username)
+    rueckschau = db.beitrag_einstellungen.get().quartale_rueckschau
+    ergebnis = BeitragsService(db).abrechnen(
+        data.stichtag, erstellt_von=user.username, quartale_rueckschau=rueckschau)
     return {
         'zeitraum': ergebnis.zeitraum,
         'angelegt': ergebnis.angelegt,
         'uebersprungen': ergebnis.uebersprungen,
+        'zeitraeume': ergebnis.zeitraeume,
     }
 
 

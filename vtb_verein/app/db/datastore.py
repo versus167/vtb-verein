@@ -56,6 +56,7 @@ from app.db.gebuehr_repository import GebuehrRepository
 from app.db.gebuehr_forderung_repository import GebuehrForderungRepository
 from app.db.fibu_export_repository import FibuExportRepository
 from app.db.fibu_einstellungen_repository import FibuEinstellungenRepository
+from app.db.beitrag_einstellungen_repository import BeitragEinstellungenRepository
 from app.db.statistik_repository import StatistikRepository
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
@@ -97,6 +98,7 @@ class VereinsDB:
         self._kassen_zaehlung_repo = KassenZaehlungRepository(self.conn)
         self._beitragsregel_repo = BeitragsregelRepository(self.conn)
         self._sollstellung_repo = BeitragSollstellungRepository(self.conn)
+        self._beitrag_einstellungen_repo = BeitragEinstellungenRepository(self.conn)
         self._gebuehr_repo = GebuehrRepository(self.conn)
         self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
         self._fibu_export_repo = FibuExportRepository(self.conn)
@@ -498,6 +500,10 @@ class VereinsDB:
     @property
     def sollstellungen(self) -> BeitragSollstellungRepository:
         return self._sollstellung_repo
+
+    @property
+    def beitrag_einstellungen(self) -> BeitragEinstellungenRepository:
+        return self._beitrag_einstellungen_repo
 
     @property
     def gebuehren(self) -> GebuehrRepository:
