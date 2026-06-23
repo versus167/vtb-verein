@@ -34,9 +34,13 @@ class GebuehrForderungRepository(BaseRepository):
         params: list = []
         if status == 'exportiert':
             # "an Fibu übergeben": exportiert und (noch) nicht storniert – deckt sich
-            # mit dem indigofarbenen Status-Chip in der Forderungsliste. 'offen'/'storniert'
-            # bleiben reine status-Filter.
+            # mit dem indigofarbenen Status-Chip in der Forderungsliste.
             where += " AND f.exportiert_in_export_id IS NOT NULL AND f.status <> 'storniert'"
+        elif status == 'offen':
+            # "Erstellt": angelegt, aber noch nicht an die Fibu übergeben (und nicht
+            # storniert) – schließt bereits übergebene Forderungen aus, deckt sich mit
+            # dem orangefarbenen Status-Chip.
+            where += " AND f.status = 'offen' AND f.exportiert_in_export_id IS NULL"
         elif status:
             where += " AND f.status = %s"
             params.append(status)

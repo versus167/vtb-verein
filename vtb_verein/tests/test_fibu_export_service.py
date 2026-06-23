@@ -221,6 +221,22 @@ class TestAufloesung:
         assert p.belegdatum == '2026-06-21'
         assert p.faelligkeitsdatum == '2026-07-01'
 
+    def test_belegdatum_und_mandatsdatum_als_datetime_objekt(self):
+        # Postgres liefert seit der TIMESTAMPTZ-/DATE-Umstellung (v51) datetime/date-Objekte
+        # statt ISO-Strings. Diese müssen ebenso auf den reinen Datumsanteil normalisiert
+        # werden (Regression: 'datetime.datetime' object is not subscriptable).
+        from datetime import date, datetime, timezone
+        svc, _ = _service(neu=[_row(
+            belegdatum=datetime(2026, 6, 21, 17, 30, tzinfo=timezone.utc),
+            sepa_mandatsdatum=date(2025, 1, 2),
+        )])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.belegdatum == '2026-06-21'
+        assert p.faelligkeitsdatum == '2026-07-01'
+        assert p.mandatsdatum == '2025-01-02'
+        # Bis in die gerenderte FBASC-Zeile (Feld 48 = Mandatsdatum) durchformatiert.
+        assert ff.render_zeile(p).split(';')[48] == '02.01.2025'
+
     def test_lastschrift_ohne_iban_leer(self):
         svc, _ = _service(neu=[_row(iban=None, sepa_mandatsref=None)])
         assert svc.vorschau()['forderungen'][0].lastschrifteinzug is None

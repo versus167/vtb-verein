@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 52
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +345,7 @@ class Database:
             49: self._migrate_v48_to_v49,
             50: self._migrate_v49_to_v50,
             51: self._migrate_v50_to_v51,
+            52: self._migrate_v51_to_v52,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2747,6 +2748,27 @@ class Database:
         with self.cursor() as cur:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 51 WHERE id = 1")
+
+    def _migrate_v51_to_v52(self) -> None:
+        """Fibu-Export-Storno-Spalte `fibu_exporte.storno_von_export_id` nachziehen.
+
+        Die Spalte (Gegenbuchungs-Lauf → Original) wurde nachträglich in die v46-Migration
+        aufgenommen. Datenbanken, die v46 schon vor dieser Ergänzung durchlaufen hatten,
+        besitzen sie nicht – das Repository (SELECT … storno_von_export_id …) lief daher
+        auf »UndefinedColumn«. Frisch erstellte Schemas haben die Spalte bereits, hier wird
+        sie idempotent für Bestands-DBs nachgezogen: Spalte (Tabelle + History), Index und
+        die beiden Audit-Trigger-Funktionen, die die Spalte mitschreiben.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE fibu_exporte ADD COLUMN IF NOT EXISTS "
+                        "storno_von_export_id INTEGER REFERENCES fibu_exporte(id)")
+            cur.execute("ALTER TABLE fibu_exporte_history ADD COLUMN IF NOT EXISTS "
+                        "storno_von_export_id INTEGER")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_fibu_exporte_storno_von_export_id "
+                        "ON fibu_exporte(storno_von_export_id)")
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
+            cur.execute("UPDATE schema_version SET version = 52 WHERE id = 1")
 
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (

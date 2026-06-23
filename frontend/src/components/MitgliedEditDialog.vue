@@ -750,7 +750,7 @@ function fibuStatus(item) {
       : { label: 'storniert', color: 'grey' }
   }
   if (item.exportiert_in_export_id) return { label: 'an Fibu übergeben', color: 'indigo' }
-  return { label: 'offen', color: 'orange' }
+  return { label: 'erstellt', color: 'orange' }
 }
 
 async function loadFinanzen() {
