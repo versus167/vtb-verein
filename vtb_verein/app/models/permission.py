@@ -49,6 +49,14 @@ class Permission:
     # --- Finanzbuchhaltung (Fibu-Delta-Export der Sollstellungen, Format FBASC) ---
     FIBU_EXPORT = 'fibu.export'
 
+    # --- Übungsleiter-Stundenerfassung ---
+    # ÜL erfasst/bearbeitet/reicht eigene Abrechnungen ein (Funktion 'uebungsleiter').
+    UL_STUNDEN_ERFASSEN    = 'ulstunden.erfassen'
+    # AL bestätigt/lehnt ab – abteilungs-scoped (Funktion 'abteilungsleiter').
+    UL_STUNDEN_BESTAETIGEN = 'ulstunden.bestaetigen'
+    # Admin/Fibu: alle Abrechnungen sehen, Vergütungssätze/Konten pflegen.
+    UL_STUNDEN_VERWALTEN   = 'ulstunden.verwalten'
+
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'

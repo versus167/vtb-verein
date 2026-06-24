@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 54
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +247,235 @@ _FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE = """
     END; $$;
 """
 
+# ---------------------------------------------------------------------------
+# Mitglied-Audit-Trigger (inkl. Trainerlizenz/Qualifikation ab Schema v54),
+# geteilt zwischen Frischaufbau (_create_trigger_functions) und Migration v53→v54.
+# ---------------------------------------------------------------------------
+
+_MITGLIED_COLS = (
+    "id, version, mitgliedsnummer, vorname, nachname, geburtsdatum, "
+    "strasse, plz, ort, land, eintrittsdatum, austrittsdatum, status, "
+    "zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis, "
+    "geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum, "
+    "user_id, trainerlizenz_nr, qualifikation, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_MITGLIED_VALS = ", ".join("NEW." + c.strip() for c in _MITGLIED_COLS.split(","))
+
+_FN_MITGLIED_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_mitglied_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO mitglied_history ({_MITGLIED_COLS}) VALUES ({_MITGLIED_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_MITGLIED_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_mitglied_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO mitglied_history ({_MITGLIED_COLS}) VALUES ({_MITGLIED_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# ---------------------------------------------------------------------------
+# Übungsleiter-Stundenerfassung (Schema v53): Audit-Trigger-Funktionen, geteilt
+# zwischen Frischaufbau (_create_trigger_functions) und Migration v52→v53.
+# ---------------------------------------------------------------------------
+
+_UL_ABRECHNUNG_COLS = (
+    "id, version, mitglied_id, abteilung_id, zeitraum_von, zeitraum_bis, status, "
+    "lizenz_klassifikation, foerder_klassifikation, verguetung_pro_stunde, "
+    "eingereicht_am, eingereicht_von, bestaetigt_am, bestaetigt_von, abgelehnt_grund, "
+    "exportiert_in_export_id, storno_exportiert_in_export_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_UL_ABRECHNUNG_VALS = ", ".join("NEW." + c.strip() for c in _UL_ABRECHNUNG_COLS.split(","))
+
+_FN_UL_ABRECHNUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_abrechnung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO ul_abrechnung_history ({_UL_ABRECHNUNG_COLS}) VALUES ({_UL_ABRECHNUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_UL_ABRECHNUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_abrechnung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO ul_abrechnung_history ({_UL_ABRECHNUNG_COLS}) VALUES ({_UL_ABRECHNUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_UL_STUNDE_COLS = (
+    "id, version, abrechnung_id, datum, stunden, wochentag, angebot, bemerkung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_UL_STUNDE_VALS = ", ".join("NEW." + c.strip() for c in _UL_STUNDE_COLS.split(","))
+
+_FN_UL_STUNDE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_stunde_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO ul_stunde_history ({_UL_STUNDE_COLS}) VALUES ({_UL_STUNDE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_UL_STUNDE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_stunde_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO ul_stunde_history ({_UL_STUNDE_COLS}) VALUES ({_UL_STUNDE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_UL_SATZ_COLS = (
+    "id, version, mitglied_id, abteilung_id, lizenz_klassifikation, satz, gueltig_ab, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_UL_SATZ_VALS = ", ".join("NEW." + c.strip() for c in _UL_SATZ_COLS.split(","))
+
+_FN_UL_SATZ_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_satz_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO ul_satz_history ({_UL_SATZ_COLS}) VALUES ({_UL_SATZ_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_UL_SATZ_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_ul_satz_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO ul_satz_history ({_UL_SATZ_COLS}) VALUES ({_UL_SATZ_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# DDL der drei ÜL-Tabellen (+ History), geteilt zwischen Frischaufbau und Migration.
+_DDL_UL_TABLES = """
+    CREATE TABLE IF NOT EXISTS ul_abrechnung (
+      id                              SERIAL PRIMARY KEY,
+      mitglied_id                     INTEGER NOT NULL REFERENCES mitglied(id),
+      abteilung_id                    INTEGER NOT NULL REFERENCES abteilung(id),
+      zeitraum_von                    TEXT NOT NULL,
+      zeitraum_bis                    TEXT NOT NULL,
+      status                          TEXT NOT NULL DEFAULT 'entwurf',
+      lizenz_klassifikation           TEXT NOT NULL DEFAULT 'ohne_lizenz',
+      foerder_klassifikation          TEXT,
+      verguetung_pro_stunde           REAL,
+      eingereicht_am                  TEXT,
+      eingereicht_von                 TEXT,
+      bestaetigt_am                   TEXT,
+      bestaetigt_von                  TEXT,
+      abgelehnt_grund                 TEXT,
+      exportiert_in_export_id         INTEGER,
+      storno_exportiert_in_export_id  INTEGER,
+      version                         INTEGER NOT NULL DEFAULT 1,
+      created_at                      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by                      TEXT,
+      updated_at                      TEXT,
+      updated_by                      TEXT,
+      deleted_at                      TEXT,
+      deleted_by                      TEXT
+    );
+    CREATE TABLE IF NOT EXISTS ul_abrechnung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      mitglied_id INTEGER, abteilung_id INTEGER, zeitraum_von TEXT, zeitraum_bis TEXT,
+      status TEXT, lizenz_klassifikation TEXT, foerder_klassifikation TEXT,
+      verguetung_pro_stunde REAL,
+      eingereicht_am TEXT, eingereicht_von TEXT, bestaetigt_am TEXT, bestaetigt_von TEXT,
+      abgelehnt_grund TEXT, exportiert_in_export_id INTEGER, storno_exportiert_in_export_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS ul_stunde (
+      id            SERIAL PRIMARY KEY,
+      abrechnung_id INTEGER NOT NULL REFERENCES ul_abrechnung(id),
+      datum         TEXT NOT NULL,
+      stunden       REAL NOT NULL,
+      wochentag     INTEGER,
+      angebot       TEXT,
+      bemerkung     TEXT,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT,
+      updated_at    TEXT,
+      updated_by    TEXT,
+      deleted_at    TEXT,
+      deleted_by    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS ul_stunde_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      abrechnung_id INTEGER, datum TEXT, stunden REAL, wochentag INTEGER,
+      angebot TEXT, bemerkung TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS ul_satz (
+      id                    SERIAL PRIMARY KEY,
+      mitglied_id           INTEGER REFERENCES mitglied(id),
+      abteilung_id          INTEGER REFERENCES abteilung(id),
+      lizenz_klassifikation TEXT NOT NULL DEFAULT 'ohne_lizenz',
+      satz                  REAL NOT NULL,
+      gueltig_ab            TEXT,
+      version               INTEGER NOT NULL DEFAULT 1,
+      created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by            TEXT,
+      updated_at            TEXT,
+      updated_by            TEXT,
+      deleted_at            TEXT,
+      deleted_by            TEXT
+    );
+    CREATE TABLE IF NOT EXISTS ul_satz_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      mitglied_id INTEGER, abteilung_id INTEGER, lizenz_klassifikation TEXT,
+      satz REAL, gueltig_ab TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+# Indizes der ÜL-Tabellen, geteilt zwischen Frischaufbau und Migration.
+_UL_INDEXES = (
+    ("idx_ul_abrechnung_mitglied_id",   "ul_abrechnung(mitglied_id)"),
+    ("idx_ul_abrechnung_abteilung_id",  "ul_abrechnung(abteilung_id)"),
+    ("idx_ul_abrechnung_status",        "ul_abrechnung(status)"),
+    ("idx_ul_abrechnung_sperre",        "ul_abrechnung(mitglied_id, abteilung_id, zeitraum_bis)"),
+    ("idx_ul_abrechnung_export_id",     "ul_abrechnung(exportiert_in_export_id)"),
+    ("idx_ul_abrechnung_deleted_at",    "ul_abrechnung(deleted_at)"),
+    ("idx_ul_abrechnung_history_id",    "ul_abrechnung_history(id)"),
+    ("idx_ul_stunde_abrechnung_id",     "ul_stunde(abrechnung_id)"),
+    ("idx_ul_stunde_deleted_at",        "ul_stunde(deleted_at)"),
+    ("idx_ul_stunde_history_id",        "ul_stunde_history(id)"),
+    ("idx_ul_satz_lookup",              "ul_satz(lizenz_klassifikation, mitglied_id, abteilung_id)"),
+    ("idx_ul_satz_deleted_at",          "ul_satz(deleted_at)"),
+    ("idx_ul_satz_history_id",          "ul_satz_history(id)"),
+)
+
+# ÜL-Trigger (Tabelle ↔ Funktion), geteilt zwischen Frischaufbau und Migration.
+_UL_TRIGGERS = (
+    ('trig_ul_abrechnung_audit_insert', 'INSERT', 'ul_abrechnung', 'fn_ul_abrechnung_audit_insert'),
+    ('trig_ul_abrechnung_audit_update', 'UPDATE', 'ul_abrechnung', 'fn_ul_abrechnung_audit_update'),
+    ('trig_ul_stunde_audit_insert',     'INSERT', 'ul_stunde',     'fn_ul_stunde_audit_insert'),
+    ('trig_ul_stunde_audit_update',     'UPDATE', 'ul_stunde',     'fn_ul_stunde_audit_update'),
+    ('trig_ul_satz_audit_insert',       'INSERT', 'ul_satz',       'fn_ul_satz_audit_insert'),
+    ('trig_ul_satz_audit_update',       'UPDATE', 'ul_satz',       'fn_ul_satz_audit_update'),
+)
+
+# Standard-Berechtigungen je Funktion für die ÜL-Stundenerfassung (Seed/Migration).
+_UL_FUNKTION_PERMISSIONS = (
+    ('uebungsleiter',    'ulstunden.erfassen'),
+    ('abteilungsleiter', 'ulstunden.bestaetigen'),
+)
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -346,6 +575,8 @@ class Database:
             50: self._migrate_v49_to_v50,
             51: self._migrate_v50_to_v51,
             52: self._migrate_v51_to_v52,
+            53: self._migrate_v52_to_v53,
+            54: self._migrate_v53_to_v54,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -2770,11 +3001,66 @@ class Database:
             cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
             cur.execute("UPDATE schema_version SET version = 52 WHERE id = 1")
 
+    def _migrate_v52_to_v53(self) -> None:
+        """Übungsleiter-Stundenerfassung: ul_abrechnung/ul_stunde/ul_satz (+History,
+        Audit-Trigger, Indizes) sowie Standard-Berechtigungen je Funktion.
+
+        Idempotent (CREATE TABLE/INDEX IF NOT EXISTS, ON CONFLICT). Fresh-Schema und
+        Migration teilen sich DDL/Trigger/Index-Definitionen (Modul-Konstanten), damit
+        beide Pfade garantiert identische Schemata erzeugen.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_UL_TABLES)
+            # Audit-Trigger-Funktionen + Trigger
+            for fn_sql in (
+                _FN_UL_ABRECHNUNG_AUDIT_INSERT, _FN_UL_ABRECHNUNG_AUDIT_UPDATE,
+                _FN_UL_STUNDE_AUDIT_INSERT, _FN_UL_STUNDE_AUDIT_UPDATE,
+                _FN_UL_SATZ_AUDIT_INSERT, _FN_UL_SATZ_AUDIT_UPDATE,
+            ):
+                cur.execute(fn_sql)
+            for name, event, table, fn in _UL_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _UL_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            # Standard-Berechtigungen an die Funktionen 'uebungsleiter'/'abteilungsleiter' hängen
+            for fkey, perm in _UL_FUNKTION_PERMISSIONS:
+                cur.execute(
+                    """
+                    INSERT INTO funktion_permission (funktion_id, permission, created_by, updated_by)
+                    SELECT f.id, %s, 'SYSTEM', 'SYSTEM' FROM funktion f
+                    WHERE f.key=%s AND f.deleted_at IS NULL
+                    ON CONFLICT (funktion_id, permission) DO NOTHING
+                    """,
+                    (perm, fkey),
+                )
+            # eingereicht_am/bestaetigt_am als TIMESTAMPTZ (gleiche Routine wie Fresh-Schema)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 53 WHERE id = 1")
+
+    def _migrate_v53_to_v54(self) -> None:
+        """Mitglied-Stammdaten für den ÜL-Stundennachweis: trainerlizenz_nr, qualifikation.
+
+        Spalten (Tabelle + History) idempotent nachziehen und die Mitglied-Audit-Trigger
+        auf die neuen Spalten erweitern (geteilte Modul-Konstanten, identisch zum Fresh-Schema).
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS trainerlizenz_nr TEXT")
+            cur.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS qualifikation TEXT")
+            cur.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS trainerlizenz_nr TEXT")
+            cur.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS qualifikation TEXT")
+            cur.execute(_FN_MITGLIED_AUDIT_INSERT)
+            cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
+            cur.execute("UPDATE schema_version SET version = 54 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
         "exportiert_am", "hochgeladen_am", "hinzugefuegt_am",
         "last_login", "last_seen",
+        "eingereicht_am", "bestaetigt_am",
     )
 
     def _normalize_audit_timestamps(self, cur) -> None:
@@ -2867,6 +3153,8 @@ class Database:
               sepa_mandatsref   TEXT,
               sepa_mandatsdatum TEXT,
               user_id           INTEGER,
+              trainerlizenz_nr  TEXT,
+              qualifikation     TEXT,
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by        TEXT,
@@ -2903,6 +3191,8 @@ class Database:
               sepa_mandatsref   TEXT,
               sepa_mandatsdatum TEXT,
               user_id           INTEGER,
+              trainerlizenz_nr  TEXT,
+              qualifikation     TEXT,
               created_at        TEXT,
               created_by        TEXT,
               updated_at        TEXT,
@@ -3978,6 +4268,10 @@ class Database:
             )
         """)
 
+        # Übungsleiter-Stundenerfassung (Schema v53): Abrechnung (Header) + Einzeltermine
+        # + konfigurierbare Vergütungssätze. DDL geteilt mit Migration v52→v53.
+        cur.execute(_DDL_UL_TABLES)
+
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fibu_exporte (
@@ -4079,50 +4373,8 @@ class Database:
                 RETURN NULL;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO mitglied_history (
-                    id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
-                    strasse, plz, ort, land,
-                    eintrittsdatum, austrittsdatum, status,
-                    zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                    geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
-                    user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
-                    NEW.strasse, NEW.plz, NEW.ort, NEW.land,
-                    NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
-                    NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
-                    NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
-                    NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO mitglied_history (
-                        id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
-                        strasse, plz, ort, land,
-                        eintrittsdatum, austrittsdatum, status,
-                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
-                        geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
-                        user_id, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.mitgliedsnummer, NEW.vorname, NEW.nachname, NEW.geburtsdatum,
-                        NEW.strasse, NEW.plz, NEW.ort, NEW.land,
-                        NEW.eintrittsdatum, NEW.austrittsdatum, NEW.status,
-                        NEW.zahlungsart, NEW.iban, NEW.bic, NEW.kontoinhaber, NEW.abgerechnet_bis,
-                        NEW.geschlecht, NEW.bemerkungen, NEW.sepa_mandatsref, NEW.sepa_mandatsdatum,
-                        NEW.user_id, NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_MITGLIED_AUDIT_INSERT)
+        cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_mitglied_kontakt_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -4211,6 +4463,12 @@ class Database:
         cur.execute(_FN_GEBUEHR_AUDIT_UPDATE)
         cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_INSERT)
         cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE)
+        cur.execute(_FN_UL_ABRECHNUNG_AUDIT_INSERT)
+        cur.execute(_FN_UL_ABRECHNUNG_AUDIT_UPDATE)
+        cur.execute(_FN_UL_STUNDE_AUDIT_INSERT)
+        cur.execute(_FN_UL_STUNDE_AUDIT_UPDATE)
+        cur.execute(_FN_UL_SATZ_AUDIT_INSERT)
+        cur.execute(_FN_UL_SATZ_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -4864,6 +5122,7 @@ class Database:
             ('trig_funktion_audit_update',                          'UPDATE', 'funktion',                          'fn_funktion_audit_update'),
             ('trig_funktion_permission_audit_insert',               'INSERT', 'funktion_permission',               'fn_funktion_permission_audit_insert'),
             ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
+            *_UL_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -4904,6 +5163,7 @@ class Database:
             ("idx_funktion_permission_funktion_id",                 "funktion_permission(funktion_id)"),
             ("idx_funktion_permission_deleted_at",                  "funktion_permission(deleted_at)"),
             ("idx_funktion_permission_history_id",                  "funktion_permission_history(id)"),
+            *_UL_INDEXES,
             ("idx_kassen_deleted_at",                               "kassen(deleted_at)"),
             ("idx_kassen_abteilung_id",                             "kassen(abteilung_id)"),
             ("idx_kassenbuchungen_kasse_id",                        "kassenbuchungen(kasse_id)"),
@@ -4997,6 +5257,7 @@ class Database:
             'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
             'gebuehren.read', 'gebuehren.write', 'gebuehren.abrechnen',
             'fibu.export',
+            'ulstunden.erfassen', 'ulstunden.bestaetigen', 'ulstunden.verwalten',
             'berichte.read', 'berichte.export',
             'system.config',
             'tickets.access',
@@ -5065,3 +5326,12 @@ class Database:
                     SELECT 1 FROM funktion WHERE key = %s AND deleted_at IS NULL
                 )
             """, (key, name, key))
+
+        # Standard-Berechtigungen der ÜL-Stundenerfassung an die Funktionen hängen.
+        for fkey, perm in _UL_FUNKTION_PERMISSIONS:
+            cur.execute("""
+                INSERT INTO funktion_permission (funktion_id, permission, created_by, updated_by)
+                SELECT f.id, %s, 'SYSTEM', 'SYSTEM' FROM funktion f
+                WHERE f.key=%s AND f.deleted_at IS NULL
+                ON CONFLICT (funktion_id, permission) DO NOTHING
+            """, (perm, fkey))

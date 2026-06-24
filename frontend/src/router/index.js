@@ -86,6 +86,18 @@ const routes = [
         meta: { permission: 'gebuehren.read' },
       },
       {
+        path: 'stundenerfassung',
+        name: 'stundenerfassung',
+        component: () => import('pages/UlStundenPage.vue'),
+        meta: { permission: 'ulstunden.erfassen' },
+      },
+      {
+        path: 'stunden-bestaetigung',
+        name: 'stunden-bestaetigung',
+        component: () => import('pages/UlBestaetigungPage.vue'),
+        meta: { permission: 'ulstunden.bestaetigen' },
+      },
+      {
         path: 'fibu-export',
         name: 'fibu-export',
         component: () => import('pages/FibuExportPage.vue'),

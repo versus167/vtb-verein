@@ -93,6 +93,8 @@ class PersonMitgliedUpdate(BaseModel):
     bic: Optional[str] = None
     kontoinhaber: Optional[str] = None
     abgerechnet_bis: Optional[str] = None
+    trainerlizenz_nr: Optional[str] = None
+    qualifikation: Optional[str] = None
     expected_version: int
 
 
@@ -160,6 +162,8 @@ def _mitglied_to_dict(m) -> dict:
         'bic': m.bic,
         'kontoinhaber': m.kontoinhaber,
         'abgerechnet_bis': m.abgerechnet_bis,
+        'trainerlizenz_nr': m.trainerlizenz_nr,
+        'qualifikation': m.qualifikation,
         'user_id': m.user_id,
         'version': m.version,
         'created_at': m.created_at,
@@ -480,6 +484,8 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     m.bic = data.bic
     m.kontoinhaber = data.kontoinhaber
     m.abgerechnet_bis = data.abgerechnet_bis
+    m.trainerlizenz_nr = data.trainerlizenz_nr
+    m.qualifikation = data.qualifikation
     m.version = data.expected_version
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
@@ -511,6 +517,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         status=data.status, zahlungsart=data.zahlungsart,
         iban=data.iban, bic=data.bic, kontoinhaber=data.kontoinhaber,
         abgerechnet_bis=data.abgerechnet_bis,
+        trainerlizenz_nr=data.trainerlizenz_nr, qualifikation=data.qualifikation,
         user_id=user_id,
     )
     mitglied = db.create_mitglied(m, created_by=user.username)
@@ -557,6 +564,8 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     m.bic = data.bic
     m.kontoinhaber = data.kontoinhaber
     m.abgerechnet_bis = data.abgerechnet_bis
+    m.trainerlizenz_nr = data.trainerlizenz_nr
+    m.qualifikation = data.qualifikation
     m.version = data.expected_version
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:

@@ -74,6 +74,16 @@
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
               </div>
             </q-expansion-item>
+            <q-expansion-item label="Übungsleiter" dense icon="sports">
+              <div class="q-gutter-sm q-pt-sm">
+                <q-input v-model="form.qualifikation" label="Übungsleiterqualifikation"
+                  outlined dense :readonly="!canWrite"
+                  hint="z. B. Sport in der Prävention" />
+                <q-input v-model="form.trainerlizenz_nr" label="Trainerlizenz-Nr."
+                  outlined dense :readonly="!canWrite"
+                  hint="erscheint auf dem Stundennachweis-Beleg" />
+              </div>
+            </q-expansion-item>
             <div v-if="stammError" class="text-negative text-caption">{{ stammError }}</div>
             <div v-if="canWrite" class="row justify-end">
               <q-btn :label="isNewLocal ? 'Erfassen' : 'Stammdaten speichern'" color="primary" unelevated
@@ -575,6 +585,7 @@ const emptyForm = () => ({
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
   eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
+  trainerlizenz_nr: null, qualifikation: null,
 })
 const form = ref(emptyForm())
 // Snapshot des zuletzt geladenen/gespeicherten Stands – Basis für die
@@ -1029,6 +1040,8 @@ async function saveStammdaten() {
         bic: form.value.bic || null,
         kontoinhaber: form.value.kontoinhaber || null,
         abgerechnet_bis: form.value.abgerechnet_bis || null,
+        trainerlizenz_nr: form.value.trainerlizenz_nr || null,
+        qualifikation: form.value.qualifikation || null,
         expected_version: form.value.version ?? 1,
       }
       let response

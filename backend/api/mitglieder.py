@@ -30,6 +30,8 @@ class MitgliedCreate(BaseModel):
     bic: Optional[str] = None
     kontoinhaber: Optional[str] = None
     abgerechnet_bis: Optional[str] = None
+    trainerlizenz_nr: Optional[str] = None
+    qualifikation: Optional[str] = None
 
     @field_validator('geburtsdatum', 'eintrittsdatum', 'austrittsdatum', 'abgerechnet_bis', mode='before')
     @classmethod

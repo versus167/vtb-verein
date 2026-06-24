@@ -42,6 +42,10 @@ class Mitglied:
     sepa_mandatsref: Optional[str] = None
     sepa_mandatsdatum: Optional[str] = None
 
+    # Übungsleiter-Stammdaten (für den Stundennachweis-Beleg)
+    trainerlizenz_nr: Optional[str] = None
+    qualifikation: Optional[str] = None
+
     # Verknüpfung mit User-Account (optional)
     user_id: Optional[int] = None
 
