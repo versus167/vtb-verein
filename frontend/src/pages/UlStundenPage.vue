@@ -6,6 +6,17 @@
       <q-btn color="primary" unelevated icon="add" label="Neue Abrechnung" @click="openCreate" />
     </div>
 
+    <!-- Fremderfassung (Geschäftsstelle): zwischen eigener und fremder ÜL-Sicht wechseln -->
+    <q-select v-if="kannFremd" v-model="zielMitgliedId" :options="uebungsleiter" option-value="id"
+      :option-label="u => `${u.nachname}, ${u.vorname}`" emit-value map-options clearable dense outlined
+      class="q-mb-md" label="Für Übungsleiter (leer = eigene)" @update:model-value="onZielChange">
+      <template #prepend><q-icon name="badge" /></template>
+    </q-select>
+    <q-banner v-if="zielMitgliedId" dense class="bg-amber-1 text-amber-9 q-mb-md rounded-borders">
+      <template #avatar><q-icon name="edit_note" /></template>
+      Fremderfassung für <b>{{ zielLabel }}</b> – Anlegen und Bearbeiten erfolgen für diesen Übungsleiter.
+    </q-banner>
+
     <q-list bordered separator>
       <q-item v-for="a in abrechnungen" :key="a.id" clickable @click="openDetail(a)">
         <q-item-section>
@@ -213,13 +224,24 @@ import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { useAuthStore } from 'src/stores/auth'
 
 defineOptions({ name: 'UlStundenPage' })
 
 const $q = useQuasar()
+const auth = useAuthStore()
 
 const abrechnungen = ref([])
 const abteilungen = ref([])
+
+// Fremderfassung (Geschäftsstelle): Abrechnungen für einen anderen ÜL anlegen/pflegen.
+const kannFremd = computed(() => auth.hasPermission('ulstunden.erfassen_fremd'))
+const uebungsleiter = ref([])          // Auswahl-Liste (nur mit Fremderfassungs-Recht)
+const zielMitgliedId = ref(null)       // null = eigene Abrechnungen
+const zielLabel = computed(() => {
+  const ul = uebungsleiter.value.find(u => u.id === zielMitgliedId.value)
+  return ul ? `${ul.nachname}, ${ul.vorname}` : ''
+})
 
 function statusChip(status) {
   return {
@@ -264,12 +286,23 @@ function endOfMonthIso(iso) {            // letzter Tag des Monats von iso
 }
 
 async function loadAbrechnungen() {
-  const { data } = await api.get('/api/ul-stunden/meine')
+  const params = zielMitgliedId.value ? { mitglied_id: zielMitgliedId.value } : {}
+  const { data } = await api.get('/api/ul-stunden/meine', { params })
   abrechnungen.value = data
+}
+async function loadUebungsleiter() {
+  if (!kannFremd.value) return
+  try {
+    const { data } = await api.get('/api/ul-stunden/uebungsleiter')
+    uebungsleiter.value = data
+  } catch { uebungsleiter.value = [] }
+}
+function onZielChange() {
+  loadAbrechnungen().catch(() => $q.notify({ type: 'negative', message: 'Fehler beim Laden' }))
 }
 usePageRefresh(loadAbrechnungen)
 onMounted(async () => {
-  try { await loadAbrechnungen() }
+  try { await Promise.all([loadAbrechnungen(), loadUebungsleiter()]) }
   catch { $q.notify({ type: 'negative', message: 'Fehler beim Laden' }) }
 })
 
@@ -295,10 +328,14 @@ async function openCreate() {
   cError.value = ''
   kontextGeladen.value = false
   abteilungen.value = []
-  cForm.value = { abteilung_id: null, zeitraum_von: firstOfPrevMonthIso(), zeitraum_bis: endOfPrevMonthIso() }
+  cForm.value = {
+    abteilung_id: null, zeitraum_von: firstOfPrevMonthIso(), zeitraum_bis: endOfPrevMonthIso(),
+    mitglied_id: zielMitgliedId.value || null,   // bei Fremderfassung: Ziel-ÜL
+  }
   createOpen.value = true
   try {
-    const { data } = await api.get('/api/ul-stunden/erfassung-kontext')
+    const params = zielMitgliedId.value ? { mitglied_id: zielMitgliedId.value } : {}
+    const { data } = await api.get('/api/ul-stunden/erfassung-kontext', { params })
     abteilungen.value = data.abteilungen || []
     if (abteilungen.value.length === 1) {
       cForm.value.abteilung_id = abteilungen.value[0].id

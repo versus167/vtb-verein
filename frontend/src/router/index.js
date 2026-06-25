@@ -89,7 +89,7 @@ const routes = [
         path: 'stundenerfassung',
         name: 'stundenerfassung',
         component: () => import('pages/UlStundenPage.vue'),
-        meta: { permission: 'ulstunden.erfassen' },
+        meta: { permission: ['ulstunden.erfassen', 'ulstunden.erfassen_fremd'] },
       },
       {
         path: 'stunden-bestaetigung',

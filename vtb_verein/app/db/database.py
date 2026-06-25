@@ -5274,7 +5274,7 @@ class Database:
             'beitraege.read', 'beitraege.write', 'beitraege.abrechnen',
             'gebuehren.read', 'gebuehren.write', 'gebuehren.abrechnen',
             'fibu.export',
-            'ulstunden.erfassen', 'ulstunden.bestaetigen', 'ulstunden.verwalten',
+            'ulstunden.erfassen', 'ulstunden.erfassen_fremd', 'ulstunden.bestaetigen', 'ulstunden.verwalten',
             'berichte.read', 'berichte.export',
             'system.config',
             'tickets.access',

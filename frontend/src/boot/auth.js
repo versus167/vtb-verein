@@ -19,8 +19,11 @@ export default boot(async ({ router }) => {
     if (to.meta.adminOnly && auth.user?.role !== 'admin') {
       return { name: 'dashboard' }
     }
-    if (to.meta.permission && !auth.hasPermission(to.meta.permission) && auth.user?.role !== 'admin') {
-      return { name: 'dashboard' }
+    if (to.meta.permission && auth.user?.role !== 'admin') {
+      const perms = Array.isArray(to.meta.permission) ? to.meta.permission : [to.meta.permission]
+      if (!perms.some((p) => auth.hasPermission(p))) {
+        return { name: 'dashboard' }
+      }
     }
   })
 

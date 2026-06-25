@@ -32,6 +32,7 @@ class AbrechnungCreate(BaseModel):
     abteilung_id: int
     zeitraum_von: str
     zeitraum_bis: str
+    mitglied_id: Optional[int] = None   # Ziel-ÜL bei Fremderfassung; None = eigene
     # Lizenz wird aus den Mitglied-Stammdaten abgeleitet; Sportförderung ist ein
     # späteres Buchungsdetail – beides hier nicht erfassen.
 
@@ -104,6 +105,11 @@ def _can_erfassen(user, abteilung_id: int) -> bool:
             or user.has_permission_for_abteilung(Permission.UL_STUNDEN_ERFASSEN, abteilung_id))
 
 
+def _can_erfassen_fremd(user) -> bool:
+    """Fremderfassung: Geschäftsstelle legt/pflegt Abrechnungen FÜR andere ÜL an."""
+    return _can_verwalten(user) or user.has_permission(Permission.UL_STUNDEN_ERFASSEN_FREMD)
+
+
 def _load(db, abrechnung_id: int):
     a = db.ul_abrechnungen.get(abrechnung_id)
     if a is None:
@@ -112,15 +118,17 @@ def _load(db, abrechnung_id: int):
 
 
 def _can_view(user, db, a) -> bool:
-    """Eigentümer, Abteilungsleiter der Abteilung oder Verwaltung."""
+    """Eigentümer, Abteilungsleiter der Abteilung, Verwaltung oder Fremderfasser."""
     own = db.get_mitglied_by_user_id(user.id)
     is_owner = own is not None and own.id == a.mitglied_id
-    return is_owner or _can_confirm(user, a.abteilung_id)
+    return is_owner or _can_confirm(user, a.abteilung_id) or _can_erfassen_fremd(user)
 
 
 def _require_owner_entwurf(user, db, a):
-    """Stellt sicher, dass der aktuelle User Eigentümer und die Abrechnung im Entwurf ist."""
-    if a.mitglied_id != _own_mitglied_id(user, db):
+    """Eigentümer – oder Fremderfasser/Verwaltung – darf den Entwurf bearbeiten."""
+    own = db.get_mitglied_by_user_id(user.id)
+    is_owner = own is not None and own.id == a.mitglied_id
+    if not (is_owner or _can_erfassen_fremd(user)):
         raise HTTPException(status_code=403, detail="Nur die eigene Abrechnung ist bearbeitbar")
     if a.status != 'entwurf':
         raise HTTPException(status_code=409, detail="Abrechnung ist nicht mehr im Entwurf")
@@ -143,32 +151,56 @@ def _abrechnung_dict(db, a, *, with_details: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/meine")
-def list_meine(user: CurrentUser, db: DB, status_filter: Optional[str] = None):
-    """Eigene Abrechnungen des eingeloggten Übungsleiters."""
-    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_verwalten(user)):
+def list_meine(user: CurrentUser, db: DB, status_filter: Optional[str] = None,
+               mitglied_id: Optional[int] = None):
+    """Abrechnungen des eingeloggten ÜL – oder, mit Fremderfassungs-Recht und gesetztem
+    mitglied_id, die eines anderen ÜL (Geschäftsstelle)."""
+    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_erfassen_fremd(user)):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Stundenerfassung")
-    mid = _own_mitglied_id(user, db)
+    own = db.get_mitglied_by_user_id(user.id)
+    own_id = own.id if own else None
+    target = mitglied_id if mitglied_id is not None else own_id
+    if target is None:
+        raise HTTPException(status_code=400, detail="Kein Übungsleiter angegeben")
+    if target != own_id and not _can_erfassen_fremd(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für fremde Abrechnungen")
     return [_abrechnung_dict(db, a)
-            for a in db.ul_abrechnungen.list_for_mitglied(mid, status_filter)]
+            for a in db.ul_abrechnungen.list_for_mitglied(target, status_filter)]
 
 
 @router.get("/erfassung-kontext")
-def erfassung_kontext(user: CurrentUser, db: DB):
-    """Kontext für den Anlegen-Dialog: Abteilungen, für die der eingeloggte ÜL erfassen
-    darf, je mit Zeitraum-Vorschlag (Beginn = Tag nach der letzten Abrechnung). Ist es
-    genau eine Abteilung, wählt das Frontend sie ohne Auswahl aus."""
-    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_verwalten(user)):
+def erfassung_kontext(user: CurrentUser, db: DB, mitglied_id: Optional[int] = None):
+    """Kontext für den Anlegen-Dialog: Abteilungen mit Zeitraum-Vorschlag (Beginn = Tag
+    nach der letzten Abrechnung des Ziel-ÜL). Eigene Erfassung = abteilungs-scoped;
+    Fremderfassung (mitglied_id gesetzt) oder Verwaltung = alle Abteilungen. Bei genau
+    einer Abteilung wählt das Frontend sie ohne Auswahl aus."""
+    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_erfassen_fremd(user)):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Stundenerfassung")
-    mid = _own_mitglied_id(user, db)
-    allowed = (None if _can_verwalten(user)
+    own = db.get_mitglied_by_user_id(user.id)
+    own_id = own.id if own else None
+    target = mitglied_id if mitglied_id is not None else own_id
+    if target is None:
+        raise HTTPException(status_code=400, detail="Kein Übungsleiter angegeben")
+    fremd = target != own_id
+    if fremd and not _can_erfassen_fremd(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
+    allowed = (None if (fremd or _can_verwalten(user))
                else user.allowed_abteilungen(Permission.UL_STUNDEN_ERFASSEN))
     svc = ULStundenService(db)
     abteilungen = [
-        {'id': a.id, 'name': a.name, 'zeitraum_von_vorschlag': svc.erfassbar_ab(mid, a.id)}
+        {'id': a.id, 'name': a.name, 'zeitraum_von_vorschlag': svc.erfassbar_ab(target, a.id)}
         for a in db.list_abteilungen()
         if allowed is None or a.id in allowed
     ]
     return {'abteilungen': abteilungen}
+
+
+@router.get("/uebungsleiter")
+def list_uebungsleiter(user: CurrentUser, db: DB):
+    """ÜL-Auswahl für die Fremderfassung: aktive Inhaber der Funktion 'uebungsleiter'."""
+    if not _can_erfassen_fremd(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
+    return db.list_mitglieder_mit_funktion('uebungsleiter')
 
 
 @router.get("/zu-bestaetigen")
@@ -294,13 +326,21 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_abrechnung(data: AbrechnungCreate, user: CurrentUser, db: DB):
-    if not _can_erfassen(user, data.abteilung_id):
+    own = db.get_mitglied_by_user_id(user.id)
+    own_id = own.id if own else None
+    target_mid = data.mitglied_id if data.mitglied_id is not None else own_id
+    if target_mid is None:
+        raise HTTPException(status_code=400, detail="Kein Ziel-Übungsleiter angegeben")
+    if target_mid == own_id:
+        if not _can_erfassen(user, data.abteilung_id):
+            raise HTTPException(status_code=403,
+                                detail="Keine Berechtigung zur Stundenerfassung in dieser Abteilung")
+    elif not _can_erfassen_fremd(user):
         raise HTTPException(status_code=403,
-                            detail="Keine Berechtigung zur Stundenerfassung in dieser Abteilung")
-    mid = _own_mitglied_id(user, db)
+                            detail="Keine Berechtigung zur Erfassung für andere Übungsleiter")
     try:
         a = ULStundenService(db).create_abrechnung(
-            mitglied_id=mid, abteilung_id=data.abteilung_id,
+            mitglied_id=target_mid, abteilung_id=data.abteilung_id,
             von=data.zeitraum_von, bis=data.zeitraum_bis,
             erstellt_von=user.username,
         )

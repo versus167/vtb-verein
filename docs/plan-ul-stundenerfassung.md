@@ -13,7 +13,7 @@ Abteilungsleiter (AL) bestätigt, anschließend Fibu-Export (FBASC) + PDF-Beleg
 - ✅ **Phase 2:** PDF-Beleg (A4 quer) + Lizenz-Stammdaten am Mitglied — fertig & getestet
 - ⬜ **Phase 3:** Fibu-Anbindung (Kreditor je ÜL) — offen (Detailplan unten)
 - ✅ **Vergütungssätze-UI:** Liste + Anlegen/Bearbeiten/Löschen (vereinsweit + Abteilung) — `UlSaetzePage.vue` fertig; ÜL-Override-Bearbeitung weiter „später" (s. „Offen 4")
-- ⬜ **Fremderfassung (Geschäftsstelle):** Abrechnung für einen anderen ÜL anlegen/pflegen — offen (s. „Offen 3")
+- ✅ **Fremderfassung (Geschäftsstelle):** Abrechnung für einen anderen ÜL anlegen/pflegen — `UlStundenPage.vue` „Für Übungsleiter"-Auswahl + Recht `ulstunden.erfassen_fremd`
 
 Beides committet in `4188bf3` (Phase 1+2). Verifikation lief gegen lokale PG14
 (Port 5434, DB `vtb_test`): Schema beide Pfade, Workflow, Sperr-Logik, PDF, HTTP-Flow.
@@ -112,23 +112,21 @@ einhängen (Delta/Storno/Re-Download wiederverwenden), NICHT neuer Export-Lauf-T
 
 **Braucht vom Verein/Steuerberater:** konkretes Aufwandskonto + Kreditor-Konten-Basis. Bis dahin als konfigurierbare Felder mit Platzhaltern anlegen und testbar machen.
 
-## Offen 3 — Fremderfassung durch Geschäftsstelle (Abrechnung für anderen ÜL)
-Ein Geschäftsstellen-Mitarbeiter soll eine Abrechnung **für einen anderen ÜL** anlegen und
-pflegen können, nicht nur die eigene. Heute hängt das Anlegen hart am eigenen Mitglied
-(`_own_mitglied_id` in [ul_stunden.py](../backend/api/ul_stunden.py)).
-- **Eigene, dedizierte Permission** (z. B. `ulstunden.erfassen_fremd`, „Stundenerfassung für
-  andere ÜL") — in die Katalog-Gruppe „Übungsleiter-Stunden" ([users.py](../backend/api/users.py))
-  aufnehmen. Vereinsweit gedacht (Geschäftsstelle), Abteilungs-Scope optional. Bewusst getrennt
-  von `ulstunden.verwalten` (= alles sehen + Sätze/Konten): Fremderfassung ist nur das
-  operative Anlegen/Einreichen für einen ÜL.
-- **Backend:** `create_abrechnung` (und `add_stunde`/`add_serie`/`add_tage`/`einreichen`/…) auf ein
-  Ziel-`mitglied_id` öffnen. Ziel ≠ eigenes Mitglied → die neue Permission verlangen;
-  `_require_owner_entwurf` so erweitern, dass auch der Fremderfasser den Entwurf bearbeiten darf.
-  Audit (`created_by`/`updated_by`) = handelnder Mitarbeiter, Eigentümer/Beleg = Ziel-ÜL.
-- **Frontend:** im Anlegen-Dialog ein „Für Übungsleiter"-Feld (nur mit der Permission sichtbar),
-  Auswahl aus den ÜL (Mitglieder mit Funktion `uebungsleiter`/Recht `ulstunden.erfassen`).
-  Zugriff auf die fremden Abrechnungen über eine Geschäftsstellen-/Verwaltungssicht — die
-  „meine"-Liste reicht nicht, da der Mitarbeiter nicht Eigentümer ist.
+## Offen 3 — Fremderfassung durch Geschäftsstelle (Abrechnung für anderen ÜL) — ✅ erledigt
+Ein Geschäftsstellen-Mitarbeiter kann Abrechnungen **für einen anderen ÜL** anlegen und pflegen.
+- **Dedizierte Permission `ulstunden.erfassen_fremd`** ([permission.py](../vtb_verein/app/models/permission.py)),
+  in der Katalog-Gruppe „Übungsleiter-Stunden" ([users.py](../backend/api/users.py)) und im Admin-Seed.
+  Vereinsweit; getrennt von `ulstunden.verwalten`.
+- **Backend** ([ul_stunden.py](../backend/api/ul_stunden.py)): `create_abrechnung` nimmt ein Ziel-
+  `mitglied_id` (Ziel ≠ eigenes → Recht verlangt); `_require_owner_entwurf`/`_can_view` lassen
+  Fremderfasser zu; `meine?mitglied_id=` + `erfassung-kontext?mitglied_id=` (Vorschlag aus dem
+  Watermark des Ziel-ÜL); neuer Endpoint `GET /uebungsleiter` (aktive Inhaber der Funktion
+  `uebungsleiter`). Audit = Mitarbeiter, Eigentümer/Beleg = Ziel-ÜL.
+- **Frontend** ([UlStundenPage.vue](../frontend/src/pages/UlStundenPage.vue)): „Für Übungsleiter"-
+  Auswahl (nur mit Recht) steuert Liste + Anlegen; Route-Guard ([boot/auth.js](../frontend/src/boot/auth.js))
+  akzeptiert jetzt mehrere Rechte (anyOf), Route/Menü erlauben `erfassen` ODER `erfassen_fremd`.
+- **Offen geblieben:** scoped (abteilungsweise) Einschränkung der Fremderfassung; der Fremderfasser
+  darf derzeit jede Entwurfs-Abrechnung bearbeiten (bewusst, Geschäftsstelle vereinsweit).
 
 ## Offen 4 — später
 ÜL-individuelle Satz-Overrides im UI, Sportförder-Auswertungen, ggf. Korrektur-Workflows.

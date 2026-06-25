@@ -351,6 +351,9 @@ class VereinsDB:
     def list_mitglied_funktionen(self, mitglied_id: int) -> list[MitgliedFunktion]:
         return self._mitglied_funktion_repo.list_for_mitglied(mitglied_id)
 
+    def list_mitglieder_mit_funktion(self, funktion: str) -> list[dict]:
+        return self._mitglied_funktion_repo.list_mitglieder_mit_funktion(funktion)
+
     def get_mitglied_funktion(self, id: int) -> Optional[MitgliedFunktion]:
         return self._mitglied_funktion_repo.get(id)
 

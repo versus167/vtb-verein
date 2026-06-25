@@ -160,7 +160,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('ulstunden.erfassen')"
+            v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd')"
             clickable
             :to="{ name: 'stundenerfassung' }"
             active-class="bg-primary text-white"
