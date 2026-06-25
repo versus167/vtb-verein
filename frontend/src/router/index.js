@@ -98,6 +98,12 @@ const routes = [
         meta: { permission: 'ulstunden.bestaetigen' },
       },
       {
+        path: 'verguetungssaetze',
+        name: 'ul-saetze',
+        component: () => import('pages/UlSaetzePage.vue'),
+        meta: { permission: 'ulstunden.verwalten' },
+      },
+      {
         path: 'fibu-export',
         name: 'fibu-export',
         component: () => import('pages/FibuExportPage.vue'),

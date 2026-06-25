@@ -1,6 +1,6 @@
 # Plan & Status: Übungsleiter-Stundenerfassung
 
-Stand: 2026-06-24 · Branch `feature/ul-stundenerfassung` · Schema **v54**
+Stand: 2026-06-25 · Branch `feature/ul-stundenerfassung` · Schema **v55**
 
 ## Ziel
 Übungsleiter (ÜL) erfassen ihre geleisteten Trainingsstunden selbst, der
@@ -12,10 +12,18 @@ Abteilungsleiter (AL) bestätigt, anschließend Fibu-Export (FBASC) + PDF-Beleg
 - ✅ **Phase 1 (MVP):** Erfassung (ÜL) + Bestätigung (AL) + Sperr-Logik — fertig & getestet
 - ✅ **Phase 2:** PDF-Beleg (A4 quer) + Lizenz-Stammdaten am Mitglied — fertig & getestet
 - ⬜ **Phase 3:** Fibu-Anbindung (Kreditor je ÜL) — offen (Detailplan unten)
-- ⬜ **Vergütungssätze-UI:** Backend fertig, Frontend-Verwaltungsseite fehlt noch
+- ✅ **Vergütungssätze-UI:** Liste + Anlegen/Bearbeiten/Löschen (vereinsweit + Abteilung) — `UlSaetzePage.vue` fertig; ÜL-Override-Bearbeitung weiter „später" (s. „Offen 4")
+- ⬜ **Fremderfassung (Geschäftsstelle):** Abrechnung für einen anderen ÜL anlegen/pflegen — offen (s. „Offen 3")
 
 Beides committet in `4188bf3` (Phase 1+2). Verifikation lief gegen lokale PG14
 (Port 5434, DB `vtb_test`): Schema beide Pfade, Workflow, Sperr-Logik, PDF, HTTP-Flow.
+
+**Update 2026-06-25 (Schema jetzt v55):** seit `4188bf3` zusätzlich committet —
+`592d78a` Schnell-Erfassung (Serie/Einzeltage-Kalender/Vorlage, Angebot auf Beleg);
+`6d92292` Anlegen-Dialog verschlankt + Lizenz als Stammdatum (`trainerlizenz_gueltig_bis`,
+mit/ohne wird daraus abgeleitet) + Zurückziehen eingereichter Abrechnungen;
+`844ff34` Erfassen-Recht scoped + über die Berechtigungsmatrix vergebbar.
+Folge: die Phase-3-Migration für `ul_einstellungen` ist jetzt **v55→v56** (unten korrigiert).
 
 ## Entscheidungen (mit Auftraggeber abgestimmt)
 - Auslieferung **stufenweise** (MVP zuerst).
@@ -75,11 +83,14 @@ API-Endpunkte: `GET /api/ul-stunden/{meine|zu-bestaetigen|''}`, `POST/PUT/DELETE
 
 ---
 
-## Offen 1 — Vergütungssätze-UI (Frontend)
-Backend (`/api/ul-stunden/saetze`, Recht `ulstunden.verwalten`) ist fertig — es fehlt nur die Seite.
-- Neue Page `UlSaetzePage.vue` + Route (`meta.permission: 'ulstunden.verwalten'`) + Menüeintrag.
-- Liste aller Sätze (Abteilung · mit/ohne Lizenz · €/h · ggf. ÜL-Override · gültig-ab), Anlegen/Bearbeiten/Löschen.
-- Felder: `lizenz_klassifikation` (Pflicht), `satz` (Pflicht), `abteilung_id` (leer=vereinsweit), `mitglied_id` (leer=alle/sonst ÜL-Override), `gueltig_ab`.
+## Offen 1 — Vergütungssätze-UI (Frontend) — ✅ erledigt
+`UlSaetzePage.vue` + Route `verguetungssaetze`/`ul-saetze` (`meta.permission: 'ulstunden.verwalten'`)
++ Menüeintrag. Liste (Abteilung/vereinsweit · mit/ohne Lizenz · €/h · gültig-ab) mit
+Anlegen/Bearbeiten/Löschen über `/api/ul-stunden/saetze`. Felder: `lizenz_klassifikation`,
+`satz`, `abteilung_id` (leer=vereinsweit), `gueltig_ab`.
+**Offen geblieben:** ÜL-individuelle Overrides (`mitglied_id`) im UI anlegen/zuordnen — vorhandene
+Override-Zeilen bleiben beim Bearbeiten erhalten, aber kein Picker (s. „Offen 4"). Abteilungs-Select
+braucht `abteilungen.read`; fehlt das Recht, ist nur „vereinsweit" wählbar.
 
 ## Offen 2 — Phase 3: Fibu-Export (Kreditor je ÜL)
 Eigene Positions-Quelle `quelle_typ='ul_abrechnung'` in die **bestehende** Fibu-Pipeline
@@ -97,11 +108,29 @@ einhängen (Delta/Storno/Re-Download wiederverwenden), NICHT neuer Export-Lauf-T
    Belegnummer-Präfix `U{id}`, Kreditor-Stammdaten aus `mitglied` (Name/IBAN/BIC/kontoinhaber). Storno spiegelt mit `'S'`.
    `_validieren` erweitern (Aufwandskonto + Kreditor-Basis gesetzt, Satz > 0).
 5. **Kein neuer Endpunkt**: bestätigte Abrechnungen erscheinen automatisch in `GET /fibu/vorschau` und `POST /fibu/export`.
-6. Migration v54→v55 für `ul_einstellungen` (+ Fresh-Schema spiegeln, Trigger-Registry, `_normalize_audit_timestamps`).
+6. Migration v55→v56 für `ul_einstellungen` (+ Fresh-Schema spiegeln, Trigger-Registry, `_normalize_audit_timestamps`).
 
 **Braucht vom Verein/Steuerberater:** konkretes Aufwandskonto + Kreditor-Konten-Basis. Bis dahin als konfigurierbare Felder mit Platzhaltern anlegen und testbar machen.
 
-## Offen 3 — später
+## Offen 3 — Fremderfassung durch Geschäftsstelle (Abrechnung für anderen ÜL)
+Ein Geschäftsstellen-Mitarbeiter soll eine Abrechnung **für einen anderen ÜL** anlegen und
+pflegen können, nicht nur die eigene. Heute hängt das Anlegen hart am eigenen Mitglied
+(`_own_mitglied_id` in [ul_stunden.py](../backend/api/ul_stunden.py)).
+- **Eigene, dedizierte Permission** (z. B. `ulstunden.erfassen_fremd`, „Stundenerfassung für
+  andere ÜL") — in die Katalog-Gruppe „Übungsleiter-Stunden" ([users.py](../backend/api/users.py))
+  aufnehmen. Vereinsweit gedacht (Geschäftsstelle), Abteilungs-Scope optional. Bewusst getrennt
+  von `ulstunden.verwalten` (= alles sehen + Sätze/Konten): Fremderfassung ist nur das
+  operative Anlegen/Einreichen für einen ÜL.
+- **Backend:** `create_abrechnung` (und `add_stunde`/`add_serie`/`add_tage`/`einreichen`/…) auf ein
+  Ziel-`mitglied_id` öffnen. Ziel ≠ eigenes Mitglied → die neue Permission verlangen;
+  `_require_owner_entwurf` so erweitern, dass auch der Fremderfasser den Entwurf bearbeiten darf.
+  Audit (`created_by`/`updated_by`) = handelnder Mitarbeiter, Eigentümer/Beleg = Ziel-ÜL.
+- **Frontend:** im Anlegen-Dialog ein „Für Übungsleiter"-Feld (nur mit der Permission sichtbar),
+  Auswahl aus den ÜL (Mitglieder mit Funktion `uebungsleiter`/Recht `ulstunden.erfassen`).
+  Zugriff auf die fremden Abrechnungen über eine Geschäftsstellen-/Verwaltungssicht — die
+  „meine"-Liste reicht nicht, da der Mitarbeiter nicht Eigentümer ist.
+
+## Offen 4 — später
 ÜL-individuelle Satz-Overrides im UI, Sportförder-Auswertungen, ggf. Korrektur-Workflows.
 
 ---

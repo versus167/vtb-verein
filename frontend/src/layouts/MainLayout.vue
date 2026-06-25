@@ -180,6 +180,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('ulstunden.verwalten')"
+            clickable
+            :to="{ name: 'ul-saetze' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="payments" /></q-item-section>
+            <q-item-section>Vergütungssätze</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('fibu.export')"
             clickable
             :to="{ name: 'fibu-export' }"
