@@ -47,6 +47,20 @@ class StundeCreate(BaseModel):
     bemerkung: Optional[str] = None
 
 
+class SerieCreate(BaseModel):
+    wochentage: list[int]          # 1=Mo … 7=So
+    stunden: float
+    angebot: Optional[str] = None
+    bemerkung: Optional[str] = None
+
+
+class TageCreate(BaseModel):
+    datums: list[str]              # ausgewählte Einzeltage (ISO), gleiche Stunden/Angebot
+    stunden: float
+    angebot: Optional[str] = None
+    bemerkung: Optional[str] = None
+
+
 class AblehnenBody(BaseModel):
     grund: Optional[str] = None
 
@@ -113,6 +127,8 @@ def _abrechnung_dict(db, a, *, with_details: bool = False) -> dict:
     if with_details:
         d['stunden'] = [asdict(s) for s in db.ul_abrechnungen.list_stunden(a.id)]
         d['erfassbar_ab'] = svc.erfassbar_ab(a.mitglied_id, a.abteilung_id)
+        d['vorlage'] = (svc.letzte_vorlage(a.mitglied_id, a.abteilung_id, exclude_id=a.id)
+                        if a.status == 'entwurf' else [])
     return d
 
 
@@ -305,6 +321,38 @@ def add_stunde(abrechnung_id: int, data: StundeCreate, user: CurrentUser, db: DB
     try:
         ULStundenService(db).add_stunde(
             a, datum=data.datum, stunden=data.stunden,
+            angebot=data.angebot, bemerkung=data.bemerkung, erstellt_von=user.username,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _abrechnung_dict(db, _load(db, abrechnung_id), with_details=True)
+
+
+@router.post("/{abrechnung_id}/stunden/serie", status_code=status.HTTP_201_CREATED)
+def add_serie(abrechnung_id: int, data: SerieCreate, user: CurrentUser, db: DB):
+    """Erzeugt Termine für die gewählten Wochentage über den gesamten Zeitraum
+    (Serien-/Wochenplan-Erfassung). Bereits erfasste Tage werden übersprungen."""
+    a = _load(db, abrechnung_id)
+    _require_owner_entwurf(user, db, a)
+    try:
+        ULStundenService(db).add_serie(
+            a, wochentage=data.wochentage, stunden=data.stunden,
+            angebot=data.angebot, bemerkung=data.bemerkung, erstellt_von=user.username,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _abrechnung_dict(db, _load(db, abrechnung_id), with_details=True)
+
+
+@router.post("/{abrechnung_id}/stunden/mehrfach", status_code=status.HTTP_201_CREATED)
+def add_tage(abrechnung_id: int, data: TageCreate, user: CurrentUser, db: DB):
+    """Erzeugt Termine für eine Liste ausgewählter Einzeltage (Kalender-Mehrfachauswahl)
+    mit gleichen Stunden/Angebot. Bereits erfasste Tage werden übersprungen."""
+    a = _load(db, abrechnung_id)
+    _require_owner_entwurf(user, db, a)
+    try:
+        ULStundenService(db).add_tage(
+            a, datums=data.datums, stunden=data.stunden,
             angebot=data.angebot, bemerkung=data.bemerkung, erstellt_von=user.username,
         )
     except ValueError as e:

@@ -126,6 +126,93 @@ class ULStundenService:
         if stunden is None or float(stunden) <= 0:
             raise ValueError("Stunden müssen größer als 0 sein")
 
+    def add_serie(self, abrechnung: ULAbrechnung, *, wochentage, stunden: float,
+                  angebot: Optional[str], bemerkung: Optional[str], erstellt_von: str) -> int:
+        """Wochenplan: erzeugt für jeden gewählten Wochentag (1=Mo … 7=So) einen Termin
+        an jedem passenden Tag im Abrechnungszeitraum. Liefert die Anzahl angelegter."""
+        if abrechnung.status != STATUS_ENTWURF:
+            raise ValueError("Termine können nur im Entwurf erfasst werden")
+        try:
+            wt = sorted({int(w) for w in (wochentage or [])})
+        except (ValueError, TypeError):
+            raise ValueError("Ungültige Wochentage")
+        if not wt or any(w < 1 or w > 7 for w in wt):
+            raise ValueError("Mindestens ein gültiger Wochentag (1–7) ist erforderlich")
+        d, bis = _as_date(abrechnung.zeitraum_von), _as_date(abrechnung.zeitraum_bis)
+        datums = []
+        while d <= bis:
+            if d.isoweekday() in wt:
+                datums.append(d.isoformat())
+            d += timedelta(days=1)
+        return self._insert_termine(abrechnung, datums=datums, stunden=stunden,
+                                    angebot=angebot, bemerkung=bemerkung, erstellt_von=erstellt_von)
+
+    def add_tage(self, abrechnung: ULAbrechnung, *, datums, stunden: float,
+                 angebot: Optional[str], bemerkung: Optional[str], erstellt_von: str) -> int:
+        """Einzeltage (Kalender-Mehrfachauswahl): erzeugt für jeden ausgewählten Tag
+        einen Termin mit denselben Stunden/Angebot (z. B. Spieltage). Liefert die
+        Anzahl angelegter."""
+        if abrechnung.status != STATUS_ENTWURF:
+            raise ValueError("Termine können nur im Entwurf erfasst werden")
+        norm = [(x or '')[:10] for x in (datums or []) if x]
+        if not norm:
+            raise ValueError("Mindestens ein Tag ist erforderlich")
+        return self._insert_termine(abrechnung, datums=norm, stunden=stunden,
+                                    angebot=angebot, bemerkung=bemerkung, erstellt_von=erstellt_von)
+
+    def _insert_termine(self, abrechnung: ULAbrechnung, *, datums, stunden: float,
+                        angebot: Optional[str], bemerkung: Optional[str],
+                        erstellt_von: str) -> int:
+        """Legt für eine Datumsliste je einen Termin an. Tage außerhalb des Zeitraums,
+        ungültige Daten und bereits erfasste Tage werden übersprungen (idempotent),
+        sodass Serie und Einzeltage sich nicht doppeln. Validierung der Eingabeform
+        (Wochentage/Tage) liegt beim Aufrufer; hier nur Stunden + Bereich + Dedup."""
+        if stunden is None or float(stunden) <= 0:
+            raise ValueError("Stunden müssen größer als 0 sein")
+        von, bis = _as_date(abrechnung.zeitraum_von), _as_date(abrechnung.zeitraum_bis)
+        vorhanden = {s.datum[:10] for s in self.db.ul_abrechnungen.list_stunden(abrechnung.id)}
+        angelegt = 0
+        for iso in sorted(set(datums)):
+            try:
+                d = _as_date(iso)
+            except (ValueError, TypeError):
+                continue
+            if d < von or d > bis or iso in vorhanden:
+                continue
+            self.db.ul_abrechnungen.add_stunde(
+                ULStunde(abrechnung_id=abrechnung.id, datum=iso, stunden=float(stunden),
+                         wochentag=d.isoweekday(), angebot=(angebot or None),
+                         bemerkung=(bemerkung or None)),
+                created_by=erstellt_von,
+            )
+            vorhanden.add(iso)
+            angelegt += 1
+        return angelegt
+
+    # --------------------------------------------------------------- Vorlage
+    def letzte_vorlage(self, mitglied_id: int, abteilung_id: int,
+                       exclude_id: Optional[int] = None) -> list[dict]:
+        """Wochenmuster der jüngsten vorhergehenden Abrechnung desselben ÜL/derselben
+        Abteilung – als Vorschlag für die Serien-Erfassung. Termine werden nach
+        (Stunden, Angebot) gruppiert; je Gruppe die belegten Wochentage. Absteigend
+        nach Häufigkeit, damit das dominante Muster zuerst kommt. [] wenn es keine gibt."""
+        src_id = self.db.ul_abrechnungen.letzte_vorlage_quelle_id(
+            mitglied_id, abteilung_id, exclude_id=exclude_id)
+        if not src_id:
+            return []
+        groups: dict[tuple, dict] = {}
+        for s in self.db.ul_abrechnungen.list_stunden(src_id):
+            key = (s.stunden, s.angebot or '')
+            g = groups.setdefault(key, {'wochentage': set(), 'stunden': s.stunden,
+                                        'angebot': s.angebot, 'anzahl': 0})
+            if s.wochentag:
+                g['wochentage'].add(s.wochentag)
+            g['anzahl'] += 1
+        out = [{'wochentage': sorted(g['wochentage']), 'stunden': g['stunden'],
+                'angebot': g['angebot'], 'anzahl': g['anzahl']} for g in groups.values()]
+        out.sort(key=lambda g: (-g['anzahl'], g['stunden']))
+        return out
+
     # ------------------------------------------------------------- Workflow
     def einreichen(self, abrechnung: ULAbrechnung, *, eingereicht_von: str) -> ULAbrechnung:
         if abrechnung.status != STATUS_ENTWURF:

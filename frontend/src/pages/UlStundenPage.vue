@@ -103,14 +103,72 @@
             </tbody>
           </q-markup-table>
 
-          <!-- Termin hinzufügen (nur im Entwurf) -->
-          <div v-if="isEntwurf" class="row q-gutter-sm items-end q-mb-sm">
-            <q-input v-model="tForm.datum" label="Datum" outlined dense type="date" class="col"
-              :min="detail.zeitraum_von" :max="detail.zeitraum_bis" />
-            <q-input v-model.number="tForm.stunden" label="Std." outlined dense type="number" step="0.25"
-              style="width:90px" />
-            <q-input v-model="tForm.angebot" label="Angebot" outlined dense class="col" />
-            <q-btn color="primary" unelevated icon="add" :loading="tSaving" @click="addTermin" />
+          <!-- Termine erfassen (nur im Entwurf) -->
+          <div v-if="isEntwurf" class="q-mb-sm">
+            <q-btn-toggle v-model="erfassModus" spread no-caps unelevated dense
+              toggle-color="primary" color="grey-3" text-color="grey-8" class="q-mb-sm"
+              :options="[{ label: 'Serie', value: 'serie', icon: 'repeat' },
+                         { label: 'Einzeltage', value: 'einzeltage', icon: 'event' }]" />
+
+            <!-- Serie: Wochentage antippen → Termine für den ganzen Zeitraum erzeugen -->
+            <div v-if="erfassModus === 'serie'">
+              <div v-if="detail.vorlage && detail.vorlage.length" class="q-mb-xs">
+                <span class="text-caption text-grey-7 q-mr-xs">Aus letzter Abrechnung:</span>
+                <q-chip v-for="(v, i) in detail.vorlage" :key="i" clickable dense
+                  color="blue-1" text-color="primary" icon="content_copy"
+                  @click="vorlageUebernehmen(v)">
+                  {{ v.wochentage.map(wochentagKurz).join('+') }} · {{ v.stunden }} Std.<!--
+                  -->{{ v.angebot ? ' · ' + v.angebot : '' }}
+                </q-chip>
+              </div>
+              <div class="q-gutter-xs q-mb-sm">
+                <q-btn v-for="w in 7" :key="w" :label="wochentagKurz(w)" dense no-caps
+                  :outline="!sForm.wochentage.includes(w)"
+                  :unelevated="sForm.wochentage.includes(w)"
+                  :color="sForm.wochentage.includes(w) ? 'primary' : 'grey-6'"
+                  style="min-width:42px" @click="toggleWochentag(w)" />
+              </div>
+              <div class="row q-gutter-sm items-end">
+                <q-input v-model.number="sForm.stunden" label="Std." outlined dense type="number"
+                  step="0.25" style="width:90px" />
+                <q-input v-model="sForm.angebot" label="Angebot" outlined dense class="col" />
+              </div>
+              <div class="row items-center q-mt-sm">
+                <div class="text-caption" :class="serieAnzahl ? 'text-grey-7' : 'text-grey-5'">
+                  {{ serieVorschau }}
+                </div>
+                <q-space />
+                <q-btn color="primary" unelevated icon="playlist_add" no-caps
+                  label="Termine erzeugen" :disable="!serieAnzahl" :loading="sSaving"
+                  @click="addSerie" />
+              </div>
+            </div>
+
+            <!-- Einzeltage: Std./Angebot setzen, dann Tage im Kalender antippen (z. B. Spiele) -->
+            <div v-else>
+              <div class="row q-gutter-sm items-end q-mb-sm">
+                <q-input v-model.number="tageForm.stunden" label="Std." outlined dense
+                  type="number" step="0.25" style="width:90px" />
+                <q-input v-model="tageForm.angebot" label="Angebot" outlined dense class="col"
+                  placeholder="z. B. Spiel" />
+              </div>
+              <div class="row justify-center">
+                <q-date v-model="tageForm.datums" multiple minimal mask="YYYY-MM-DD"
+                  :first-day-of-week="1" :default-year-month="ymOf(detail.zeitraum_von)"
+                  :navigation-min-year-month="ymOf(detail.zeitraum_von)"
+                  :navigation-max-year-month="ymOf(detail.zeitraum_bis)"
+                  :options="tagWaehlbar" :events="tagHatTermin" event-color="grey-5" />
+              </div>
+              <div class="row items-center q-mt-sm">
+                <div class="text-caption" :class="tageAnzahl ? 'text-grey-7' : 'text-grey-5'">
+                  {{ tageVorschau }}
+                </div>
+                <q-space />
+                <q-btn color="primary" unelevated icon="playlist_add" no-caps
+                  label="Termine erzeugen" :disable="!tageAnzahl || !tageForm.stunden"
+                  :loading="tageSaving" @click="addTage" />
+              </div>
+            </div>
           </div>
 
           <div class="row items-center q-mt-sm">
@@ -181,6 +239,19 @@ function fmtEuro(v) {
 function wochentagKurz(w) {
   return ['', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][w] || ''
 }
+// Lokales ISO-Datum (kein toISOString → keine Zeitzonen-Verschiebung)
+function isoOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function isoWeekday(d) {
+  return d.getDay() === 0 ? 7 : d.getDay()  // So=7 statt 0
+}
+function ymOf(iso) {                     // 'YYYY-MM-DD' → 'YYYY/MM' (q-date-Navigation)
+  return iso ? iso.slice(0, 7).replace('-', '/') : ''
+}
+function normIso(dateStr) {              // q-date liefert teils 'YYYY/MM/DD'
+  return (dateStr || '').replace(/\//g, '-').slice(0, 10)
+}
 
 async function loadAbrechnungen() {
   const { data } = await api.get('/api/ul-stunden/meine')
@@ -232,19 +303,78 @@ const detailOpen = ref(false)
 const detail = ref(null)
 const dError = ref('')
 const dBusy = ref(false)
-const tForm = ref({ datum: '', stunden: null, angebot: '' })
-const tSaving = ref(false)
+
+// Erfassungs-Modus: 'serie' (Wochenplan, z. B. Training) | 'einzeltage' (Kalender, z. B. Spiele)
+const erfassModus = ref('serie')
+const sForm = ref({ wochentage: [], stunden: null, angebot: '' })
+const sSaving = ref(false)
+const tageForm = ref({ datums: [], stunden: null, angebot: '' })
+const tageSaving = ref(false)
 
 const isEntwurf = computed(() => detail.value?.status === 'entwurf')
+
+// Bereits erfasste Tage (ISO) – für Dedup-Vorschau in beiden Modi.
+const vorhandeneTage = computed(
+  () => new Set((detail.value?.stunden || []).map(s => s.datum.slice(0, 10))))
+
+// Wie viele neue Termine würde die Serie erzeugen (bereits erfasste Tage ausgenommen)?
+const serieAnzahl = computed(() => {
+  if (!detail.value || !sForm.value.wochentage.length || !sForm.value.stunden) return 0
+  const bis = new Date(detail.value.zeitraum_bis + 'T00:00:00')
+  const d = new Date(detail.value.zeitraum_von + 'T00:00:00')
+  let n = 0
+  while (d <= bis) {
+    if (sForm.value.wochentage.includes(isoWeekday(d)) && !vorhandeneTage.value.has(isoOf(d))) n++
+    d.setDate(d.getDate() + 1)
+  }
+  return n
+})
+const serieVorschau = computed(() => {
+  if (!sForm.value.wochentage.length) return 'Wochentage wählen'
+  if (!sForm.value.stunden) return 'Stunden angeben'
+  const n = serieAnzahl.value
+  return n ? `→ ${n} Termin${n === 1 ? '' : 'e'} werden erzeugt` : 'Keine neuen Termine im Zeitraum'
+})
+
+// Einzeltage: gewählte, noch nicht erfasste Tage.
+const tageAnzahl = computed(
+  () => (tageForm.value.datums || []).filter(d => !vorhandeneTage.value.has(d)).length)
+const tageVorschau = computed(() => {
+  if (!tageForm.value.datums?.length) return 'Tage im Kalender wählen'
+  if (!tageForm.value.stunden) return 'Stunden angeben'
+  const n = tageAnzahl.value
+  return n ? `→ ${n} Termin${n === 1 ? '' : 'e'} werden erzeugt` : 'Alle gewählten Tage schon erfasst'
+})
+function tagWaehlbar(dateStr) {           // nur Tage im Abrechnungszeitraum anklickbar
+  const iso = normIso(dateStr)
+  return iso >= detail.value.zeitraum_von && iso <= detail.value.zeitraum_bis
+}
+function tagHatTermin(dateStr) {          // markiert bereits erfasste Tage im Kalender
+  return vorhandeneTage.value.has(normIso(dateStr))
+}
+
+function toggleWochentag(w) {
+  const i = sForm.value.wochentage.indexOf(w)
+  if (i >= 0) sForm.value.wochentage.splice(i, 1)
+  else sForm.value.wochentage.push(w)
+}
+function vorlageUebernehmen(v) {
+  erfassModus.value = 'serie'
+  sForm.value = { wochentage: [...v.wochentage], stunden: v.stunden, angebot: v.angebot || '' }
+}
 
 async function openDetail(a) {
   dError.value = ''
   detailOpen.value = true
   await reloadDetail(a.id)
-  tForm.value = {
-    datum: detail.value?.erfassbar_ab && detail.value.erfassbar_ab > detail.value.zeitraum_von
-      ? detail.value.erfassbar_ab : detail.value?.zeitraum_von || '',
-    stunden: null, angebot: '',
+  erfassModus.value = 'serie'
+  sForm.value = { wochentage: [], stunden: null, angebot: '' }
+  tageForm.value = { datums: [], stunden: null, angebot: '' }
+  // Frischer, leerer Entwurf mit Vorlage → Serien-Modus mit dem dominanten Muster
+  // der letzten Abrechnung vorbelegen (1 Tap zum Erzeugen).
+  const vorlage = detail.value?.vorlage || []
+  if (isEntwurf.value && detail.value.stunden.length === 0 && vorlage.length) {
+    vorlageUebernehmen(vorlage[0])
   }
 }
 async function reloadDetail(id) {
@@ -257,22 +387,47 @@ function setDetail(data) {
   if (idx >= 0) abrechnungen.value[idx] = data
 }
 
-async function addTermin() {
-  if (!tForm.value.datum || !tForm.value.stunden) {
-    dError.value = 'Datum und Stunden sind erforderlich.'; return
+async function addTage() {
+  if (!tageForm.value.datums?.length || !tageForm.value.stunden) {
+    dError.value = 'Tage und Stunden sind erforderlich.'; return
   }
-  tSaving.value = true; dError.value = ''
+  tageSaving.value = true; dError.value = ''
   try {
-    const { data } = await api.post(`/api/ul-stunden/${detail.value.id}/stunden`, {
-      datum: tForm.value.datum, stunden: Number(tForm.value.stunden),
-      angebot: tForm.value.angebot || null,
+    const vorher = detail.value.stunden.length
+    const { data } = await api.post(`/api/ul-stunden/${detail.value.id}/stunden/mehrfach`, {
+      datums: tageForm.value.datums,
+      stunden: Number(tageForm.value.stunden),
+      angebot: tageForm.value.angebot || null,
     })
     setDetail(data)
-    tForm.value.stunden = null; tForm.value.angebot = ''
+    tageForm.value.datums = []
+    const neu = data.stunden.length - vorher
+    $q.notify({ type: 'positive', message: neu > 0 ? `${neu} Termine erzeugt` : 'Keine neuen Termine' })
   } catch (e) {
     dError.value = e.response?.data?.detail || 'Fehler'
   } finally {
-    tSaving.value = false
+    tageSaving.value = false
+  }
+}
+async function addSerie() {
+  if (!sForm.value.wochentage.length || !sForm.value.stunden) {
+    dError.value = 'Wochentage und Stunden sind erforderlich.'; return
+  }
+  sSaving.value = true; dError.value = ''
+  try {
+    const { data } = await api.post(`/api/ul-stunden/${detail.value.id}/stunden/serie`, {
+      wochentage: [...sForm.value.wochentage].sort((a, b) => a - b),
+      stunden: Number(sForm.value.stunden),
+      angebot: sForm.value.angebot || null,
+    })
+    const vorher = detail.value.stunden.length
+    setDetail(data)
+    const neu = data.stunden.length - vorher
+    $q.notify({ type: 'positive', message: neu > 0 ? `${neu} Termine erzeugt` : 'Keine neuen Termine' })
+  } catch (e) {
+    dError.value = e.response?.data?.detail || 'Fehler'
+  } finally {
+    sSaving.value = false
   }
 }
 async function deleteTermin(s) {

@@ -52,24 +52,33 @@ def _monat_label(ym: str) -> str:
         return ym
 
 
-def _wochentag_tabelle(name: str, eintraege: list[dict], style_cell) -> Table:
-    """Kleine Tabelle (Datum | Stunden) mit Summenfuß für einen Wochentag."""
-    rows = [[Paragraph(f'<b>{name}</b>', style_cell), '']]
-    rows.append(['Datum', 'Std.'])
+def _wochentag_tabelle(name: str, eintraege: list[dict], style_cell,
+                       mit_angebot: bool = False) -> Table:
+    """Kleine Tabelle (Datum | Stunden [| Angebot]) mit Summenfuß für einen Wochentag.
+
+    Die Angebot-Spalte erscheint nur, wenn der Beleg überhaupt Angebots-Texte enthält
+    (mit_angebot) – sonst bleibt die kompakte zweispaltige Darstellung erhalten."""
+    last = 2 if mit_angebot else 1
+    colWidths = [2.6 * cm, 1.1 * cm, 4.3 * cm] if mit_angebot else [3.2 * cm, 1.6 * cm]
+    rows = [[Paragraph(f'<b>{name}</b>', style_cell)] + [''] * last]
+    rows.append(['Datum', 'Std.', 'Angebot'][:last + 1])
     summe = 0.0
     for e in eintraege:
-        rows.append([_fmt_datum(e['datum']), _fmt_std(e['stunden'])])
+        row = [_fmt_datum(e['datum']), _fmt_std(e['stunden'])]
+        if mit_angebot:
+            row.append(Paragraph(e.get('angebot') or '', style_cell))
+        rows.append(row)
         summe += float(e['stunden'])
-    rows.append(['Summe', _fmt_std(summe)])
-    t = Table(rows, colWidths=[3.2 * cm, 1.6 * cm])
+    rows.append(['Summe', _fmt_std(summe)] + ([''] if mit_angebot else []))
+    t = Table(rows, colWidths=colWidths)
     t.setStyle(TableStyle([
-        ('SPAN', (0, 0), (1, 0)),
-        ('BACKGROUND', (0, 0), (1, 0), _DUNKEL),
-        ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
-        ('BACKGROUND', (0, 1), (1, 1), _STREIFEN),
-        ('FONTNAME', (0, 1), (1, 1), 'Helvetica-Bold'),
-        ('FONTNAME', (0, -1), (1, -1), 'Helvetica-Bold'),
-        ('LINEABOVE', (0, -1), (1, -1), 0.5, _DUNKEL),
+        ('SPAN', (0, 0), (last, 0)),
+        ('BACKGROUND', (0, 0), (last, 0), _DUNKEL),
+        ('TEXTCOLOR', (0, 0), (last, 0), colors.white),
+        ('BACKGROUND', (0, 1), (last, 1), _STREIFEN),
+        ('FONTNAME', (0, 1), (last, 1), 'Helvetica-Bold'),
+        ('FONTNAME', (0, -1), (last, -1), 'Helvetica-Bold'),
+        ('LINEABOVE', (0, -1), (last, -1), 0.5, _DUNKEL),
         ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
         ('GRID', (0, 1), (-1, -1), 0.25, colors.grey),
@@ -160,20 +169,22 @@ def erstelle_stundennachweis_pdf(
     story.append(Spacer(1, 0.4 * cm))
 
     # ── Termine je Wochentag (nebeneinander, max. 4 pro Reihe) ──
+    mit_angebot = any((t.get('angebot') or '').strip() for t in termine)
     nach_wochentag: dict[int, list[dict]] = {}
     for t in termine:
         wt = t.get('wochentag') or (date.fromisoformat(t['datum'][:10]).isoweekday())
         nach_wochentag.setdefault(wt, []).append(t)
     weekday_tables = [
         _wochentag_tabelle(_WOCHENTAGE.get(wt, str(wt)),
-                           sorted(eintr, key=lambda e: e['datum']), cell)
+                           sorted(eintr, key=lambda e: e['datum']), cell, mit_angebot)
         for wt, eintr in sorted(nach_wochentag.items())
     ]
     if weekday_tables:
-        per_row = 4
+        per_row = 3 if mit_angebot else 4
+        col_breite = (8.6 if mit_angebot else 6.2) * cm
         for i in range(0, len(weekday_tables), per_row):
             chunk = weekday_tables[i:i + per_row]
-            grid = Table([chunk], colWidths=[6.2 * cm] * len(chunk))
+            grid = Table([chunk], colWidths=[col_breite] * len(chunk))
             grid.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ('LEFTPADDING', (0, 0), (-1, -1), 0),

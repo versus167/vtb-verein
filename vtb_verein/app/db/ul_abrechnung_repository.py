@@ -207,6 +207,27 @@ class ULAbrechnungRepository(BaseRepository):
             row = cur.fetchone()
             return row['bis'] if row and row['bis'] else None
 
+    def letzte_vorlage_quelle_id(self, mitglied_id: int, abteilung_id: int,
+                                 exclude_id: Optional[int] = None) -> Optional[int]:
+        """ID der jüngsten (nach zeitraum_bis) nicht gelöschten Abrechnung desselben
+        ÜL/derselben Abteilung, die mindestens einen Termin hat – Quelle für die
+        Serien-Vorlage. None, wenn es keine gibt."""
+        params: list = [mitglied_id, abteilung_id]
+        sql = """
+            SELECT a.id FROM ul_abrechnung a
+            WHERE a.mitglied_id=%s AND a.abteilung_id=%s AND a.deleted_at IS NULL
+              AND EXISTS (SELECT 1 FROM ul_stunde s
+                          WHERE s.abrechnung_id=a.id AND s.deleted_at IS NULL)
+        """
+        if exclude_id is not None:
+            sql += " AND a.id <> %s"
+            params.append(exclude_id)
+        sql += " ORDER BY a.zeitraum_bis DESC, a.id DESC LIMIT 1"
+        with self.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            return row['id'] if row else None
+
     def has_overlap(self, mitglied_id: int, abteilung_id: int, von: str, bis: str,
                     exclude_id: Optional[int] = None) -> bool:
         """True, wenn sich [von,bis] mit einer aktiven (nicht abgelehnten,
