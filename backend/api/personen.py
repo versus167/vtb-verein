@@ -179,21 +179,48 @@ def _gueltig_heute(von, bis) -> bool:
     return True
 
 
-def _person_row(user, mitglied, abteilungen: list, funktionen: list) -> dict:
+def _last_edited_sql(mitglied_alias: str, user_alias: Optional[str]) -> str:
+    """SQL-Ausdruck für „zuletzt bearbeitet" (Ticket #58).
+
+    Maximum aus den updated_at-Feldern von User und Mitglied sowie der jüngsten
+    Aktivität (created/updated/deleted) aller Unterdatensätze – Abteilungen,
+    Funktionen, Kontakte, Mannschaften. So bewegt sich die Spalte auch, wenn z.B.
+    eine Abteilung oder Funktion hinzugefügt, geändert oder entfernt wird, ohne
+    dass dafür mitglied.updated_at (und damit die Historie) angefasst werden muss.
+    Alle Zeitstempel sind TEXT in einheitlichem ISO-Format → lexikalisch
+    vergleichbar; GREATEST ignoriert NULL-Werte.
+    """
+    terms = []
+    if user_alias:
+        terms.append(f"{user_alias}.updated_at")
+    terms.append(f"{mitglied_alias}.updated_at")
+    for tbl in ("mitglied_abteilung", "mitglied_funktion",
+                "mitglied_kontakt", "mitglied_mannschaft"):
+        terms.append(
+            f"(SELECT MAX(GREATEST(c.created_at, c.updated_at, c.deleted_at)) "
+            f"FROM {tbl} c WHERE c.mitglied_id = {mitglied_alias}.id)"
+        )
+    return "GREATEST(" + ", ".join(terms) + ")"
+
+
+def _person_row(user, mitglied, abteilungen: list, funktionen: list,
+                last_edited: Optional[str] = None) -> dict:
     # In der Personenliste nur aktuell (heute) gültige Abteilungen/Funktionen zeigen
     abteilungen = [z for z in abteilungen if _gueltig_heute(z.von, z.bis)]
     funktionen = [f for f in funktionen if _gueltig_heute(f.von, f.bis)]
-    # Berechne "zuletzt bearbeitet" als Maximum der updated_at Felder
-    user_updated = user.updated_at if user else None
-    mitglied_updated = mitglied.updated_at if mitglied else None
-    last_edited = None
-    if user_updated and mitglied_updated:
-        last_edited = user_updated if user_updated > mitglied_updated else mitglied_updated
-    elif user_updated:
-        last_edited = user_updated
-    elif mitglied_updated:
-        last_edited = mitglied_updated
-    
+    # "Zuletzt bearbeitet": Die Personenliste reicht den über alle Unterdatensätze
+    # berechneten Wert herein (s. _last_edited_sql). Ohne Vorgabe (Einzel-Endpoints)
+    # genügt das Maximum aus User- und Mitglied-updated_at.
+    if last_edited is None:
+        user_updated = user.updated_at if user else None
+        mitglied_updated = mitglied.updated_at if mitglied else None
+        if user_updated and mitglied_updated:
+            last_edited = user_updated if user_updated > mitglied_updated else mitglied_updated
+        elif user_updated:
+            last_edited = user_updated
+        elif mitglied_updated:
+            last_edited = mitglied_updated
+
     return {
         'user_id': user.id if user else None,
         'username': user.username if user else None,
@@ -242,7 +269,7 @@ def list_personen(user: CurrentUser, db: DB):
     # erlaubten Abteilungen; reine Benutzerkonten ohne Mitglied bleiben dann verborgen.
     visible = visible_mitglied_ids(user, db)
     with db.conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(f"""
             SELECT * FROM (
                 SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.last_seen, u.version, u.updated_at,
                        m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
@@ -253,7 +280,8 @@ def list_personen(user: CurrentUser, db: DB):
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        m.user_id AS m_user_id, m.version AS m_version,
                        m.created_at AS m_created_at, m.created_by AS m_created_by,
-                       m.updated_at AS m_updated_at, m.updated_by AS m_updated_by
+                       m.updated_at AS m_updated_at, m.updated_by AS m_updated_by,
+                       {_last_edited_sql('m', 'u')} AS last_edited
                 FROM users u
                 LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
                 WHERE u.deleted_at IS NULL
@@ -266,7 +294,8 @@ def list_personen(user: CurrentUser, db: DB):
                        m.eintrittsdatum, m.austrittsdatum, m.status,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        NULL, m.version,
-                       m.created_at, m.created_by, m.updated_at, m.updated_by
+                       m.created_at, m.created_by, m.updated_at, m.updated_by,
+                       {_last_edited_sql('m', None)}
                 FROM mitglied m
                 WHERE m.deleted_at IS NULL AND m.user_id IS NULL
             ) p
@@ -305,7 +334,8 @@ def list_personen(user: CurrentUser, db: DB):
             continue  # außerhalb des erlaubten Abteilungs-Scopes
         abteilungen = db.list_mitglied_abteilungen(m_obj.id) if m_obj else []
         funktionen = db.list_mitglied_funktionen(m_obj.id) if m_obj else []
-        result.append(_person_row(u_obj, m_obj, abteilungen, funktionen))
+        result.append(_person_row(u_obj, m_obj, abteilungen, funktionen,
+                                  last_edited=r['last_edited']))
     return result
 
 
