@@ -184,8 +184,15 @@ def erfassung_kontext(user: CurrentUser, db: DB, mitglied_id: Optional[int] = No
     fremd = target != own_id
     if fremd and not _can_erfassen_fremd(user):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
-    allowed = (None if (fremd or _can_verwalten(user))
-               else user.allowed_abteilungen(Permission.UL_STUNDEN_ERFASSEN))
+    if fremd:
+        # Abteilungen auf die ÜL-Funktion des Ziel-ÜL begrenzen (NULL = vereinsweit → alle),
+        # damit bei genau einer das Frontend sie vorwählt.
+        ul_abt = db.abteilung_ids_fuer_funktion(target, 'uebungsleiter')
+        allowed = None if (None in ul_abt) else {a for a in ul_abt if a is not None}
+    elif _can_verwalten(user):
+        allowed = None
+    else:
+        allowed = user.allowed_abteilungen(Permission.UL_STUNDEN_ERFASSEN)
     svc = ULStundenService(db)
     abteilungen = [
         {'id': a.id, 'name': a.name, 'zeitraum_von_vorschlag': svc.erfassbar_ab(target, a.id)}
