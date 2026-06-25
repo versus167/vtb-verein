@@ -98,6 +98,12 @@ def _can_confirm(user, abteilung_id: int) -> bool:
             or user.has_permission_for_abteilung(Permission.UL_STUNDEN_BESTAETIGEN, abteilung_id))
 
 
+def _can_erfassen(user, abteilung_id: int) -> bool:
+    """Erfassen ist abteilungs-scoped (Funktion 'uebungsleiter' über die Berechtigungsmatrix)."""
+    return (_can_verwalten(user)
+            or user.has_permission_for_abteilung(Permission.UL_STUNDEN_ERFASSEN, abteilung_id))
+
+
 def _load(db, abrechnung_id: int):
     a = db.ul_abrechnungen.get(abrechnung_id)
     if a is None:
@@ -288,8 +294,9 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_abrechnung(data: AbrechnungCreate, user: CurrentUser, db: DB):
-    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_verwalten(user)):
-        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Stundenerfassung")
+    if not _can_erfassen(user, data.abteilung_id):
+        raise HTTPException(status_code=403,
+                            detail="Keine Berechtigung zur Stundenerfassung in dieser Abteilung")
     mid = _own_mitglied_id(user, db)
     try:
         a = ULStundenService(db).create_abrechnung(

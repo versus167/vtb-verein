@@ -51,6 +51,14 @@ PERMISSION_GROUPS = [
         ],
     },
     {
+        'label': 'Übungsleiter-Stunden', 'icon': 'schedule',
+        'permissions': [
+            (Permission.UL_STUNDEN_ERFASSEN,    'Erfassen'),
+            (Permission.UL_STUNDEN_BESTAETIGEN, 'Bestätigen'),
+            (Permission.UL_STUNDEN_VERWALTEN,   'Verwalten (Sätze, alle Abrechnungen)'),
+        ],
+    },
+    {
         'label': 'Berichte', 'icon': 'bar_chart',
         'permissions': [
             (Permission.BERICHTE_READ,   'Ansehen'),
