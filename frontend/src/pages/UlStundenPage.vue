@@ -38,21 +38,26 @@
       <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:440px'">
         <q-card-section class="text-h6">Neue Abrechnung</q-card-section>
         <q-card-section class="q-gutter-sm q-pt-none">
-          <q-select v-model="cForm.abteilung_id" :options="abteilungen" option-value="id" option-label="name"
-            emit-value map-options label="Abteilung *" outlined dense />
+          <!-- Abteilung nur zur Auswahl, wenn der ÜL in mehreren tätig ist -->
+          <q-select v-if="abteilungen.length > 1" v-model="cForm.abteilung_id" :options="abteilungen"
+            option-value="id" option-label="name" emit-value map-options label="Abteilung *"
+            outlined dense @update:model-value="onAbteilungChange" />
+          <div v-else-if="abteilungen.length === 1" class="text-body2 q-py-xs">
+            <q-icon name="account_tree" size="xs" /> {{ abteilungen[0].name }}
+          </div>
+          <div v-else-if="kontextGeladen" class="text-negative text-caption">
+            Du bist in keiner Abteilung als Übungsleiter hinterlegt.
+          </div>
           <div class="row q-gutter-sm">
             <q-input v-model="cForm.zeitraum_von" label="Von *" outlined dense type="date" class="col" />
             <q-input v-model="cForm.zeitraum_bis" label="Bis *" outlined dense type="date" class="col" />
           </div>
-          <q-select v-model="cForm.lizenz_klassifikation" :options="lizenzOptionen" emit-value map-options
-            label="Lizenz" outlined dense />
-          <q-select v-model="cForm.foerder_klassifikation" :options="foerderOptionen" emit-value map-options
-            clearable label="Sportförderung (optional)" outlined dense />
           <div v-if="cError" class="text-negative text-caption">{{ cError }}</div>
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
-          <q-btn unelevated color="primary" label="Anlegen" :loading="cSaving" @click="saveCreate" />
+          <q-btn unelevated color="primary" label="Anlegen" :disable="!cForm.abteilung_id"
+            :loading="cSaving" @click="saveCreate" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -193,6 +198,8 @@
           <q-space />
           <q-btn v-if="detail && detail.status === 'abgelehnt'" flat color="primary"
             label="Erneut bearbeiten" :loading="dBusy" @click="zuruecksetzen" />
+          <q-btn v-if="detail && detail.status === 'eingereicht'" flat color="primary"
+            label="Zurückziehen" :loading="dBusy" @click="zuruecksetzen" />
           <q-btn v-if="isEntwurf" unelevated color="primary" label="Einreichen"
             :loading="dBusy" @click="einreichen" />
         </q-card-actions>
@@ -213,15 +220,6 @@ const $q = useQuasar()
 
 const abrechnungen = ref([])
 const abteilungen = ref([])
-
-const lizenzOptionen = [
-  { label: 'mit Lizenz', value: 'mit_lizenz' },
-  { label: 'ohne Lizenz', value: 'ohne_lizenz' },
-]
-const foerderOptionen = [
-  { label: 'LSBS', value: 'LSBS' },
-  { label: 'Spofö 3.3', value: 'Spofoe_3_3' },
-]
 
 function statusChip(status) {
   return {
@@ -252,18 +250,26 @@ function ymOf(iso) {                     // 'YYYY-MM-DD' → 'YYYY/MM' (q-date-N
 function normIso(dateStr) {              // q-date liefert teils 'YYYY/MM/DD'
   return (dateStr || '').replace(/\//g, '-').slice(0, 10)
 }
+function endOfPrevMonthIso() {           // letzter Tag des Vormonats (Default „bis")
+  const n = new Date()
+  return isoOf(new Date(n.getFullYear(), n.getMonth(), 0))
+}
+function firstOfPrevMonthIso() {         // erster Tag des Vormonats (Fallback „von")
+  const n = new Date()
+  return isoOf(new Date(n.getFullYear(), n.getMonth() - 1, 1))
+}
+function endOfMonthIso(iso) {            // letzter Tag des Monats von iso
+  const d = new Date(iso + 'T00:00:00')
+  return isoOf(new Date(d.getFullYear(), d.getMonth() + 1, 0))
+}
 
 async function loadAbrechnungen() {
   const { data } = await api.get('/api/ul-stunden/meine')
   abrechnungen.value = data
 }
-async function loadAbteilungen() {
-  const { data } = await api.get('/api/abteilungen/')
-  abteilungen.value = data
-}
 usePageRefresh(loadAbrechnungen)
 onMounted(async () => {
-  try { await Promise.all([loadAbrechnungen(), loadAbteilungen()]) }
+  try { await loadAbrechnungen() }
   catch { $q.notify({ type: 'negative', message: 'Fehler beim Laden' }) }
 })
 
@@ -272,14 +278,37 @@ const createOpen = ref(false)
 const cSaving = ref(false)
 const cError = ref('')
 const cForm = ref({})
-function openCreate() {
+const kontextGeladen = ref(false)
+
+// von-Vorschlag (Tag nach letzter Abrechnung, sonst Monatsanfang) übernehmen;
+// liegt er nach „bis", „bis" auf das Monatsende von „von" ziehen.
+function applyVonVorschlag(abt) {
+  const von = abt?.zeitraum_von_vorschlag || firstOfPrevMonthIso()
+  cForm.value.zeitraum_von = von
+  if (von > cForm.value.zeitraum_bis) cForm.value.zeitraum_bis = endOfMonthIso(von)
+}
+function onAbteilungChange(id) {
+  const abt = abteilungen.value.find(a => a.id === id)
+  if (abt) applyVonVorschlag(abt)
+}
+async function openCreate() {
   cError.value = ''
-  const heute = new Date().toISOString().slice(0, 10)
-  cForm.value = {
-    abteilung_id: null, zeitraum_von: heute, zeitraum_bis: heute,
-    lizenz_klassifikation: 'ohne_lizenz', foerder_klassifikation: null,
-  }
+  kontextGeladen.value = false
+  abteilungen.value = []
+  cForm.value = { abteilung_id: null, zeitraum_von: firstOfPrevMonthIso(), zeitraum_bis: endOfPrevMonthIso() }
   createOpen.value = true
+  try {
+    const { data } = await api.get('/api/ul-stunden/erfassung-kontext')
+    abteilungen.value = data.abteilungen || []
+    if (abteilungen.value.length === 1) {
+      cForm.value.abteilung_id = abteilungen.value[0].id
+      applyVonVorschlag(abteilungen.value[0])
+    }
+  } catch (e) {
+    cError.value = e.response?.data?.detail || 'Abteilungen konnten nicht geladen werden'
+  } finally {
+    kontextGeladen.value = true
+  }
 }
 async function saveCreate() {
   if (!cForm.value.abteilung_id || !cForm.value.zeitraum_von || !cForm.value.zeitraum_bis) {

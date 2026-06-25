@@ -9,6 +9,7 @@ Fachregeln:
   Muster zuerst.
 """
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -134,6 +135,31 @@ class TestAddTage:
         with pytest.raises(ValueError):
             _svc(_FakeRepo()).add_tage(_abr(), datums=['2026-06-06'], stunden=0,
                                        angebot=None, bemerkung=None, erstellt_von='t')
+
+
+class TestLizenzAbleitung:
+    """mit_lizenz, wenn die Trainerlizenz am Ende des Abrechnungszeitraums noch gültig ist."""
+    def _svc(self, gueltig_bis):
+        m = SimpleNamespace(trainerlizenz_gueltig_bis=gueltig_bis)
+        return ULStundenService(SimpleNamespace(get_mitglied=lambda mid: m))
+
+    def test_gueltige_lizenz_ist_mit_lizenz(self):
+        assert self._svc('2026-12-31').lizenz_fuer(1, '2026-06-30') == 'mit_lizenz'
+
+    def test_genau_am_periodenende_ist_mit_lizenz(self):
+        assert self._svc('2026-06-30').lizenz_fuer(1, '2026-06-30') == 'mit_lizenz'
+
+    def test_abgelaufene_lizenz_ist_ohne_lizenz(self):
+        assert self._svc('2026-05-31').lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
+
+    def test_kein_datum_ist_ohne_lizenz(self):
+        assert self._svc(None).lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
+
+    def test_unbekanntes_mitglied_ist_ohne_lizenz(self):
+        def boom(mid):
+            raise KeyError(mid)
+        svc = ULStundenService(SimpleNamespace(get_mitglied=boom))
+        assert svc.lizenz_fuer(99, '2026-06-30') == 'ohne_lizenz'
 
 
 class TestLetzteVorlage:

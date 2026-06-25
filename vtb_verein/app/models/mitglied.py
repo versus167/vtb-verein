@@ -45,6 +45,7 @@ class Mitglied:
     # Übungsleiter-Stammdaten (für den Stundennachweis-Beleg)
     trainerlizenz_nr: Optional[str] = None
     qualifikation: Optional[str] = None
+    trainerlizenz_gueltig_bis: Optional[str] = None   # ISO-Datum; steuert mit/ohne Lizenz
 
     # Verknüpfung mit User-Account (optional)
     user_id: Optional[int] = None

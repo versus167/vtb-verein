@@ -32,8 +32,10 @@ class MitgliedCreate(BaseModel):
     abgerechnet_bis: Optional[str] = None
     trainerlizenz_nr: Optional[str] = None
     qualifikation: Optional[str] = None
+    trainerlizenz_gueltig_bis: Optional[str] = None
 
-    @field_validator('geburtsdatum', 'eintrittsdatum', 'austrittsdatum', 'abgerechnet_bis', mode='before')
+    @field_validator('geburtsdatum', 'eintrittsdatum', 'austrittsdatum', 'abgerechnet_bis',
+                     'trainerlizenz_gueltig_bis', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return None if v == '' else v
 

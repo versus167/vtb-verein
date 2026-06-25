@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from app.models.ul_stunden import (
-    ULAbrechnung, ULStunde, LIZENZ_KLASSIFIKATIONEN, STATUS_ENTWURF,
+    ULAbrechnung, ULStunde, LIZENZ_MIT, LIZENZ_OHNE, STATUS_ENTWURF,
 )
 
 
@@ -50,32 +50,40 @@ class ULStundenService:
         if dv > db_:
             raise ValueError("'von' darf nicht nach 'bis' liegen")
 
+    # --------------------------------------------------------------- Lizenz
+    def lizenz_fuer(self, mitglied_id: int, bis: str) -> str:
+        """Leitet die Lizenz-Klassifikation aus den Mitglied-Stammdaten ab: 'mit_lizenz',
+        wenn die Trainerlizenz (trainerlizenz_gueltig_bis) am Ende des Abrechnungszeitraums
+        noch gültig ist – sonst 'ohne_lizenz'. Kein Datum hinterlegt = ohne Lizenz."""
+        try:
+            m = self.db.get_mitglied(mitglied_id)
+        except (KeyError, AttributeError):
+            m = None
+        gueltig = getattr(m, 'trainerlizenz_gueltig_bis', None) if m else None
+        if gueltig and _as_date(gueltig) >= _as_date(bis):
+            return LIZENZ_MIT
+        return LIZENZ_OHNE
+
     # ----------------------------------------------------------- Kopf / CRUD
     def create_abrechnung(self, *, mitglied_id: int, abteilung_id: int, von: str, bis: str,
-                          lizenz_klassifikation: str, foerder_klassifikation: Optional[str],
                           erstellt_von: str) -> ULAbrechnung:
         self._validiere_zeitraum(von, bis)
-        if lizenz_klassifikation not in LIZENZ_KLASSIFIKATIONEN:
-            raise ValueError("Ungültige Lizenz-Klassifikation")
         self._pruefe_sperre(mitglied_id, abteilung_id, von)
         if self.db.ul_abrechnungen.has_overlap(mitglied_id, abteilung_id, von, bis):
             raise ValueError("Zeitraum überschneidet sich mit einer bestehenden Abrechnung")
         a = ULAbrechnung(
             mitglied_id=mitglied_id, abteilung_id=abteilung_id,
             zeitraum_von=von, zeitraum_bis=bis,
-            lizenz_klassifikation=lizenz_klassifikation,
-            foerder_klassifikation=(foerder_klassifikation or None),
+            lizenz_klassifikation=self.lizenz_fuer(mitglied_id, bis),
+            foerder_klassifikation=None,   # Buchungsdetail – nicht bei der Erfassung
         )
         return self.db.ul_abrechnungen.create(a, created_by=erstellt_von)
 
     def update_kopf(self, abrechnung: ULAbrechnung, *, von: str, bis: str,
-                    lizenz_klassifikation: str, foerder_klassifikation: Optional[str],
                     expected_version: int, updated_by: str) -> bool:
         if abrechnung.status != STATUS_ENTWURF:
             raise ValueError("Nur Entwürfe können bearbeitet werden")
         self._validiere_zeitraum(von, bis)
-        if lizenz_klassifikation not in LIZENZ_KLASSIFIKATIONEN:
-            raise ValueError("Ungültige Lizenz-Klassifikation")
         self._pruefe_sperre(abrechnung.mitglied_id, abrechnung.abteilung_id, von)
         if self.db.ul_abrechnungen.has_overlap(
             abrechnung.mitglied_id, abrechnung.abteilung_id, von, bis, exclude_id=abrechnung.id
@@ -83,8 +91,8 @@ class ULStundenService:
             raise ValueError("Zeitraum überschneidet sich mit einer bestehenden Abrechnung")
         abrechnung.zeitraum_von = von
         abrechnung.zeitraum_bis = bis
-        abrechnung.lizenz_klassifikation = lizenz_klassifikation
-        abrechnung.foerder_klassifikation = (foerder_klassifikation or None)
+        # Lizenz nach Zeitraumänderung aus den Stammdaten neu ableiten (Snapshot beim Einreichen).
+        abrechnung.lizenz_klassifikation = self.lizenz_fuer(abrechnung.mitglied_id, bis)
         abrechnung.version = expected_version
         return self.db.ul_abrechnungen.update_kopf(abrechnung, updated_by=updated_by)
 

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ _MITGLIED_COLS = (
     "strasse, plz, ort, land, eintrittsdatum, austrittsdatum, status, "
     "zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis, "
     "geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum, "
-    "user_id, trainerlizenz_nr, qualifikation, "
+    "user_id, trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _MITGLIED_VALS = ", ".join("NEW." + c.strip() for c in _MITGLIED_COLS.split(","))
@@ -577,6 +577,7 @@ class Database:
             52: self._migrate_v51_to_v52,
             53: self._migrate_v52_to_v53,
             54: self._migrate_v53_to_v54,
+            55: self._migrate_v54_to_v55,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3055,6 +3056,20 @@ class Database:
             cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
             cur.execute("UPDATE schema_version SET version = 54 WHERE id = 1")
 
+    def _migrate_v54_to_v55(self) -> None:
+        """ÜL-Lizenz mit Gültigkeitsdatum: mitglied.trainerlizenz_gueltig_bis.
+
+        Aus diesem Datum wird beim Anlegen einer Abrechnung die Lizenz-Klassifikation
+        (mit/ohne Lizenz) abgeleitet, statt sie im Dialog abzufragen. Spalte (Tabelle +
+        History) idempotent nachziehen und die Mitglied-Audit-Trigger auf die neue
+        Spalte erweitern (geteilte Modul-Konstanten, identisch zum Fresh-Schema)."""
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS trainerlizenz_gueltig_bis TEXT")
+            cur.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS trainerlizenz_gueltig_bis TEXT")
+            cur.execute(_FN_MITGLIED_AUDIT_INSERT)
+            cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
+            cur.execute("UPDATE schema_version SET version = 55 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -3155,6 +3170,7 @@ class Database:
               user_id           INTEGER,
               trainerlizenz_nr  TEXT,
               qualifikation     TEXT,
+              trainerlizenz_gueltig_bis TEXT,
               version           INTEGER NOT NULL DEFAULT 1,
               created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by        TEXT,
@@ -3193,6 +3209,7 @@ class Database:
               user_id           INTEGER,
               trainerlizenz_nr  TEXT,
               qualifikation     TEXT,
+              trainerlizenz_gueltig_bis TEXT,
               created_at        TEXT,
               created_by        TEXT,
               updated_at        TEXT,

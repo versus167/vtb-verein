@@ -82,6 +82,9 @@
                 <q-input v-model="form.trainerlizenz_nr" label="Trainerlizenz-Nr."
                   outlined dense :readonly="!canWrite"
                   hint="erscheint auf dem Stundennachweis-Beleg" />
+                <q-input v-model="form.trainerlizenz_gueltig_bis" label="Lizenz gültig bis"
+                  outlined dense type="date" :readonly="!canWrite"
+                  hint="steuert mit/ohne Lizenz in der Abrechnung" />
               </div>
             </q-expansion-item>
             <div v-if="stammError" class="text-negative text-caption">{{ stammError }}</div>
@@ -585,7 +588,7 @@ const emptyForm = () => ({
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
   eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
-  trainerlizenz_nr: null, qualifikation: null,
+  trainerlizenz_nr: null, qualifikation: null, trainerlizenz_gueltig_bis: null,
 })
 const form = ref(emptyForm())
 // Snapshot des zuletzt geladenen/gespeicherten Stands – Basis für die
@@ -1042,6 +1045,7 @@ async function saveStammdaten() {
         abgerechnet_bis: form.value.abgerechnet_bis || null,
         trainerlizenz_nr: form.value.trainerlizenz_nr || null,
         qualifikation: form.value.qualifikation || null,
+        trainerlizenz_gueltig_bis: form.value.trainerlizenz_gueltig_bis || null,
         expected_version: form.value.version ?? 1,
       }
       let response

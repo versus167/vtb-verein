@@ -32,8 +32,8 @@ class AbrechnungCreate(BaseModel):
     abteilung_id: int
     zeitraum_von: str
     zeitraum_bis: str
-    lizenz_klassifikation: str = 'ohne_lizenz'
-    foerder_klassifikation: Optional[str] = None
+    # Lizenz wird aus den Mitglied-Stammdaten abgeleitet; Sportförderung ist ein
+    # späteres Buchungsdetail – beides hier nicht erfassen.
 
 
 class AbrechnungUpdate(AbrechnungCreate):
@@ -144,6 +144,25 @@ def list_meine(user: CurrentUser, db: DB, status_filter: Optional[str] = None):
     mid = _own_mitglied_id(user, db)
     return [_abrechnung_dict(db, a)
             for a in db.ul_abrechnungen.list_for_mitglied(mid, status_filter)]
+
+
+@router.get("/erfassung-kontext")
+def erfassung_kontext(user: CurrentUser, db: DB):
+    """Kontext für den Anlegen-Dialog: Abteilungen, für die der eingeloggte ÜL erfassen
+    darf, je mit Zeitraum-Vorschlag (Beginn = Tag nach der letzten Abrechnung). Ist es
+    genau eine Abteilung, wählt das Frontend sie ohne Auswahl aus."""
+    if not (user.has_permission(Permission.UL_STUNDEN_ERFASSEN) or _can_verwalten(user)):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Stundenerfassung")
+    mid = _own_mitglied_id(user, db)
+    allowed = (None if _can_verwalten(user)
+               else user.allowed_abteilungen(Permission.UL_STUNDEN_ERFASSEN))
+    svc = ULStundenService(db)
+    abteilungen = [
+        {'id': a.id, 'name': a.name, 'zeitraum_von_vorschlag': svc.erfassbar_ab(mid, a.id)}
+        for a in db.list_abteilungen()
+        if allowed is None or a.id in allowed
+    ]
+    return {'abteilungen': abteilungen}
 
 
 @router.get("/zu-bestaetigen")
@@ -276,8 +295,6 @@ def create_abrechnung(data: AbrechnungCreate, user: CurrentUser, db: DB):
         a = ULStundenService(db).create_abrechnung(
             mitglied_id=mid, abteilung_id=data.abteilung_id,
             von=data.zeitraum_von, bis=data.zeitraum_bis,
-            lizenz_klassifikation=data.lizenz_klassifikation,
-            foerder_klassifikation=data.foerder_klassifikation,
             erstellt_von=user.username,
         )
     except ValueError as e:
@@ -292,8 +309,6 @@ def update_abrechnung(abrechnung_id: int, data: AbrechnungUpdate, user: CurrentU
     try:
         ok = ULStundenService(db).update_kopf(
             a, von=data.zeitraum_von, bis=data.zeitraum_bis,
-            lizenz_klassifikation=data.lizenz_klassifikation,
-            foerder_klassifikation=data.foerder_klassifikation,
             expected_version=data.expected_version, updated_by=user.username,
         )
     except ValueError as e:
@@ -427,15 +442,17 @@ def ablehnen(abrechnung_id: int, data: AblehnenBody, user: CurrentUser, db: DB):
 
 @router.post("/{abrechnung_id}/zuruecksetzen")
 def zuruecksetzen(abrechnung_id: int, user: CurrentUser, db: DB):
-    """Setzt eine bestätigte/abgelehnte (noch nicht exportierte) Abrechnung zurück
-    auf 'entwurf', sodass der ÜL nachbessern kann.
+    """Setzt eine eingereichte/bestätigte/abgelehnte (noch nicht exportierte) Abrechnung
+    zurück auf 'entwurf', sodass der ÜL nachbessern kann.
 
-    Erlaubt für AL/Verwaltung (jeder Status) sowie für den Eigentümer selbst,
-    solange die Abrechnung abgelehnt wurde."""
+    Erlaubt für AL/Verwaltung (jeder Status) sowie für den Eigentümer selbst, solange
+    die Abrechnung eingereicht (= noch nicht bestätigt) oder abgelehnt ist – nach dem
+    Bestätigen kann nur noch AL/Verwaltung zurücksetzen."""
     a = _load(db, abrechnung_id)
     own = db.get_mitglied_by_user_id(user.id)
     is_owner = own is not None and own.id == a.mitglied_id
-    if not (_can_confirm(user, a.abteilung_id) or (is_owner and a.status == 'abgelehnt')):
+    if not (_can_confirm(user, a.abteilung_id)
+            or (is_owner and a.status in ('eingereicht', 'abgelehnt'))):
         raise HTTPException(status_code=403, detail="Keine Berechtigung für diese Abteilung")
     if not db.ul_abrechnungen.zuruecksetzen(abrechnung_id, updated_by=user.username):
         raise HTTPException(status_code=409,
