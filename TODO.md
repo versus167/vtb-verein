@@ -157,6 +157,35 @@ Erledigt (2026-06-11):
       Fibu** (Finanzbuchhaltung). Voraussetzung: hinterlegte **Stundensätze** als Stammdaten,
       voraussichtlich **je Abteilung** (ggf. zusätzlich personenabhängig). Auswertung:
       bestätigte Stunden × Satz → Abrechnungsübersicht/Export pro Übungsleiter und Zeitraum.
+- [ ] **Zutrittskontrolle / Schließsystem (TT-Lock)** – TTLock/Sciener-Schlösser für
+      einige Vereinstüren anbinden und **Berechtigungen, Schlüsselchips (RFID/IC-Cards) und
+      Zutrittslogs in der App verwalten**. Die App ist dabei **Orchestrierungs-/Verwaltungs-
+      schicht über der TTLock-Cloud-API** (`open`/`euopen.ttlock.com`), nicht der Schloss-
+      Controller selbst – die Cloud bleibt Quelle der Wahrheit, wir spiegeln/steuern.
+  - **Hardware-Voraussetzung:** Schlösser funken nur per **Bluetooth**. Für serverseitige
+    Verwaltung + Log-Abruf (unser Backend hat kein BLE) ist je Standort ein **Gateway
+    (G2/G3)** praktisch zwingend (BLE ↔ WLAN ↔ Cloud). Ohne Gateway lassen sich Chips nur
+    lokal per Handy-App am Schloss anlernen, und Logs werden erst beim nächsten App-Kontakt
+    hochgeladen (keine Echtzeit).
+  - **API/Auth:** Entwickler-Account (clientId/clientSecret) + OAuth2-Token je TTLock-Konto;
+    Token-Refresh + Secrets serverseitig ablegen. Relevante Endpunkte: `identityCard`
+    (IC-Cards anlegen/auflisten/löschen, **mit Gültigkeitszeitraum**), `lock`/`gateway`
+    (Inventar/Status), `lockRecord/list` (Zutrittslogs inkl. `recordType` = Öffnungsmethode).
+  - **Datenmodell (Skizze):** `tuer_schloss` (lockId ↔ Tür/Standort/Abteilung),
+    `schluessel_chip` (IC-Card ↔ Mitglied, Status, gültig-von/bis), `tuer_berechtigung`
+    (Mitglied/Chip ↔ Schloss + Zeitraum + erteilt_von), `tuer_zutritt_log` (synchronisierte
+    Unlock-Records), TTLock-Account-/Token-Konfig. **Sync-Job** zieht Logs periodisch in die
+    eigene DB.
+  - **Berechtigungen (App):** z. B. `schliessanlage.verwalten` (Chips/Türen/Berechtigungen)
+    + eigenes Lese-/Log-Recht; fügt sich in die bestehende **Permission-Matrix** ein, ggf.
+    **abteilungs-scoped** wie Kassen/Tickets.
+  - **DSGVO/Recht:** Zutrittslogs sind **personenbezogene Bewegungsdaten** → Zweckbindung,
+    Aufbewahrungsfrist/Löschkonzept, Datenschutzhinweis für Mitglieder; vor Einführung klären.
+  - **Offene Punkte:** EU-Endpoint + Freischaltung des Dev-Accounts; wo Chips angelernt
+    werden (am Schloss vs. remote via Gateway); Echtzeit- vs. verzögerte Logs; konkrete
+    Schloss-/Gateway-Modelle; Mapping bestehender Chips ↔ Mitglieder.
+  - **Plan: `ZUTRITTSKONTROLLE_PLAN.md`** (Gateways an allen Standorten vorhanden →
+    Fernverwaltung + Log-Sync möglich; Datenmodell v53, Phasen, TTLock-API-Details).
 
 ### Infrastruktur
 - [ ] CI/CD (GitHub Actions): automatische Tests, Container-Registry-Push, Auto-Deploy auf Tag
