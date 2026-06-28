@@ -30,6 +30,8 @@ class EinstellungenUpdate(BaseModel):
     default_steuerschluessel: Optional[str] = None
     verein_kostenstelle: int = 12
     default_kostentraeger: int = 1
+    ul_aufwand_konto: Optional[str] = None
+    ul_kreditor_konto_basis: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,8 @@ def _einst_dict(e: FibuEinstellungen) -> dict:
         'default_steuerschluessel': e.default_steuerschluessel,
         'verein_kostenstelle': e.verein_kostenstelle,
         'default_kostentraeger': e.default_kostentraeger,
+        'ul_aufwand_konto': e.ul_aufwand_konto,
+        'ul_kreditor_konto_basis': e.ul_kreditor_konto_basis,
         'version': e.version,
     }
 
@@ -107,6 +111,8 @@ def update_einstellungen(data: EinstellungenUpdate, user: CurrentUser, db: DB):
         default_steuerschluessel=(data.default_steuerschluessel or None),
         verein_kostenstelle=data.verein_kostenstelle,
         default_kostentraeger=data.default_kostentraeger,
+        ul_aufwand_konto=(data.ul_aufwand_konto or None),
+        ul_kreditor_konto_basis=data.ul_kreditor_konto_basis,
     )
     return _einst_dict(db.fibu_einstellungen.update(e, updated_by=user.username))
 

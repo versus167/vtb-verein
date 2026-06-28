@@ -56,11 +56,13 @@
                 {{ p.bezeichnung }}
                 <q-badge v-if="istAbteilungUmbuchung(p)" color="teal" text-color="white"
                   class="q-ml-xs">Abteilung trägt</q-badge>
+                <q-badge v-if="p.quelle_typ === 'ul_abrechnung'" color="indigo" text-color="white"
+                  class="q-ml-xs">ÜL-Honorar (Kreditor)</q-badge>
               </td>
               <td>{{ p.konto ?? '–' }}</td><td>{{ p.gegenkonto ?? '–' }}</td>
               <td>{{ p.kostenstelle ?? '–' }} / {{ p.kostentraeger ?? '–' }}</td>
               <td class="text-right">
-                {{ istAbteilungUmbuchung(p) ? '−' : '' }}{{ fmt(p.betrag) }} €
+                {{ p.soll_haben === 'H' ? '−' : '' }}{{ fmt(p.betrag) }} €
               </td>
               <td>{{ p.belegnummer }}</td>
             </tr>
@@ -142,6 +144,12 @@
             <q-input v-model.number="einst.default_kostentraeger" label="Default-Kostenträger" outlined dense
               type="number" class="col" />
           </div>
+          <q-separator class="q-my-sm" />
+          <div class="text-subtitle2">Übungsleiter-Honorar (Kreditor)</div>
+          <q-input v-model="einst.ul_aufwand_konto" label="ÜL-Aufwandskonto (Soll-Sachkonto)" outlined dense
+            clearable hint="Gegenkonto der Kreditor-Buchung – Honorar-Aufwand" />
+          <q-input v-model.number="einst.ul_kreditor_konto_basis" label="ÜL-Kreditor-Konto-Basis" outlined dense
+            type="number" clearable hint="Kreditor-Konto = Basis + Mitgliedsnummer · Kostenstelle kommt aus der Abteilung" />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn unelevated color="primary" label="Speichern" :loading="speichere" @click="saveEinstellungen" />
@@ -168,6 +176,7 @@ const exporte = ref([])
 const einst = ref({
   debitor_konto_basis: null, default_gegenkonto: '', default_steuerschluessel: '',
   verein_kostenstelle: 12, default_kostentraeger: 1,
+  ul_aufwand_konto: '', ul_kreditor_konto_basis: null,
 })
 const speichere = ref(false)
 
@@ -177,7 +186,9 @@ const kannExportieren = computed(() =>
 function fmt(n) { return (Number(n) || 0).toFixed(2) }
 
 // Abteilungs-Gegenbuchung: liegt als Haben-Zeile in den Forderungen (zahler_typ='abteilung').
-function istAbteilungUmbuchung(p) { return p.art === 'forderung' && p.soll_haben === 'H' }
+function istAbteilungUmbuchung(p) {
+  return p.quelle_typ !== 'ul_abrechnung' && p.art === 'forderung' && p.soll_haben === 'H'
+}
 
 function downloadBlob(data, filename) {
   const url = URL.createObjectURL(data)
@@ -277,6 +288,8 @@ async function loadEinstellungen() {
     default_steuerschluessel: data.default_steuerschluessel ?? '',
     verein_kostenstelle: data.verein_kostenstelle,
     default_kostentraeger: data.default_kostentraeger,
+    ul_aufwand_konto: data.ul_aufwand_konto ?? '',
+    ul_kreditor_konto_basis: data.ul_kreditor_konto_basis,
   }
 }
 
@@ -289,6 +302,8 @@ async function saveEinstellungen() {
       default_steuerschluessel: einst.value.default_steuerschluessel || null,
       verein_kostenstelle: einst.value.verein_kostenstelle ?? 12,
       default_kostentraeger: einst.value.default_kostentraeger ?? 1,
+      ul_aufwand_konto: einst.value.ul_aufwand_konto || null,
+      ul_kreditor_konto_basis: einst.value.ul_kreditor_konto_basis ?? null,
     })
     $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
     await loadVorschau()

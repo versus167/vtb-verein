@@ -67,7 +67,7 @@ def felder(p: FibuExportPosition) -> list[str]:
     f[11] = _datum(p.faelligkeitsdatum)  # Fälligkeitsdatum
     f[12] = _clean(p.buchungstext)      # Buchungstext
     f[17] = "E"                         # Währung EURO
-    f[19] = "D"                         # Kontenart Debitor
+    f[19] = p.kontenart or "D"          # Kontenart 'D' Debitor | 'K' Kreditor (ÜL-Honorar)
     f[20] = _clean(p.suchname)          # Suchname (Adresscode)
     f[22] = _clean(p.nachname)          # Name
     f[24] = _clean(p.strasse)           # Straße

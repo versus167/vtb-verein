@@ -58,6 +58,8 @@ from app.db.fibu_export_repository import FibuExportRepository
 from app.db.fibu_einstellungen_repository import FibuEinstellungenRepository
 from app.db.beitrag_einstellungen_repository import BeitragEinstellungenRepository
 from app.db.statistik_repository import StatistikRepository
+from app.db.ul_abrechnung_repository import ULAbrechnungRepository
+from app.db.ul_satz_repository import ULSatzRepository
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
@@ -103,6 +105,8 @@ class VereinsDB:
         self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
         self._fibu_export_repo = FibuExportRepository(self.conn)
         self._fibu_einstellungen_repo = FibuEinstellungenRepository(self.conn)
+        self._ul_abrechnung_repo = ULAbrechnungRepository(self.conn)
+        self._ul_satz_repo = ULSatzRepository(self.conn)
         self._statistik_repo = StatistikRepository(self.conn)
 
         self._anhang_service = AnhangService(
@@ -347,6 +351,12 @@ class VereinsDB:
     def list_mitglied_funktionen(self, mitglied_id: int) -> list[MitgliedFunktion]:
         return self._mitglied_funktion_repo.list_for_mitglied(mitglied_id)
 
+    def list_mitglieder_mit_funktion(self, funktion: str) -> list[dict]:
+        return self._mitglied_funktion_repo.list_mitglieder_mit_funktion(funktion)
+
+    def abteilung_ids_fuer_funktion(self, mitglied_id: int, funktion: str) -> list:
+        return self._mitglied_funktion_repo.abteilung_ids_fuer_funktion(mitglied_id, funktion)
+
     def get_mitglied_funktion(self, id: int) -> Optional[MitgliedFunktion]:
         return self._mitglied_funktion_repo.get(id)
 
@@ -520,6 +530,14 @@ class VereinsDB:
     @property
     def fibu_einstellungen(self) -> FibuEinstellungenRepository:
         return self._fibu_einstellungen_repo
+
+    @property
+    def ul_abrechnungen(self) -> ULAbrechnungRepository:
+        return self._ul_abrechnung_repo
+
+    @property
+    def ul_saetze(self) -> ULSatzRepository:
+        return self._ul_satz_repo
 
     # --- Gebühren-Delegationen (für Service/API) ---
     def get_gebuehr(self, id: int) -> Optional[Gebuehr]:

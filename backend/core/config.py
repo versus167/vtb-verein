@@ -24,6 +24,13 @@ class Settings:
     COOKIE_SECURE: bool = os.getenv("VTB_COOKIE_SECURE", "true").lower() == "true"
     COOKIE_SAMESITE: str = os.getenv("VTB_COOKIE_SAMESITE", "strict")
 
+    # Vereins-Stammdaten für Belege/PDFs (z. B. Übungsleiter-Stundennachweis).
+    # Defaults entsprechen dem Muster-Beleg; per Env überschreibbar.
+    VEREIN_NAME: str = os.getenv("VTB_VEREIN_NAME", "VTB Chemnitz e.V.")
+    VEREIN_STRASSE: str = os.getenv("VTB_VEREIN_STRASSE", "Guerickestraße 48")
+    VEREIN_PLZ_ORT: str = os.getenv("VTB_VEREIN_PLZ_ORT", "09116 Chemnitz")
+    VEREIN_REGISTRIER_NR: str = os.getenv("VTB_VEREIN_REGISTRIER_NR", "400193")
+
     # SMTP / Magic-Link
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))

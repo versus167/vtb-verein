@@ -40,6 +40,39 @@ class MitgliedFunktionRepository(BaseRepository):
             row = cur.fetchone()
             return MitgliedFunktion(**dict(row)) if row else None
 
+    def list_mitglieder_mit_funktion(self, funktion: str) -> list[dict]:
+        """Aktive Inhaber einer Funktion (distinct je Mitglied) – z. B. für die ÜL-Auswahl
+        bei der Fremderfassung. von/bis sind ISO-Datum-Texte (lexikografisch vergleichbar)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT m.id, m.vorname, m.nachname, m.mitgliedsnummer
+                FROM mitglied_funktion mf
+                JOIN mitglied m ON m.id = mf.mitglied_id AND m.deleted_at IS NULL
+                WHERE mf.funktion = %s AND mf.deleted_at IS NULL
+                  AND (mf.von IS NULL OR mf.von <= CURRENT_DATE::text)
+                  AND (mf.bis IS NULL OR mf.bis >= CURRENT_DATE::text)
+                ORDER BY m.nachname, m.vorname
+                """,
+                (funktion,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def abteilung_ids_fuer_funktion(self, mitglied_id: int, funktion: str) -> list[Optional[int]]:
+        """abteilung_id je aktiver Zuordnung dieser Funktion (NULL = vereinsweit) – für die
+        Abteilungs-Vorauswahl bei der Fremderfassung. von/bis als ISO-Text verglichen."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT abteilung_id FROM mitglied_funktion
+                WHERE mitglied_id = %s AND funktion = %s AND deleted_at IS NULL
+                  AND (von IS NULL OR von <= CURRENT_DATE::text)
+                  AND (bis IS NULL OR bis >= CURRENT_DATE::text)
+                """,
+                (mitglied_id, funktion),
+            )
+            return [r['abteilung_id'] for r in cur.fetchall()]
+
     def list_for_mitglied(self, mitglied_id: int) -> list[MitgliedFunktion]:
         with self.cursor() as cur:
             cur.execute(

@@ -115,9 +115,25 @@ def _row(**kw):
 def _einst(**kw):
     base = dict(debitor_konto_basis=70000, default_gegenkonto='4999',
                 default_steuerschluessel=None, verein_kostenstelle=12,
-                default_kostentraeger=1)
+                default_kostentraeger=1, ul_aufwand_konto='4200',
+                ul_kreditor_konto_basis=80000)
     base.update(kw)
     return FibuEinstellungen(**base)
+
+
+def _ul_row(**kw):
+    """Rohzeile einer bestätigten ÜL-Abrechnung, wie sie das Repository liefert
+    (Betrag = Summe Stunden × Satz bereits in SQL berechnet, Belegdatum = bestaetigt_am)."""
+    base = dict(
+        quelle_typ='ul_abrechnung', quelle_id=1, periode='2026-01-01 – 2026-03-31',
+        betrag_soll=315.0, belegdatum='2026-04-05 10:00:00+00',
+        mitglied_id=20, mitgliedsnummer=7, vorname='Annett', nachname='Wagner',
+        strasse='Turnweg 2', plz='01067', ort='Dresden', land='DE',
+        iban='DE12', bic='YBIC', kontoinhaber=None, email='annett@example.org',
+        quelle_name='Aerobic', abteilung_id=3, abteilung_kostenstelle=44,
+    )
+    base.update(kw)
+    return base
 
 
 class _FibuExporteStub:
@@ -349,7 +365,7 @@ class TestAbteilungUmbuchung:
         # Netto fließt nichts; Quellzeile genau einmal gestempelt.
         assert stub.calls[0]['summe_cent'] == 0
         assert stub.calls[0]['anzahl_positionen'] == 2
-        assert stub.calls[0]['neu_ids'] == {'beitrag': [1], 'gebuehr': []}
+        assert stub.calls[0]['neu_ids'] == {'beitrag': [1], 'gebuehr': [], 'ul_abrechnung': []}
 
     def test_storno_dreht_beide_zeilen_um(self):
         # Stornierter/gelöschter Abteilungs-Posten → Gegenbuchungs-Paar mit invertiertem S/H.
@@ -403,6 +419,86 @@ class TestAbteilungUmbuchung:
 
 
 # ---------------------------------------------------------------------------
+# ÜL-Honorar (quelle_typ='ul_abrechnung') – Kreditor-Buchung (gegenläufig zum Debitor)
+# ---------------------------------------------------------------------------
+
+class TestUlHonorar:
+    def test_kreditor_konto_gegenkonto_soll_haben(self):
+        # Forderung = neue, bestätigte Abrechnung → Kreditor im HABEN, Aufwand als Gegenkonto.
+        svc, _ = _service(neu=[_ul_row(quelle_id=1, mitgliedsnummer=7)])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.konto == 80007            # Kreditor-Basis + Mitgliedsnummer
+        assert p.gegenkonto == '4200'      # ÜL-Aufwandskonto (Soll-Sachkonto)
+        assert p.soll_haben == 'H'
+        assert p.kontenart == 'K'
+        assert p.belegnummer == 'U1'
+
+    def test_betrag_kostenstelle_aus_abteilung_und_kein_lastschrift(self):
+        svc, _ = _service(neu=[_ul_row(betrag_soll=315.0, abteilung_kostenstelle=44)])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.betrag == 315.0
+        assert p.kostenstelle == 44        # aus der Abteilung übernommen
+        assert p.kostentraeger == 1        # Default
+        # Der Verein zahlt den ÜL per Überweisung → kein Lastschrifteinzug, kein Mandat.
+        assert p.lastschrifteinzug is None
+        assert p.mandatsref is None and p.mandatsdatum is None
+
+    def test_belegdatum_aus_bestaetigung_und_faelligkeit_plus_10(self):
+        svc, _ = _service(neu=[_ul_row(belegdatum='2026-04-05 10:00:00+00')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.belegdatum == '2026-04-05'
+        assert p.faelligkeitsdatum == '2026-04-15'
+
+    def test_bezeichnung_enthaelt_abteilung_und_zeitraum(self):
+        svc, _ = _service(neu=[_ul_row(quelle_name='Aerobic', periode='2026-01-01 – 2026-03-31')])
+        assert svc.vorschau()['forderungen'][0].bezeichnung == 'ÜL-Honorar Aerobic 2026-01-01 – 2026-03-31'
+
+    def test_gegenbuchung_dreht_auf_soll(self):
+        svc, _ = _service(gegen=[_ul_row(quelle_id=1)])
+        g = svc.vorschau()['gegenbuchungen'][0]
+        assert g.soll_haben == 'S' and g.kontenart == 'K'
+
+    def test_gerenderte_zeile_hat_kontenart_K(self):
+        svc, _ = _service(neu=[_ul_row()])
+        p = svc.vorschau()['forderungen'][0]
+        assert ff.render_zeile(p).split(';')[19] == 'K'
+
+    def test_validierung_kreditor_basis_fehlt(self):
+        svc, _ = _service(neu=[_ul_row()], einst=_einst(ul_kreditor_konto_basis=None))
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Kreditor-Konto-Basis' in fehler[0]['problem']
+
+    def test_validierung_aufwandskonto_fehlt(self):
+        svc, _ = _service(neu=[_ul_row()], einst=_einst(ul_aufwand_konto=None))
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Aufwandskonto' in fehler[0]['problem']
+
+    def test_validierung_betrag_null(self):
+        svc, _ = _service(neu=[_ul_row(betrag_soll=0.0)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'kein Honorar' in fehler[0]['problem']
+
+    def test_validierung_fehlende_mitgliedsnummer(self):
+        svc, _ = _service(neu=[_ul_row(mitgliedsnummer=None)])
+        fehler = svc.vorschau()['fehler']
+        assert len(fehler) == 1 and 'Mitgliedsnummer' in fehler[0]['problem']
+
+    def test_alles_konfiguriert_keine_fehler(self):
+        svc, _ = _service(neu=[_ul_row()])
+        assert svc.vorschau()['fehler'] == []
+
+    def test_export_stempelt_ul_ids_und_summe_negativ(self):
+        svc, stub = _service(neu=[_ul_row(quelle_id=1, betrag_soll=315.0)])
+        export, content = svc.exportieren(erstellt_von='admin')
+        kw = stub.calls[0]
+        assert kw['neu_ids'] == {'beitrag': [], 'gebuehr': [], 'ul_abrechnung': [1]}
+        assert kw['anzahl_positionen'] == 1
+        # Haben-Buchung → Netto-Summe negativ.
+        assert kw['summe_cent'] == -31500
+        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+
+
+# ---------------------------------------------------------------------------
 # Export-Lauf
 # ---------------------------------------------------------------------------
 
@@ -416,8 +512,8 @@ class TestExportieren:
         export, content = svc.exportieren(erstellt_von='admin')
         assert isinstance(content, bytes) and content
         kw = stub.calls[0]
-        assert kw['neu_ids'] == {'beitrag': [1], 'gebuehr': [2]}
-        assert kw['storno_ids'] == {'beitrag': [3], 'gebuehr': []}
+        assert kw['neu_ids'] == {'beitrag': [1], 'gebuehr': [2], 'ul_abrechnung': []}
+        assert kw['storno_ids'] == {'beitrag': [3], 'gebuehr': [], 'ul_abrechnung': []}
         assert kw['anzahl_positionen'] == 3
 
     def test_summe_cent_netto(self):
