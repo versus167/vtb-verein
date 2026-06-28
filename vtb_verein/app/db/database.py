@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +578,7 @@ class Database:
             53: self._migrate_v52_to_v53,
             54: self._migrate_v53_to_v54,
             55: self._migrate_v54_to_v55,
+            56: self._migrate_v55_to_v56,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3070,6 +3071,20 @@ class Database:
             cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
             cur.execute("UPDATE schema_version SET version = 55 WHERE id = 1")
 
+    def _migrate_v55_to_v56(self) -> None:
+        """ÜL-Honorar im Fibu-Export (Kreditor je ÜL): Konten an fibu_einstellungen.
+
+        Zwei einstellbare Konten zur globalen Fibu-Konfiguration nachziehen:
+        `ul_aufwand_konto` (Soll-Sachkonto ÜL-Honorar = Gegenkonto) und
+        `ul_kreditor_konto_basis` (Kreditor-Konto = Basis + Mitgliedsnummer). Die
+        Kostenstelle stammt aus der Abteilung – dafür ist keine neue Spalte nötig.
+        fibu_einstellungen ist eine Single-Row-Konfig ohne History/Trigger; die Spalten
+        idempotent nachziehen (identisch zum Fresh-Schema)."""
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE fibu_einstellungen ADD COLUMN IF NOT EXISTS ul_aufwand_konto TEXT")
+            cur.execute("ALTER TABLE fibu_einstellungen ADD COLUMN IF NOT EXISTS ul_kreditor_konto_basis INTEGER")
+            cur.execute("UPDATE schema_version SET version = 56 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -4333,6 +4348,8 @@ class Database:
               default_steuerschluessel TEXT,
               verein_kostenstelle      INTEGER NOT NULL DEFAULT 12,
               default_kostentraeger    INTEGER NOT NULL DEFAULT 1,
+              ul_aufwand_konto         TEXT,
+              ul_kreditor_konto_basis  INTEGER,
               version                  INTEGER NOT NULL DEFAULT 1,
               created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by               TEXT,

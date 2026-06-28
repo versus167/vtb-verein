@@ -1,6 +1,6 @@
 # Plan & Status: Übungsleiter-Stundenerfassung
 
-Stand: 2026-06-25 · Branch `feature/ul-stundenerfassung` · Schema **v55**
+Stand: 2026-06-28 · Branch `feature/ul-stundenerfassung` · Schema **v56**
 
 ## Ziel
 Übungsleiter (ÜL) erfassen ihre geleisteten Trainingsstunden selbst, der
@@ -11,7 +11,8 @@ Abteilungsleiter (AL) bestätigt, anschließend Fibu-Export (FBASC) + PDF-Beleg
 ## Status-Überblick
 - ✅ **Phase 1 (MVP):** Erfassung (ÜL) + Bestätigung (AL) + Sperr-Logik — fertig & getestet
 - ✅ **Phase 2:** PDF-Beleg (A4 quer) + Lizenz-Stammdaten am Mitglied — fertig & getestet
-- ⬜ **Phase 3:** Fibu-Anbindung (Kreditor je ÜL) — offen (Detailplan unten)
+- ✅ **Phase 3:** Fibu-Anbindung (Kreditor je ÜL) — fertig & getestet (s. „Offen 2"). Konten
+  in `fibu_einstellungen` (statt separater `ul_einstellungen`-Tabelle), Kostenstelle aus der Abteilung.
 - ✅ **Vergütungssätze-UI:** Liste + Anlegen/Bearbeiten/Löschen (vereinsweit + Abteilung) — `UlSaetzePage.vue` fertig; ÜL-Override-Bearbeitung weiter „später" (s. „Offen 4")
 - ✅ **Fremderfassung (Geschäftsstelle):** Abrechnung für einen anderen ÜL anlegen/pflegen — `UlStundenPage.vue` „Für Übungsleiter"-Auswahl + Recht `ulstunden.erfassen_fremd`
 
@@ -49,7 +50,10 @@ und Migrationen synchron.
 - **`ul_satz`** (konfigurierbare Sätze): `mitglied_id` (NULL=alle), `abteilung_id` (NULL=vereinsweit),
   `lizenz_klassifikation`, `satz`, `gueltig_ab`. Auflösung: ÜL-individuell → Abteilung+Lizenz → vereinsweit+Lizenz.
 - **`mitglied`** (v54): + `trainerlizenz_nr`, `qualifikation` (für Beleg-Kopf).
-- **`ul_einstellungen`** (Single-Row, **erst Phase 3**): `aufwand_konto`, `kreditor_konto_basis`, `default_kostentraeger`.
+- **`fibu_einstellungen`** (v56, Phase 3): + `ul_aufwand_konto` (Soll-Sachkonto = Gegenkonto),
+  `ul_kreditor_konto_basis` (Kreditor = Basis + Mitgliedsnummer). KEINE separate `ul_einstellungen`-Tabelle
+  (mit Auftraggeber so entschieden): die ÜL-Konten sind reine Fibu-Werte und teilen die bestehende
+  Konfig/Einstellungsseite. Kostenstelle kommt aus der Abteilung, Kostenträger = `default_kostentraeger`.
 
 **Sperr-Logik** in [ul_stunden_service.py](../vtb_verein/app/services/ul_stunden_service.py):
 `erfassbar_ab(mitglied, abteilung) = MAX(zeitraum_bis WHERE status IN (eingereicht,bestaetigt)) + 1 Tag`.
@@ -92,25 +96,36 @@ Anlegen/Bearbeiten/Löschen über `/api/ul-stunden/saetze`. Felder: `lizenz_klas
 Override-Zeilen bleiben beim Bearbeiten erhalten, aber kein Picker (s. „Offen 4"). Abteilungs-Select
 braucht `abteilungen.read`; fehlt das Recht, ist nur „vereinsweit" wählbar.
 
-## Offen 2 — Phase 3: Fibu-Export (Kreditor je ÜL)
+## Offen 2 — Phase 3: Fibu-Export (Kreditor je ÜL) — ✅ erledigt
 Eigene Positions-Quelle `quelle_typ='ul_abrechnung'` in die **bestehende** Fibu-Pipeline
-einhängen (Delta/Storno/Re-Download wiederverwenden), NICHT neuer Export-Lauf-Typ.
-1. `ul_einstellungen` (Single-Row) + Repo + API `GET/PUT /ul-stunden/einstellungen` (Recht `ulstunden.verwalten`).
-   Felder: `aufwand_konto` (Soll-Sachkonto ÜL-Honorar), `kreditor_konto_basis` (Kreditor = Basis + Mitgliedsnummer), `default_kostentraeger`.
-2. [fibu.py-Model](../vtb_verein/app/models/fibu.py): `FibuExportPosition.quelle_typ` um `'ul_abrechnung'` erweitern (Doku).
-3. [fibu_export_repository.py](../vtb_verein/app/db/fibu_export_repository.py): `_SQL_UL` analog `_SQL_BEITRAG`/`_SQL_GEBUEHR`
-   (nur `status='bestaetigt'`, gleiche `_COND_NEU`/`_COND_STORNO`-Stempelspalten); `tables`-Map in
-   `list_neue_positionen`/`list_gegenbuchungen`/`get_positionen_fuer_export`/`create_export`/`un_export` ergänzen.
-4. [fibu_export_service.py](../vtb_verein/app/services/fibu_export_service.py): `_positionen_fuer_row` um Zweig
-   `'ul_abrechnung'` — **Kreditor-Buchung, kein Debitor/keine Lastschrift**: eine Position je Abrechnung,
-   `konto = kreditor_konto_basis + mitgliedsnummer`, `soll_haben='H'`, `gegenkonto = aufwand_konto`,
-   `betrag = summe_stunden * verguetung_pro_stunde`, `kostenstelle = abteilung.kostenstelle`,
-   Belegnummer-Präfix `U{id}`, Kreditor-Stammdaten aus `mitglied` (Name/IBAN/BIC/kontoinhaber). Storno spiegelt mit `'S'`.
-   `_validieren` erweitern (Aufwandskonto + Kreditor-Basis gesetzt, Satz > 0).
-5. **Kein neuer Endpunkt**: bestätigte Abrechnungen erscheinen automatisch in `GET /fibu/vorschau` und `POST /fibu/export`.
-6. Migration v55→v56 für `ul_einstellungen` (+ Fresh-Schema spiegeln, Trigger-Registry, `_normalize_audit_timestamps`).
+eingehängt (Delta/Storno/Re-Download wiederverwendet), KEIN neuer Export-Lauf-Typ. Umgesetzt:
+1. **Konten in `fibu_einstellungen`** statt separater `ul_einstellungen`-Tabelle (mit Auftraggeber so
+   entschieden): `ul_aufwand_konto`, `ul_kreditor_konto_basis` an Model/Repo/API
+   ([fibu.py](../vtb_verein/app/models/fibu.py), [fibu_einstellungen_repository.py](../vtb_verein/app/db/fibu_einstellungen_repository.py),
+   [backend/api/fibu.py](../backend/api/fibu.py) `PUT /fibu/einstellungen`, Recht `fibu.export`). Kein eigener Endpoint/keine eigene Seite.
+2. [fibu.py-Model](../vtb_verein/app/models/fibu.py): `quelle_typ` um `'ul_abrechnung'` erweitert; neues Feld
+   `FibuExportPosition.kontenart` (Default `'D'` Debitor; ÜL setzt `'K'` Kreditor) → [fibu_formatter.py](../vtb_verein/app/services/fibu_formatter.py) Feld 19.
+3. [fibu_export_repository.py](../vtb_verein/app/db/fibu_export_repository.py): `_SQL_UL` (Betrag = Summe Termin-Stunden ×
+   eingefrorenem Satz, Belegdatum = `bestaetigt_am`, Kostenstelle aus Abteilung); `_COND_UL_NEU` (`status='bestaetigt'`)
+   / `_COND_UL_STORNO`; `ul_abrechnung` in `list_neue_positionen`/`list_gegenbuchungen`/`get_positionen_fuer_export`/`create_export`(tables)/`un_export`.
+4. [fibu_export_service.py](../vtb_verein/app/services/fibu_export_service.py): `_positionen_fuer_row`-Zweig +
+   `_position_ul` — **Kreditor-Buchung, kein Debitor/keine Lastschrift/kein Mandat**: `konto = ul_kreditor_konto_basis + mitgliedsnummer`,
+   `soll_haben='H'` (Storno `'S'`), `gegenkonto = ul_aufwand_konto`, `betrag` aus SQL, `kostenstelle = abteilung.kostenstelle`,
+   Beleg-Präfix `U{id}`, Kreditor-Stammdaten aus `mitglied`. `_validieren` quelle-spezifisch (Kreditor-Basis + Aufwandskonto gesetzt, Betrag > 0).
+5. **Kein neuer Endpunkt**: bestätigte Abrechnungen erscheinen automatisch in `GET /fibu/vorschau` und `POST /fibu/export`
+   ([FibuExportPage.vue](../frontend/src/pages/FibuExportPage.vue): zwei Einstellungsfelder + ÜL-Badge in der Vorschau).
+6. Migration **v55→v56** in [database.py](../vtb_verein/app/db/database.py): zwei Spalten an `fibu_einstellungen` (Single-Row ohne
+   History/Trigger, daher kein `_normalize_audit_timestamps`/Trigger-Touch); Fresh-Schema gespiegelt.
 
-**Braucht vom Verein/Steuerberater:** konkretes Aufwandskonto + Kreditor-Konten-Basis. Bis dahin als konfigurierbare Felder mit Platzhaltern anlegen und testbar machen.
+Tests: `TestUlHonorar` in [test_fibu_export_service.py](../vtb_verein/tests/test_fibu_export_service.py) (Konto/S-H/Kontenart/Betrag/
+Kostenstelle/Validierung/Export-Stempel). **Real gegen die Dev-DB (`vtb`, PG18/5434) verifiziert** (2026-06-28):
+Migration v55→v56 lief automatisch (uvicorn-Reload), `schema_version=56` + beide Spalten vorhanden; `_SQL_UL`
+läuft in allen vier Pfaden; eine echte `ul_abrechnung`-Zeile erzeugt korrekt Kontenart `K`/Konto/Gegenkonto/Kostenstelle;
+alle Stempel-/un_export-UPDATEs gültig (in zurückgerollter TX geprüft). Offen nur noch der **Fresh-Schema-Pfad**
+(CREATE TABLE mit den zwei Spalten) — `vtb_app` hat kein CREATEDB, daher nicht in Wegwerf-DB gebaut; 2-Zeilen-Spiegelung
+der Migration, Risiko gering.
+
+**Braucht vom Verein/Steuerberater:** konkretes Aufwandskonto + Kreditor-Konten-Basis. Felder sind als konfigurierbare Platzhalter angelegt und testbar.
 
 ## Offen 3 — Fremderfassung durch Geschäftsstelle (Abrechnung für anderen ÜL) — ✅ erledigt
 Ein Geschäftsstellen-Mitarbeiter kann Abrechnungen **für einen anderen ÜL** anlegen und pflegen.

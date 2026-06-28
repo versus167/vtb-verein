@@ -37,6 +37,8 @@ class FibuEinstellungen:
     default_steuerschluessel: Optional[str] = None  # Fallback-Steuerschlüssel (i.d.R. leer)
     verein_kostenstelle: int = 12                   # Kostenstelle für Vereinsbeiträge (ohne Abteilung)
     default_kostentraeger: int = 1                  # Kostenträger-Default
+    ul_aufwand_konto: Optional[str] = None          # ÜL-Honorar: Soll-Sachkonto (= Gegenkonto der Kreditor-Buchung)
+    ul_kreditor_konto_basis: Optional[int] = None   # ÜL-Honorar: Kreditor-Konto = Basis + Mitgliedsnummer
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -52,7 +54,7 @@ class FibuExportPosition:
     Beträge sind immer positiv – das Vorzeichen steckt im S/H-Kennzeichen.
     """
     # Herkunft / Anzeige
-    quelle_typ: str = ""               # 'beitrag' | 'gebuehr'
+    quelle_typ: str = ""               # 'beitrag' | 'gebuehr' | 'ul_abrechnung'
     quelle_id: int = 0
     art: str = "forderung"             # 'forderung' | 'gegenbuchung'
     mitglied_id: int = 0
@@ -70,6 +72,7 @@ class FibuExportPosition:
     belegdatum: Optional[str] = None       # Feld 10 (ISO)
     faelligkeitsdatum: Optional[str] = None  # Feld 11 (ISO)
     buchungstext: str = ""             # Feld 12
+    kontenart: str = "D"               # Feld 19 'D' Debitor (Beitrag/Gebühr) | 'K' Kreditor (ÜL-Honorar)
     lastschrifteinzug: Optional[int] = None  # Feld 36 (1 = Lastschrift)
     # Debitor-Stammdaten
     suchname: str = ""                 # Feld 20 (Adresscode)

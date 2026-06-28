@@ -17,6 +17,11 @@ Buchungslogik:
 - Forderung = noch nicht exportierte, lebende Sollstellung → Debitor im Soll (S).
 - Gegenbuchung = bereits exportierte, danach stornierte/gelöschte Sollstellung → Haben (H),
   damit bereits an die Fibu übergebene Beträge nicht still verschwinden.
+- ÜL-Honorar (quelle_typ='ul_abrechnung'): GEGENLÄUFIGE Kreditor-Buchung statt Debitor.
+  Eine bestätigte Abrechnung bucht Aufwand (Soll-Sachkonto = Gegenkonto) gegen Kreditor
+  (Haben, Kontenart 'K') = einstellungen.ul_kreditor_konto_basis + Mitgliedsnummer; Betrag =
+  Summe der Termin-Stunden × eingefrorenem Satz, Kostenstelle aus der Abteilung, kein
+  Lastschrifteinzug. Der Storno-Pfad dreht Soll↔Haben wie bei den Debitor-Posten.
 - Abteilungs-getragene Posten (zahler_typ='abteilung', z.B. Schiedsrichter-Beiträge):
   erzeugen ZWEI Zeilen mit demselben Erlöskonto, getauschter Kostenstelle und gleicher
   Belegnummer (sich ausgleichendes OPOS-Paar auf dem Debitor → kein SEPA-Einzug):
@@ -139,9 +144,12 @@ class FibuExportService:
         def _ids(positionen, quelle):
             return sorted({p.quelle_id for p in positionen if p.quelle_typ == quelle})
 
-        neu_ids = {'beitrag': _ids(forderungen, 'beitrag'), 'gebuehr': _ids(forderungen, 'gebuehr')}
+        neu_ids = {'beitrag': _ids(forderungen, 'beitrag'),
+                   'gebuehr': _ids(forderungen, 'gebuehr'),
+                   'ul_abrechnung': _ids(forderungen, 'ul_abrechnung')}
         storno_ids = {'beitrag': _ids(gegenbuchungen, 'beitrag'),
-                      'gebuehr': _ids(gegenbuchungen, 'gebuehr')}
+                      'gebuehr': _ids(gegenbuchungen, 'gebuehr'),
+                      'ul_abrechnung': _ids(gegenbuchungen, 'ul_abrechnung')}
         dateiname = f"fbasc_{date.today().isoformat()}.hia"
 
         export = self.db.fibu_exporte.create_export(
@@ -222,7 +230,10 @@ class FibuExportService:
         Abteilungs-getragen (zahler_typ='abteilung'): zwei Positionen mit demselben
         Erlöskonto und gleicher Belegnummer (sich ausgleichendes Debitor-OPOS-Paar):
         Einbuchung (Kostenstelle Verein) und Gegenbuchung (S↔H, Kostenstelle Abteilung).
-        Im Storno-Pfad (art='gegenbuchung') sind beide Zeilen bereits invertiert."""
+        Im Storno-Pfad (art='gegenbuchung') sind beide Zeilen bereits invertiert.
+        ÜL-Honorar (quelle_typ='ul_abrechnung'): genau eine Kreditor-Position."""
+        if row['quelle_typ'] == 'ul_abrechnung':
+            return [self._position_ul(row, art, einst)]
         basis = self._position(row, art, einst)
         if row.get('zahler_typ') != 'abteilung':
             return [basis]
@@ -314,6 +325,66 @@ class FibuExportService:
             kontoinhaber=abw_kontoinhaber,
         )
 
+    def _position_ul(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
+        """ÜL-Honorar als Kreditor-Buchung – gegenläufig zum Debitor-Pfad:
+        Aufwand (Soll-Sachkonto) gegen Kreditor (Haben). Eine neue, bestätigte Abrechnung
+        (art='forderung') bucht den Kreditor im HABEN; der Storno-Pfad dreht auf Soll.
+        Kein Lastschrifteinzug/Mandat (der Verein zahlt den ÜL per Überweisung); die
+        Kostenstelle kommt aus der Abteilung."""
+        nummer = row.get('mitgliedsnummer')
+        konto = (einst.ul_kreditor_konto_basis + nummer
+                 if einst.ul_kreditor_konto_basis is not None and nummer is not None else None)
+
+        abteilung = (row.get('quelle_name') or '').strip()
+        periode = row.get('periode')
+        bezeichnung = f"ÜL-Honorar {abteilung}".strip()
+        if periode:
+            bezeichnung = f"{bezeichnung} {periode}".strip()
+
+        vorname = row.get('vorname')
+        nachname = row.get('nachname') or ''
+        belegdatum = _date_only(row.get('belegdatum'))
+        faelligkeitsdatum = _plus_tage(belegdatum, NETTOTAGE)
+
+        # Abweichender Kontoinhaber (Feld 70) nur, wenn er vom ÜL-Namen abweicht.
+        voller_name = f"{vorname or ''} {nachname}".strip()
+        kontoinhaber = (row.get('kontoinhaber') or '').strip()
+        abw_kontoinhaber = (kontoinhaber if kontoinhaber
+                            and kontoinhaber.casefold() != voller_name.casefold() else None)
+
+        return FibuExportPosition(
+            quelle_typ=row['quelle_typ'],
+            quelle_id=row['quelle_id'],
+            art=art,
+            mitglied_id=row.get('mitglied_id') or 0,
+            mitglied_name=f"{nachname}, {vorname}" if vorname else nachname,
+            bezeichnung=bezeichnung,
+            konto=konto,
+            gegenkonto=einst.ul_aufwand_konto,
+            betrag=row.get('betrag_soll') or 0.0,
+            # Forderung = neue Verbindlichkeit → Kreditor Haben; Gegenbuchung dreht auf Soll.
+            soll_haben='H' if art == 'forderung' else 'S',
+            belegnummer=f"U{row['quelle_id']}",
+            kontenart='K',
+            kostenstelle=row.get('abteilung_kostenstelle'),
+            kostentraeger=einst.default_kostentraeger,
+            belegdatum=belegdatum,
+            faelligkeitsdatum=faelligkeitsdatum,
+            buchungstext=bezeichnung,
+            lastschrifteinzug=None,
+            suchname=str(nummer) if nummer is not None else '',
+            nachname=nachname,
+            vorname=vorname,
+            strasse=row.get('strasse'),
+            plz=row.get('plz'),
+            ort=row.get('ort'),
+            land=row.get('land'),
+            iban=row.get('iban'),
+            bic=row.get('bic'),
+            mailadresse=row.get('email'),
+            kontoinhaber=abw_kontoinhaber,
+        )
+
     @staticmethod
     def _kostenstelle(row: dict, einst: FibuEinstellungen):
         """Kostenstelle: Gebühr-Override → Abteilung → Verein-Default (nur ohne Abteilung)."""
@@ -331,13 +402,24 @@ class FibuExportService:
         fehler: list[dict] = []
         for p in positionen:
             probleme = []
-            if p.konto is None:
-                if einst.debitor_konto_basis is None:
-                    probleme.append("Debitor-Konto-Basis nicht gesetzt (Fibu-Einstellungen)")
-                else:
-                    probleme.append("Mitglied ohne Mitgliedsnummer")
-            if not p.gegenkonto:
-                probleme.append("kein Gegenkonto (Regel/Gebühr oder Default)")
+            if p.quelle_typ == 'ul_abrechnung':
+                # Kreditor-Buchung: eigene Konten-Quellen und eigene Meldungen.
+                if p.konto is None:
+                    probleme.append("Kreditor-Konto-Basis nicht gesetzt (Fibu-Einstellungen)"
+                                    if einst.ul_kreditor_konto_basis is None
+                                    else "ÜL ohne Mitgliedsnummer")
+                if not p.gegenkonto:
+                    probleme.append("ÜL-Aufwandskonto nicht gesetzt (Fibu-Einstellungen)")
+                if p.betrag <= 0:
+                    probleme.append("kein Honorar (keine Stunden oder Vergütungssatz 0)")
+            else:
+                if p.konto is None:
+                    if einst.debitor_konto_basis is None:
+                        probleme.append("Debitor-Konto-Basis nicht gesetzt (Fibu-Einstellungen)")
+                    else:
+                        probleme.append("Mitglied ohne Mitgliedsnummer")
+                if not p.gegenkonto:
+                    probleme.append("kein Gegenkonto (Regel/Gebühr oder Default)")
             if probleme:
                 fehler.append({
                     'quelle_typ': p.quelle_typ,

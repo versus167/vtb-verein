@@ -63,12 +63,47 @@ _SQL_GEBUEHR = """
     ORDER BY m.nachname, m.vorname, f.id
 """
 
+# ÜL-Honorar (Kreditor je ÜL): eine Position je bestätigter Abrechnung. Betrag =
+# Summe der (lebenden) Termin-Stunden × eingefrorenem Vergütungssatz; Belegdatum =
+# Bestätigungsdatum; Kostenstelle aus der Abteilung. Anders als Beitrag/Gebühr (Debitor
+# im Soll) ist dies eine Kreditor-Buchung – die Soll/Haben-Drehung macht der Service.
+_SQL_UL = """
+    SELECT 'ul_abrechnung' AS quelle_typ, a.id AS quelle_id,
+           a.zeitraum_von || ' – ' || a.zeitraum_bis AS periode,
+           COALESCE(st.summe_stunden, 0) * COALESCE(a.verguetung_pro_stunde, 0) AS betrag_soll,
+           a.bestaetigt_am AS belegdatum,
+           m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
+           m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.kontoinhaber,
+           (SELECT k.wert FROM mitglied_kontakt k
+            WHERE k.mitglied_id = m.id AND k.typ = 'email' AND k.ist_primaer
+              AND k.deleted_at IS NULL LIMIT 1) AS email,
+           ab.name AS quelle_name,
+           a.abteilung_id, ab.kostenstelle AS abteilung_kostenstelle
+    FROM ul_abrechnung a
+    JOIN mitglied m ON m.id = a.mitglied_id
+    LEFT JOIN abteilung ab ON ab.id = a.abteilung_id
+    LEFT JOIN LATERAL (
+        SELECT SUM(s.stunden) AS summe_stunden
+        FROM ul_stunde s WHERE s.abrechnung_id = a.id AND s.deleted_at IS NULL
+    ) st ON TRUE
+    WHERE {cond}
+    ORDER BY m.nachname, m.vorname, a.id
+"""
+
 # WHERE-Fragmente; {p} = Spaltenpräfix (s = Beitrag, f = Gebühr).
 _COND_NEU = ("{p}.exportiert_in_export_id IS NULL AND {p}.deleted_at IS NULL "
              "AND {p}.status <> 'storniert'")
 _COND_STORNO = ("{p}.exportiert_in_export_id IS NOT NULL "
                 "AND {p}.storno_exportiert_in_export_id IS NULL "
                 "AND ({p}.status = 'storniert' OR {p}.deleted_at IS NOT NULL)")
+# ÜL: nur bestätigte Abrechnungen sind exportierbar. Eine exportierte Abrechnung ist
+# gegen Statuswechsel/Löschen gesperrt (siehe ul_abrechnung_repository), daher kann der
+# Storno-Zweig faktisch nur über einen ganzen Gegenbuchungs-Lauf greifen.
+_COND_UL_NEU = ("a.exportiert_in_export_id IS NULL AND a.deleted_at IS NULL "
+                "AND a.status = 'bestaetigt'")
+_COND_UL_STORNO = ("a.exportiert_in_export_id IS NOT NULL "
+                   "AND a.storno_exportiert_in_export_id IS NULL "
+                   "AND (a.status <> 'bestaetigt' OR a.deleted_at IS NOT NULL)")
 
 _EXPORT_COLS = """id, exportiert_am, exportiert_von, dateiname, format,
                   anzahl_positionen, summe_cent, storno_von_export_id,
@@ -84,11 +119,13 @@ class FibuExportRepository(BaseRepository):
     # ---- Positions-Ermittlung (Delta) -------------------------------------
 
     def list_neue_positionen(self) -> list[dict]:
-        """Noch nicht exportierte, lebende Forderungen (Beitrag + Gebühr) → Soll-Buchungen."""
+        """Noch nicht exportierte, lebende Posten (Beitrag + Gebühr + ÜL-Honorar)."""
         with self.cursor() as cur:
             cur.execute(_SQL_BEITRAG.format(cond=_COND_NEU.format(p='s')))
             rows = [dict(r) for r in cur.fetchall()]
             cur.execute(_SQL_GEBUEHR.format(cond=_COND_NEU.format(p='f')))
+            rows += [dict(r) for r in cur.fetchall()]
+            cur.execute(_SQL_UL.format(cond=_COND_UL_NEU))
             rows += [dict(r) for r in cur.fetchall()]
         return rows
 
@@ -99,6 +136,8 @@ class FibuExportRepository(BaseRepository):
             rows = [dict(r) for r in cur.fetchall()]
             cur.execute(_SQL_GEBUEHR.format(cond=_COND_STORNO.format(p='f')))
             rows += [dict(r) for r in cur.fetchall()]
+            cur.execute(_SQL_UL.format(cond=_COND_UL_STORNO))
+            rows += [dict(r) for r in cur.fetchall()]
         return rows
 
     def get_positionen_fuer_export(self, export_id: int) -> tuple[list[dict], list[dict]]:
@@ -108,9 +147,13 @@ class FibuExportRepository(BaseRepository):
             neu = [dict(r) for r in cur.fetchall()]
             cur.execute(_SQL_GEBUEHR.format(cond="f.exportiert_in_export_id = %s"), (export_id,))
             neu += [dict(r) for r in cur.fetchall()]
+            cur.execute(_SQL_UL.format(cond="a.exportiert_in_export_id = %s"), (export_id,))
+            neu += [dict(r) for r in cur.fetchall()]
             cur.execute(_SQL_BEITRAG.format(cond="s.storno_exportiert_in_export_id = %s"), (export_id,))
             storno = [dict(r) for r in cur.fetchall()]
             cur.execute(_SQL_GEBUEHR.format(cond="f.storno_exportiert_in_export_id = %s"), (export_id,))
+            storno += [dict(r) for r in cur.fetchall()]
+            cur.execute(_SQL_UL.format(cond="a.storno_exportiert_in_export_id = %s"), (export_id,))
             storno += [dict(r) for r in cur.fetchall()]
         return neu, storno
 
@@ -123,7 +166,8 @@ class FibuExportRepository(BaseRepository):
 
         neu_ids/storno_ids: {'beitrag': [...], 'gebuehr': [...]} der zu stempelnden IDs.
         """
-        tables = {'beitrag': 'beitrag_sollstellung', 'gebuehr': 'gebuehr_forderung'}
+        tables = {'beitrag': 'beitrag_sollstellung', 'gebuehr': 'gebuehr_forderung',
+                  'ul_abrechnung': 'ul_abrechnung'}
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -199,7 +243,7 @@ class FibuExportRepository(BaseRepository):
         Liefert die Anzahl wieder freigegebener Quellzeilen."""
         with self.cursor() as cur:
             geloest = 0
-            for tbl in ('beitrag_sollstellung', 'gebuehr_forderung'):
+            for tbl in ('beitrag_sollstellung', 'gebuehr_forderung', 'ul_abrechnung'):
                 cur.execute(
                     f"""UPDATE {tbl}
                         SET exportiert_in_export_id = NULL, version = version+1,
