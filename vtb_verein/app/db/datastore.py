@@ -60,6 +60,12 @@ from app.db.beitrag_einstellungen_repository import BeitragEinstellungenReposito
 from app.db.statistik_repository import StatistikRepository
 from app.db.ul_abrechnung_repository import ULAbrechnungRepository
 from app.db.ul_satz_repository import ULSatzRepository
+from app.db.ttlock_konto_repository import TTLockKontoRepository
+from app.db.tuer_schloss_repository import TuerSchlossRepository
+from app.db.schluessel_chip_repository import SchluesselChipRepository
+from app.db.tuer_berechtigung_repository import TuerBerechtigungRepository
+from app.db.tuer_zutritt_log_repository import TuerZutrittLogRepository
+from app.services.zutritt_service import ZutrittService
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
@@ -108,6 +114,20 @@ class VereinsDB:
         self._ul_abrechnung_repo = ULAbrechnungRepository(self.conn)
         self._ul_satz_repo = ULSatzRepository(self.conn)
         self._statistik_repo = StatistikRepository(self.conn)
+
+        # Zutrittskontrolle / Schließanlage (TT-Lock)
+        self._ttlock_konto_repo = TTLockKontoRepository(self.conn)
+        self._tuer_schloss_repo = TuerSchlossRepository(self.conn)
+        self._schluessel_chip_repo = SchluesselChipRepository(self.conn)
+        self._tuer_berechtigung_repo = TuerBerechtigungRepository(self.conn)
+        self._tuer_zutritt_log_repo = TuerZutrittLogRepository(self.conn)
+        self._zutritt_service = ZutrittService(
+            konto_repo=self._ttlock_konto_repo,
+            schloss_repo=self._tuer_schloss_repo,
+            chip_repo=self._schluessel_chip_repo,
+            berechtigung_repo=self._tuer_berechtigung_repo,
+            log_repo=self._tuer_zutritt_log_repo,
+        )
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
@@ -195,6 +215,31 @@ class VereinsDB:
     def kassen_kategorien(self) -> KassenKategorieRepository:
         """Direktzugriff auf KassenKategorieRepository (Stammdaten)."""
         return self._kassen_kategorie_repo
+
+    # --- Zutrittskontrolle / Schließanlage ---
+    @property
+    def zutritt(self) -> ZutrittService:
+        return self._zutritt_service
+
+    @property
+    def tuer_schloesser(self) -> TuerSchlossRepository:
+        return self._tuer_schloss_repo
+
+    @property
+    def schluessel_chips(self) -> SchluesselChipRepository:
+        return self._schluessel_chip_repo
+
+    @property
+    def tuer_berechtigungen(self) -> TuerBerechtigungRepository:
+        return self._tuer_berechtigung_repo
+
+    @property
+    def tuer_zutritt_logs(self) -> TuerZutrittLogRepository:
+        return self._tuer_zutritt_log_repo
+
+    @property
+    def ttlock_konto(self) -> TTLockKontoRepository:
+        return self._ttlock_konto_repo
 
     @property
     def anhang_service(self) -> AnhangService:
