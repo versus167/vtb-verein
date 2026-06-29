@@ -1,8 +1,10 @@
 # Plan: Zutrittskontrolle / Schließsystem (TT-Lock)
 
-> Status: geplant · Branch (vorgeschlagen) `feature/zutrittskontrolle` · Schema-Migration **v57**
-> (Stand 2026-06-29: aktuelle `SCHEMA_VERSION = 56`, letzte Migration v55→v56 → Zutritt wird v57.
-> Nummer vor Implementierung gegen `database.py` final prüfen, falls zwischenzeitlich Migrationen landen.)
+> Status (2026-06-29): **Phase 1 (read-only) umgesetzt + getestet** auf Branch
+> `feature/zutrittskontrolle`, Schema **v57** angelegt. Zusätzlich bereits **Fernöffnen/
+> -verriegeln per App** implementiert (vorgezogen aus Phase 2/4). Offen: Chip-Anlernen über
+> die Cloud (Phase 2), Abteilungs-Scoping (Phase 3), Self-Service-Sichten (Phase 4) sowie
+> die unten ergänzte **kurzzeitige App-Betätigungs-Berechtigung**.
 >
 > Voraussetzung vom Verein bestätigt: **An allen Standorten sind Gateways vorhanden.**
 > Damit ist Fern­verwaltung (Chips anlernen/sperren) **und** automatischer Log-Abruf
@@ -136,11 +138,14 @@ Quelle: `euopen.ttlock.com/doc/api/v3/lockRecord/list`. 1:1 im PoC hinterlegt
 SCHLIESSANLAGE_READ      = 'schliessanlage.read'       # Schlösser/Chips/Berechtigungen + Logs sehen
 SCHLIESSANLAGE_VERWALTEN = 'schliessanlage.verwalten'  # Chips ↔ Mitglied, Berechtigungen vergeben/sperren, Inventar pflegen
 SCHLIESSANLAGE_PROTOKOLL = 'schliessanlage.protokoll'  # Zutrittsprotokoll (Bewegungsdaten) einsehen – DSGVO-sensibel, eigenes Recht
+SCHLIESSANLAGE_OEFFNEN   = 'schliessanlage.oeffnen'    # Schloss per App fernöffnen/-verriegeln (Gateway)
 ```
 
 Admin bleibt uneingeschränkt (`has_permission` liefert für `role='admin'` True).
 `schliessanlage.protokoll` bewusst **getrennt** vom normalen Read, weil Logs
-personenbezogene Bewegungsdaten sind.
+personenbezogene Bewegungsdaten sind. `schliessanlage.oeffnen` ist das **globale**
+Betätigungsrecht (Staff/Admin); zusätzlich darf öffnen, wer eine **gültige Berechtigung**
+für genau dieses Schloss hat (Self-Service, s. Datenmodell `user_has_valid_for_schloss`).
 
 ## Datenmodell (Migration v57)
 
@@ -301,18 +306,42 @@ Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
 
 ## Phasen
 
-1. **Fundament & Read-only (geringstes Risiko, sofort Nutzen):** TTLock-Client + Auth/
-   Token-Refresh, Inventar-Sync (Schlösser/Gateways), **Log-Sync + Anzeige**. Noch
-   **keine** schreibenden Schloss-Operationen. Liefert sofort sichtbare Zutrittslogs.
+1. ✅ **Fundament & Read-only (umgesetzt):** TTLock-Client + Auth/Token-Refresh,
+   Inventar-Sync (Schlösser/Gateways), **Log-Sync + Anzeige**, Cron-Command, API + UI.
+   Zusätzlich vorgezogen: **Fernöffnen/-verriegeln per App** (`v3/lock/unlock|lock`,
+   Recht `schliessanlage.oeffnen` ODER gültige Berechtigung).
 2. **Chip-Verwaltung:** Chips ↔ Mitglieder pflegen, Berechtigungen vergeben/verlängern/
    sperren über Gateway (`identityCard/add|changePeriod|delete`), Gültigkeitszeiträume,
-   Kartennummer→Chip-Auflösung in den Logs.
+   Kartennummer→Chip-Auflösung in den Logs. **Erst hiermit** trägt der Self-Service-Pfad
+   des Fernöffnens echte Daten.
 3. **Rechte & DSGVO:** Permission-Matrix-Integration, **Abteilungs-Scoping**
    (`schloss.abteilung_id`, analog Personen-Pilot), Aufbewahrung/Löschung der Logs über
    das **Prune-System**, Datenschutzhinweis für Mitglieder.
-4. **Komfort:** Self-Service-Sicht (eigene Chips/Zutritte), Benachrichtigungen bei
-   relevanten Events (z. B. Sabotage-Alarm `recordType 44`) über das bestehende
-   Notification-System, Auswertungen/Reports.
+4. **Komfort:** Self-Service-Sicht (eigene Chips/Zutritte), **kurzzeitige App-Betätigungs-
+   Berechtigung** (s. u.), Benachrichtigungen bei relevanten Events (z. B. Sabotage-Alarm
+   `recordType 44`) über das bestehende Notification-System, Auswertungen/Reports.
+
+### Geplante Erweiterung: kurzzeitige App-Betätigungs-Berechtigung (Phase 4)
+
+Ziel: Einer **konkreten Person (User)** befristet das Recht geben, ein **bestimmtes
+Schloss per App zu öffnen** – ohne physischen Chip und ohne dauerhaftes Recht. Use-Cases:
+Handwerker/Reinigung für einen Tag, Gast-Übungsleiter für ein Wochenende, Vertretung.
+
+- **Datenmodell:** neue Tabelle `tuer_app_berechtigung` (`user_id`, `schloss_id`,
+  `gueltig_von`, `gueltig_bis`, `grund`, `erteilt_von`, +Audit/Soft-Delete). Bewusst
+  getrennt von `tuer_berechtigung` (= Chip↔Schloss/IC-Card), weil es hier **keinen Chip**
+  gibt, sondern nur das App-/Gateway-Öffnen.
+- **Autorisierung:** `_darf_oeffnen()` zusätzlich gegen diese Tabelle prüfen (User hat
+  einen aktiven, im Gültigkeitsfenster liegenden Eintrag für das Schloss). Globales Recht
+  `schliessanlage.oeffnen` und Chip-Berechtigung bleiben die anderen beiden Wege.
+- **Vergabe:** nur mit `schliessanlage.verwalten`; Dialog „Befristet öffnen erlauben"
+  (User wählen, Schloss, von/bis, Grund). Ablauf erzwingt die App selbst über das
+  Gültigkeitsfenster (kein Cronjob nötig); optional Soft-Delete zum vorzeitigen Entzug.
+- **Nachvollziehbarkeit:** Vergabe/Entzug ins `access_log`; jede Nutzung erscheint
+  ohnehin als Gateway-Event im Zutrittslog.
+- **Kein TTLock-Schreibzugriff nötig:** rein lokale Berechtigung über das bereits
+  verifizierte `v3/lock/unlock` – damit ohne Chip-Anlern-Abhängigkeit auch **vor** Phase 2
+  baubar.
 
 ## Offene Punkte (vor/während Phase 1 klären)
 
