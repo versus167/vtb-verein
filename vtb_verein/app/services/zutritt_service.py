@@ -132,6 +132,25 @@ class ZutrittService:
         logger.info("Inventar-Sync: %d Schloss/Schlösser gespiegelt.", len(locks))
         return {"schloesser": len(locks)}
 
+    # --- Steuern (Fernöffnen/-verriegeln über Gateway) ---------------------
+    def oeffnen(self, schloss_id: int) -> dict:
+        """Schloss per Gateway fernöffnen. Wirft ValueError, wenn unbekannt."""
+        schloss = self.schloss_repo.get(schloss_id)
+        if not schloss:
+            raise ValueError("Schloss nicht gefunden")
+        self._client().unlock(schloss.ttlock_lock_id)
+        logger.info("Schloss %s (lockId=%s) ferngeöffnet.", schloss.name, schloss.ttlock_lock_id)
+        return {"ok": True, "schloss": schloss.name}
+
+    def verriegeln(self, schloss_id: int) -> dict:
+        """Schloss per Gateway fernverriegeln (modellabhängig)."""
+        schloss = self.schloss_repo.get(schloss_id)
+        if not schloss:
+            raise ValueError("Schloss nicht gefunden")
+        self._client().remote_lock(schloss.ttlock_lock_id)
+        logger.info("Schloss %s (lockId=%s) fernverriegelt.", schloss.name, schloss.ttlock_lock_id)
+        return {"ok": True, "schloss": schloss.name}
+
     # --- Log-Sync -----------------------------------------------------------
     def logs_sync(self, *, schloss_id: Optional[int] = None,
                   backfill_days: int = 30, max_pages: int = 20) -> dict:

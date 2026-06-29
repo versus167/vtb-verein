@@ -204,3 +204,14 @@ class TTLockClient:
         return self._get("v3/lockRecord/list", lockId=lock_id,
                          startDate=start_ms, endDate=end_ms,
                          pageNo=page_no, pageSize=page_size)
+
+    # --- Steuer-Operationen (über Gateway) ---------------------------------
+    # TTLock nutzt für diese Gateway-Kommandos denselben signierten Request-Stil
+    # (clientId+accessToken+date) wie die Lese-Endpunkte; per PoC verifiziert (errcode 0).
+    def unlock(self, lock_id: int) -> dict:
+        """Schloss per Gateway fernöffnen (v3/lock/unlock)."""
+        return self._get("v3/lock/unlock", lockId=lock_id)
+
+    def remote_lock(self, lock_id: int) -> dict:
+        """Schloss per Gateway fernverriegeln (v3/lock/lock; modellabhängig)."""
+        return self._get("v3/lock/lock", lockId=lock_id)

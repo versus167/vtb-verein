@@ -5604,6 +5604,7 @@ class Database:
             'tickets.access',
             'tickets.bereiche_verwalten',
             'schliessanlage.read', 'schliessanlage.verwalten', 'schliessanlage.protokoll',
+            'schliessanlage.oeffnen',
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

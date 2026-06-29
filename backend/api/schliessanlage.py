@@ -30,6 +30,13 @@ def _require(user, perm: str, was: str) -> None:
                             detail=f"Keine Berechtigung: {was}")
 
 
+def _darf_oeffnen(user, db, schloss_id: int) -> bool:
+    """Öffnen darf, wer das globale Recht hat ODER eine gültige Berechtigung für genau
+    dieses Schloss besitzt (Self-Service: Mitglied → Chip → Berechtigung)."""
+    return (user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN)
+            or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id))
+
+
 class SchlossUpdateIn(BaseModel):
     name: str
     standort: Optional[str] = None
@@ -66,6 +73,7 @@ def status_info(user: CurrentUser, db: DB):
         "letzter_sync_at": konto.letzter_sync_at if konto else None,
         "darf_verwalten": user.has_permission(Permission.SCHLIESSANLAGE_VERWALTEN),
         "darf_protokoll": user.has_permission(Permission.SCHLIESSANLAGE_PROTOKOLL),
+        "darf_oeffnen": user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN),
     }
 
 
@@ -132,6 +140,55 @@ def schloss_update(schloss_id: int, data: SchlossUpdateIn, user: CurrentUser, db
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Konflikt (zwischenzeitlich geändert) – bitte neu laden")
     return updated
+
+
+@router.post("/schloesser/{schloss_id}/oeffnen")
+def schloss_oeffnen(schloss_id: int, request: Request, user: CurrentUser, db: DB):
+    """Schloss per Gateway fernöffnen. Recht: schliessanlage.oeffnen ODER gültige
+    Berechtigung für genau dieses Schloss (Self-Service)."""
+    if not db.tuer_schloesser.get(schloss_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not _darf_oeffnen(user, db, schloss_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu öffnen")
+    try:
+        ergebnis = db.zutritt.oeffnen(schloss_id)
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_unlock", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"Schloss {schloss_id} ({ergebnis.get('schloss')}) ferngeöffnet",
+        )
+    except Exception:
+        pass
+    return ergebnis
+
+
+@router.post("/schloesser/{schloss_id}/verriegeln")
+def schloss_verriegeln(schloss_id: int, request: Request, user: CurrentUser, db: DB):
+    """Schloss per Gateway fernverriegeln (modellabhängig). Nur globales Recht."""
+    _require(user, Permission.SCHLIESSANLAGE_OEFFNEN, "Schloss verriegeln")
+    if not db.tuer_schloesser.get(schloss_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    try:
+        ergebnis = db.zutritt.verriegeln(schloss_id)
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_lock", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"Schloss {schloss_id} ({ergebnis.get('schloss')}) fernverriegelt",
+        )
+    except Exception:
+        pass
+    return ergebnis
 
 
 # --- Chips -------------------------------------------------------------------

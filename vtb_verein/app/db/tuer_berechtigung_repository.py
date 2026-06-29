@@ -52,3 +52,27 @@ class TuerBerechtigungRepository(BaseRepository):
                 (chip_id,),
             )
             return [_map(r) for r in cur.fetchall()]
+
+    def user_has_valid_for_schloss(self, user_id: int, schloss_id: int) -> bool:
+        """Self-Service-Check: hat der eingeloggte User (über sein Mitglied → Chip) eine
+        aktuell gültige, nicht gesperrte Berechtigung für genau dieses Schloss?
+
+        Datums-Vergleich der (als ISO-Text gespeicherten) Gültigkeit gegen now()."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM tuer_berechtigung b
+                JOIN schluessel_chip c ON c.id = b.chip_id AND c.deleted_at IS NULL
+                JOIN mitglied m ON m.id = c.mitglied_id
+                WHERE b.schloss_id = %s AND m.user_id = %s
+                  AND b.deleted_at IS NULL
+                  AND c.status = 'aktiv'
+                  AND b.sync_status <> 'gesperrt'
+                  AND (b.gueltig_von IS NULL OR NULLIF(b.gueltig_von, '')::timestamptz <= now())
+                  AND (b.gueltig_bis IS NULL OR NULLIF(b.gueltig_bis, '')::timestamptz >= now())
+                LIMIT 1
+                """,
+                (schloss_id, user_id),
+            )
+            return cur.fetchone() is not None

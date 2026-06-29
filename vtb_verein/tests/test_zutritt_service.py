@@ -12,6 +12,16 @@ from app.services.zutritt_service import ZutrittService
 
 # --- Fakes ------------------------------------------------------------------
 class FakeClient:
+    def __init__(self):
+        self.unlocked = []
+        self.locked = []
+
+    def unlock(self, lock_id):
+        self.unlocked.append(lock_id); return {"errcode": 0}
+
+    def remote_lock(self, lock_id):
+        self.locked.append(lock_id); return {"errcode": 0}
+
     def gateway_list(self, **k):
         return {"list": [{"gatewayId": 2147896, "isOnline": 1}]}
 
@@ -41,8 +51,9 @@ class FakeClient:
 
 
 class FakeSchloss:
-    def __init__(self, id, ttlock_lock_id):
+    def __init__(self, id, ttlock_lock_id, name="s3"):
         self.id, self.ttlock_lock_id, self.aktiv = id, ttlock_lock_id, True
+        self.name = name
         self.lock_mac = self.ttlock_gateway_id = self.gateway_online = None
         self.akku_prozent = self.akku_stand_at = None
         self.letzter_log_serverdate = self.letztes_event_at = self.letztes_event_type = None
@@ -62,7 +73,7 @@ class FakeSchlossRepo:
                          gateway_online, akku_prozent, akku_stand_at, by='SYSTEM'):
         s = self._by_lock.get(ttlock_lock_id)
         if not s:
-            s = FakeSchloss(self._next, ttlock_lock_id); self._next += 1
+            s = FakeSchloss(self._next, ttlock_lock_id, name); self._next += 1
             self._by_lock[ttlock_lock_id] = s; self._by_id[s.id] = s
         s.lock_mac, s.ttlock_gateway_id, s.gateway_online = lock_mac, ttlock_gateway_id, gateway_online
         s.akku_prozent, s.akku_stand_at = akku_prozent, akku_stand_at
@@ -173,3 +184,24 @@ def test_logs_sync_status_snapshot():
     # Jüngster lockDate (…312000) gehört zu recordType 7
     assert s.letztes_event_type == 7
     assert s.letztes_event_at is not None
+
+
+def test_oeffnen_ruft_unlock_mit_ttlock_lock_id():
+    fake = FakeClient()
+    svc = ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
+        chip_repo=FakeChipRepo({}), berechtigung_repo=None,
+        log_repo=FakeLogRepo(), client_factory=lambda: fake,
+    )
+    svc.inventar_sync()
+    sid = svc.schloss_repo.list_all()[0].id     # lokale id
+    res = svc.oeffnen(sid)
+    assert res["ok"] is True
+    assert fake.unlocked == [30392116]          # an die TTLock-lockId, nicht die lokale id
+
+
+def test_oeffnen_unbekanntes_schloss_wirft():
+    svc = _service()
+    import pytest
+    with pytest.raises(ValueError):
+        svc.oeffnen(999)

@@ -53,6 +53,10 @@
                 :class="akkuLow(s.akku_prozent) ? 'text-negative' : 'text-grey-7'">
                 <q-icon :name="akkuIcon(s.akku_prozent)" size="18px" /> {{ s.akku_prozent }}%
               </span>
+              <q-btn v-if="status.darf_oeffnen" flat dense round size="sm" icon="lock_open"
+                color="primary" :loading="opening === s.id" @click.stop="doOeffnen(s)">
+                <q-tooltip>Fernöffnen</q-tooltip>
+              </q-btn>
             </div>
           </q-item-section>
         </q-item>
@@ -97,6 +101,14 @@
         <q-card-section class="row items-center">
           <div class="text-h6">{{ schlossDetail.schloss?.name }}</div>
           <q-space />
+          <q-btn v-if="status.darf_oeffnen" flat dense icon="lock_open" color="primary"
+            :loading="opening === schlossDetail.schloss?.id" @click="doOeffnen(schlossDetail.schloss)">
+            <q-tooltip>Fernöffnen</q-tooltip>
+          </q-btn>
+          <q-btn v-if="status.darf_oeffnen" flat dense icon="lock" color="grey-8"
+            @click="doVerriegeln(schlossDetail.schloss)">
+            <q-tooltip>Fernverriegeln</q-tooltip>
+          </q-btn>
           <q-btn v-if="status.darf_verwalten" flat dense icon="edit" @click="openSchlossEdit" />
           <q-btn flat dense icon="close" v-close-popup />
         </q-card-section>
@@ -275,6 +287,7 @@ const chips = ref([])
 const abteilungen = ref([])
 const syncing = ref(false)
 const saving = ref(false)
+const opening = ref(null)
 
 function fmtDateTime(iso) {
   if (!iso) return '–'
@@ -325,6 +338,38 @@ async function doSync() {
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Sync fehlgeschlagen' })
   } finally { syncing.value = false }
+}
+
+function doOeffnen(s) {
+  if (!s) return
+  $q.dialog({
+    title: 'Schloss fernöffnen',
+    message: `„${s.name}" jetzt per Gateway öffnen?`,
+    cancel: true, ok: { label: 'Öffnen', color: 'primary' },
+  }).onOk(async () => {
+    opening.value = s.id
+    try {
+      await api.post(`/api/schliessanlage/schloesser/${s.id}/oeffnen`)
+      $q.notify({ type: 'positive', message: `„${s.name}" geöffnet` })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Öffnen fehlgeschlagen' })
+    } finally { opening.value = null }
+  })
+}
+function doVerriegeln(s) {
+  if (!s) return
+  $q.dialog({
+    title: 'Schloss fernverriegeln',
+    message: `„${s.name}" jetzt per Gateway verriegeln?`,
+    cancel: true, ok: { label: 'Verriegeln', color: 'grey-8' },
+  }).onOk(async () => {
+    try {
+      await api.post(`/api/schliessanlage/schloesser/${s.id}/verriegeln`)
+      $q.notify({ type: 'positive', message: `„${s.name}" verriegelt` })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Verriegeln fehlgeschlagen' })
+    }
+  })
 }
 
 // --- Schloss-Detail/Edit ---
