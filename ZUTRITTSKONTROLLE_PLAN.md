@@ -1,6 +1,8 @@
 # Plan: Zutrittskontrolle / Schließsystem (TT-Lock)
 
-> Status: geplant · Branch (vorgeschlagen) `feature/zutrittskontrolle` · Schema-Migration **v53**
+> Status: geplant · Branch (vorgeschlagen) `feature/zutrittskontrolle` · Schema-Migration **v57**
+> (Stand 2026-06-29: aktuelle `SCHEMA_VERSION = 56`, letzte Migration v55→v56 → Zutritt wird v57.
+> Nummer vor Implementierung gegen `database.py` final prüfen, falls zwischenzeitlich Migrationen landen.)
 >
 > Voraussetzung vom Verein bestätigt: **An allen Standorten sind Gateways vorhanden.**
 > Damit ist Fern­verwaltung (Chips anlernen/sperren) **und** automatischer Log-Abruf
@@ -120,8 +122,12 @@ Quelle: `euopen.ttlock.com/doc/api/v3/lockRecord/list`. 1:1 im PoC hinterlegt
 - **Logs** sind **append-only** in unserer DB (kein History-Mirror nötig, es *ist* schon
   ein Log) und unterliegen einem **Aufbewahrungs-/Löschkonzept** über das vorhandene
   **Prune-System** (`prune_einstellungen`/`prune_service`).
-- **Log-Sync**: (a) **on-demand** beim Öffnen der Log-Seite (pull, mit Cursor) **plus**
-  (b) periodischer Hintergrund-Sync. Scheduler-Mechanik ist noch offen (s. Offene Punkte).
+- **Ein TTLock-Konto, fest in `.env`** (keine Mehrkonten-Verwaltung in der UI). `ttlock_konto`
+  hält nur Laufzeit-Tokens + Sync-Status, **kein** zweites Konto-Konzept.
+- **Log-Sync**: (a) **periodischer Hintergrund-Sync, ein paar Mal am Tag** (Default **alle 6 h
+  = 4×/Tag**, per Setting/Env justierbar) **plus** (b) **on-demand**-Button „Jetzt
+  synchronisieren" auf der Log-Ansicht. Beides über denselben `logs_sync()`-Pfad mit Cursor.
+  API-Budget unkritisch: selbst 20 Schlösser × 4×/Tag × 30 ≈ 2.400 Calls/Monat (Limit 30.000).
 
 ## Berechtigungen (neue Keys in `app/models/permission.py`)
 
@@ -136,7 +142,7 @@ Admin bleibt uneingeschränkt (`has_permission` liefert für `role='admin'` True
 `schliessanlage.protokoll` bewusst **getrennt** vom normalen Read, weil Logs
 personenbezogene Bewegungsdaten sind.
 
-## Datenmodell (Migration v53)
+## Datenmodell (Migration v57)
 
 ```sql
 -- TTLock-Konto-/Token-Status (eine Zeile; Secrets NICHT hier, nur Laufzeit-Tokens)
@@ -165,18 +171,25 @@ CREATE TABLE tuer_schloss (
   aktiv            BOOLEAN NOT NULL DEFAULT true,
   notiz            TEXT,
   letzter_log_serverdate BIGINT,           -- Sync-Cursor (serverDate ms) je Schloss
+  letztes_event_at TIMESTAMPTZ,            -- für Status-Liste: Zeit des jüngsten Logs
+  letztes_event_type INTEGER,              -- recordType des jüngsten Logs (Status-Anzeige)
   version/created_*/updated_*/deleted_*    -- Standard-Audit + Soft-Delete
 );
+-- letztes_event_* werden in logs_sync() denormalisiert mitgeführt, damit die
+-- Schloss-Liste „Akku + letzter Schließvorgang" ohne Log-Join anzeigen kann.
 
 -- Physischer Chip ↔ Mitglied (unser Konzept, schloss-unabhängig)
 CREATE TABLE schluessel_chip (
   id            SERIAL PRIMARY KEY,
   kartennummer  TEXT NOT NULL,             -- physische IC-Card-Nummer
   bezeichnung   TEXT,                      -- z. B. "Chip blau #14"
-  mitglied_id   INTEGER REFERENCES mitglied(id),  -- Inhaber (NULL = Pool/unzugeordnet)
+  mitglied_id   INTEGER REFERENCES mitglied(id),  -- Inhaber, falls personalisiert ausgegeben
+  aufbewahrungsort TEXT,                   -- Standard-Standort, falls NICHT personalisiert
+                                           -- (z. B. "Schlüsselkasten Geschäftsstelle")
   status        TEXT NOT NULL DEFAULT 'aktiv',    -- aktiv | gesperrt | verloren
   version/created_*/updated_*/deleted_*
 );
+-- Inhaber XOR Standort: mitglied_id gesetzt = ausgegeben; sonst Pool-Chip mit aufbewahrungsort
 -- partieller Unique-Index auf kartennummer WHERE deleted_at IS NULL
 
 -- Berechtigung: Chip an einem Schloss = eine TTLock-IC-Card
@@ -219,7 +232,7 @@ CREATE TABLE tuer_zutritt_log (
 Alle Domänentabellen bekommen `*_history` + Audit-Trigger (Insert/Update) wie üblich –
 **außer `tuer_zutritt_log`** (reiner Append-Log, kein History-Mirror; Löschung nur per
 Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
-(`_migrate_v52_to_v53`) synchron halten; `SCHEMA_VERSION = 53`.
+(`_migrate_v56_to_v57`) synchron halten; `SCHEMA_VERSION = 57`.
 
 ## Services
 
@@ -244,7 +257,7 @@ Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
 ## Betroffene Dateien
 
 **Backend**
-- `vtb_verein/app/db/database.py` – Migration v52→v53, `SCHEMA_VERSION=53`,
+- `vtb_verein/app/db/database.py` – Migration v56→v57, `SCHEMA_VERSION=57`,
   Fresh-Schema, Audit-Funktionen/Trigger/Indizes (für die 4 Domänentabellen).
 - `vtb_verein/app/models/permission.py` – 3 neue Permission-Konstanten.
 - `vtb_verein/app/models/schliessanlage.py` – **neu** (`TuerSchloss`, `SchluesselChip`,
@@ -258,13 +271,25 @@ Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
   Berechtigungen (vergeben/sperren), Logs (lesen + „Jetzt synchronisieren"), Inventar-
   Sync; Router in `backend/api/__init__.py`/App registrieren.
 
-**Frontend**
-- `frontend/src/pages/SchliessanlagePage.vue` – **neu**: Tabs **Schlösser** (Inventar +
-  Logs je Tür), **Chips** (Chip ↔ Mitglied, Status), **Berechtigungen** (Matrix Chip×Tür
-  mit Gültigkeitszeitraum), **Protokoll** (Zutrittslog mit Filter Tür/Mitglied/Zeit,
-  hinter `schliessanlage.protokoll`).
-- Nav-Eintrag + Route-Guard auf `schliessanlage.read`; Protokoll-Tab auf
-  `schliessanlage.protokoll`.
+**Frontend** – neue Karte/Nav **„Schließanlage"** mit **Master-Detail** statt Matrix/
+Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
+
+- `frontend/src/pages/SchliessanlagePage.vue` – **neu**, zwei Tabs:
+  - **Schlösser** (Liste): je Schloss **Status** – Akku (`akku_prozent`), letzter
+    Schließvorgang (`letztes_event_at` + gemappter `letztes_event_type`), Gateway-/Online-
+    Status, aktiv. **Detail** je Schloss:
+    - **Zutritts-Logs** dieses Schlosses (hinter `schliessanlage.protokoll`),
+    - **zugeteilte Chips** (welche Berechtigungen/Chips hängen an dieser Tür, mit
+      Gültigkeit + Inhaber/Standort).
+  - **Chips** (Liste): je Chip Bezeichnung, Status, **wem ausgegeben** (`mitglied_id`)
+    **bzw. Standardstandort** (`aufbewahrungsort`). **Detail** je Chip:
+    - **welche Schlösser** der Chip aufsperrt (Berechtigungen, Gültigkeit),
+    - **Nutzungs-Log**: wann an welchem Schloss benutzt (Logs gefiltert auf `chip_id`,
+      hinter `schliessanlage.protokoll`).
+- Inventar-/Log-Sync-Button („Jetzt synchronisieren") + Anzeige `letzter_sync_at`.
+- Nav-Eintrag + Route-Guard auf `schliessanlage.read`; alle **Log-/Nutzungs-Ansichten**
+  (Bewegungsdaten) zusätzlich hinter `schliessanlage.protokoll`. Inventar-/Chip-Pflege
+  hinter `schliessanlage.verwalten`.
 - (Phase 4) Self-Service: im Mitglied-/Profil eigene Chips + letzte Zutritte.
 
 **Tests**
@@ -291,9 +316,11 @@ Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
 
 ## Offene Punkte (vor/während Phase 1 klären)
 
-- **Scheduler für periodischen Log-Sync:** existiert noch keine Cron-/Background-
-  Mechanik im Backend (`prune` läuft on-demand). Optionen: APScheduler, externer Cron
-  ruft Sync-Endpoint, oder vorerst rein **on-demand** beim Öffnen der Log-Seite.
+- ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29:**
+  Management-Command (`tools/zutritt_sync.py` bzw. `python -m …`) ruft `logs_sync()` für
+  alle aktiven Schlösser, getriggert per **externem Cron/systemd-Timer** – robust, kein
+  Worker-Duplikations-Problem, passt zur bestehenden on-demand-Linie (so läuft auch `prune`).
+  Derselbe Pfad bedient den on-demand-Button „Jetzt synchronisieren".
 - ~~**TTLock-Dev-Account-Freischaltung** (clientId/clientSecret) + **EU-Endpoint**
   bestätigen.~~ ✅ **erledigt 2026-06-29** (PoC): clientId/clientSecret gültig & EU,
   Endpoint `euapi.ttlock.com`. **Offen bleibt:** die echten Vereins-Schlösser als
