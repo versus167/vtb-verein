@@ -166,6 +166,30 @@ class TuerBerechtigung:
 
 
 @dataclass
+class TuerAppBerechtigung:
+    """Kurzzeitige App-Betätigungs-Berechtigung: User darf Schloss befristet per App
+    öffnen – ohne Chip (Self-Service-Sonderfall, getrennt von TuerBerechtigung)."""
+    id: Optional[int] = None
+    user_id: int = 0
+    schloss_id: int = 0
+    gueltig_von: Optional[str] = None             # NULL = ab sofort
+    gueltig_bis: Optional[str] = None             # NULL = unbefristet
+    grund: Optional[str] = None
+    erteilt_von: Optional[int] = None
+    # per JOIN befüllt (Anzeige)
+    schloss_name: Optional[str] = None
+    user_username: Optional[str] = None
+    erteilt_von_username: Optional[str] = None
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+
+@dataclass
 class TuerZutrittLog:
     """Append-only Zutrittslog (aus v3/lockRecord/list, dedupe über ttlock_record_id)."""
     id: Optional[int] = None

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 57
+SCHEMA_VERSION = 58
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +727,74 @@ _ZUTRITT_PERMISSIONS = (
     'schliessanlage.protokoll',
 )
 
+# ----------------------------------------------------------------------------
+# Kurzzeitige App-Betätigungs-Berechtigung (Schema v58): einem User befristet das
+# Öffnen genau eines Schlosses per App erlauben – ohne Chip. Getrennt von
+# tuer_berechtigung (Chip↔Schloss/IC-Card), da es hier keinen Chip gibt.
+# ----------------------------------------------------------------------------
+_TUER_APP_BERECHTIGUNG_COLS = (
+    "id, version, user_id, schloss_id, gueltig_von, gueltig_bis, grund, erteilt_von, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TUER_APP_BERECHTIGUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TUER_APP_BERECHTIGUNG_COLS.split(","))
+
+_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_app_berechtigung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tuer_app_berechtigung_history ({_TUER_APP_BERECHTIGUNG_COLS}) VALUES ({_TUER_APP_BERECHTIGUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_app_berechtigung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tuer_app_berechtigung_history ({_TUER_APP_BERECHTIGUNG_COLS}) VALUES ({_TUER_APP_BERECHTIGUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TUER_APP_BERECHTIGUNG = """
+    CREATE TABLE IF NOT EXISTS tuer_app_berechtigung (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      schloss_id  INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      gueltig_von TEXT,
+      gueltig_bis TEXT,
+      grund       TEXT,
+      erteilt_von INTEGER REFERENCES users(id),
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT,
+      updated_at  TEXT,
+      updated_by  TEXT,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tuer_app_berechtigung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      user_id INTEGER, schloss_id INTEGER, gueltig_von TEXT, gueltig_bis TEXT,
+      grund TEXT, erteilt_von INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TUER_APP_BERECHTIGUNG_INDEXES = (
+    ("idx_tuer_app_berechtigung_user_id",    "tuer_app_berechtigung(user_id)"),
+    ("idx_tuer_app_berechtigung_schloss_id", "tuer_app_berechtigung(schloss_id)"),
+    ("idx_tuer_app_berechtigung_deleted_at", "tuer_app_berechtigung(deleted_at)"),
+    ("idx_tuer_app_berechtigung_history_id", "tuer_app_berechtigung_history(id)"),
+)
+
+_TUER_APP_BERECHTIGUNG_TRIGGERS = (
+    ('trig_tuer_app_berechtigung_audit_insert', 'INSERT', 'tuer_app_berechtigung', 'fn_tuer_app_berechtigung_audit_insert'),
+    ('trig_tuer_app_berechtigung_audit_update', 'UPDATE', 'tuer_app_berechtigung', 'fn_tuer_app_berechtigung_audit_update'),
+)
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -831,6 +899,7 @@ class Database:
             55: self._migrate_v54_to_v55,
             56: self._migrate_v55_to_v56,
             57: self._migrate_v56_to_v57,
+            58: self._migrate_v57_to_v58,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3378,6 +3447,26 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 57 WHERE id = 1")
 
+    def _migrate_v57_to_v58(self) -> None:
+        """Kurzzeitige App-Betätigungs-Berechtigung: tuer_app_berechtigung (+History,
+        Audit-Trigger, Indizes). Befristetes App-Öffnen je User+Schloss ohne Chip.
+
+        Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem Fresh-Schema.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
+            cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
+            cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
+            for name, event, table, fn in _TUER_APP_BERECHTIGUNG_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TUER_APP_BERECHTIGUNG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 58 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -4600,6 +4689,8 @@ class Database:
         # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
         # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
         cur.execute(_DDL_ZUTRITT_TABLES)
+        # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
+        cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -4806,6 +4897,8 @@ class Database:
         cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
+        cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
+        cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -5461,6 +5554,7 @@ class Database:
             ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
             *_UL_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
+            *_TUER_APP_BERECHTIGUNG_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -5573,6 +5667,7 @@ class Database:
             ("idx_fibu_exporte_storno_von_export_id",               "fibu_exporte(storno_von_export_id)"),
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
             *_ZUTRITT_INDEXES,
+            *_TUER_APP_BERECHTIGUNG_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 

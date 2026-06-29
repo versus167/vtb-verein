@@ -139,6 +139,31 @@
               keine Chips zugeteilt</q-item-section></q-item>
           </q-list>
 
+          <div class="row items-center q-mt-md">
+            <div class="text-subtitle2">Befristete App-Öffnung</div>
+            <q-space />
+            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="schedule" color="primary"
+              label="Befristet erlauben" @click="openAppGrant" />
+          </div>
+          <q-list dense bordered separator>
+            <q-item v-for="a in schlossDetail.app_berechtigungen" :key="a.id">
+              <q-item-section>
+                <q-item-label>{{ a.user_username || ('User #' + a.user_id) }}</q-item-label>
+                <q-item-label caption>
+                  {{ a.gueltig_von ? fmtDateTime(a.gueltig_von) : 'ab sofort' }}
+                  – {{ a.gueltig_bis ? fmtDateTime(a.gueltig_bis) : 'unbefristet' }}
+                  <span v-if="a.grund">· {{ a.grund }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side v-if="status.darf_verwalten">
+                <q-btn flat dense round size="sm" icon="delete" color="negative"
+                  @click="revokeApp(a)" />
+              </q-item-section>
+            </q-item>
+            <q-item v-if="!schlossDetail.app_berechtigungen?.length"><q-item-section class="text-grey">
+              keine befristeten App-Berechtigungen</q-item-section></q-item>
+          </q-list>
+
           <div class="text-subtitle2 q-mt-md">Zutrittslog</div>
           <div v-if="!schlossDetail.darf_protokoll" class="text-grey text-caption">
             Kein Recht für das Zutrittsprotokoll (schliessanlage.protokoll).
@@ -252,6 +277,30 @@
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn unelevated color="primary" label="Speichern" :loading="saving" @click="saveSchloss" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Befristete App-Öffnung vergeben ====================== -->
+    <q-dialog v-model="appGrantDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:440px'">
+        <q-card-section class="text-h6">Befristet öffnen erlauben</q-card-section>
+        <q-card-section class="q-gutter-sm q-pt-none">
+          <div class="text-caption text-grey-7">
+            Schloss: {{ schlossDetail.schloss?.name }}
+          </div>
+          <q-input v-model.number="appGrantForm.user_id" type="number" label="Benutzer-ID *"
+            outlined dense hint="Wer darf das Schloss per App öffnen" />
+          <q-input v-model="appGrantForm.gueltig_von" type="datetime-local" label="Gültig ab (leer = sofort)"
+            outlined dense stack-label />
+          <q-input v-model="appGrantForm.gueltig_bis" type="datetime-local" label="Gültig bis (leer = unbefristet)"
+            outlined dense stack-label />
+          <q-input v-model="appGrantForm.grund" label="Grund (optional)" outlined dense />
+          <div v-if="appGrantError" class="text-negative text-caption">{{ appGrantError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn unelevated color="primary" label="Erlauben" :loading="saving" @click="saveAppGrant" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -403,6 +452,40 @@ async function saveSchloss() {
     await loadSchloesser()
   } catch (e) { schlossError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen' }
   finally { saving.value = false }
+}
+
+// --- Befristete App-Öffnung ---
+const appGrantDialog = ref(false)
+const appGrantForm = ref({})
+const appGrantError = ref('')
+function openAppGrant() {
+  appGrantForm.value = { user_id: null, gueltig_von: '', gueltig_bis: '', grund: '' }
+  appGrantError.value = ''; appGrantDialog.value = true
+}
+async function saveAppGrant() {
+  if (!appGrantForm.value.user_id) { appGrantError.value = 'Benutzer-ID ist erforderlich.'; return }
+  saving.value = true; appGrantError.value = ''
+  try {
+    await api.post(`/api/schliessanlage/schloesser/${schlossDetail.value.schloss.id}/app-berechtigungen`, {
+      user_id: appGrantForm.value.user_id,
+      gueltig_von: appGrantForm.value.gueltig_von || null,
+      gueltig_bis: appGrantForm.value.gueltig_bis || null,
+      grund: appGrantForm.value.grund || null,
+    })
+    appGrantDialog.value = false
+    await openSchloss(schlossDetail.value.schloss.id)
+  } catch (e) { appGrantError.value = e.response?.data?.detail || 'Vergabe fehlgeschlagen' }
+  finally { saving.value = false }
+}
+function revokeApp(a) {
+  $q.dialog({ title: 'Berechtigung entziehen',
+    message: `Befristete App-Öffnung für „${a.user_username || ('User #' + a.user_id)}" entziehen?`,
+    cancel: true }).onOk(async () => {
+    try {
+      await api.delete(`/api/schliessanlage/app-berechtigungen/${a.id}`)
+      await openSchloss(schlossDetail.value.schloss.id)
+    } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entzug fehlgeschlagen' }) }
+  })
 }
 
 // --- Chip-Detail/Edit ---

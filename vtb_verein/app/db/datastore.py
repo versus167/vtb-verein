@@ -64,6 +64,7 @@ from app.db.ttlock_konto_repository import TTLockKontoRepository
 from app.db.tuer_schloss_repository import TuerSchlossRepository
 from app.db.schluessel_chip_repository import SchluesselChipRepository
 from app.db.tuer_berechtigung_repository import TuerBerechtigungRepository
+from app.db.tuer_app_berechtigung_repository import TuerAppBerechtigungRepository
 from app.db.tuer_zutritt_log_repository import TuerZutrittLogRepository
 from app.services.zutritt_service import ZutrittService
 from app.models.gebuehr import Gebuehr, GebuehrForderung
@@ -120,6 +121,7 @@ class VereinsDB:
         self._tuer_schloss_repo = TuerSchlossRepository(self.conn)
         self._schluessel_chip_repo = SchluesselChipRepository(self.conn)
         self._tuer_berechtigung_repo = TuerBerechtigungRepository(self.conn)
+        self._tuer_app_berechtigung_repo = TuerAppBerechtigungRepository(self.conn)
         self._tuer_zutritt_log_repo = TuerZutrittLogRepository(self.conn)
         self._zutritt_service = ZutrittService(
             konto_repo=self._ttlock_konto_repo,
@@ -232,6 +234,10 @@ class VereinsDB:
     @property
     def tuer_berechtigungen(self) -> TuerBerechtigungRepository:
         return self._tuer_berechtigung_repo
+
+    @property
+    def tuer_app_berechtigungen(self) -> TuerAppBerechtigungRepository:
+        return self._tuer_app_berechtigung_repo
 
     @property
     def tuer_zutritt_logs(self) -> TuerZutrittLogRepository:

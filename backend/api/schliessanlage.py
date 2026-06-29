@@ -34,7 +34,8 @@ def _darf_oeffnen(user, db, schloss_id: int) -> bool:
     """Öffnen darf, wer das globale Recht hat ODER eine gültige Berechtigung für genau
     dieses Schloss besitzt (Self-Service: Mitglied → Chip → Berechtigung)."""
     return (user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN)
-            or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id))
+            or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id)
+            or db.tuer_app_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id))
 
 
 class SchlossUpdateIn(BaseModel):
@@ -60,6 +61,13 @@ class ChipUpdateIn(BaseModel):
     aufbewahrungsort: Optional[str] = None
     status: str = "aktiv"
     version: int
+
+
+class AppBerechtigungIn(BaseModel):
+    user_id: int
+    gueltig_von: Optional[str] = None
+    gueltig_bis: Optional[str] = None
+    grund: Optional[str] = None
 
 
 # --- Status / Sync ----------------------------------------------------------
@@ -117,6 +125,7 @@ def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
     return {
         "schloss": schloss,
         "berechtigungen": db.tuer_berechtigungen.list_for_schloss(schloss_id),
+        "app_berechtigungen": db.tuer_app_berechtigungen.list_for_schloss(schloss_id),
         "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
         "darf_protokoll": darf_protokoll,
     }
@@ -189,6 +198,52 @@ def schloss_verriegeln(schloss_id: int, request: Request, user: CurrentUser, db:
     except Exception:
         pass
     return ergebnis
+
+
+# --- Kurzzeitige App-Betätigungs-Berechtigung -------------------------------
+@router.post("/schloesser/{schloss_id}/app-berechtigungen", status_code=status.HTTP_201_CREATED)
+def app_berechtigung_vergeben(schloss_id: int, data: AppBerechtigungIn, request: Request,
+                              user: CurrentUser, db: DB):
+    """Einem User befristet das App-Öffnen dieses Schlosses erlauben (ohne Chip)."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    if not db.tuer_schloesser.get(schloss_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    from app.models.schliessanlage import TuerAppBerechtigung
+    erteilt = db.tuer_app_berechtigungen.create(
+        TuerAppBerechtigung(
+            user_id=data.user_id, schloss_id=schloss_id,
+            gueltig_von=data.gueltig_von or None, gueltig_bis=data.gueltig_bis or None,
+            grund=data.grund or None, erteilt_von=user.id,
+        ),
+        created_by=user.username,
+    )
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_app_grant", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"App-Öffnen für User {data.user_id} an Schloss {schloss_id} "
+                   f"({data.gueltig_von or 'sofort'}–{data.gueltig_bis or 'unbefristet'})",
+        )
+    except Exception:
+        pass
+    return erteilt
+
+
+@router.delete("/app-berechtigungen/{berechtigung_id}", status_code=status.HTTP_204_NO_CONTENT)
+def app_berechtigung_entziehen(berechtigung_id: int, request: Request,
+                               user: CurrentUser, db: DB):
+    """App-Betätigungs-Berechtigung vorzeitig entziehen (Soft-Delete)."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    if not db.tuer_app_berechtigungen.soft_delete(berechtigung_id, user.username):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nicht gefunden")
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_app_revoke", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"App-Berechtigung {berechtigung_id} entzogen",
+        )
+    except Exception:
+        pass
 
 
 # --- Chips -------------------------------------------------------------------
