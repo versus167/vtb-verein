@@ -145,6 +145,12 @@ const routes = [
         meta: { permission: 'system.config' },
       },
       {
+        path: 'schliessanlage',
+        name: 'schliessanlage',
+        component: () => import('pages/SchliessanlagePage.vue'),
+        meta: { permission: 'schliessanlage.read' },
+      },
+      {
         path: 'import',
         name: 'import',
         component: () => import('pages/ImportPage.vue'),

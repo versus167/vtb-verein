@@ -101,6 +101,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('schliessanlage.read')"
+            clickable
+            :to="{ name: 'schliessanlage' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="lock" /></q-item-section>
+            <q-item-section>Schließanlage</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('berichte.read')"
             clickable
             :to="{ name: 'berichte' }"
