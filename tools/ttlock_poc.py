@@ -36,19 +36,37 @@ try:
 except Exception:
     pass
 
-DEFAULT_ENDPOINT = 'https://euopen.ttlock.com'
+DEFAULT_ENDPOINT = 'https://euapi.ttlock.com'  # API-Host (euopen.* ist nur das Dev-Portal)
 
-# recordType → lesbare Öffnungsmethode (vorläufig, final aus der TTLock-Doc).
+# recordType → lesbare Öffnungs-/Verriegelungsmethode.
+# Vollständig aus der TTLock-Doc (euopen.ttlock.com/doc/api/v3/lockRecord/list, 2026-06).
 RECORD_TYPES = {
     1: 'App',
+    2: 'Parklücke berührt',
+    3: 'Gateway (remote)',
     4: 'Passcode',
+    5: 'Parksperre hoch',
+    6: 'Parksperre runter',
     7: 'IC-Karte',
     8: 'Fingerprint',
+    9: 'Armband',
     10: 'mech. Schlüssel',
-    30: 'Türmagnet',
+    11: 'Bluetooth-Verriegeln',
+    12: 'Gateway (remote)',
+    29: 'Unerwartet entriegelt',
+    30: 'Türmagnet zu',
+    31: 'Türmagnet auf',
+    32: 'Von innen geöffnet',
+    33: 'Verriegelt (Fingerprint)',
+    34: 'Verriegelt (Passcode)',
+    35: 'Verriegelt (IC-Karte)',
+    36: 'Verriegelt (mech. Schlüssel)',
+    37: 'Fernbedienung',
     44: 'Sabotage-Alarm',
     45: 'Auto-Lock',
-    48: 'Fehlversuch',
+    46: 'Entriegeln (Unlock-Key)',
+    47: 'Verriegeln (Lock-Key)',
+    48: 'Mehrf. Falsch-Passcode',
 }
 
 

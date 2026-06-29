@@ -9,7 +9,8 @@
 ## Kernidee
 
 Die App wird **Orchestrierungs-/Verwaltungsschicht über der TTLock-Cloud-API**
-(`euopen.ttlock.com`), **nicht** der Schloss-Controller. Die TTLock-Cloud bleibt
+(API-Host `euapi.ttlock.com`; `euopen.ttlock.com` ist nur das Entwickler-Portal),
+**nicht** der Schloss-Controller. Die TTLock-Cloud bleibt
 **Quelle der Wahrheit** für Schlösser, Karten und Roh-Logs; wir
 
 1. **spiegeln** Inventar (Schlösser, Gateways) und **Zutrittslogs** in unsere DB,
@@ -22,22 +23,43 @@ Der entscheidende Hebel: TTLock-IC-Cards haben einen **Gültigkeitszeitraum**
 zeitlich befristeter Zutritt, **Ablauf erzwingt das Schloss selbst** (kein Cronjob nötig,
 nur Verlängern/Sperren ist eine API-Aktion).
 
-## Was die TTLock-API liefert (verifiziert 2026-06)
+## Was die TTLock-API liefert (End-to-End verifiziert 2026-06-29)
 
-- **Auth (OAuth2):** `POST https://euopen.ttlock.com/oauth2/token` mit `clientId`,
+> Per Wegwerf-PoC `tools/ttlock_poc.py` (read-only) gegen ein echtes Test-Schloss
+> bestätigt: Login → Inventar → Gateways → IC-Cards → Zutrittslogs laufen sauber durch.
+> **API-Host ist `euapi.ttlock.com` (EU)** – `euopen.ttlock.com` ist nur das
+> Dev-Portal und liefert auf `/oauth2/token` ein HTML-404.
+
+- **Auth (OAuth2):** `POST https://euapi.ttlock.com/oauth2/token` mit `clientId`,
   `clientSecret`, `username`, `password = MD5(klartext)` (lowercase hex),
-  `grant_type=password` → `access_token`, `refresh_token`, `expires_in`, `uid`.
-  Refresh via `grant_type=refresh_token`. **Jeder** API-Call braucht zusätzlich
-  `clientId`, `accessToken` und `date` (13-stelliger ms-Timestamp).
+  `grant_type=password` → `access_token`, `refresh_token`, `expires_in` (≈ **90 Tage**,
+  7.776.000 s), `uid`. Refresh via `grant_type=refresh_token`. **Jeder** API-Call braucht
+  zusätzlich `clientId`, `accessToken` und `date` (13-stelliger ms-Timestamp).
+  Zwei getrennte Konten: **Dev-Account** (Portal euopen → clientId/clientSecret) ≠
+  **TTLock-App-Konto** (besitzt die Schlösser → `username`/`password`).
 - **Inventar:** `v3/lock/list`, `v3/lock/detail`, `v3/gateway/listByLock`.
+  `lock/list` liefert u. a. `lockId`, `lockAlias` (Anzeigename), `lockName`
+  (Werksname), `lockMac`, `electricQuantity` (**Akku %**) + `…UpdateDate`,
+  `hasGateway` (0/1), `passageMode`, `timezoneRawOffset`.
+  **Nicht spiegeln** (sicherheitsrelevant/irrelevant): `lockData` (BLE-Schlüsselblob),
+  `noKeyPwd` (Admin-Passcode), `featureValue`, `specialValue`.
+- **Gateways:** `v3/gateway/listByLock` → `gatewayId`, `gatewayName`, `gatewayMac`,
+  `rssi` + `rssiUpdateDate` (Signal/letzter Kontakt). **Achtung:** *kein* `isOnline`-Feld
+  hier – den **Online-Status** liefert nur `v3/gateway/list` (account-weit). PoC zeigte
+  daher `online=None`; in der echten Sync `gateway/list` für den Online-Status nutzen.
 - **IC-Cards (Chips):** `v3/identityCard/list` (→ `cardId`, `cardNumber`, `cardName`,
-  `startDate`, `endDate`, `status`, `senderUsername`), `…/add` (mit `addType=2` =
-  **über Gateway** remote, plus `startDate`/`endDate`), `…/changePeriod` (Gültigkeit
-  ändern), `…/delete`, `…/clear`.
+  `startDate`, `endDate`, `status`, `cardType`, `userId`/`senderUsername`/`nickName`,
+  `createDate`), `…/add` (mit `addType=2` = **über Gateway** remote, plus
+  `startDate`/`endDate`), `…/changePeriod` (Gültigkeit ändern), `…/delete`, `…/clear`.
 - **Zutrittslogs:** `v3/lockRecord/list` (Params `lockId`, `startDate`, `endDate`,
-  `pageNo`, `pageSize≤100`) → je Eintrag `recordType` (Öffnungsmethode), `success`
-  (0/1), `username`, `keyboardPwd` (= **Passcode oder IC-Card-Nummer**), `lockDate`,
-  `serverDate`.
+  `pageNo`, `pageSize≤100`) → je Eintrag:
+  - **`recordId`** (BIGINT, eindeutig je Record) → **idealer Dedupe-/Idempotenz-Schlüssel**.
+  - `recordType` (logische Methode, s. Schlüssel unten) + `recordTypeFromLock`
+    (Rohcode der Hardware, z. B. 26 → nur forensisch).
+  - `success` (0/1), `lockDate` (Ereigniszeit am Schloss, ms),
+    `serverDate` (Server-Empfang, ms) → **Sync-Cursor**.
+  - `username` (TTLock-User), `keyName` (Label der Berechtigung),
+    `keyboardPwd` (= Passcode bzw. IC-Card-Nummer, oft leer), `hotelUsername`.
 
 ### Wichtige Randbedingungen (vor der Umsetzung wissen)
 
@@ -59,8 +81,33 @@ nur Verlängern/Sperren ist eine API-Aktion).
 - **Logs landen nur bei online-Gateway in der Cloud** (bei uns überall gegeben);
   trotzdem Lücken bei Gateway-/WLAN-Ausfall möglich → Sync ist „best effort".
 - **`recordType` ist numerisch** und muss auf lesbare Methoden gemappt werden
-  (bekannt: 1 App, 4 Passcode, 7 ≈ IC-Karte, 8 Fingerprint, 10 mech. Schlüssel,
-  30 Türmagnet, 44 Sabotage-Alarm, 45 Auto-Lock, 48 Fehlversuche; Liste in der Doc).
+  (vollständiger Schlüssel s. u.). Beachte: es gibt **Entriegeln *und* Verriegeln**
+  als eigene Codes; für ein reines „Zutritts"-Protokoll ggf. nur die Unlock-/Alarm-Codes
+  anzeigen und die Lock-Codes (33–36, 47) ausfiltern.
+
+### recordType-Schlüssel (vollständig, aus der TTLock-Doc, 2026-06)
+
+Quelle: `euopen.ttlock.com/doc/api/v3/lockRecord/list`. 1:1 im PoC hinterlegt
+(`tools/ttlock_poc.py`, `RECORD_TYPES`) → später nach `app/models/schliessanlage.py`.
+
+| Code | Bedeutung | Code | Bedeutung |
+|---|---|---|---|
+| 1 | App entriegeln | 30 | Türmagnet zu |
+| 2 | Parklücke berührt | 31 | Türmagnet auf |
+| 3 | Gateway (remote) | 32 | Von innen geöffnet |
+| 4 | Passcode | 33 | Verriegelt (Fingerprint) |
+| 5 | Parksperre hoch | 34 | Verriegelt (Passcode) |
+| 6 | Parksperre runter | 35 | Verriegelt (IC-Karte) |
+| 7 | IC-Karte | 36 | Verriegelt (mech. Schlüssel) |
+| 8 | Fingerprint | 37 | Fernbedienung |
+| 9 | Armband | 44 | **Sabotage-Alarm** |
+| 10 | mech. Schlüssel | 45 | Auto-Lock |
+| 11 | Bluetooth-Verriegeln | 46 | Entriegeln (Unlock-Key) |
+| 12 | Gateway (remote) | 47 | Verriegeln (Lock-Key) |
+| 29 | Unerwartet entriegelt | 48 | Mehrf. Falsch-Passcode |
+
+> Enum kann je Schloss-/Protokolltyp leicht variieren; unbekannte Codes als `?<n>`
+> durchreichen statt hart zu mappen (so macht es der PoC schon).
 
 ## Entscheidungen (Vorschlag – mit User abzustimmen)
 
@@ -95,7 +142,7 @@ personenbezogene Bewegungsdaten sind.
 -- TTLock-Konto-/Token-Status (eine Zeile; Secrets NICHT hier, nur Laufzeit-Tokens)
 CREATE TABLE ttlock_konto (
   id              SERIAL PRIMARY KEY,
-  endpoint        TEXT NOT NULL DEFAULT 'https://euopen.ttlock.com',
+  endpoint        TEXT NOT NULL DEFAULT 'https://euapi.ttlock.com',  -- API-Host (NICHT euopen.*)
   ttlock_uid      BIGINT,                 -- uid aus dem Token-Response
   access_token    TEXT,
   refresh_token   TEXT,
@@ -111,10 +158,13 @@ CREATE TABLE tuer_schloss (
   name             TEXT NOT NULL,          -- z. B. "Geschäftsstelle Eingang"
   standort         TEXT,
   abteilung_id     INTEGER REFERENCES abteilungen(id),  -- NULL = vereinsweit (Scope)
-  ttlock_gateway_id BIGINT,                -- aus gateway/listByLock
+  ttlock_gateway_id BIGINT,                -- gatewayId aus gateway/listByLock
+  lock_mac         TEXT,                   -- lockMac (Diagnose)
+  akku_prozent     INTEGER,                -- electricQuantity (für „Akku schwach")
+  akku_stand_at    TIMESTAMPTZ,            -- electricQuantityUpdateDate
   aktiv            BOOLEAN NOT NULL DEFAULT true,
   notiz            TEXT,
-  letzter_log_serverdate BIGINT,           -- Sync-Cursor (ms) je Schloss
+  letzter_log_serverdate BIGINT,           -- Sync-Cursor (serverDate ms) je Schloss
   version/created_*/updated_*/deleted_*    -- Standard-Audit + Soft-Delete
 );
 
@@ -146,20 +196,24 @@ CREATE TABLE tuer_berechtigung (
 
 -- Zutrittslog (append-only, gespiegelt aus v3/lockRecord/list)
 CREATE TABLE tuer_zutritt_log (
-  id            SERIAL PRIMARY KEY,
-  schloss_id    INTEGER NOT NULL REFERENCES tuer_schloss(id),
-  record_type   INTEGER,                   -- TTLock recordType
-  methode       TEXT,                      -- gemappt: 'ic_card' | 'passcode' | 'app' | ...
-  erfolg        BOOLEAN,
-  credential    TEXT,                      -- keyboardPwd (Kartennummer/Passcode)
-  chip_id       INTEGER REFERENCES schluessel_chip(id),  -- aufgelöst, falls Kartennummer matcht
-  mitglied_id   INTEGER REFERENCES mitglied(id),         -- aufgelöst über Chip
-  lock_date     TIMESTAMPTZ,               -- Ereigniszeit am Schloss
-  server_date   BIGINT,                    -- serverDate (ms) – Dedupe-/Cursor-Basis
-  raw           JSONB,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  id               SERIAL PRIMARY KEY,
+  ttlock_record_id BIGINT NOT NULL UNIQUE, -- recordId → idempotenter Sync (1 Feld genügt!)
+  schloss_id       INTEGER NOT NULL REFERENCES tuer_schloss(id),
+  record_type      INTEGER,                -- TTLock recordType (logisch)
+  record_type_from_lock INTEGER,           -- recordTypeFromLock (Hardware-Rohcode, forensisch)
+  methode          TEXT,                   -- gemappt: 'ic_card' | 'passcode' | 'app' | ...
+  erfolg           BOOLEAN,                -- success 0/1
+  credential       TEXT,                   -- keyboardPwd (Kartennummer/Passcode)
+  key_name         TEXT,                   -- keyName (Label der Berechtigung)
+  ttlock_username  TEXT,                   -- username aus dem Record
+  chip_id          INTEGER REFERENCES schluessel_chip(id),  -- aufgelöst, falls Kartennummer matcht
+  mitglied_id      INTEGER REFERENCES mitglied(id),         -- aufgelöst über Chip
+  lock_date        TIMESTAMPTZ,            -- lockDate – Ereigniszeit am Schloss
+  server_date      BIGINT,                 -- serverDate (ms) – Cursor-Basis
+  raw              JSONB,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- Unique (schloss_id, server_date, credential, record_type) → idempotenter Sync
+-- Unique (ttlock_record_id) → echter idempotenter Sync; Cursor = MAX(server_date) je Schloss
 ```
 
 Alle Domänentabellen bekommen `*_history` + Audit-Trigger (Insert/Update) wie üblich –
@@ -175,12 +229,15 @@ Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
   `identityCard/{list,add,changePeriod,delete}`, `lockRecord/list`. TTLock-Fehler-
   Envelope (`errcode != 0`) → Exception. **Kein** DB-Zugriff (rein API).
 - **`app/services/zutritt_service.py` (neu)** – Domänen-Orchestrierung:
-  - `inventar_sync()` – Schlösser/Gateways spiegeln.
+  - `inventar_sync()` – Schlösser/Gateways spiegeln (`lock/list` + `gateway/list` für
+    den **Online-Status**, `gateway/listByLock` für die Schloss↔Gateway-Zuordnung; Akku
+    aus `electricQuantity`).
   - `chip_anlernen(chip, schloss, von, bis)` – `identityCard/add` (Gateway) →
     `ttlock_card_id` + `sync_status` setzen.
   - `berechtigung_aendern/sperren` – `changePeriod`/`delete`.
   - `logs_sync(schloss, seit_cursor)` – `lockRecord/list` paginiert, dedupe über
-    Unique-Key, Kartennummer → Chip → Mitglied auflösen, Cursor fortschreiben.
+    **`ttlock_record_id` (recordId)**, Kartennummer → Chip → Mitglied auflösen, Cursor
+    (`MAX(serverDate)`) fortschreiben.
 - Secrets (`clientId`/`clientSecret`/Konto-Login) aus `app/config`/Env; nur Tokens via
   `ttlock_konto`-Repo.
 
@@ -237,10 +294,14 @@ Prune/DSGVO). Frischaufbau-Pfad (`_create_tables`), Indizes und Migrationspfad
 - **Scheduler für periodischen Log-Sync:** existiert noch keine Cron-/Background-
   Mechanik im Backend (`prune` läuft on-demand). Optionen: APScheduler, externer Cron
   ruft Sync-Endpoint, oder vorerst rein **on-demand** beim Öffnen der Log-Seite.
-- **TTLock-Dev-Account-Freischaltung** (clientId/clientSecret) + **EU-Endpoint**
-  bestätigen; Schlösser unter das API-Konto als **Admin** bringen.
-- **`recordType`-Mapping** final aus der TTLock-Doc übernehmen (v. a. exakter Wert für
-  „IC-Karte").
+- ~~**TTLock-Dev-Account-Freischaltung** (clientId/clientSecret) + **EU-Endpoint**
+  bestätigen.~~ ✅ **erledigt 2026-06-29** (PoC): clientId/clientSecret gültig & EU,
+  Endpoint `euapi.ttlock.com`. **Offen bleibt:** die echten Vereins-Schlösser als
+  **Admin** unter das produktive API-Konto bringen (PoC lief gegen ein Einzel-Test-Schloss).
+- ~~**`recordType`-Mapping** final aus der TTLock-Doc übernehmen.~~ ✅ **erledigt** –
+  vollständiger Schlüssel oben dokumentiert und im PoC hinterlegt (`7` = IC-Karte bestätigt).
+- **Gateway-Online-Status** kommt aus `gateway/list` (nicht `listByLock`) – in
+  `inventar_sync()` berücksichtigen.
 - **Chip-Erstanlernung**: Festlegen, ob am Schloss gescannt (Weg 1, empfohlen) oder mit
   RFID-Leser erfasst (Weg 2) wird; Mapping der **bestehenden** Chips ↔ Mitglieder.
 - **Secret-Handling**: Ablage von `clientSecret`/Konto-Passwort (Env vs. Secret-Store);
