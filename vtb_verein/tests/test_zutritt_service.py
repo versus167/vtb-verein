@@ -8,6 +8,7 @@ Geprüft:
 - Status-Snapshot (letztes Event) entspricht dem jüngsten Log.
 """
 import pytest
+import requests
 
 from app.services.zutritt_service import ZutrittService, build_alarm_digest
 from app.services.ttlock_client import TTLockError
@@ -31,6 +32,7 @@ class FakeClient:
         self.passcodes_by_lock = {}
         self.ekeys_by_lock = {}
         self.fingerprint_should_fail = False   # simuliert Modell ohne Sensor (errcode)
+        self.passcode_http_fail = False        # simuliert Transport-/HTTP-Fehler (z. B. 404)
 
     def unlock(self, lock_id):
         self.unlocked.append(lock_id); return {"errcode": 0}
@@ -58,6 +60,8 @@ class FakeClient:
         return {"list": self.fingerprints_by_lock.get(lock_id, []), "pages": 1}
 
     def passcodes(self, lock_id, page_no=1, page_size=100):
+        if self.passcode_http_fail:
+            raise requests.exceptions.HTTPError("404 Client Error")
         return {"list": self.passcodes_by_lock.get(lock_id, []), "pages": 1}
 
     def ekeys(self, lock_id, page_no=1, page_size=100):
@@ -492,6 +496,24 @@ def test_credentials_sync_typ_fehler_laesst_bestand_unangetastet():
     assert by_typ[CRED_FINGERPRINT].name == "alt"
     assert by_typ[CRED_EKEY].ttlock_credential_id == 9
     assert res["credentials"] == 1               # nur der eingefügte eKey zählt
+
+
+def test_credentials_sync_http_fehler_bricht_lauf_nicht_ab():
+    # Regression: ein Transport-/HTTP-Fehler (z. B. falscher Endpoint → 404) bei EINEM Typ
+    # darf den Gesamtlauf NICHT abbrechen (sonst stirbt im Sidecar auch der nachgelagerte
+    # Log-Sync). Andere Typen werden weiter gespiegelt, der fehlende Typ bleibt unangetastet.
+    fake = FakeClient()
+    fake.passcode_http_fail = True
+    fake.ekeys_by_lock[30392116] = [
+        {"keyId": 9, "keyName": "Trainer", "username": "u", "startDate": 0, "endDate": 0}]
+    svc = _cred_service(fake)
+    svc.inventar_sync()
+
+    res = svc.credentials_sync()                 # darf NICHT werfen
+    by_typ = {c.typ: c for c in svc.credential_repo.list_for_schloss(1)}
+    assert CRED_PASSCODE not in by_typ           # fehlgeschlagener Typ nicht fälschlich geleert/befüllt
+    assert by_typ[CRED_EKEY].ttlock_credential_id == 9
+    assert res["credentials"] == 1               # nur der eKey zählt
 
 
 def test_credentials_sync_ohne_repo_ist_noop():
