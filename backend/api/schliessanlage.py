@@ -130,6 +130,22 @@ def user_lookup(user: CurrentUser, db: DB):
     ]
 
 
+@router.get("/mitglieder")
+def mitglied_lookup(user: CurrentUser, db: DB):
+    """Schlanke Mitglieder-Liste (id + Name + Nr) für den Chip-Zuordnungs-Picker.
+    Eigener Endpoint (statt /api/mitglieder, das personen.read verlangt) – hier reicht
+    schliessanlage.verwalten."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    return [
+        {"id": m.id, "vorname": m.vorname, "nachname": m.nachname,
+         "mitgliedsnummer": m.mitgliedsnummer}
+        for m in sorted(
+            db.list_mitglieder(),
+            key=lambda m: ((m.nachname or "").lower(), (m.vorname or "").lower()),
+        )
+    ]
+
+
 @router.get("/mein-zugang")
 def mein_zugang(user: CurrentUser, db: DB):
     """Self-Service (Phase 4): eigene Chips, Türen, befristete App-Berechtigungen und

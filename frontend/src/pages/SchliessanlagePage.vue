@@ -285,8 +285,15 @@
           <q-input v-model="chipForm.kartennummer" label="Kartennummer *" outlined dense
             :readonly="!!chipForm.id" :hint="chipForm.id ? 'Kartennummer ist fix' : ''" />
           <q-input v-model="chipForm.bezeichnung" label="Bezeichnung (z. B. Chip blau 14)" outlined dense />
-          <q-input v-model.number="chipForm.mitglied_id" type="number" label="Mitglieds-ID (optional)"
-            outlined dense hint="Wem ausgegeben – leer = Pool-Chip mit Standort" />
+          <q-select v-model="chipForm.mitglied_id" :options="mitgliedOptions" option-value="id"
+            :option-label="mitgliedLabel" emit-value map-options use-input input-debounce="0"
+            @filter="filterMitglieder" label="Mitglied (optional)" outlined dense clearable
+            :hint="mitglieder.length ? 'Wem ausgegeben – leer = Pool-Chip mit Standort'
+              : 'keine Mitglieder geladen'">
+            <template #no-option>
+              <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
+            </template>
+          </q-select>
           <q-input v-model="chipForm.aufbewahrungsort" label="Standardstandort (wenn nicht ausgegeben)"
             outlined dense />
           <q-select v-model="chipForm.status" :options="['aktiv','gesperrt','verloren']" label="Status"
@@ -754,12 +761,34 @@ async function openChip(id) {
 const chipFormDialog = ref(false)
 const chipForm = ref({})
 const chipError = ref('')
-function openChipCreate() {
+const mitglieder = ref([])
+const mitgliedOptions = ref([])
+const mitgliedLabel = (m) => (m
+  ? `${m.nachname || ''}, ${m.vorname || ''}`.trim() + (m.mitgliedsnummer ? ` (Nr. ${m.mitgliedsnummer})` : '')
+  : '')
+async function loadMitglieder() {
+  if (mitglieder.value.length) return
+  try {
+    const { data } = await api.get('/api/schliessanlage/mitglieder')
+    mitglieder.value = data; mitgliedOptions.value = data
+  } catch { mitglieder.value = []; mitgliedOptions.value = [] }
+}
+function filterMitglieder(val, update) {
+  const n = (val || '').toLowerCase()
+  update(() => {
+    mitgliedOptions.value = n
+      ? mitglieder.value.filter(m => mitgliedLabel(m).toLowerCase().includes(n))
+      : mitglieder.value
+  })
+}
+async function openChipCreate() {
+  await loadMitglieder()
   chipForm.value = { id: null, kartennummer: '', bezeichnung: '', mitglied_id: null,
     aufbewahrungsort: '', status: 'aktiv' }
   chipError.value = ''; chipFormDialog.value = true
 }
-function openChipEdit() {
+async function openChipEdit() {
+  await loadMitglieder()
   const c = chipDetail.value.chip
   chipForm.value = { id: c.id, kartennummer: c.kartennummer, bezeichnung: c.bezeichnung,
     mitglied_id: c.mitglied_id, aufbewahrungsort: c.aufbewahrungsort, status: c.status, version: c.version }
