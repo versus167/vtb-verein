@@ -8,6 +8,11 @@
 > (TODO.md), feineres Alarm-Empfänger-Scoping, Auswertungen/Reports; Cloud-Writes noch nicht
 > live an einem Schloss verifiziert (gerätegenaue Freigabe nötig).
 >
+> **Nachtrag v59 (2026-06-30, #62):** read-only **Credential-Übersicht je Schloss**
+> (`tuer_credential`: Fingerprint/Passcode/eKey/IC am Schloss, 1:1 aus der Cloud gespiegelt,
+> kein Personen-Bezug). Baustein für die **geplante Phase 5: Zutrittslog vollständig auf
+> Mitglieder auflösen** (s. u.) – heute löst `logs_sync()` nur die IC-Karte auf ein Mitglied auf.
+>
 > Phase 2 konkret: IC-Card-Writes über Gateway (`identityCard/add|changePeriod|delete`)
 > als signierter POST, `chip_anlernen`/`berechtigung_aendern`/`berechtigung_entziehen` im
 > `ZutrittService`, `ic_cards_sync` (am Schloss per BLE angelernte Karten → Chips/
@@ -368,6 +373,63 @@ Handwerker/Reinigung für einen Tag, Gast-Übungsleiter für ein Wochenende, Ver
 - **Kein TTLock-Schreibzugriff nötig:** rein lokale Berechtigung über das bereits
   verifizierte `v3/lock/unlock` – damit ohne Chip-Anlern-Abhängigkeit auch **vor** Phase 2
   baubar.
+
+## Phase 5 (geplant): Zutrittslog vollständig auf Mitglieder auflösen
+
+Ziel: Jede Log-Zeile zeigt – soweit möglich – **welches Mitglied** mit **welcher Methode**
+geöffnet hat. Heute löst `logs_sync()` **nur die IC-Karte** auf ein Mitglied auf
+(`keyboardPwd` = Kartennummer → `schluessel_chip` → `mitglied`, nur `recordType ∈ {7, 35}`).
+Fingerprint (8/33), Passcode (4/34) und App/eKey/Gateway-Remote (1/3/11/12) bleiben ohne
+Personenbezug – die Anzeige (`logWer` in `SchliessanlagePage.vue`) fällt auf
+`chip_bezeichnung` bzw. `ttlock_username` (= TTLock-Sammelkonto) zurück, der Cloud-Name
+`key_name` wird gar nicht gezeigt.
+
+### Auflösung je Methode
+
+- **IC-Karte:** vorhanden (Kartennummer → Chip → Mitglied).
+- **App-/Gateway-Öffnung über die VTB-App (Sonderfall – am einfachsten):** Wenn das Öffnen
+  über *uns* läuft (`POST /schloesser/{id}/oeffnen` → `v3/lock/unlock`), **kennen wir den
+  eingeloggten User exakt** und schreiben ihn bereits in `access_log`
+  (`action='schliessanlage_unlock'`, `user_id`, Schloss, Zeit – s. `backend/api/schliessanlage.py`).
+  TTLock zeigt dieselbe Aktion nur als „Gateway (remote)" (recordType 3/12) mit dem einen
+  Sammelkonto `ttlock@…` – **nicht** unterscheidbar. Auflösung daher **nicht über TTLock,
+  sondern per Korrelation TTLock-Record ↔ `access_log`** (gleiches Schloss, `lockDate` ≈
+  `access_log.created_at` innerhalb eines kleinen Fensters) → echter VTB-User. Befristete
+  App-Berechtigungen (Phase 4) sind damit automatisch mit abgedeckt.
+  *Abgrenzung:* Gateway-Remote-Events **ohne** passenden `access_log`-Eintrag stammen aus
+  der nativen TTLock-App/vom Admin → bleiben dem TTLock-Konto/„System" zugeordnet.
+- **Fingerprint:** über `tuer_credential` (Typ fingerprint) am Schloss, Match per
+  `fingerprintId` bzw. `keyName` ↔ zugeordnetem Mitglied.
+- **Passcode:** über `tuer_credential` (Typ passcode) per `keyboardPwdId`/`keyName` –
+  **Passcode-Wert ist sensibel, kein Klartext speichern/anzeigen.**
+- **eKey (BLE direkt):** über `username`/eKey-Credential → Mitglied.
+
+### Voraussetzung (Hauptarbeit für Fingerprint/Passcode/eKey)
+
+Eine **Credential→Mitglied-Zuordnung für alle Typen**, analog zur Chip→Mitglied-Zuordnung
+(#59). Fingerprint/Passcode/eKey existieren bisher nur als **read-only Cloud-Mirror**
+(`tuer_credential`, v59) **ohne** Personen-Bezug; es fehlt die Zuordnungsschicht.
+
+- **Datenmodell:** `mitglied_id` an `tuer_credential` (oder eigene Mapping-Tabelle) +
+  Migration. Trennung Mirror (1:1 Cloud) vs. Zuordnung (unser Konzept) sauber halten.
+- **UI:** in der Credential-Übersicht je Schloss ein Mitglied zuordnen – suchbares Dropdown
+  wie bei der Chip→Mitglied-Zuordnung.
+- **Resolver:** `logs_sync()` (bzw. ein nachgelagerter Resolve-Pass) setzt `mitglied_id`
+  je `recordType` über die Zuordnung/Korrelation – optional **rückwirkend** (Backfill der
+  bestehenden Logs) statt nur ab jetzt.
+- **Frontend:** `logWer` um das aufgelöste Mitglied erweitern, `key_name` als Fallback.
+- **DSGVO:** vollständige Auflösung erhöht den Personenbezug deutlich → Zweckbindung +
+  Recht `schliessanlage.protokoll` bleiben Pflicht; Datenschutzhinweis ggf. schärfen.
+
+### Offene Fragen
+
+- Trägt `lockRecord` die `credentialId` (`fingerprintId`/`keyboardPwdId`) oder nur
+  `keyName`? Entscheidet ID- vs. (fragiles) Namens-Matching – per echtem Sync/PoC prüfen.
+- Korrelations-Fenster App-Öffnung ↔ `access_log` (Sekunden? Toleranz bei Gateway-Latenz)?
+- Backfill der bestehenden Logs gewünscht oder nur ab Einführung?
+
+**Aufwand:** App-/Gateway-Auflösung klein (Daten liegen schon vor); Fingerprint/Passcode/
+eKey mittel–groß (Mapping + UI + Resolver + Migration + Tests). Eigener Branch.
 
 ## Offene Punkte (vor/während Phase 1 klären)
 
