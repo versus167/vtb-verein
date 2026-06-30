@@ -181,15 +181,16 @@
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Am Schloss eingerichtet</div>
             <q-space />
-            <q-chip dense size="sm" color="grey-3">{{ schlossDetail.credentials?.length || 0 }}</q-chip>
+            <q-chip dense size="sm" color="grey-3">{{ mirrorCredentials(schlossDetail.credentials).length }}</q-chip>
           </div>
           <div class="text-caption text-grey-6 q-mb-xs">
-            Read-only aus der TTLock-Cloud gespiegelt – zeigt auch Credentials, die nicht über die App liefen.
+            Read-only aus der TTLock-Cloud gespiegelt – zeigt Credentials, die nicht über die App
+            liefen (IC-Karten siehe oben „Zugeteilte Chips").
           </div>
-          <div v-if="!schlossDetail.credentials?.length" class="text-grey text-caption q-mb-sm">
+          <div v-if="!mirrorCredentials(schlossDetail.credentials).length" class="text-grey text-caption q-mb-sm">
             keine Credentials gespiegelt (oder noch kein Sync)
           </div>
-          <template v-for="g in credentialGruppen(schlossDetail.credentials)" :key="g.typ">
+          <template v-for="g in credentialGruppen(mirrorCredentials(schlossDetail.credentials))" :key="g.typ">
             <div class="text-caption text-weight-medium text-grey-8 q-mt-sm q-mb-xs">
               <q-icon :name="g.icon" size="16px" class="q-mr-xs" />{{ g.label }} ({{ g.items.length }})
             </div>
@@ -475,13 +476,19 @@ const RECORD_TYPES = {
 const recordTypeLabel = (t) => (t == null ? '–' : (RECORD_TYPES[t] || ('?' + t)))
 
 // Credential-Typen am Schloss (read-only Mirror) → Anzeige-Reihenfolge + Icon/Label.
+// IC-Karten bewusst NICHT hier: die verwalten wir über die App und zeigen sie oben unter
+// „Zugeteilte Chips" (dort einem Mitglied zugeordnet). Im Mirror wären sie nur ein doppelter,
+// ärmerer Eintrag → werden über CRED_TYP_APP_MANAGED ausgeblendet.
 const CRED_TYP_META = {
   fingerprint: { label: 'Fingerprints', icon: 'fingerprint' },
   passcode: { label: 'Passcodes', icon: 'dialpad' },
   ekey: { label: 'App-/eKeys', icon: 'phonelink_ring' },
-  ic: { label: 'IC-Karten', icon: 'badge' },
 }
-const CRED_TYP_ORDER = ['fingerprint', 'passcode', 'ekey', 'ic']
+const CRED_TYP_ORDER = ['fingerprint', 'passcode', 'ekey']
+const CRED_TYP_APP_MANAGED = ['ic']   // schon unter „Zugeteilte Chips" sichtbar
+function mirrorCredentials(credentials) {
+  return (credentials || []).filter((c) => !CRED_TYP_APP_MANAGED.includes(c.typ))
+}
 function credentialGruppen(credentials) {
   const by = {}
   for (const c of credentials || []) (by[c.typ] ||= []).push(c)
