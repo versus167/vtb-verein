@@ -19,6 +19,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    image: vtb-verein:latest
     container_name: vtb-verein
     depends_on:
       db:
@@ -54,4 +55,37 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+
+  # Hintergrund-Sync der Schließanlage (Inventar + IC-Karten + Logs, paarmal täglich).
+  # Eigener Sidecar statt In-Process-Scheduler: kein Worker-Duplikations-Problem, robust
+  # über die Restart-Policy. Nutzt dasselbe Image wie vtb-verein (kein zweiter Build).
+  # Intervall über TTLOCK_SYNC_INTERVAL_HOURS (Default 6 = 4×/Tag). Läuft erst nach dem
+  # App-Start (Migrationen), idle wenn kein TTLock-Konto konfiguriert ist.
+  zutritt-sync:
+    image: vtb-verein:latest
+    container_name: vtb-zutritt-sync
+    depends_on:
+      vtb-verein:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+    command: >
+      sh -c '
+      H="$${TTLOCK_SYNC_INTERVAL_HOURS:-6}";
+      echo "[zutritt-sync] gestartet – Intervall $${H}h";
+      while true; do
+        python tools/zutritt_sync.py || echo "[zutritt-sync] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
+        sleep "$$(( H * 3600 ))";
+      done'
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
 

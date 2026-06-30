@@ -371,11 +371,14 @@ Handwerker/Reinigung für einen Tag, Gast-Übungsleiter für ein Wochenende, Ver
 
 ## Offene Punkte (vor/während Phase 1 klären)
 
-- ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29:**
-  Management-Command (`tools/zutritt_sync.py` bzw. `python -m …`) ruft `logs_sync()` für
-  alle aktiven Schlösser, getriggert per **externem Cron/systemd-Timer** – robust, kein
-  Worker-Duplikations-Problem, passt zur bestehenden on-demand-Linie (so läuft auch `prune`).
-  Derselbe Pfad bedient den on-demand-Button „Jetzt synchronisieren".
+- ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29, umgesetzt
+  2026-06-30:** Management-Command (`tools/zutritt_sync.py`) ruft Inventar-/IC-Card-/
+  Log-Sync für alle aktiven Schlösser; robust, kein Worker-Duplikations-Problem. **Deployment:**
+  eigener **docker-compose-Sidecar `zutritt-sync`** (gleiches Image wie `vtb-verein`, kein
+  zweiter Build) mit Schleife `python tools/zutritt_sync.py; sleep TTLOCK_SYNC_INTERVAL_HOURS`
+  (Default 6 h = 4×/Tag), `depends_on: vtb-verein (healthy)` damit die Migrationen durch sind,
+  `restart: unless-stopped`. Für Bare-Metal alternativ Host-Cron/systemd-Timer auf denselben
+  Command. Derselbe Sync-Pfad bedient den on-demand-Button „Jetzt synchronisieren".
 - ~~**TTLock-Dev-Account-Freischaltung** (clientId/clientSecret) + **EU-Endpoint**
   bestätigen.~~ ✅ **erledigt 2026-06-29** (PoC): clientId/clientSecret gültig & EU,
   Endpoint `euapi.ttlock.com`. **Offen bleibt:** die echten Vereins-Schlösser als
