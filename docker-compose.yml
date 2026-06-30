@@ -64,6 +64,11 @@ services:
   zutritt-sync:
     image: vtb-verein:latest
     container_name: vtb-zutritt-sync
+    # Image bringt einen HEALTHCHECK auf den Webserver (Port 8000) mit (backend/Dockerfile).
+    # Der Sidecar startet aber nur die Sync-Schleife, keinen Webserver → der vererbte Check
+    # würde den Container dauerhaft fälschlich „unhealthy" stempeln. Daher hier abschalten.
+    healthcheck:
+      disable: true
     depends_on:
       vtb-verein:
         condition: service_healthy
