@@ -20,8 +20,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from app.models.schliessanlage import (
-    TuerZutrittLog, SchluesselChip, TuerBerechtigung, record_type_label,
+    TuerZutrittLog, SchluesselChip, TuerBerechtigung, TuerCredential, record_type_label,
     IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
+    CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
 )
 from app.services.ttlock_client import TTLockClient, TTLockError
 
@@ -103,12 +104,14 @@ def notify_alarme(db, alarme: list[dict]) -> int:
 class ZutrittService:
 
     def __init__(self, *, konto_repo, schloss_repo, chip_repo, berechtigung_repo,
-                 log_repo, client_factory: Optional[Callable[[], TTLockClient]] = None):
+                 log_repo, credential_repo=None,
+                 client_factory: Optional[Callable[[], TTLockClient]] = None):
         self.konto_repo = konto_repo
         self.schloss_repo = schloss_repo
         self.chip_repo = chip_repo
         self.berechtigung_repo = berechtigung_repo
         self.log_repo = log_repo
+        self.credential_repo = credential_repo
         self._client_factory = client_factory
 
     # --- Client-Lifecycle ---------------------------------------------------
@@ -324,6 +327,98 @@ class ZutrittService:
         logger.info("IC-Card-Import: %d Chips neu, %d Berechtigungen neu, %d aktualisiert.",
                     neu_chips, neu_ber, akt_ber)
         return {"chips_neu": neu_chips, "berechtigungen_neu": neu_ber, "berechtigungen_akt": akt_ber}
+
+    # --- Credential-Mirror (read-only Inventar je Schloss) ------------------
+    @staticmethod
+    def _fetch_all_pages(fetch: Callable, lock_id: int, max_pages: int = 20) -> list[dict]:
+        """Paginierte TTLock-Liste vollständig einsammeln (gegen Listen > pageSize)."""
+        out: list[dict] = []
+        page = 1
+        while page <= max_pages:
+            resp = fetch(lock_id, page_no=page, page_size=100)
+            items = resp.get("list", [])
+            out.extend(items)
+            if page >= resp.get("pages", 1) or not items:
+                break
+            page += 1
+        return out
+
+    @staticmethod
+    def _fingerprint_row(schloss_id: int, it: dict, gesehen_am: str) -> TuerCredential:
+        return TuerCredential(
+            schloss_id=schloss_id, typ=CRED_FINGERPRINT,
+            ttlock_credential_id=it.get("fingerprintId"),
+            name=it.get("fingerprintName") or None,
+            gueltig_von=_ms_to_iso(it.get("startDate")),
+            gueltig_bis=_ms_to_iso(it.get("endDate")),
+            gesehen_am=gesehen_am, raw=it)
+
+    @staticmethod
+    def _passcode_row(schloss_id: int, it: dict, gesehen_am: str) -> TuerCredential:
+        # Passcode-Klartext (`keyboardPwd`) NICHT speichern – wir wollen Sichtbarkeit, nicht
+        # eine neue Angriffsfläche durch live gespeicherte PINs.
+        raw = {k: v for k, v in it.items() if k != "keyboardPwd"}
+        return TuerCredential(
+            schloss_id=schloss_id, typ=CRED_PASSCODE,
+            ttlock_credential_id=it.get("keyboardPwdId"),
+            name=it.get("keyboardPwdName") or None,
+            gueltig_von=_ms_to_iso(it.get("startDate")),
+            gueltig_bis=_ms_to_iso(it.get("endDate")),
+            gesehen_am=gesehen_am, raw=raw)
+
+    @staticmethod
+    def _ekey_row(schloss_id: int, it: dict, gesehen_am: str) -> TuerCredential:
+        return TuerCredential(
+            schloss_id=schloss_id, typ=CRED_EKEY,
+            ttlock_credential_id=it.get("keyId"),
+            name=it.get("keyName") or None,
+            detail=it.get("username") or None,        # TTLock-Konto, an das der eKey ging
+            gueltig_von=_ms_to_iso(it.get("startDate")),
+            gueltig_bis=_ms_to_iso(it.get("endDate")),
+            gesehen_am=gesehen_am, raw=it)
+
+    @staticmethod
+    def _ic_row(schloss_id: int, it: dict, gesehen_am: str) -> TuerCredential:
+        cn = it.get("cardNumber")
+        return TuerCredential(
+            schloss_id=schloss_id, typ=CRED_IC,
+            ttlock_credential_id=it.get("cardId"),
+            name=it.get("cardName") or None,
+            detail=str(cn) if cn else None,           # Kartennummer (Abgleich mit Chips)
+            gueltig_von=_ms_to_iso(it.get("startDate")),
+            gueltig_bis=_ms_to_iso(it.get("endDate")),
+            gesehen_am=gesehen_am, raw=it)
+
+    def credentials_sync(self) -> dict:
+        """Read-only: alle am Schloss eingerichteten Credential-Typen (Fingerprints,
+        Passcodes, App-/eKeys, IC-Karten) aus der Cloud spiegeln. Pro Schloss+Typ wird die
+        Cloud-Liste autoritativ ersetzt (am Schloss entfernte Credentials verschwinden auch
+        lokal). Schlägt ein Typ-Abruf fehl (z. B. Modell ohne Fingerprint-Sensor), bleibt der
+        bisherige Mirror DIESES Typs unangetastet. Keine Cloud-Writes, idempotent."""
+        if self.credential_repo is None:
+            return {"credentials": 0}
+        client = self._client()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        total = 0
+        spezifikation = (
+            (CRED_FINGERPRINT, client.fingerprints, self._fingerprint_row),
+            (CRED_PASSCODE, client.passcodes, self._passcode_row),
+            (CRED_EKEY, client.ekeys, self._ekey_row),
+            (CRED_IC, client.ic_cards, self._ic_row),
+        )
+        for s in self.schloss_repo.list_all(nur_aktive=True):
+            for typ, fetch, build in spezifikation:
+                try:
+                    items = self._fetch_all_pages(fetch, s.ttlock_lock_id)
+                except TTLockError as e:
+                    logger.info("Credential-Sync: %s an Schloss %s übersprungen (%s).",
+                                typ, s.name, e)
+                    continue
+                rows = [build(s.id, it, now_iso) for it in items]
+                total += self.credential_repo.replace_for_schloss_typ(s.id, typ, rows)
+        self.konto_repo.touch_sync(now_iso)
+        logger.info("Credential-Sync: %d Credentials gespiegelt.", total)
+        return {"credentials": total}
 
     # --- Log-Sync -----------------------------------------------------------
     def logs_sync(self, *, schloss_id: Optional[int] = None,

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 59
 
 
 # ---------------------------------------------------------------------------
@@ -795,6 +795,34 @@ _TUER_APP_BERECHTIGUNG_TRIGGERS = (
     ('trig_tuer_app_berechtigung_audit_update', 'UPDATE', 'tuer_app_berechtigung', 'fn_tuer_app_berechtigung_audit_update'),
 )
 
+# ----------------------------------------------------------------------------
+# Read-only Credential-Mirror je Schloss (Schema v59): Fingerprints, Passcodes,
+# App-/eKeys und IC-Karten 1:1 aus der TTLock-Cloud spiegeln, damit auch
+# Credential-Typen sichtbar werden, die NICHT über unsere App liefen (Fingerprints/
+# Funk-Keys = bisheriger blinder Fleck). Reiner Mirror – kein History/Audit/Soft-Delete;
+# pro Schloss+Typ wird die Cloud-Liste autoritativ ersetzt. Indizes sind in der DDL
+# eingebettet (self-contained), da die Tabelle keine geteilten Index-/Trigger-Tupel nutzt.
+# ----------------------------------------------------------------------------
+_DDL_TUER_CREDENTIAL = """
+    CREATE TABLE IF NOT EXISTS tuer_credential (
+      id                   SERIAL PRIMARY KEY,
+      schloss_id           INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      typ                  TEXT NOT NULL,
+      ttlock_credential_id BIGINT,
+      name                 TEXT,
+      detail               TEXT,
+      gueltig_von          TEXT,
+      gueltig_bis          TEXT,
+      gesehen_am           TEXT,
+      raw                  JSONB,
+      created_at           TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_tuer_credential_schloss_id
+      ON tuer_credential(schloss_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uix_tuer_credential_schloss_typ_credid
+      ON tuer_credential(schloss_id, typ, ttlock_credential_id);
+"""
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -900,6 +928,7 @@ class Database:
             56: self._migrate_v55_to_v56,
             57: self._migrate_v56_to_v57,
             58: self._migrate_v57_to_v58,
+            59: self._migrate_v58_to_v59,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3477,6 +3506,19 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 58 WHERE id = 1")
 
+    def _migrate_v58_to_v59(self) -> None:
+        """Read-only Credential-Mirror je Schloss (tuer_credential): Fingerprints,
+        Passcodes, App-/eKeys und IC-Karten aus der TTLock-Cloud spiegeln. Reiner Mirror
+        (kein History/Audit/Soft-Delete) – macht Credential-Typen sichtbar, die NICHT über
+        unsere App liefen (Fingerprints/Funk-Keys = bisheriger blinder Fleck).
+
+        Idempotent; geteilte DDL (inkl. Indizes) mit dem Fresh-Schema.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TUER_CREDENTIAL)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 59 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -4701,6 +4743,8 @@ class Database:
         cur.execute(_DDL_ZUTRITT_TABLES)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
         cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
+        # Read-only Credential-Mirror je Schloss (Schema v59). DDL geteilt mit v58→v59.
+        cur.execute(_DDL_TUER_CREDENTIAL)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""

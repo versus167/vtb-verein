@@ -11,6 +11,9 @@ import pytest
 
 from app.services.zutritt_service import ZutrittService, build_alarm_digest
 from app.services.ttlock_client import TTLockError
+from app.models.schliessanlage import (
+    TuerCredential, CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
+)
 
 
 # --- Fakes ------------------------------------------------------------------
@@ -23,6 +26,11 @@ class FakeClient:
         self.deleted = []
         self.cards_by_lock = {}      # lock_id -> Liste Card-Dicts (für ic_cards/Import)
         self.add_should_fail = False
+        # Credential-Mirror (read-only): lock_id -> Liste typ-spezifischer Dicts
+        self.fingerprints_by_lock = {}
+        self.passcodes_by_lock = {}
+        self.ekeys_by_lock = {}
+        self.fingerprint_should_fail = False   # simuliert Modell ohne Sensor (errcode)
 
     def unlock(self, lock_id):
         self.unlocked.append(lock_id); return {"errcode": 0}
@@ -43,6 +51,17 @@ class FakeClient:
 
     def ic_cards(self, lock_id, page_no=1, page_size=100):
         return {"list": self.cards_by_lock.get(lock_id, [])}
+
+    def fingerprints(self, lock_id, page_no=1, page_size=100):
+        if self.fingerprint_should_fail:
+            raise TTLockError("fingerprint/list nicht unterstützt", errcode=-3003)
+        return {"list": self.fingerprints_by_lock.get(lock_id, []), "pages": 1}
+
+    def passcodes(self, lock_id, page_no=1, page_size=100):
+        return {"list": self.passcodes_by_lock.get(lock_id, []), "pages": 1}
+
+    def ekeys(self, lock_id, page_no=1, page_size=100):
+        return {"list": self.ekeys_by_lock.get(lock_id, []), "pages": 1}
 
     def gateway_list(self, **k):
         return {"list": [{"gatewayId": 2147896, "isOnline": 1}]}
@@ -199,6 +218,23 @@ class FakeLogRepo:
     def max_server_date(self, schloss_id):
         sds = [r.server_date for r in self.rows if r.schloss_id == schloss_id and r.server_date]
         return max(sds) if sds else None
+
+
+class FakeCredentialRepo:
+    """Mirror je (schloss_id, typ) – ersetzt autoritativ, wie der echte Repo."""
+    def __init__(self):
+        self.by_schloss_typ = {}     # (schloss_id, typ) -> list[TuerCredential]
+
+    def replace_for_schloss_typ(self, schloss_id, typ, rows):
+        self.by_schloss_typ[(schloss_id, typ)] = list(rows)
+        return len(rows)
+
+    def list_for_schloss(self, schloss_id):
+        out = []
+        for (sid, _typ), rows in self.by_schloss_typ.items():
+            if sid == schloss_id:
+                out.extend(rows)
+        return out
 
 
 class FakeKontoRepo:
@@ -380,6 +416,89 @@ def test_ic_cards_sync_importiert_chip_und_berechtigung_idempotent():
     # zweiter Lauf: nichts Neues (idempotent)
     res2 = svc.ic_cards_sync()
     assert res2["chips_neu"] == 0 and res2["berechtigungen_neu"] == 0
+
+
+# --- Credential-Mirror (read-only Inventar je Schloss) ----------------------
+def _cred_service(fake_client):
+    return ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
+        chip_repo=FakeChipRepo({}), berechtigung_repo=FakeBerechtigungRepo(),
+        log_repo=FakeLogRepo(), credential_repo=FakeCredentialRepo(),
+        client_factory=lambda: fake_client,
+    )
+
+
+def test_credentials_sync_spiegelt_alle_typen():
+    fake = FakeClient()
+    svc = _cred_service(fake)
+    svc.inventar_sync()                                   # Schloss id=1, lockId 30392116
+    fake.fingerprints_by_lock[30392116] = [
+        {"fingerprintId": 1, "fingerprintName": "Daumen rechts", "startDate": 0, "endDate": 0}]
+    fake.passcodes_by_lock[30392116] = [
+        {"keyboardPwdId": 5, "keyboardPwdName": "Putzdienst", "keyboardPwd": "1234",
+         "startDate": 0, "endDate": 1782456408000}]
+    fake.ekeys_by_lock[30392116] = [
+        {"keyId": 9, "keyName": "Trainer", "username": "max@example.com",
+         "startDate": 0, "endDate": 0}]
+    fake.cards_by_lock[30392116] = [
+        {"cardId": 42, "cardName": "Chip blau", "cardNumber": "818229331",
+         "startDate": 0, "endDate": 0}]
+
+    res = svc.credentials_sync()
+    assert res["credentials"] == 4
+    creds = {c.typ: c for c in svc.credential_repo.list_for_schloss(1)}
+    assert creds[CRED_FINGERPRINT].name == "Daumen rechts"
+    assert creds[CRED_FINGERPRINT].ttlock_credential_id == 1
+    assert creds[CRED_PASSCODE].name == "Putzdienst"
+    assert creds[CRED_PASSCODE].gueltig_bis is not None      # ms → ISO
+    # Passcode-Klartext darf NICHT mitgespeichert werden (keine neue Angriffsfläche).
+    assert "keyboardPwd" not in (creds[CRED_PASSCODE].raw or {})
+    assert creds[CRED_EKEY].detail == "max@example.com"      # eKey → TTLock-Konto
+    assert creds[CRED_IC].detail == "818229331"              # IC → Kartennummer
+    assert all(c.gesehen_am for c in creds.values())
+
+
+def test_credentials_sync_ersetzt_und_entfernt_verschwundene():
+    fake = FakeClient()
+    svc = _cred_service(fake)
+    svc.inventar_sync()
+    fake.passcodes_by_lock[30392116] = [
+        {"keyboardPwdId": 1, "keyboardPwdName": "A", "startDate": 0, "endDate": 0},
+        {"keyboardPwdId": 2, "keyboardPwdName": "B", "startDate": 0, "endDate": 0}]
+    assert svc.credentials_sync()["credentials"] == 2
+    # Einer wird am Schloss entfernt → verschwindet beim nächsten Sync auch lokal.
+    fake.passcodes_by_lock[30392116] = [
+        {"keyboardPwdId": 1, "keyboardPwdName": "A", "startDate": 0, "endDate": 0}]
+    svc.credentials_sync()
+    pw = [c for c in svc.credential_repo.list_for_schloss(1) if c.typ == CRED_PASSCODE]
+    assert len(pw) == 1 and pw[0].ttlock_credential_id == 1
+
+
+def test_credentials_sync_typ_fehler_laesst_bestand_unangetastet():
+    fake = FakeClient()
+    fake.fingerprint_should_fail = True          # z. B. Schloss ohne Fingerprint-Sensor
+    fake.ekeys_by_lock[30392116] = [
+        {"keyId": 9, "keyName": "Trainer", "username": "u", "startDate": 0, "endDate": 0}]
+    svc = _cred_service(fake)
+    svc.inventar_sync()
+    # Bestehender Fingerprint-Mirror (z. B. aus früherem erfolgreichen Sync).
+    svc.credential_repo.replace_for_schloss_typ(1, CRED_FINGERPRINT, [
+        TuerCredential(schloss_id=1, typ=CRED_FINGERPRINT, ttlock_credential_id=7,
+                       name="alt", gesehen_am="2026-06-01T00:00:00+00:00")])
+
+    res = svc.credentials_sync()                 # darf NICHT werfen
+    by_typ = {c.typ: c for c in svc.credential_repo.list_for_schloss(1)}
+    # Fehlgeschlagener Typ bleibt erhalten (kein fälschliches Leeren), eKey kommt dazu.
+    assert by_typ[CRED_FINGERPRINT].name == "alt"
+    assert by_typ[CRED_EKEY].ttlock_credential_id == 9
+    assert res["credentials"] == 1               # nur der eingefügte eKey zählt
+
+
+def test_credentials_sync_ohne_repo_ist_noop():
+    # Service ohne credential_repo (Rückwärtskompatibilität) → kein Cloud-Call, 0.
+    svc = _service()                             # credential_repo=None
+    svc.inventar_sync()
+    assert svc.credentials_sync() == {"credentials": 0}
 
 
 # --- Phase 4: Alarm-Erkennung / Benachrichtigung ----------------------------

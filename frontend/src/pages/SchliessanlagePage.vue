@@ -178,6 +178,34 @@
               keine befristeten App-Berechtigungen</q-item-section></q-item>
           </q-list>
 
+          <div class="row items-center q-mt-md">
+            <div class="text-subtitle2">Am Schloss eingerichtet</div>
+            <q-space />
+            <q-chip dense size="sm" color="grey-3">{{ schlossDetail.credentials?.length || 0 }}</q-chip>
+          </div>
+          <div class="text-caption text-grey-6 q-mb-xs">
+            Read-only aus der TTLock-Cloud gespiegelt – zeigt auch Credentials, die nicht über die App liefen.
+          </div>
+          <div v-if="!schlossDetail.credentials?.length" class="text-grey text-caption q-mb-sm">
+            keine Credentials gespiegelt (oder noch kein Sync)
+          </div>
+          <template v-for="g in credentialGruppen(schlossDetail.credentials)" :key="g.typ">
+            <div class="text-caption text-weight-medium text-grey-8 q-mt-sm q-mb-xs">
+              <q-icon :name="g.icon" size="16px" class="q-mr-xs" />{{ g.label }} ({{ g.items.length }})
+            </div>
+            <q-list dense bordered separator>
+              <q-item v-for="c in g.items" :key="c.typ + '-' + c.id">
+                <q-item-section>
+                  <q-item-label>{{ c.name || ('#' + (c.ttlock_credential_id ?? '?')) }}</q-item-label>
+                  <q-item-label caption>
+                    <span v-if="c.detail">{{ c.detail }} · </span>
+                    {{ c.gueltig_bis ? ('gültig bis ' + fmtDateTime(c.gueltig_bis)) : 'unbefristet' }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </template>
+
           <div class="text-subtitle2 q-mt-md">Zutrittslog</div>
           <div v-if="schlossDetail.darf_protokoll" class="text-caption text-grey-6 q-mb-xs">
             <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
@@ -445,6 +473,22 @@ const RECORD_TYPES = {
   46: 'Entriegeln (Unlock-Key)', 47: 'Verriegeln (Lock-Key)', 48: 'Mehrf. Falsch-Passcode',
 }
 const recordTypeLabel = (t) => (t == null ? '–' : (RECORD_TYPES[t] || ('?' + t)))
+
+// Credential-Typen am Schloss (read-only Mirror) → Anzeige-Reihenfolge + Icon/Label.
+const CRED_TYP_META = {
+  fingerprint: { label: 'Fingerprints', icon: 'fingerprint' },
+  passcode: { label: 'Passcodes', icon: 'dialpad' },
+  ekey: { label: 'App-/eKeys', icon: 'phonelink_ring' },
+  ic: { label: 'IC-Karten', icon: 'badge' },
+}
+const CRED_TYP_ORDER = ['fingerprint', 'passcode', 'ekey', 'ic']
+function credentialGruppen(credentials) {
+  const by = {}
+  for (const c of credentials || []) (by[c.typ] ||= []).push(c)
+  return CRED_TYP_ORDER
+    .filter((t) => by[t]?.length)
+    .map((t) => ({ typ: t, ...CRED_TYP_META[t], items: by[t] }))
+}
 
 const tab = ref('schloesser')
 const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false, letzter_sync_at: null })
