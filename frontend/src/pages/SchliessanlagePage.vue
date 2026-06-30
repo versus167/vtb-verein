@@ -122,7 +122,12 @@
               <q-item-section side>{{ schlossDetail.schloss?.akku_prozent ?? '–' }}%</q-item-section></q-item>
           </q-list>
 
-          <div class="text-subtitle2 q-mt-md">Zugeteilte Chips</div>
+          <div class="row items-center q-mt-md">
+            <div class="text-subtitle2">Zugeteilte Chips</div>
+            <q-space />
+            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
+              label="Chip anlernen" @click="openBerAnlernenForSchloss" />
+          </div>
           <q-list dense bordered separator>
             <q-item v-for="b in schlossDetail.berechtigungen" :key="b.id">
               <q-item-section>
@@ -130,10 +135,19 @@
                   <span class="text-grey-6">Nr. {{ b.kartennummer }}</span></q-item-label>
                 <q-item-label caption>
                   {{ b.mitglied_vorname ? (b.mitglied_vorname + ' ' + (b.mitglied_nachname||'')) : '—' }}
-                  <span v-if="b.gueltig_bis">· gültig bis {{ b.gueltig_bis }}</span>
+                  <span v-if="b.gueltig_bis">· gültig bis {{ fmtDateTime(b.gueltig_bis) }}</span>
+                  <span v-if="b.sync_fehler" class="text-negative">· {{ b.sync_fehler }}</span>
                 </q-item-label>
               </q-item-section>
-              <q-item-section side><q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip></q-item-section>
+              <q-item-section side>
+                <div class="row items-center q-gutter-xs no-wrap">
+                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
+                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
+                    @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
+                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="link_off"
+                    color="negative" @click="revokeBer(b)"><q-tooltip>Entziehen</q-tooltip></q-btn>
+                </div>
+              </q-item-section>
             </q-item>
             <q-item v-if="!schlossDetail.berechtigungen?.length"><q-item-section class="text-grey">
               keine Chips zugeteilt</q-item-section></q-item>
@@ -204,11 +218,30 @@
                : ('liegt: ' + (chipDetail.chip?.aufbewahrungsort || '—')) }}
           </div>
 
-          <div class="text-subtitle2 q-mt-md">Öffnet diese Schlösser</div>
+          <div class="row items-center q-mt-md">
+            <div class="text-subtitle2">Öffnet diese Schlösser</div>
+            <q-space />
+            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
+              label="An Schloss anlernen" @click="openBerAnlernenForChip" />
+          </div>
           <q-list dense bordered separator>
             <q-item v-for="b in chipDetail.berechtigungen" :key="b.id">
-              <q-item-section>{{ b.schloss_name }}</q-item-section>
-              <q-item-section side><q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip></q-item-section>
+              <q-item-section>
+                <q-item-label>{{ b.schloss_name }}</q-item-label>
+                <q-item-label caption v-if="b.gueltig_bis || b.sync_fehler">
+                  <span v-if="b.gueltig_bis">gültig bis {{ fmtDateTime(b.gueltig_bis) }}</span>
+                  <span v-if="b.sync_fehler" class="text-negative">· {{ b.sync_fehler }}</span>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row items-center q-gutter-xs no-wrap">
+                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
+                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
+                    @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
+                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="link_off"
+                    color="negative" @click="revokeBer(b)"><q-tooltip>Entziehen</q-tooltip></q-btn>
+                </div>
+              </q-item-section>
             </q-item>
             <q-item v-if="!chipDetail.berechtigungen?.length"><q-item-section class="text-grey">
               keine Berechtigungen</q-item-section></q-item>
@@ -309,6 +342,67 @@
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn unelevated color="primary" label="Erlauben" :loading="saving" @click="saveAppGrant" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Chip anlernen (Chip ↔ Schloss) ====================== -->
+    <q-dialog v-model="berDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:460px'">
+        <q-card-section class="text-h6">Chip anlernen</q-card-section>
+        <q-card-section class="q-gutter-sm q-pt-none">
+          <div class="text-caption text-grey-7" v-if="berForm.mode === 'chip'">
+            Schloss: {{ berForm.schloss_name }}
+          </div>
+          <div class="text-caption text-grey-7" v-else>Chip: {{ berForm.chip_name }}</div>
+
+          <q-select v-if="berForm.mode === 'chip'" v-model="berForm.chip" :options="chipOptions"
+            :option-label="chipLabel" use-input input-debounce="0" fill-input hide-selected
+            @filter="filterChips" label="Chip *" outlined dense clearable hint="nach Bezeichnung/Nummer suchen">
+            <template #no-option><q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item></template>
+          </q-select>
+          <q-select v-else v-model="berForm.schloss" :options="schlossOptions"
+            :option-label="o => o && o.name" use-input input-debounce="0" fill-input hide-selected
+            @filter="filterSchloesser" label="Schloss *" outlined dense clearable hint="nach Name suchen">
+            <template #no-option><q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item></template>
+          </q-select>
+
+          <q-input v-model="berForm.gueltig_von" type="datetime-local" label="Gültig ab"
+            outlined dense stack-label hint="Standard: jetzt" />
+          <q-select v-model="berForm.dauer" :options="dauerOptionen" emit-value map-options
+            label="Gültig bis" outlined dense />
+          <q-input v-if="berForm.dauer === 'custom'" v-model="berForm.gueltig_bis_custom"
+            type="datetime-local" label="Konkretes Datum/Uhrzeit" outlined dense stack-label />
+          <div class="text-caption text-grey-6">
+            Die IC-Karte wird per Gateway am Schloss angelernt – die Kartennummer muss dem
+            Schloss bekannt sein (am Schloss gescannt oder per Leser erfasst).
+          </div>
+          <div v-if="berError" class="text-negative text-caption">{{ berError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn unelevated color="primary" label="Anlernen" :loading="saving" @click="saveBer" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Gültigkeit ändern ====================== -->
+    <q-dialog v-model="berEditDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:440px'">
+        <q-card-section class="text-h6">Gültigkeit ändern</q-card-section>
+        <q-card-section class="q-gutter-sm q-pt-none">
+          <div class="text-caption text-grey-7">{{ berEditForm.name }}</div>
+          <q-input v-model="berEditForm.gueltig_von" type="datetime-local" label="Gültig ab"
+            outlined dense stack-label />
+          <q-select v-model="berEditForm.dauer" :options="dauerOptionen" emit-value map-options
+            label="Gültig bis" outlined dense />
+          <q-input v-if="berEditForm.dauer === 'custom'" v-model="berEditForm.gueltig_bis_custom"
+            type="datetime-local" label="Konkretes Datum/Uhrzeit" outlined dense stack-label />
+          <div v-if="berError" class="text-negative text-caption">{{ berError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn unelevated color="primary" label="Speichern" :loading="saving" @click="saveBerEdit" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -485,6 +579,23 @@ function nowLocalInput() {
   const d = new Date(); d.setSeconds(0, 0)
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
+function toLocalInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+// datetime-local (lokale Zeit) + Dauer-Preset → {vonIso, bisIso} als UTC-ISO.
+function vonBisFromForm(f) {
+  const vonIso = f.gueltig_von ? new Date(f.gueltig_von).toISOString() : null
+  let bisIso = null
+  if (f.dauer === 'custom') {
+    bisIso = f.gueltig_bis_custom ? new Date(f.gueltig_bis_custom).toISOString() : null
+  } else if (f.dauer !== 'none') {
+    const base = f.gueltig_von ? new Date(f.gueltig_von) : new Date()
+    bisIso = new Date(base.getTime() + DAUER_MS[f.dauer]).toISOString()
+  }
+  return { vonIso, bisIso }
+}
 async function loadUsers() {
   if (users.value.length) return
   try {
@@ -508,14 +619,7 @@ async function saveAppGrant() {
   const f = appGrantForm.value
   if (!f.user?.id) { appGrantError.value = 'Bitte einen Benutzer auswählen.'; return }
   // Eindeutige Zeiten als UTC-ISO senden (datetime-local ist lokale Zeit ohne TZ).
-  const vonIso = f.gueltig_von ? new Date(f.gueltig_von).toISOString() : null
-  let bisIso = null
-  if (f.dauer === 'custom') {
-    bisIso = f.gueltig_bis_custom ? new Date(f.gueltig_bis_custom).toISOString() : null
-  } else if (f.dauer !== 'none') {
-    const base = f.gueltig_von ? new Date(f.gueltig_von) : new Date()
-    bisIso = new Date(base.getTime() + DAUER_MS[f.dauer]).toISOString()
-  }
+  const { vonIso, bisIso } = vonBisFromForm(f)
   saving.value = true; appGrantError.value = ''
   try {
     await api.post(`/api/schliessanlage/schloesser/${schlossDetail.value.schloss.id}/app-berechtigungen`, {
@@ -535,6 +639,97 @@ function revokeApp(a) {
       await openSchloss(schlossDetail.value.schloss.id)
     } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entzug fehlgeschlagen' }) }
   })
+}
+
+// --- Chip anlernen / Berechtigungen (Chip ↔ Schloss) ---
+const berDialog = ref(false)
+const berForm = ref({})
+const berError = ref('')
+const chipOptions = ref([])
+const schlossOptions = ref([])
+const chipLabel = (c) => (c ? `${c.bezeichnung || ('Chip #' + c.id)} (Nr. ${c.kartennummer})` : '')
+function filterChips(val, update) {
+  const n = (val || '').toLowerCase()
+  update(() => { chipOptions.value = n ? chips.value.filter(c => chipLabel(c).toLowerCase().includes(n)) : chips.value })
+}
+function filterSchloesser(val, update) {
+  const n = (val || '').toLowerCase()
+  update(() => { schlossOptions.value = n ? schloesser.value.filter(s => (s.name || '').toLowerCase().includes(n)) : schloesser.value })
+}
+async function openBerAnlernenForSchloss() {
+  if (!chips.value.length) await loadChips()
+  chipOptions.value = chips.value
+  berForm.value = { mode: 'chip', schloss_id: schlossDetail.value.schloss.id,
+    schloss_name: schlossDetail.value.schloss.name, chip: null,
+    gueltig_von: nowLocalInput(), dauer: 'none', gueltig_bis_custom: '' }
+  berError.value = ''; berDialog.value = true
+}
+function openBerAnlernenForChip() {
+  schlossOptions.value = schloesser.value
+  const c = chipDetail.value.chip
+  berForm.value = { mode: 'schloss', chip_id: c.id,
+    chip_name: c.bezeichnung || ('Chip #' + c.id), schloss: null,
+    gueltig_von: nowLocalInput(), dauer: 'none', gueltig_bis_custom: '' }
+  berError.value = ''; berDialog.value = true
+}
+async function saveBer() {
+  const f = berForm.value
+  let chip_id, schloss_id
+  if (f.mode === 'chip') {
+    if (!f.chip?.id) { berError.value = 'Bitte einen Chip wählen.'; return }
+    chip_id = f.chip.id; schloss_id = f.schloss_id
+  } else {
+    if (!f.schloss?.id) { berError.value = 'Bitte ein Schloss wählen.'; return }
+    chip_id = f.chip_id; schloss_id = f.schloss.id
+  }
+  const { vonIso, bisIso } = vonBisFromForm(f)
+  saving.value = true; berError.value = ''
+  try {
+    await api.post('/api/schliessanlage/berechtigungen',
+      { chip_id, schloss_id, gueltig_von: vonIso, gueltig_bis: bisIso })
+    berDialog.value = false
+    if (f.mode === 'chip') await openSchloss(schloss_id); else await openChip(chip_id)
+  } catch (e) { berError.value = e.response?.data?.detail || 'Anlernen fehlgeschlagen' }
+  finally { saving.value = false }
+}
+
+const berEditDialog = ref(false)
+const berEditForm = ref({})
+function openBerEdit(b) {
+  berEditForm.value = { id: b.id,
+    name: `${b.chip_bezeichnung || ('Chip #' + b.chip_id)} @ ${b.schloss_name || ''}`.trim(),
+    gueltig_von: b.gueltig_von ? toLocalInput(b.gueltig_von) : nowLocalInput(),
+    dauer: b.gueltig_bis ? 'custom' : 'none',
+    gueltig_bis_custom: b.gueltig_bis ? toLocalInput(b.gueltig_bis) : '' }
+  berError.value = ''; berEditDialog.value = true
+}
+async function saveBerEdit() {
+  const f = berEditForm.value
+  const { vonIso, bisIso } = vonBisFromForm(f)
+  saving.value = true; berError.value = ''
+  try {
+    await api.put(`/api/schliessanlage/berechtigungen/${f.id}`,
+      { gueltig_von: vonIso, gueltig_bis: bisIso })
+    berEditDialog.value = false
+    await reloadOffeneDetails()
+  } catch (e) { berError.value = e.response?.data?.detail || 'Ändern fehlgeschlagen' }
+  finally { saving.value = false }
+}
+function revokeBer(b) {
+  $q.dialog({ title: 'Berechtigung entziehen',
+    message: `Chip „${b.chip_bezeichnung || b.kartennummer || ('#' + b.chip_id)}"`
+      + ` von Schloss „${b.schloss_name || ''}" entziehen? Die IC-Karte wird vom Schloss entfernt.`,
+    cancel: true, ok: { label: 'Entziehen', color: 'negative' } }).onOk(async () => {
+    try {
+      await api.delete(`/api/schliessanlage/berechtigungen/${b.id}`)
+      await reloadOffeneDetails()
+    } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entzug fehlgeschlagen' }) }
+  })
+}
+// Das gerade offene Detail (Schloss und/oder Chip) neu laden.
+async function reloadOffeneDetails() {
+  if (schlossDialog.value && schlossDetail.value.schloss) await openSchloss(schlossDetail.value.schloss.id)
+  if (chipDialog.value && chipDetail.value.chip) await openChip(chipDetail.value.chip.id)
 }
 
 // --- Chip-Detail/Edit ---

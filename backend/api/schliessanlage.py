@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError
+from app.services.ttlock_client import TTLockError
 from ..core.deps import CurrentUser, DB
 from .auth import _client_ip
 
@@ -70,6 +71,18 @@ class AppBerechtigungIn(BaseModel):
     grund: Optional[str] = None
 
 
+class BerechtigungIn(BaseModel):
+    chip_id: int
+    schloss_id: int
+    gueltig_von: Optional[str] = None
+    gueltig_bis: Optional[str] = None
+
+
+class BerechtigungUpdateIn(BaseModel):
+    gueltig_von: Optional[str] = None
+    gueltig_bis: Optional[str] = None
+
+
 # --- Status / Sync ----------------------------------------------------------
 @router.get("/status")
 def status_info(user: CurrentUser, db: DB):
@@ -108,6 +121,7 @@ def sync(request: Request, user: CurrentUser, db: DB,
         ergebnis = {}
         if not logs_only:
             ergebnis.update(db.zutritt.inventar_sync())
+            ergebnis.update(db.zutritt.ic_cards_sync())
         ergebnis.update(db.zutritt.logs_sync(backfill_days=backfill_days))
     except ZutrittNichtKonfiguriertError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -255,6 +269,87 @@ def app_berechtigung_entziehen(berechtigung_id: int, request: Request,
             "schliessanlage_app_revoke", category="schliessanlage",
             user_id=user.id, username=user.username, ip=_client_ip(request),
             detail=f"App-Berechtigung {berechtigung_id} entzogen",
+        )
+    except Exception:
+        pass
+
+
+# --- Berechtigungen (Chip ↔ Schloss = IC-Card, Phase 2) ---------------------
+@router.post("/berechtigungen", status_code=status.HTTP_201_CREATED)
+def berechtigung_anlernen(data: BerechtigungIn, request: Request, user: CurrentUser, db: DB):
+    """Chip an einem Schloss anlernen (IC-Karte per Gateway aufspielen)."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    try:
+        ber = db.zutritt.chip_anlernen(
+            chip_id=data.chip_id, schloss_id=data.schloss_id,
+            gueltig_von=data.gueltig_von or None, gueltig_bis=data.gueltig_bis or None,
+            erteilt_von=user.id, actor=user.username,
+        )
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TTLockError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"TTLock-Cloud: {e}")
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_chip_anlernen", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"Chip {data.chip_id} an Schloss {data.schloss_id} angelernt",
+        )
+    except Exception:
+        pass
+    return ber
+
+
+@router.put("/berechtigungen/{berechtigung_id}")
+def berechtigung_aendern(berechtigung_id: int, data: BerechtigungUpdateIn,
+                         request: Request, user: CurrentUser, db: DB):
+    """Gültigkeitszeitraum einer angelernten Berechtigung ändern (per Gateway)."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    try:
+        ber = db.zutritt.berechtigung_aendern(
+            berechtigung_id=berechtigung_id,
+            gueltig_von=data.gueltig_von or None, gueltig_bis=data.gueltig_bis or None,
+            actor=user.username,
+        )
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TTLockError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"TTLock-Cloud: {e}")
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_berechtigung_aendern", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"Berechtigung {berechtigung_id} Gültigkeit geändert",
+        )
+    except Exception:
+        pass
+    return ber
+
+
+@router.delete("/berechtigungen/{berechtigung_id}", status_code=status.HTTP_204_NO_CONTENT)
+def berechtigung_entziehen(berechtigung_id: int, request: Request, user: CurrentUser, db: DB):
+    """Berechtigung entziehen (IC-Karte per Gateway vom Schloss entfernen + Soft-Delete)."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    try:
+        db.zutritt.berechtigung_entziehen(berechtigung_id=berechtigung_id, actor=user.username)
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except TTLockError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"TTLock-Cloud: {e}")
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_berechtigung_entziehen", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=f"Berechtigung {berechtigung_id} entzogen",
         )
     except Exception:
         pass

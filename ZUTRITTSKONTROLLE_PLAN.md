@@ -1,10 +1,17 @@
 # Plan: Zutrittskontrolle / Schließsystem (TT-Lock)
 
-> Status (2026-06-29): **Phase 1 (read-only) umgesetzt + getestet** auf Branch
-> `feature/zutrittskontrolle`, Schema **v57** angelegt. Zusätzlich bereits **Fernöffnen/
-> -verriegeln per App** implementiert (vorgezogen aus Phase 2/4). Offen: Chip-Anlernen über
-> die Cloud (Phase 2), Abteilungs-Scoping (Phase 3), Self-Service-Sichten (Phase 4) sowie
-> die unten ergänzte **kurzzeitige App-Betätigungs-Berechtigung**.
+> Status (2026-06-30): **Phase 1 (read-only)** und **Phase 2 (Chip-Verwaltung über die
+> Cloud)** umgesetzt + getestet auf Branch `feature/zutrittskontrolle`, Schema **v58**.
+> Zusätzlich **Fernöffnen/-verriegeln per App** und die **kurzzeitige App-Betätigungs-
+> Berechtigung**. Offen: Abteilungs-Scoping (Phase 3), Self-Service-Sichten (Phase 4).
+>
+> Phase 2 konkret: IC-Card-Writes über Gateway (`identityCard/add|changePeriod|delete`)
+> als signierter POST, `chip_anlernen`/`berechtigung_aendern`/`berechtigung_entziehen` im
+> `ZutrittService`, `ic_cards_sync` (am Schloss per BLE angelernte Karten → Chips/
+> Berechtigungen spiegeln, idempotent), API `POST/PUT/DELETE /berechtigungen`, Anlern-/
+> Ändern-/Entziehen-Dialoge im Schloss- und Chip-Detail. Cloud-Writes wurden mit Fakes
+> unit-getestet, **noch nicht** live gegen ein echtes Schloss ausgeführt (braucht
+> gerätegenaue Freigabe).
 >
 > Voraussetzung vom Verein bestätigt: **An allen Standorten sind Gateways vorhanden.**
 > Damit ist Fern­verwaltung (Chips anlernen/sperren) **und** automatischer Log-Abruf
@@ -310,10 +317,12 @@ Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
    Inventar-Sync (Schlösser/Gateways), **Log-Sync + Anzeige**, Cron-Command, API + UI.
    Zusätzlich vorgezogen: **Fernöffnen/-verriegeln per App** (`v3/lock/unlock|lock`,
    Recht `schliessanlage.oeffnen` ODER gültige Berechtigung).
-2. **Chip-Verwaltung:** Chips ↔ Mitglieder pflegen, Berechtigungen vergeben/verlängern/
-   sperren über Gateway (`identityCard/add|changePeriod|delete`), Gültigkeitszeiträume,
-   Kartennummer→Chip-Auflösung in den Logs. **Erst hiermit** trägt der Self-Service-Pfad
-   des Fernöffnens echte Daten.
+2. ✅ **Chip-Verwaltung (umgesetzt):** Chips ↔ Mitglieder pflegen, Berechtigungen
+   vergeben/verlängern/entziehen über Gateway (`identityCard/add|changePeriod|delete`),
+   Gültigkeitszeiträume, Kartennummer→Chip-Auflösung in den Logs, plus `ic_cards_sync`
+   (am Schloss angelernte Karten spiegeln). **Erst hiermit** trägt der Self-Service-Pfad
+   des Fernöffnens echte Daten. Cloud-Writes sind unit-getestet (Fakes), aber noch nicht
+   live an einem echten Schloss verifiziert (gerätegenaue Freigabe nötig).
 3. **Rechte & DSGVO:** Permission-Matrix-Integration, **Abteilungs-Scoping**
    (`schloss.abteilung_id`, analog Personen-Pilot), Aufbewahrung/Löschung der Logs über
    das **Prune-System**, Datenschutzhinweis für Mitglieder.

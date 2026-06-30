@@ -1,11 +1,14 @@
 """
-ZutrittService – Domänen-Orchestrierung über der TTLock-Cloud (Phase 1: read-only).
+ZutrittService – Domänen-Orchestrierung über der TTLock-Cloud.
 
 Aufgaben:
 - `inventar_sync()`  – Schlösser/Gateways aus der Cloud spiegeln (Akku, Online-Status).
 - `logs_sync()`      – Zutrittslogs paginiert seit Cursor holen, idempotent (recordId)
                        speichern, Kartennummer → Chip → Mitglied auflösen, Cursor +
                        Status-Snapshot (letzter Schließvorgang) fortschreiben.
+- `ic_cards_sync()`  – am Schloss angelernte IC-Karten spiegeln (Chips/Berechtigungen).
+- `chip_anlernen()` / `berechtigung_aendern()` / `berechtigung_entziehen()` – Cloud-Writes
+                       (`identityCard/add|changePeriod|delete`) über das Gateway (Phase 2).
 
 Der TTLock-Client wird aus der Env gebaut (ein Vereinskonto; Secrets nur in .env);
 Token-Persistenz läuft über das ttlock_konto-Repo. Für Tests kann ein `client_factory`
@@ -17,9 +20,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from app.models.schliessanlage import (
-    TuerZutrittLog, record_type_label, IC_CARD_RECORD_TYPES,
+    TuerZutrittLog, SchluesselChip, TuerBerechtigung, record_type_label,
+    IC_CARD_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
 )
-from app.services.ttlock_client import TTLockClient
+from app.services.ttlock_client import TTLockClient, TTLockError
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,16 @@ def _ms_to_iso(ms: Optional[int]) -> Optional[str]:
         return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
     except (ValueError, OSError, TypeError):
         return None
+
+
+def _iso_to_ms(iso: Optional[str]) -> int:
+    """ISO-Zeitstempel → ms (für TTLock). None/leer → 0 (= unbefristet bei TTLock)."""
+    if not iso:
+        return 0
+    try:
+        return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
+    except (ValueError, TypeError):
+        return 0
 
 
 class ZutrittService:
@@ -150,6 +164,129 @@ class ZutrittService:
         self._client().remote_lock(schloss.ttlock_lock_id)
         logger.info("Schloss %s (lockId=%s) fernverriegelt.", schloss.name, schloss.ttlock_lock_id)
         return {"ok": True, "schloss": schloss.name}
+
+    # --- Chip-Anlernen / Berechtigungen (Phase 2, Cloud-Writes) ------------
+    def chip_anlernen(self, *, chip_id: int, schloss_id: int,
+                      gueltig_von: Optional[str] = None, gueltig_bis: Optional[str] = None,
+                      erteilt_von: Optional[int] = None, actor: str = "SYSTEM") -> TuerBerechtigung:
+        """Chip an einem Schloss anlernen: lokale Berechtigung (pending) anlegen, dann per
+        Gateway `identityCard/add` → `cardId` + `sync_status` festschreiben. Bei Cloud-Fehler
+        bleibt die Zeile als `fehler` stehen (mit Meldung) und der Fehler wird geworfen."""
+        chip = self.chip_repo.get(chip_id)
+        if not chip:
+            raise ValueError("Chip nicht gefunden")
+        if not (chip.kartennummer or "").strip():
+            raise ValueError("Chip hat keine Kartennummer – Anlernen über Gateway nicht möglich")
+        schloss = self.schloss_repo.get(schloss_id)
+        if not schloss:
+            raise ValueError("Schloss nicht gefunden")
+        if self.berechtigung_repo.find_active_for_chip_schloss(chip_id, schloss_id):
+            raise ValueError("Chip ist diesem Schloss bereits zugeteilt")
+
+        ber = self.berechtigung_repo.create(TuerBerechtigung(
+            chip_id=chip_id, schloss_id=schloss_id, gueltig_von=gueltig_von,
+            gueltig_bis=gueltig_bis, sync_status=SYNC_PENDING, erteilt_von=erteilt_von,
+        ), actor)
+        card_name = chip.bezeichnung or f"Chip {chip.kartennummer}"
+        try:
+            resp = self._client().ic_card_add(
+                schloss.ttlock_lock_id, chip.kartennummer, card_name,
+                _iso_to_ms(gueltig_von), _iso_to_ms(gueltig_bis),
+            )
+        except TTLockError as e:
+            self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
+                                            sync_status=SYNC_FEHLER, sync_fehler=str(e), by=actor)
+            raise
+        card_id = resp.get("cardId")
+        logger.info("Chip %s an Schloss %s angelernt (cardId=%s).",
+                    chip.kartennummer, schloss.name, card_id)
+        return self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
+                                               sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+
+    def berechtigung_aendern(self, *, berechtigung_id: int,
+                             gueltig_von: Optional[str] = None,
+                             gueltig_bis: Optional[str] = None,
+                             actor: str = "SYSTEM") -> TuerBerechtigung:
+        """Gültigkeitszeitraum einer angelernten Berechtigung per Gateway ändern."""
+        ber = self.berechtigung_repo.get(berechtigung_id)
+        if not ber:
+            raise ValueError("Berechtigung nicht gefunden")
+        if not ber.ttlock_card_id:
+            raise ValueError("Berechtigung ist noch nicht mit der Cloud synchronisiert")
+        schloss = self.schloss_repo.get(ber.schloss_id)
+        if not schloss:
+            raise ValueError("Schloss nicht gefunden")
+        try:
+            self._client().ic_card_change_period(
+                schloss.ttlock_lock_id, ber.ttlock_card_id,
+                _iso_to_ms(gueltig_von), _iso_to_ms(gueltig_bis),
+            )
+        except TTLockError as e:
+            self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                            sync_status=SYNC_FEHLER, sync_fehler=str(e), by=actor)
+            raise
+        logger.info("Berechtigung %s: Gültigkeit geändert (%s–%s).",
+                    berechtigung_id, gueltig_von or "sofort", gueltig_bis or "unbefristet")
+        return self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
+                                                    gueltig_bis=gueltig_bis, by=actor)
+
+    def berechtigung_entziehen(self, *, berechtigung_id: int, actor: str = "SYSTEM") -> dict:
+        """Berechtigung entziehen: IC-Karte per Gateway vom Schloss entfernen (sofern bereits
+        angelernt), dann die lokale Zeile soft-löschen. Schlägt der Cloud-Delete fehl, bleibt
+        die Zeile als `fehler` bestehen (kein lokaler Soft-Delete) – die Karte ist sonst noch
+        gültig am Schloss."""
+        ber = self.berechtigung_repo.get(berechtigung_id)
+        if not ber:
+            raise ValueError("Berechtigung nicht gefunden")
+        if ber.ttlock_card_id:
+            schloss = self.schloss_repo.get(ber.schloss_id)
+            if schloss:
+                try:
+                    self._client().ic_card_delete(schloss.ttlock_lock_id, ber.ttlock_card_id)
+                except TTLockError as e:
+                    self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                    sync_status=SYNC_FEHLER, sync_fehler=str(e),
+                                                    by=actor)
+                    raise
+        self.berechtigung_repo.soft_delete(ber.id, actor)
+        logger.info("Berechtigung %s entzogen (Chip von Schloss entfernt).", berechtigung_id)
+        return {"ok": True}
+
+    def ic_cards_sync(self) -> dict:
+        """Bereits am Schloss (per BLE) angelernte IC-Karten aus der Cloud spiegeln:
+        fehlende Chips anlegen, Berechtigungen (Chip↔Schloss) anlegen bzw. cardId/Status
+        nachziehen. Read-only gegenüber dem Schloss (keine Cloud-Writes), idempotent."""
+        client = self._client()
+        neu_chips = neu_ber = akt_ber = 0
+        for s in self.schloss_repo.list_all(nur_aktive=True):
+            for card in client.ic_cards(s.ttlock_lock_id).get("list", []):
+                cn = str(card.get("cardNumber") or "").strip()
+                if not cn:
+                    continue
+                chip = self.chip_repo.find_active_by_kartennummer(cn)
+                if not chip:
+                    chip = self.chip_repo.create(
+                        SchluesselChip(kartennummer=cn, bezeichnung=card.get("cardName") or None),
+                        "SYSTEM")
+                    neu_chips += 1
+                card_id = card.get("cardId")
+                ber = self.berechtigung_repo.find_active_for_chip_schloss(chip.id, s.id)
+                if not ber:
+                    self.berechtigung_repo.create(TuerBerechtigung(
+                        chip_id=chip.id, schloss_id=s.id, ttlock_card_id=card_id,
+                        gueltig_von=_ms_to_iso(card.get("startDate")),
+                        gueltig_bis=_ms_to_iso(card.get("endDate")),
+                        sync_status=SYNC_AKTIV), "SYSTEM")
+                    neu_ber += 1
+                elif ber.ttlock_card_id != card_id or ber.sync_status != SYNC_AKTIV:
+                    self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
+                                                    sync_status=SYNC_AKTIV, sync_fehler=None,
+                                                    by="SYSTEM")
+                    akt_ber += 1
+        self.konto_repo.touch_sync(datetime.now(timezone.utc).isoformat())
+        logger.info("IC-Card-Import: %d Chips neu, %d Berechtigungen neu, %d aktualisiert.",
+                    neu_chips, neu_ber, akt_ber)
+        return {"chips_neu": neu_chips, "berechtigungen_neu": neu_ber, "berechtigungen_akt": akt_ber}
 
     # --- Log-Sync -----------------------------------------------------------
     def logs_sync(self, *, schloss_id: Optional[int] = None,

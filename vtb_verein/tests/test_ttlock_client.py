@@ -138,3 +138,35 @@ class TestTokenLifecycle:
 
         assert c.session.post.called  # Re-Login erfolgte
         assert result["list"] == [{"lockId": 1}]
+
+
+class TestWriteEndpoints:
+    """IC-Card-Writes laufen als signierter POST (form-encoded), Envelope identisch."""
+
+    def test_ic_card_add_posts_signed_form(self):
+        c = _client(access_token="AT", token_expires_at=_far_future())
+        c.session.post.return_value = _resp({"errcode": 0, "cardId": 555})
+
+        res = c.ic_card_add(123, "818229331", "Chip blau", 0, 0)
+
+        data = c.session.post.call_args.kwargs["data"]
+        assert data["clientId"] == "cid" and data["accessToken"] == "AT"
+        assert isinstance(data["date"], int) and data["date"] > 0
+        assert data["lockId"] == 123 and data["cardNumber"] == "818229331"
+        assert data["addType"] == 2          # über Gateway
+        assert res["cardId"] == 555
+
+    def test_ic_card_change_period_and_delete_use_gateway_type(self):
+        c = _client(access_token="AT", token_expires_at=_far_future())
+        c.session.post.return_value = _resp({"errcode": 0})
+        c.ic_card_change_period(1, 2, 1000, 2000)
+        assert c.session.post.call_args.kwargs["data"]["changeType"] == 2
+        c.ic_card_delete(1, 2)
+        assert c.session.post.call_args.kwargs["data"]["deleteType"] == 2
+
+    def test_post_errcode_envelope_raises(self):
+        c = _client(access_token="AT", token_expires_at=_far_future())
+        c.session.post.return_value = _resp({"errcode": -3007, "errmsg": "card already exists"})
+        with pytest.raises(TTLockError) as exc:
+            c.ic_card_delete(1, 2)
+        assert exc.value.errcode == -3007

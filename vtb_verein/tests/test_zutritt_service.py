@@ -7,7 +7,10 @@ Geprüft:
 - Kartennummer → Chip → Mitglied wird nur für IC-Karten-Records aufgelöst.
 - Status-Snapshot (letztes Event) entspricht dem jüngsten Log.
 """
+import pytest
+
 from app.services.zutritt_service import ZutrittService
+from app.services.ttlock_client import TTLockError
 
 
 # --- Fakes ------------------------------------------------------------------
@@ -15,12 +18,31 @@ class FakeClient:
     def __init__(self):
         self.unlocked = []
         self.locked = []
+        self.added = []
+        self.changed = []
+        self.deleted = []
+        self.cards_by_lock = {}      # lock_id -> Liste Card-Dicts (für ic_cards/Import)
+        self.add_should_fail = False
 
     def unlock(self, lock_id):
         self.unlocked.append(lock_id); return {"errcode": 0}
 
     def remote_lock(self, lock_id):
         self.locked.append(lock_id); return {"errcode": 0}
+
+    def ic_card_add(self, lock_id, card_number, card_name, start_ms=0, end_ms=0, *, add_type=2):
+        if self.add_should_fail:
+            raise TTLockError("add fehlgeschlagen", errcode=-3007)
+        self.added.append((lock_id, card_number, start_ms, end_ms)); return {"errcode": 0, "cardId": 9001}
+
+    def ic_card_change_period(self, lock_id, card_id, start_ms=0, end_ms=0, *, change_type=2):
+        self.changed.append((lock_id, card_id, start_ms, end_ms)); return {"errcode": 0}
+
+    def ic_card_delete(self, lock_id, card_id, *, delete_type=2):
+        self.deleted.append((lock_id, card_id)); return {"errcode": 0}
+
+    def ic_cards(self, lock_id, page_no=1, page_size=100):
+        return {"list": self.cards_by_lock.get(lock_id, [])}
 
     def gateway_list(self, **k):
         return {"list": [{"gatewayId": 2147896, "isOnline": 1}]}
@@ -91,16 +113,77 @@ class FakeSchlossRepo:
 
 
 class FakeChip:
-    def __init__(self, id, mitglied_id):
+    def __init__(self, id, mitglied_id, kartennummer="", bezeichnung=None):
         self.id, self.mitglied_id = id, mitglied_id
+        self.kartennummer, self.bezeichnung = kartennummer, bezeichnung
 
 
 class FakeChipRepo:
-    def __init__(self, mapping):
-        self._m = mapping
+    def __init__(self, mapping=None):
+        self._m = mapping or {}
+        self._by_id = {c.id: c for c in self._m.values()}
+        self._next = (max(self._by_id) + 1) if self._by_id else 1
 
     def find_active_by_kartennummer(self, kn):
         return self._m.get(kn)
+
+    def get(self, id):
+        return self._by_id.get(id)
+
+    def create(self, c, created_by):
+        chip = FakeChip(self._next, getattr(c, "mitglied_id", None),
+                        kartennummer=c.kartennummer, bezeichnung=c.bezeichnung)
+        self._by_id[chip.id] = chip; self._m[c.kartennummer] = chip; self._next += 1
+        return chip
+
+
+class FakeBer:
+    def __init__(self, id, chip_id, schloss_id, **kw):
+        self.id, self.chip_id, self.schloss_id = id, chip_id, schloss_id
+        self.ttlock_card_id = kw.get("ttlock_card_id")
+        self.gueltig_von = kw.get("gueltig_von")
+        self.gueltig_bis = kw.get("gueltig_bis")
+        self.sync_status = kw.get("sync_status") or "pending"
+        self.sync_fehler = kw.get("sync_fehler")
+        self.erteilt_von = kw.get("erteilt_von")
+        self.deleted = False
+
+
+class FakeBerechtigungRepo:
+    def __init__(self):
+        self.rows, self._next = {}, 1
+
+    def create(self, b, created_by):
+        r = FakeBer(self._next, b.chip_id, b.schloss_id, ttlock_card_id=b.ttlock_card_id,
+                    gueltig_von=b.gueltig_von, gueltig_bis=b.gueltig_bis,
+                    sync_status=b.sync_status, erteilt_von=b.erteilt_von)
+        self.rows[r.id] = r; self._next += 1
+        return r
+
+    def get(self, id):
+        r = self.rows.get(id)
+        return r if (r and not r.deleted) else None
+
+    def find_active_for_chip_schloss(self, chip_id, schloss_id):
+        return next((r for r in self.rows.values()
+                     if not r.deleted and r.chip_id == chip_id and r.schloss_id == schloss_id), None)
+
+    def set_sync(self, id, *, ttlock_card_id, sync_status, sync_fehler, by):
+        r = self.rows[id]
+        r.ttlock_card_id, r.sync_status, r.sync_fehler = ttlock_card_id, sync_status, sync_fehler
+        return r
+
+    def update_period(self, id, *, gueltig_von, gueltig_bis, by):
+        r = self.rows[id]
+        r.gueltig_von, r.gueltig_bis = gueltig_von, gueltig_bis
+        r.sync_status, r.sync_fehler = "aktiv", None
+        return r
+
+    def soft_delete(self, id, deleted_by):
+        r = self.rows.get(id)
+        if r:
+            r.deleted = True
+        return bool(r)
 
 
 class FakeLogRepo:
@@ -202,6 +285,98 @@ def test_oeffnen_ruft_unlock_mit_ttlock_lock_id():
 
 def test_oeffnen_unbekanntes_schloss_wirft():
     svc = _service()
-    import pytest
     with pytest.raises(ValueError):
         svc.oeffnen(999)
+
+
+# --- Phase 2: Chip anlernen / Berechtigungen --------------------------------
+def _p2_service(fake_client, chip_map=None):
+    return ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
+        chip_repo=FakeChipRepo(chip_map or {}), berechtigung_repo=FakeBerechtigungRepo(),
+        log_repo=FakeLogRepo(), client_factory=lambda: fake_client,
+    )
+
+
+def test_chip_anlernen_ruft_add_und_setzt_card_id():
+    fake = FakeClient()
+    chip = FakeChip(7, mitglied_id=None, kartennummer="818229331", bezeichnung="Chip blau")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()                       # legt Schloss id=1 (lockId 30392116) an
+    ber = svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    # add ging an die TTLock-lockId mit der Kartennummer
+    assert fake.added and fake.added[0][0] == 30392116 and fake.added[0][1] == "818229331"
+    assert ber.sync_status == "aktiv" and ber.ttlock_card_id == 9001
+
+
+def test_chip_anlernen_doppelt_wirft():
+    fake = FakeClient()
+    chip = FakeChip(7, None, kartennummer="818229331")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()
+    svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    with pytest.raises(ValueError):
+        svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+
+
+def test_chip_anlernen_ohne_kartennummer_wirft():
+    fake = FakeClient()
+    chip = FakeChip(7, None, kartennummer="")   # keine Nummer → Gateway-Add unmöglich
+    svc = _p2_service(fake, chip_map={"seed": chip})
+    svc.inventar_sync()
+    with pytest.raises(ValueError):
+        svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    assert fake.added == []
+
+
+def test_chip_anlernen_cloud_fehler_setzt_status_fehler_und_wirft():
+    fake = FakeClient(); fake.add_should_fail = True
+    chip = FakeChip(7, None, kartennummer="999")
+    svc = _p2_service(fake, chip_map={"999": chip})
+    svc.inventar_sync()
+    with pytest.raises(TTLockError):
+        svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    rows = list(svc.berechtigung_repo.rows.values())
+    assert len(rows) == 1 and rows[0].sync_status == "fehler" and rows[0].sync_fehler
+
+
+def test_berechtigung_aendern_ruft_change_period():
+    fake = FakeClient()
+    chip = FakeChip(7, None, kartennummer="818229331")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()
+    ber = svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    out = svc.berechtigung_aendern(berechtigung_id=ber.id,
+                                   gueltig_bis="2026-12-31T23:00:00+00:00", actor="admin")
+    assert fake.changed and fake.changed[0][1] == 9001
+    assert out.gueltig_bis == "2026-12-31T23:00:00+00:00" and out.sync_status == "aktiv"
+
+
+def test_berechtigung_entziehen_loescht_card_und_soft_delete():
+    fake = FakeClient()
+    chip = FakeChip(7, None, kartennummer="818229331")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()
+    ber = svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    svc.berechtigung_entziehen(berechtigung_id=ber.id, actor="admin")
+    assert fake.deleted == [(30392116, 9001)]
+    assert svc.berechtigung_repo.get(ber.id) is None   # lokal soft-gelöscht
+
+
+def test_ic_cards_sync_importiert_chip_und_berechtigung_idempotent():
+    fake = FakeClient()
+    svc = _p2_service(fake)
+    svc.inventar_sync()                       # Schloss id=1, ttlock_lock_id 30392116
+    fake.cards_by_lock[30392116] = [
+        {"cardId": 4242, "cardNumber": "818229331", "cardName": "Chip blau",
+         "startDate": 0, "endDate": 0},
+    ]
+    res = svc.ic_cards_sync()
+    assert res["chips_neu"] == 1 and res["berechtigungen_neu"] == 1
+    chip = svc.chip_repo.find_active_by_kartennummer("818229331")
+    assert chip is not None
+    ber = svc.berechtigung_repo.find_active_for_chip_schloss(chip.id, 1)
+    assert ber.ttlock_card_id == 4242 and ber.sync_status == "aktiv"
+    # zweiter Lauf: nichts Neues (idempotent)
+    res2 = svc.ic_cards_sync()
+    assert res2["chips_neu"] == 0 and res2["berechtigungen_neu"] == 0

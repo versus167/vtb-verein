@@ -155,17 +155,23 @@ class TTLockClient:
                 logger.warning("TTLock-Refresh fehlgeschlagen – versuche Neu-Login.")
                 self.login()
 
-    # --- Signierte GET-Requests --------------------------------------------
-    def _get(self, path: str, _retry_auth: bool = True, **params: Any) -> dict:
+    # --- Signierte Requests ------------------------------------------------
+    def _request(self, method: str, path: str, _retry_auth: bool = True,
+                 **params: Any) -> dict:
+        """Signierter Request (GET oder POST). Lese-Endpunkte und Gateway-Steuerung
+        nutzen GET (verifiziert), Schreib-Endpunkte (IC-Card add/change/delete) POST
+        (form-encoded) – TTLock signiert beide identisch über clientId+accessToken+date."""
         self._ensure_token()
         params.update({
             "clientId": self.client_id,
             "accessToken": self.access_token,
             "date": self._now_ms(),
         })
-        resp = self.session.get(
-            f"{self.endpoint}/{path.lstrip('/')}", params=params, timeout=_HTTP_TIMEOUT
-        )
+        url = f"{self.endpoint}/{path.lstrip('/')}"
+        if method == "POST":
+            resp = self.session.post(url, data=params, timeout=_HTTP_TIMEOUT)
+        else:
+            resp = self.session.get(url, params=params, timeout=_HTTP_TIMEOUT)
         resp.raise_for_status()
         body = resp.json()
         if isinstance(body, dict) and body.get("errcode", 0):
@@ -173,13 +179,19 @@ class TTLockClient:
                 logger.info("TTLock-Token ungültig (errcode=%s) – Neu-Login + Retry.",
                             body["errcode"])
                 self.login()
-                return self._get(path, _retry_auth=False, **params)
+                return self._request(method, path, _retry_auth=False, **params)
             raise TTLockError(
                 f"{path}: errcode={body['errcode']} {body.get('errmsg')} "
                 f"({body.get('description', '')})",
                 errcode=body["errcode"],
             )
         return body
+
+    def _get(self, path: str, **params: Any) -> dict:
+        return self._request("GET", path, **params)
+
+    def _post(self, path: str, **params: Any) -> dict:
+        return self._request("POST", path, **params)
 
     # --- Read-only-Wrapper (Phase 1) ---------------------------------------
     def lock_list(self, page_no: int = 1, page_size: int = 100) -> dict:
@@ -198,6 +210,29 @@ class TTLockClient:
     def ic_cards(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
         return self._get("v3/identityCard/list", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
+
+    # --- IC-Card-Schreiboperationen (über Gateway, Phase 2) ----------------
+    # TTLock-Typ-Felder: 2 = „über Gateway/WLAN" (server-seitig, ohne Bluetooth).
+    # startDate/endDate in ms; 0 = unbefristet. Ein neuer Chip braucht eine bereits
+    # bekannte cardNumber (am Schloss per BLE gelesen oder per RFID-Leser erfasst).
+    def ic_card_add(self, lock_id: int, card_number: str, card_name: str,
+                    start_ms: int = 0, end_ms: int = 0, *, add_type: int = 2) -> dict:
+        """IC-Karte an ein Schloss anlernen (v3/identityCard/add) → liefert `cardId`."""
+        return self._post("v3/identityCard/add", lockId=lock_id, cardNumber=card_number,
+                          cardName=card_name, startDate=start_ms, endDate=end_ms,
+                          addType=add_type)
+
+    def ic_card_change_period(self, lock_id: int, card_id: int,
+                              start_ms: int = 0, end_ms: int = 0, *,
+                              change_type: int = 2) -> dict:
+        """Gültigkeitszeitraum einer IC-Karte ändern (v3/identityCard/changePeriod)."""
+        return self._post("v3/identityCard/changePeriod", lockId=lock_id, cardId=card_id,
+                          startDate=start_ms, endDate=end_ms, changeType=change_type)
+
+    def ic_card_delete(self, lock_id: int, card_id: int, *, delete_type: int = 2) -> dict:
+        """IC-Karte von einem Schloss entfernen (v3/identityCard/delete)."""
+        return self._post("v3/identityCard/delete", lockId=lock_id, cardId=card_id,
+                          deleteType=delete_type)
 
     def lock_records(self, lock_id: int, start_ms: int, end_ms: int,
                      page_no: int = 1, page_size: int = 100) -> dict:
