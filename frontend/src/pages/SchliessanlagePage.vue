@@ -6,7 +6,7 @@
       <span v-if="status.letzter_sync_at" class="text-caption text-grey-7 q-mr-sm">
         letzter Sync: {{ fmtDateTime(status.letzter_sync_at) }}
       </span>
-      <q-btn v-if="status.darf_verwalten" color="primary" unelevated icon="sync"
+      <q-btn v-if="status.darf_sync" color="primary" unelevated icon="sync"
         label="Jetzt synchronisieren" :loading="syncing" @click="doSync" />
     </div>
 
@@ -62,7 +62,7 @@
         </q-item>
       </q-list>
       <div v-if="schloesser.length === 0" class="text-grey text-center q-py-lg">
-        Keine Schlösser. {{ status.darf_verwalten ? 'Synchronisiere, um das Inventar zu laden.' : '' }}
+        Keine Schlösser. {{ status.darf_sync ? 'Synchronisiere, um das Inventar zu laden.' : '' }}
       </div>
     </div>
 
@@ -101,15 +101,15 @@
         <q-card-section class="row items-center">
           <div class="text-h6">{{ schlossDetail.schloss?.name }}</div>
           <q-space />
-          <q-btn v-if="status.darf_oeffnen" flat dense icon="lock_open" color="primary"
+          <q-btn v-if="schlossDetail.darf_oeffnen" flat dense icon="lock_open" color="primary"
             :loading="opening === schlossDetail.schloss?.id" @click="doOeffnen(schlossDetail.schloss)">
             <q-tooltip>Fernöffnen</q-tooltip>
           </q-btn>
-          <q-btn v-if="status.darf_oeffnen" flat dense icon="lock" color="grey-8"
+          <q-btn v-if="schlossDetail.darf_verriegeln" flat dense icon="lock" color="grey-8"
             @click="doVerriegeln(schlossDetail.schloss)">
             <q-tooltip>Fernverriegeln</q-tooltip>
           </q-btn>
-          <q-btn v-if="status.darf_verwalten" flat dense icon="edit" @click="openSchlossEdit" />
+          <q-btn v-if="schlossDetail.darf_verwalten" flat dense icon="edit" @click="openSchlossEdit" />
           <q-btn flat dense icon="close" v-close-popup />
         </q-card-section>
         <q-card-section class="q-pt-none">
@@ -125,7 +125,7 @@
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Zugeteilte Chips</div>
             <q-space />
-            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
+            <q-btn v-if="schlossDetail.darf_verwalten" flat dense size="sm" icon="add" color="primary"
               label="Chip anlernen" @click="openBerAnlernenForSchloss" />
           </div>
           <q-list dense bordered separator>
@@ -142,9 +142,9 @@
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
                   <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
-                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
+                  <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
-                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="link_off"
+                  <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="link_off"
                     color="negative" @click="revokeBer(b)"><q-tooltip>Entziehen</q-tooltip></q-btn>
                 </div>
               </q-item-section>
@@ -156,7 +156,7 @@
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Befristete App-Öffnung</div>
             <q-space />
-            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="schedule" color="primary"
+            <q-btn v-if="schlossDetail.darf_verwalten" flat dense size="sm" icon="schedule" color="primary"
               label="Befristet erlauben" @click="openAppGrant" />
           </div>
           <q-list dense bordered separator>
@@ -169,7 +169,7 @@
                   <span v-if="a.grund">· {{ a.grund }}</span>
                 </q-item-label>
               </q-item-section>
-              <q-item-section side v-if="status.darf_verwalten">
+              <q-item-section side v-if="schlossDetail.darf_verwalten">
                 <q-btn flat dense round size="sm" icon="delete" color="negative"
                   @click="revokeApp(a)" />
               </q-item-section>
@@ -179,6 +179,10 @@
           </q-list>
 
           <div class="text-subtitle2 q-mt-md">Zutrittslog</div>
+          <div v-if="schlossDetail.darf_protokoll" class="text-caption text-grey-6 q-mb-xs">
+            <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
+            nur zweckgebunden einsehen (DSGVO).
+          </div>
           <div v-if="!schlossDetail.darf_protokoll" class="text-grey text-caption">
             Kein Recht für das Zutrittsprotokoll (schliessanlage.protokoll).
           </div>
@@ -248,6 +252,10 @@
           </q-list>
 
           <div class="text-subtitle2 q-mt-md">Benutzt (Nutzungs-Log)</div>
+          <div v-if="chipDetail.darf_protokoll" class="text-caption text-grey-6 q-mb-xs">
+            <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
+            nur zweckgebunden einsehen (DSGVO).
+          </div>
           <div v-if="!chipDetail.darf_protokoll" class="text-grey text-caption">
             Kein Recht für das Zutrittsprotokoll (schliessanlage.protokoll).
           </div>
@@ -432,7 +440,7 @@ const RECORD_TYPES = {
 const recordTypeLabel = (t) => (t == null ? '–' : (RECORD_TYPES[t] || ('?' + t)))
 
 const tab = ref('schloesser')
-const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, letzter_sync_at: null })
+const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false, letzter_sync_at: null })
 const schloesser = ref([])
 const chips = ref([])
 const abteilungen = ref([])

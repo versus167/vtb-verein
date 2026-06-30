@@ -20,6 +20,7 @@ from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError
 from app.services.ttlock_client import TTLockError
 from ..core.deps import CurrentUser, DB
+from ..core.scope import visible_schloss_ids, darf_schloss
 from .auth import _client_ip
 
 router = APIRouter(prefix="/schliessanlage", tags=["schliessanlage"])
@@ -31,12 +32,25 @@ def _require(user, perm: str, was: str) -> None:
                             detail=f"Keine Berechtigung: {was}")
 
 
-def _darf_oeffnen(user, db, schloss_id: int) -> bool:
-    """Öffnen darf, wer das globale Recht hat ODER eine gültige Berechtigung für genau
-    dieses Schloss besitzt (Self-Service: Mitglied → Chip → Berechtigung)."""
-    return (user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN)
-            or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id)
-            or db.tuer_app_berechtigungen.user_has_valid_for_schloss(user.id, schloss_id))
+def _darf_oeffnen(user, db, schloss) -> bool:
+    """Öffnen darf, wer das Betätigungsrecht für genau dieses Schloss hat (global ODER
+    abteilungsgebunden, Phase-3-Scope) ODER eine gültige Berechtigung dafür besitzt
+    (Self-Service: Mitglied → Chip → Berechtigung bzw. befristete App-Berechtigung)."""
+    return (darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN)
+            or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss.id)
+            or db.tuer_app_berechtigungen.user_has_valid_for_schloss(user.id, schloss.id))
+
+
+def _require_berechtigung_verwalten(user, db, berechtigung_id: int) -> None:
+    """404, wenn die (Chip↔Schloss-)Berechtigung fehlt; 403, wenn der User das zugehörige
+    Schloss nicht verwalten darf (Phase-3-Scope)."""
+    ber = db.tuer_berechtigungen.get(berechtigung_id)
+    if not ber:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Berechtigung nicht gefunden")
+    if not darf_schloss(user, db.tuer_schloesser.get(ber.schloss_id),
+                        Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verwalten")
 
 
 class SchlossUpdateIn(BaseModel):
@@ -89,12 +103,16 @@ def status_info(user: CurrentUser, db: DB):
     """Konto-/Sync-Status für die Seite (konfiguriert? letzter Sync?)."""
     _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")
     konto = db.ttlock_konto.get()
+    # Seiten-Chrome: 'darf_*' sind lenient (Recht irgendwo vorhanden) und steuern nur die
+    # Sichtbarkeit von Buttons. Die echte Durchsetzung passiert je Schloss server-seitig
+    # (Phase-3-Scope). Der account-weite Sync verlangt das **vereinsweite** Verwalten-Recht.
     return {
         "konfiguriert": db.zutritt.is_configured(),
         "letzter_sync_at": konto.letzter_sync_at if konto else None,
         "darf_verwalten": user.has_permission(Permission.SCHLIESSANLAGE_VERWALTEN),
         "darf_protokoll": user.has_permission(Permission.SCHLIESSANLAGE_PROTOKOLL),
         "darf_oeffnen": user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN),
+        "darf_sync": user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN),
     }
 
 
@@ -115,8 +133,11 @@ def user_lookup(user: CurrentUser, db: DB):
 @router.post("/sync")
 def sync(request: Request, user: CurrentUser, db: DB,
          backfill_days: int = 30, logs_only: bool = False):
-    """On-demand-Sync (Inventar + Logs) – derselbe Pfad wie der Cron-Command."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage synchronisieren")
+    """On-demand-Sync (Inventar + Logs) – derselbe Pfad wie der Cron-Command. Account-weit,
+    daher vereinsweites Verwalten-Recht (nicht nur abteilungsgebunden)."""
+    if not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung: Schließanlage synchronisieren (vereinsweit)")
     try:
         ergebnis = {}
         if not logs_only:
@@ -140,7 +161,11 @@ def sync(request: Request, user: CurrentUser, db: DB,
 @router.get("/schloesser")
 def schloesser_liste(user: CurrentUser, db: DB):
     _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")
-    return db.tuer_schloesser.list_all()
+    schloesser = db.tuer_schloesser.list_all()
+    visible = visible_schloss_ids(user, db)          # Abteilungs-Scope (Phase 3)
+    if visible is not None:
+        schloesser = [s for s in schloesser if s.id in visible]
+    return schloesser
 
 
 @router.get("/schloesser/{schloss_id}")
@@ -149,23 +174,40 @@ def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
     schloss = db.tuer_schloesser.get(schloss_id)
     if not schloss:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
-    darf_protokoll = user.has_permission(Permission.SCHLIESSANLAGE_PROTOKOLL)
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_READ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung für dieses Schloss")
+    # Aktions-/Protokollrechte gelten je Schloss (Scope), nicht pauschal für die Seite.
+    darf_protokoll = darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_PROTOKOLL)
     return {
         "schloss": schloss,
         "berechtigungen": db.tuer_berechtigungen.list_for_schloss(schloss_id),
         "app_berechtigungen": db.tuer_app_berechtigungen.list_for_schloss(schloss_id),
         "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
         "darf_protokoll": darf_protokoll,
+        "darf_verwalten": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN),
+        "darf_oeffnen": _darf_oeffnen(user, db, schloss),
+        # Verriegeln ist reines Betätigungsrecht (kein Self-Service über Chip/App-Grant).
+        "darf_verriegeln": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN),
     }
 
 
 @router.put("/schloesser/{schloss_id}")
 def schloss_update(schloss_id: int, data: SchlossUpdateIn, user: CurrentUser, db: DB):
     """Stammdaten (Name/Standort/Abteilung/Notiz/aktiv) – reine DB-Pflege."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
     schloss = db.tuer_schloesser.get(schloss_id)
     if not schloss:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verwalten")
+    # Das Umhängen der Abteilung (= des Scopes selbst) ist eine vereinsweite Governance-
+    # Aktion: nur mit globalem Verwalten-Recht, sonst könnte ein abteilungsgebundener
+    # Verwalter ein Schloss aus seinem Scope heraus- oder vereinsweit schieben.
+    if data.abteilung_id != schloss.abteilung_id \
+            and not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Abteilungs-Zuordnung darf nur vereinsweit verwaltet werden")
     schloss.name = data.name
     schloss.standort = data.standort
     schloss.abteilung_id = data.abteilung_id
@@ -183,9 +225,10 @@ def schloss_update(schloss_id: int, data: SchlossUpdateIn, user: CurrentUser, db
 def schloss_oeffnen(schloss_id: int, request: Request, user: CurrentUser, db: DB):
     """Schloss per Gateway fernöffnen. Recht: schliessanlage.oeffnen ODER gültige
     Berechtigung für genau dieses Schloss (Self-Service)."""
-    if not db.tuer_schloesser.get(schloss_id):
+    schloss = db.tuer_schloesser.get(schloss_id)
+    if not schloss:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
-    if not _darf_oeffnen(user, db, schloss_id):
+    if not _darf_oeffnen(user, db, schloss):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Keine Berechtigung, dieses Schloss zu öffnen")
     try:
@@ -207,10 +250,14 @@ def schloss_oeffnen(schloss_id: int, request: Request, user: CurrentUser, db: DB
 
 @router.post("/schloesser/{schloss_id}/verriegeln")
 def schloss_verriegeln(schloss_id: int, request: Request, user: CurrentUser, db: DB):
-    """Schloss per Gateway fernverriegeln (modellabhängig). Nur globales Recht."""
-    _require(user, Permission.SCHLIESSANLAGE_OEFFNEN, "Schloss verriegeln")
-    if not db.tuer_schloesser.get(schloss_id):
+    """Schloss per Gateway fernverriegeln (modellabhängig). Betätigungsrecht je Schloss
+    (Scope) – kein Self-Service-Verriegeln."""
+    schloss = db.tuer_schloesser.get(schloss_id)
+    if not schloss:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verriegeln")
     try:
         ergebnis = db.zutritt.verriegeln(schloss_id)
     except ZutrittNichtKonfiguriertError as e:
@@ -233,9 +280,12 @@ def schloss_verriegeln(schloss_id: int, request: Request, user: CurrentUser, db:
 def app_berechtigung_vergeben(schloss_id: int, data: AppBerechtigungIn, request: Request,
                               user: CurrentUser, db: DB):
     """Einem User befristet das App-Öffnen dieses Schlosses erlauben (ohne Chip)."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
-    if not db.tuer_schloesser.get(schloss_id):
+    schloss = db.tuer_schloesser.get(schloss_id)
+    if not schloss:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verwalten")
     from app.models.schliessanlage import TuerAppBerechtigung
     erteilt = db.tuer_app_berechtigungen.create(
         TuerAppBerechtigung(
@@ -261,9 +311,14 @@ def app_berechtigung_vergeben(schloss_id: int, data: AppBerechtigungIn, request:
 def app_berechtigung_entziehen(berechtigung_id: int, request: Request,
                                user: CurrentUser, db: DB):
     """App-Betätigungs-Berechtigung vorzeitig entziehen (Soft-Delete)."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
-    if not db.tuer_app_berechtigungen.soft_delete(berechtigung_id, user.username):
+    ber = db.tuer_app_berechtigungen.get(berechtigung_id)
+    if not ber:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nicht gefunden")
+    if not darf_schloss(user, db.tuer_schloesser.get(ber.schloss_id),
+                        Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verwalten")
+    db.tuer_app_berechtigungen.soft_delete(berechtigung_id, user.username)
     try:
         db.access_log_repository.log(
             "schliessanlage_app_revoke", category="schliessanlage",
@@ -278,7 +333,12 @@ def app_berechtigung_entziehen(berechtigung_id: int, request: Request,
 @router.post("/berechtigungen", status_code=status.HTTP_201_CREATED)
 def berechtigung_anlernen(data: BerechtigungIn, request: Request, user: CurrentUser, db: DB):
     """Chip an einem Schloss anlernen (IC-Karte per Gateway aufspielen)."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    schloss = db.tuer_schloesser.get(data.schloss_id)
+    if not schloss:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, dieses Schloss zu verwalten")
     try:
         ber = db.zutritt.chip_anlernen(
             chip_id=data.chip_id, schloss_id=data.schloss_id,
@@ -307,7 +367,7 @@ def berechtigung_anlernen(data: BerechtigungIn, request: Request, user: CurrentU
 def berechtigung_aendern(berechtigung_id: int, data: BerechtigungUpdateIn,
                          request: Request, user: CurrentUser, db: DB):
     """Gültigkeitszeitraum einer angelernten Berechtigung ändern (per Gateway)."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    _require_berechtigung_verwalten(user, db, berechtigung_id)
     try:
         ber = db.zutritt.berechtigung_aendern(
             berechtigung_id=berechtigung_id,
@@ -335,7 +395,7 @@ def berechtigung_aendern(berechtigung_id: int, data: BerechtigungUpdateIn,
 @router.delete("/berechtigungen/{berechtigung_id}", status_code=status.HTTP_204_NO_CONTENT)
 def berechtigung_entziehen(berechtigung_id: int, request: Request, user: CurrentUser, db: DB):
     """Berechtigung entziehen (IC-Karte per Gateway vom Schloss entfernen + Soft-Delete)."""
-    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    _require_berechtigung_verwalten(user, db, berechtigung_id)
     try:
         db.zutritt.berechtigung_entziehen(berechtigung_id=berechtigung_id, actor=user.username)
     except ZutrittNichtKonfiguriertError as e:
@@ -369,10 +429,20 @@ def chip_detail(chip_id: int, user: CurrentUser, db: DB):
     if not chip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chip nicht gefunden")
     darf_protokoll = user.has_permission(Permission.SCHLIESSANLAGE_PROTOKOLL)
+    berechtigungen = db.tuer_berechtigungen.list_for_chip(chip_id)
+    logs = db.tuer_zutritt_logs.list_for_chip(chip_id) if darf_protokoll else []
+    # Abteilungs-Scope: ein abteilungsgebundener User darf über einen (club-weiten) Chip
+    # keine Schlösser/Bewegungsdaten außerhalb seines Scopes sehen.
+    visible = visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_READ)
+    if visible is not None:
+        berechtigungen = [b for b in berechtigungen if b.schloss_id in visible]
+    visible_prot = visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_PROTOKOLL)
+    if visible_prot is not None:
+        logs = [l for l in logs if l.schloss_id in visible_prot]
     return {
         "chip": chip,
-        "berechtigungen": db.tuer_berechtigungen.list_for_chip(chip_id),
-        "logs": db.tuer_zutritt_logs.list_for_chip(chip_id) if darf_protokoll else [],
+        "berechtigungen": berechtigungen,
+        "logs": logs,
         "darf_protokoll": darf_protokoll,
     }
 

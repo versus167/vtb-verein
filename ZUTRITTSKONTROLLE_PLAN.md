@@ -323,9 +323,17 @@ Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
    (am Schloss angelernte Karten spiegeln). **Erst hiermit** trägt der Self-Service-Pfad
    des Fernöffnens echte Daten. Cloud-Writes sind unit-getestet (Fakes), aber noch nicht
    live an einem echten Schloss verifiziert (gerätegenaue Freigabe nötig).
-3. **Rechte & DSGVO:** Permission-Matrix-Integration, **Abteilungs-Scoping**
-   (`schloss.abteilung_id`, analog Personen-Pilot), Aufbewahrung/Löschung der Logs über
-   das **Prune-System**, Datenschutzhinweis für Mitglieder.
+3. **Rechte & DSGVO (teilweise umgesetzt):** Permission-Matrix-Integration ✅ und
+   **Abteilungs-Scoping** ✅ (`schloss.abteilung_id`, analog Personen-Pilot):
+   `backend/core/scope.py` → `visible_schloss_ids` (Listen-Filter) + `darf_schloss`
+   (vereinsweite Schlösser = `abteilung_id IS NULL` verlangen das vereinsweite Recht;
+   abteilungsgebundene erfüllt global ODER für die Abteilung). Durchgesetzt je Schloss
+   für Detail/Verwalten/Protokoll/Öffnen/Verriegeln und Berechtigungs-Aktionen; Detail
+   liefert per-Schloss `darf_*`-Flags; Umhängen der Abteilung nur vereinsweit; account-
+   weiter Sync nur vereinsweit (`darf_sync`); Chip-Detail filtert Schlösser/Logs auf den
+   Scope. **Datenschutzhinweis** an den Protokoll-Ansichten ✅. **Log-Aufbewahrung** (append-
+   only → alters-basiertes Löschen) wird **ins allgemeine Prune** gezogen statt hier separat
+   gebaut → als TODO in `TODO.md` notiert (Retention-Dauer dort festzulegen).
 4. **Komfort:** Self-Service-Sicht (eigene Chips/Zutritte), **kurzzeitige App-Betätigungs-
    Berechtigung** (s. u.), Benachrichtigungen bei relevanten Events (z. B. Sabotage-Alarm
    `recordType 44`) über das bestehende Notification-System, Auswertungen/Reports.
