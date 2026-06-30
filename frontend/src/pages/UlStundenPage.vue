@@ -7,10 +7,14 @@
     </div>
 
     <!-- Fremderfassung (Geschäftsstelle): zwischen eigener und fremder ÜL-Sicht wechseln -->
-    <q-select v-if="kannFremd" v-model="zielMitgliedId" :options="uebungsleiter" option-value="id"
-      :option-label="u => `${u.nachname}, ${u.vorname}`" emit-value map-options clearable dense outlined
+    <q-select v-if="kannFremd" v-model="zielMitgliedId" :options="uebungsleiterOptions" option-value="id"
+      :option-label="ulLabel" emit-value map-options clearable dense outlined
+      use-input input-debounce="0" @filter="filterUebungsleiter"
       class="q-mb-md" label="Für Übungsleiter (leer = eigene)" @update:model-value="onZielChange">
       <template #prepend><q-icon name="badge" /></template>
+      <template #no-option>
+        <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
+      </template>
     </q-select>
     <q-banner v-if="zielMitgliedId" dense class="bg-amber-1 text-amber-9 q-mb-md rounded-borders">
       <template #avatar><q-icon name="edit_note" /></template>
@@ -237,11 +241,21 @@ const abteilungen = ref([])
 // Fremderfassung (Geschäftsstelle): Abrechnungen für einen anderen ÜL anlegen/pflegen.
 const kannFremd = computed(() => auth.hasPermission('ulstunden.erfassen_fremd'))
 const uebungsleiter = ref([])          // Auswahl-Liste (nur mit Fremderfassungs-Recht)
+const uebungsleiterOptions = ref([])   // gefilterte Sicht für die Textsuche
 const zielMitgliedId = ref(null)       // null = eigene Abrechnungen
+const ulLabel = (u) => (u ? `${u.nachname}, ${u.vorname}` : '')
 const zielLabel = computed(() => {
   const ul = uebungsleiter.value.find(u => u.id === zielMitgliedId.value)
-  return ul ? `${ul.nachname}, ${ul.vorname}` : ''
+  return ul ? ulLabel(ul) : ''
 })
+function filterUebungsleiter(val, update) {
+  const n = (val || '').toLowerCase()
+  update(() => {
+    uebungsleiterOptions.value = n
+      ? uebungsleiter.value.filter(u => ulLabel(u).toLowerCase().includes(n))
+      : uebungsleiter.value
+  })
+}
 
 function statusChip(status) {
   return {
@@ -294,8 +308,8 @@ async function loadUebungsleiter() {
   if (!kannFremd.value) return
   try {
     const { data } = await api.get('/api/ul-stunden/uebungsleiter')
-    uebungsleiter.value = data
-  } catch { uebungsleiter.value = [] }
+    uebungsleiter.value = data; uebungsleiterOptions.value = data
+  } catch { uebungsleiter.value = []; uebungsleiterOptions.value = [] }
 }
 function onZielChange() {
   loadAbrechnungen().catch(() => $q.notify({ type: 'negative', message: 'Fehler beim Laden' }))
