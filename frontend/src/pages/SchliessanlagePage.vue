@@ -53,6 +53,10 @@
                 :class="akkuLow(s.akku_prozent) ? 'text-negative' : 'text-grey-7'">
                 <q-icon :name="akkuIcon(s.akku_prozent)" size="18px" /> {{ s.akku_prozent }}%
               </span>
+              <q-btn v-if="status.darf_protokoll" flat dense round size="sm" icon="history"
+                color="grey-7" @click.stop="openSchlossLog(s)">
+                <q-tooltip>Zutrittslog</q-tooltip>
+              </q-btn>
               <q-btn v-if="status.darf_oeffnen" flat dense round size="sm" icon="lock_open"
                 color="primary" :loading="opening === s.id" @click.stop="doOeffnen(s)">
                 <q-tooltip>Fernöffnen</q-tooltip>
@@ -206,17 +210,33 @@
               </q-item>
             </q-list>
           </template>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
-          <div class="text-subtitle2 q-mt-md">Zutrittslog</div>
-          <div v-if="schlossDetail.darf_protokoll" class="text-caption text-grey-6 q-mb-xs">
+    <!-- ====================== Zutrittslog (Schloss) ====================== -->
+    <q-dialog v-model="logDialog" :maximized="$q.screen.lt.sm">
+      <q-card style="min-width:min(560px,96vw)">
+        <q-card-section class="row items-center">
+          <q-icon name="history" class="q-mr-sm" />
+          <div class="text-h6">Zutrittslog</div>
+          <div v-if="logSchloss" class="text-caption text-grey q-ml-sm">{{ logSchloss.name }}</div>
+          <q-space />
+          <q-btn flat dense icon="close" v-close-popup />
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <div v-if="logDarfProtokoll" class="text-caption text-grey-6 q-mb-xs">
             <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
             nur zweckgebunden einsehen (DSGVO).
           </div>
-          <div v-if="!schlossDetail.darf_protokoll" class="text-grey text-caption">
+          <div v-if="logLoading" class="row justify-center q-py-lg">
+            <q-spinner size="28px" color="primary" />
+          </div>
+          <div v-else-if="!logDarfProtokoll" class="text-grey text-caption q-py-sm">
             Kein Recht für das Zutrittsprotokoll (schliessanlage.protokoll).
           </div>
           <q-list v-else dense bordered separator>
-            <q-item v-for="l in schlossDetail.logs" :key="l.id">
+            <q-item v-for="l in logEntries" :key="l.id">
               <q-item-section avatar>
                 <q-icon :name="l.erfolg ? 'check_circle' : 'cancel'"
                   :color="l.erfolg ? 'positive' : 'negative'" size="18px" />
@@ -227,7 +247,7 @@
                   <span v-if="logWer(l)">· {{ logWer(l) }}</span></q-item-label>
               </q-item-section>
             </q-item>
-            <q-item v-if="!schlossDetail.logs?.length"><q-item-section class="text-grey">
+            <q-item v-if="!logEntries.length"><q-item-section class="text-grey">
               keine Einträge im Zeitraum</q-item-section></q-item>
           </q-list>
         </q-card-section>
@@ -600,6 +620,28 @@ async function openSchloss(id) {
     schlossDetail.value = data; schlossDialog.value = true
   } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Detail fehlgeschlagen' }) }
 }
+
+// --- Zutrittslog je Schloss (separater Lazy-Dialog auf der Kachel) ---
+const logDialog = ref(false)
+const logSchloss = ref(null)
+const logEntries = ref([])
+const logDarfProtokoll = ref(false)
+const logLoading = ref(false)
+async function openSchlossLog(s) {
+  logSchloss.value = s
+  logEntries.value = []
+  logDarfProtokoll.value = false
+  logLoading.value = true
+  logDialog.value = true
+  try {
+    const { data } = await api.get(`/api/schliessanlage/schloesser/${s.id}/logs`)
+    logEntries.value = data.logs || []
+    logDarfProtokoll.value = !!data.darf_protokoll
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zutrittslog fehlgeschlagen' })
+  } finally { logLoading.value = false }
+}
+
 const schlossFormDialog = ref(false)
 const schlossForm = ref({})
 const schlossError = ref('')

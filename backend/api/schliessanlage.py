@@ -233,12 +233,32 @@ def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
         # Read-only Credential-Inventar (Fingerprints/Passcodes/eKeys/IC) – auf Read-Ebene,
         # analog zur Chip-/Berechtigungsliste (kein personenbezogenes Bewegungsdatum).
         "credentials": db.tuer_credentials.list_for_schloss(schloss_id),
-        "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
+        # Der Zutrittslog (Bewegungsdaten) wird NICHT mehr hier mitgeladen, sondern separat
+        # über GET …/{id}/logs (Lazy-Dialog auf der Schloss-Kachel) – hält das Detail schlank.
         "darf_protokoll": darf_protokoll,
         "darf_verwalten": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN),
         "darf_oeffnen": _darf_oeffnen(user, db, schloss),
         # Verriegeln ist reines Betätigungsrecht (kein Self-Service über Chip/App-Grant).
         "darf_verriegeln": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN),
+    }
+
+
+@router.get("/schloesser/{schloss_id}/logs")
+def schloss_logs(schloss_id: int, user: CurrentUser, db: DB):
+    """Zutrittslog eines Schlosses – separater Lazy-Abruf für den Log-Dialog auf der Kachel
+    (statt im Detail mitzuladen). Bewegungsdaten hinter dem eigenen Protokoll-Recht je
+    Schloss (Scope), exakt wie in schloss_detail."""
+    _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")
+    schloss = db.tuer_schloesser.get(schloss_id)
+    if not schloss:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schloss nicht gefunden")
+    if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_READ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung für dieses Schloss")
+    darf_protokoll = darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_PROTOKOLL)
+    return {
+        "darf_protokoll": darf_protokoll,
+        "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
     }
 
 
