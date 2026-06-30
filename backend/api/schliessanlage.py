@@ -85,6 +85,20 @@ def status_info(user: CurrentUser, db: DB):
     }
 
 
+@router.get("/users")
+def user_lookup(user: CurrentUser, db: DB):
+    """Schlanke User-Liste (id + username) für den Berechtigungs-Picker.
+    Eigener Endpoint (statt /api/users, das personen.read verlangt) – hier reicht
+    schliessanlage.verwalten."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    from app.services.user_service import UserService
+    return [
+        {"id": u.id, "username": u.username, "active": u.active}
+        for u in UserService(db).list_all()
+        if u.active
+    ]
+
+
 @router.post("/sync")
 def sync(request: Request, user: CurrentUser, db: DB,
          backfill_days: int = 30, logs_only: bool = False):

@@ -289,12 +289,20 @@
           <div class="text-caption text-grey-7">
             Schloss: {{ schlossDetail.schloss?.name }}
           </div>
-          <q-input v-model.number="appGrantForm.user_id" type="number" label="Benutzer-ID *"
-            outlined dense hint="Wer darf das Schloss per App öffnen" />
-          <q-input v-model="appGrantForm.gueltig_von" type="datetime-local" label="Gültig ab (leer = sofort)"
-            outlined dense stack-label />
-          <q-input v-model="appGrantForm.gueltig_bis" type="datetime-local" label="Gültig bis (leer = unbefristet)"
-            outlined dense stack-label />
+          <q-select v-model="appGrantForm.user" :options="userOptions" :option-label="o => o && o.username"
+            use-input input-debounce="0" fill-input hide-selected @filter="filterUsers"
+            label="Benutzer *" outlined dense clearable
+            :hint="users.length ? 'nach Benutzername suchen' : 'keine Benutzer geladen'">
+            <template #no-option>
+              <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
+            </template>
+          </q-select>
+          <q-input v-model="appGrantForm.gueltig_von" type="datetime-local" label="Gültig ab"
+            outlined dense stack-label hint="Standard: jetzt – anpassbar" />
+          <q-select v-model="appGrantForm.dauer" :options="dauerOptionen" emit-value map-options
+            label="Gültig bis" outlined dense />
+          <q-input v-if="appGrantForm.dauer === 'custom'" v-model="appGrantForm.gueltig_bis_custom"
+            type="datetime-local" label="Konkretes Datum/Uhrzeit" outlined dense stack-label />
           <q-input v-model="appGrantForm.grund" label="Grund (optional)" outlined dense />
           <div v-if="appGrantError" class="text-negative text-caption">{{ appGrantError }}</div>
         </q-card-section>
@@ -458,19 +466,60 @@ async function saveSchloss() {
 const appGrantDialog = ref(false)
 const appGrantForm = ref({})
 const appGrantError = ref('')
-function openAppGrant() {
-  appGrantForm.value = { user_id: null, gueltig_von: '', gueltig_bis: '', grund: '' }
+const users = ref([])
+const userOptions = ref([])
+const dauerOptionen = [
+  { label: '1 Stunde', value: '1h' },
+  { label: '2 Stunden', value: '2h' },
+  { label: '4 Stunden', value: '4h' },
+  { label: '8 Stunden', value: '8h' },
+  { label: '1 Tag', value: '1d' },
+  { label: '3 Tage', value: '3d' },
+  { label: '1 Woche', value: '7d' },
+  { label: 'unbefristet', value: 'none' },
+  { label: 'konkretes Datum …', value: 'custom' },
+]
+const DAUER_MS = { '1h': 36e5, '2h': 72e5, '4h': 144e5, '8h': 288e5, '1d': 864e5, '3d': 2592e5, '7d': 6048e5 }
+
+function nowLocalInput() {
+  const d = new Date(); d.setSeconds(0, 0)
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+async function loadUsers() {
+  if (users.value.length) return
+  try {
+    const { data } = await api.get('/api/schliessanlage/users')
+    users.value = data; userOptions.value = data
+  } catch { users.value = []; userOptions.value = [] }
+}
+function filterUsers(val, update) {
+  const n = (val || '').toLowerCase()
+  update(() => {
+    userOptions.value = n ? users.value.filter(u => u.username.toLowerCase().includes(n)) : users.value
+  })
+}
+async function openAppGrant() {
+  await loadUsers()
+  appGrantForm.value = { user: null, gueltig_von: nowLocalInput(), dauer: '1d',
+    gueltig_bis_custom: '', grund: '' }
   appGrantError.value = ''; appGrantDialog.value = true
 }
 async function saveAppGrant() {
-  if (!appGrantForm.value.user_id) { appGrantError.value = 'Benutzer-ID ist erforderlich.'; return }
+  const f = appGrantForm.value
+  if (!f.user?.id) { appGrantError.value = 'Bitte einen Benutzer auswählen.'; return }
+  // Eindeutige Zeiten als UTC-ISO senden (datetime-local ist lokale Zeit ohne TZ).
+  const vonIso = f.gueltig_von ? new Date(f.gueltig_von).toISOString() : null
+  let bisIso = null
+  if (f.dauer === 'custom') {
+    bisIso = f.gueltig_bis_custom ? new Date(f.gueltig_bis_custom).toISOString() : null
+  } else if (f.dauer !== 'none') {
+    const base = f.gueltig_von ? new Date(f.gueltig_von) : new Date()
+    bisIso = new Date(base.getTime() + DAUER_MS[f.dauer]).toISOString()
+  }
   saving.value = true; appGrantError.value = ''
   try {
     await api.post(`/api/schliessanlage/schloesser/${schlossDetail.value.schloss.id}/app-berechtigungen`, {
-      user_id: appGrantForm.value.user_id,
-      gueltig_von: appGrantForm.value.gueltig_von || null,
-      gueltig_bis: appGrantForm.value.gueltig_bis || null,
-      grund: appGrantForm.value.grund || null,
+      user_id: f.user.id, gueltig_von: vonIso, gueltig_bis: bisIso, grund: f.grund || null,
     })
     appGrantDialog.value = false
     await openSchloss(schlossDetail.value.schloss.id)
