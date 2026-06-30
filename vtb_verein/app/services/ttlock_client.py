@@ -211,19 +211,22 @@ class TTLockClient:
         return self._get("v3/identityCard/list", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
 
-    # Read-only Credential-Listen (Mirror): je Typ eine eigene paginierte Liste,
-    # analog identityCard/list. Modellabhängig – Schlösser ohne den jeweiligen Sensor
-    # können errcode liefern (vom Aufrufer abgefangen).
+    # Read-only Credential-Listen (Mirror): je Typ eine eigene paginierte Liste.
+    # Achtung: die Listen-Endpunkte sind NICHT einheitlich `v3/<typ>/list` – Passcodes und
+    # eKeys hängen unter `v3/lock/...` (lock-scoped), nur Fingerprint hat `v3/fingerprint/list`.
+    # `v3/keyboardPwd/*` kennt kein /list (→ 404), `v3/key/list` wäre account-weit ohne lockId.
+    # Modellabhängig – Schlösser ohne den jeweiligen Sensor können errcode liefern
+    # (vom Aufrufer abgefangen).
     def fingerprints(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
         return self._get("v3/fingerprint/list", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
 
     def passcodes(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
-        return self._get("v3/keyboardPwd/list", lockId=lock_id,
+        return self._get("v3/lock/listKeyboardPwd", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
 
     def ekeys(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
-        return self._get("v3/key/list", lockId=lock_id,
+        return self._get("v3/lock/listKey", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
 
     # --- IC-Card-Schreiboperationen (über Gateway, Phase 2) ----------------

@@ -19,6 +19,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
+import requests
+
 from app.models.schliessanlage import (
     TuerZutrittLog, SchluesselChip, TuerBerechtigung, TuerCredential, record_type_label,
     IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
@@ -411,8 +413,15 @@ class ZutrittService:
                 try:
                     items = self._fetch_all_pages(fetch, s.ttlock_lock_id)
                 except TTLockError as e:
+                    # Modell ohne diesen Sensor o. ä. – erwartetes Überspringen, Mirror bleibt.
                     logger.info("Credential-Sync: %s an Schloss %s übersprungen (%s).",
                                 typ, s.name, e)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    # Transport-/HTTP-Fehler dieses Typs darf den Gesamtlauf (inkl. nachgelagerter
+                    # Log-Sync) NICHT abbrechen; Mirror DIESES Typs bleibt unangetastet.
+                    logger.warning("Credential-Sync: %s an Schloss %s fehlgeschlagen (%s).",
+                                   typ, s.name, e)
                     continue
                 rows = [build(s.id, it, now_iso) for it in items]
                 total += self.credential_repo.replace_for_schloss_typ(s.id, typ, rows)
