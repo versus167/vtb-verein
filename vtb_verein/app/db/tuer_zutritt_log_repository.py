@@ -78,3 +78,14 @@ class TuerZutrittLogRepository(BaseRepository):
                 (chip_id, limit),
             )
             return [_map(r) for r in cur.fetchall()]
+
+    def list_for_mitglied(self, mitglied_id: int, limit: int = 50) -> list[TuerZutrittLog]:
+        """Eigene Zutritte eines Mitglieds (Self-Service) – über die im Log aufgelöste
+        mitglied_id (Kartennummer → Chip → Mitglied)."""
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE l.mitglied_id = %s ORDER BY l.lock_date DESC NULLS LAST, l.id DESC "
+                          "LIMIT %s",
+                (mitglied_id, limit),
+            )
+            return [_map(r) for r in cur.fetchall()]

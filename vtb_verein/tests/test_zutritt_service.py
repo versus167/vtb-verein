@@ -9,7 +9,7 @@ Geprüft:
 """
 import pytest
 
-from app.services.zutritt_service import ZutrittService
+from app.services.zutritt_service import ZutrittService, build_alarm_digest
 from app.services.ttlock_client import TTLockError
 
 
@@ -380,3 +380,49 @@ def test_ic_cards_sync_importiert_chip_und_berechtigung_idempotent():
     # zweiter Lauf: nichts Neues (idempotent)
     res2 = svc.ic_cards_sync()
     assert res2["chips_neu"] == 0 and res2["berechtigungen_neu"] == 0
+
+
+# --- Phase 4: Alarm-Erkennung / Benachrichtigung ----------------------------
+class AlarmClient(FakeClient):
+    """Liefert genau einen Sabotage-Alarm-Record (recordType 44)."""
+    def lock_records(self, lock_id, start_ms, end_ms, page_no=1, page_size=100):
+        if page_no > 1:
+            return {"list": [], "pages": 1, "pageNo": page_no}
+        return {"total": 1, "pages": 1, "pageNo": 1, "list": [
+            {"recordId": 99, "recordType": 44, "success": 1, "keyboardPwd": "",
+             "keyName": "tamper", "username": "u",
+             "lockDate": 1782456500000, "serverDate": 1782456500000},
+        ]}
+
+
+def test_logs_sync_meldet_nur_neue_alarme():
+    fake = AlarmClient()
+    svc = ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
+        chip_repo=FakeChipRepo(), berechtigung_repo=FakeBerechtigungRepo(),
+        log_repo=FakeLogRepo(), client_factory=lambda: fake,
+    )
+    svc.inventar_sync()
+    res = svc.logs_sync()
+    assert res["neu"] == 1 and len(res["alarme"]) == 1
+    a = res["alarme"][0]
+    assert a["record_type"] == 44 and a["methode"] == "Sabotage-Alarm" and a["schloss_name"] == "s3"
+    # zweiter Lauf: derselbe Record ist dedupliziert → kein erneuter Alarm
+    assert svc.logs_sync()["alarme"] == []
+
+
+def test_logs_sync_normale_records_ohne_alarm():
+    # Der Standard-FakeClient liefert recordTypes 7/4/11 → keine Alarme.
+    svc = _service()
+    svc.inventar_sync()
+    assert svc.logs_sync()["alarme"] == []
+
+
+def test_build_alarm_digest():
+    assert build_alarm_digest([]) is None
+    titel, text = build_alarm_digest([
+        {"schloss_id": 1, "schloss_name": "s3", "record_type": 44,
+         "methode": "Sabotage-Alarm", "lock_date": "2026-06-30T10:00:00+00:00"},
+    ])
+    assert "1" in titel
+    assert "s3" in text and "Sabotage-Alarm" in text

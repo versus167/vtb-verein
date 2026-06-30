@@ -21,7 +21,7 @@ from typing import Callable, Optional
 
 from app.models.schliessanlage import (
     TuerZutrittLog, SchluesselChip, TuerBerechtigung, record_type_label,
-    IC_CARD_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
+    IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
 )
 from app.services.ttlock_client import TTLockClient, TTLockError
 
@@ -61,6 +61,43 @@ def _iso_to_ms(iso: Optional[str]) -> int:
         return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
     except (ValueError, TypeError):
         return 0
+
+
+def build_alarm_digest(alarme: list[dict]) -> Optional[tuple[str, str]]:
+    """Aus neuen Alarm-Events eine kompakte Benachrichtigung (Titel, Text) bauen;
+    None, wenn keine Alarme. Reine Funktion (kein Versand) – gut testbar."""
+    if not alarme:
+        return None
+    zeilen = [
+        f"• {a.get('schloss_name') or ('Schloss #' + str(a.get('schloss_id')))}: "
+        f"{a.get('methode')} ({a.get('lock_date') or 'Zeit unbekannt'})"
+        for a in alarme
+    ]
+    titel = f"⚠️ Schließanlage: {len(alarme)} sicherheitsrelevante(s) Ereignis(se)"
+    text = "Beim Zutritts-Sync wurden folgende Ereignisse registriert:\n\n" + "\n".join(zeilen)
+    return titel, text
+
+
+def notify_alarme(db, alarme: list[dict]) -> int:
+    """Aktive Admins über neue Alarm-Events benachrichtigen (Phase 4). Gibt die Zahl
+    erreichter Empfänger zurück. Fehler je Empfänger werden geloggt, nicht propagiert
+    (der Sync darf an einem Notification-Problem nicht scheitern)."""
+    digest = build_alarm_digest(alarme)
+    if digest is None:
+        return 0
+    titel, text = digest
+    from app.services.user_service import UserService
+    from app.services.notification_service import NotificationService
+    empfaenger = [u for u in UserService(db).list_all() if u.active and u.role == "admin"]
+    sent = 0
+    for u in empfaenger:
+        try:
+            if NotificationService.send_notification(u, titel, text):
+                sent += 1
+        except Exception:
+            logger.exception("Alarm-Benachrichtigung an %s fehlgeschlagen.", u.username)
+    logger.info("Alarm-Benachrichtigung: %d/%d Admins erreicht.", sent, len(empfaenger))
+    return sent
 
 
 class ZutrittService:
@@ -301,6 +338,7 @@ class ZutrittService:
 
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         total_new = 0
+        alarme: list[dict] = []
         for s in schloesser:
             cursor = self.log_repo.max_server_date(s.id)
             start_ms = (cursor + 1) if cursor else int(
@@ -335,6 +373,13 @@ class ZutrittService:
                         server_date=r.get("serverDate"), raw=r,
                     )):
                         total_new += 1
+                        # Nur für tatsächlich NEUE Einträge melden (kein Re-Alarm bei Re-Sync).
+                        if rt in ALARM_RECORD_TYPES:
+                            alarme.append({
+                                "schloss_id": s.id, "schloss_name": s.name,
+                                "record_type": rt, "methode": record_type_label(rt),
+                                "lock_date": _ms_to_iso(r.get("lockDate")),
+                            })
                     sd = r.get("serverDate")
                     if sd and sd > max_sd:
                         max_sd = sd
@@ -354,5 +399,6 @@ class ZutrittService:
                     letztes_event_type=newest_rt,
                 )
         self.konto_repo.touch_sync(datetime.now(timezone.utc).isoformat())
-        logger.info("Log-Sync: %d neue Zutrittslog-Einträge.", total_new)
-        return {"neu": total_new}
+        logger.info("Log-Sync: %d neue Zutrittslog-Einträge (%d Alarme).",
+                    total_new, len(alarme))
+        return {"neu": total_new, "alarme": alarme}

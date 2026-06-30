@@ -29,7 +29,9 @@ except Exception:
     pass
 
 from app.db.datastore import VereinsDB
-from app.services.zutritt_service import ZutrittService, ZutrittNichtKonfiguriertError
+from app.services.zutritt_service import (
+    ZutrittService, ZutrittNichtKonfiguriertError, notify_alarme,
+)
 
 
 def main() -> int:
@@ -68,6 +70,10 @@ def main() -> int:
         if not args.inventar_only:
             res = svc.logs_sync(backfill_days=args.backfill_days)
             log(f"✓ Log-Sync: {res['neu']} neue Zutrittslog-Einträge.")
+            alarme = res.get("alarme", [])
+            if alarme:
+                erreicht = notify_alarme(db, alarme)
+                log(f"⚠ {len(alarme)} Alarm-Ereignis(se) → {erreicht} Admin(s) benachrichtigt.")
     except ZutrittNichtKonfiguriertError as e:
         print(f"FEHLER: {e}", file=sys.stderr)
         return 2

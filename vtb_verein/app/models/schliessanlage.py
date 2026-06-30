@@ -50,6 +50,10 @@ RECORD_TYPES: dict[int, str] = {
 # recordType-Codes, die ein Öffnen per IC-Karte sind (Kartennummer → Chip auflösbar).
 IC_CARD_RECORD_TYPES = frozenset({7, 35})
 
+# Sicherheitsrelevante recordType-Codes → Benachrichtigung an Admins (Phase 4).
+# 44 = Sabotage-Alarm, 48 = mehrfach falscher Passcode.
+ALARM_RECORD_TYPES = frozenset({44, 48})
+
 # Chip-Status
 CHIP_AKTIV = 'aktiv'
 CHIP_GESPERRT = 'gesperrt'

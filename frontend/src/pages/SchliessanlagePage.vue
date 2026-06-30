@@ -492,7 +492,9 @@ async function doSync() {
   syncing.value = true
   try {
     const { data } = await api.post('/api/schliessanlage/sync')
-    $q.notify({ type: 'positive', message: `Sync ok: ${data.schloesser ?? 0} Schlösser, ${data.neu ?? 0} neue Logs` })
+    let msg = `Sync ok: ${data.schloesser ?? 0} Schlösser, ${data.neu ?? 0} neue Logs`
+    if (data.alarme?.length) msg += ` · ⚠️ ${data.alarme.length} Alarm(e)`
+    $q.notify({ type: data.alarme?.length ? 'warning' : 'positive', message: msg })
     await reloadAll()
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Sync fehlgeschlagen' })

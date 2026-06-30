@@ -1,9 +1,12 @@
 # Plan: Zutrittskontrolle / Schließsystem (TT-Lock)
 
-> Status (2026-06-30): **Phase 1 (read-only)** und **Phase 2 (Chip-Verwaltung über die
-> Cloud)** umgesetzt + getestet auf Branch `feature/zutrittskontrolle`, Schema **v58**.
-> Zusätzlich **Fernöffnen/-verriegeln per App** und die **kurzzeitige App-Betätigungs-
-> Berechtigung**. Offen: Abteilungs-Scoping (Phase 3), Self-Service-Sichten (Phase 4).
+> Status (2026-06-30): **Phasen 1–4 umgesetzt + getestet** auf Branch
+> `feature/zutrittskontrolle`, Schema **v58**: Read-only (Inventar/Logs), Fernöffnen/
+> -verriegeln, Chip-Verwaltung über die Cloud (anlernen/ändern/entziehen + IC-Card-Import),
+> Abteilungs-Scoping + DSGVO-Hinweis, kurzzeitige App-Betätigungs-Berechtigung, Self-Service-
+> Sicht und Alarm-Benachrichtigungen. **Offen:** Log-Retention im allgemeinen Prune
+> (TODO.md), feineres Alarm-Empfänger-Scoping, Auswertungen/Reports; Cloud-Writes noch nicht
+> live an einem Schloss verifiziert (gerätegenaue Freigabe nötig).
 >
 > Phase 2 konkret: IC-Card-Writes über Gateway (`identityCard/add|changePeriod|delete`)
 > als signierter POST, `chip_anlernen`/`berechtigung_aendern`/`berechtigung_entziehen` im
@@ -334,9 +337,15 @@ Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
    Scope. **Datenschutzhinweis** an den Protokoll-Ansichten ✅. **Log-Aufbewahrung** (append-
    only → alters-basiertes Löschen) wird **ins allgemeine Prune** gezogen statt hier separat
    gebaut → als TODO in `TODO.md` notiert (Retention-Dauer dort festzulegen).
-4. **Komfort:** Self-Service-Sicht (eigene Chips/Zutritte), **kurzzeitige App-Betätigungs-
-   Berechtigung** (s. u.), Benachrichtigungen bei relevanten Events (z. B. Sabotage-Alarm
-   `recordType 44`) über das bestehende Notification-System, Auswertungen/Reports.
+4. **Komfort (umgesetzt):** **Self-Service-Sicht** ✅ – `GET /schliessanlage/mein-zugang`
+   (eigene Chips, Türen, befristete App-Berechtigungen, letzte eigene Zutritte über das
+   verknüpfte Mitglied; kein schliessanlage-Recht nötig, nur eigene Daten) + Card „Mein
+   Zugang" in der ProfilePage. **Kurzzeitige App-Betätigungs-Berechtigung** ✅ (s. u.).
+   **Event-Benachrichtigungen** ✅ – `ALARM_RECORD_TYPES` (44 Sabotage, 48 mehrf.
+   Falsch-Passcode); `logs_sync` meldet nur **neue** Alarm-Records, `notify_alarme` schickt
+   einen Sammel-Digest an aktive Admins über das bestehende Notification-System (E-Mail/
+   Matrix), verdrahtet in API-`/sync` und Cron. **Offen:** Empfänger feiner als „alle
+   Admins" (z. B. abteilungsgebunden), Auswertungen/Reports.
 
 ### Geplante Erweiterung: kurzzeitige App-Betätigungs-Berechtigung (Phase 4)
 

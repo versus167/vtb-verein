@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.models.permission import Permission
-from app.services.zutritt_service import ZutrittNichtKonfiguriertError
+from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.ttlock_client import TTLockError
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_schloss_ids, darf_schloss
@@ -130,6 +130,29 @@ def user_lookup(user: CurrentUser, db: DB):
     ]
 
 
+@router.get("/mein-zugang")
+def mein_zugang(user: CurrentUser, db: DB):
+    """Self-Service (Phase 4): eigene Chips, Türen, befristete App-Berechtigungen und
+    letzte eigene Zutritte des eingeloggten Users – über das verknüpfte Mitglied. Kein
+    schliessanlage-Recht nötig (nur eigene Daten); Bewegungsdaten betreffen nur ihn selbst."""
+    app_ber = db.tuer_app_berechtigungen.list_for_user(user.id)
+    mitglied = db.get_mitglied_by_user_id(user.id)
+    if not mitglied:
+        return {"verknuepft": False, "chips": [], "berechtigungen": [],
+                "app_berechtigungen": app_ber, "zutritte": []}
+    chips = db.schluessel_chips.list_for_mitglied(mitglied.id)
+    berechtigungen = []
+    for c in chips:
+        berechtigungen.extend(db.tuer_berechtigungen.list_for_chip(c.id))
+    return {
+        "verknuepft": True,
+        "chips": chips,
+        "berechtigungen": berechtigungen,
+        "app_berechtigungen": app_ber,
+        "zutritte": db.tuer_zutritt_logs.list_for_mitglied(mitglied.id, limit=50),
+    }
+
+
 @router.post("/sync")
 def sync(request: Request, user: CurrentUser, db: DB,
          backfill_days: int = 30, logs_only: bool = False):
@@ -146,6 +169,13 @@ def sync(request: Request, user: CurrentUser, db: DB,
         ergebnis.update(db.zutritt.logs_sync(backfill_days=backfill_days))
     except ZutrittNichtKonfiguriertError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    # Sicherheitsrelevante Ereignisse → Admins benachrichtigen (Fehler nicht propagieren).
+    try:
+        benachrichtigt = notify_alarme(db, ergebnis.get("alarme", []))
+        if benachrichtigt:
+            ergebnis["alarme_benachrichtigt"] = benachrichtigt
+    except Exception:
+        pass
     try:
         db.access_log_repository.log(
             "schliessanlage_sync", category="schliessanlage",

@@ -42,6 +42,13 @@ class SchluesselChipRepository(BaseRepository):
             cur.execute(_SELECT + " WHERE c.deleted_at IS NULL ORDER BY c.bezeichnung, c.id")
             return [_map(r) for r in cur.fetchall()]
 
+    def list_for_mitglied(self, mitglied_id: int) -> list[SchluesselChip]:
+        """Chips, die diesem Mitglied ausgegeben sind (Self-Service)."""
+        with self.cursor() as cur:
+            cur.execute(_SELECT + " WHERE c.mitglied_id = %s AND c.deleted_at IS NULL "
+                                  "ORDER BY c.bezeichnung, c.id", (mitglied_id,))
+            return [_map(r) for r in cur.fetchall()]
+
     def create(self, c: SchluesselChip, created_by: str) -> SchluesselChip:
         with self.cursor() as cur:
             cur.execute(
