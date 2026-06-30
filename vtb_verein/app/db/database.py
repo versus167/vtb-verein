@@ -3464,6 +3464,16 @@ class Database:
                 )
             for name, target in _TUER_APP_BERECHTIGUNG_INDEXES:
                 cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            # schliessanlage.oeffnen kam mit dem Fernöffnen (v58-Ära) dazu und stand bisher
+            # nur im Fresh-Seed → Bestands-Admins beim Upgrade nachziehen (Fresh==Upgrade).
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, 'schliessanlage.oeffnen', 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 58 WHERE id = 1")
 
