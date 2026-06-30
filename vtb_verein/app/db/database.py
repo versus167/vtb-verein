@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 58
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +477,325 @@ _UL_FUNKTION_PERMISSIONS = (
 )
 
 
+# ============================================================================
+# Zutrittskontrolle / Schließsystem (TT-Lock), Schema v57
+# ----------------------------------------------------------------------------
+# DDL/Trigger/Index-Definitionen, geteilt zwischen Frischaufbau (_create_*) und
+# Migration v56→v57, damit beide Pfade identische Schemata erzeugen.
+# Die App ist Orchestrierungsschicht über der TTLock-Cloud (Quelle der Wahrheit):
+#  * ttlock_konto      – Single-Row-Laufzeitstatus (Tokens/Sync), kein History/Soft-Delete.
+#  * tuer_schloss      – gespiegeltes Schloss-Inventar (+History, Soft-Delete).
+#  * schluessel_chip   – physischer Chip ↔ Mitglied/Standort (+History, Soft-Delete).
+#  * tuer_berechtigung – Chip an Schloss = eine TTLock-IC-Card (+History, Soft-Delete).
+#  * tuer_zutritt_log  – append-only Zutrittslog (kein History-Mirror, dedupe über recordId).
+# ============================================================================
+_TUER_SCHLOSS_COLS = (
+    "id, version, ttlock_lock_id, name, standort, abteilung_id, ttlock_gateway_id, "
+    "gateway_online, lock_mac, akku_prozent, akku_stand_at, aktiv, notiz, "
+    "letzter_log_serverdate, letztes_event_at, letztes_event_type, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TUER_SCHLOSS_VALS = ", ".join("NEW." + c.strip() for c in _TUER_SCHLOSS_COLS.split(","))
+
+_FN_TUER_SCHLOSS_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_schloss_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tuer_schloss_history ({_TUER_SCHLOSS_COLS}) VALUES ({_TUER_SCHLOSS_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TUER_SCHLOSS_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_schloss_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tuer_schloss_history ({_TUER_SCHLOSS_COLS}) VALUES ({_TUER_SCHLOSS_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_SCHLUESSEL_CHIP_COLS = (
+    "id, version, kartennummer, bezeichnung, mitglied_id, aufbewahrungsort, status, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_SCHLUESSEL_CHIP_VALS = ", ".join("NEW." + c.strip() for c in _SCHLUESSEL_CHIP_COLS.split(","))
+
+_FN_SCHLUESSEL_CHIP_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_schluessel_chip_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO schluessel_chip_history ({_SCHLUESSEL_CHIP_COLS}) VALUES ({_SCHLUESSEL_CHIP_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_schluessel_chip_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO schluessel_chip_history ({_SCHLUESSEL_CHIP_COLS}) VALUES ({_SCHLUESSEL_CHIP_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_TUER_BERECHTIGUNG_COLS = (
+    "id, version, chip_id, schloss_id, ttlock_card_id, gueltig_von, gueltig_bis, "
+    "sync_status, sync_fehler, erteilt_von, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TUER_BERECHTIGUNG_VALS = ", ".join("NEW." + c.strip() for c in _TUER_BERECHTIGUNG_COLS.split(","))
+
+_FN_TUER_BERECHTIGUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_berechtigung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tuer_berechtigung_history ({_TUER_BERECHTIGUNG_COLS}) VALUES ({_TUER_BERECHTIGUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_berechtigung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tuer_berechtigung_history ({_TUER_BERECHTIGUNG_COLS}) VALUES ({_TUER_BERECHTIGUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# DDL aller Zutritts-Tabellen (+History), geteilt zwischen Frischaufbau und Migration.
+_DDL_ZUTRITT_TABLES = """
+    CREATE TABLE IF NOT EXISTS ttlock_konto (
+      id               SERIAL PRIMARY KEY,
+      endpoint         TEXT NOT NULL DEFAULT 'https://euapi.ttlock.com',
+      ttlock_uid       BIGINT,
+      access_token     TEXT,
+      refresh_token    TEXT,
+      token_expires_at TEXT,
+      letzter_sync_at  TEXT,
+      version          INTEGER NOT NULL DEFAULT 1,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by       TEXT,
+      updated_at       TEXT,
+      updated_by       TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tuer_schloss (
+      id                     SERIAL PRIMARY KEY,
+      ttlock_lock_id         BIGINT NOT NULL,
+      name                   TEXT NOT NULL,
+      standort               TEXT,
+      abteilung_id           INTEGER REFERENCES abteilung(id),
+      ttlock_gateway_id      BIGINT,
+      gateway_online         BOOLEAN,
+      lock_mac               TEXT,
+      akku_prozent           INTEGER,
+      akku_stand_at          TEXT,
+      aktiv                  BOOLEAN NOT NULL DEFAULT TRUE,
+      notiz                  TEXT,
+      letzter_log_serverdate BIGINT,
+      letztes_event_at       TEXT,
+      letztes_event_type     INTEGER,
+      version                INTEGER NOT NULL DEFAULT 1,
+      created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by             TEXT,
+      updated_at             TEXT,
+      updated_by             TEXT,
+      deleted_at             TEXT,
+      deleted_by             TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tuer_schloss_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      ttlock_lock_id BIGINT, name TEXT, standort TEXT, abteilung_id INTEGER,
+      ttlock_gateway_id BIGINT, gateway_online BOOLEAN, lock_mac TEXT,
+      akku_prozent INTEGER, akku_stand_at TEXT, aktiv BOOLEAN, notiz TEXT,
+      letzter_log_serverdate BIGINT, letztes_event_at TEXT, letztes_event_type INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS schluessel_chip (
+      id               SERIAL PRIMARY KEY,
+      kartennummer     TEXT NOT NULL,
+      bezeichnung      TEXT,
+      mitglied_id      INTEGER REFERENCES mitglied(id),
+      aufbewahrungsort TEXT,
+      status           TEXT NOT NULL DEFAULT 'aktiv',
+      version          INTEGER NOT NULL DEFAULT 1,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by       TEXT,
+      updated_at       TEXT,
+      updated_by       TEXT,
+      deleted_at       TEXT,
+      deleted_by       TEXT
+    );
+    CREATE TABLE IF NOT EXISTS schluessel_chip_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      kartennummer TEXT, bezeichnung TEXT, mitglied_id INTEGER, aufbewahrungsort TEXT,
+      status TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS tuer_berechtigung (
+      id             SERIAL PRIMARY KEY,
+      chip_id        INTEGER NOT NULL REFERENCES schluessel_chip(id),
+      schloss_id     INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      ttlock_card_id BIGINT,
+      gueltig_von    TEXT,
+      gueltig_bis    TEXT,
+      sync_status    TEXT NOT NULL DEFAULT 'pending',
+      sync_fehler    TEXT,
+      erteilt_von    INTEGER REFERENCES users(id),
+      version        INTEGER NOT NULL DEFAULT 1,
+      created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by     TEXT,
+      updated_at     TEXT,
+      updated_by     TEXT,
+      deleted_at     TEXT,
+      deleted_by     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tuer_berechtigung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      chip_id INTEGER, schloss_id INTEGER, ttlock_card_id BIGINT,
+      gueltig_von TEXT, gueltig_bis TEXT, sync_status TEXT, sync_fehler TEXT,
+      erteilt_von INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS tuer_zutritt_log (
+      id                    SERIAL PRIMARY KEY,
+      ttlock_record_id      BIGINT NOT NULL UNIQUE,
+      schloss_id            INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      record_type           INTEGER,
+      record_type_from_lock INTEGER,
+      methode               TEXT,
+      erfolg                BOOLEAN,
+      credential            TEXT,
+      key_name              TEXT,
+      ttlock_username       TEXT,
+      chip_id               INTEGER REFERENCES schluessel_chip(id),
+      mitglied_id           INTEGER REFERENCES mitglied(id),
+      lock_date             TEXT,
+      server_date           BIGINT,
+      raw                   JSONB,
+      created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+"""
+
+# Einfache Indizes (CREATE INDEX-Loop), geteilt zwischen Frischaufbau und Migration.
+_ZUTRITT_INDEXES = (
+    ("idx_tuer_schloss_abteilung_id",     "tuer_schloss(abteilung_id)"),
+    ("idx_tuer_schloss_deleted_at",       "tuer_schloss(deleted_at)"),
+    ("idx_tuer_schloss_history_id",       "tuer_schloss_history(id)"),
+    ("idx_schluessel_chip_mitglied_id",   "schluessel_chip(mitglied_id)"),
+    ("idx_schluessel_chip_deleted_at",    "schluessel_chip(deleted_at)"),
+    ("idx_schluessel_chip_history_id",    "schluessel_chip_history(id)"),
+    ("idx_tuer_berechtigung_chip_id",     "tuer_berechtigung(chip_id)"),
+    ("idx_tuer_berechtigung_schloss_id",  "tuer_berechtigung(schloss_id)"),
+    ("idx_tuer_berechtigung_deleted_at",  "tuer_berechtigung(deleted_at)"),
+    ("idx_tuer_berechtigung_history_id",  "tuer_berechtigung_history(id)"),
+    ("idx_tuer_zutritt_log_schloss_id",   "tuer_zutritt_log(schloss_id)"),
+    ("idx_tuer_zutritt_log_chip_id",      "tuer_zutritt_log(chip_id)"),
+    ("idx_tuer_zutritt_log_mitglied_id",  "tuer_zutritt_log(mitglied_id)"),
+    ("idx_tuer_zutritt_log_lock_date",    "tuer_zutritt_log(lock_date)"),
+    ("idx_tuer_zutritt_log_server_date",  "tuer_zutritt_log(schloss_id, server_date)"),
+)
+
+# Partielle Unique-Indizes (Soft-Delete-tauglich), explizit ausgeführt.
+_ZUTRITT_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_tuer_schloss_lock_active "
+    "ON tuer_schloss (ttlock_lock_id) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_schluessel_chip_kartennummer_active "
+    "ON schluessel_chip (kartennummer) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_tuer_berechtigung_chip_schloss_active "
+    "ON tuer_berechtigung (chip_id, schloss_id) WHERE deleted_at IS NULL",
+)
+
+# Audit-Trigger (Tabelle ↔ Funktion), geteilt zwischen Frischaufbau und Migration.
+_ZUTRITT_TRIGGERS = (
+    ('trig_tuer_schloss_audit_insert',      'INSERT', 'tuer_schloss',      'fn_tuer_schloss_audit_insert'),
+    ('trig_tuer_schloss_audit_update',      'UPDATE', 'tuer_schloss',      'fn_tuer_schloss_audit_update'),
+    ('trig_schluessel_chip_audit_insert',   'INSERT', 'schluessel_chip',   'fn_schluessel_chip_audit_insert'),
+    ('trig_schluessel_chip_audit_update',   'UPDATE', 'schluessel_chip',   'fn_schluessel_chip_audit_update'),
+    ('trig_tuer_berechtigung_audit_insert', 'INSERT', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_insert'),
+    ('trig_tuer_berechtigung_audit_update', 'UPDATE', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_update'),
+)
+
+# Neue Permission-Keys (Seed Admin + Migration für Bestands-Admins).
+_ZUTRITT_PERMISSIONS = (
+    'schliessanlage.read',
+    'schliessanlage.verwalten',
+    'schliessanlage.protokoll',
+)
+
+# ----------------------------------------------------------------------------
+# Kurzzeitige App-Betätigungs-Berechtigung (Schema v58): einem User befristet das
+# Öffnen genau eines Schlosses per App erlauben – ohne Chip. Getrennt von
+# tuer_berechtigung (Chip↔Schloss/IC-Card), da es hier keinen Chip gibt.
+# ----------------------------------------------------------------------------
+_TUER_APP_BERECHTIGUNG_COLS = (
+    "id, version, user_id, schloss_id, gueltig_von, gueltig_bis, grund, erteilt_von, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TUER_APP_BERECHTIGUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TUER_APP_BERECHTIGUNG_COLS.split(","))
+
+_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_app_berechtigung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tuer_app_berechtigung_history ({_TUER_APP_BERECHTIGUNG_COLS}) VALUES ({_TUER_APP_BERECHTIGUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tuer_app_berechtigung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tuer_app_berechtigung_history ({_TUER_APP_BERECHTIGUNG_COLS}) VALUES ({_TUER_APP_BERECHTIGUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TUER_APP_BERECHTIGUNG = """
+    CREATE TABLE IF NOT EXISTS tuer_app_berechtigung (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      schloss_id  INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      gueltig_von TEXT,
+      gueltig_bis TEXT,
+      grund       TEXT,
+      erteilt_von INTEGER REFERENCES users(id),
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT,
+      updated_at  TEXT,
+      updated_by  TEXT,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tuer_app_berechtigung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      user_id INTEGER, schloss_id INTEGER, gueltig_von TEXT, gueltig_bis TEXT,
+      grund TEXT, erteilt_von INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TUER_APP_BERECHTIGUNG_INDEXES = (
+    ("idx_tuer_app_berechtigung_user_id",    "tuer_app_berechtigung(user_id)"),
+    ("idx_tuer_app_berechtigung_schloss_id", "tuer_app_berechtigung(schloss_id)"),
+    ("idx_tuer_app_berechtigung_deleted_at", "tuer_app_berechtigung(deleted_at)"),
+    ("idx_tuer_app_berechtigung_history_id", "tuer_app_berechtigung_history(id)"),
+)
+
+_TUER_APP_BERECHTIGUNG_TRIGGERS = (
+    ('trig_tuer_app_berechtigung_audit_insert', 'INSERT', 'tuer_app_berechtigung', 'fn_tuer_app_berechtigung_audit_insert'),
+    ('trig_tuer_app_berechtigung_audit_update', 'UPDATE', 'tuer_app_berechtigung', 'fn_tuer_app_berechtigung_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -579,6 +898,8 @@ class Database:
             54: self._migrate_v53_to_v54,
             55: self._migrate_v54_to_v55,
             56: self._migrate_v55_to_v56,
+            57: self._migrate_v56_to_v57,
+            58: self._migrate_v57_to_v58,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3085,6 +3406,77 @@ class Database:
             cur.execute("ALTER TABLE fibu_einstellungen ADD COLUMN IF NOT EXISTS ul_kreditor_konto_basis INTEGER")
             cur.execute("UPDATE schema_version SET version = 56 WHERE id = 1")
 
+    def _migrate_v56_to_v57(self) -> None:
+        """Zutrittskontrolle/Schließsystem (TT-Lock): ttlock_konto, tuer_schloss,
+        schluessel_chip, tuer_berechtigung (+History, Audit-Trigger) sowie das
+        append-only tuer_zutritt_log; plus die drei schliessanlage.*-Permissions an
+        bestehende Admin-User.
+
+        Idempotent (CREATE TABLE/INDEX IF NOT EXISTS, ON CONFLICT). Fresh-Schema und
+        Migration teilen DDL/Trigger/Index-Konstanten (Modul-Konstanten), damit beide
+        Pfade identische Schemata erzeugen.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_ZUTRITT_TABLES)
+            for fn_sql in (
+                _FN_TUER_SCHLOSS_AUDIT_INSERT, _FN_TUER_SCHLOSS_AUDIT_UPDATE,
+                _FN_SCHLUESSEL_CHIP_AUDIT_INSERT, _FN_SCHLUESSEL_CHIP_AUDIT_UPDATE,
+                _FN_TUER_BERECHTIGUNG_AUDIT_INSERT, _FN_TUER_BERECHTIGUNG_AUDIT_UPDATE,
+            ):
+                cur.execute(fn_sql)
+            for name, event, table, fn in _ZUTRITT_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _ZUTRITT_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _ZUTRITT_UNIQUE_INDEXES:
+                cur.execute(sql)
+            # Neue Permissions an Bestands-Admins hängen (Frisch-Schema seedet sie separat).
+            for perm in _ZUTRITT_PERMISSIONS:
+                cur.execute(
+                    """
+                    INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                    SELECT id, %s, 'SYSTEM', 'SYSTEM' FROM users
+                    WHERE role='admin' AND deleted_at IS NULL
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (perm,),
+                )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 57 WHERE id = 1")
+
+    def _migrate_v57_to_v58(self) -> None:
+        """Kurzzeitige App-Betätigungs-Berechtigung: tuer_app_berechtigung (+History,
+        Audit-Trigger, Indizes). Befristetes App-Öffnen je User+Schloss ohne Chip.
+
+        Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem Fresh-Schema.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
+            cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
+            cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
+            for name, event, table, fn in _TUER_APP_BERECHTIGUNG_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TUER_APP_BERECHTIGUNG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            # schliessanlage.oeffnen kam mit dem Fernöffnen (v58-Ära) dazu und stand bisher
+            # nur im Fresh-Seed → Bestands-Admins beim Upgrade nachziehen (Fresh==Upgrade).
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, 'schliessanlage.oeffnen', 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 58 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -4304,6 +4696,12 @@ class Database:
         # + konfigurierbare Vergütungssätze. DDL geteilt mit Migration v52→v53.
         cur.execute(_DDL_UL_TABLES)
 
+        # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
+        # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
+        cur.execute(_DDL_ZUTRITT_TABLES)
+        # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
+        cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
+
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fibu_exporte (
@@ -4503,6 +4901,14 @@ class Database:
         cur.execute(_FN_UL_STUNDE_AUDIT_UPDATE)
         cur.execute(_FN_UL_SATZ_AUDIT_INSERT)
         cur.execute(_FN_UL_SATZ_AUDIT_UPDATE)
+        cur.execute(_FN_TUER_SCHLOSS_AUDIT_INSERT)
+        cur.execute(_FN_TUER_SCHLOSS_AUDIT_UPDATE)
+        cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_INSERT)
+        cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
+        cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_INSERT)
+        cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
+        cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
+        cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -5157,6 +5563,8 @@ class Database:
             ('trig_funktion_permission_audit_insert',               'INSERT', 'funktion_permission',               'fn_funktion_permission_audit_insert'),
             ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
             *_UL_TRIGGERS,
+            *_ZUTRITT_TRIGGERS,
+            *_TUER_APP_BERECHTIGUNG_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -5268,6 +5676,8 @@ class Database:
             ("idx_gebuehr_forderung_storno_export_id",              "gebuehr_forderung(storno_exportiert_in_export_id)"),
             ("idx_fibu_exporte_storno_von_export_id",               "fibu_exporte(storno_von_export_id)"),
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
+            *_ZUTRITT_INDEXES,
+            *_TUER_APP_BERECHTIGUNG_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -5278,6 +5688,8 @@ class Database:
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_kassen_kategorien_scope_name ON kassen_kategorien (COALESCE(kasse_id, 0), lower(name)) WHERE deleted_at IS NULL")
+        for sql in _ZUTRITT_UNIQUE_INDEXES:
+            cur.execute(sql)
 
     # -----------------------------------
     # Seed-Daten
@@ -5296,6 +5708,8 @@ class Database:
             'system.config',
             'tickets.access',
             'tickets.bereiche_verwalten',
+            'schliessanlage.read', 'schliessanlage.verwalten', 'schliessanlage.protokoll',
+            'schliessanlage.oeffnen',
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

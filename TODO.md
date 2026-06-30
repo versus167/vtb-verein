@@ -26,6 +26,11 @@
       Spalte „Eintritt" → „Eintritt/Austritt" (Austrittsdatum weiß auf rot).
 - [ ] **Aufbewahrung/Archivierung ausgetretener Mitglieder** – offen: nach X Jahren
       automatisch archivieren/löschen (DSGVO-Aufbewahrungsfristen?), o. Ä.
+- [ ] **Zutrittslog-Aufbewahrung ins allgemeine Prune** – `tuer_zutritt_log` ist
+      append-only (kein Soft-Delete) → **alters-basiertes** Löschen (analog den
+      access_log-Page-Views) im allgemeinen Prune-Job ergänzen, Retention konfigurierbar
+      via `prune_einstellungen`, Retention-Dauer noch festzulegen. (Rest von Phase 3 der
+      Zutrittskontrolle – Abteilungs-Scoping + DSGVO-Hinweis – ist umgesetzt.)
 
 ### Mitglieder-Import (SPG-Verein)
 - [x] Echter Import-Lauf der Bestandsdaten durchführen (Importer `tools/import_spg.py`

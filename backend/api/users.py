@@ -88,6 +88,15 @@ PERMISSION_GROUPS = [
             (Permission.TICKETS_BEREICHE_VERWALTEN, 'Bereiche verwalten'),
         ],
     },
+    {
+        'label': 'Schließanlage', 'icon': 'lock',
+        'permissions': [
+            (Permission.SCHLIESSANLAGE_READ,      'Ansehen (Schlösser/Chips)'),
+            (Permission.SCHLIESSANLAGE_OEFFNEN,   'Öffnen/Verriegeln (per App)'),
+            (Permission.SCHLIESSANLAGE_VERWALTEN, 'Verwalten (Chips, Berechtigungen, Inventar)'),
+            (Permission.SCHLIESSANLAGE_PROTOKOLL, 'Zutrittsprotokoll einsehen'),
+        ],
+    },
 ]
 
 

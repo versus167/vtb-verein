@@ -40,5 +40,24 @@ class Settings:
     MAIL_FROM: str = os.getenv("MAIL_FROM", "noreply@vtb-verein.de")
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:9000")
 
+    # TTLock / Zutrittskontrolle (ein Vereinskonto, Secrets nur aus Env/.env).
+    # Dev-Account-Portal: euopen.ttlock.com; API-Host ist euapi.ttlock.com (NICHT euopen.*).
+    TTLOCK_ENDPOINT: str = os.getenv("TTLOCK_ENDPOINT", "https://euapi.ttlock.com")
+    TTLOCK_CLIENT_ID: str = os.getenv("TTLOCK_CLIENT_ID", "")
+    TTLOCK_CLIENT_SECRET: str = os.getenv("TTLOCK_CLIENT_SECRET", "")
+    TTLOCK_USERNAME: str = os.getenv("TTLOCK_USERNAME", "")
+    TTLOCK_PASSWORD: str = os.getenv("TTLOCK_PASSWORD", "")
+    # Hintergrund-Log-Sync: Default „paarmal am Tag" (alle 6 h) + Backfill-Fenster bei Erstlauf.
+    TTLOCK_SYNC_INTERVAL_HOURS: int = int(os.getenv("TTLOCK_SYNC_INTERVAL_HOURS", "6"))
+    TTLOCK_LOG_BACKFILL_DAYS: int = int(os.getenv("TTLOCK_LOG_BACKFILL_DAYS", "30"))
+
+    @property
+    def ttlock_configured(self) -> bool:
+        """True, wenn ein TTLock-Konto vollständig in der Env hinterlegt ist."""
+        return bool(
+            self.TTLOCK_CLIENT_ID and self.TTLOCK_CLIENT_SECRET
+            and self.TTLOCK_USERNAME and self.TTLOCK_PASSWORD
+        )
+
 
 settings = Settings()

@@ -286,6 +286,76 @@
         </q-card>
       </div>
 
+      <!-- Mein Zugang (Schließanlage, Self-Service) -->
+      <div class="col-12" v-if="zugangHasData">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Mein Zugang (Schließanlage)</div>
+
+            <template v-if="meinZugang.chips.length">
+              <div class="text-caption text-weight-medium q-mt-sm">Meine Chips</div>
+              <q-list dense>
+                <q-item v-for="c in meinZugang.chips" :key="'c' + c.id">
+                  <q-item-section>
+                    <q-item-label>{{ c.bezeichnung || ('Chip #' + c.id) }}
+                      <q-chip dense size="sm" outline>Nr. {{ c.kartennummer }}</q-chip>
+                      <q-chip v-if="c.status !== 'aktiv'" dense size="sm" color="orange-3">{{ c.status }}</q-chip>
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </template>
+
+            <template v-if="meinZugang.berechtigungen.length">
+              <div class="text-caption text-weight-medium q-mt-sm">Öffnet diese Türen</div>
+              <q-list dense>
+                <q-item v-for="b in meinZugang.berechtigungen" :key="'b' + b.id">
+                  <q-item-section>
+                    <q-item-label>{{ b.schloss_name }}</q-item-label>
+                    <q-item-label caption v-if="b.gueltig_bis">gültig bis {{ fmt(b.gueltig_bis) }}</q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-chip dense size="sm" :color="b.sync_status === 'aktiv' ? 'green-3' : 'grey-3'">
+                      {{ b.sync_status }}</q-chip>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </template>
+
+            <template v-if="meinZugang.app_berechtigungen.length">
+              <div class="text-caption text-weight-medium q-mt-sm">Befristete App-Öffnung</div>
+              <q-list dense>
+                <q-item v-for="a in meinZugang.app_berechtigungen" :key="'a' + a.id">
+                  <q-item-section>
+                    <q-item-label>{{ a.schloss_name }}</q-item-label>
+                    <q-item-label caption>
+                      {{ a.gueltig_von ? fmt(a.gueltig_von) : 'ab sofort' }}
+                      – {{ a.gueltig_bis ? fmt(a.gueltig_bis) : 'unbefristet' }}
+                    </q-item-label>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </template>
+
+            <template v-if="meinZugang.zutritte.length">
+              <div class="text-caption text-weight-medium q-mt-sm">Letzte Zutritte</div>
+              <q-list dense>
+                <q-item v-for="l in meinZugang.zutritte" :key="'l' + l.id">
+                  <q-item-section avatar>
+                    <q-icon :name="l.erfolg ? 'check_circle' : 'cancel'"
+                      :color="l.erfolg ? 'positive' : 'negative'" size="18px" />
+                  </q-item-section>
+                  <q-item-section>
+                    <q-item-label>{{ l.schloss_name }}</q-item-label>
+                    <q-item-label caption>{{ fmt(l.lock_date) }} · {{ l.methode }}</q-item-label>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </template>
+          </q-card-section>
+        </q-card>
+      </div>
+
     </div>
   </q-page>
 </template>
@@ -338,6 +408,13 @@ const permGroups = computed(() => {
 
 const meinMitglied = ref(null)
 const mitgliedForm = ref({})
+
+// Self-Service Schließanlage (eigene Chips/Türen/Zutritte)
+const meinZugang = ref({ verknuepft: false, chips: [], berechtigungen: [], app_berechtigungen: [], zutritte: [] })
+const zugangHasData = computed(() => {
+  const z = meinZugang.value
+  return !!(z && (z.chips.length || z.berechtigungen.length || z.app_berechtigungen.length || z.zutritte.length))
+})
 const mitgliedError = ref('')
 const savingMitglied = ref(false)
 
@@ -369,6 +446,10 @@ async function load() {
     const { data: perms } = await api.get('/api/auth/me/permissions')
     permData.value = perms
   } catch { /* Berechtigungen optional – Anzeige einfach weglassen */ }
+  try {
+    const { data: mz } = await api.get('/api/schliessanlage/mein-zugang')
+    meinZugang.value = mz
+  } catch { /* Schließanlage optional – Card bleibt ausgeblendet */ }
   try {
     const { data: m } = await api.get('/api/personen/mein-mitglied')
     meinMitglied.value = m

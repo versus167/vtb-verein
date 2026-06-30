@@ -94,6 +94,17 @@ class Permission:
     TICKETS_READ             = 'tickets.read'
     TICKETS_CREATE           = 'tickets.create'
 
+    # --- Zutrittskontrolle / Schließsystem (TT-Lock) ---
+    # Schlösser/Chips/Berechtigungen + Status sehen (Inventar, keine Bewegungsdaten)
+    SCHLIESSANLAGE_READ      = 'schliessanlage.read'
+    # Chips ↔ Mitglied/Standort pflegen, Berechtigungen vergeben/sperren, Inventar pflegen, Sync auslösen
+    SCHLIESSANLAGE_VERWALTEN = 'schliessanlage.verwalten'
+    # Zutrittsprotokoll (personenbezogene Bewegungsdaten) einsehen – DSGVO-sensibel, eigenes Recht
+    SCHLIESSANLAGE_PROTOKOLL = 'schliessanlage.protokoll'
+    # Schloss per App fernöffnen/-verriegeln (Gateway). Alternativ öffnet, wer eine
+    # gültige Berechtigung (Chip↔Schloss) für genau dieses Schloss hat (Self-Service).
+    SCHLIESSANLAGE_OEFFNEN   = 'schliessanlage.oeffnen'
+
     @classmethod
     def all(cls) -> list[str]:
         """Alle definierten globalen Permissions."""
