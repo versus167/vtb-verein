@@ -54,6 +54,25 @@ IC_CARD_RECORD_TYPES = frozenset({7, 35})
 # 44 = Sabotage-Alarm, 48 = mehrfach falscher Passcode.
 ALARM_RECORD_TYPES = frozenset({44, 48})
 
+# Credential-Typen am Schloss (read-only Inventar, 1:1 aus der Cloud gespiegelt).
+CRED_FINGERPRINT = 'fingerprint'
+CRED_PASSCODE = 'passcode'
+CRED_EKEY = 'ekey'
+CRED_IC = 'ic'
+CREDENTIAL_TYPEN = (CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC)
+
+CREDENTIAL_TYP_LABELS: dict[str, str] = {
+    CRED_FINGERPRINT: 'Fingerprint',
+    CRED_PASSCODE: 'Passcode',
+    CRED_EKEY: 'App-/eKey',
+    CRED_IC: 'IC-Karte',
+}
+
+
+def credential_typ_label(typ: Optional[str]) -> str:
+    """Lesbarer Text zu einem Credential-Typ; Unbekanntes unverändert zurück."""
+    return CREDENTIAL_TYP_LABELS.get(typ or '', typ or '-')
+
 # Chip-Status
 CHIP_AKTIV = 'aktiv'
 CHIP_GESPERRT = 'gesperrt'
@@ -191,6 +210,29 @@ class TuerAppBerechtigung:
     updated_by: Optional[str] = None
     deleted_at: Optional[str] = None
     deleted_by: Optional[str] = None
+
+
+@dataclass
+class TuerCredential:
+    """Read-only gespiegeltes Credential am Schloss (Fingerprint/Passcode/eKey/IC-Karte).
+
+    Reiner Cloud-Mirror (kein Anlernen/Löschen über die App): je Schloss + Typ wird die
+    TTLock-Liste 1:1 gespiegelt, damit auch Credential-Typen sichtbar werden, die NICHT
+    über unsere App liefen (Fingerprints/Funk-Keys = bisheriger blinder Fleck). Kein
+    History/Soft-Delete – pro Schloss+Typ wird die Cloud-Liste autoritativ ersetzt."""
+    id: Optional[int] = None
+    schloss_id: int = 0
+    typ: str = CRED_FINGERPRINT                    # fingerprint | passcode | ekey | ic
+    ttlock_credential_id: Optional[int] = None     # fingerprintId/keyboardPwdId/keyId/cardId
+    name: Optional[str] = None                     # *Name aus der Cloud
+    detail: Optional[str] = None                   # eKey-User / Kartennummer (typabhängig)
+    gueltig_von: Optional[str] = None              # aus startDate (ms) – NULL = unbefristet
+    gueltig_bis: Optional[str] = None              # aus endDate (ms)
+    gesehen_am: Optional[str] = None               # letzter Sync, der das Credential bestätigte
+    raw: Optional[dict] = None
+    created_at: Optional[str] = None
+    # per JOIN befüllt (Anzeige)
+    schloss_name: Optional[str] = None
 
 
 @dataclass

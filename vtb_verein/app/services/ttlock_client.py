@@ -211,6 +211,21 @@ class TTLockClient:
         return self._get("v3/identityCard/list", lockId=lock_id,
                          pageNo=page_no, pageSize=page_size)
 
+    # Read-only Credential-Listen (Mirror): je Typ eine eigene paginierte Liste,
+    # analog identityCard/list. Modellabhängig – Schlösser ohne den jeweiligen Sensor
+    # können errcode liefern (vom Aufrufer abgefangen).
+    def fingerprints(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
+        return self._get("v3/fingerprint/list", lockId=lock_id,
+                         pageNo=page_no, pageSize=page_size)
+
+    def passcodes(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
+        return self._get("v3/keyboardPwd/list", lockId=lock_id,
+                         pageNo=page_no, pageSize=page_size)
+
+    def ekeys(self, lock_id: int, page_no: int = 1, page_size: int = 100) -> dict:
+        return self._get("v3/key/list", lockId=lock_id,
+                         pageNo=page_no, pageSize=page_size)
+
     # --- IC-Card-Schreiboperationen (über Gateway, Phase 2) ----------------
     # TTLock-Typ-Felder: 2 = „über Gateway/WLAN" (server-seitig, ohne Bluetooth).
     # startDate/endDate in ms; 0 = unbefristet. Ein neuer Chip braucht eine bereits

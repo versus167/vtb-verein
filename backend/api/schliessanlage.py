@@ -182,6 +182,7 @@ def sync(request: Request, user: CurrentUser, db: DB,
         if not logs_only:
             ergebnis.update(db.zutritt.inventar_sync())
             ergebnis.update(db.zutritt.ic_cards_sync())
+            ergebnis.update(db.zutritt.credentials_sync())
         ergebnis.update(db.zutritt.logs_sync(backfill_days=backfill_days))
     except ZutrittNichtKonfiguriertError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -229,6 +230,9 @@ def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
         "schloss": schloss,
         "berechtigungen": db.tuer_berechtigungen.list_for_schloss(schloss_id),
         "app_berechtigungen": db.tuer_app_berechtigungen.list_for_schloss(schloss_id),
+        # Read-only Credential-Inventar (Fingerprints/Passcodes/eKeys/IC) – auf Read-Ebene,
+        # analog zur Chip-/Berechtigungsliste (kein personenbezogenes Bewegungsdatum).
+        "credentials": db.tuer_credentials.list_for_schloss(schloss_id),
         "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
         "darf_protokoll": darf_protokoll,
         "darf_verwalten": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN),

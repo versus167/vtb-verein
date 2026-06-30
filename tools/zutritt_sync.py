@@ -3,9 +3,9 @@
 TTLock-Zutritts-Sync – für externen Cron/systemd-Timer (Default „paarmal am Tag").
 
 Spiegelt Inventar (Schlösser/Gateways), am Schloss angelernte IC-Karten (Chips/
-Berechtigungen) und holt neue Zutrittslogs aus der TTLock-Cloud. Read-only gegenüber den
-Schlössern; schreibt nur in die eigene DB. Idempotent (Dedupe über recordId/Kartennummer),
-daher gefahrlos wiederholbar.
+Berechtigungen), den read-only Credential-Mirror (Fingerprints/Passcodes/eKeys/IC) und holt
+neue Zutrittslogs aus der TTLock-Cloud. Read-only gegenüber den Schlössern; schreibt nur in
+die eigene DB. Idempotent (Dedupe über recordId/Kartennummer), daher gefahrlos wiederholbar.
 
 TTLock-Zugangsdaten kommen aus der Env/.env (TTLOCK_CLIENT_ID/SECRET/USERNAME/PASSWORD),
 die DB aus VTB_DATABASE_URL.
@@ -67,6 +67,9 @@ def main() -> int:
             log(f"✓ IC-Card-Import: {res['chips_neu']} Chips neu, "
                 f"{res['berechtigungen_neu']} Berechtigungen neu, "
                 f"{res['berechtigungen_akt']} aktualisiert.")
+            res = svc.credentials_sync()
+            log(f"✓ Credential-Mirror: {res['credentials']} Credentials gespiegelt "
+                f"(Fingerprints/Passcodes/eKeys/IC).")
         if not args.inventar_only:
             res = svc.logs_sync(backfill_days=args.backfill_days)
             log(f"✓ Log-Sync: {res['neu']} neue Zutrittslog-Einträge.")
