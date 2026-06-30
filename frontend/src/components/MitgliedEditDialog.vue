@@ -82,9 +82,12 @@
                 <q-input v-model="form.trainerlizenz_nr" label="Trainerlizenz-Nr."
                   outlined dense :readonly="!canWrite"
                   hint="erscheint auf dem Stundennachweis-Beleg" />
+                <q-input v-model="form.trainerlizenz_gueltig_von" label="Lizenz gültig von"
+                  outlined dense type="date" :readonly="!canWrite"
+                  hint="Nr., gültig-von und gültig-bis nur gemeinsam ausfüllen" />
                 <q-input v-model="form.trainerlizenz_gueltig_bis" label="Lizenz gültig bis"
                   outlined dense type="date" :readonly="!canWrite"
-                  hint="steuert mit/ohne Lizenz in der Abrechnung" />
+                  hint="steuert mit/ohne Lizenz (Fenster von–bis) in der Abrechnung" />
               </div>
             </q-expansion-item>
             <div v-if="stammError" class="text-negative text-caption">{{ stammError }}</div>
@@ -588,7 +591,8 @@ const emptyForm = () => ({
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
   eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
-  trainerlizenz_nr: null, qualifikation: null, trainerlizenz_gueltig_bis: null,
+  trainerlizenz_nr: null, qualifikation: null,
+  trainerlizenz_gueltig_von: null, trainerlizenz_gueltig_bis: null,
 })
 const form = ref(emptyForm())
 // Snapshot des zuletzt geladenen/gespeicherten Stands – Basis für die
@@ -1020,6 +1024,19 @@ async function saveStammdaten() {
     stammError.value = 'Ungültige IBAN – bitte Format und Prüfziffer prüfen.'
     return false
   }
+  // Trainerlizenz: Nr., Gültig-von und Gültig-bis nur gemeinsam (alle drei oder keins).
+  const lizGesetzt = [form.value.trainerlizenz_nr, form.value.trainerlizenz_gueltig_von,
+    form.value.trainerlizenz_gueltig_bis].filter((v) => v != null && v !== '')
+  if (lizGesetzt.length > 0 && lizGesetzt.length < 3) {
+    stammError.value = 'Trainerlizenz nur vollständig: Lizenz-Nr., Gültig-von und Gültig-bis '
+      + 'zusammen ausfüllen (oder alle leer).'
+    return false
+  }
+  if (lizGesetzt.length === 3
+      && form.value.trainerlizenz_gueltig_von > form.value.trainerlizenz_gueltig_bis) {
+    stammError.value = "Lizenz: 'Gültig von' darf nicht nach 'Gültig bis' liegen."
+    return false
+  }
   savingStamm.value = true
   try {
     if (props.personMode) {
@@ -1046,6 +1063,7 @@ async function saveStammdaten() {
         trainerlizenz_nr: form.value.trainerlizenz_nr || null,
         qualifikation: form.value.qualifikation || null,
         trainerlizenz_gueltig_bis: form.value.trainerlizenz_gueltig_bis || null,
+        trainerlizenz_gueltig_von: form.value.trainerlizenz_gueltig_von || null,
         expected_version: form.value.version ?? 1,
       }
       let response

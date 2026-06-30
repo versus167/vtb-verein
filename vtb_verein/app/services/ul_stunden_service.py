@@ -53,14 +53,17 @@ class ULStundenService:
     # --------------------------------------------------------------- Lizenz
     def lizenz_fuer(self, mitglied_id: int, bis: str) -> str:
         """Leitet die Lizenz-Klassifikation aus den Mitglied-Stammdaten ab: 'mit_lizenz',
-        wenn die Trainerlizenz (trainerlizenz_gueltig_bis) am Ende des Abrechnungszeitraums
-        noch gültig ist – sonst 'ohne_lizenz'. Kein Datum hinterlegt = ohne Lizenz."""
+        wenn die Trainerlizenz am Ende des Abrechnungszeitraums (`bis`) im Gültigkeitsfenster
+        [trainerlizenz_gueltig_von, trainerlizenz_gueltig_bis] liegt – sonst 'ohne_lizenz'.
+        Maßstab ist das Zeitraum-Ende (eine Klassifikation je Abrechnung). Fehlt eines der
+        beiden Datümer = ohne (die Kopplung erzwingt: nr + von + bis nur gemeinsam)."""
         try:
             m = self.db.get_mitglied(mitglied_id)
         except (KeyError, AttributeError):
             m = None
-        gueltig = getattr(m, 'trainerlizenz_gueltig_bis', None) if m else None
-        if gueltig and _as_date(gueltig) >= _as_date(bis):
+        von = getattr(m, 'trainerlizenz_gueltig_von', None) if m else None
+        bis_lizenz = getattr(m, 'trainerlizenz_gueltig_bis', None) if m else None
+        if von and bis_lizenz and _as_date(von) <= _as_date(bis) <= _as_date(bis_lizenz):
             return LIZENZ_MIT
         return LIZENZ_OHNE
 
@@ -233,8 +236,17 @@ class ULStundenService:
         satz = self.db.ul_saetze.resolve(
             abrechnung.mitglied_id, abrechnung.abteilung_id, abrechnung.lizenz_klassifikation
         )
+        # Lizenz-Beleg-Stammdaten beim Einreichen einfrieren (analog Satz): ein später am
+        # Mitglied geänderter Lizenz-Nr/Qualifikation darf den eingereichten Beleg nicht
+        # rückwirkend verändern.
+        try:
+            m = self.db.get_mitglied(abrechnung.mitglied_id)
+        except (KeyError, AttributeError):
+            m = None
         ok = self.db.ul_abrechnungen.einreichen(
-            abrechnung.id, verguetung_pro_stunde=satz, eingereicht_von=eingereicht_von
+            abrechnung.id, verguetung_pro_stunde=satz, eingereicht_von=eingereicht_von,
+            trainerlizenz_nr=(m.trainerlizenz_nr if m else None),
+            qualifikation=(m.qualifikation if m else None),
         )
         if not ok:
             raise ValueError("Einreichen fehlgeschlagen (Status geändert?)")

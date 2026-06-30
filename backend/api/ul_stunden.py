@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.models.permission import Permission
-from app.models.ul_stunden import ULSatz
+from app.models.ul_stunden import ULSatz, STATUS_ENTWURF
 from app.services.ul_stunden_service import ULStundenService
 from app.services.ul_stundennachweis_pdf_service import erstelle_stundennachweis_pdf
 from ..core.config import settings
@@ -300,6 +300,15 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
         m = db.get_mitglied(a.mitglied_id)
     except KeyError:
         m = None
+    # Eingereichte/bestätigte Belege aus dem beim Einreichen eingefrorenen Snapshot (a.*),
+    # Entwürfe live aus dem Mitglied (m.*) – ein fertiger Beleg ändert sich so nicht mehr
+    # rückwirkend, wenn die Lizenz-Stammdaten später angepasst werden (#63).
+    if a.status == STATUS_ENTWURF:
+        beleg_lizenz_nr = m.trainerlizenz_nr if m else None
+        beleg_qualifikation = m.qualifikation if m else None
+    else:
+        beleg_lizenz_nr = a.trainerlizenz_nr
+        beleg_qualifikation = a.qualifikation
     verein = {
         'name': settings.VEREIN_NAME,
         'strasse': settings.VEREIN_STRASSE,
@@ -311,8 +320,8 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
         ul_name=f"{a.mitglied_vorname or ''} {a.mitglied_nachname or ''}".strip(),
         sportart=a.abteilung_name or '',
         iban=a.mitglied_iban,
-        trainerlizenz_nr=(m.trainerlizenz_nr if m else None),
-        qualifikation=(m.qualifikation if m else None),
+        trainerlizenz_nr=beleg_lizenz_nr,
+        qualifikation=beleg_qualifikation,
         lizenz_klassifikation=a.lizenz_klassifikation,
         foerder_klassifikation=a.foerder_klassifikation,
         zeitraum_von=a.zeitraum_von,
