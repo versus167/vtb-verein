@@ -4,8 +4,9 @@ ZutrittService – Domänen-Orchestrierung über der TTLock-Cloud.
 Aufgaben:
 - `inventar_sync()`  – Schlösser/Gateways aus der Cloud spiegeln (Akku, Online-Status).
 - `logs_sync()`      – Zutrittslogs paginiert seit Cursor holen, idempotent (recordId)
-                       speichern, Kartennummer → Chip → Mitglied auflösen, Cursor +
-                       Status-Snapshot (letzter Schließvorgang) fortschreiben.
+                       speichern, Kartennummer → Chip → Mitglied auflösen, App-/Gateway-
+                       Fernöffnung per access_log-Korrelation → Mitglied auflösen (#66),
+                       Cursor + Status-Snapshot (letzter Schließvorgang) fortschreiben.
 - `ic_cards_sync()`  – am Schloss angelernte IC-Karten spiegeln (Chips/Berechtigungen).
 - `chip_anlernen()` / `berechtigung_aendern()` / `berechtigung_entziehen()` – Cloud-Writes
                        (`identityCard/add|changePeriod|delete`) über das Gateway (Phase 2).
@@ -23,7 +24,8 @@ import requests
 
 from app.models.schliessanlage import (
     TuerZutrittLog, SchluesselChip, TuerBerechtigung, TuerCredential, record_type_label,
-    IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
+    IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, GATEWAY_REMOTE_RECORD_TYPES,
+    SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
     CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
 )
 from app.services.ttlock_client import TTLockClient, TTLockError
@@ -107,6 +109,7 @@ class ZutrittService:
 
     def __init__(self, *, konto_repo, schloss_repo, chip_repo, berechtigung_repo,
                  log_repo, credential_repo=None,
+                 access_log_repo=None, mitglied_repo=None,
                  client_factory: Optional[Callable[[], TTLockClient]] = None):
         self.konto_repo = konto_repo
         self.schloss_repo = schloss_repo
@@ -114,6 +117,11 @@ class ZutrittService:
         self.berechtigung_repo = berechtigung_repo
         self.log_repo = log_repo
         self.credential_repo = credential_repo
+        # Für die Log-Auflösung von App-/Gateway-Öffnungen (#66, Phase-5-Teil B):
+        # access_log-Korrelation → VTB-User → verknüpftes Mitglied. Beide optional,
+        # damit schlanke (Test-)Instanzen ohne sie auskommen (Auflösung entfällt dann).
+        self.access_log_repo = access_log_repo
+        self.mitglied_repo = mitglied_repo
         self._client_factory = client_factory
 
     # --- Client-Lifecycle ---------------------------------------------------
@@ -430,6 +438,23 @@ class ZutrittService:
         return {"credentials": total}
 
     # --- Log-Sync -----------------------------------------------------------
+    def _resolve_app_unlock_mitglied(self, schloss_id: int,
+                                     lock_date_ms: Optional[int]) -> Optional[int]:
+        """App-/Gateway-Fernöffnung auf ein Mitglied auflösen (#66, Teil B): den
+        auslösenden VTB-User per access_log-Korrelation finden und über sein verknüpftes
+        Mitglied auflösen. Kein Treffer / kein verknüpftes Mitglied → None (der Log-Eintrag
+        bleibt dann ohne Personenbezug, Anzeige fällt auf key_name/Sammelkonto zurück)."""
+        if self.access_log_repo is None or self.mitglied_repo is None:
+            return None
+        iso = _ms_to_iso(lock_date_ms)
+        if iso is None:
+            return None
+        treffer = self.access_log_repo.find_schliessanlage_unlock_near(schloss_id, iso)
+        if not treffer or treffer.get("user_id") is None:
+            return None
+        mitglied = self.mitglied_repo.get_by_user_id(treffer["user_id"])
+        return mitglied.id if mitglied else None
+
     def logs_sync(self, *, schloss_id: Optional[int] = None,
                   backfill_days: int = 30, max_pages: int = 20) -> dict:
         """Zutrittslogs paginiert seit Cursor holen und idempotent speichern."""
@@ -465,6 +490,13 @@ class ZutrittService:
                     chip = None
                     if credential and rt in IC_CARD_RECORD_TYPES:
                         chip = self.chip_repo.find_active_by_kartennummer(credential)
+                    mitglied_id = chip.mitglied_id if chip else None
+                    # App-/Gateway-Fernöffnung (v3/lock/unlock) → auslösenden VTB-User per
+                    # access_log-Korrelation auf ein Mitglied auflösen (#66, Teil B). Nur wenn
+                    # nicht ohnehin schon über eine IC-Karte aufgelöst.
+                    if mitglied_id is None and rt in GATEWAY_REMOTE_RECORD_TYPES:
+                        mitglied_id = self._resolve_app_unlock_mitglied(
+                            s.id, r.get("lockDate"))
                     if self.log_repo.insert_if_new(TuerZutrittLog(
                         ttlock_record_id=rec_id, schloss_id=s.id,
                         record_type=rt, record_type_from_lock=r.get("recordTypeFromLock"),
@@ -472,7 +504,7 @@ class ZutrittService:
                         credential=credential, key_name=r.get("keyName"),
                         ttlock_username=r.get("username"),
                         chip_id=chip.id if chip else None,
-                        mitglied_id=chip.mitglied_id if chip else None,
+                        mitglied_id=mitglied_id,
                         lock_date=_ms_to_iso(r.get("lockDate")),
                         server_date=r.get("serverDate"), raw=r,
                     )):

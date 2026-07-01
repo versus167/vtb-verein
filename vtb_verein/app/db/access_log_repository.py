@@ -143,6 +143,37 @@ class AccessLogRepository:
             )
             return [r["username"] for r in cur.fetchall()]
 
+    def find_schliessanlage_unlock_near(
+        self, schloss_id: int, ts_iso: str, window_seconds: int = 120
+    ) -> Optional[Dict[str, Any]]:
+        """Korrelations-Lookup für die Zutrittslog-Auflösung (#66, Phase-5-Teil B):
+        der VTB-User, der dieses Schloss über die App ferngeöffnet hat
+        (event_type 'schliessanlage_unlock'), zeitlich am nächsten an `ts_iso` (dem
+        lockDate des TTLock-Records) innerhalb ±`window_seconds`.
+
+        Das Schloss steckt nur im Freitext-`detail` (kein strukturiertes Feld) – die
+        LIKE-Bedingung ist an das Schreibformat in backend/api/schliessanlage.py gekoppelt:
+        'Schloss {id} (…) ferngeöffnet'. Das schließende ' (' trennt z. B. 5 von 50.
+        Gibt {'user_id', 'username'} des nächstliegenden Treffers zurück oder None.
+        """
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id, username
+                FROM access_log
+                WHERE event_type = 'schliessanlage_unlock'
+                  AND detail LIKE %s
+                  AND created_at BETWEEN %s::timestamptz - make_interval(secs => %s)
+                                     AND %s::timestamptz + make_interval(secs => %s)
+                ORDER BY ABS(EXTRACT(EPOCH FROM (created_at - %s::timestamptz)))
+                LIMIT 1
+                """,
+                (f"Schloss {schloss_id} (%", ts_iso, window_seconds,
+                 ts_iso, window_seconds, ts_iso),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     def count_page_views_older_than(self, days: int = 90) -> int:
         """Zahl der Seitenaufrufe (category 'page') älter als `days` Tage – für die Vorschau."""
         with self.db.cursor() as cur:

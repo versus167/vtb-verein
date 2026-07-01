@@ -7,10 +7,12 @@ Geprüft:
 - Kartennummer → Chip → Mitglied wird nur für IC-Karten-Records aufgelöst.
 - Status-Snapshot (letztes Event) entspricht dem jüngsten Log.
 """
+from datetime import datetime
+
 import pytest
 import requests
 
-from app.services.zutritt_service import ZutrittService, build_alarm_digest
+from app.services.zutritt_service import ZutrittService, build_alarm_digest, _ms_to_iso
 from app.services.ttlock_client import TTLockError
 from app.models.schliessanlage import (
     TuerCredential, CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
@@ -33,6 +35,7 @@ class FakeClient:
         self.ekeys_by_lock = {}
         self.fingerprint_should_fail = False   # simuliert Modell ohne Sensor (errcode)
         self.passcode_http_fail = False        # simuliert Transport-/HTTP-Fehler (z. B. 404)
+        self.records = None                    # überschreibt die Standard-3-Records (Korrelations-Tests)
 
     def unlock(self, lock_id):
         self.unlocked.append(lock_id); return {"errcode": 0}
@@ -80,6 +83,10 @@ class FakeClient:
         return {"list": [{"gatewayId": 2147896, "gatewayName": "wlandongle"}]}
 
     def lock_records(self, lock_id, start_ms, end_ms, page_no=1, page_size=100):
+        if self.records is not None:
+            if page_no > 1:
+                return {"list": [], "pages": 1, "pageNo": page_no}
+            return {"total": len(self.records), "pages": 1, "pageNo": 1, "list": self.records}
         if page_no > 1:
             return {"list": [], "pages": 1, "pageNo": page_no}
         return {"total": 3, "pages": 1, "pageNo": 1, "list": [
@@ -255,11 +262,44 @@ class FakeKontoRepo:
         self.synced.append(when_iso)
 
 
-def _service(chip_map=None):
+class FakeMitgliedForLog:
+    def __init__(self, id):
+        self.id = id
+
+
+class FakeMitgliedRepo:
+    def __init__(self, by_user=None):
+        self._by_user = by_user or {}      # user_id -> FakeMitgliedForLog
+
+    def get_by_user_id(self, user_id):
+        return self._by_user.get(user_id)
+
+
+class FakeAccessLogRepo:
+    """Spiegelt die SQL-Semantik von find_schliessanlage_unlock_near:
+    gleiches Schloss, Zeit innerhalb ±window_seconds, nächstliegender Treffer."""
+    def __init__(self, unlocks=None):
+        # unlocks: list[{schloss_id, user_id, username, ts_iso}]
+        self._unlocks = unlocks or []
+
+    def find_schliessanlage_unlock_near(self, schloss_id, ts_iso, window_seconds=120):
+        target = datetime.fromisoformat(ts_iso)
+        best, best_dt = None, None
+        for u in self._unlocks:
+            if u["schloss_id"] != schloss_id:
+                continue
+            dt = abs((datetime.fromisoformat(u["ts_iso"]) - target).total_seconds())
+            if dt <= window_seconds and (best_dt is None or dt < best_dt):
+                best, best_dt = u, dt
+        return {"user_id": best["user_id"], "username": best["username"]} if best else None
+
+
+def _service(chip_map=None, access_log_repo=None, mitglied_repo=None):
     return ZutrittService(
         konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
         chip_repo=FakeChipRepo(chip_map or {}), berechtigung_repo=None,
         log_repo=FakeLogRepo(), client_factory=FakeClient,
+        access_log_repo=access_log_repo, mitglied_repo=mitglied_repo,
     )
 
 
@@ -307,6 +347,66 @@ def test_logs_sync_status_snapshot():
     # Jüngster lockDate (…312000) gehört zu recordType 7
     assert s.letztes_event_type == 7
     assert s.letztes_event_at is not None
+
+
+# --- App-/Gateway-Öffnung → Mitglied auflösen (#66, Phase-5-Teil B) ----------
+_REMOTE_MS = 1782456312000     # lockDate des Gateway-Remote-Records (recordType 3)
+
+
+def _remote_record():
+    return [{"recordId": 10, "recordType": 3, "success": 1, "keyboardPwd": "",
+             "keyName": "Gateway", "username": "ttlock@verein",
+             "lockDate": _REMOTE_MS, "serverDate": 1782456409000}]
+
+
+def _remote_service(fake, access_log_repo=None, mitglied_repo=None):
+    return ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
+        chip_repo=FakeChipRepo({}), berechtigung_repo=None,
+        log_repo=FakeLogRepo(), client_factory=lambda: fake,
+        access_log_repo=access_log_repo, mitglied_repo=mitglied_repo,
+    )
+
+
+def test_logs_sync_app_oeffnung_wird_auf_mitglied_korreliert():
+    fake = FakeClient(); fake.records = _remote_record()
+    alog = FakeAccessLogRepo([{"schloss_id": 1, "user_id": 7, "username": "vsuess",
+                               "ts_iso": _ms_to_iso(_REMOTE_MS)}])
+    svc = _remote_service(fake, alog, FakeMitgliedRepo({7: FakeMitgliedForLog(99)}))
+    svc.inventar_sync()
+    svc.logs_sync()
+    rec = svc.log_repo.rows[0]
+    assert rec.record_type == 3 and rec.chip_id is None
+    assert rec.mitglied_id == 99          # VTB-User per access_log-Korrelation → Mitglied
+
+
+def test_logs_sync_app_oeffnung_ausserhalb_fensters_bleibt_unaufgeloest():
+    fake = FakeClient(); fake.records = _remote_record()
+    # access_log-Eintrag 5 min entfernt → außerhalb des 120s-Korrelationsfensters
+    alog = FakeAccessLogRepo([{"schloss_id": 1, "user_id": 7, "username": "vsuess",
+                               "ts_iso": _ms_to_iso(_REMOTE_MS + 5 * 60 * 1000)}])
+    svc = _remote_service(fake, alog, FakeMitgliedRepo({7: FakeMitgliedForLog(99)}))
+    svc.inventar_sync()
+    svc.logs_sync()
+    assert svc.log_repo.rows[0].mitglied_id is None
+
+
+def test_logs_sync_app_oeffnung_user_ohne_mitglied_bleibt_unaufgeloest():
+    fake = FakeClient(); fake.records = _remote_record()
+    alog = FakeAccessLogRepo([{"schloss_id": 1, "user_id": 7, "username": "admin",
+                               "ts_iso": _ms_to_iso(_REMOTE_MS)}])
+    svc = _remote_service(fake, alog, FakeMitgliedRepo({}))   # User 7 ohne verknüpftes Mitglied
+    svc.inventar_sync()
+    svc.logs_sync()
+    assert svc.log_repo.rows[0].mitglied_id is None
+
+
+def test_logs_sync_app_oeffnung_ohne_korrelations_repos_kein_fehler():
+    fake = FakeClient(); fake.records = _remote_record()
+    svc = _remote_service(fake)              # keine access_log-/mitglied-Repos injiziert
+    svc.inventar_sync()
+    svc.logs_sync()
+    assert svc.log_repo.rows[0].mitglied_id is None
 
 
 def test_oeffnen_ruft_unlock_mit_ttlock_lock_id():
