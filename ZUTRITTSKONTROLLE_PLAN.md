@@ -374,15 +374,35 @@ Handwerker/Reinigung für einen Tag, Gast-Übungsleiter für ein Wochenende, Ver
   verifizierte `v3/lock/unlock` – damit ohne Chip-Anlern-Abhängigkeit auch **vor** Phase 2
   baubar.
 
-## Phase 5 (geplant): Zutrittslog vollständig auf Mitglieder auflösen
+## Phase 5 (teils umgesetzt): Zutrittslog vollständig auf Mitglieder auflösen
 
 Ziel: Jede Log-Zeile zeigt – soweit möglich – **welches Mitglied** mit **welcher Methode**
-geöffnet hat. Heute löst `logs_sync()` **nur die IC-Karte** auf ein Mitglied auf
+geöffnet hat.
+
+> **Umgesetzt (#66, Teil A + B):**
+> - **A – `key_name`-Fallback:** `logWer` zeigt den Cloud-Credential-Namen (`key_name`,
+>   z. B. eKey-/Fingerprint-Label) als Fallback vor dem TTLock-Sammelkonto.
+> - **B – App-/Gateway-Öffnung → Mitglied:** `logs_sync()` korreliert Gateway-Remote-Records
+>   (`recordType ∈ {3, 12}`) per Zeit+Schloss mit dem `access_log`-Eintrag der App-Öffnung
+>   (`schliessanlage_unlock`, `AccessLogRepository.find_schliessanlage_unlock_near`,
+>   ±120 s) → VTB-User → verknüpftes Mitglied. **Ohne Migration** (nutzt vorhandene Daten),
+>   kein Backfill (greift ab Einführung), keine Auflösung ohne verknüpftes Mitglied.
+>
+> **Verifiziert (dev-db + echte Test-Hardware, 2026-07-01):** Korrelations-SQL real gegen
+> PG18 (`make_interval`/`EXTRACT EPOCH`/`::timestamptz`-Casts, `LIKE`-Präfix trennt Schloss
+> 5/50); recordType einer echten App-Fernöffnung ist **12** (in `{3, 12}`); End-to-end
+> (App-Öffnung → `logs_sync`) löst den Gateway-Record korrekt auf das verknüpfte Mitglied
+> auf, Alt-Records ohne App-Öffnung bleiben ohne Personenbezug; realer Zeitversatz
+> `lockDate` ↔ `access_log.created_at` ≈ **2 s** (120-s-Fenster großzügig).
+>
+> **Offen (Teil C):** Fingerprint/Passcode/eKey → Mitglied (s. u.) – braucht die
+> Zuordnungsschicht + einen echten TTLock-Sync für die `credentialId`-Frage.
+
+Vor Teil A/B löste `logs_sync()` **nur die IC-Karte** auf ein Mitglied auf
 (`keyboardPwd` = Kartennummer → `schluessel_chip` → `mitglied`, nur `recordType ∈ {7, 35}`).
-Fingerprint (8/33), Passcode (4/34) und App/eKey/Gateway-Remote (1/3/11/12) bleiben ohne
-Personenbezug – die Anzeige (`logWer` in `SchliessanlagePage.vue`) fällt auf
-`chip_bezeichnung` bzw. `ttlock_username` (= TTLock-Sammelkonto) zurück, der Cloud-Name
-`key_name` wird gar nicht gezeigt.
+Fingerprint (8/33), Passcode (4/34) und **direkter** App/eKey (1/11) bleiben weiter ohne
+Personenbezug – die Anzeige (`logWer` in `SchliessanlagePage.vue`) fällt dann auf
+`chip_bezeichnung` bzw. `key_name`/`ttlock_username` (= TTLock-Sammelkonto) zurück.
 
 ### Auflösung je Methode
 

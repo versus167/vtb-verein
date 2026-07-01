@@ -132,6 +132,9 @@ class VereinsDB:
             berechtigung_repo=self._tuer_berechtigung_repo,
             log_repo=self._tuer_zutritt_log_repo,
             credential_repo=self._tuer_credential_repo,
+            # Log-Auflösung von App-/Gateway-Öffnungen (#66): access_log-Korrelation → Mitglied.
+            access_log_repo=self._access_log_repo,
+            mitglied_repo=self._mitglied_repo,
         )
 
         self._anhang_service = AnhangService(

@@ -54,6 +54,12 @@ IC_CARD_RECORD_TYPES = frozenset({7, 35})
 # 44 = Sabotage-Alarm, 48 = mehrfach falscher Passcode.
 ALARM_RECORD_TYPES = frozenset({44, 48})
 
+# recordType-Codes einer Gateway-Fernöffnung (v3/lock/unlock). Öffnungen über UNSERE App
+# laufen so und erscheinen in der Cloud nur unter dem TTLock-Sammelkonto – der auslösende
+# VTB-User lässt sich per Korrelation mit dem access_log ('schliessanlage_unlock')
+# auflösen (Phase-5-Teil B). 3/12 = „Gateway (remote)".
+GATEWAY_REMOTE_RECORD_TYPES = frozenset({3, 12})
+
 # Credential-Typen am Schloss (read-only Inventar, 1:1 aus der Cloud gespiegelt).
 CRED_FINGERPRINT = 'fingerprint'
 CRED_PASSCODE = 'passcode'

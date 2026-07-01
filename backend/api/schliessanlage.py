@@ -311,6 +311,8 @@ def schloss_oeffnen(schloss_id: int, request: Request, user: CurrentUser, db: DB
         db.access_log_repository.log(
             "schliessanlage_unlock", category="schliessanlage",
             user_id=user.id, username=user.username, ip=_client_ip(request),
+            # Format-Kopplung: die Zutrittslog-Auflösung (#66) korreliert TTLock-Records
+            # per LIKE 'Schloss {id} (%' mit diesem detail – Präfix nicht ändern.
             detail=f"Schloss {schloss_id} ({ergebnis.get('schloss')}) ferngeöffnet",
         )
     except Exception:

@@ -538,8 +538,11 @@ const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p 
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
 const mitgliedName = (x) => `${x.mitglied_vorname || ''} ${x.mitglied_nachname || ''}`.trim() || ('Mitglied #' + x.mitglied_id)
+// Wer hat geöffnet: aufgelöstes Mitglied > Chip-Bezeichnung > Cloud-Credential-Name (key_name)
+// > TTLock-Sammelkonto. key_name benennt das Credential (eKey/Fingerprint), ist also
+// aussagekräftiger als das geteilte ttlock_username.
 const logWer = (l) => (l.mitglied_vorname ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
-  : l.chip_bezeichnung || l.ttlock_username || '')
+  : l.chip_bezeichnung || l.key_name || l.ttlock_username || '')
 
 async function loadStatus() {
   const { data } = await api.get('/api/schliessanlage/status')
