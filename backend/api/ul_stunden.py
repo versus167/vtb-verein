@@ -23,6 +23,11 @@ from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/ul-stunden", tags=["ul-stunden"])
 
+# ÜL-Funktionen, die als Übungsleiter für die (Fremd-)Erfassung gelten (#65).
+# 'uebungsleiter_lizenz' ("Übungsleiter mit Lizenz") entsteht über den SPG-Import und
+# ist keine Seed-Funktion, zählt hier aber gleichwertig als Übungsleiter.
+UL_FUNKTIONEN = ('uebungsleiter', 'uebungsleiter_lizenz')
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -185,9 +190,9 @@ def erfassung_kontext(user: CurrentUser, db: DB, mitglied_id: Optional[int] = No
     if fremd and not _can_erfassen_fremd(user):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
     if fremd:
-        # Abteilungen auf die ÜL-Funktion des Ziel-ÜL begrenzen (NULL = vereinsweit → alle),
+        # Abteilungen auf die ÜL-Funktion(en) des Ziel-ÜL begrenzen (NULL = vereinsweit → alle),
         # damit bei genau einer das Frontend sie vorwählt.
-        ul_abt = db.abteilung_ids_fuer_funktion(target, 'uebungsleiter')
+        ul_abt = db.abteilung_ids_fuer_funktion(target, *UL_FUNKTIONEN)
         allowed = None if (None in ul_abt) else {a for a in ul_abt if a is not None}
     elif _can_verwalten(user):
         allowed = None
@@ -204,10 +209,11 @@ def erfassung_kontext(user: CurrentUser, db: DB, mitglied_id: Optional[int] = No
 
 @router.get("/uebungsleiter")
 def list_uebungsleiter(user: CurrentUser, db: DB):
-    """ÜL-Auswahl für die Fremderfassung: aktive Inhaber der Funktion 'uebungsleiter'."""
+    """ÜL-Auswahl für die Fremderfassung: aktive Inhaber der Funktionen 'uebungsleiter'
+    und 'uebungsleiter_lizenz' (#65)."""
     if not _can_erfassen_fremd(user):
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
-    return db.list_mitglieder_mit_funktion('uebungsleiter')
+    return db.list_mitglieder_mit_funktion(*UL_FUNKTIONEN)
 
 
 @router.get("/zu-bestaetigen")
