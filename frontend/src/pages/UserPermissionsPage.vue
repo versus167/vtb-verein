@@ -12,18 +12,18 @@
     <template v-if="!loading && userData">
       <div class="text-caption text-grey-7 q-mb-sm">Rolle: {{ userData.role }}</div>
 
-      <q-banner v-if="userData.role === 'admin'" class="bg-blue-1 q-mb-md rounded-borders">
+      <q-banner v-if="userData.role === 'admin'" class="bg-blue-1 text-blue-10 q-mb-md rounded-borders">
         <template #avatar><q-icon name="shield" color="blue" /></template>
         Administratoren haben unabhängig von dieser Matrix immer alle Rechte.
       </q-banner>
 
-      <q-banner v-if="hasOverrides" class="bg-orange-1 q-mb-md rounded-borders">
+      <q-banner v-if="hasOverrides" class="bg-orange-1 text-orange-10 q-mb-md rounded-borders">
         <template #avatar><q-icon name="tune" color="orange" /></template>
         Es sind individuelle Anpassungen gesetzt
         ({{ grants.length }} gewährt, {{ denies.length }} entzogen).
       </q-banner>
 
-      <q-banner class="bg-grey-2 q-mb-lg rounded-borders">
+      <q-banner class="bg-grey-2 text-grey-9 q-mb-lg rounded-borders">
         <template #avatar><q-icon name="info" color="grey-7" /></template>
         Rechte werden über die <b>Funktionen</b> des Mitglieds geerbt (mehrere kumulieren).
         Hier kannst du je Recht abweichen: <b>+</b> zusätzlich gewähren, <b>−</b> entziehen

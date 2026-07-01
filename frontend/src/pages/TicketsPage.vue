@@ -367,7 +367,7 @@
                 </div>
 
                 <div v-for="k in kommentare" :key="k.id" class="q-mb-sm">
-                  <q-card flat :class="k.sichtbarkeit === 'intern' ? 'bg-amber-1' : 'bg-grey-1'">
+                  <q-card flat :class="['text-grey-9', k.sichtbarkeit === 'intern' ? 'bg-amber-1' : 'bg-grey-1']">
                     <q-card-section class="q-py-sm q-px-md">
                       <div class="row items-center q-mb-xs">
                         <span class="text-caption text-weight-bold col">{{ k.autor_username }}</span>
@@ -614,7 +614,7 @@ function prioritaetIcon(p)  { return { niedrig: 'keyboard_arrow_down', normal: '
 function prioritaetColor(p) { return { niedrig: 'grey', normal: 'primary', hoch: 'orange', sicherheit: 'negative' }[p] ?? 'grey' }
 function prioritaetLabel(p) { return { niedrig: 'Niedrig', normal: 'Normal', hoch: 'Hoch', sicherheit: 'Sicherheit' }[p] ?? p }
 function prioritaetBorderColor(p) { return { niedrig: '#9e9e9e', normal: 'var(--q-primary)', hoch: '#ef6c00', sicherheit: 'var(--q-negative)' }[p] ?? '#9e9e9e' }
-function statusBgClass(s) { return { offen: 'bg-blue-1', in_pruefung: 'bg-orange-1', eingeplant: 'bg-purple-1', rueckfrage: 'bg-amber-1', erledigt: 'bg-green-1', abgelehnt: 'bg-red-1' }[s] ?? '' }
+function statusBgClass(s) { return { offen: 'bg-blue-1 text-grey-9', in_pruefung: 'bg-orange-1 text-grey-9', eingeplant: 'bg-purple-1 text-grey-9', rueckfrage: 'bg-amber-1 text-grey-9', erledigt: 'bg-green-1 text-grey-9', abgelehnt: 'bg-red-1 text-grey-9' }[s] ?? '' }
 
 function formatDate(iso) {
   return fmtDate(iso, { placeholder: '—' })

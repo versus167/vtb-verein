@@ -855,9 +855,9 @@ function buchungBorderColor(b) {
 }
 
 function buchungBgClass(b) {
-  if (b.deleted_at) return 'bg-grey-1'
-  if (b.einnahme_cent > 0) return 'bg-green-1'
-  return 'bg-red-1'
+  if (b.deleted_at) return 'bg-grey-1 text-grey-9'
+  if (b.einnahme_cent > 0) return 'bg-green-1 text-grey-9'
+  return 'bg-red-1 text-grey-9'
 }
 
 function formatEuro(cent) {

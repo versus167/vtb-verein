@@ -49,7 +49,7 @@
               Änderungen kann nur die Vereinsverwaltung vornehmen.
             </div>
 
-            <q-banner v-if="me?.role === 'admin'" class="bg-blue-1 rounded-borders q-mb-md">
+            <q-banner v-if="me?.role === 'admin'" class="bg-blue-1 text-blue-10 rounded-borders q-mb-md">
               <template #avatar><q-icon name="shield" color="blue" /></template>
               Als Administrator hast du uneingeschränkten Zugriff auf alle Funktionen.
             </q-banner>
@@ -252,7 +252,7 @@
 
             <q-inner-loading :showing="loadingSessions" />
 
-            <q-banner v-if="!loadingSessions && sessions.length === 0" class="bg-grey-2 rounded-borders">
+            <q-banner v-if="!loadingSessions && sessions.length === 0" class="bg-grey-2 text-grey-9 rounded-borders">
               Keine aktiven Sitzungen gefunden.
             </q-banner>
 
