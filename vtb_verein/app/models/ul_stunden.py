@@ -39,6 +39,9 @@ class ULAbrechnung:
     lizenz_klassifikation: str = LIZENZ_OHNE       # mit_lizenz | ohne_lizenz
     foerder_klassifikation: Optional[str] = None   # z.B. LSBS, Spofoe_3_3 (nur Beleg)
     verguetung_pro_stunde: Optional[float] = None  # Snapshot beim Einreichen
+    # Lizenz-Snapshot beim Einreichen (Beleg friert mit ein – sonst rückwirkend änderbar)
+    trainerlizenz_nr: Optional[str] = None
+    qualifikation: Optional[str] = None
     eingereicht_am: Optional[str] = None
     eingereicht_von: Optional[str] = None
     bestaetigt_am: Optional[str] = None

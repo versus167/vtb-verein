@@ -27,7 +27,7 @@ _MITGLIED_COLS = """
         eintrittsdatum, austrittsdatum, status,
         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
         geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
-        trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis,
+        trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, trainerlizenz_gueltig_von,
         user_id, version, created_at, created_by, updated_at, updated_by
 """
 
@@ -165,9 +165,9 @@ class MitgliedRepository(BaseRepository):
                     eintrittsdatum, austrittsdatum, status,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                     geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
-                    trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis,
+                    trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, trainerlizenz_gueltig_von,
                     user_id, created_by, updated_at, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
                 (
@@ -177,6 +177,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
                     mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.trainerlizenz_nr, mitglied.qualifikation, mitglied.trainerlizenz_gueltig_bis,
+                    mitglied.trainerlizenz_gueltig_von,
                     mitglied.user_id, created_by, created_by
                 ),
             )
@@ -213,6 +214,7 @@ class MitgliedRepository(BaseRepository):
                     zahlungsart = %s, iban = %s, bic = %s, kontoinhaber = %s, abgerechnet_bis = %s,
                     geschlecht = %s, bemerkungen = %s, sepa_mandatsref = %s, sepa_mandatsdatum = %s,
                     trainerlizenz_nr = %s, qualifikation = %s, trainerlizenz_gueltig_bis = %s,
+                    trainerlizenz_gueltig_von = %s,
                     user_id = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
@@ -226,6 +228,7 @@ class MitgliedRepository(BaseRepository):
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
                     mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.trainerlizenz_nr, mitglied.qualifikation, mitglied.trainerlizenz_gueltig_bis,
+                    mitglied.trainerlizenz_gueltig_von,
                     mitglied.user_id,
                     updated_by, mitglied.id, mitglied.version
                 ),

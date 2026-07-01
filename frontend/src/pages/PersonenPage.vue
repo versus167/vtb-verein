@@ -47,6 +47,10 @@
             <div class="col">
               <div v-if="p.mitglied" class="text-subtitle2 text-weight-bold">
                 {{ p.mitglied.nachname }}, {{ p.mitglied.vorname }}
+                <q-chip v-if="p.lizenz_aktuell_gueltig" dense size="sm" color="green-2"
+                  text-color="green-9" icon="workspace_premium" class="q-ml-xs q-my-none">Lizenz
+                  <q-tooltip>Gültige Trainerlizenz</q-tooltip>
+                </q-chip>
               </div>
               <div v-else class="text-subtitle2 text-weight-bold text-grey-7">{{ p.username }}</div>
               <div v-if="p.username" class="text-caption text-grey">{{ p.username }}</div>
@@ -148,6 +152,10 @@
         <q-td :props="props">
           <div v-if="props.row.mitglied" class="text-weight-medium">
             {{ props.row.mitglied.nachname }}, {{ props.row.mitglied.vorname }}
+            <q-chip v-if="props.row.lizenz_aktuell_gueltig" dense size="sm" color="green-2"
+              text-color="green-9" icon="workspace_premium" class="q-ml-xs q-my-none">Lizenz
+              <q-tooltip>Gültige Trainerlizenz</q-tooltip>
+            </q-chip>
           </div>
           <div v-else class="text-grey-7">{{ props.row.username }}</div>
           <div class="text-caption text-grey">{{ props.row.username }}</div>

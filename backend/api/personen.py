@@ -3,7 +3,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from app.models.mitglied import Mitglied
 from app.models.permission import Permission
@@ -86,7 +86,8 @@ class PersonMitgliedUpdate(BaseModel):
     status: str = 'aktiv'
 
     @field_validator('eintrittsdatum', 'austrittsdatum', 'geburtsdatum', 'abgerechnet_bis',
-                     'trainerlizenz_gueltig_bis', mode='before')
+                     'trainerlizenz_gueltig_bis', 'trainerlizenz_gueltig_von',
+                     'trainerlizenz_nr', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return _none_if_empty(v)
     zahlungsart: str = ''
@@ -97,7 +98,24 @@ class PersonMitgliedUpdate(BaseModel):
     trainerlizenz_nr: Optional[str] = None
     qualifikation: Optional[str] = None
     trainerlizenz_gueltig_bis: Optional[str] = None
+    trainerlizenz_gueltig_von: Optional[str] = None
     expected_version: int
+
+    @model_validator(mode='after')
+    def _lizenz_gekoppelt(self):
+        """Trainerlizenz-Nr, Gültig-von und Gültig-bis nur GEMEINSAM (alle drei oder keins) –
+        sonst würde z. B. eine Nr ohne Gültigkeitsdatum still als 'ohne Lizenz' abgerechnet (#63)."""
+        gesetzt = [bool(self.trainerlizenz_nr),
+                   bool(self.trainerlizenz_gueltig_von),
+                   bool(self.trainerlizenz_gueltig_bis)]
+        if any(gesetzt) and not all(gesetzt):
+            raise ValueError(
+                "Trainerlizenz nur vollständig: Lizenz-Nr., Gültig-von und Gültig-bis "
+                "müssen zusammen ausgefüllt sein (oder alle leer)."
+            )
+        if all(gesetzt) and self.trainerlizenz_gueltig_von > self.trainerlizenz_gueltig_bis:
+            raise ValueError("Lizenz: 'Gültig von' darf nicht nach 'Gültig bis' liegen.")
+        return self
 
 
 class MeinMitgliedUpdate(BaseModel):
@@ -167,6 +185,7 @@ def _mitglied_to_dict(m) -> dict:
         'trainerlizenz_nr': m.trainerlizenz_nr,
         'qualifikation': m.qualifikation,
         'trainerlizenz_gueltig_bis': m.trainerlizenz_gueltig_bis,
+        'trainerlizenz_gueltig_von': m.trainerlizenz_gueltig_von,
         'user_id': m.user_id,
         'version': m.version,
         'created_at': m.created_at,
@@ -211,7 +230,8 @@ def _last_edited_sql(mitglied_alias: str, user_alias: Optional[str]) -> str:
 
 
 def _person_row(user, mitglied, abteilungen: list, funktionen: list,
-                last_edited: Optional[str] = None) -> dict:
+                last_edited: Optional[str] = None,
+                lizenz_aktuell_gueltig: Optional[bool] = None) -> dict:
     # In der Personenliste nur aktuell (heute) gültige Abteilungen/Funktionen zeigen
     abteilungen = [z for z in abteilungen if _gueltig_heute(z.von, z.bis)]
     funktionen = [f for f in funktionen if _gueltig_heute(f.von, f.bis)]
@@ -237,6 +257,9 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list,
         'last_login': user.last_login if user else None,
         'last_seen': user.last_seen if user else None,
         'last_edited': last_edited,
+        # Kleiner Lizenz-Hinweis in der Personenliste (unabhängig von der Funktion, #64):
+        # HEUTE im Trainerlizenz-Fenster (server-seitig per CURRENT_DATE berechnet).
+        'lizenz_aktuell_gueltig': bool(lizenz_aktuell_gueltig),
         'user_version': user.version if user else None,
         'mitglied': _mitglied_to_dict(mitglied),
         'abteilungen': [
@@ -288,7 +311,10 @@ def list_personen(user: CurrentUser, db: DB):
                        m.user_id AS m_user_id, m.version AS m_version,
                        m.created_at AS m_created_at, m.created_by AS m_created_by,
                        m.updated_at AS m_updated_at, m.updated_by AS m_updated_by,
-                       {_last_edited_sql('m', 'u')} AS last_edited
+                       {_last_edited_sql('m', 'u')} AS last_edited,
+                       (m.trainerlizenz_gueltig_von IS NOT NULL AND m.trainerlizenz_gueltig_bis IS NOT NULL
+                        AND m.trainerlizenz_gueltig_von <= CURRENT_DATE::text
+                        AND m.trainerlizenz_gueltig_bis >= CURRENT_DATE::text) AS lizenz_aktuell_gueltig
                 FROM users u
                 LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
                 WHERE u.deleted_at IS NULL
@@ -302,7 +328,10 @@ def list_personen(user: CurrentUser, db: DB):
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        NULL, m.version,
                        m.created_at, m.created_by, m.updated_at, m.updated_by,
-                       {_last_edited_sql('m', None)}
+                       {_last_edited_sql('m', None)},
+                       (m.trainerlizenz_gueltig_von IS NOT NULL AND m.trainerlizenz_gueltig_bis IS NOT NULL
+                        AND m.trainerlizenz_gueltig_von <= CURRENT_DATE::text
+                        AND m.trainerlizenz_gueltig_bis >= CURRENT_DATE::text)
                 FROM mitglied m
                 WHERE m.deleted_at IS NULL AND m.user_id IS NULL
             ) p
@@ -342,7 +371,8 @@ def list_personen(user: CurrentUser, db: DB):
         abteilungen = db.list_mitglied_abteilungen(m_obj.id) if m_obj else []
         funktionen = db.list_mitglied_funktionen(m_obj.id) if m_obj else []
         result.append(_person_row(u_obj, m_obj, abteilungen, funktionen,
-                                  last_edited=r['last_edited']))
+                                  last_edited=r['last_edited'],
+                                  lizenz_aktuell_gueltig=r['lizenz_aktuell_gueltig']))
     return result
 
 
@@ -520,6 +550,7 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     m.trainerlizenz_nr = data.trainerlizenz_nr
     m.qualifikation = data.qualifikation
     m.trainerlizenz_gueltig_bis = data.trainerlizenz_gueltig_bis
+    m.trainerlizenz_gueltig_von = data.trainerlizenz_gueltig_von
     m.version = data.expected_version
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
@@ -553,6 +584,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         abgerechnet_bis=data.abgerechnet_bis,
         trainerlizenz_nr=data.trainerlizenz_nr, qualifikation=data.qualifikation,
         trainerlizenz_gueltig_bis=data.trainerlizenz_gueltig_bis,
+        trainerlizenz_gueltig_von=data.trainerlizenz_gueltig_von,
         user_id=user_id,
     )
     mitglied = db.create_mitglied(m, created_by=user.username)
@@ -602,6 +634,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     m.trainerlizenz_nr = data.trainerlizenz_nr
     m.qualifikation = data.qualifikation
     m.trainerlizenz_gueltig_bis = data.trainerlizenz_gueltig_bis
+    m.trainerlizenz_gueltig_von = data.trainerlizenz_gueltig_von
     m.version = data.expected_version
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:

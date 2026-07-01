@@ -1,6 +1,6 @@
 from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
@@ -33,11 +33,30 @@ class MitgliedCreate(BaseModel):
     trainerlizenz_nr: Optional[str] = None
     qualifikation: Optional[str] = None
     trainerlizenz_gueltig_bis: Optional[str] = None
+    trainerlizenz_gueltig_von: Optional[str] = None
 
     @field_validator('geburtsdatum', 'eintrittsdatum', 'austrittsdatum', 'abgerechnet_bis',
-                     'trainerlizenz_gueltig_bis', mode='before')
+                     'trainerlizenz_gueltig_bis', 'trainerlizenz_gueltig_von',
+                     'trainerlizenz_nr', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return None if v == '' else v
+
+    @model_validator(mode='after')
+    def _lizenz_gekoppelt(self):
+        """Trainerlizenz-Nr, Gültig-von und Gültig-bis dürfen nur GEMEINSAM gesetzt sein
+        (alle drei oder keins). Verhindert, dass z. B. eine Nr ohne Gültigkeitsdatum still
+        als 'ohne Lizenz' abgerechnet wird (#63)."""
+        gesetzt = [bool(self.trainerlizenz_nr),
+                   bool(self.trainerlizenz_gueltig_von),
+                   bool(self.trainerlizenz_gueltig_bis)]
+        if any(gesetzt) and not all(gesetzt):
+            raise ValueError(
+                "Trainerlizenz nur vollständig: Lizenz-Nr., Gültig-von und Gültig-bis "
+                "müssen zusammen ausgefüllt sein (oder alle leer)."
+            )
+        if all(gesetzt) and self.trainerlizenz_gueltig_von > self.trainerlizenz_gueltig_bis:
+            raise ValueError("Lizenz: 'Gültig von' darf nicht nach 'Gültig bis' liegen.")
+        return self
 
 
 def _require_read(user):

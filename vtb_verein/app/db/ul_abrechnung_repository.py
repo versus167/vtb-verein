@@ -13,7 +13,7 @@ from app.db.base_repository import BaseRepository
 _SELECT = """
     SELECT a.id, a.mitglied_id, a.abteilung_id, a.zeitraum_von, a.zeitraum_bis,
            a.status, a.lizenz_klassifikation, a.foerder_klassifikation,
-           a.verguetung_pro_stunde,
+           a.verguetung_pro_stunde, a.trainerlizenz_nr, a.qualifikation,
            a.eingereicht_am, a.eingereicht_von, a.bestaetigt_am, a.bestaetigt_von,
            a.abgelehnt_grund,
            a.exportiert_in_export_id, a.storno_exportiert_in_export_id,
@@ -117,18 +117,21 @@ class ULAbrechnungRepository(BaseRepository):
             return cur.rowcount == 1
 
     def einreichen(self, id: int, *, verguetung_pro_stunde: Optional[float],
-                   eingereicht_von: str) -> bool:
+                   eingereicht_von: str, trainerlizenz_nr: Optional[str] = None,
+                   qualifikation: Optional[str] = None) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE ul_abrechnung
                 SET status='eingereicht', verguetung_pro_stunde=%s,
+                    trainerlizenz_nr=%s, qualifikation=%s,
                     eingereicht_am=CURRENT_TIMESTAMP, eingereicht_von=%s,
                     abgelehnt_grund=NULL, version=version+1,
                     updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND status='entwurf' AND deleted_at IS NULL
                 """,
-                (verguetung_pro_stunde, eingereicht_von, eingereicht_von, id),
+                (verguetung_pro_stunde, trainerlizenz_nr, qualifikation,
+                 eingereicht_von, eingereicht_von, id),
             )
             return cur.rowcount == 1
 
@@ -168,6 +171,7 @@ class ULAbrechnungRepository(BaseRepository):
                 UPDATE ul_abrechnung
                 SET status='entwurf', eingereicht_am=NULL, eingereicht_von=NULL,
                     bestaetigt_am=NULL, bestaetigt_von=NULL, verguetung_pro_stunde=NULL,
+                    trainerlizenz_nr=NULL, qualifikation=NULL,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND status IN ('eingereicht','bestaetigt','abgelehnt')
                   AND exportiert_in_export_id IS NULL AND deleted_at IS NULL

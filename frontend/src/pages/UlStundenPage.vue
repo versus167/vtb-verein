@@ -12,6 +12,18 @@
       use-input input-debounce="0" @filter="filterUebungsleiter"
       class="q-mb-md" label="Für Übungsleiter (leer = eigene)" @update:model-value="onZielChange">
       <template #prepend><q-icon name="badge" /></template>
+      <template #option="{ itemProps, opt }">
+        <q-item v-bind="itemProps">
+          <q-item-section>{{ ulLabel(opt) }}</q-item-section>
+          <q-item-section side>
+            <q-chip dense size="sm"
+              :color="opt.lizenz_aktuell_gueltig ? 'green-2' : 'blue-grey-2'"
+              :text-color="opt.lizenz_aktuell_gueltig ? 'green-9' : 'blue-grey-8'">
+              {{ opt.lizenz_aktuell_gueltig ? 'Lizenz' : 'keine Lizenz' }}
+            </q-chip>
+          </q-item-section>
+        </q-item>
+      </template>
       <template #no-option>
         <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
       </template>

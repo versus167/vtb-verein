@@ -138,9 +138,10 @@ class TestAddTage:
 
 
 class TestLizenzAbleitung:
-    """mit_lizenz, wenn die Trainerlizenz am Ende des Abrechnungszeitraums noch gültig ist."""
-    def _svc(self, gueltig_bis):
-        m = SimpleNamespace(trainerlizenz_gueltig_bis=gueltig_bis)
+    """mit_lizenz, wenn das Zeitraum-Ende (bis) im Lizenzfenster [von, bis] liegt (#63)."""
+    def _svc(self, gueltig_bis, gueltig_von='2020-01-01'):
+        m = SimpleNamespace(trainerlizenz_gueltig_von=gueltig_von,
+                            trainerlizenz_gueltig_bis=gueltig_bis)
         return ULStundenService(SimpleNamespace(get_mitglied=lambda mid: m))
 
     def test_gueltige_lizenz_ist_mit_lizenz(self):
@@ -152,14 +153,57 @@ class TestLizenzAbleitung:
     def test_abgelaufene_lizenz_ist_ohne_lizenz(self):
         assert self._svc('2026-05-31').lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
 
-    def test_kein_datum_ist_ohne_lizenz(self):
+    def test_periodenende_vor_lizenzbeginn_ist_ohne_lizenz(self):
+        # Lizenz beginnt erst NACH dem Abrechnungs-Ende → ohne (Startdatum greift, #63).
+        assert self._svc('2026-12-31', gueltig_von='2026-07-01') \
+            .lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
+
+    def test_genau_am_lizenzbeginn_ist_mit_lizenz(self):
+        assert self._svc('2026-12-31', gueltig_von='2026-06-30') \
+            .lizenz_fuer(1, '2026-06-30') == 'mit_lizenz'
+
+    def test_kein_bis_ist_ohne_lizenz(self):
         assert self._svc(None).lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
+
+    def test_kein_von_ist_ohne_lizenz(self):
+        # Defensiv: fehlt das Startdatum (legacy-Daten vor #63), zählt es als ohne Lizenz.
+        assert self._svc('2026-12-31', gueltig_von=None).lizenz_fuer(1, '2026-06-30') == 'ohne_lizenz'
 
     def test_unbekanntes_mitglied_ist_ohne_lizenz(self):
         def boom(mid):
             raise KeyError(mid)
         svc = ULStundenService(SimpleNamespace(get_mitglied=boom))
         assert svc.lizenz_fuer(99, '2026-06-30') == 'ohne_lizenz'
+
+
+class TestEinreichenSnapshot:
+    """Beim Einreichen werden Satz UND die Lizenz-Beleg-Stammdaten (Nr./Qualifikation)
+    eingefroren, damit ein eingereichter Beleg nicht rückwirkend kippt (#63)."""
+    def test_friert_lizenz_nr_und_qualifikation_ein(self):
+        erfasst = {}
+
+        class _Repo:
+            def list_stunden(self, _id):
+                return [_stunde('2026-06-10')]
+            def max_gesperrt_bis(self, mid, aid):
+                return None
+            def einreichen(self, _id, *, verguetung_pro_stunde, eingereicht_von,
+                           trainerlizenz_nr=None, qualifikation=None):
+                erfasst.update(satz=verguetung_pro_stunde, nr=trainerlizenz_nr,
+                               qual=qualifikation)
+                return True
+            def get(self, _id):
+                return _abr(status=STATUS_EINGEREICHT)
+
+        m = SimpleNamespace(trainerlizenz_nr='TL-123', qualifikation='ÜL-B Prävention')
+
+        class _DB:
+            ul_abrechnungen = _Repo()
+            ul_saetze = SimpleNamespace(resolve=lambda mid, aid, kl: 17.5)
+            get_mitglied = staticmethod(lambda mid: m)
+
+        ULStundenService(_DB()).einreichen(_abr(), eingereicht_von='admin')
+        assert erfasst == {'satz': 17.5, 'nr': 'TL-123', 'qual': 'ÜL-B Prävention'}
 
 
 class TestLetzteVorlage:

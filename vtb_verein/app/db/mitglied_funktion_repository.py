@@ -42,11 +42,20 @@ class MitgliedFunktionRepository(BaseRepository):
 
     def list_mitglieder_mit_funktion(self, funktion: str) -> list[dict]:
         """Aktive Inhaber einer Funktion (distinct je Mitglied) – z. B. für die ÜL-Auswahl
-        bei der Fremderfassung. von/bis sind ISO-Datum-Texte (lexikografisch vergleichbar)."""
+        bei der Fremderfassung. von/bis sind ISO-Datum-Texte (lexikografisch vergleichbar).
+
+        Liefert zusätzlich die Trainerlizenz-Gültigkeit für den ÜL-Auswahlfilter (#64):
+        `lizenz_aktuell_gueltig` = HEUTE liegt im Fenster [gueltig_von, gueltig_bis]
+        (server-seitig per CURRENT_DATE, damit konsistent mit lizenz_fuer)."""
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT DISTINCT m.id, m.vorname, m.nachname, m.mitgliedsnummer
+                SELECT DISTINCT m.id, m.vorname, m.nachname, m.mitgliedsnummer,
+                       m.trainerlizenz_gueltig_von, m.trainerlizenz_gueltig_bis,
+                       (m.trainerlizenz_gueltig_von IS NOT NULL
+                        AND m.trainerlizenz_gueltig_bis IS NOT NULL
+                        AND m.trainerlizenz_gueltig_von <= CURRENT_DATE::text
+                        AND m.trainerlizenz_gueltig_bis >= CURRENT_DATE::text) AS lizenz_aktuell_gueltig
                 FROM mitglied_funktion mf
                 JOIN mitglied m ON m.id = mf.mitglied_id AND m.deleted_at IS NULL
                 WHERE mf.funktion = %s AND mf.deleted_at IS NULL
