@@ -40,9 +40,10 @@ class MitgliedFunktionRepository(BaseRepository):
             row = cur.fetchone()
             return MitgliedFunktion(**dict(row)) if row else None
 
-    def list_mitglieder_mit_funktion(self, funktion: str) -> list[dict]:
-        """Aktive Inhaber einer Funktion (distinct je Mitglied) – z. B. für die ÜL-Auswahl
-        bei der Fremderfassung. von/bis sind ISO-Datum-Texte (lexikografisch vergleichbar).
+    def list_mitglieder_mit_funktion(self, *funktionen: str) -> list[dict]:
+        """Aktive Inhaber einer oder mehrerer Funktionen (distinct je Mitglied) – z. B. für
+        die ÜL-Auswahl bei der Fremderfassung, die 'uebungsleiter' UND 'uebungsleiter_lizenz'
+        umfasst (#65). von/bis sind ISO-Datum-Texte (lexikografisch vergleichbar).
 
         Liefert zusätzlich die Trainerlizenz-Gültigkeit für den ÜL-Auswahlfilter (#64):
         `lizenz_aktuell_gueltig` = HEUTE liegt im Fenster [gueltig_von, gueltig_bis]
@@ -58,27 +59,27 @@ class MitgliedFunktionRepository(BaseRepository):
                         AND m.trainerlizenz_gueltig_bis >= CURRENT_DATE::text) AS lizenz_aktuell_gueltig
                 FROM mitglied_funktion mf
                 JOIN mitglied m ON m.id = mf.mitglied_id AND m.deleted_at IS NULL
-                WHERE mf.funktion = %s AND mf.deleted_at IS NULL
+                WHERE mf.funktion = ANY(%s) AND mf.deleted_at IS NULL
                   AND (mf.von IS NULL OR mf.von <= CURRENT_DATE::text)
                   AND (mf.bis IS NULL OR mf.bis >= CURRENT_DATE::text)
                 ORDER BY m.nachname, m.vorname
                 """,
-                (funktion,),
+                (list(funktionen),),
             )
             return [dict(r) for r in cur.fetchall()]
 
-    def abteilung_ids_fuer_funktion(self, mitglied_id: int, funktion: str) -> list[Optional[int]]:
-        """abteilung_id je aktiver Zuordnung dieser Funktion (NULL = vereinsweit) – für die
+    def abteilung_ids_fuer_funktion(self, mitglied_id: int, *funktionen: str) -> list[Optional[int]]:
+        """abteilung_id je aktiver Zuordnung dieser Funktion(en) (NULL = vereinsweit) – für die
         Abteilungs-Vorauswahl bei der Fremderfassung. von/bis als ISO-Text verglichen."""
         with self.cursor() as cur:
             cur.execute(
                 """
                 SELECT DISTINCT abteilung_id FROM mitglied_funktion
-                WHERE mitglied_id = %s AND funktion = %s AND deleted_at IS NULL
+                WHERE mitglied_id = %s AND funktion = ANY(%s) AND deleted_at IS NULL
                   AND (von IS NULL OR von <= CURRENT_DATE::text)
                   AND (bis IS NULL OR bis >= CURRENT_DATE::text)
                 """,
-                (mitglied_id, funktion),
+                (mitglied_id, list(funktionen)),
             )
             return [r['abteilung_id'] for r in cur.fetchall()]
 
