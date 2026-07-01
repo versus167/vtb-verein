@@ -388,6 +388,13 @@ geöffnet hat.
 >   ±120 s) → VTB-User → verknüpftes Mitglied. **Ohne Migration** (nutzt vorhandene Daten),
 >   kein Backfill (greift ab Einführung), keine Auflösung ohne verknüpftes Mitglied.
 >
+> **Verifiziert (dev-db + echte Test-Hardware, 2026-07-01):** Korrelations-SQL real gegen
+> PG18 (`make_interval`/`EXTRACT EPOCH`/`::timestamptz`-Casts, `LIKE`-Präfix trennt Schloss
+> 5/50); recordType einer echten App-Fernöffnung ist **12** (in `{3, 12}`); End-to-end
+> (App-Öffnung → `logs_sync`) löst den Gateway-Record korrekt auf das verknüpfte Mitglied
+> auf, Alt-Records ohne App-Öffnung bleiben ohne Personenbezug; realer Zeitversatz
+> `lockDate` ↔ `access_log.created_at` ≈ **2 s** (120-s-Fenster großzügig).
+>
 > **Offen (Teil C):** Fingerprint/Passcode/eKey → Mitglied (s. u.) – braucht die
 > Zuordnungsschicht + einen echten TTLock-Sync für die `credentialId`-Frage.
 
