@@ -206,6 +206,44 @@ class TestEinreichenSnapshot:
         assert erfasst == {'satz': 17.5, 'nr': 'TL-123', 'qual': 'ÜL-B Prävention'}
 
 
+class TestSummenVorschau:
+    """Im Entwurf ist noch kein Satz eingefroren. summen() liefert dann eine
+    Vorschau aus dem aktuell gültigen Satz, ohne den Snapshot zu setzen;
+    ab dem Einreichen zählt allein der eingefrorene verguetung_pro_stunde."""
+
+    @staticmethod
+    def _svc(stunden, resolve):
+        repo = _FakeRepo(stunden=stunden)
+
+        class _DB:
+            ul_abrechnungen = repo
+            ul_saetze = SimpleNamespace(resolve=resolve)
+
+        return ULStundenService(_DB())
+
+    def test_entwurf_zeigt_vorschau_ohne_snapshot(self):
+        svc = self._svc([_stunde('2026-06-02'), _stunde('2026-06-09')],
+                        lambda mid, aid, kl: 10.0)
+        s = svc.summen(_abr())                      # Entwurf, verguetung_pro_stunde=None
+        assert s['verguetung_pro_stunde'] is None and s['gesamtbetrag'] is None
+        assert s['vorschau_pro_stunde'] == 10.0
+        assert s['vorschau_gesamtbetrag'] == 40.0   # 2×2,0 Std. × 10 €
+
+    def test_eingereicht_nutzt_snapshot_ohne_vorschau(self):
+        abr = _abr(status=STATUS_EINGEREICHT)
+        abr.verguetung_pro_stunde = 12.0
+        svc = self._svc([_stunde('2026-06-02'), _stunde('2026-06-09')],
+                        lambda mid, aid, kl: 99.0)  # darf nicht herangezogen werden
+        s = svc.summen(abr)
+        assert s['verguetung_pro_stunde'] == 12.0 and s['gesamtbetrag'] == 48.0
+        assert s['vorschau_pro_stunde'] is None and s['vorschau_gesamtbetrag'] is None
+
+    def test_entwurf_ohne_satz_liefert_keine_vorschau(self):
+        svc = self._svc([_stunde('2026-06-02')], lambda mid, aid, kl: None)
+        s = svc.summen(_abr())
+        assert s['vorschau_pro_stunde'] is None and s['vorschau_gesamtbetrag'] is None
+
+
 class TestLetzteVorlage:
     def test_gruppiert_nach_stunden_und_angebot_dominant_zuerst(self):
         termine = [

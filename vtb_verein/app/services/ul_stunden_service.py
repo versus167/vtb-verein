@@ -258,6 +258,18 @@ class ULStundenService:
         total = round(sum(s.stunden for s in stunden), 2)
         satz = abrechnung.verguetung_pro_stunde
         gesamt = round(total * satz, 2) if satz is not None else None
+        # Vorschau: solange kein Satz eingefroren ist (Entwurf/abgelehnt), den aktuell
+        # gültigen Satz auflösen, damit der ÜL die voraussichtliche Vergütung sieht.
+        # Der eingefrorene Snapshot (verguetung_pro_stunde) entsteht erst beim Einreichen.
+        vorschau_satz = None
+        vorschau_gesamt = None
+        if satz is None:
+            vorschau_satz = self.db.ul_saetze.resolve(
+                abrechnung.mitglied_id, abrechnung.abteilung_id,
+                abrechnung.lizenz_klassifikation,
+            )
+            if vorschau_satz is not None:
+                vorschau_gesamt = round(total * vorschau_satz, 2)
         monat: dict[str, float] = {}
         for s in stunden:
             key = s.datum[:7]  # YYYY-MM
@@ -266,6 +278,8 @@ class ULStundenService:
             'summe_stunden': total,
             'verguetung_pro_stunde': satz,
             'gesamtbetrag': gesamt,
+            'vorschau_pro_stunde': vorschau_satz,
+            'vorschau_gesamtbetrag': vorschau_gesamt,
             'monatssummen': monat,
             'anzahl_termine': len(stunden),
         }

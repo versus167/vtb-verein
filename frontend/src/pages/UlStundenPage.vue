@@ -112,8 +112,25 @@
             <q-icon name="error" size="xs" /> Abgelehnt: {{ detail.abgelehnt_grund }}
           </div>
 
+          <!-- Erfasste Termine: Kalender (Standard) oder Liste -->
+          <div class="row items-center q-mb-xs">
+            <div class="text-caption text-grey-7">Erfasste Stunden</div>
+            <q-space />
+            <q-btn-toggle v-model="ansicht" dense no-caps unelevated size="sm"
+              toggle-color="primary" color="grey-3" text-color="grey-8"
+              :options="[{ label: 'Kalender', value: 'kalender', icon: 'calendar_month' },
+                         { label: 'Liste', value: 'liste', icon: 'list' }]" />
+          </div>
+
+          <!-- Kalender: Tage mit Einträgen zeigen die Stunden als umkreiste Zahl -->
+          <StundenKalender v-if="ansicht === 'kalender'" class="q-mb-sm"
+            :termine="detail.stunden" :von="detail.zeitraum_von" :bis="detail.zeitraum_bis"
+            :editable="isEntwurf" @delete="deleteTermin" />
+          <div v-if="ansicht === 'kalender' && detail.stunden.length === 0"
+            class="text-grey text-center q-pb-sm">Noch keine Termine erfasst.</div>
+
           <!-- Termine -->
-          <q-markup-table flat bordered dense class="q-mb-sm">
+          <q-markup-table v-if="ansicht === 'liste'" flat bordered dense class="q-mb-sm">
             <thead>
               <tr><th class="text-left">Datum</th><th class="text-left">Wo.</th>
                 <th class="text-right">Stunden</th><th class="text-left">Angebot</th><th></th></tr>
@@ -210,6 +227,11 @@
                 · {{ fmtEuro(detail.summen.gesamtbetrag) }}
                 <span class="text-grey-7">({{ fmtEuro(detail.summen.verguetung_pro_stunde) }}/h)</span>
               </span>
+              <!-- Entwurf: Satz ist noch nicht eingefroren → voraussichtliche Vergütung -->
+              <span v-else-if="detail.summen.vorschau_gesamtbetrag != null" class="text-grey-7">
+                · voraussichtlich {{ fmtEuro(detail.summen.vorschau_gesamtbetrag) }}
+                ({{ fmtEuro(detail.summen.vorschau_pro_stunde) }}/h)
+              </span>
               <span v-else-if="detail.status !== 'entwurf'" class="text-orange">
                 · kein Vergütungssatz hinterlegt
               </span>
@@ -241,6 +263,7 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import StundenKalender from 'src/components/StundenKalender.vue'
 
 defineOptions({ name: 'UlStundenPage' })
 
@@ -395,6 +418,7 @@ const detailOpen = ref(false)
 const detail = ref(null)
 const dError = ref('')
 const dBusy = ref(false)
+const ansicht = ref('kalender')   // 'kalender' (Standard) | 'liste'
 
 // Erfassungs-Modus: 'serie' (Wochenplan, z. B. Training) | 'einzeltage' (Kalender, z. B. Spiele)
 const erfassModus = ref('serie')
