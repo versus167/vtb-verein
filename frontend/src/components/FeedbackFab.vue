@@ -1,10 +1,10 @@
 <template>
-  <!-- Floating Action Button -->
-  <div id="feedback-fab" style="position:fixed;right:18px;bottom:18px;z-index:2000">
-    <q-btn fab icon="feedback" color="primary" :loading="capturing" @click="onFabClick">
-      <q-tooltip anchor="top middle" self="bottom middle">Feedback / Screenshot</q-tooltip>
-    </q-btn>
-  </div>
+  <!-- Trigger in der festen Kopfzeile. Früher ein FAB unten rechts, der auf
+       Listen-Seiten den Pagination-Pfeil verdeckt hat (#69). -->
+  <q-btn id="feedback-fab" flat dense round icon="feedback"
+    :loading="capturing" @click="onFabClick">
+    <q-tooltip>Feedback / Screenshot</q-tooltip>
+  </q-btn>
 
   <!-- Dialog -->
   <q-dialog id="feedback-dialog" v-model="dialogOpen"
