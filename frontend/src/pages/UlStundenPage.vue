@@ -6,8 +6,14 @@
       <q-btn color="primary" unelevated icon="add" label="Neue Abrechnung" @click="openCreate" />
     </div>
 
+    <!-- Fremderfassung: Einzel-ÜL-Sicht oder Übersicht aller offenen Erfassungen (#73) -->
+    <q-btn-toggle v-if="kannFremd" v-model="sicht" dense no-caps unelevated class="q-mb-md"
+      toggle-color="primary" color="grey-3" text-color="grey-8" @update:model-value="onSichtChange"
+      :options="[{ label: 'Einzel-ÜL', value: 'einzel', icon: 'person' },
+                 { label: 'Alle offenen', value: 'uebersicht', icon: 'groups' }]" />
+
     <!-- Fremderfassung (Geschäftsstelle): zwischen eigener und fremder ÜL-Sicht wechseln -->
-    <q-select v-if="kannFremd" v-model="zielMitgliedId" :options="uebungsleiterOptions" option-value="id"
+    <q-select v-if="kannFremd && sicht === 'einzel'" v-model="zielMitgliedId" :options="uebungsleiterOptions" option-value="id"
       :option-label="ulLabel" emit-value map-options clearable dense outlined
       use-input input-debounce="0" @filter="filterUebungsleiter"
       class="q-mb-md" label="Für Übungsleiter (leer = eigene)" @update:model-value="onZielChange">
@@ -28,7 +34,7 @@
         <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
       </template>
     </q-select>
-    <q-banner v-if="zielMitgliedId" dense class="bg-amber-1 text-amber-9 q-mb-md rounded-borders">
+    <q-banner v-if="zielMitgliedId && sicht === 'einzel'" dense class="bg-amber-1 text-amber-9 q-mb-md rounded-borders">
       <template #avatar><q-icon name="edit_note" /></template>
       Fremderfassung für <b>{{ zielLabel }}</b> – Anlegen und Bearbeiten erfolgen für diesen Übungsleiter.
     </q-banner>
@@ -37,6 +43,9 @@
       <q-item v-for="a in abrechnungen" :key="a.id" clickable @click="openDetail(a)">
         <q-item-section>
           <q-item-label>
+            <span v-if="sicht === 'uebersicht'" class="text-weight-medium">
+              {{ a.mitglied_nachname }}, {{ a.mitglied_vorname }} ·
+            </span>
             {{ a.abteilung_name }}
             <span class="text-grey-7">· {{ a.zeitraum_von }} – {{ a.zeitraum_bis }}</span>
           </q-item-label>
@@ -57,7 +66,8 @@
       </q-item>
     </q-list>
     <div v-if="abrechnungen.length === 0" class="text-grey text-center q-py-lg">
-      Noch keine Abrechnungen. Lege deine erste an.
+      <template v-if="sicht === 'uebersicht'">Keine offenen Erfassungen.</template>
+      <template v-else>Noch keine Abrechnungen. Lege deine erste an.</template>
     </div>
 
     <!-- ════════════ Neue Abrechnung ════════════ -->
@@ -278,6 +288,7 @@ const kannFremd = computed(() => auth.hasPermission('ulstunden.erfassen_fremd'))
 const uebungsleiter = ref([])          // Auswahl-Liste (nur mit Fremderfassungs-Recht)
 const uebungsleiterOptions = ref([])   // gefilterte Sicht für die Textsuche
 const zielMitgliedId = ref(null)       // null = eigene Abrechnungen
+const sicht = ref('einzel')            // 'einzel' (per ÜL) | 'uebersicht' (alle offenen, #73)
 const ulLabel = (u) => (u ? `${u.nachname}, ${u.vorname}` : '')
 const zielLabel = computed(() => {
   const ul = uebungsleiter.value.find(u => u.id === zielMitgliedId.value)
@@ -335,6 +346,12 @@ function endOfMonthIso(iso) {            // letzter Tag des Monats von iso
 }
 
 async function loadAbrechnungen() {
+  // Übersicht: alle offenen Erfassungen (Entwurf/Eingereicht) über alle ÜL (#73).
+  if (sicht.value === 'uebersicht') {
+    const { data } = await api.get('/api/ul-stunden/uebersicht')
+    abrechnungen.value = data
+    return
+  }
   const params = zielMitgliedId.value ? { mitglied_id: zielMitgliedId.value } : {}
   const { data } = await api.get('/api/ul-stunden/meine', { params })
   abrechnungen.value = data
@@ -347,6 +364,11 @@ async function loadUebungsleiter() {
   } catch { uebungsleiter.value = []; uebungsleiterOptions.value = [] }
 }
 function onZielChange() {
+  loadAbrechnungen().catch(() => $q.notify({ type: 'negative', message: 'Fehler beim Laden' }))
+}
+function onSichtChange() {
+  // In der Übersicht ist keine Einzel-ÜL-Auswahl aktiv.
+  if (sicht.value === 'uebersicht') zielMitgliedId.value = null
   loadAbrechnungen().catch(() => $q.notify({ type: 'negative', message: 'Fehler beim Laden' }))
 }
 usePageRefresh(loadAbrechnungen)
