@@ -15,6 +15,7 @@
         >
           <q-tooltip>Aktualisieren</q-tooltip>
         </q-btn>
+        <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
         <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
@@ -271,8 +272,6 @@
         </keep-alive>
       </router-view>
     </q-page-container>
-
-    <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
 
     <!-- PWA-Installationsbanner (Android/Chrome) -->
     <q-banner
