@@ -227,6 +227,11 @@
                 · {{ fmtEuro(detail.summen.gesamtbetrag) }}
                 <span class="text-grey-7">({{ fmtEuro(detail.summen.verguetung_pro_stunde) }}/h)</span>
               </span>
+              <!-- Entwurf: Satz ist noch nicht eingefroren → voraussichtliche Vergütung -->
+              <span v-else-if="detail.summen.vorschau_gesamtbetrag != null" class="text-grey-7">
+                · voraussichtlich {{ fmtEuro(detail.summen.vorschau_gesamtbetrag) }}
+                ({{ fmtEuro(detail.summen.vorschau_pro_stunde) }}/h)
+              </span>
               <span v-else-if="detail.status !== 'entwurf'" class="text-orange">
                 · kein Vergütungssatz hinterlegt
               </span>
