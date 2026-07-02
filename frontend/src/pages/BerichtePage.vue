@@ -36,7 +36,14 @@
           <q-card flat bordered class="fit">
             <q-card-section class="text-center">
               <div class="text-h4 text-weight-bold" :class="kpi.color">{{ kpi.value }}</div>
-              <div class="text-caption text-grey-7">{{ kpi.label }}</div>
+              <div class="text-caption text-grey-7">
+                {{ kpi.label }}
+                <q-icon v-if="kpi.hint" name="info" size="14px" class="q-ml-xs cursor-pointer text-grey-6">
+                  <q-tooltip max-width="280px" anchor="top middle" self="bottom middle" class="text-body2">
+                    {{ kpi.hint }}
+                  </q-tooltip>
+                </q-icon>
+              </div>
             </q-card-section>
           </q-card>
         </div>
@@ -182,8 +189,16 @@ const kpiCards = computed(() => {
   const k = data.value?.kpis
   if (!k) return []
   return [
-    { label: 'Mitglieder gesamt', value: k.gesamt, color: 'text-primary' },
-    { label: 'Aktiv', value: k.aktiv, color: 'text-positive' },
+    {
+      label: 'Mitglieder gesamt', value: k.gesamt, color: 'text-primary',
+      hint: 'Aktueller Mitgliederstand heute: alle, die heute Mitglied sind (auch passiv/inaktiv). '
+        + 'Bereits Ausgetretene zählen nicht mehr, künftige Eintritte noch nicht.',
+    },
+    {
+      label: 'Aktiv', value: k.aktiv, color: 'text-positive',
+      hint: 'Mitglieder mit Status „aktiv" und gültiger Mitgliedschaft; künftige Eintritte zählen mit, '
+        + 'abgelaufene Austritte nicht. Kann von „gesamt" abweichen (z. B. gekündigt, aber noch nicht ausgetreten).',
+    },
     { label: `Eintritte ${k.jahr}`, value: k.eintritte_jahr, color: 'text-positive' },
     { label: `Austritte ${k.jahr}`, value: k.austritte_jahr, color: 'text-negative' },
     { label: 'Ø Alter', value: k.durchschnittsalter ?? '–', color: 'text-grey-8' },

@@ -27,11 +27,17 @@ _AKTIV = (
     "AND (safe_to_date(m.austrittsdatum) IS NULL "
     "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
 )
-# "zählt zum Bestand": Eintritt liegt nicht in der Zukunft (am Eintrittstag schon dabei,
-# fehlendes/ungültiges Datum = dabei). Ausgetretene bleiben im Bestand.
+# "zählt zum Bestand": aktueller Mitgliederstand zum Anzeigetag (heute) – wer HEUTE
+# Mitglied ist. Eintritt nicht in der Zukunft (am Eintrittstag schon dabei) UND Austritt
+# nicht in der Vergangenheit (am Austrittstag noch dabei → >= CURRENT_DATE). Fehlende/
+# ungültige Datumsfelder = dabei. Rein datumsbasiert (Status egal): wer laut Datum schon
+# ausgetreten ist, fällt raus – auch wenn der Status noch 'aktiv' steht; wer als
+# 'ausgetreten' geführt wird, aber erst künftig geht, ist heute noch dabei.
 _BESTAND = (
     "(safe_to_date(m.eintrittsdatum) IS NULL "
-    " OR safe_to_date(m.eintrittsdatum) <= CURRENT_DATE)"
+    " OR safe_to_date(m.eintrittsdatum) <= CURRENT_DATE) "
+    "AND (safe_to_date(m.austrittsdatum) IS NULL "
+    "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
 )
 
 
@@ -66,9 +72,12 @@ class StatistikRepository(BaseRepository):
     def kpis(self, abteilung_id: int | None = None) -> dict:
         """Eckdaten: Mitglieder nach Status, Zu-/Abgänge im laufenden Jahr, Ø-Alter.
 
-        ``gesamt`` = Bestand (ohne Zukunfts-Eintritte, s. ``_BESTAND``),
-        ``aktiv`` = aktuell aktiv (Austritt nicht abgelaufen, künftige Eintritte zählen
-        mit, s. ``_AKTIV``). Mit ``abteilung_id`` auf diese Abteilung beschränkt;
+        ``gesamt`` = aktueller Mitgliederstand heute (weder Zukunfts-Eintritte noch bereits
+        Ausgetretene, s. ``_BESTAND``), ``aktiv`` = aktuell aktiv (Status aktiv, Austritt
+        nicht abgelaufen, künftige Eintritte zählen mit, s. ``_AKTIV``). Damit kann ``gesamt``
+        ≥ ``aktiv`` sein (z. B. gekündigte Mitglieder, die erst künftig gehen), und in
+        seltenen Fällen ``aktiv`` > ``gesamt`` (künftiger Eintritt: schon aktiv, aber heute
+        noch kein Bestand). Mit ``abteilung_id`` auf diese Abteilung beschränkt;
         Eintritte/Austritte zählen dann über das Abteilungsdatum (s. ``_scope``).
         """
         jahr = date.today().year
