@@ -122,6 +122,18 @@ def _load(db, abrechnung_id: int):
     return a
 
 
+def _display_name(db, username: Optional[str]) -> Optional[str]:
+    """Login → Klarname des verknüpften Mitglieds; Fallback auf den Usernamen."""
+    if not username:
+        return None
+    u = db.get_user_by_username(username)
+    if u is not None:
+        m = db.get_mitglied_by_user_id(u.id)
+        if m is not None and (m.vorname or m.nachname):
+            return f"{m.vorname or ''} {m.nachname or ''}".strip()
+    return username
+
+
 def _can_view(user, db, a) -> bool:
     """Eigentümer, Abteilungsleiter der Abteilung, Verwaltung oder Fremderfasser."""
     own = db.get_mitglied_by_user_id(user.id)
@@ -335,6 +347,10 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
         termine=[asdict(s) for s in db.ul_abrechnungen.list_stunden(a.id)],
         summen=ULStundenService(db).summen(a),
         erstellt_von=user.username,
+        eingereicht_von=_display_name(db, a.eingereicht_von),
+        eingereicht_am=a.eingereicht_am,
+        bestaetigt_von=_display_name(db, a.bestaetigt_von),
+        bestaetigt_am=a.bestaetigt_am,
     )
     nachname = (a.mitglied_nachname or 'UL').replace(' ', '_')
     dateiname = f"Stundennachweis_{nachname}_{a.zeitraum_von}_{a.zeitraum_bis}.pdf"
