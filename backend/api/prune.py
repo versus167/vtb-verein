@@ -109,7 +109,7 @@ def prune_einstellungen_zuruecksetzen(
     """Entfernt den Override → Entität fällt auf den Code-Default zurück."""
     _require_admin(user)
     _require_known_entity(entity)
-    db.prune_einstellungen.delete(entity)
+    db.prune_einstellungen.delete(entity, deleted_by=user.username)
     try:
         db.access_log_repository.log(
             "prune_config_reset", category="prune",

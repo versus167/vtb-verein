@@ -50,7 +50,7 @@ def clean(db):
             "TRUNCATE mitglied_history, mitglied_kontakt_history, users_history, "
             "tickets_history, abteilung_history RESTART IDENTITY"
         )
-        cur.execute("TRUNCATE prune_einstellungen")
+        cur.execute("TRUNCATE prune_einstellungen, prune_einstellungen_history")
     yield
 
 
@@ -76,7 +76,7 @@ def _soft_delete(db, table, id_, days_ago):
     dann eine Zeile, wenn NEW.version != OLD.version (PK (id, version))."""
     with db.cursor() as cur:
         cur.execute(
-            f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s))::text, "
+            f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s)), "
             f"deleted_by='t', version=version+1 WHERE id=%s", (days_ago, id_)
         )
 
@@ -85,7 +85,7 @@ def _soft_delete_plain(db, table, id_, days_ago):
     """Soft-Delete für Tabellen OHNE version/History (z.B. Anhänge): nur deleted_at."""
     with db.cursor() as cur:
         cur.execute(
-            f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s))::text, "
+            f"UPDATE {table} SET deleted_at=(now()-make_interval(days=>%s)), "
             f"deleted_by='t' WHERE id=%s", (days_ago, id_)
         )
 
@@ -94,12 +94,12 @@ def _age_history(db, htable, id_, days_ago):
     """Simuliert vollständig abgeflossene History: alle Zeitstempel zurückdatieren."""
     with db.cursor() as cur:
         cur.execute(
-            f"UPDATE {htable} SET created_at=(now()-make_interval(days=>%s))::text, "
-            f"updated_at=(now()-make_interval(days=>%s))::text WHERE id=%s",
+            f"UPDATE {htable} SET created_at=(now()-make_interval(days=>%s)), "
+            f"updated_at=(now()-make_interval(days=>%s)) WHERE id=%s",
             (days_ago, days_ago, id_)
         )
         cur.execute(
-            f"UPDATE {htable} SET deleted_at=(now()-make_interval(days=>%s))::text "
+            f"UPDATE {htable} SET deleted_at=(now()-make_interval(days=>%s)) "
             f"WHERE id=%s AND deleted_at IS NOT NULL", (days_ago, id_)
         )
 
@@ -198,7 +198,7 @@ def test_einstellungen_override_roundtrip(db):
     rep = {e["name"]: e for e in svc.report()["entities"]}["mitglied"]
     assert rep["retention_days"] == 30 and rep["history_retention_days"] == 100 and rep["is_override"] is True
 
-    assert db.prune_einstellungen.delete("mitglied") is True
+    assert db.prune_einstellungen.delete("mitglied", deleted_by="tester") is True
     reset = {e["name"]: e for e in svc.einstellungen()}["mitglied"]
     assert reset["is_override"] is False
     assert reset["retention_days"] == default["retention_days"]
