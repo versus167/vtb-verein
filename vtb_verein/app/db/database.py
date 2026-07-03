@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 60
+SCHEMA_VERSION = 61
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +51,126 @@ _FN_FIBU_EXPORTE_AUDIT_UPDATE = """
                 NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
                 NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
                 NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# Un-Export/Umbenennen eines Kassenbuch-Exports = versionierter UPDATE → in die History.
+# (Der INSERT-Trigger fn_kassenbuch_exporte_audit_insert wird inline in
+#  _create_trigger_functions definiert; hier fehlte bislang das UPDATE-Pendant.)
+_FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_kassenbuch_exporte_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO kassenbuch_exporte_history (
+                id, version, kasse_id, zeitraum_von, zeitraum_bis,
+                exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                created_at, created_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
+                NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.anzahl_buchungen,
+                NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# --- Audit für die Konfig-Tabellen (v61) ---------------------------------------
+# Single-Row-/Config-Tabellen bekommen dasselbe versions-gategetriggerte History-
+# Muster wie die Domänentabellen: jede versionsändernde Schreibung landet als
+# Snapshot in *_history. fibu_/beitrag_einstellungen sind Single-Row (id=1, nie
+# gelöscht → kein deleted_*); prune_einstellungen wird per Soft-Delete geführt.
+_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_fibu_einstellungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO fibu_einstellungen_history (
+            id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
+            verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
+            created_at, created_by, updated_at, updated_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
+            NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_fibu_einstellungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO fibu_einstellungen_history (
+                id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
+                verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
+                created_at, created_by, updated_at, updated_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
+                NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAG_EINSTELLUNGEN_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_beitrag_einstellungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO beitrag_einstellungen_history (
+            id, version, quartale_rueckschau,
+            created_at, created_by, updated_at, updated_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.quartale_rueckschau,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_BEITRAG_EINSTELLUNGEN_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_beitrag_einstellungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO beitrag_einstellungen_history (
+                id, version, quartale_rueckschau,
+                created_at, created_by, updated_at, updated_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.quartale_rueckschau,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_PRUNE_EINSTELLUNGEN_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_prune_einstellungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO prune_einstellungen_history (
+            entity, version, retention_days, keep_min, history_retention_days,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.entity, NEW.version, NEW.retention_days, NEW.keep_min, NEW.history_retention_days,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_PRUNE_EINSTELLUNGEN_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_prune_einstellungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO prune_einstellungen_history (
+                entity, version, retention_days, keep_min, history_retention_days,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.entity, NEW.version, NEW.retention_days, NEW.keep_min, NEW.history_retention_days,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
             );
         END IF;
         RETURN NEW;
@@ -934,6 +1054,7 @@ class Database:
             58: self._migrate_v57_to_v58,
             59: self._migrate_v58_to_v59,
             60: self._migrate_v59_to_v60,
+            61: self._migrate_v60_to_v61,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3262,15 +3383,89 @@ class Database:
 
     @staticmethod
     def _create_prune_einstellungen(cur) -> None:
-        """CREATE der Prune-Override-Tabelle (idempotent, von Fresh-Schema + Migration genutzt)."""
+        """CREATE der Prune-Override-Tabelle (idempotent, von Fresh-Schema + Migration genutzt).
+
+        Seit v61 folgt auch diese Config-Tabelle dem „History + Soft-Delete"-Prinzip:
+        versioniert (`version`), auditiert (`created_*`) und ohne Hart-Löschen
+        (`deleted_*`; ein zurückgesetzter Override wird soft-deleted, nicht entfernt).
+        Die ALTERs ziehen Bestands-DBs idempotent nach.
+        """
         cur.execute("""
             CREATE TABLE IF NOT EXISTS prune_einstellungen (
               entity                 TEXT PRIMARY KEY,
               retention_days         INTEGER NOT NULL,
               keep_min               INTEGER NOT NULL,
               history_retention_days INTEGER NOT NULL,
+              version                INTEGER NOT NULL DEFAULT 1,
+              created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              created_by             TEXT,
               updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_by             TEXT
+              updated_by             TEXT,
+              deleted_at             TEXT,
+              deleted_by             TEXT
+            )
+        """)
+        for ddl in (
+            "ALTER TABLE prune_einstellungen ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE prune_einstellungen ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE prune_einstellungen ADD COLUMN IF NOT EXISTS created_by TEXT",
+            "ALTER TABLE prune_einstellungen ADD COLUMN IF NOT EXISTS deleted_at TEXT",
+            "ALTER TABLE prune_einstellungen ADD COLUMN IF NOT EXISTS deleted_by TEXT",
+        ):
+            cur.execute(ddl)
+
+    @staticmethod
+    def _create_einstellungen_history(cur) -> None:
+        """History-Tabellen der Konfig-Tabellen (idempotent; Fresh-Schema + Migration v61).
+
+        Spiegeln jeweils die Spalten ihrer Basistabelle; PK (id|entity, version). Kein FK
+        auf die Basis (reines Audit-Log), analog zu den übrigen *_history-Tabellen. Timestamp-
+        Spalten werden – wie überall – am Ende via _normalize_audit_timestamps auf TIMESTAMPTZ
+        gezogen."""
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fibu_einstellungen_history (
+              id                       INTEGER NOT NULL,
+              version                  INTEGER NOT NULL,
+              debitor_konto_basis      INTEGER,
+              default_gegenkonto       TEXT,
+              default_steuerschluessel TEXT,
+              verein_kostenstelle      INTEGER,
+              default_kostentraeger    INTEGER,
+              ul_aufwand_konto         TEXT,
+              ul_kreditor_konto_basis  INTEGER,
+              created_at               TEXT,
+              created_by               TEXT,
+              updated_at               TEXT,
+              updated_by               TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS beitrag_einstellungen_history (
+              id                  INTEGER NOT NULL,
+              version             INTEGER NOT NULL,
+              quartale_rueckschau INTEGER,
+              created_at          TEXT,
+              created_by          TEXT,
+              updated_at          TEXT,
+              updated_by          TEXT,
+              PRIMARY KEY (id, version)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS prune_einstellungen_history (
+              entity                 TEXT NOT NULL,
+              version                INTEGER NOT NULL,
+              retention_days         INTEGER,
+              keep_min               INTEGER,
+              history_retention_days INTEGER,
+              created_at             TEXT,
+              created_by             TEXT,
+              updated_at             TEXT,
+              updated_by             TEXT,
+              deleted_at             TEXT,
+              deleted_by             TEXT,
+              PRIMARY KEY (entity, version)
             )
         """)
 
@@ -3548,6 +3743,62 @@ class Database:
             cur.execute(_FN_UL_ABRECHNUNG_AUDIT_UPDATE)
             cur.execute("UPDATE schema_version SET version = 60 WHERE id = 1")
 
+    def _migrate_v60_to_v61(self) -> None:
+        """„History + Smart-Delete" auf die Konfig-Tabellen ausweiten; fehlende Export-UPDATE-
+        Trigger nachziehen; Alembic-Altlast droppen.
+
+        Bislang waren die Config-Tabellen bewusst vom Prinzip ausgenommen. Diese Migration
+        holt das nach:
+          * fibu_/beitrag_einstellungen (Single-Row, id=1): versions-gategetriggerte History.
+          * prune_einstellungen: um version/created_*/deleted_* erweitert – ein zurückgesetzter
+            Override wird ab jetzt soft-deleted statt hart gelöscht (Repo-Anpassung) – + History.
+        Zusätzlich zwei fehlende Audit-UPDATE-Trigger auf den Export-Headern: fibu_exporte
+        (auf migrierten DBs nie angelegt, weil nachträglich in den v46-Block editiert) und
+        kassenbuch_exporte (fehlte generell). Ohne sie lief der Un-Export/das Umbenennen nicht
+        in die *_history. schema_version (kein Audit nötig) bleibt außen vor; die leere
+        Alembic-Tabelle wird entfernt.
+        """
+        with self.cursor() as cur:
+            # 1) prune_einstellungen um Versions-/Audit-/Soft-Delete-Spalten erweitern (idempotent)
+            #    und alle drei Konfig-History-Tabellen anlegen.
+            self._create_prune_einstellungen(cur)
+            self._create_einstellungen_history(cur)
+
+            # 2) Audit-Funktionen (CREATE OR REPLACE – idempotent)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+            cur.execute(_FN_BEITRAG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_BEITRAG_EINSTELLUNGEN_AUDIT_UPDATE)
+            cur.execute(_FN_PRUNE_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_PRUNE_EINSTELLUNGEN_AUDIT_UPDATE)
+            cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE)
+
+            # 3) Trigger anlegen bzw. nachziehen (CREATE OR REPLACE greift auch auf Bestands-DBs)
+            for name, event, table, fn in (
+                ('trig_fibu_einstellungen_audit_insert',    'INSERT', 'fibu_einstellungen',    'fn_fibu_einstellungen_audit_insert'),
+                ('trig_fibu_einstellungen_audit_update',    'UPDATE', 'fibu_einstellungen',    'fn_fibu_einstellungen_audit_update'),
+                ('trig_beitrag_einstellungen_audit_insert', 'INSERT', 'beitrag_einstellungen', 'fn_beitrag_einstellungen_audit_insert'),
+                ('trig_beitrag_einstellungen_audit_update', 'UPDATE', 'beitrag_einstellungen', 'fn_beitrag_einstellungen_audit_update'),
+                ('trig_prune_einstellungen_audit_insert',   'INSERT', 'prune_einstellungen',   'fn_prune_einstellungen_audit_insert'),
+                ('trig_prune_einstellungen_audit_update',   'UPDATE', 'prune_einstellungen',   'fn_prune_einstellungen_audit_update'),
+                ('trig_fibu_exporte_audit_update',          'UPDATE', 'fibu_exporte',          'fn_fibu_exporte_audit_update'),
+                ('trig_kassenbuch_exporte_audit_update',    'UPDATE', 'kassenbuch_exporte',    'fn_kassenbuch_exporte_audit_update'),
+            ):
+                cur.execute(f"""
+                    CREATE OR REPLACE TRIGGER {name}
+                    AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION {fn}();
+                """)
+
+            # 4) Altlast: leere Alembic-Tabelle entfernen (Laufzeit-Migrationen laufen über database.py)
+            cur.execute("DROP TABLE IF EXISTS alembic_version")
+
+            # 5) Neue Timestamp-Spalten (prune_einstellungen.created_at/deleted_at + *_history)
+            #    einheitlich auf TIMESTAMPTZ ziehen – dieselbe Routine wie im Fresh-Schema.
+            self._normalize_audit_timestamps(cur)
+
+            cur.execute("UPDATE schema_version SET version = 61 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -3606,6 +3857,7 @@ class Database:
             self._create_tables(cur)
             self._create_prune_einstellungen(cur)
             self._create_beitrag_einstellungen(cur)
+            self._create_einstellungen_history(cur)
             self._create_trigger_functions(cur)
             self._create_triggers(cur)
             self._create_indexes(cur)
@@ -5235,6 +5487,13 @@ class Database:
         """)
         cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
         cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
+        cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE)
+        cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+        cur.execute(_FN_BEITRAG_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_BEITRAG_EINSTELLUNGEN_AUDIT_UPDATE)
+        cur.execute(_FN_PRUNE_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_PRUNE_EINSTELLUNGEN_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_kasse_berechtigungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -5609,8 +5868,15 @@ class Database:
             ('trig_kassenbuchungen_audit_insert',                   'INSERT', 'kassenbuchungen',                   'fn_kassenbuchungen_audit_insert'),
             ('trig_kassenbuchungen_audit_update',                   'UPDATE', 'kassenbuchungen',                   'fn_kassenbuchungen_audit_update'),
             ('trig_kassenbuch_exporte_audit_insert',                'INSERT', 'kassenbuch_exporte',                'fn_kassenbuch_exporte_audit_insert'),
+            ('trig_kassenbuch_exporte_audit_update',                'UPDATE', 'kassenbuch_exporte',                'fn_kassenbuch_exporte_audit_update'),
             ('trig_fibu_exporte_audit_insert',                      'INSERT', 'fibu_exporte',                      'fn_fibu_exporte_audit_insert'),
             ('trig_fibu_exporte_audit_update',                      'UPDATE', 'fibu_exporte',                      'fn_fibu_exporte_audit_update'),
+            ('trig_fibu_einstellungen_audit_insert',                'INSERT', 'fibu_einstellungen',                'fn_fibu_einstellungen_audit_insert'),
+            ('trig_fibu_einstellungen_audit_update',                'UPDATE', 'fibu_einstellungen',                'fn_fibu_einstellungen_audit_update'),
+            ('trig_beitrag_einstellungen_audit_insert',             'INSERT', 'beitrag_einstellungen',             'fn_beitrag_einstellungen_audit_insert'),
+            ('trig_beitrag_einstellungen_audit_update',             'UPDATE', 'beitrag_einstellungen',             'fn_beitrag_einstellungen_audit_update'),
+            ('trig_prune_einstellungen_audit_insert',               'INSERT', 'prune_einstellungen',               'fn_prune_einstellungen_audit_insert'),
+            ('trig_prune_einstellungen_audit_update',               'UPDATE', 'prune_einstellungen',               'fn_prune_einstellungen_audit_update'),
             ('trig_kasse_berechtigungen_audit_insert',              'INSERT', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_insert'),
             ('trig_kasse_berechtigungen_audit_update',              'UPDATE', 'kasse_berechtigungen',              'fn_kasse_berechtigungen_audit_update'),
             ('trig_kassen_kategorien_audit_insert',                 'INSERT', 'kassen_kategorien',                 'fn_kassen_kategorien_audit_insert'),

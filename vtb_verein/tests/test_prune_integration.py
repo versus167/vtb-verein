@@ -198,7 +198,7 @@ def test_einstellungen_override_roundtrip(db):
     rep = {e["name"]: e for e in svc.report()["entities"]}["mitglied"]
     assert rep["retention_days"] == 30 and rep["history_retention_days"] == 100 and rep["is_override"] is True
 
-    assert db.prune_einstellungen.delete("mitglied") is True
+    assert db.prune_einstellungen.delete("mitglied", deleted_by="tester") is True
     reset = {e["name"]: e for e in svc.einstellungen()}["mitglied"]
     assert reset["is_override"] is False
     assert reset["retention_days"] == default["retention_days"]
