@@ -74,6 +74,12 @@
             </div>
           </div>
           <div v-if="p.email" class="text-caption text-grey-7 q-mb-xs">{{ p.email }}</div>
+          <div v-if="lizenzInfo(p.mitglied)" class="text-caption row items-center q-gutter-xs q-mb-xs">
+            <span class="text-grey-7">Lizenz bis {{ formatDate(p.mitglied.trainerlizenz_gueltig_bis) }}</span>
+            <q-chip dense size="sm" :color="lizenzInfo(p.mitglied).color" text-color="white" class="q-my-none">
+              {{ lizenzInfo(p.mitglied).label }}
+            </q-chip>
+          </div>
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
             <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
               :color="abteilungColor(ab.abteilung_id)" text-color="white">
@@ -176,6 +182,19 @@
             <q-tooltip>Ausgetreten</q-tooltip>
           </q-badge>
           <span v-else-if="props.row.mitglied?.eintrittsdatum">{{ props.row.mitglied.eintrittsdatum }}</span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
+      <template #body-cell-lizenz_bis="props">
+        <q-td :props="props">
+          <template v-if="lizenzInfo(props.row.mitglied)">
+            <span class="q-mr-sm">{{ formatDate(props.row.mitglied.trainerlizenz_gueltig_bis) }}</span>
+            <q-chip dense size="sm" :color="lizenzInfo(props.row.mitglied).color" text-color="white"
+              class="q-my-none">
+              {{ lizenzInfo(props.row.mitglied).label }}
+            </q-chip>
+          </template>
           <span v-else class="text-grey">—</span>
         </q-td>
       </template>
@@ -603,6 +622,16 @@ const deletedColumns = [
 // Native Quasar-Tabellensortierung (über pagination). Start: „Zuletzt bearbeitet" absteigend (neueste zuerst).
 const pagination = ref({ sortBy: 'last_edited', descending: true, page: 1, rowsPerPage: 25 })
 
+// "Nur Lizenz": beim Wechsel automatisch nach Ablaufdatum aufsteigend sortieren
+// (früheste/abgelaufene zuerst); beim Verlassen zurück auf "zuletzt bearbeitet".
+watch(filter, (nun, vorher) => {
+  if (nun === 'lizenz') {
+    pagination.value = { ...pagination.value, sortBy: 'lizenz_bis', descending: false, page: 1 }
+  } else if (vorher === 'lizenz') {
+    pagination.value = { ...pagination.value, sortBy: 'last_edited', descending: true, page: 1 }
+  }
+})
+
 // Sortierschlüssel der Name-Spalte: Nachname + Vorname (Mitglied) bzw. Benutzername.
 function nameKey(p) {
   return p.mitglied
@@ -614,16 +643,58 @@ const filterOptions = [
   { label: 'Alle', value: 'alle' },
   { label: 'Nur Mitglieder', value: 'mitglieder' },
   { label: 'Nur Benutzer', value: 'benutzer' },
+  { label: 'Nur Lizenz', value: 'lizenz' },
 ]
+
+// Trainerlizenz-Status eines Mitglieds für die Ampel in der "Nur Lizenz"-Ansicht.
+// Baut ausschließlich auf dem Lizenzfenster [von, bis] auf (nur gemeinsam gesetzt, #63).
+// Rückgabe null = keine Lizenz hinterlegt. Schwelle "läuft bald ab": 90 Tage.
+const LIZENZ_WARN_TAGE = 90
+function lizenzInfo(m) {
+  const bis = m?.trainerlizenz_gueltig_bis
+  if (!bis) return null
+  const von = m?.trainerlizenz_gueltig_von
+  const heute = heuteIso()
+  if (von && von > heute) {
+    return { color: 'blue-grey', label: `ab ${formatDate(von)}` }
+  }
+  if (bis < heute) {
+    return { color: 'negative', label: 'abgelaufen' }
+  }
+  const tage = Math.round((new Date(bis) - new Date(heute)) / 86400000)
+  if (tage <= LIZENZ_WARN_TAGE) {
+    return { color: 'orange', label: `noch ${tage} Tg.` }
+  }
+  return { color: 'positive', label: 'gültig' }
+}
 
 // Spalten sind tab-abhängig: Im Tab "Nur Benutzer" interessieren Rolle und
 // letzte Aktivität statt Geburtstag/Eintritt (Ticket #14).
 const columns = computed(() => {
   const istBenutzer = filter.value === 'benutzer'
+  const nameCol = { name: 'name', label: 'Name', align: 'left', sortable: true,
+    field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : r.username || ''),
+    sort: (a, b, rowA, rowB) => nameKey(rowA).localeCompare(nameKey(rowB), 'de', { sensitivity: 'base' }) }
+
+  // "Nur Lizenz": fokussierte, nach Ablauf sortierbare Trainerlizenz-Liste (#70).
+  if (filter.value === 'lizenz') {
+    return [
+      nameCol,
+      { name: 'qualifikation', label: 'Qualifikation', align: 'left', sortable: true,
+        field: r => r.mitglied?.qualifikation || '' },
+      { name: 'lizenz_nr', label: 'Lizenz-Nr.', align: 'left', sortable: true,
+        field: r => r.mitglied?.trainerlizenz_nr || '' },
+      { name: 'lizenz_von', label: 'Gültig von', align: 'left', sortable: true,
+        field: r => r.mitglied?.trainerlizenz_gueltig_von || '', format: v => formatDate(v) },
+      { name: 'lizenz_bis', label: 'Gültig bis', align: 'left', sortable: true,
+        field: r => r.mitglied?.trainerlizenz_gueltig_bis || '' },
+      { name: 'abteilungen', label: 'Abteilungen', field: 'abteilungen', align: 'left' },
+      { name: 'actions', label: '', field: 'actions', align: 'right', style: 'width: 200px' },
+    ]
+  }
+
   const cols = [
-    { name: 'name', label: 'Name', align: 'left', sortable: true,
-      field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : r.username || ''),
-      sort: (a, b, rowA, rowB) => nameKey(rowA).localeCompare(nameKey(rowB), 'de', { sensitivity: 'base' }) },
+    nameCol,
     { name: 'email', label: 'E-Mail', field: 'email',    align: 'left', sortable: true },
   ]
   if (istBenutzer) {
@@ -667,6 +738,8 @@ const filteredPersonen = computed(() => {
   // Basis-Filter
   if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
+  // "Nur Lizenz": Mitglieder mit hinterlegtem Trainerlizenz-Fenster (#70)
+  if (filter.value === 'lizenz')     list = list.filter(p => p.mitglied?.trainerlizenz_gueltig_bis)
 
   // Ausgetretene standardmäßig ausblenden (nur per Häkchen sichtbar)
   if (!zeigeAusgetretene.value) list = list.filter(p => !istAusgetreten(p))
@@ -701,11 +774,16 @@ const filteredPersonen = computed(() => {
   return list
 })
 
-// Karten-Ansicht (mobil) hat keine Spaltenköpfe → fest nach „Zuletzt bearbeitet" absteigend (neueste zuerst).
-const sortierteKarten = computed(() =>
-  [...filteredPersonen.value].sort((a, b) =>
-    String(b.last_edited || '').localeCompare(String(a.last_edited || ''))),
-)
+// Karten-Ansicht (mobil) hat keine Spaltenköpfe → feste Sortierung. In der "Nur Lizenz"-
+// Ansicht nach Ablaufdatum aufsteigend (wie die Tabelle), sonst „Zuletzt bearbeitet" absteigend.
+const sortierteKarten = computed(() => {
+  const list = [...filteredPersonen.value]
+  if (filter.value === 'lizenz') {
+    return list.sort((a, b) => String(a.mitglied?.trainerlizenz_gueltig_bis || '')
+      .localeCompare(String(b.mitglied?.trainerlizenz_gueltig_bis || '')))
+  }
+  return list.sort((a, b) => String(b.last_edited || '').localeCompare(String(a.last_edited || '')))
+})
 
 // Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
 function resetAllFilters() {
