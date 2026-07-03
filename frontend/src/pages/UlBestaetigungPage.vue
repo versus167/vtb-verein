@@ -50,7 +50,23 @@
             · {{ detail.lizenz_klassifikation === 'mit_lizenz' ? 'mit Lizenz' : 'ohne Lizenz' }}
           </div>
 
-          <q-markup-table flat bordered dense class="q-mb-sm">
+          <!-- Erfasste Termine: Kalender (Standard) oder Liste -->
+          <div class="row items-center q-mb-xs">
+            <div class="text-caption text-grey-7">Erfasste Stunden</div>
+            <q-space />
+            <q-btn-toggle v-model="ansicht" dense no-caps unelevated size="sm"
+              toggle-color="primary" color="grey-3" text-color="grey-8"
+              :options="[{ label: 'Kalender', value: 'kalender', icon: 'calendar_month' },
+                         { label: 'Liste', value: 'liste', icon: 'list' }]" />
+          </div>
+
+          <!-- Kalender: Tage mit Einträgen zeigen die Stunden als umkreiste Zahl (nur lesen) -->
+          <StundenKalender v-if="ansicht === 'kalender'" class="q-mb-sm"
+            :termine="detail.stunden" :von="detail.zeitraum_von" :bis="detail.zeitraum_bis" />
+          <div v-if="ansicht === 'kalender' && detail.stunden.length === 0"
+            class="text-grey text-center q-pb-sm">Keine Termine.</div>
+
+          <q-markup-table v-if="ansicht === 'liste'" flat bordered dense class="q-mb-sm">
             <thead>
               <tr><th class="text-left">Datum</th><th class="text-left">Wo.</th>
                 <th class="text-right">Stunden</th><th class="text-left">Angebot</th></tr>
@@ -102,6 +118,7 @@ import { ref, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import StundenKalender from 'src/components/StundenKalender.vue'
 
 defineOptions({ name: 'UlBestaetigungPage' })
 
@@ -147,6 +164,7 @@ const detailOpen = ref(false)
 const detail = ref(null)
 const dError = ref('')
 const dBusy = ref(false)
+const ansicht = ref('kalender')   // 'kalender' (Standard) | 'liste'
 
 async function openDetail(a) {
   dError.value = ''

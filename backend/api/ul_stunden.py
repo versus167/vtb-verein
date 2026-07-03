@@ -28,6 +28,9 @@ router = APIRouter(prefix="/ul-stunden", tags=["ul-stunden"])
 # ist keine Seed-Funktion, zählt hier aber gleichwertig als Übungsleiter.
 UL_FUNKTIONEN = ('uebungsleiter', 'uebungsleiter_lizenz')
 
+# "Offene" (noch laufende) Abrechnungen für die Fremderfassungs-Übersicht (#73).
+OFFENE_STATUS = ('entwurf', 'eingereicht')
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -183,6 +186,20 @@ def list_meine(user: CurrentUser, db: DB, status_filter: Optional[str] = None,
         raise HTTPException(status_code=403, detail="Keine Berechtigung für fremde Abrechnungen")
     return [_abrechnung_dict(db, a)
             for a in db.ul_abrechnungen.list_for_mitglied(target, status_filter)]
+
+
+@router.get("/uebersicht")
+def list_uebersicht(user: CurrentUser, db: DB, status_filter: Optional[str] = None):
+    """Übersicht der laufenden Erfassungen über ALLE Übungsleiter – für Fremderfasser/
+    Verwaltung, damit sie den Stand aller Abrechnungen auf einen Blick sehen, ohne ÜL
+    für ÜL durchzugehen (#73). Ohne status_filter: alle offenen (Entwurf + Eingereicht)."""
+    if not _can_erfassen_fremd(user):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung zur Fremderfassung")
+    if status_filter:
+        rows = db.ul_abrechnungen.list_all(status_filter)
+    else:
+        rows = [a for a in db.ul_abrechnungen.list_all(None) if a.status in OFFENE_STATUS]
+    return [_abrechnung_dict(db, a) for a in rows]
 
 
 @router.get("/erfassung-kontext")
