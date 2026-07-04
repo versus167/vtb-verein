@@ -18,6 +18,8 @@ from reportlab.platypus import (
     Spacer, HRFlowable,
 )
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+from reportlab.graphics.shapes import Drawing, Path, Group
+from xml.sax.saxutils import escape
 
 
 def letzter_vollstaendiger_monat() -> tuple[str, str]:
@@ -62,6 +64,31 @@ def _stueckelung_label(wert_cent: int) -> str:
         euro = wert_cent / 100
         return f"{euro:g} €"
     return f"{wert_cent} ct"
+
+
+def _bueroklammer_flowable(color=colors.HexColor('#444444'), height: float = 9.0) -> Drawing:
+    """Kleine gezeichnete Büroklammer als Flowable für eine Tabellenzelle.
+
+    Bewusst als Vektor gezeichnet (kein Font-Glyph / Emoji nötig) – die Standard-
+    PDF-Schriften haben kein Büroklammer-Zeichen, damit rendert das Kennzeichen in
+    jeder Umgebung zuverlässig. Einzelne durchgehende Strichführung in einer
+    10×16-Box (y nach oben), anschließend auf ``height`` skaliert."""
+    p = Path(strokeColor=color, strokeWidth=1.1, fillColor=None)
+    p.strokeLineCap = 1   # runde Enden
+    p.strokeLineJoin = 1
+    p.moveTo(2.0, 15.0)
+    p.lineTo(2.0, 3.0)
+    p.curveTo(2.0, 0.2, 8.0, 0.2, 8.0, 3.0)   # unterer Bogen (äußere Schlaufe)
+    p.lineTo(8.0, 13.0)
+    p.curveTo(8.0, 15.6, 4.6, 15.6, 4.6, 13.0)  # oberer Bogen zur inneren Ader
+    p.lineTo(4.6, 6.0)
+    scale = height / 16.0
+    g = Group(p)
+    g.scale(scale, scale)
+    d = Drawing(10.0 * scale, 16.0 * scale)
+    d.add(g)
+    d.hAlign = 'CENTER'
+    return d
 
 
 def erstelle_kassenbuch_pdf(
@@ -154,6 +181,22 @@ def erstelle_kassenbuch_pdf(
     COL_ENDGUELTIG_BG = colors.HexColor('#e8f0fe')
     COL_ENDGUELTIG_BELEG = colors.HexColor('#1a56a0')
 
+    # Umbrechende Textzellen: Paragraph statt String, damit lange Texte (auch
+    # einzelne lange Wörter) umbrechen statt in die Nachbarspalte zu laufen.
+    style_cell = ParagraphStyle('KBCell', fontName='Helvetica', fontSize=8,
+                                leading=9.5, textColor=colors.black)
+    style_cell_storno = ParagraphStyle('KBCellStorno', parent=style_cell,
+                                        textColor=COL_STORNO)
+
+    def _cell(text: str, storno: bool) -> Paragraph:
+        return Paragraph(escape(text or ''), style_cell_storno if storno else style_cell)
+
+    def _beleg_cell(beleg: str, storno: bool, endgueltig: bool) -> Paragraph:
+        if not storno and endgueltig:
+            return Paragraph(
+                f'<b><font color="#1a56a0">[✓] {escape(beleg)}</font></b>', style_cell)
+        return Paragraph(escape(beleg), style_cell_storno if storno else style_cell)
+
     story = []
 
     # ------------------------------------------------------------------
@@ -224,14 +267,21 @@ def erstelle_kassenbuch_pdf(
 
     # ------------------------------------------------------------------
     # Buchungstabelle
-    # 7 Spalten: Datum | Beleg | Buchungstext | Kategorie | Einnahme | Ausgabe | Bestand
+    # 9 Spalten: Datum | Beleg | 📎 | Buchungstext | Kategorie | Erfasser
+    #            | Einnahme | Ausgabe | Bestand
     # ------------------------------------------------------------------
     story.append(Paragraph(f'Buchungen ({len(buchungen)} gesamt)', style_section))
 
-    # Spaltenbreiten: gesamt ~17 cm nutzbar (A4 - 4 cm Rand)
-    col_widths = [2.3 * cm, 2.5 * cm, 6.0 * cm, 2.8 * cm, 2.0 * cm, 2.0 * cm, 2.5 * cm]
+    # Spaltenbreiten: gesamt 16.7 cm (≤ 17 cm nutzbar, A4 - 4 cm Rand)
+    #                Datum  Beleg  Anl.   Text   Kat.   Erf.   Ein.   Aus.   Best.
+    col_pt = [1.8, 1.8, 0.7, 3.5, 2.2, 1.8, 1.5, 1.5, 1.9]
+    col_widths = [w * cm for w in col_pt]
 
-    header_row = ['Datum', 'Beleg', 'Buchungstext', 'Kategorie', 'Einnahme', 'Ausgabe', 'Bestand']
+    # Spaltenindizes (nach Einschub von Anlagen + Erfasser)
+    C_ANL, C_EIN, C_AUS, C_BEST = 2, 6, 7, 8
+
+    header_row = ['Datum', 'Beleg', 'Anl.', 'Buchungstext', 'Kategorie',
+                  'Erfasser', 'Einnahme', 'Ausgabe', 'Bestand']
 
     table_data = [header_row]
 
@@ -250,40 +300,44 @@ def erstelle_kassenbuch_pdf(
         ausgabe_str = _fmt_euro(b['ausgabe_cent']) if b['ausgabe_cent'] else ''
         datum_str = _fmt_datum(b['buchungsdatum'])
         beleg_str = b.get('belegnummer') or '–'
-        hat_anhang = b.get('anhang_count', 0) > 0
-        anhang_suffix = ' ◆' if hat_anhang else ''
-        text_str = b['buchungstext']
-        if len(text_str) > 45:
-            text_str = text_str[:42] + '...'
-        kat_str = b.get('kategorie', '')
+        hat_anhang = (b.get('anhang_count') or 0) > 0
+        # Büroklammer als Kennzeichen für Anhänge (eigene Spalte, gezeichnet).
+        anl_cell = _bueroklammer_flowable(
+            color=COL_STORNO if ist_storniert else colors.HexColor('#444444')
+        ) if hat_anhang else ''
 
         data_row_idx = i  # 0 = header
+        # Textspalten als umbrechende Paragraphen (Zeilenumbruch statt Überlauf).
+        row = [
+            datum_str,
+            _beleg_cell(beleg_str, ist_storniert, ist_endgueltig),
+            anl_cell,
+            _cell(b['buchungstext'], ist_storniert),
+            _cell(b.get('kategorie', ''), ist_storniert),
+            _cell(b.get('created_by') or '', ist_storniert),
+            einnahme_str, ausgabe_str, bestand_str,
+        ]
+        table_data.append(row)
 
         if ist_storniert:
-            row = [datum_str, f'{beleg_str}{anhang_suffix}', text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
-            table_data.append(row)
+            # Grau gilt für die String-Zellen (Datum/Beträge); die Paragraph-Zellen
+            # tragen ihre Graufärbung selbst (style_cell_storno).
             row_styles.append(('TEXTCOLOR', (0, data_row_idx), (-1, data_row_idx), COL_STORNO))
         elif ist_endgueltig:
-            # Endgültig exportierte Buchung: blaues Beleg-Kürzel + dezenter blauer Hintergrund
-            beleg_display = f'[✓] {beleg_str}{anhang_suffix}'
-            row = [datum_str, beleg_display, text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
-            table_data.append(row)
+            # Endgültig exportierte Buchung: dezenter blauer Hintergrund
+            # (blaues/fettes Beleg-Kürzel steckt im Paragraph selbst).
             row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), COL_ENDGUELTIG_BG))
-            row_styles.append(('TEXTCOLOR', (1, data_row_idx), (1, data_row_idx), COL_ENDGUELTIG_BELEG))
-            row_styles.append(('FONTNAME', (1, data_row_idx), (1, data_row_idx), 'Helvetica-Bold'))
             if b['einnahme_cent']:
-                row_styles.append(('TEXTCOLOR', (4, data_row_idx), (4, data_row_idx), COL_POSITIVE))
+                row_styles.append(('TEXTCOLOR', (C_EIN, data_row_idx), (C_EIN, data_row_idx), COL_POSITIVE))
             if b['ausgabe_cent']:
-                row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_NEGATIVE))
+                row_styles.append(('TEXTCOLOR', (C_AUS, data_row_idx), (C_AUS, data_row_idx), COL_NEGATIVE))
         else:
-            row = [datum_str, f'{beleg_str}{anhang_suffix}', text_str, kat_str, einnahme_str, ausgabe_str, bestand_str]
-            table_data.append(row)
             bg = COL_STRIPE if i % 2 == 0 else colors.white
             row_styles.append(('BACKGROUND', (0, data_row_idx), (-1, data_row_idx), bg))
             if b['einnahme_cent']:
-                row_styles.append(('TEXTCOLOR', (4, data_row_idx), (4, data_row_idx), COL_POSITIVE))
+                row_styles.append(('TEXTCOLOR', (C_EIN, data_row_idx), (C_EIN, data_row_idx), COL_POSITIVE))
             if b['ausgabe_cent']:
-                row_styles.append(('TEXTCOLOR', (5, data_row_idx), (5, data_row_idx), COL_NEGATIVE))
+                row_styles.append(('TEXTCOLOR', (C_AUS, data_row_idx), (C_AUS, data_row_idx), COL_NEGATIVE))
 
     buch_table = Table(table_data, colWidths=col_widths, repeatRows=1)
 
@@ -303,13 +357,18 @@ def erstelle_kassenbuch_pdf(
         ('BOTTOMPADDING', (0, 1), (-1, -1), 3),
         ('LEFTPADDING', (0, 0), (-1, -1), 4),
         ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-        # Ausrichtung Zahlen (Einnahme=4, Ausgabe=5, Bestand=6)
-        ('ALIGN', (4, 0), (6, -1), 'RIGHT'),
+        # Ausrichtung Zahlen (Einnahme/Ausgabe/Bestand)
+        ('ALIGN', (C_EIN, 0), (C_BEST, -1), 'RIGHT'),
+        # Mehrzeilige Zellen oben ausrichten
+        ('VALIGN', (0, 1), (-1, -1), 'TOP'),
+        # Anlagen-Spalte: Büroklammer zentriert
+        ('ALIGN', (C_ANL, 1), (C_ANL, -1), 'CENTER'),
+        ('VALIGN', (C_ANL, 1), (C_ANL, -1), 'MIDDLE'),
         # Gitter
         ('GRID', (0, 0), (-1, -1), 0.25, colors.HexColor('#dddddd')),
         ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#1a3a5c')),
         # Letzter Saldo fett
-        ('FONTNAME', (6, 1), (6, -1), 'Helvetica-Bold'),
+        ('FONTNAME', (C_BEST, 1), (C_BEST, -1), 'Helvetica-Bold'),
     ]
 
     buch_table.setStyle(TableStyle(base_style + row_styles))
@@ -320,7 +379,8 @@ def erstelle_kassenbuch_pdf(
     # ------------------------------------------------------------------
     story.append(Paragraph(
         '[✓] Beleg = endgültig / bereits exportiert  ·  '
-        '◆ = Anhänge vorhanden  ·  '
+        'Büroklammer (Spalte „Anl.") = Anhänge zur Buchung vorhanden  ·  '
+        'Erfasser = angelegt von  ·  '
         'Grau = storniert (wird im Endbestand nicht berücksichtigt)',
         style_legend,
     ))
