@@ -94,6 +94,14 @@
               <span v-else>nicht zugeordnet</span>
             </q-item-label>
           </q-item-section>
+          <q-item-section side>
+            <div class="row items-center text-grey-6">
+              <q-icon v-if="status.darf_protokoll" name="history" size="18px">
+                <q-tooltip>Details &amp; Nutzungs-Log – wo &amp; wann benutzt</q-tooltip>
+              </q-icon>
+              <q-icon name="chevron_right" size="20px" />
+            </div>
+          </q-item-section>
         </q-item>
       </q-list>
       <div v-if="chips.length === 0" class="text-grey text-center q-py-lg">Noch keine Chips erfasst.</div>
