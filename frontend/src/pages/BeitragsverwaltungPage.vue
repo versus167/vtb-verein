@@ -203,6 +203,56 @@
           </div>
         </div>
 
+        <!-- Summen der neu abzurechnenden Beträge (#77) -->
+        <div v-if="gefilterteVorschauNeu.length > 0" class="row q-col-gutter-md q-mb-md">
+          <div class="col-12 col-md-6">
+            <q-card flat bordered>
+              <q-card-section class="q-pb-xs">
+                <div class="text-subtitle2">Summe nach Quartal (Verein gesamt)</div>
+                <div class="text-caption text-grey-7">
+                  {{ gefilterteVorschauNeu.length }} neu anzulegende Positionen
+                  <span v-if="vorschauFilterName || vorschauFilterAbteilung != null">
+                    (aktuelle Filterauswahl)</span>.
+                </div>
+              </q-card-section>
+              <q-table :rows="summenNachQuartal" :columns="summenQuartalColumns"
+                row-key="zeitraum" flat dense hide-pagination
+                :pagination="{ rowsPerPage: 0 }">
+                <template #bottom-row>
+                  <q-tr class="text-weight-bold">
+                    <q-td>Gesamt</q-td>
+                    <q-td class="text-right">{{ euro(summeGesamt) }}</q-td>
+                    <q-td class="text-center">{{ gefilterteVorschauNeu.length }}</q-td>
+                  </q-tr>
+                </template>
+              </q-table>
+            </q-card>
+          </div>
+          <div class="col-12 col-md-6">
+            <q-card flat bordered>
+              <q-card-section class="q-pb-xs">
+                <div class="text-subtitle2">Summe nach Abteilung &amp; Quartal</div>
+                <div class="text-caption text-grey-7">
+                  „Verein" = Vereinsbeitrag, übrige = Abteilungsbeiträge.
+                </div>
+              </q-card-section>
+              <q-table :rows="summenNachAbteilungQuartal" :columns="summenAbtColumns"
+                :row-key="r => (r.abteilung_id ?? 'v') + '|' + r.zeitraum"
+                flat dense hide-pagination :pagination="{ rowsPerPage: 0 }">
+                <template #body-cell-bereich="props">
+                  <q-td :props="props">
+                    <q-chip v-if="props.row.abteilung_id == null" dense size="sm"
+                      color="primary" text-color="white">Verein</q-chip>
+                    <q-chip v-else dense size="sm" color="purple" text-color="white">
+                      {{ props.row.bereich }}
+                    </q-chip>
+                  </q-td>
+                </template>
+              </q-table>
+            </q-card>
+          </div>
+        </div>
+
         <!-- Vorschau-Tabelle -->
         <template v-if="vorschau.length > 0">
           <div class="row q-gutter-sm q-mb-sm items-center">
@@ -761,6 +811,66 @@ const sichtbareVorschau = computed(() =>
     ? gefilterteVorschau.value
     : gefilterteVorschau.value.filter(p => !p.bereits_vorhanden),
 )
+
+// ── Summen der jetzt abzurechnenden Beträge (#77) ──────────
+// Grundlage: die NEU anzulegenden Positionen der aktuellen Filterauswahl
+// (Name-/Abteilungsfilter). Die „Vorhandene anzeigen"-Checkbox wirkt bewusst
+// nicht auf die Summen – abgerechnet werden ohnehin nur die neuen Positionen.
+function _round2(x) { return Math.round((x + Number.EPSILON) * 100) / 100 }
+
+const gefilterteVorschauNeu = computed(() =>
+  gefilterteVorschau.value.filter(p => !p.bereits_vorhanden))
+
+const summeGesamt = computed(() =>
+  _round2(gefilterteVorschauNeu.value.reduce((s, p) => s + (Number(p.betrag) || 0), 0)))
+
+const summenNachQuartal = computed(() => {
+  const map = new Map()
+  for (const p of gefilterteVorschauNeu.value) {
+    const e = map.get(p.zeitraum) || { zeitraum: p.zeitraum, summe: 0, anzahl: 0 }
+    e.summe += Number(p.betrag) || 0
+    e.anzahl += 1
+    map.set(p.zeitraum, e)
+  }
+  return [...map.values()]
+    .map(e => ({ ...e, summe: _round2(e.summe) }))
+    .sort((a, b) => a.zeitraum.localeCompare(b.zeitraum))
+})
+
+const summenNachAbteilungQuartal = computed(() => {
+  const map = new Map()
+  for (const p of gefilterteVorschauNeu.value) {
+    const istVerein = p.abteilung_id == null
+    const bereich = istVerein ? 'Verein' : (p.abteilung_name || 'Abteilung')
+    const key = `${istVerein ? '' : p.abteilung_id}|${p.zeitraum}`
+    const e = map.get(key) || {
+      bereich, abteilung_id: istVerein ? null : p.abteilung_id,
+      zeitraum: p.zeitraum, summe: 0, anzahl: 0,
+    }
+    e.summe += Number(p.betrag) || 0
+    e.anzahl += 1
+    map.set(key, e)
+  }
+  return [...map.values()]
+    .map(e => ({ ...e, summe: _round2(e.summe) }))
+    .sort((a, b) =>
+      // „Verein" zuerst, dann Abteilungen alphabetisch; je Bereich nach Quartal.
+      (a.abteilung_id == null ? -1 : 1) - (b.abteilung_id == null ? -1 : 1)
+      || a.bereich.localeCompare(b.bereich)
+      || a.zeitraum.localeCompare(b.zeitraum))
+})
+
+const summenQuartalColumns = [
+  { name: 'zeitraum', label: 'Quartal',    field: 'zeitraum', align: 'left' },
+  { name: 'summe',    label: 'Summe',      field: r => euro(r.summe), align: 'right' },
+  { name: 'anzahl',   label: 'Positionen', field: 'anzahl', align: 'center' },
+]
+const summenAbtColumns = [
+  { name: 'bereich',  label: 'Bereich',    field: 'bereich',  align: 'left' },
+  { name: 'zeitraum', label: 'Quartal',    field: 'zeitraum', align: 'left' },
+  { name: 'summe',    label: 'Summe',      field: r => euro(r.summe), align: 'right' },
+  { name: 'anzahl',   label: 'Positionen', field: 'anzahl', align: 'center' },
+]
 
 const vorschauColumns = [
   { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
