@@ -159,6 +159,16 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="kasseForm.name" label="Name *" outlined :rules="[v => !!v || 'Pflichtfeld']" />
           <q-input v-model="kasseForm.beschreibung" label="Beschreibung" outlined />
+          <q-select
+            v-model="kasseForm.abteilung_id"
+            :options="abteilungOptionen"
+            label="Abteilung (liefert die Kostenstelle, FBASC Feld 07)"
+            outlined
+            emit-value
+            map-options
+            clearable
+            hint="Leer = Verein-Kostenstelle aus den Fibu-Einstellungen."
+          />
           <q-input
             v-model="kasseForm.sachkonto"
             label="Sachkonto (Fibu, FBASC Feld 00)"
@@ -276,13 +286,14 @@ const $q = useQuasar()
 
 const kassen = ref([])
 const loading = ref(false)
+const abteilungen = ref([])
 
 const kasseDialogOpen = ref(false)
 const saving = ref(false)
 const editingKasseId = ref(null)
 const editingKasseVersion = ref(null)
 const anfangsbestandEuro = ref(0)
-const kasseForm = ref({ name: '', beschreibung: '', sachkonto: '' })
+const kasseForm = ref({ name: '', beschreibung: '', abteilung_id: null, sachkonto: '' })
 
 const berechtigungDialogOpen = ref(false)
 const berechtigungLoading = ref(false)
@@ -320,6 +331,13 @@ const geltungsbereichOptionen = computed(() => [
   ...kassen.value.map(k => ({ label: k.name, value: k.id })),
 ])
 
+const abteilungOptionen = computed(() =>
+  abteilungen.value.map(a => ({
+    label: a.kostenstelle != null ? `${a.name} (KoSt ${a.kostenstelle})` : `${a.name} (keine KoSt hinterlegt)`,
+    value: a.id,
+  })),
+)
+
 const verfuegbareUsers = computed(() => {
   const bereitsVorhanden = new Set(berechtigungen.value.map(b => b.user_id))
   return alleUsers.value.filter(u => !bereitsVorhanden.has(u.id) && u.role !== 'admin')
@@ -341,11 +359,18 @@ async function loadKassen() {
   }
 }
 
+async function loadAbteilungen() {
+  try {
+    const { data } = await api.get('/api/abteilungen/')
+    abteilungen.value = data
+  } catch { /* ignorieren – Selektor bleibt dann leer */ }
+}
+
 function openCreateDialog() {
   editingKasseId.value = null
   editingKasseVersion.value = null
   anfangsbestandEuro.value = 0
-  kasseForm.value = { name: '', beschreibung: '', sachkonto: '' }
+  kasseForm.value = { name: '', beschreibung: '', abteilung_id: null, sachkonto: '' }
   kasseDialogOpen.value = true
 }
 
@@ -353,7 +378,12 @@ function openEditDialog(kasse) {
   editingKasseId.value = kasse.id
   editingKasseVersion.value = kasse.version
   anfangsbestandEuro.value = kasse.anfangsbestand_cent / 100
-  kasseForm.value = { name: kasse.name, beschreibung: kasse.beschreibung || '', sachkonto: kasse.sachkonto || '' }
+  kasseForm.value = {
+    name: kasse.name,
+    beschreibung: kasse.beschreibung || '',
+    abteilung_id: kasse.abteilung_id ?? null,
+    sachkonto: kasse.sachkonto || '',
+  }
   kasseDialogOpen.value = true
 }
 
@@ -365,6 +395,7 @@ async function onSaveKasse() {
       name: kasseForm.value.name.trim(),
       beschreibung: kasseForm.value.beschreibung || null,
       anfangsbestand_cent: Math.round(anfangsbestandEuro.value * 100),
+      abteilung_id: kasseForm.value.abteilung_id ?? null,
       sachkonto: kasseForm.value.sachkonto?.trim() || null,
     }
     if (editingKasseId.value) {
@@ -541,9 +572,10 @@ function confirmDeleteKategorie(kat) {
   })
 }
 
-usePageRefresh(() => Promise.all([loadKassen(), loadKategorien()]))
+usePageRefresh(() => Promise.all([loadKassen(), loadKategorien(), loadAbteilungen()]))
 onMounted(() => {
   loadKassen()
   loadKategorien()
+  loadAbteilungen()
 })
 </script>
