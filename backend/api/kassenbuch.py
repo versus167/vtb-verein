@@ -25,6 +25,7 @@ from app.services.kassenbuch_service import (
     DatumAusserhalbBereichError,
     KategorieUngueltigError,
     ZaehlungUngueltigError,
+    FibuKassenExportFehler,
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
@@ -41,6 +42,7 @@ class KasseWrite(BaseModel):
     beschreibung: Optional[str] = None
     anfangsbestand_cent: int = 0
     abteilung_id: Optional[int] = None
+    sachkonto: Optional[str] = None     # FBASC-Feld 00 (Sachkonto der Barkasse)
 
 
 class KasseUpdate(KasseWrite):
@@ -89,6 +91,8 @@ class KategorieWrite(BaseModel):
     name: str
     kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
     loest_zaehlung_aus: bool = False    # True → Buchung mit dieser Kategorie fordert eine Kassenzählung an
+    gegenkonto: Optional[str] = None    # FBASC-Feld 01 (Erlös-/Aufwandskonto dieser Kategorie)
+    kostentraeger: Optional[int] = None  # FBASC-Feld 08 (None = Default aus Fibu-Einstellungen)
 
     @field_validator("name")
     @classmethod
@@ -135,6 +139,8 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, ZaehlungUngueltigError):
         return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, FibuKassenExportFehler):
+        return HTTPException(status_code=422, detail={"message": str(exc), "fehler": exc.fehler})
     if isinstance(exc, ValueError):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, KeyError):
@@ -177,6 +183,7 @@ def create_kasse(data: KasseWrite, user: CurrentUser, db: DB):
         beschreibung=data.beschreibung,
         anfangsbestand_cent=data.anfangsbestand_cent,
         abteilung_id=data.abteilung_id,
+        sachkonto=data.sachkonto,
     )
     created = db.kassenbuch.create_kasse(kasse, created_by=user.username)
     return asdict(created)
@@ -193,6 +200,7 @@ def update_kasse(kasse_id: int, data: KasseUpdate, user: CurrentUser, db: DB):
     kasse.beschreibung = data.beschreibung
     kasse.anfangsbestand_cent = data.anfangsbestand_cent
     kasse.abteilung_id = data.abteilung_id
+    kasse.sachkonto = data.sachkonto
     kasse.version = data.expected_version
     ok = db.kassenbuch.update_kasse(kasse, updated_by=user.username)
     if not ok:
@@ -336,17 +344,34 @@ def get_datum_bereich(kasse_id: int, user: CurrentUser, db: DB):
 
 
 # ---------------------------------------------------------------------------
-# CSV-Export
+# FBASC-Export (hmd) – Zip mit fbasc.hia + Belegen + Kassenbericht
 # ---------------------------------------------------------------------------
+
+def _zip_response(dateiname: str, zip_bytes: bytes) -> Response:
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
+    )
+
+
+def _csv_response(dateiname: str, csv_bytes: bytes) -> Response:
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
+    )
+
 
 @router.post("/{kasse_id}/exporte")
 def create_export(kasse_id: int, data: ExportRequest, user: CurrentUser, db: DB):
-    """Exportiert nicht-exportierte Buchungen bis bis_datum als CSV.
+    """Exportiert die offenen Buchungen bis bis_datum als hmd-FBASC-Zip.
 
-    Sperrt die Buchungen danach. Gibt Export-Metadaten + CSV als Download zurück.
+    Das Zip enthält flach im Root: fbasc.hia, alle Belege (Feld 39) und den
+    Perioden-Kassenbericht. Sperrt die Buchungen danach (Export-Schutz).
     """
     try:
-        dateiname, csv_bytes = db.kassenbuch.exportiere_csv(
+        dateiname, zip_bytes = db.kassenbuch.exportiere_fbasc(
             kasse_id,
             bis_datum=data.bis_datum,
             exported_by=user.username,
@@ -356,11 +381,7 @@ def create_export(kasse_id: int, data: ExportRequest, user: CurrentUser, db: DB)
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
 
-    return Response(
-        content=csv_bytes,
-        media_type="text/csv; charset=utf-8-sig",
-        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
-    )
+    return _zip_response(dateiname, zip_bytes)
 
 
 @router.get("/{kasse_id}/exporte")
@@ -377,22 +398,35 @@ def list_exporte(kasse_id: int, user: CurrentUser, db: DB):
 
 @router.get("/{kasse_id}/exporte/{export_id}/download")
 def redownload_export(kasse_id: int, export_id: int, user: CurrentUser, db: DB):
-    """Lädt einen bereits abgeschlossenen Export erneut herunter."""
+    """Lädt einen abgeschlossenen Export erneut herunter (FBASC-Zip bzw. Altbestand-CSV)."""
     try:
-        dateiname, csv_bytes = db.kassenbuch.reexportiere_csv(
+        export = db.kassenbuch._export.get_export(export_id)
+        if export.format == "csv":
+            dateiname, inhalt = db.kassenbuch.reexportiere_csv(
+                export_id, user_id=user.id, is_admin=_kassen_admin(user))
+            return _csv_response(dateiname, inhalt)
+        dateiname, inhalt = db.kassenbuch.reexportiere_fbasc(
+            export_id, user_id=user.id, is_admin=_kassen_admin(user))
+        return _zip_response(dateiname, inhalt)
+    except Exception as exc:
+        raise _kassenbuch_error_to_http(exc)
+
+
+@router.delete("/{kasse_id}/exporte/{export_id}", status_code=200)
+def zuruecknehmen_export(kasse_id: int, export_id: int, user: CurrentUser, db: DB):
+    """Un-Export: den jüngsten Export einer Kasse zurücknehmen.
+
+    Gibt die gesperrten Buchungen wieder frei und soft-deletet den Export-Header.
+    """
+    try:
+        return db.kassenbuch.zuruecknehmen_export(
             export_id,
+            benutzer=user.username,
             user_id=user.id,
             is_admin=_kassen_admin(user),
         )
-    except KeinExportrechtError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    return Response(
-        content=csv_bytes,
-        media_type="text/csv; charset=utf-8-sig",
-        headers={"Content-Disposition": f'attachment; filename="{dateiname}"'},
-    )
+    except Exception as exc:
+        raise _kassenbuch_error_to_http(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +562,8 @@ def _kategorie_dict(k: KassenKategorie, kasse_name: Optional[str]) -> dict:
         "kasse_name": kasse_name,            # None bei allgemeiner Kategorie
         "ist_allgemein": k.kasse_id is None,
         "loest_zaehlung_aus": k.loest_zaehlung_aus,
+        "gegenkonto": k.gegenkonto,
+        "kostentraeger": k.kostentraeger,
         "version": k.version,
     }
 
@@ -569,7 +605,8 @@ def create_kategorie(data: KategorieWrite, user: CurrentUser, db: DB):
         raise HTTPException(status_code=409, detail="Eine Kategorie mit diesem Namen existiert hier bereits.")
     kat = db.kassen_kategorien.create(
         KassenKategorie(name=data.name, kasse_id=data.kasse_id,
-                        loest_zaehlung_aus=data.loest_zaehlung_aus),
+                        loest_zaehlung_aus=data.loest_zaehlung_aus,
+                        gegenkonto=data.gegenkonto, kostentraeger=data.kostentraeger),
         created_by=user.username,
     )
     return _kategorie_dict(kat, _kassen_namen(db).get(kat.kasse_id))
@@ -591,6 +628,8 @@ def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser
     kat.name = data.name
     kat.kasse_id = data.kasse_id
     kat.loest_zaehlung_aus = data.loest_zaehlung_aus
+    kat.gegenkonto = data.gegenkonto
+    kat.kostentraeger = data.kostentraeger
     kat.version = data.expected_version
     if not db.kassen_kategorien.update(kat, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")

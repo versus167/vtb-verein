@@ -23,6 +23,7 @@ class Kasse:
     anfangsbestand_cent: int = 0
     beschreibung: Optional[str] = None
     abteilung_id: Optional[int] = None
+    sachkonto: Optional[str] = None     # FBASC-Feld 00: Sachkonto der Barkasse (für den Fibu-Export)
 
     id: Optional[int] = None
     version: int = 1
@@ -105,6 +106,8 @@ class KassenKategorie:
     name: str
     kasse_id: Optional[int] = None      # None = allgemein (gilt für alle Kassen)
     loest_zaehlung_aus: bool = False    # True → Buchung mit dieser Kategorie fordert eine Kassenzählung an
+    gegenkonto: Optional[str] = None    # FBASC-Feld 01: Erlös-/Aufwands-Sachkonto dieser Kategorie
+    kostentraeger: Optional[int] = None  # FBASC-Feld 08: Kostenträger-Override (None = Default aus Fibu-Einstellungen)
 
     id: Optional[int] = None
     version: int = 1
@@ -168,12 +171,16 @@ class KassenZaehlung:
 
 @dataclass
 class KassenbuchExport:
-    """Repräsentiert einen abgeschlossenen CSV-Export eines Zeitraums."""
+    """Repräsentiert einen abgeschlossenen Export eines Zeitraums.
+
+    format: 'fbasc' = hmd-FBASC-Zip (Datei + Belege), 'csv' = Altbestand (generisches CSV).
+    """
     kasse_id: int
     zeitraum_von: str           # ISO-Format: YYYY-MM-DD
     zeitraum_bis: str           # ISO-Format: YYYY-MM-DD
     dateiname: str
     anzahl_buchungen: int
+    format: str = "fbasc"
 
     id: Optional[int] = None
     exportiert_am: Optional[str] = None

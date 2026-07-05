@@ -32,6 +32,7 @@ class EinstellungenUpdate(BaseModel):
     default_kostentraeger: int = 1
     ul_aufwand_konto: Optional[str] = None
     ul_kreditor_konto_basis: Optional[int] = None
+    kassendifferenz_gegenkonto: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +48,7 @@ def _einst_dict(e: FibuEinstellungen) -> dict:
         'default_kostentraeger': e.default_kostentraeger,
         'ul_aufwand_konto': e.ul_aufwand_konto,
         'ul_kreditor_konto_basis': e.ul_kreditor_konto_basis,
+        'kassendifferenz_gegenkonto': e.kassendifferenz_gegenkonto,
         'version': e.version,
     }
 
@@ -113,6 +115,7 @@ def update_einstellungen(data: EinstellungenUpdate, user: CurrentUser, db: DB):
         default_kostentraeger=data.default_kostentraeger,
         ul_aufwand_konto=(data.ul_aufwand_konto or None),
         ul_kreditor_konto_basis=data.ul_kreditor_konto_basis,
+        kassendifferenz_gegenkonto=(data.kassendifferenz_gegenkonto or None),
     )
     return _einst_dict(db.fibu_einstellungen.update(e, updated_by=user.username))
 

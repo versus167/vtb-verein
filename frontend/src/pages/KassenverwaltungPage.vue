@@ -127,6 +127,19 @@
             Statt eines Betrags wird im Buchungsdialog die Kasse gezählt; gebucht wird
             Zählung − Altbestand (z. B. Imbiss-Tageseinnahmen).
           </div>
+          <q-input
+            v-model="kategorieForm.gegenkonto"
+            label="Gegenkonto (Fibu, FBASC Feld 01)"
+            outlined
+            hint="Leer = Kategorie ist nicht exportierbar."
+          />
+          <q-input
+            v-model.number="kategorieForm.kostentraeger"
+            label="Kostenträger (Fibu, FBASC Feld 08)"
+            type="number"
+            outlined
+            hint="Leer = Default aus den Fibu-Einstellungen."
+          />
         </q-card-section>
         <q-separator />
         <q-card-actions align="right">
@@ -146,6 +159,12 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="kasseForm.name" label="Name *" outlined :rules="[v => !!v || 'Pflichtfeld']" />
           <q-input v-model="kasseForm.beschreibung" label="Beschreibung" outlined />
+          <q-input
+            v-model="kasseForm.sachkonto"
+            label="Sachkonto (Fibu, FBASC Feld 00)"
+            outlined
+            hint="Leer = Kasse ist nicht exportierbar."
+          />
           <q-input
             v-model.number="anfangsbestandEuro"
             label="Anfangsbestand (€)"
@@ -263,7 +282,7 @@ const saving = ref(false)
 const editingKasseId = ref(null)
 const editingKasseVersion = ref(null)
 const anfangsbestandEuro = ref(0)
-const kasseForm = ref({ name: '', beschreibung: '' })
+const kasseForm = ref({ name: '', beschreibung: '', sachkonto: '' })
 
 const berechtigungDialogOpen = ref(false)
 const berechtigungLoading = ref(false)
@@ -287,7 +306,7 @@ const kategorieDialogOpen = ref(false)
 const savingKategorie = ref(false)
 const editingKategorieId = ref(null)
 const editingKategorieVersion = ref(null)
-const kategorieForm = ref({ name: '', kasse_id: null, loest_zaehlung_aus: false })
+const kategorieForm = ref({ name: '', kasse_id: null, loest_zaehlung_aus: false, gegenkonto: '', kostentraeger: null })
 
 const kategorieColumns = [
   { name: 'name', label: 'Name', field: 'name', align: 'left' },
@@ -326,7 +345,7 @@ function openCreateDialog() {
   editingKasseId.value = null
   editingKasseVersion.value = null
   anfangsbestandEuro.value = 0
-  kasseForm.value = { name: '', beschreibung: '' }
+  kasseForm.value = { name: '', beschreibung: '', sachkonto: '' }
   kasseDialogOpen.value = true
 }
 
@@ -334,7 +353,7 @@ function openEditDialog(kasse) {
   editingKasseId.value = kasse.id
   editingKasseVersion.value = kasse.version
   anfangsbestandEuro.value = kasse.anfangsbestand_cent / 100
-  kasseForm.value = { name: kasse.name, beschreibung: kasse.beschreibung || '' }
+  kasseForm.value = { name: kasse.name, beschreibung: kasse.beschreibung || '', sachkonto: kasse.sachkonto || '' }
   kasseDialogOpen.value = true
 }
 
@@ -346,6 +365,7 @@ async function onSaveKasse() {
       name: kasseForm.value.name.trim(),
       beschreibung: kasseForm.value.beschreibung || null,
       anfangsbestand_cent: Math.round(anfangsbestandEuro.value * 100),
+      sachkonto: kasseForm.value.sachkonto?.trim() || null,
     }
     if (editingKasseId.value) {
       await api.put(`/api/kassen/${editingKasseId.value}`, {
@@ -464,14 +484,14 @@ async function loadKategorien() {
 function openCreateKategorie() {
   editingKategorieId.value = null
   editingKategorieVersion.value = null
-  kategorieForm.value = { name: '', kasse_id: null, loest_zaehlung_aus: false }
+  kategorieForm.value = { name: '', kasse_id: null, loest_zaehlung_aus: false, gegenkonto: '', kostentraeger: null }
   kategorieDialogOpen.value = true
 }
 
 function openEditKategorie(kat) {
   editingKategorieId.value = kat.id
   editingKategorieVersion.value = kat.version
-  kategorieForm.value = { name: kat.name, kasse_id: kat.kasse_id, loest_zaehlung_aus: !!kat.loest_zaehlung_aus }
+  kategorieForm.value = { name: kat.name, kasse_id: kat.kasse_id, loest_zaehlung_aus: !!kat.loest_zaehlung_aus, gegenkonto: kat.gegenkonto || '', kostentraeger: kat.kostentraeger ?? null }
   kategorieDialogOpen.value = true
 }
 
@@ -483,6 +503,8 @@ async function onSaveKategorie() {
       name: kategorieForm.value.name.trim(),
       kasse_id: kategorieForm.value.kasse_id ?? null,
       loest_zaehlung_aus: !!kategorieForm.value.loest_zaehlung_aus,
+      gegenkonto: kategorieForm.value.gegenkonto?.trim() || null,
+      kostentraeger: kategorieForm.value.kostentraeger ?? null,
     }
     if (editingKategorieId.value) {
       await api.put(`/api/kassen/kategorien/${editingKategorieId.value}`, {

@@ -24,7 +24,7 @@ class KasseRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen
                 WHERE id = %s AND deleted_at IS NULL
@@ -41,7 +41,7 @@ class KasseRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen
                 WHERE deleted_at IS NULL
@@ -55,18 +55,18 @@ class KasseRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO kassen (name, beschreibung, anfangsbestand_cent, abteilung_id,
+                INSERT INTO kassen (name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
                                     created_by, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
                 (kasse.name, kasse.beschreibung, kasse.anfangsbestand_cent,
-                 kasse.abteilung_id, created_by, created_by),
+                 kasse.abteilung_id, kasse.sachkonto, created_by, created_by),
             )
             kasse_id = cur.fetchone()['id']
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id,
+                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen WHERE id = %s
                 """,
@@ -85,13 +85,14 @@ class KasseRepository(BaseRepository):
                 """
                 UPDATE kassen
                 SET name = %s, beschreibung = %s, anfangsbestand_cent = %s, abteilung_id = %s,
+                    sachkonto = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = %s
                 WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (kasse.name, kasse.beschreibung, kasse.anfangsbestand_cent,
-                 kasse.abteilung_id, updated_by, kasse.id, kasse.version),
+                 kasse.abteilung_id, kasse.sachkonto, updated_by, kasse.id, kasse.version),
             )
             if cur.rowcount == 0:
                 return False

@@ -151,6 +151,8 @@ class VereinsDB:
             anhang_service=self._anhang_service,
             kategorie_repo=self._kassen_kategorie_repo,
             zaehlung_repo=self._kassen_zaehlung_repo,
+            abteilung_repo=self._abteilung_repo,
+            fibu_einstellungen_repo=self._fibu_einstellungen_repo,
         )
 
         self._ticket_repo = TicketRepository(self.conn)

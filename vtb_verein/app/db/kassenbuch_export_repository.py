@@ -23,7 +23,7 @@ class KassenbuchExportRepository(BaseRepository):
             cur.execute(
                 """
                 SELECT id, kasse_id, zeitraum_von, zeitraum_bis,
-                       exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                       exportiert_am, exportiert_von, dateiname, format, anzahl_buchungen,
                        version, created_at, created_by,
                        deleted_at, deleted_by
                 FROM kassenbuch_exporte
@@ -42,7 +42,7 @@ class KassenbuchExportRepository(BaseRepository):
             cur.execute(
                 """
                 SELECT id, kasse_id, zeitraum_von, zeitraum_bis,
-                       exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                       exportiert_am, exportiert_von, dateiname, format, anzahl_buchungen,
                        version, created_at, created_by,
                        deleted_at, deleted_by
                 FROM kassenbuch_exporte
@@ -82,20 +82,21 @@ class KassenbuchExportRepository(BaseRepository):
                 INSERT INTO kassenbuch_exporte (
                     kasse_id, zeitraum_von, zeitraum_bis,
                     exportiert_am, exportiert_von,
-                    dateiname, anzahl_buchungen, created_by
-                ) VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s)
+                    dateiname, format, anzahl_buchungen, created_by
+                ) VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
                     export.kasse_id, export.zeitraum_von, export.zeitraum_bis,
-                    created_by, export.dateiname, export.anzahl_buchungen, created_by,
+                    created_by, export.dateiname, export.format,
+                    export.anzahl_buchungen, created_by,
                 ),
             )
             export_id = cur.fetchone()['id']
             cur.execute(
                 """
                 SELECT id, kasse_id, zeitraum_von, zeitraum_bis,
-                       exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                       exportiert_am, exportiert_von, dateiname, format, anzahl_buchungen,
                        version, created_at, created_by,
                        deleted_at, deleted_by
                 FROM kassenbuch_exporte WHERE id = %s
@@ -172,3 +173,43 @@ class KassenbuchExportRepository(BaseRepository):
                 (kasse_id, bis_datum),
             )
             return [dict(row) for row in cur.fetchall()]
+
+    # -----------------------------------
+    # Un-Export (Zurücknehmen)
+    # -----------------------------------
+
+    def is_latest_export(self, export_id: int) -> bool:
+        """True, wenn dieser Export der jüngste aktive Export SEINER Kasse ist.
+
+        Nur der jüngste Lauf einer Kasse darf zurückgenommen werden – ältere haben
+        Datums-/Folge-Abhängigkeiten (der Export-Stichtag sperrt frühere Buchungen)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM kassenbuch_exporte
+                WHERE kasse_id = (SELECT kasse_id FROM kassenbuch_exporte WHERE id = %s)
+                  AND deleted_at IS NULL
+                ORDER BY exportiert_am DESC, id DESC
+                LIMIT 1
+                """,
+                (export_id,),
+            )
+            row = cur.fetchone()
+            return row is not None and row['id'] == export_id
+
+    def soft_delete(self, export_id: int, deleted_by: str) -> bool:
+        """Soft-Delete des Export-Headers (versioniert → History via Trigger).
+
+        Gibt die gesperrten Buchungen NICHT frei – das macht der Service über das
+        Buchungs-Repository (unmark_buchungen_exportiert)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE kassenbuch_exporte
+                SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, version = version + 1
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (deleted_by, export_id),
+            )
+            return cur.rowcount == 1

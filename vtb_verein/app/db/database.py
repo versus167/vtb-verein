@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 61
+SCHEMA_VERSION = 64
 
 
 # ---------------------------------------------------------------------------
@@ -66,12 +66,91 @@ _FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE = """
         IF NEW.version != OLD.version THEN
             INSERT INTO kassenbuch_exporte_history (
                 id, version, kasse_id, zeitraum_von, zeitraum_bis,
-                exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
+                exportiert_am, exportiert_von, dateiname, format, anzahl_buchungen,
                 created_at, created_by, deleted_at, deleted_by
             ) VALUES (
                 NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
-                NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.anzahl_buchungen,
+                NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format, NEW.anzahl_buchungen,
                 NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# Audit-Trigger für kassen / kassen_kategorien / kassenbuch_exporte-INSERT als geteilte
+# Konstanten – identischer Funktionsrumpf im Frischaufbau UND in den Migrationen (v62/v64),
+# damit fresh- und migrierte DBs byte-identische pg_proc.prosrc haben.
+_FN_KASSEN_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_kassen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO kassen_history (
+            id, version, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id, NEW.sachkonto,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_KASSEN_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_kassen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO kassen_history (
+                id, version, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id, NEW.sachkonto,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_KASSENBUCH_EXPORTE_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_kassenbuch_exporte_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO kassenbuch_exporte_history (
+            id, version, kasse_id, zeitraum_von, zeitraum_bis,
+            exportiert_am, exportiert_von, dateiname, format, anzahl_buchungen,
+            created_at, created_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
+            NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format, NEW.anzahl_buchungen,
+            NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_KASSEN_KATEGORIEN_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO kassen_kategorien_history (
+            id, version, kasse_id, name, loest_zaehlung_aus, gegenkonto, kostentraeger,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus, NEW.gegenkonto, NEW.kostentraeger,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_KASSEN_KATEGORIEN_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO kassen_kategorien_history (
+                id, version, kasse_id, name, loest_zaehlung_aus, gegenkonto, kostentraeger,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus, NEW.gegenkonto, NEW.kostentraeger,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
             );
         END IF;
         RETURN NEW;
@@ -89,10 +168,12 @@ _FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT = """
         INSERT INTO fibu_einstellungen_history (
             id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
             verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
+            kassendifferenz_gegenkonto,
             created_at, created_by, updated_at, updated_by
         ) VALUES (
             NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
             NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
+            NEW.kassendifferenz_gegenkonto,
             NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
         );
         RETURN NEW;
@@ -106,10 +187,12 @@ _FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE = """
             INSERT INTO fibu_einstellungen_history (
                 id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
                 verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
+                kassendifferenz_gegenkonto,
                 created_at, created_by, updated_at, updated_by
             ) VALUES (
                 NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
                 NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
+                NEW.kassendifferenz_gegenkonto,
                 NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
             );
         END IF;
@@ -1055,6 +1138,9 @@ class Database:
             59: self._migrate_v58_to_v59,
             60: self._migrate_v59_to_v60,
             61: self._migrate_v60_to_v61,
+            62: self._migrate_v61_to_v62,
+            63: self._migrate_v62_to_v63,
+            64: self._migrate_v63_to_v64,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3433,6 +3519,7 @@ class Database:
               default_kostentraeger    INTEGER,
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
+              kassendifferenz_gegenkonto TEXT,
               created_at               TEXT,
               created_by               TEXT,
               updated_at               TEXT,
@@ -3798,6 +3885,97 @@ class Database:
             self._normalize_audit_timestamps(cur)
 
             cur.execute("UPDATE schema_version SET version = 61 WHERE id = 1")
+
+    def _migrate_v61_to_v62(self) -> None:
+        """FBASC-Kassenexport: Konten-Felder + Export-Format nachziehen.
+
+        Der Kassenexport wird von generischem CSV auf das hmd-FBASC-Format umgestellt.
+        Dafür brauchen die Buchungszeilen ein Konto (Kassen-Sachkonto) und ein Gegenkonto
+        (je Kategorie):
+          * kassen.sachkonto            – Feld 00 der FBASC-Zeile (Sachkonto der Barkasse).
+          * kassen_kategorien.gegenkonto – Feld 01 (Erlös-/Aufwands-Sachkonto je Kategorie).
+          * kassenbuch_exporte.format    – 'csv' (Altbestand) | 'fbasc' (neu). Alle bereits
+            vorhandenen Exporte waren CSV und werden entsprechend markiert.
+        Die Audit-Trigger dieser drei Tabellen werden per CREATE OR REPLACE auf die neuen
+        Spalten gezogen (die Funktionsrümpfe stehen identisch im Fresh-Schema).
+        """
+        with self.cursor() as cur:
+            # 1) Neue Spalten (idempotent).
+            cur.execute("ALTER TABLE kassen ADD COLUMN IF NOT EXISTS sachkonto TEXT")
+            cur.execute("ALTER TABLE kassen_history ADD COLUMN IF NOT EXISTS sachkonto TEXT")
+            cur.execute("ALTER TABLE kassen_kategorien ADD COLUMN IF NOT EXISTS gegenkonto TEXT")
+            cur.execute("ALTER TABLE kassen_kategorien_history ADD COLUMN IF NOT EXISTS gegenkonto TEXT")
+            cur.execute("ALTER TABLE kassenbuch_exporte ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'fbasc'")
+            cur.execute("ALTER TABLE kassenbuch_exporte_history ADD COLUMN IF NOT EXISTS format TEXT")
+            # Alle bestehenden Exporte waren CSV (FBASC gab es vorher nicht) → korrekt kennzeichnen.
+            cur.execute("UPDATE kassenbuch_exporte SET format = 'csv'")
+
+            # 2) Audit-Funktionen auf die neuen Spalten ziehen (CREATE OR REPLACE, idempotent).
+            #    kassen + kassenbuch_exporte-INSERT über die geteilten Konstanten (byte-identisch
+            #    zum Frischaufbau); kassen_kategorien hier noch gegenkonto-only (v64 zieht kostentraeger nach).
+            cur.execute(_FN_KASSEN_AUDIT_INSERT)
+            cur.execute(_FN_KASSEN_AUDIT_UPDATE)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    INSERT INTO kassen_kategorien_history (
+                        id, version, kasse_id, name, loest_zaehlung_aus, gegenkonto,
+                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                    ) VALUES (
+                        NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus, NEW.gegenkonto,
+                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                    );
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute("""
+                CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.version != OLD.version THEN
+                        INSERT INTO kassen_kategorien_history (
+                            id, version, kasse_id, name, loest_zaehlung_aus, gegenkonto,
+                            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+                        ) VALUES (
+                            NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus, NEW.gegenkonto,
+                            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+                        );
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+            cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_INSERT)
+            cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE)
+
+            cur.execute("UPDATE schema_version SET version = 62 WHERE id = 1")
+
+    def _migrate_v62_to_v63(self) -> None:
+        """Gegenkonto für die System-Kategorie „Kassendifferenz" konfigurierbar machen.
+
+        Die Differenzbuchung einer Kassenzählung trägt die System-Kategorie
+        „Kassendifferenz", die es nicht in der Kategorie-Verwaltung gibt – ihr Gegenkonto
+        (FBASC Feld 01) wird daher global in den Fibu-Einstellungen gepflegt.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE fibu_einstellungen ADD COLUMN IF NOT EXISTS kassendifferenz_gegenkonto TEXT")
+            cur.execute("ALTER TABLE fibu_einstellungen_history ADD COLUMN IF NOT EXISTS kassendifferenz_gegenkonto TEXT")
+            # Audit-Funktionen auf die neue Spalte ziehen (CREATE OR REPLACE, idempotent).
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+            cur.execute("UPDATE schema_version SET version = 63 WHERE id = 1")
+
+    def _migrate_v63_to_v64(self) -> None:
+        """Kostenträger (FBASC Feld 08) je Buchungskategorie konfigurierbar machen.
+
+        Der globale Default-Kostenträger passt nicht überall; jede Kassen-Kategorie kann
+        nun einen eigenen Kostenträger hinterlegen (NULL = Default aus den Fibu-Einstellungen).
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE kassen_kategorien ADD COLUMN IF NOT EXISTS kostentraeger INTEGER")
+            cur.execute("ALTER TABLE kassen_kategorien_history ADD COLUMN IF NOT EXISTS kostentraeger INTEGER")
+            # Trigger auf die neue Spalte ziehen – geteilte Konstante = byte-identisch zum Frischaufbau.
+            cur.execute(_FN_KASSEN_KATEGORIEN_AUDIT_INSERT)
+            cur.execute(_FN_KASSEN_KATEGORIEN_AUDIT_UPDATE)
+            cur.execute("UPDATE schema_version SET version = 64 WHERE id = 1")
 
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
@@ -4354,6 +4532,7 @@ class Database:
               beschreibung        TEXT,
               anfangsbestand_cent INTEGER NOT NULL DEFAULT 0,
               abteilung_id        INTEGER REFERENCES abteilung(id),
+              sachkonto           TEXT,
               version             INTEGER NOT NULL DEFAULT 1,
               created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by          TEXT NOT NULL,
@@ -4371,6 +4550,7 @@ class Database:
               beschreibung        TEXT,
               anfangsbestand_cent INTEGER,
               abteilung_id        INTEGER,
+              sachkonto           TEXT,
               created_at          TEXT,
               created_by          TEXT,
               updated_at          TEXT,
@@ -4389,6 +4569,7 @@ class Database:
               exportiert_am    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               exportiert_von   TEXT NOT NULL,
               dateiname        TEXT NOT NULL,
+              format           TEXT NOT NULL DEFAULT 'fbasc',
               anzahl_buchungen INTEGER NOT NULL,
               version          INTEGER NOT NULL DEFAULT 1,
               created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -4407,6 +4588,7 @@ class Database:
               exportiert_am    TEXT,
               exportiert_von   TEXT,
               dateiname        TEXT,
+              format           TEXT,
               anzahl_buchungen INTEGER,
               created_at       TEXT,
               created_by       TEXT,
@@ -4500,6 +4682,8 @@ class Database:
               kasse_id    INTEGER REFERENCES kassen(id),
               name        TEXT NOT NULL,
               loest_zaehlung_aus BOOLEAN NOT NULL DEFAULT false,
+              gegenkonto  TEXT,
+              kostentraeger INTEGER,
               version     INTEGER NOT NULL DEFAULT 1,
               created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by  TEXT NOT NULL,
@@ -4516,6 +4700,8 @@ class Database:
               kasse_id    INTEGER,
               name        TEXT,
               loest_zaehlung_aus BOOLEAN,
+              gegenkonto  TEXT,
+              kostentraeger INTEGER,
               created_at  TEXT,
               created_by  TEXT,
               updated_at  TEXT,
@@ -5075,6 +5261,7 @@ class Database:
               default_kostentraeger    INTEGER NOT NULL DEFAULT 1,
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
+              kassendifferenz_gegenkonto TEXT,
               version                  INTEGER NOT NULL DEFAULT 1,
               created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by               TEXT,
@@ -5408,34 +5595,8 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_kassen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO kassen_history (
-                    id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_kassen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO kassen_history (
-                        id, version, name, beschreibung, anfangsbestand_cent, abteilung_id,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_KASSEN_AUDIT_INSERT)
+        cur.execute(_FN_KASSEN_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_kassenbuchungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -5470,21 +5631,7 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_kassenbuch_exporte_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO kassenbuch_exporte_history (
-                    id, version, kasse_id, zeitraum_von, zeitraum_bis,
-                    exportiert_am, exportiert_von, dateiname, anzahl_buchungen,
-                    created_at, created_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.kasse_id, NEW.zeitraum_von, NEW.zeitraum_bis,
-                    NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.anzahl_buchungen,
-                    NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_INSERT)
         cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
         cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
         cur.execute(_FN_KASSENBUCH_EXPORTE_AUDIT_UPDATE)
@@ -5526,34 +5673,8 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO kassen_kategorien_history (
-                    id, version, kasse_id, name, loest_zaehlung_aus,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_kassen_kategorien_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO kassen_kategorien_history (
-                        id, version, kasse_id, name, loest_zaehlung_aus,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.kasse_id, NEW.name, NEW.loest_zaehlung_aus,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_KASSEN_KATEGORIEN_AUDIT_INSERT)
+        cur.execute(_FN_KASSEN_KATEGORIEN_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_kassen_zaehlungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
