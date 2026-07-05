@@ -554,12 +554,24 @@ def _kassen_namen(db) -> dict:
     return {k.id: k.name for k in db.kassen.list_kassen()}
 
 
-def _kategorie_dict(k: KassenKategorie, kasse_name: Optional[str]) -> dict:
+def _kassen_abteilungen(db) -> dict:
+    """kasse_id → Abteilungsname (None wenn keine bzw. gelöschte Abteilung).
+
+    Für die Kategorien-Liste: die Abteilung (und damit die Kostenstelle) einer
+    Kategorie ergibt sich aus ihrer Geltungsbereich-Kasse."""
+    abt_namen = {a.id: a.name for a in db.list_abteilungen()}
+    return {k.id: abt_namen.get(k.abteilung_id) for k in db.kassen.list_kassen()}
+
+
+def _kategorie_dict(
+    k: KassenKategorie, kasse_name: Optional[str], abteilung_name: Optional[str] = None
+) -> dict:
     return {
         "id": k.id,
         "name": k.name,
         "kasse_id": k.kasse_id,
         "kasse_name": kasse_name,            # None bei allgemeiner Kategorie
+        "abteilung_name": abteilung_name,    # aus der Kasse abgeleitet; None bei „Alle Kassen"
         "ist_allgemein": k.kasse_id is None,
         "loest_zaehlung_aus": k.loest_zaehlung_aus,
         "gegenkonto": k.gegenkonto,
@@ -590,7 +602,11 @@ def list_alle_kategorien(user: CurrentUser, db: DB):
     """Alle Kategorien (allgemein + kassenspezifisch) für die Verwaltung."""
     _require_kassen_verwalten(user)
     namen = _kassen_namen(db)
-    return [_kategorie_dict(k, namen.get(k.kasse_id)) for k in db.kassen_kategorien.list_all()]
+    abteilungen = _kassen_abteilungen(db)
+    return [
+        _kategorie_dict(k, namen.get(k.kasse_id), abteilungen.get(k.kasse_id))
+        for k in db.kassen_kategorien.list_all()
+    ]
 
 
 @router.post("/kategorien", status_code=201)
@@ -609,7 +625,9 @@ def create_kategorie(data: KategorieWrite, user: CurrentUser, db: DB):
                         gegenkonto=data.gegenkonto, kostentraeger=data.kostentraeger),
         created_by=user.username,
     )
-    return _kategorie_dict(kat, _kassen_namen(db).get(kat.kasse_id))
+    return _kategorie_dict(
+        kat, _kassen_namen(db).get(kat.kasse_id), _kassen_abteilungen(db).get(kat.kasse_id)
+    )
 
 
 @router.put("/kategorien/{kategorie_id}")
@@ -634,7 +652,9 @@ def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser
     if not db.kassen_kategorien.update(kat, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
     updated = db.kassen_kategorien.get(kategorie_id)
-    return _kategorie_dict(updated, _kassen_namen(db).get(updated.kasse_id))
+    return _kategorie_dict(
+        updated, _kassen_namen(db).get(updated.kasse_id), _kassen_abteilungen(db).get(updated.kasse_id)
+    )
 
 
 @router.delete("/kategorien/{kategorie_id}", status_code=204)
