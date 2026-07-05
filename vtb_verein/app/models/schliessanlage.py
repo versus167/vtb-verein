@@ -133,6 +133,8 @@ class TuerSchloss:
     letzter_log_serverdate: Optional[int] = None  # Sync-Cursor (ms)
     letztes_event_at: Optional[str] = None        # Status-Snapshot (letzter Schließvorgang)
     letztes_event_type: Optional[int] = None
+    # per Subquery befüllt: seit wann gilt der aktuelle gateway_online-Status (#82)
+    gateway_online_seit: Optional[str] = None
     # per JOIN befüllt (Anzeige)
     abteilung_name: Optional[str] = None
     version: int = 1
@@ -265,3 +267,15 @@ class TuerZutrittLog:
     chip_bezeichnung: Optional[str] = None
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None
+
+
+@dataclass
+class TuerSchlossStatusLog:
+    """Append-only Konnektivitäts-Log je Schloss (#82): ein Eintrag je online↔offline-
+    Wechsel. `online` ist tri-state (TRUE/FALSE/NULL=unbekannt); `geaendert_am` = seit
+    wann dieser Status gilt."""
+    id: Optional[int] = None
+    schloss_id: int = 0
+    online: Optional[bool] = None
+    geaendert_am: Optional[str] = None
+    created_at: Optional[str] = None

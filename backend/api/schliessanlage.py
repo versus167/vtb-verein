@@ -259,6 +259,9 @@ def schloss_logs(schloss_id: int, user: CurrentUser, db: DB):
     return {
         "darf_protokoll": darf_protokoll,
         "logs": db.tuer_zutritt_logs.list_for_schloss(schloss_id) if darf_protokoll else [],
+        # Konnektivitäts-Events (online↔offline, #82) sind keine Bewegungs-/Personendaten →
+        # bereits mit READ sichtbar, verschränkt mit den Öffnungen im selben Log-Dialog.
+        "status_events": db.tuer_schloss_status_logs.list_for_schloss(schloss_id),
     }
 
 
