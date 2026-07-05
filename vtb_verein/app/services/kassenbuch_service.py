@@ -8,11 +8,16 @@ import csv
 import io
 import logging
 import os
+import re
+import zipfile
+from dataclasses import asdict, replace
 from datetime import date
 from app.models.kasse import (
     Kasse, Kassenbuchung, KassenbuchExport, KassenbuchungAnhang,
     KassenZaehlung, EURO_STUECKELUNG_CENT,
 )
+from app.models.fibu import FibuExportPosition
+from app.services import fibu_formatter
 from app.db.kasse_repository import KasseRepository
 from app.db.kassenbuchung_repository import KassenbuchungRepository
 from app.db.kassenbuch_export_repository import KassenbuchExportRepository
@@ -21,7 +26,7 @@ from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
 from app.db.kassen_kategorie_repository import KassenKategorieRepository
 from app.db.kassen_zaehlung_repository import KassenZaehlungRepository
 from app.services.anhang_service import AnhangService, DateitypNichtErlaubtError, DateiZuGrossError
-from app.services.kassenbuch_pdf_service import erstelle_zaehlprotokoll_pdf
+from app.services.kassenbuch_pdf_service import erstelle_zaehlprotokoll_pdf, erstelle_kassenbuch_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,17 @@ class KeinSchreibzugriffError(Exception):
 class KeinExportrechtError(Exception):
     """Wird geworfen wenn der User kein Exportrecht für die Kasse hat."""
     pass
+
+
+class FibuKassenExportFehler(Exception):
+    """FBASC-Kassenexport abgebrochen: Konten unvollständig konfiguriert.
+
+    fehler: Liste menschenlesbarer Probleme (fehlendes Sachkonto/Gegenkonto).
+    """
+
+    def __init__(self, fehler: list[str]) -> None:
+        self.fehler = fehler
+        super().__init__("; ".join(fehler))
 
 
 class KategorieUngueltigError(Exception):
@@ -110,6 +126,8 @@ class KassenbuchService:
         anhang_service: AnhangService | None = None,
         kategorie_repo: KassenKategorieRepository | None = None,
         zaehlung_repo: KassenZaehlungRepository | None = None,
+        abteilung_repo=None,
+        fibu_einstellungen_repo=None,
     ):
         self._kasse = kasse_repo
         self._buchung = buchung_repo
@@ -119,6 +137,8 @@ class KassenbuchService:
         self._anhang_service = anhang_service
         self._kategorie = kategorie_repo
         self._zaehlung = zaehlung_repo
+        self._abteilung = abteilung_repo
+        self._fibu_einstellungen = fibu_einstellungen_repo
 
     # -----------------------------------
     # Berechtigungsprüfung
@@ -457,6 +477,287 @@ class KassenbuchService:
         csv_bytes = self._baue_csv_bytes(buchungen)
 
         return gespeicherter_export.dateiname, csv_bytes
+
+    # -----------------------------------
+    # Export (FBASC / hmd, sperrend) + Un-Export
+    # -----------------------------------
+
+    def exportiere_fbasc(
+        self,
+        kasse_id: int,
+        bis_datum: str,
+        exported_by: str,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> tuple[str, bytes]:
+        """Exportiert die offenen Buchungen bis bis_datum als hmd-FBASC-Zip.
+
+        Das Zip ist "plain": `fbasc.hia` und alle Belege liegen flach im Root, dazu der
+        Perioden-Kassenbericht als PDF. Belege werden pro Buchung in Feld 39 referenziert;
+        Zusatzbelege und der Bericht bekommen je eine eigene 0,00-Zeile (hmd verkraftet das).
+        Nach dem Rendern werden die Buchungen gesperrt (Export-Schutz).
+
+        Raises:
+            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
+            ValueError: Wenn keine exportierbaren Buchungen vorhanden.
+            FibuKassenExportFehler: Wenn Sachkonto/Gegenkonto fehlen.
+
+        Returns:
+            Tuple (dateiname, zip_bytes)
+        """
+        if user_id is not None:
+            self._pruefe_exportrecht(kasse_id, user_id, is_admin)
+
+        buchungen = self._export.get_nicht_exportierte_buchungen(kasse_id, bis_datum)
+        if not buchungen:
+            raise ValueError("Keine exportierbaren Buchungen im angegebenen Zeitraum.")
+
+        kasse = self._kasse.get_kasse(kasse_id)
+        von_datum = buchungen[0]["buchungsdatum"]
+        einst = self._fibu_einstellungen.get()
+        kostenstelle, kostentraeger = self._kasse_kost(kasse, einst)
+        gegenkonto_map, kostentraeger_map = self._kategorie_konten(kasse_id, einst)
+
+        fehler = self._fbasc_validieren(kasse, buchungen, gegenkonto_map)
+        if fehler:
+            raise FibuKassenExportFehler(fehler)
+
+        # Export-Header (Dateiname erst mit echter ID) anlegen.
+        export = KassenbuchExport(
+            kasse_id=kasse_id, zeitraum_von=von_datum, zeitraum_bis=bis_datum,
+            dateiname="pending", anzahl_buchungen=len(buchungen), format="fbasc",
+        )
+        gespeichert = self._export.create_export(export, exported_by)
+        dateiname = f"{self._slug(kasse.name)}-export-{gespeichert.id}.zip"
+        self._export.update_dateiname(gespeichert.id, dateiname)
+
+        zip_bytes = self._baue_fbasc_zip(
+            kasse, buchungen, von_datum, bis_datum,
+            kostenstelle, kostentraeger, gegenkonto_map, kostentraeger_map, exported_by,
+        )
+
+        self._buchung.mark_buchungen_exportiert(
+            [b["id"] for b in buchungen], gespeichert.id
+        )
+        return dateiname, zip_bytes
+
+    def reexportiere_fbasc(
+        self,
+        export_id: int,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> tuple[str, bytes]:
+        """Baut das FBASC-Zip eines abgeschlossenen Exports erneut (kein neuer Lauf,
+        keine neue Sperre). Belege/Bericht werden aus dem aktuellen Stand rekonstruiert."""
+        export = self._export.get_export(export_id)
+        if user_id is not None:
+            self._pruefe_exportrecht(export.kasse_id, user_id, is_admin)
+        kasse = self._kasse.get_kasse(export.kasse_id)
+        buchungen = self._export.get_buchungen_fuer_export(export_id)
+        einst = self._fibu_einstellungen.get()
+        kostenstelle, kostentraeger = self._kasse_kost(kasse, einst)
+        gegenkonto_map, kostentraeger_map = self._kategorie_konten(export.kasse_id, einst)
+        zip_bytes = self._baue_fbasc_zip(
+            kasse, buchungen, export.zeitraum_von, export.zeitraum_bis,
+            kostenstelle, kostentraeger, gegenkonto_map, kostentraeger_map, export.exportiert_von or "",
+        )
+        return export.dateiname, zip_bytes
+
+    def zuruecknehmen_export(
+        self,
+        export_id: int,
+        benutzer: str,
+        user_id: int = None,
+        is_admin: bool = False,
+    ) -> dict:
+        """Un-Export: den jüngsten Export einer Kasse zurücknehmen.
+
+        Löst die Sperre aller Buchungen des Exports (sie erscheinen wieder in der
+        Vorschau und sind editier-/stornierbar) und soft-deletet den Export-Header.
+        Nur der jüngste Export einer Kasse ist erlaubt – ältere haben Datums-Folgen.
+
+        Raises:
+            KeyError: Wenn der Export nicht existiert.
+            KeinExportrechtError: Wenn kein Exportrecht für die Kasse.
+            ValueError: Wenn der Export nicht der jüngste der Kasse ist.
+        """
+        export = self._export.get_export(export_id)  # KeyError → 404
+        if user_id is not None:
+            self._pruefe_exportrecht(export.kasse_id, user_id, is_admin)
+        if not self._export.is_latest_export(export_id):
+            raise ValueError(
+                "Nur der jüngste Export einer Kasse kann zurückgenommen werden."
+            )
+        anzahl = self._buchung.unmark_buchungen_exportiert(export_id)
+        self._export.soft_delete(export_id, benutzer)
+        return {"zurueckgenommen": export_id, "buchungen_wieder_offen": anzahl}
+
+    # -- FBASC-Hilfen ------------------------------------------------------
+
+    @staticmethod
+    def _slug(name: str) -> str:
+        return name.lower().replace(" ", "-")
+
+    @staticmethod
+    def _safe_basename(roh: str) -> str:
+        """Dateisystem-/Zip-tauglicher Basisname (nur [A-Za-z0-9_-])."""
+        s = re.sub(r"[^A-Za-z0-9_-]+", "-", roh).strip("-")
+        return s or "beleg"
+
+    def _kasse_kost(self, kasse: Kasse, einst) -> tuple:
+        """Kostenstelle (Feld 07) aus der Abteilung der Kasse, sonst Verein-Default;
+        Kostenträger (Feld 08) aus den Fibu-Einstellungen."""
+        kostenstelle = None
+        if kasse.abteilung_id is not None and self._abteilung is not None:
+            try:
+                kostenstelle = self._abteilung.get_abteilung(kasse.abteilung_id).kostenstelle
+            except KeyError:
+                kostenstelle = None
+        if kostenstelle is None:
+            kostenstelle = einst.verein_kostenstelle
+        return kostenstelle, einst.default_kostentraeger
+
+    def _kategorie_konten(self, kasse_id: int, einst) -> tuple[dict, dict]:
+        """(gegenkonto_map, kostentraeger_map) je Kategorie-Name (casefold) für die Kasse.
+
+        Die System-Kategorie „Kassendifferenz" (Differenzbuchung einer Zählung) gibt es
+        nicht in der Kategorie-Verwaltung; ihr Gegenkonto kommt aus den Fibu-Einstellungen,
+        ihr Kostenträger aus dem Default. Ein Kategorie-Kostenträger von None bedeutet
+        „Default aus den Fibu-Einstellungen"."""
+        kats = self._kategorie.list_for_kasse(kasse_id) if self._kategorie else []
+        gegenkonto = {k.name.casefold(): k.gegenkonto for k in kats}
+        gegenkonto.setdefault(KASSENDIFFERENZ_KATEGORIE.casefold(), einst.kassendifferenz_gegenkonto)
+        kostentraeger = {k.name.casefold(): k.kostentraeger for k in kats}
+        return gegenkonto, kostentraeger
+
+    @staticmethod
+    def _fbasc_validieren(kasse: Kasse, buchungen: list[dict], gegenkonto_map: dict) -> list[str]:
+        """Sammelt Konfigurationsfehler (fehlendes Sachkonto/Gegenkonto)."""
+        fehler: list[str] = []
+        if not kasse.sachkonto:
+            fehler.append(f"Kasse „{kasse.name}“ hat kein Sachkonto (Feld 00) hinterlegt.")
+        fehlend = sorted({(b.get("kategorie") or "").strip()
+                          for b in buchungen
+                          if not gegenkonto_map.get((b.get("kategorie") or "").casefold())})
+        for kat in fehlend:
+            if kat.casefold() == KASSENDIFFERENZ_KATEGORIE.casefold():
+                fehler.append("System-Kategorie „Kassendifferenz“ hat kein Gegenkonto – "
+                              "bitte in den Fibu-Einstellungen setzen.")
+            elif kat:
+                fehler.append(f"Kategorie „{kat}“ hat kein Gegenkonto (Feld 01).")
+            else:
+                fehler.append("Buchung ohne Kategorie – kein Gegenkonto zuordenbar.")
+        return fehler
+
+    def _lese_anhang(self, anhang: KassenbuchungAnhang) -> bytes | None:
+        """Beleg-Datei vom Datenträger lesen; fehlende Datei → None (wird übersprungen)."""
+        if self._anhang_service is None:
+            return None
+        try:
+            return (self._anhang_service.upload_path / anhang.stored_name).read_bytes()
+        except OSError:
+            logger.warning("Beleg-Datei fehlt beim Export: %s", anhang.stored_name)
+            return None
+
+    @staticmethod
+    def _anhang_ext(anhang: KassenbuchungAnhang) -> str:
+        ext = os.path.splitext(anhang.stored_name)[1] or os.path.splitext(anhang.original_name)[1]
+        return ext.lower()
+
+    def _baue_fbasc_zip(
+        self, kasse: Kasse, buchungen: list[dict], von_datum: str, bis_datum: str,
+        kostenstelle, kostentraeger, gegenkonto_map: dict, kostentraeger_map: dict, exported_by: str,
+    ) -> bytes:
+        """Rendert fbasc.hia + sammelt Belege + Bericht in ein flaches Zip (alles im Root)."""
+        positionen: list[FibuExportPosition] = []
+        dateien: dict[str, bytes] = {}
+        verwendet: set[str] = set()
+        letzte_hauptzeile: FibuExportPosition | None = None
+
+        for b in buchungen:
+            kategorie = b.get("kategorie") or ""
+            gegenkonto = gegenkonto_map.get(kategorie.casefold())
+            # Kostenträger: Kategorie-Override, sonst Default aus den Fibu-Einstellungen.
+            kt = kostentraeger_map.get(kategorie.casefold())
+            eff_kostentraeger = kt if kt is not None else kostentraeger
+            basis = self._eindeutiger_basis(b, verwendet)
+            gelesen = [(a, c) for a in (self._anhang_repo.list_by_buchung(b["id"]) if self._anhang_repo else [])
+                       if (c := self._lese_anhang(a)) is not None]
+            primaer = None
+            extras: list[tuple[int, str]] = []
+            for i, (a, content) in enumerate(gelesen):
+                fname = f"{basis}{self._anhang_ext(a)}" if i == 0 else f"{basis}-{i + 1}{self._anhang_ext(a)}"
+                dateien[fname] = content
+                if i == 0:
+                    primaer = fname
+                else:
+                    extras.append((i + 1, fname))
+            hauptzeile = self._fbasc_position(
+                b, kasse, gegenkonto, kostenstelle, eff_kostentraeger, primaer)
+            positionen.append(hauptzeile)
+            letzte_hauptzeile = hauptzeile
+            # Zusatzbelege: 0,00-Zeile auf DENSELBEN Konten wie ihre Buchung (kein Selbst-
+            # buchungs-Split in der Fibu), trägt nur das weitere Dokument in Feld 39.
+            for nr, fname in extras:
+                positionen.append(replace(
+                    hauptzeile, betrag=0.0, dokument=fname,
+                    buchungstext=f"{hauptzeile.buchungstext} (Beleg {nr})"))
+
+        # Perioden-Bericht: per Definition an die LETZTE Buchung des Exports (übernimmt
+        # deren Konten) als 0,00-Zeile, die nur das Bericht-PDF trägt.
+        bericht_name = f"bericht-{von_datum}-bis-{bis_datum}.pdf"
+        dateien[bericht_name] = self._erzeuge_bericht_pdf(kasse, von_datum, bis_datum, exported_by)
+        if letzte_hauptzeile is not None:
+            positionen.append(replace(
+                letzte_hauptzeile, betrag=0.0, dokument=bericht_name,
+                buchungstext=f"Kassenbericht {von_datum} bis {bis_datum}"))
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(fibu_formatter.FBASC_DATEINAME, fibu_formatter.render(positionen))
+            for fname, content in dateien.items():
+                zf.writestr(fname, content)
+        return buf.getvalue()
+
+    def _eindeutiger_basis(self, b: dict, verwendet: set) -> str:
+        basis = self._safe_basename(str(b.get("belegnummer") or f"buchung-{b['id']}"))
+        kandidat, n = basis, 1
+        while kandidat in verwendet:
+            n += 1
+            kandidat = f"{basis}-b{n}"
+        verwendet.add(kandidat)
+        return kandidat
+
+    def _fbasc_position(
+        self, b: dict, kasse: Kasse, gegenkonto, kostenstelle, kostentraeger, dokument,
+    ) -> FibuExportPosition:
+        """Eine Kassenbuchung → FBASC-Sachkonto-Zeile (Einnahme=S / Ausgabe=H)."""
+        einnahme = b.get("einnahme_cent") or 0
+        ausgabe = b.get("ausgabe_cent") or 0
+        betrag = (einnahme if einnahme else ausgabe) / 100
+        beleg = b.get("belegnummer") or f"buchung-{b['id']}"
+        return FibuExportPosition(
+            quelle_typ="kassenbuchung", quelle_id=b["id"], art="forderung",
+            konto=kasse.sachkonto, gegenkonto=gegenkonto, betrag=betrag,
+            soll_haben="S" if einnahme else "H", belegnummer=str(beleg),
+            kontenart="S", kostenstelle=kostenstelle, kostentraeger=kostentraeger,
+            belegdatum=b["buchungsdatum"], buchungstext=b.get("buchungstext") or "",
+            bezeichnung=b.get("kategorie") or "", dokument=dokument,
+        )
+
+    def _erzeuge_bericht_pdf(self, kasse: Kasse, von_datum: str, bis_datum: str, erstellt_von: str) -> bytes:
+        """Perioden-Kassenbericht als PDF (dieselbe Ausgabe wie der /bericht.pdf-Endpoint)."""
+        daten = self.get_kassenbericht_daten(
+            kasse.id, von_datum, bis_datum, include_storniert=True)
+        buchungen_pdf = [
+            {**asdict(e["buchung"]), "ist_storniert": e["buchung"].ist_storniert}
+            for e in daten["buchungen"]
+        ]
+        return erstelle_kassenbuch_pdf(
+            kasse_name=daten["kasse"].name, von_datum=von_datum, bis_datum=bis_datum,
+            buchungen=buchungen_pdf, anfangsbestand_cent=daten["anfangsbestand_cent"],
+            erstellt_von=erstellt_von,
+        )
 
     # -----------------------------------
     # Kassenbericht-Daten (für PDF)

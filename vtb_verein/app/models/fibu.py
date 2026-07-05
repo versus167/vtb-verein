@@ -39,6 +39,7 @@ class FibuEinstellungen:
     default_kostentraeger: int = 1                  # Kostenträger-Default
     ul_aufwand_konto: Optional[str] = None          # ÜL-Honorar: Soll-Sachkonto (= Gegenkonto der Kreditor-Buchung)
     ul_kreditor_konto_basis: Optional[int] = None   # ÜL-Honorar: Kreditor-Konto = Basis + Mitgliedsnummer
+    kassendifferenz_gegenkonto: Optional[str] = None  # Gegenkonto (FBASC Feld 01) für die System-Kategorie „Kassendifferenz"
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -72,8 +73,9 @@ class FibuExportPosition:
     belegdatum: Optional[str] = None       # Feld 10 (ISO)
     faelligkeitsdatum: Optional[str] = None  # Feld 11 (ISO)
     buchungstext: str = ""             # Feld 12
-    kontenart: str = "D"               # Feld 19 'D' Debitor (Beitrag/Gebühr) | 'K' Kreditor (ÜL-Honorar)
+    kontenart: str = "D"               # Feld 19 'D' Debitor (Beitrag/Gebühr) | 'K' Kreditor (ÜL-Honorar) | 'S' Sachkonto (Kasse)
     lastschrifteinzug: Optional[int] = None  # Feld 36 (1 = Lastschrift)
+    dokument: Optional[str] = None     # Feld 39 (Dokument zur Erfassung – Belegdateiname, z.B. 'B12.pdf')
     # Debitor-Stammdaten
     suchname: str = ""                 # Feld 20 (Adresscode)
     nachname: str = ""                 # Feld 22

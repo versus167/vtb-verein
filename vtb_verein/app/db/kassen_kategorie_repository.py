@@ -13,7 +13,7 @@ from app.models.kasse import KassenKategorie
 from app.db.base_repository import BaseRepository
 
 _COLS = (
-    "id, kasse_id, name, loest_zaehlung_aus, version, "
+    "id, kasse_id, name, loest_zaehlung_aus, gegenkonto, kostentraeger, version, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 
@@ -89,12 +89,12 @@ class KassenKategorieRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO kassen_kategorien (kasse_id, name, loest_zaehlung_aus, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO kassen_kategorien (kasse_id, name, loest_zaehlung_aus, gegenkonto, kostentraeger, created_by, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (kategorie.kasse_id, kategorie.name, kategorie.loest_zaehlung_aus,
-                 created_by, created_by),
+                 kategorie.gegenkonto, kategorie.kostentraeger, created_by, created_by),
             )
             new_id = cur.fetchone()["id"]
         return self.get(new_id)
@@ -105,12 +105,15 @@ class KassenKategorieRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE kassen_kategorien
-                SET name = %s, kasse_id = %s, loest_zaehlung_aus = %s, version = version + 1,
+                SET name = %s, kasse_id = %s, loest_zaehlung_aus = %s, gegenkonto = %s,
+                    kostentraeger = %s,
+                    version = version + 1,
                     updated_at = CURRENT_TIMESTAMP, updated_by = %s
                 WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
                 (kategorie.name, kategorie.kasse_id, kategorie.loest_zaehlung_aus,
-                 updated_by, kategorie.id, kategorie.version),
+                 kategorie.gegenkonto, kategorie.kostentraeger, updated_by,
+                 kategorie.id, kategorie.version),
             )
             return cur.rowcount > 0
 

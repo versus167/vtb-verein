@@ -150,6 +150,10 @@
             clearable hint="Gegenkonto der Kreditor-Buchung – Honorar-Aufwand" />
           <q-input v-model.number="einst.ul_kreditor_konto_basis" label="ÜL-Kreditor-Konto-Basis" outlined dense
             type="number" clearable hint="Kreditor-Konto = Basis + Mitgliedsnummer · Kostenstelle kommt aus der Abteilung" />
+          <q-separator class="q-my-sm" />
+          <div class="text-subtitle2">Kassenexport (FBASC)</div>
+          <q-input v-model="einst.kassendifferenz_gegenkonto" label="Gegenkonto Kassendifferenz" outlined dense
+            clearable hint="Gegenkonto (Feld 01) der System-Kategorie Kassendifferenz beim Kassenexport" />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn unelevated color="primary" label="Speichern" :loading="speichere" @click="saveEinstellungen" />
@@ -177,6 +181,7 @@ const einst = ref({
   debitor_konto_basis: null, default_gegenkonto: '', default_steuerschluessel: '',
   verein_kostenstelle: 12, default_kostentraeger: 1,
   ul_aufwand_konto: '', ul_kreditor_konto_basis: null,
+  kassendifferenz_gegenkonto: '',
 })
 const speichere = ref(false)
 
@@ -290,6 +295,7 @@ async function loadEinstellungen() {
     default_kostentraeger: data.default_kostentraeger,
     ul_aufwand_konto: data.ul_aufwand_konto ?? '',
     ul_kreditor_konto_basis: data.ul_kreditor_konto_basis,
+    kassendifferenz_gegenkonto: data.kassendifferenz_gegenkonto ?? '',
   }
 }
 
@@ -304,6 +310,7 @@ async function saveEinstellungen() {
       default_kostentraeger: einst.value.default_kostentraeger ?? 1,
       ul_aufwand_konto: einst.value.ul_aufwand_konto || null,
       ul_kreditor_konto_basis: einst.value.ul_kreditor_konto_basis ?? null,
+      kassendifferenz_gegenkonto: einst.value.kassendifferenz_gegenkonto || null,
     })
     $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
     await loadVorschau()

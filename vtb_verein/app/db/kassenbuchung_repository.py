@@ -232,7 +232,7 @@ class KassenbuchungRepository(BaseRepository):
         """
         if not buchung_ids:
             return 0
-        placeholders = ",".join("%s" * len(buchung_ids))
+        placeholders = ",".join(["%s"] * len(buchung_ids))
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -245,6 +245,28 @@ class KassenbuchungRepository(BaseRepository):
                   AND deleted_at IS NULL
                 """,
                 [export_id] + buchung_ids,
+            )
+            return cur.rowcount
+
+    def unmark_buchungen_exportiert(self, export_id: int) -> int:
+        """Löst die Export-Sperre aller Buchungen eines Exports (Un-Export).
+
+        Setzt exportiert_in_export_id zurück auf NULL → die Buchungen erscheinen wieder
+        in der nächsten Export-Vorschau und sind wieder editier-/stornierbar.
+
+        Returns:
+            Anzahl freigegebener Buchungen.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE kassenbuchungen
+                SET exportiert_in_export_id = NULL,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE exportiert_in_export_id = %s
+                """,
+                (export_id,),
             )
             return cur.rowcount
 

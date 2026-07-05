@@ -76,6 +76,7 @@ def felder(p: FibuExportPosition) -> list[str]:
     f[27] = _land(p.land)               # Land
     if p.lastschrifteinzug:
         f[36] = _clean(p.lastschrifteinzug)  # Lastschrifteinzug (1)
+    f[39] = _clean(p.dokument)          # Dokument zur Erfassung (Belegdateiname, z.B. B12.pdf)
     f[40] = _clean(p.iban)              # IBAN
     f[41] = _clean(p.bic)              # BIC
     f[43] = _clean(p.vorname)           # Vorname (Erweiterung zu Feld 22)

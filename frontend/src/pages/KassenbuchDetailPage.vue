@@ -66,7 +66,7 @@
       <q-btn
         v-if="kannExportieren"
         icon="download"
-        :label="$q.screen.gt.sm ? 'CSV-Export' : undefined"
+        :label="$q.screen.gt.sm ? 'Fibu-Export' : undefined"
         color="primary"
         outline
         :round="$q.screen.lt.md"
@@ -373,7 +373,7 @@
       :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
     >
       <q-card :style="$q.screen.lt.sm ? 'width: 100%; border-radius: 16px 16px 0 0' : 'min-width: 520px; max-width: 680px'">
-        <q-card-section class="text-h6">CSV-Export</q-card-section>
+        <q-card-section class="text-h6">Fibu-Export (hmd / FBASC)</q-card-section>
         <q-separator />
         <q-card-section class="q-gutter-sm">
           <q-input
@@ -384,6 +384,10 @@
             :max="today"
             hint="Alle noch nicht exportierten Buchungen bis einschließlich dieses Datums werden gesperrt."
           />
+          <div class="text-caption text-grey-7">
+            Ergebnis: ein Zip mit <code>fbasc.hia</code>, allen Belegen und dem Kassenbericht (PDF).
+            Der jüngste Export lässt sich unten wieder zurücknehmen.
+          </div>
         </q-card-section>
 
         <q-separator />
@@ -405,6 +409,10 @@
                 <q-btn flat dense round icon="download" color="primary" size="sm"
                   @click="redownload(props.row)">
                   <q-tooltip>Erneut herunterladen</q-tooltip>
+                </q-btn>
+                <q-btn v-if="props.row.id === latestExportId" flat dense round icon="undo"
+                  color="negative" size="sm" @click="zuruecknehmen(props.row)">
+                  <q-tooltip>Export zurücknehmen (Buchungen wieder entsperren)</q-tooltip>
                 </q-btn>
               </q-td>
             </template>
@@ -837,9 +845,14 @@ const columns = [
 const exportColumns = [
   { name: 'zeitraum', label: 'Zeitraum', field: r => `${r.zeitraum_von} – ${r.zeitraum_bis}`, align: 'left' },
   { name: 'dateiname', label: 'Dateiname', field: 'dateiname', align: 'left' },
+  { name: 'format', label: 'Format', field: r => (r.format === 'csv' ? 'CSV (alt)' : 'FBASC'), align: 'left' },
   { name: 'anzahl_buchungen', label: 'Buchungen', field: 'anzahl_buchungen', align: 'right' },
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
+
+const latestExportId = computed(() =>
+  exporte.value.length ? Math.max(...exporte.value.map(e => e.id)) : null,
+)
 
 function rowBgStyle(row) {
   const dark = $q.dark.isActive
@@ -1071,7 +1084,7 @@ async function doExport() {
     )
     const disposition = response.headers['content-disposition'] || ''
     const match = disposition.match(/filename="?([^"]+)"?/)
-    const filename = match ? match[1] : `kassenbuch-export-${exportBisDatum.value}.csv`
+    const filename = match ? match[1] : `kassenbuch-export-${exportBisDatum.value}.zip`
     const url = URL.createObjectURL(new Blob([response.data]))
     const a = document.createElement('a')
     a.href = url
@@ -1082,16 +1095,45 @@ async function doExport() {
     exportDialog.value = false
     await Promise.all([loadBuchungen(), loadExporte(), loadDatumBereich()])
   } catch (e) {
+    let detail = e.response?.data?.detail
     if (e.response?.data instanceof Blob) {
-      const text = await e.response.data.text()
-      try { $q.notify({ type: 'negative', message: JSON.parse(text).detail || 'Fehler.' }) }
-      catch { $q.notify({ type: 'negative', message: 'Fehler beim Export.' }) }
-    } else {
-      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Export.' })
+      try { detail = JSON.parse(await e.response.data.text()).detail } catch { detail = null }
     }
+    $q.notify({ type: 'negative', message: exportFehlerText(detail), multiLine: true })
   } finally {
     exportLoading.value = false
   }
+}
+
+// Fehler-Detail kann ein String oder – bei fehlenden Konten – { message, fehler[] } sein.
+function exportFehlerText(detail) {
+  if (!detail) return 'Fehler beim Export.'
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail.fehler) && detail.fehler.length) {
+    return 'Export nicht möglich: ' + detail.fehler.join(' · ')
+  }
+  return detail.message || 'Fehler beim Export.'
+}
+
+async function zuruecknehmen(exportObj) {
+  $q.dialog({
+    title: 'Export zurücknehmen',
+    message: `Export „${exportObj.dateiname}" zurücknehmen? Die enthaltenen Buchungen werden `
+      + `wieder entsperrt und der Export entfernt.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    try {
+      const { data } = await api.delete(`/api/kassen/${kasseId.value}/exporte/${exportObj.id}`)
+      $q.notify({
+        type: 'positive',
+        message: `Zurückgenommen – ${data.buchungen_wieder_offen} Buchung(en) wieder frei.`,
+      })
+      await Promise.all([loadBuchungen(), loadExporte(), loadDatumBereich()])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Zurücknehmen.' })
+    }
+  })
 }
 
 async function redownload(exportObj) {
