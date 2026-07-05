@@ -43,11 +43,15 @@
               </span>
               <span v-else>noch keine Zutritte</span>
             </q-item-label>
+            <q-item-label v-if="offlineSeit(s)" caption class="text-negative">
+              <q-icon name="cloud_off" size="12px" /> {{ offlineSeit(s) }}
+            </q-item-label>
           </q-item-section>
           <q-item-section side>
             <div class="row items-center q-gutter-sm">
               <q-icon :name="onlineIcon(s.gateway_online)" :color="onlineColor(s.gateway_online)" size="14px">
-                <q-tooltip>{{ onlineLabel(s.gateway_online) }}</q-tooltip>
+                <q-tooltip>{{ onlineLabel(s.gateway_online) }}<template
+                  v-if="s.gateway_online_seit"> · seit {{ fmtDateTime(s.gateway_online_seit) }}</template></q-tooltip>
               </q-icon>
               <span v-if="s.akku_prozent != null" class="row items-center text-caption"
                 :class="akkuLow(s.akku_prozent) ? 'text-negative' : 'text-grey-7'">
@@ -244,18 +248,29 @@
             Kein Recht für das Zutrittsprotokoll (schliessanlage.protokoll).
           </div>
           <q-list v-else dense bordered separator>
-            <q-item v-for="l in logEntries" :key="l.id">
-              <q-item-section avatar>
-                <q-icon :name="l.erfolg ? 'check_circle' : 'cancel'"
-                  :color="l.erfolg ? 'positive' : 'negative'" size="18px" />
-              </q-item-section>
-              <q-item-section>
-                <q-item-label>{{ l.methode }}</q-item-label>
-                <q-item-label caption>{{ fmtDateTime(l.lock_date) }}
-                  <span v-if="logWer(l)">· {{ logWer(l) }}</span></q-item-label>
-              </q-item-section>
+            <q-item v-for="it in logItems" :key="it.key">
+              <template v-if="it.typ === 'status'">
+                <q-item-section avatar>
+                  <q-icon :name="onlineIcon(it.online)" :color="onlineColor(it.online)" size="18px" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ statusEventLabel(it.online) }}</q-item-label>
+                  <q-item-label caption>{{ fmtDateTime(it.geaendert_am) }}</q-item-label>
+                </q-item-section>
+              </template>
+              <template v-else>
+                <q-item-section avatar>
+                  <q-icon :name="it.erfolg ? 'check_circle' : 'cancel'"
+                    :color="it.erfolg ? 'positive' : 'negative'" size="18px" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ it.methode }}</q-item-label>
+                  <q-item-label caption>{{ fmtDateTime(it.lock_date) }}
+                    <span v-if="logWer(it)">· {{ logWer(it) }}</span></q-item-label>
+                </q-item-section>
+              </template>
             </q-item>
-            <q-item v-if="!logEntries.length"><q-item-section class="text-grey">
+            <q-item v-if="!logItems.length"><q-item-section class="text-grey">
               keine Einträge im Zeitraum</q-item-section></q-item>
           </q-list>
         </q-card-section>
@@ -482,7 +497,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { api } from 'src/boot/axios'
@@ -542,6 +557,14 @@ function fmtDateTime(iso) {
 const onlineIcon = (o) => (o === true ? 'cloud_done' : o === false ? 'cloud_off' : 'cloud_queue')
 const onlineColor = (o) => (o === true ? 'positive' : o === false ? 'negative' : 'grey')
 const onlineLabel = (o) => (o === true ? 'Gateway online' : o === false ? 'Gateway offline' : 'unbekannt')
+const statusEventLabel = (o) => (o === true ? 'Gateway online' : o === false ? 'Gateway offline' : 'Gateway-Status unbekannt')
+// „offline seit …" nur, wenn ein Gateway zugeordnet ist (sonst kein sinnvoller Offline-Bezug)
+// und der Status derzeit nicht online ist (#82).
+const offlineSeit = (s) => {
+  if (s.gateway_online === true || s.ttlock_gateway_id == null || !s.gateway_online_seit) return ''
+  const wort = s.gateway_online === false ? 'offline' : 'nicht erreichbar'
+  return `${wort} seit ${fmtDateTime(s.gateway_online_seit)}`
+}
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
@@ -636,17 +659,26 @@ async function openSchloss(id) {
 const logDialog = ref(false)
 const logSchloss = ref(null)
 const logEntries = ref([])
+const statusEvents = ref([])
 const logDarfProtokoll = ref(false)
 const logLoading = ref(false)
+// Öffnungen (Bewegungsdaten) und Konnektivitäts-Events zeitlich verschränkt (#82).
+const logItems = computed(() => {
+  const zutritt = (logEntries.value || []).map(l => ({ ...l, typ: 'zutritt', key: 'z' + l.id, ts: l.lock_date }))
+  const status = (statusEvents.value || []).map(e => ({ ...e, typ: 'status', key: 's' + e.id, ts: e.geaendert_am }))
+  return [...zutritt, ...status].sort((a, b) => new Date(b.ts || 0) - new Date(a.ts || 0))
+})
 async function openSchlossLog(s) {
   logSchloss.value = s
   logEntries.value = []
+  statusEvents.value = []
   logDarfProtokoll.value = false
   logLoading.value = true
   logDialog.value = true
   try {
     const { data } = await api.get(`/api/schliessanlage/schloesser/${s.id}/logs`)
     logEntries.value = data.logs || []
+    statusEvents.value = data.status_events || []
     logDarfProtokoll.value = !!data.darf_protokoll
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zutrittslog fehlgeschlagen' })

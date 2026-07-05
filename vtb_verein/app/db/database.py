@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 64
+SCHEMA_VERSION = 65
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +888,23 @@ _DDL_ZUTRITT_TABLES = """
     );
 """
 
+# Append-only Konnektivitäts-/Status-Log je Schloss (online↔offline-Wechsel, #82):
+# hält fest, seit wann der aktuelle Gateway-Status gilt, und macht die Historie im
+# Schloss-Protokoll sichtbar. Tri-state (online = TRUE/FALSE/NULL=unbekannt). Kein
+# History-Mirror/Soft-Delete (wie tuer_zutritt_log). Tabelle+Index in einer Konstante,
+# damit die Index-Erzeugung nicht vor der Tabelle läuft. Geteilt Frischaufbau/Migration.
+_DDL_TUER_SCHLOSS_STATUS_LOG = """
+    CREATE TABLE IF NOT EXISTS tuer_schloss_status_log (
+      id            SERIAL PRIMARY KEY,
+      schloss_id    INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      online        BOOLEAN,
+      geaendert_am  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_tuer_schloss_status_log_schloss_id
+      ON tuer_schloss_status_log(schloss_id, geaendert_am);
+"""
+
 # Einfache Indizes (CREATE INDEX-Loop), geteilt zwischen Frischaufbau und Migration.
 _ZUTRITT_INDEXES = (
     ("idx_tuer_schloss_abteilung_id",     "tuer_schloss(abteilung_id)"),
@@ -1141,6 +1158,7 @@ class Database:
             62: self._migrate_v61_to_v62,
             63: self._migrate_v62_to_v63,
             64: self._migrate_v63_to_v64,
+            65: self._migrate_v64_to_v65,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -3977,6 +3995,41 @@ class Database:
             cur.execute(_FN_KASSEN_KATEGORIEN_AUDIT_UPDATE)
             cur.execute("UPDATE schema_version SET version = 64 WHERE id = 1")
 
+    def _migrate_v64_to_v65(self) -> None:
+        """Konnektivitäts-Log je Schloss (#82): seit wann ist ein Schloss offline?
+
+        Bislang wurde nur der aktuelle `gateway_online`-Bool gespiegelt – ohne Zeitpunkt,
+        wann er zuletzt wechselte. Neue append-only Tabelle `tuer_schloss_status_log` hält
+        jeden online↔offline-Wechsel mit Zeitstempel fest; „seit wann" = jüngster Eintrag.
+
+        Best-effort-Backfill aus `tuer_schloss_history`: dort ist `gateway_online` je Version
+        gesnapshottet, also lassen sich die bisherigen Wechsel (inkl. der ersten Version als
+        Startpunkt) rekonstruieren – so ist der aktuelle Offline-Zeitraum sofort bekannt.
+        DDL geteilt mit dem Frischaufbau (_DDL_TUER_SCHLOSS_STATUS_LOG). Idempotent.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
+            # Nur backfillen, wenn noch leer (Migration bei Bedarf gefahrlos wiederholbar).
+            cur.execute("SELECT NOT EXISTS (SELECT 1 FROM tuer_schloss_status_log) AS leer")
+            if cur.fetchone()["leer"]:
+                cur.execute(
+                    """
+                    INSERT INTO tuer_schloss_status_log (schloss_id, online, geaendert_am)
+                    SELECT schloss_id, gateway_online, ts
+                    FROM (
+                        SELECT id AS schloss_id, version, gateway_online,
+                               COALESCE(updated_at, created_at) AS ts,
+                               LAG(gateway_online) OVER (PARTITION BY id ORDER BY version) AS prev,
+                               ROW_NUMBER()        OVER (PARTITION BY id ORDER BY version) AS rn
+                        FROM tuer_schloss_history
+                    ) h
+                    WHERE ts IS NOT NULL
+                      AND (rn = 1 OR gateway_online IS DISTINCT FROM prev)
+                    ORDER BY schloss_id, ts
+                    """
+                )
+            cur.execute("UPDATE schema_version SET version = 65 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -5210,6 +5263,8 @@ class Database:
         # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
         # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
         cur.execute(_DDL_ZUTRITT_TABLES)
+        # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
+        cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
         cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
         # Read-only Credential-Mirror je Schloss (Schema v59). DDL geteilt mit v58→v59.

@@ -62,6 +62,7 @@ from app.db.ul_abrechnung_repository import ULAbrechnungRepository
 from app.db.ul_satz_repository import ULSatzRepository
 from app.db.ttlock_konto_repository import TTLockKontoRepository
 from app.db.tuer_schloss_repository import TuerSchlossRepository
+from app.db.tuer_schloss_status_log_repository import TuerSchlossStatusLogRepository
 from app.db.schluessel_chip_repository import SchluesselChipRepository
 from app.db.tuer_berechtigung_repository import TuerBerechtigungRepository
 from app.db.tuer_app_berechtigung_repository import TuerAppBerechtigungRepository
@@ -120,6 +121,7 @@ class VereinsDB:
         # Zutrittskontrolle / Schließanlage (TT-Lock)
         self._ttlock_konto_repo = TTLockKontoRepository(self.conn)
         self._tuer_schloss_repo = TuerSchlossRepository(self.conn)
+        self._tuer_schloss_status_log_repo = TuerSchlossStatusLogRepository(self.conn)
         self._schluessel_chip_repo = SchluesselChipRepository(self.conn)
         self._tuer_berechtigung_repo = TuerBerechtigungRepository(self.conn)
         self._tuer_app_berechtigung_repo = TuerAppBerechtigungRepository(self.conn)
@@ -250,6 +252,10 @@ class VereinsDB:
     @property
     def tuer_zutritt_logs(self) -> TuerZutrittLogRepository:
         return self._tuer_zutritt_log_repo
+
+    @property
+    def tuer_schloss_status_logs(self) -> TuerSchlossStatusLogRepository:
+        return self._tuer_schloss_status_log_repo
 
     @property
     def tuer_credentials(self) -> TuerCredentialRepository:

@@ -8,6 +8,8 @@ _SELECT = """
     SELECT s.id, s.ttlock_lock_id, s.name, s.standort, s.abteilung_id,
            s.ttlock_gateway_id, s.gateway_online, s.lock_mac, s.akku_prozent, s.akku_stand_at,
            s.aktiv, s.notiz, s.letzter_log_serverdate, s.letztes_event_at, s.letztes_event_type,
+           (SELECT MAX(sl.geaendert_am) FROM tuer_schloss_status_log sl
+              WHERE sl.schloss_id = s.id) AS gateway_online_seit,
            ab.name AS abteilung_name,
            s.version, s.created_at, s.created_by, s.updated_at, s.updated_by,
            s.deleted_at, s.deleted_by
@@ -64,6 +66,10 @@ class TuerSchlossRepository(BaseRepository):
                 )
                 if unchanged:
                     return existing.id
+                # Online-Status separat prüfen: Konnektivitäts-Log nur bei echtem Wechsel
+                # fortschreiben (nicht bei reinen Akku-Änderungen). `!=` deckt das tri-state
+                # None/True/False sauber ab (== IS DISTINCT FROM).
+                online_changed = existing.gateway_online != gateway_online
                 cur.execute(
                     """
                     UPDATE tuer_schloss
@@ -75,6 +81,8 @@ class TuerSchlossRepository(BaseRepository):
                     (lock_mac, ttlock_gateway_id, gateway_online, akku_prozent,
                      akku_stand_at, by, existing.id),
                 )
+                if online_changed:
+                    self._log_gateway_status(cur, existing.id, gateway_online)
                 return existing.id
             cur.execute(
                 """
@@ -86,7 +94,19 @@ class TuerSchlossRepository(BaseRepository):
                 (ttlock_lock_id, name, lock_mac, ttlock_gateway_id, gateway_online,
                  akku_prozent, akku_stand_at, by, by),
             )
-            return cur.fetchone()['id']
+            new_id = cur.fetchone()['id']
+            # Ausgangsstatus als Startpunkt des Konnektivitäts-Logs festhalten (#82).
+            self._log_gateway_status(cur, new_id, gateway_online)
+            return new_id
+
+    @staticmethod
+    def _log_gateway_status(cur, schloss_id: int, online: Optional[bool]) -> None:
+        """Einen online↔offline-Wechsel append-only protokollieren (#82). Läuft in der
+        aufrufenden Transaktion, damit Schloss-Update und Log-Eintrag atomar bleiben."""
+        cur.execute(
+            "INSERT INTO tuer_schloss_status_log (schloss_id, online) VALUES (%s, %s)",
+            (schloss_id, online),
+        )
 
     def update_cursor_and_event(self, schloss_id: int, *, serverdate: Optional[int],
                                 letztes_event_at: Optional[str],
