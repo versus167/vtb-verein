@@ -78,6 +78,24 @@
               </q-chip>
             </q-td>
           </template>
+          <template #body-cell-abteilung="props">
+            <q-td :props="props">
+              <span v-if="props.row.abteilung_name">{{ props.row.abteilung_name }}</span>
+              <span v-else class="text-grey-5">–</span>
+            </q-td>
+          </template>
+          <template #body-cell-gegenkonto="props">
+            <q-td :props="props">
+              <span v-if="props.row.gegenkonto">{{ props.row.gegenkonto }}</span>
+              <span v-else class="text-grey-5">–</span>
+            </q-td>
+          </template>
+          <template #body-cell-kostentraeger="props">
+            <q-td :props="props">
+              <span v-if="props.row.kostentraeger != null">{{ props.row.kostentraeger }}</span>
+              <span v-else class="text-grey-5">–</span>
+            </q-td>
+          </template>
           <template #body-cell-zaehlung="props">
             <q-td :props="props">
               <q-icon v-if="props.row.loest_zaehlung_aus" name="pin" color="primary" size="20px">
@@ -322,6 +340,9 @@ const kategorieForm = ref({ name: '', kasse_id: null, loest_zaehlung_aus: false,
 const kategorieColumns = [
   { name: 'name', label: 'Name', field: 'name', align: 'left' },
   { name: 'geltungsbereich', label: 'Geltungsbereich', field: 'kasse_name', align: 'left' },
+  { name: 'abteilung', label: 'Abteilung', field: 'abteilung_name', align: 'left' },
+  { name: 'gegenkonto', label: 'Gegenkonto', field: 'gegenkonto', align: 'left' },
+  { name: 'kostentraeger', label: 'Kostenträger', field: 'kostentraeger', align: 'right' },
   { name: 'zaehlung', label: 'Zählung', field: 'loest_zaehlung_aus', align: 'center' },
   { name: 'actions', label: '', field: 'actions', align: 'right' },
 ]
