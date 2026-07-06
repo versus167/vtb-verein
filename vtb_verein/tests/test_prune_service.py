@@ -49,6 +49,29 @@ class TestRegistry:
                 "ticket", "ticket_kommentar", "ticket_bereich", "ticket_kategorie",
                 "ticket_teilnehmer", "ticket_bereich_berechtigung"} <= names
 
+    def test_schliessanlage_und_ul_entitaeten_registriert(self):
+        names = {e.name for e in PRUNE_REGISTRY}
+        assert {"tuer_app_berechtigung", "tuer_berechtigung", "tuer_schloss",
+                "schluessel_chip", "ul_stunde", "ul_abrechnung", "ul_satz"} <= names
+
+    def test_mitglied_guards_gegen_schliessanlage_und_ul(self):
+        """Befund #75: mitglied darf nicht geprunt werden, solange Chip/Zutritts-Log/ÜL
+        darauf zeigen (sonst FK-RESTRICT sprengt den ganzen Lauf)."""
+        refs = {(c.table, c.fk) for c in _entity("mitglied").children}
+        assert {("schluessel_chip", "mitglied_id"), ("tuer_zutritt_log", "mitglied_id"),
+                ("ul_abrechnung", "mitglied_id"), ("ul_satz", "mitglied_id")} <= refs
+
+    def test_abteilung_guards_gegen_schliessanlage_und_ul(self):
+        refs = {(c.table, c.fk) for c in _entity("abteilung").children}
+        assert {("tuer_schloss", "abteilung_id"), ("ul_abrechnung", "abteilung_id"),
+                ("ul_satz", "abteilung_id")} <= refs
+
+    def test_tuer_schloss_deckt_dauerprotokolle_ab(self):
+        """tuer_schloss muss auch die nie-soft-gelöschten Logs als Guard führen."""
+        refs = {(c.table, c.fk) for c in _entity("tuer_schloss").children}
+        assert {("tuer_zutritt_log", "schloss_id"), ("tuer_credential", "schloss_id"),
+                ("tuer_schloss_status_log", "schloss_id")} <= refs
+
     def test_kinder_stehen_vor_dem_elternteil(self):
         """Invariante: ist eine Kind-Tabelle selbst eine Prune-Entität, kommt sie früher
         (Blatt → Wurzel) – sonst stimmt die Löschreihenfolge im Report nicht."""
