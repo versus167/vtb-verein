@@ -161,33 +161,13 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd')"
+            v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd') || auth.hasPermission('ulstunden.bestaetigen') || auth.hasPermission('ulstunden.verwalten')"
             clickable
-            :to="{ name: 'stundenerfassung' }"
+            :to="{ name: 'uebungsleiter' }"
             active-class="bg-primary text-white"
           >
-            <q-item-section avatar><q-icon name="schedule" /></q-item-section>
-            <q-item-section>Stundenerfassung</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('ulstunden.bestaetigen')"
-            clickable
-            :to="{ name: 'stunden-bestaetigung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="how_to_reg" /></q-item-section>
-            <q-item-section>Stunden bestätigen</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('ulstunden.verwalten')"
-            clickable
-            :to="{ name: 'ul-saetze' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="payments" /></q-item-section>
-            <q-item-section>Vergütungssätze</q-item-section>
+            <q-item-section avatar><q-icon name="sports" /></q-item-section>
+            <q-item-section>Übungsleiter</q-item-section>
           </q-item>
 
           <q-item

@@ -1,5 +1,5 @@
 <template>
-  <q-page class="q-pa-md">
+  <div>
     <div class="row items-center q-mb-md">
       <div class="text-h5">Stundenerfassung</div>
       <q-space />
@@ -264,7 +264,7 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
-  </q-page>
+  </div>
 </template>
 
 <script setup>
