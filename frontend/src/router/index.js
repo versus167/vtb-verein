@@ -130,7 +130,20 @@ const routes = [
       {
         path: 'einstellungen',
         name: 'einstellungen',
-        component: () => import('pages/EinstellungenPage.vue'),
+        component: () => import('pages/EinstellungenAllgemeinPage.vue'),
+        meta: { permission: ['funktionen.verwalten', 'abteilungen.read'] },
+      },
+      {
+        path: 'sonstiges',
+        name: 'sonstiges',
+        component: () => import('pages/EinstellungenSonstigesPage.vue'),
+        // Import ist adminOnly → Admins umgehen den Guard ohnehin
+        meta: { permission: ['system.config', 'fibu.export', 'system.protokoll'] },
+      },
+      {
+        path: 'funktionen',
+        name: 'funktionen',
+        component: () => import('pages/FunktionenPage.vue'),
         meta: { permission: 'funktionen.verwalten' },
       },
       {

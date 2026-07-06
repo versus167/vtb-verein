@@ -43,6 +43,19 @@
         </q-card>
       </div>
 
+      <div
+        v-if="auth.hasPermission('schliessanlage.read')"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'schliessanlage' })">
+          <q-card-section class="text-center">
+            <q-icon name="lock" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Schließanlage</div>
+            <div class="text-caption text-grey">Zutritt & Schlösser</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
       <div class="col-6 col-sm-4 col-md-3">
         <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
           <q-card-section class="text-center">
@@ -91,6 +104,26 @@
           </q-card-section>
         </q-card>
       </div>
+
+      <div v-if="zeigeEinstellungen" class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'einstellungen' })">
+          <q-card-section class="text-center">
+            <q-icon name="tune" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Einstellungen</div>
+            <div class="text-caption text-grey">Funktionen, Abteilungen</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'sonstiges' })">
+          <q-card-section class="text-center">
+            <q-icon name="more_horiz" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Sonstiges</div>
+            <div class="text-caption text-grey">Import, Bereinigen, Fibu, Protokoll</div>
+          </q-card-section>
+        </q-card>
+      </div>
     </div>
   </q-page>
 </template>
@@ -111,6 +144,18 @@ const hatUebungsleiterZugriff = computed(() =>
   auth.hasPermission('ulstunden.erfassen_fremd') ||
   auth.hasPermission('ulstunden.bestaetigen') ||
   auth.hasPermission('ulstunden.verwalten'),
+)
+
+const zeigeEinstellungen = computed(() =>
+  auth.user?.role === 'admin' ||
+  auth.hasPermission('funktionen.verwalten') ||
+  auth.hasPermission('abteilungen.read'),
+)
+const zeigeSonstiges = computed(() =>
+  auth.user?.role === 'admin' ||
+  auth.hasPermission('system.config') ||
+  auth.hasPermission('fibu.export') ||
+  auth.hasPermission('system.protokoll'),
 )
 
 onMounted(async () => {

@@ -1,56 +1,48 @@
 <template>
   <q-page padding>
-    <div class="text-h5 q-mb-md">Einstellungen</div>
+    <div class="row items-center q-mb-md">
+      <q-btn flat round dense icon="arrow_back" :to="{ name: 'einstellungen' }" class="q-mr-sm" />
+      <div class="text-h5">Funktionen</div>
+    </div>
 
-    <q-tabs v-model="tab" dense align="left" class="q-mb-md">
-      <q-tab name="funktionen" label="Funktionen" icon="badge" />
-    </q-tabs>
+    <div class="text-caption text-grey-7 q-mb-md">
+      Funktionen werden Vereinsmitgliedern zugewiesen (z.B. Schiedsrichter, Übungsleiter)
+      und können in Beitragsregeln als Bedingung oder Ausnahme verwendet werden.
+    </div>
 
-    <q-tab-panels v-model="tab" animated>
-      <!-- ════════════════════════════════════════════════
-           Tab: Funktionen
-           ════════════════════════════════════════════════ -->
-      <q-tab-panel name="funktionen" class="q-pa-none">
-        <div class="text-caption text-grey-7 q-mb-md">
-          Funktionen werden Vereinsmitgliedern zugewiesen (z.B. Schiedsrichter, Übungsleiter)
-          und können in Beitragsregeln als Bedingung oder Ausnahme verwendet werden.
-        </div>
+    <div class="row justify-end q-mb-md">
+      <q-btn icon="add" label="Neue Funktion" color="primary" unelevated
+        @click="openDialog()" />
+    </div>
 
-        <div class="row justify-end q-mb-md">
-          <q-btn icon="add" label="Neue Funktion" color="primary" unelevated
-            @click="openDialog()" />
-        </div>
-
-        <div v-if="loading" class="row justify-center q-py-xl">
-          <q-spinner size="40px" color="primary" />
-        </div>
-        <q-list bordered separator v-else>
-          <q-item v-for="f in funktionen" :key="f.id">
-            <q-item-section>
-              <q-item-label class="text-weight-medium">{{ f.name }}</q-item-label>
-              <q-item-label caption>
-                <span class="text-mono text-grey-6">{{ f.key }}</span>
-                <span v-if="f.beschreibung" class="q-ml-sm">· {{ f.beschreibung }}</span>
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <div class="row q-gutter-xs">
-                <q-btn flat dense round icon="security" color="teal" @click="openPermissionsDialog(f)">
-                  <q-tooltip>Berechtigungen dieser Funktion</q-tooltip>
-                </q-btn>
-                <q-btn flat dense round icon="edit" color="primary" @click="openDialog(f)" />
-                <q-btn flat dense round icon="delete" color="negative" @click="confirmDelete(f)" />
-              </div>
-            </q-item-section>
-          </q-item>
-          <q-item v-if="funktionen.length === 0">
-            <q-item-section class="text-grey text-center q-py-md">
-              Noch keine Funktionen angelegt.
-            </q-item-section>
-          </q-item>
-        </q-list>
-      </q-tab-panel>
-    </q-tab-panels>
+    <div v-if="loading" class="row justify-center q-py-xl">
+      <q-spinner size="40px" color="primary" />
+    </div>
+    <q-list bordered separator v-else>
+      <q-item v-for="f in funktionen" :key="f.id">
+        <q-item-section>
+          <q-item-label class="text-weight-medium">{{ f.name }}</q-item-label>
+          <q-item-label caption>
+            <span class="text-mono text-grey-6">{{ f.key }}</span>
+            <span v-if="f.beschreibung" class="q-ml-sm">· {{ f.beschreibung }}</span>
+          </q-item-label>
+        </q-item-section>
+        <q-item-section side>
+          <div class="row q-gutter-xs">
+            <q-btn flat dense round icon="security" color="teal" @click="openPermissionsDialog(f)">
+              <q-tooltip>Berechtigungen dieser Funktion</q-tooltip>
+            </q-btn>
+            <q-btn flat dense round icon="edit" color="primary" @click="openDialog(f)" />
+            <q-btn flat dense round icon="delete" color="negative" @click="confirmDelete(f)" />
+          </div>
+        </q-item-section>
+      </q-item>
+      <q-item v-if="funktionen.length === 0">
+        <q-item-section class="text-grey text-center q-py-md">
+          Noch keine Funktionen angelegt.
+        </q-item-section>
+      </q-item>
+    </q-list>
 
     <!-- Dialog -->
     <q-dialog v-model="dialogOpen" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
@@ -112,9 +104,10 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 
+defineOptions({ name: 'FunktionenPage' })
+
 const $q = useQuasar()
 
-const tab = ref('funktionen')
 const funktionen = ref([])
 const loading = ref(false)
 const dialogOpen = ref(false)
