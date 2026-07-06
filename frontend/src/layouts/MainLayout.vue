@@ -92,9 +92,9 @@
           </q-item>
 
           <q-item
-            v-if="hatKassenZugriff"
+            v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')"
             clickable
-            :to="{ name: 'kassenbuch' }"
+            :to="{ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' }"
             active-class="bg-primary text-white"
           >
             <q-item-section avatar><q-icon name="account_balance_wallet" /></q-item-section>
@@ -138,16 +138,6 @@
           >
             <q-item-section avatar><q-icon name="confirmation_number" /></q-item-section>
             <q-item-section>Tickets</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('tickets.bereiche_verwalten')"
-            clickable
-            :to="{ name: 'ticket-verwaltung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="settings" /></q-item-section>
-            <q-item-section>Ticket-Verwaltung</q-item-section>
           </q-item>
 
           <q-item
@@ -208,16 +198,6 @@
           >
             <q-item-section avatar><q-icon name="account_balance" /></q-item-section>
             <q-item-section>Fibu-Export</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('kassen.verwalten')"
-            clickable
-            :to="{ name: 'kassenverwaltung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="manage_history" /></q-item-section>
-            <q-item-section>Kassenverwaltung</q-item-section>
           </q-item>
 
           <q-item
