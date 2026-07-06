@@ -5,14 +5,14 @@
 
     <div class="row q-col-gutter-md">
       <div
-        v-if="auth.hasPermission('abteilungen.read')"
+        v-if="auth.hasPermission('personen.read')"
         class="col-6 col-sm-4 col-md-3"
       >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'abteilungen' })">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'personen' })">
           <q-card-section class="text-center">
-            <q-icon name="account_tree" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Abteilungen</div>
-            <div class="text-caption text-grey">Abteilungen verwalten</div>
+            <q-icon name="people" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Personen</div>
+            <div class="text-caption text-grey">Personen verwalten</div>
           </q-card-section>
         </q-card>
       </div>
@@ -30,15 +30,51 @@
         </q-card>
       </div>
 
+      <div v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')" class="col-6 col-sm-4 col-md-3">
+        <q-card
+          class="cursor-pointer dashboard-card fit"
+          @click="router.push({ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' })"
+        >
+          <q-card-section class="text-center">
+            <q-icon name="account_balance_wallet" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Kassenbuch</div>
+            <div class="text-caption text-grey">Buchungen & Berichte</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
       <div
-        v-if="auth.hasPermission('personen.read')"
+        v-if="auth.hasPermission('schliessanlage.read')"
         class="col-6 col-sm-4 col-md-3"
       >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'personen' })">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'schliessanlage' })">
           <q-card-section class="text-center">
-            <q-icon name="people" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Personen</div>
-            <div class="text-caption text-grey">Personen verwalten</div>
+            <q-icon name="lock" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Schließanlage</div>
+            <div class="text-caption text-grey">Zutritt & Schlösser</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
+          <q-card-section class="text-center">
+            <q-icon name="confirmation_number" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Tickets</div>
+            <div class="text-caption text-grey">Anfragen & Aufgaben</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div
+        v-if="hatUebungsleiterZugriff"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'uebungsleiter' })">
+          <q-card-section class="text-center">
+            <q-icon name="sports" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Übungsleiter</div>
+            <div class="text-caption text-grey">Stunden & Vergütung</div>
           </q-card-section>
         </q-card>
       </div>
@@ -56,48 +92,35 @@
         </q-card>
       </div>
 
-      <div v-if="hatKassenZugriff" class="col-6 col-sm-4 col-md-3">
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'kassenbuch' })">
-          <q-card-section class="text-center">
-            <q-icon name="account_balance_wallet" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Kassenbuch</div>
-            <div class="text-caption text-grey">Buchungen & Berichte</div>
-          </q-card-section>
-        </q-card>
-      </div>
-
-      <div class="col-6 col-sm-4 col-md-3">
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
-          <q-card-section class="text-center">
-            <q-icon name="confirmation_number" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Tickets</div>
-            <div class="text-caption text-grey">Anfragen & Aufgaben</div>
-          </q-card-section>
-        </q-card>
-      </div>
-
       <div
-        v-if="auth.hasPermission('beitraege.read')"
+        v-if="auth.hasPermission('abteilungen.read')"
         class="col-6 col-sm-4 col-md-3"
       >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'beitraege' })">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'abteilungen' })">
           <q-card-section class="text-center">
-            <q-icon name="euro" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Beiträge</div>
-            <div class="text-caption text-grey">Beitragsverwaltung</div>
+            <q-icon name="account_tree" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Abteilungen</div>
+            <div class="text-caption text-grey">Abteilungen verwalten</div>
           </q-card-section>
         </q-card>
       </div>
 
-      <div
-        v-if="auth.hasPermission('gebuehren.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'gebuehren' })">
+      <div v-if="zeigeEinstellungen" class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'einstellungen' })">
           <q-card-section class="text-center">
-            <q-icon name="receipt_long" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Gebühren</div>
-            <div class="text-caption text-grey">Aufnahme-/Einmalgebühren</div>
+            <q-icon name="tune" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Einstellungen</div>
+            <div class="text-caption text-grey">Funktionen, Abteilungen</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
+      <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'sonstiges' })">
+          <q-card-section class="text-center">
+            <q-icon name="more_horiz" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Sonstiges</div>
+            <div class="text-caption text-grey">Import, Bereinigen, Fibu, Protokoll</div>
           </q-card-section>
         </q-card>
       </div>
@@ -106,7 +129,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
@@ -115,6 +138,25 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const hatKassenZugriff = ref(false)
+
+const hatUebungsleiterZugriff = computed(() =>
+  auth.hasPermission('ulstunden.erfassen') ||
+  auth.hasPermission('ulstunden.erfassen_fremd') ||
+  auth.hasPermission('ulstunden.bestaetigen') ||
+  auth.hasPermission('ulstunden.verwalten'),
+)
+
+const zeigeEinstellungen = computed(() =>
+  auth.user?.role === 'admin' ||
+  auth.hasPermission('funktionen.verwalten') ||
+  auth.hasPermission('abteilungen.read'),
+)
+const zeigeSonstiges = computed(() =>
+  auth.user?.role === 'admin' ||
+  auth.hasPermission('system.config') ||
+  auth.hasPermission('fibu.export') ||
+  auth.hasPermission('system.protokoll'),
+)
 
 onMounted(async () => {
   try {

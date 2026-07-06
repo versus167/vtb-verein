@@ -86,22 +86,17 @@ const routes = [
         meta: { permission: 'gebuehren.read' },
       },
       {
-        path: 'stundenerfassung',
-        name: 'stundenerfassung',
-        component: () => import('pages/UlStundenPage.vue'),
-        meta: { permission: ['ulstunden.erfassen', 'ulstunden.erfassen_fremd'] },
-      },
-      {
-        path: 'stunden-bestaetigung',
-        name: 'stunden-bestaetigung',
-        component: () => import('pages/UlBestaetigungPage.vue'),
-        meta: { permission: 'ulstunden.bestaetigen' },
-      },
-      {
-        path: 'verguetungssaetze',
-        name: 'ul-saetze',
-        component: () => import('pages/UlSaetzePage.vue'),
-        meta: { permission: 'ulstunden.verwalten' },
+        path: 'uebungsleiter',
+        name: 'uebungsleiter',
+        component: () => import('pages/UebungsleiterPage.vue'),
+        meta: {
+          permission: [
+            'ulstunden.erfassen',
+            'ulstunden.erfassen_fremd',
+            'ulstunden.bestaetigen',
+            'ulstunden.verwalten',
+          ],
+        },
       },
       {
         path: 'fibu-export',
@@ -135,7 +130,20 @@ const routes = [
       {
         path: 'einstellungen',
         name: 'einstellungen',
-        component: () => import('pages/EinstellungenPage.vue'),
+        component: () => import('pages/EinstellungenAllgemeinPage.vue'),
+        meta: { permission: ['funktionen.verwalten', 'abteilungen.read'] },
+      },
+      {
+        path: 'sonstiges',
+        name: 'sonstiges',
+        component: () => import('pages/EinstellungenSonstigesPage.vue'),
+        // Import ist adminOnly → Admins umgehen den Guard ohnehin
+        meta: { permission: ['system.config', 'fibu.export', 'system.protokoll'] },
+      },
+      {
+        path: 'funktionen',
+        name: 'funktionen',
+        component: () => import('pages/FunktionenPage.vue'),
         meta: { permission: 'funktionen.verwalten' },
       },
       {

@@ -4,6 +4,18 @@
     <div class="row items-center q-mb-md">
       <div class="text-h5 col">Tickets</div>
       <q-btn
+        v-if="auth.hasPermission('tickets.bereiche_verwalten')"
+        icon="settings"
+        :label="$q.screen.gt.sm ? 'Verwaltung' : undefined"
+        :round="$q.screen.lt.md"
+        flat
+        color="grey-7"
+        class="q-mr-sm"
+        :to="{ name: 'ticket-verwaltung' }"
+      >
+        <q-tooltip v-if="$q.screen.lt.md">Ticket-Verwaltung</q-tooltip>
+      </q-btn>
+      <q-btn
         icon="add"
         :label="$q.screen.gt.sm ? 'Neues Ticket' : undefined"
         :round="$q.screen.lt.md"

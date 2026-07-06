@@ -62,16 +62,6 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('abteilungen.read')"
-            clickable
-            :to="{ name: 'abteilungen' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="account_tree" /></q-item-section>
-            <q-item-section>Abteilungen</q-item-section>
-          </q-item>
-
-          <q-item
             v-if="auth.hasPermission('mannschaften.read')"
             clickable
             :to="{ name: 'mannschaften' }"
@@ -92,9 +82,9 @@
           </q-item>
 
           <q-item
-            v-if="hatKassenZugriff"
+            v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')"
             clickable
-            :to="{ name: 'kassenbuch' }"
+            :to="{ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' }"
             active-class="bg-primary text-white"
           >
             <q-item-section avatar><q-icon name="account_balance_wallet" /></q-item-section>
@@ -122,32 +112,12 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('system.protokoll')"
-            clickable
-            :to="{ name: 'protokoll' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="fact_check" /></q-item-section>
-            <q-item-section>Protokoll</q-item-section>
-          </q-item>
-
-          <q-item
             clickable
             :to="{ name: 'tickets' }"
             active-class="bg-primary text-white"
           >
             <q-item-section avatar><q-icon name="confirmation_number" /></q-item-section>
             <q-item-section>Tickets</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('tickets.bereiche_verwalten')"
-            clickable
-            :to="{ name: 'ticket-verwaltung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="settings" /></q-item-section>
-            <q-item-section>Ticket-Verwaltung</q-item-section>
           </q-item>
 
           <q-item
@@ -171,67 +141,17 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd')"
+            v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd') || auth.hasPermission('ulstunden.bestaetigen') || auth.hasPermission('ulstunden.verwalten')"
             clickable
-            :to="{ name: 'stundenerfassung' }"
+            :to="{ name: 'uebungsleiter' }"
             active-class="bg-primary text-white"
           >
-            <q-item-section avatar><q-icon name="schedule" /></q-item-section>
-            <q-item-section>Stundenerfassung</q-item-section>
+            <q-item-section avatar><q-icon name="sports" /></q-item-section>
+            <q-item-section>Übungsleiter</q-item-section>
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('ulstunden.bestaetigen')"
-            clickable
-            :to="{ name: 'stunden-bestaetigung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="how_to_reg" /></q-item-section>
-            <q-item-section>Stunden bestätigen</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('ulstunden.verwalten')"
-            clickable
-            :to="{ name: 'ul-saetze' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="payments" /></q-item-section>
-            <q-item-section>Vergütungssätze</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('fibu.export')"
-            clickable
-            :to="{ name: 'fibu-export' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="account_balance" /></q-item-section>
-            <q-item-section>Fibu-Export</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('kassen.verwalten')"
-            clickable
-            :to="{ name: 'kassenverwaltung' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="manage_history" /></q-item-section>
-            <q-item-section>Kassenverwaltung</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.user?.role === 'admin'"
-            clickable
-            :to="{ name: 'import' }"
-            active-class="bg-primary text-white"
-          >
-            <q-item-section avatar><q-icon name="upload_file" /></q-item-section>
-            <q-item-section>Datenimport</q-item-section>
-          </q-item>
-
-          <q-item
-            v-if="auth.hasPermission('funktionen.verwalten')"
+            v-if="hatEinstellungenZugriff"
             clickable
             :to="{ name: 'einstellungen' }"
             active-class="bg-primary text-white"
@@ -241,13 +161,13 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('system.config')"
+            v-if="hatSonstigesZugriff"
             clickable
-            :to="{ name: 'prune' }"
+            :to="{ name: 'sonstiges' }"
             active-class="bg-primary text-white"
           >
-            <q-item-section avatar><q-icon name="cleaning_services" /></q-item-section>
-            <q-item-section>Datenbereinigung</q-item-section>
+            <q-item-section avatar><q-icon name="more_horiz" /></q-item-section>
+            <q-item-section>Sonstiges</q-item-section>
           </q-item>
 
           <q-item
@@ -321,6 +241,23 @@ const router = useRouter()
 const auth = useAuthStore()
 const $q = useQuasar()
 const drawer = ref($q.screen.gt.sm)
+
+// Zwei gebündelte Bereiche: „Einstellungen" (Funktionen/Abteilungen) und „Sonstiges"
+// (Import/Bereinigung/Fibu-Export/Protokoll). Jeweils sichtbar, sobald der Nutzer
+// mindestens einen Unterbereich darf. Import ist adminOnly – Admins sehen ohnehin alles.
+const hatEinstellungenZugriff = computed(
+  () =>
+    auth.user?.role === 'admin' ||
+    auth.hasPermission('funktionen.verwalten') ||
+    auth.hasPermission('abteilungen.read'),
+)
+const hatSonstigesZugriff = computed(
+  () =>
+    auth.user?.role === 'admin' ||
+    auth.hasPermission('system.config') ||
+    auth.hasPermission('fibu.export') ||
+    auth.hasPermission('system.protokoll'),
+)
 
 // Refresh der aktuell sichtbaren Listen-Seite (Button + Auto bei App-Fokus).
 const { refreshing, hasHandler, triggerRefresh } = useRefreshControl()
