@@ -46,9 +46,13 @@ def clean(db):
             "gebuehr_forderung, users, tickets, ticket_anhaenge, abteilung "
             "RESTART IDENTITY CASCADE"
         )
+        # History-Tabellen werden NICHT per CASCADE erfasst (FK-frei) – explizit leeren,
+        # sonst kollidiert der Audit-Trigger nach RESTART IDENTITY mit Alt-(id,version)
+        # aus anderen Integrationsmodulen am selben Wegwerf-Container.
         cur.execute(
-            "TRUNCATE mitglied_history, mitglied_kontakt_history, users_history, "
-            "tickets_history, abteilung_history RESTART IDENTITY"
+            "TRUNCATE mitglied_history, mitglied_kontakt_history, mitglied_abteilung_history, "
+            "users_history, tickets_history, abteilung_history, schluessel_chip_history "
+            "RESTART IDENTITY"
         )
         cur.execute("TRUNCATE prune_einstellungen, prune_einstellungen_history")
     yield
@@ -412,3 +416,61 @@ def test_papierkorb_zaehler(db):
     _ins_kontakt(db, m)   # aktiv
     pk_sql, pk_params = build_papierkorb_count_sql(_KONTAKT)
     assert _count(db, pk_sql, pk_params) == 2
+
+
+def test_registry_deckt_alle_eingehenden_fks_ab(db):
+    """Schema-Drift-Wächter (Ticket #75): JEDE Live-FK, die auf eine geprunte Tabelle zeigt,
+    MUSS als ChildRef in der Registry stehen.
+
+    Fehlt eine, zählt der Report das Elternteil als löschbar, aber das echte DELETE läuft in
+    den FK-RESTRICT und rollt den ganzen Lauf zurück. Genau so entstand die Lücke, als
+    Schließanlage/Übungsleiter neue FKs auf mitglied/abteilung mitbrachten. Neue Domäne mit
+    FK auf eine geprunte Tabelle ohne Registry-Pflege ⇒ dieser Test wird rot.
+    """
+    from app.services.prune_service import PRUNE_REGISTRY
+    pruned_tables = {e.table for e in PRUNE_REGISTRY}
+    refs_by_parent = {e.table: {(c.table, c.fk) for c in e.children} for e in PRUNE_REGISTRY}
+
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT tc.table_name AS child_table, kcu.column_name AS child_col, "
+            "       ccu.table_name AS parent_table "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+            "JOIN information_schema.constraint_column_usage ccu "
+            "  ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'"
+        )
+        fks = cur.fetchall()
+
+    fehlend = [
+        (r["parent_table"], r["child_table"], r["child_col"])
+        for r in fks
+        if r["parent_table"] in pruned_tables
+        and (r["child_table"], r["child_col"]) not in refs_by_parent[r["parent_table"]]
+    ]
+    assert not fehlend, (
+        "FK auf geprunte Tabelle ohne ChildRef – Prune-DELETE würde am RESTRICT scheitern: "
+        + ", ".join(f"{c}.{col} -> {p}" for p, c, col in fehlend)
+    )
+
+
+def test_mitglied_durch_schluessel_chip_blockiert(db):
+    """Regression Befund #75: ein soft-gelöschtes Mitglied mit Chip ist NICHT prunebar.
+
+    Ohne den schluessel_chip-Guard hätte der Report es als löschbar gezählt und das echte
+    DELETE wäre am FK-RESTRICT gescheitert (und hätte den ganzen Lauf zurückgerollt)."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO schluessel_chip (kartennummer, mitglied_id) "
+                    "VALUES ('C-75', %s)", (m,))
+    _soft_delete(db, "mitglied", m, 60)
+    _age_history(db, "mitglied_history", m, 60)
+
+    assert {e["name"]: e for e in svc.report()["entities"]}["mitglied"]["loeschbar"] == 0
+    svc.prune(dry_run=False)                 # kein FK-Crash
+    assert _row_exists(db, "mitglied", m)    # Mitglied bleibt (durch Chip blockiert)

@@ -82,9 +82,12 @@ class PruneEntity:
 # Reihenfolge: Blatt → Wurzel. So sind beim echten Lauf die Kinder schon weg, bevor
 # das Eltern-Element drankommt. History wird je Entität separat (und vorgelagert) geprunt.
 #
-# Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten.
-# TODO (bewusst NICHT drin): Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren –
+# Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten,
+# Schließanlage/Zutritt und Übungsleiter-Abrechnung.
+# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren –
 # Aufbewahrungspflicht) und users (Auth-/Audit-verflochten, Last-Admin-Schutz).
+# Vollständigkeit der Child-Refs wird per Schema-Drift-Test (test_prune_integration.py)
+# gegen die echten FKs abgesichert – neue FK auf eine geprunte Tabelle -> Test rot.
 #
 # Child-Refs listen ALLE eingehenden FKs (auch aus nicht-geprunten Tabellen) – fehlt
 # einer, würde der DB-FK (RESTRICT) das echte Löschen blockieren. Anhänge sind reine
@@ -95,6 +98,37 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 stored_name_col="stored_name"),
     PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
                 stored_name_col="stored_name"),
+    # --- Schließanlage / Zutritt (Blatt → Wurzel) ---
+    # Steht VOR mitglied/abteilung: schluessel_chip hängt an mitglied, tuer_schloss an
+    # abteilung. tuer_zutritt_log, tuer_credential, tuer_schloss_status_log sind KEINE
+    # Prune-Entitäten (Dauerprotokolle/kein Soft-Delete) – tauchen nur als Child-Guards auf.
+    PruneEntity("tuer_app_berechtigung", "App-Türberechtigungen", "tuer_app_berechtigung",
+                history_table="tuer_app_berechtigung_history"),
+    PruneEntity("tuer_berechtigung", "Chip-Türberechtigungen", "tuer_berechtigung",
+                history_table="tuer_berechtigung_history"),
+    PruneEntity("tuer_schloss", "Schlösser", "tuer_schloss",
+                history_table="tuer_schloss_history",
+                children=(
+                    ChildRef("tuer_app_berechtigung", "schloss_id"),
+                    ChildRef("tuer_berechtigung", "schloss_id"),
+                    ChildRef("tuer_credential", "schloss_id"),
+                    ChildRef("tuer_schloss_status_log", "schloss_id"),
+                    ChildRef("tuer_zutritt_log", "schloss_id"),
+                )),
+    PruneEntity("schluessel_chip", "Schlüssel-Chips", "schluessel_chip",
+                history_table="schluessel_chip_history",
+                children=(
+                    ChildRef("tuer_berechtigung", "chip_id"),
+                    ChildRef("tuer_zutritt_log", "chip_id"),
+                )),
+    # --- Übungsleiter-Abrechnung (Blatt → Wurzel) ---
+    PruneEntity("ul_stunde", "ÜL-Stunden", "ul_stunde",
+                history_table="ul_stunde_history"),
+    PruneEntity("ul_abrechnung", "ÜL-Abrechnungen", "ul_abrechnung",
+                history_table="ul_abrechnung_history",
+                children=(ChildRef("ul_stunde", "abrechnung_id"),)),
+    PruneEntity("ul_satz", "ÜL-Sätze", "ul_satz",
+                history_table="ul_satz_history"),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
@@ -116,6 +150,10 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_funktion", "mitglied_id"),
                     ChildRef("mitglied_kontakt", "mitglied_id"),
                     ChildRef("mitglied_mannschaft", "mitglied_id"),
+                    ChildRef("schluessel_chip", "mitglied_id"),
+                    ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
+                    ChildRef("ul_abrechnung", "mitglied_id"),
+                    ChildRef("ul_satz", "mitglied_id"),
                 )),
     # --- Tickets-Domäne (Blatt → Wurzel) ---
     PruneEntity("ticket_teilnehmer", "Ticket-Teilnehmer", "ticket_teilnehmer",
@@ -163,6 +201,9 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("gebuehr", "abteilung_id"),
                     ChildRef("kassen", "abteilung_id"),
                     ChildRef("user_permissions", "abteilung_id"),
+                    ChildRef("tuer_schloss", "abteilung_id"),
+                    ChildRef("ul_abrechnung", "abteilung_id"),
+                    ChildRef("ul_satz", "abteilung_id"),
                 )),
 )
 
