@@ -2,7 +2,7 @@
 
 > Roadmap / offene Aufgaben. Der **Funktionsumfang des fertigen Stands** steht in
 > `README.md`; der Architektur-Rewrite (NiceGUI/SQLite → FastAPI/Quasar/PostgreSQL) ist
-> abgeschlossen und in `REWRITE.md` dokumentiert. Hier stehen nur noch **offene** Punkte.
+> abgeschlossen. Hier stehen nur noch **offene** Punkte.
 
 ## 🔥 Hohe Priorität
 
@@ -59,7 +59,7 @@
       Differenz 0 als 0-€-Buchung. `soll_cent` wird eingefroren. Auslöser: Button
       „Kasse zählen" **+** Kategorie-Flag (Prompt nach der Buchung). Tabelle
       `kassen_zaehlungen` (Stückelung als JSONB), Migration **v43**, keine eigene Permission
-      (Schreibzugriff auf die Kasse). Plan: `ZAEHLPROTOKOLL_PLAN.md`.
+      (Schreibzugriff auf die Kasse).
 
 ### Beiträge / Gebühren
 - [x] **Fibu-Export der Sollstellungen** – **kein** SEPA-Export in dem Sinne, sondern ein
