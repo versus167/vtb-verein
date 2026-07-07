@@ -102,6 +102,16 @@
           </q-item>
 
           <q-item
+            v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')"
+            clickable
+            :to="{ name: 'tresor' }"
+            active-class="bg-primary text-white"
+          >
+            <q-item-section avatar><q-icon name="vpn_key" /></q-item-section>
+            <q-item-section>Passwörter</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('berichte.read')"
             clickable
             :to="{ name: 'berichte' }"
@@ -287,6 +297,7 @@ function toggleDarkMode() {
 }
 
 const hatKassenZugriff = ref(false)
+const hatTresorZugriff = ref(false)
 
 const appVersion = ref('')
 
@@ -308,9 +319,19 @@ async function loadKassenZugriff() {
   }
 }
 
+async function loadTresorZugriff() {
+  try {
+    const { data } = await api.get('/api/tresor')
+    hatTresorZugriff.value = data.length > 0
+  } catch {
+    hatTresorZugriff.value = false
+  }
+}
+
 async function onLogout() {
   await auth.logoutServer()
   hatKassenZugriff.value = false
+  hatTresorZugriff.value = false
   router.push({ name: 'login' })
 }
 
@@ -344,6 +365,7 @@ function triggerInstall() {
 onMounted(() => {
   installAutoRefresh()
   loadKassenZugriff()
+  loadTresorZugriff()
   loadAppVersion()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true
