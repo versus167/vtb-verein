@@ -25,6 +25,17 @@
       Standard.
     </q-banner>
 
+    <div class="row items-center q-mb-md text-grey-8" v-if="report">
+      <div class="col">
+        Insgesamt löschbar: <b>{{ report.summe_loeschbar }}</b> Einträge,
+        History: <b>{{ report.summe_history_loeschbar }}</b> von
+        {{ report.summe_history_gesamt }} Zeilen löschbar.
+      </div>
+      <div class="col-auto" v-if="report.generated_at">
+        Stand: {{ fmtDate(report.generated_at) }}
+      </div>
+    </div>
+
     <q-table
       flat bordered
       :rows="rows"
@@ -104,17 +115,6 @@
         </q-td>
       </template>
     </q-table>
-
-    <div class="row q-mt-md text-grey-8" v-if="report">
-      <div class="col">
-        Insgesamt löschbar: <b>{{ report.summe_loeschbar }}</b> Einträge,
-        History: <b>{{ report.summe_history_loeschbar }}</b> von
-        {{ report.summe_history_gesamt }} Zeilen löschbar.
-      </div>
-      <div class="col-auto" v-if="report.generated_at">
-        Stand: {{ fmtDate(report.generated_at) }}
-      </div>
-    </div>
 
     <q-dialog v-model="confirmOpen">
       <q-card style="min-width: 360px">
