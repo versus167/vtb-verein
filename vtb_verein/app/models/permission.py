@@ -74,6 +74,12 @@ class Permission:
     # Zugriffsprotokoll einsehen (Anmelde-Events + Seitenaufrufe).
     SYSTEM_PROTOKOLL     = 'system.protokoll'
 
+    # --- Passwort-Tresor ---
+    # Tresore anlegen/bearbeiten/löschen, Freigaben vergeben und ALLE Tresore einsehen
+    # (umgeht die per-Tresor-ACL). Der reine Lese-/Schreibzugriff auf einen Tresor wird
+    # NICHT hierüber, sondern per-Tresor über tresor_freigabe geregelt (analog Kassen).
+    TRESOR_VERWALTEN     = 'tresor.verwalten'
+
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben
     TICKETS_ACCESS           = 'tickets.access'

@@ -24,6 +24,12 @@ class Settings:
     COOKIE_SECURE: bool = os.getenv("VTB_COOKIE_SECURE", "true").lower() == "true"
     COOKIE_SAMESITE: str = os.getenv("VTB_COOKIE_SAMESITE", "strict")
 
+    # Passwort-Tresor (#85): symmetrischer Schlüssel für die At-rest-Verschlüsselung der
+    # Tresor-Secrets. Ein urlsafe-base64-kodierter 32-Byte-Fernet-Key, NUR aus der Env.
+    # Fehlt/ungültig → Tresor-Feature deaktiviert (API antwortet 503). Erzeugen mit:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    VAULT_KEY: str = os.getenv("VTB_VAULT_KEY", "")
+
     # Vereins-Stammdaten für Belege/PDFs (z. B. Übungsleiter-Stundennachweis).
     # Defaults entsprechen dem Muster-Beleg; per Env überschreibbar.
     VEREIN_NAME: str = os.getenv("VTB_VEREIN_NAME", "VTB Chemnitz e.V.")

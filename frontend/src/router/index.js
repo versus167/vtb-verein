@@ -159,6 +159,13 @@ const routes = [
         meta: { permission: 'schliessanlage.read' },
       },
       {
+        // Kein meta.permission: der Zugriff ist ACL-basiert (tresor_freigabe) wie
+        // beim Kassenbuch – die Seite/Backend setzen ihn je Tresor durch.
+        path: 'tresor',
+        name: 'tresor',
+        component: () => import('pages/TresorPage.vue'),
+      },
+      {
         path: 'import',
         name: 'import',
         component: () => import('pages/ImportPage.vue'),

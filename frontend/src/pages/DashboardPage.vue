@@ -56,6 +56,19 @@
         </q-card>
       </div>
 
+      <div
+        v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tresor' })">
+          <q-card-section class="text-center">
+            <q-icon name="vpn_key" size="3rem" color="primary" />
+            <div class="text-h6 q-mt-sm">Passwörter</div>
+            <div class="text-caption text-grey">Vereins-Tresor</div>
+          </q-card-section>
+        </q-card>
+      </div>
+
       <div class="col-6 col-sm-4 col-md-3">
         <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
           <q-card-section class="text-center">
@@ -138,6 +151,7 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const hatKassenZugriff = ref(false)
+const hatTresorZugriff = ref(false)
 
 const hatUebungsleiterZugriff = computed(() =>
   auth.hasPermission('ulstunden.erfassen') ||
@@ -162,6 +176,10 @@ onMounted(async () => {
   try {
     const { data } = await api.get('/api/kassen/')
     hatKassenZugriff.value = data.length > 0
+  } catch { /* ignorieren */ }
+  try {
+    const { data } = await api.get('/api/tresor')
+    hatTresorZugriff.value = data.length > 0
   } catch { /* ignorieren */ }
 })
 </script>
