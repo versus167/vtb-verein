@@ -129,6 +129,19 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 children=(ChildRef("ul_stunde", "abrechnung_id"),)),
     PruneEntity("ul_satz", "ÜL-Sätze", "ul_satz",
                 history_table="ul_satz_history"),
+    # --- Passwort-Tresor (Blatt → Wurzel) ---
+    # tresor_zugriff_log ist append-only (kein Soft-Delete, keine FK auf tresor/-eintrag)
+    # und daher KEINE Prune-Entität – es taucht auch nicht als Child-Guard auf.
+    PruneEntity("tresor_eintrag", "Tresor-Einträge", "tresor_eintrag",
+                history_table="tresor_eintrag_history"),
+    PruneEntity("tresor_freigabe", "Tresor-Freigaben", "tresor_freigabe",
+                history_table="tresor_freigabe_history"),
+    PruneEntity("tresor", "Passwort-Tresore", "tresor",
+                history_table="tresor_history",
+                children=(
+                    ChildRef("tresor_eintrag", "tresor_id"),
+                    ChildRef("tresor_freigabe", "tresor_id"),
+                )),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
