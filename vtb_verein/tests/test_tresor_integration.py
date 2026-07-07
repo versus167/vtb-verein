@@ -157,6 +157,51 @@ def test_revoke_user_freigabe_keeps_group_freigabe(db):
     assert t1 not in rest and t2 in rest
 
 
+def test_history_lists_versions_and_old_ciphertext(db):
+    import json
+    from cryptography.fernet import Fernet
+    f = Fernet(Fernet.generate_key())
+    t = db.tresore.create("T", None, "t")
+    e = db.tresor_eintraege.create(
+        t.id, "Router", "admin", None,
+        f.encrypt(json.dumps({"passwort": "orig", "notiz": ""}).encode()), "t")
+    # Passwort ändern -> Version 2 (anderer Bearbeiter)
+    db.tresor_eintraege.update(
+        e.id, "Router", "admin", None,
+        f.encrypt(json.dumps({"passwort": "neu", "notiz": ""}).encode()), "t2", e.version)
+    hist = db.tresor_eintraege.list_history(e.id)
+    assert [h["version"] for h in hist] == [2, 1]          # neueste zuerst
+    assert "secret_ciphertext" not in hist[0]              # Metadaten ohne Secret
+    assert hist[0]["updated_by"] == "t2" and hist[1]["updated_by"] == "t"
+    # der alte Ciphertext (v1) lässt sich noch entschlüsseln -> "orig"
+    ct_v1 = db.tresor_eintraege.get_history_ciphertext(e.id, 1)
+    assert json.loads(f.decrypt(bytes(ct_v1)))["passwort"] == "orig"
+    assert db.tresor_eintraege.get_history_ciphertext(e.id, 99) is None
+
+
+def test_restore_old_password_creates_new_version(db):
+    import json
+    from cryptography.fernet import Fernet
+    f = Fernet(Fernet.generate_key())
+    t = db.tresore.create("T", None, "t")
+    e = db.tresor_eintraege.create(
+        t.id, "X", None, None,
+        f.encrypt(json.dumps({"passwort": "orig", "notiz": ""}).encode()), "t")
+    db.tresor_eintraege.update(
+        e.id, "X", None, None,
+        f.encrypt(json.dumps({"passwort": "neu", "notiz": ""}).encode()), "t", e.version)
+    cur = db.tresor_eintraege.get(e.id)
+    assert cur.version == 2
+    assert json.loads(f.decrypt(bytes(db.tresor_eintraege.get_ciphertext(e.id))))["passwort"] == "neu"
+    # Wiederherstellen von v1: alten Ciphertext als neue Version übernehmen (wie die API)
+    ct_v1 = db.tresor_eintraege.get_history_ciphertext(e.id, 1)
+    assert db.tresor_eintraege.update(e.id, cur.titel, cur.benutzername, cur.url, ct_v1, "restorer", cur.version)
+    after = db.tresor_eintraege.get(e.id)
+    assert after.version == 3
+    assert json.loads(f.decrypt(bytes(db.tresor_eintraege.get_ciphertext(e.id))))["passwort"] == "orig"
+    assert [h["version"] for h in db.tresor_eintraege.list_history(e.id)] == [3, 2, 1]
+
+
 def test_zugriff_log_append(db):
     t = db.tresore.create("T", None, "t")
     e = db.tresor_eintraege.create(t.id, "X", None, None, _fernet_token("p"), "t")

@@ -48,6 +48,31 @@ class TresorEintragRepository(BaseRepository):
             row = cur.fetchone()
             return bytes(row['secret_ciphertext']) if row else None
 
+    def list_history(self, eintrag_id: int) -> list[dict]:
+        """Versions-Verlauf eines Eintrags – Metadaten je Version (OHNE Ciphertext),
+        neueste zuerst. Jede Zeile ist der Zustand DIESER Version (Audit-Trigger)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT version, titel, benutzername, url, updated_at, updated_by, "
+                "created_by, deleted_at FROM tresor_eintrag_history "
+                "WHERE id = %s ORDER BY version DESC",
+                (eintrag_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_history_ciphertext(self, eintrag_id: int, version: int) -> Optional[bytes]:
+        """Verschlüsselte Nutzlast einer bestimmten früheren Version (Reveal/Restore)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT secret_ciphertext FROM tresor_eintrag_history "
+                "WHERE id = %s AND version = %s",
+                (eintrag_id, version),
+            )
+            row = cur.fetchone()
+            if row is None or row['secret_ciphertext'] is None:
+                return None
+            return bytes(row['secret_ciphertext'])
+
     def create(self, tresor_id: int, titel: str, benutzername: Optional[str],
                url: Optional[str], secret_ciphertext: bytes, created_by: str) -> TresorEintrag:
         with self.cursor() as cur:
