@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 65
+SCHEMA_VERSION = 66
 
 
 # ---------------------------------------------------------------------------
@@ -1048,6 +1048,191 @@ _DDL_TUER_CREDENTIAL = """
 """
 
 
+# ----------------------------------------------------------------------------
+# Passwort-Tresor (Schema v66): verschlüsselte Zugangsdaten in benannten Tresoren.
+# Freigabe je Tresor an User / Abteilung / Funktion (read|write) über
+# tresor_freigabe – der Zugriff wird NICHT über globale Rechte geregelt (analog
+# kasse_berechtigungen). Secrets liegen ausschließlich als Fernet-Ciphertext
+# (BYTEA) in tresor_eintrag.secret_ciphertext; die Metadaten (Titel/Benutzer/URL)
+# sind Klartext für Liste und Suche. tresor_zugriff_log ist ein append-only Audit
+# jedes Enthüllens (kein History/Soft-Delete – das Log IST der Datensatz).
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v65→v66.
+# ----------------------------------------------------------------------------
+_TRESOR_COLS = (
+    "id, version, name, beschreibung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TRESOR_VALS = ", ".join("NEW." + c.strip() for c in _TRESOR_COLS.split(","))
+
+_TRESOR_FREIGABE_COLS = (
+    "id, version, tresor_id, principal_typ, principal_id, zugriff, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TRESOR_FREIGABE_VALS = ", ".join("NEW." + c.strip() for c in _TRESOR_FREIGABE_COLS.split(","))
+
+_TRESOR_EINTRAG_COLS = (
+    "id, version, tresor_id, titel, benutzername, url, secret_ciphertext, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TRESOR_EINTRAG_VALS = ", ".join("NEW." + c.strip() for c in _TRESOR_EINTRAG_COLS.split(","))
+
+_FN_TRESOR_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tresor_history ({_TRESOR_COLS}) VALUES ({_TRESOR_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tresor_history ({_TRESOR_COLS}) VALUES ({_TRESOR_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_FREIGABE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_freigabe_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tresor_freigabe_history ({_TRESOR_FREIGABE_COLS}) VALUES ({_TRESOR_FREIGABE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_FREIGABE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_freigabe_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tresor_freigabe_history ({_TRESOR_FREIGABE_COLS}) VALUES ({_TRESOR_FREIGABE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_EINTRAG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_eintrag_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tresor_eintrag_history ({_TRESOR_EINTRAG_COLS}) VALUES ({_TRESOR_EINTRAG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_EINTRAG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_eintrag_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tresor_eintrag_history ({_TRESOR_EINTRAG_COLS}) VALUES ({_TRESOR_EINTRAG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TRESOR = """
+    CREATE TABLE IF NOT EXISTS tresor (
+      id          SERIAL PRIMARY KEY,
+      name        TEXT NOT NULL,
+      beschreibung TEXT,
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tresor_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      name TEXT, beschreibung TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS tresor_freigabe (
+      id            SERIAL PRIMARY KEY,
+      tresor_id     INTEGER NOT NULL REFERENCES tresor(id),
+      principal_typ TEXT NOT NULL,
+      principal_id  INTEGER NOT NULL,
+      zugriff       TEXT NOT NULL DEFAULT 'read',
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by    TEXT NOT NULL,
+      deleted_at    TEXT,
+      deleted_by    TEXT,
+      CHECK (principal_typ IN ('user', 'abteilung', 'funktion')),
+      CHECK (zugriff IN ('read', 'write'))
+    );
+    CREATE TABLE IF NOT EXISTS tresor_freigabe_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      tresor_id INTEGER, principal_typ TEXT, principal_id INTEGER, zugriff TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS tresor_eintrag (
+      id            SERIAL PRIMARY KEY,
+      tresor_id     INTEGER NOT NULL REFERENCES tresor(id),
+      titel         TEXT NOT NULL,
+      benutzername  TEXT,
+      url           TEXT,
+      secret_ciphertext BYTEA NOT NULL,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by    TEXT NOT NULL,
+      deleted_at    TEXT,
+      deleted_by    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tresor_eintrag_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      tresor_id INTEGER, titel TEXT, benutzername TEXT, url TEXT,
+      secret_ciphertext BYTEA,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS tresor_zugriff_log (
+      id            BIGSERIAL PRIMARY KEY,
+      tresor_id     INTEGER,
+      eintrag_id    INTEGER,
+      eintrag_titel TEXT,
+      user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username      TEXT,
+      aktion        TEXT NOT NULL DEFAULT 'reveal',
+      ip            TEXT,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+"""
+
+_TRESOR_INDEXES = (
+    ("idx_tresor_deleted_at",            "tresor(deleted_at)"),
+    ("idx_tresor_history_id",            "tresor_history(id)"),
+    ("idx_tresor_freigabe_tresor_id",    "tresor_freigabe(tresor_id)"),
+    ("idx_tresor_freigabe_principal",    "tresor_freigabe(principal_typ, principal_id)"),
+    ("idx_tresor_freigabe_deleted_at",   "tresor_freigabe(deleted_at)"),
+    ("idx_tresor_freigabe_history_id",   "tresor_freigabe_history(id)"),
+    ("idx_tresor_eintrag_tresor_id",     "tresor_eintrag(tresor_id)"),
+    ("idx_tresor_eintrag_deleted_at",    "tresor_eintrag(deleted_at)"),
+    ("idx_tresor_eintrag_history_id",    "tresor_eintrag_history(id)"),
+    ("idx_tresor_zugriff_log_eintrag_id", "tresor_zugriff_log(eintrag_id)"),
+    ("idx_tresor_zugriff_log_created",   "tresor_zugriff_log(created_at DESC)"),
+)
+
+_TRESOR_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_tresor_freigabe_principal_active "
+    "ON tresor_freigabe (tresor_id, principal_typ, principal_id) WHERE deleted_at IS NULL",
+)
+
+_TRESOR_TRIGGERS = (
+    ('trig_tresor_audit_insert',          'INSERT', 'tresor',          'fn_tresor_audit_insert'),
+    ('trig_tresor_audit_update',          'UPDATE', 'tresor',          'fn_tresor_audit_update'),
+    ('trig_tresor_freigabe_audit_insert', 'INSERT', 'tresor_freigabe', 'fn_tresor_freigabe_audit_insert'),
+    ('trig_tresor_freigabe_audit_update', 'UPDATE', 'tresor_freigabe', 'fn_tresor_freigabe_audit_update'),
+    ('trig_tresor_eintrag_audit_insert',  'INSERT', 'tresor_eintrag',  'fn_tresor_eintrag_audit_insert'),
+    ('trig_tresor_eintrag_audit_update',  'UPDATE', 'tresor_eintrag',  'fn_tresor_eintrag_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -1159,6 +1344,7 @@ class Database:
             63: self._migrate_v62_to_v63,
             64: self._migrate_v63_to_v64,
             65: self._migrate_v64_to_v65,
+            66: self._migrate_v65_to_v66,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4030,6 +4216,47 @@ class Database:
                 )
             cur.execute("UPDATE schema_version SET version = 65 WHERE id = 1")
 
+    def _migrate_v65_to_v66(self) -> None:
+        """Passwort-Tresor (#85): verschlüsselte Zugangsdaten in benannten Tresoren.
+
+        Neue Tabellen tresor / tresor_freigabe / tresor_eintrag (+ *_history, Audit-Trigger)
+        sowie das append-only tresor_zugriff_log. Zugriff wird je Tresor über tresor_freigabe
+        geregelt (Freigabe an User/Abteilung/Funktion, read|write) – NICHT über globale Rechte;
+        nur das Verwalten (Tresore anlegen/löschen, Freigaben) hängt am neuen globalen Recht
+        `tresor.verwalten`, das Bestands-Admins hier nachgezogen bekommen (Fresh == Upgrade).
+
+        Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem Fresh-Schema. Zum Schluss
+        `_normalize_audit_timestamps`, damit die neuen TEXT-Zeitstempel – wie im Frischaufbau –
+        auf TIMESTAMPTZ gezogen werden (identische Spaltentypen fresh == migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TRESOR)
+            cur.execute(_FN_TRESOR_AUDIT_INSERT)
+            cur.execute(_FN_TRESOR_AUDIT_UPDATE)
+            cur.execute(_FN_TRESOR_FREIGABE_AUDIT_INSERT)
+            cur.execute(_FN_TRESOR_FREIGABE_AUDIT_UPDATE)
+            cur.execute(_FN_TRESOR_EINTRAG_AUDIT_INSERT)
+            cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
+            for name, event, table, fn in _TRESOR_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TRESOR_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _TRESOR_UNIQUE_INDEXES:
+                cur.execute(sql)
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, 'tresor.verwalten', 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 66 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -5269,6 +5496,9 @@ class Database:
         cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
         # Read-only Credential-Mirror je Schloss (Schema v59). DDL geteilt mit v58→v59.
         cur.execute(_DDL_TUER_CREDENTIAL)
+        # Passwort-Tresor (Schema v66): Tresore, Freigaben, verschlüsselte Einträge +
+        # append-only Zugriffslog. DDL geteilt mit Migration v65→v66.
+        cur.execute(_DDL_TRESOR)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -5478,6 +5708,12 @@ class Database:
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
+        cur.execute(_FN_TRESOR_AUDIT_INSERT)
+        cur.execute(_FN_TRESOR_AUDIT_UPDATE)
+        cur.execute(_FN_TRESOR_FREIGABE_AUDIT_INSERT)
+        cur.execute(_FN_TRESOR_FREIGABE_AUDIT_UPDATE)
+        cur.execute(_FN_TRESOR_EINTRAG_AUDIT_INSERT)
+        cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -6082,6 +6318,7 @@ class Database:
             *_UL_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
+            *_TRESOR_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -6195,6 +6432,7 @@ class Database:
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
             *_ZUTRITT_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
+            *_TRESOR_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -6206,6 +6444,8 @@ class Database:
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_kassen_kategorien_scope_name ON kassen_kategorien (COALESCE(kasse_id, 0), lower(name)) WHERE deleted_at IS NULL")
         for sql in _ZUTRITT_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------
@@ -6227,6 +6467,7 @@ class Database:
             'tickets.bereiche_verwalten',
             'schliessanlage.read', 'schliessanlage.verwalten', 'schliessanlage.protokoll',
             'schliessanlage.oeffnen',
+            'tresor.verwalten',
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

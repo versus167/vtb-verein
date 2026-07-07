@@ -340,6 +340,8 @@ class UserService:
         self.db.permissions.revoke_all_permissions_for_user(user_id, deleted_by)
         self.db.kasse_berechtigungen.revoke_alle_berechtigungen_fuer_user(user_id, deleted_by)
         self.db.ticket_bereich_berechtigungen.mark_alle_berechtigungen_fuer_user_deleted(user_id, deleted_by)
+        # Persönliche Tresor-Freigaben entziehen (Abteilungs-/Funktions-Freigaben bleiben).
+        self.db.tresor_freigaben.revoke_alle_freigaben_fuer_user(user_id, deleted_by)
 
         return True
     
