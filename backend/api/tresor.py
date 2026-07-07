@@ -257,6 +257,79 @@ def reveal_eintrag(eintrag_id: int, request: Request, user: CurrentUser, db: DB)
     }
 
 
+# ------------------------------------------------------------- Änderungsverlauf
+class VerlaufRestore(BaseModel):
+    expected_version: int
+
+
+@router.get("/eintraege/{eintrag_id}/verlauf")
+def eintrag_verlauf(eintrag_id: int, user: CurrentUser, db: DB):
+    """Versions-Verlauf eines Eintrags: wer hat wann geändert. Schreibzugriff nötig – das
+    Passwort steht hier NICHT drin (dafür /verlauf/{version}/reveal). Jede Zeile ist der
+    Zustand einer Version aus tresor_eintrag_history (Audit-Trigger je version-Bump)."""
+    e = db.tresor_eintraege.get(eintrag_id)
+    if e is None:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    _require_write(db, user, e.tresor_id)
+    verlauf = db.tresor_eintraege.list_history(eintrag_id)
+    for v in verlauf:
+        v["aktuell"] = v["version"] == e.version
+    return {"aktuelle_version": e.version, "verlauf": verlauf}
+
+
+@router.get("/eintraege/{eintrag_id}/verlauf/{version}/reveal")
+def reveal_verlauf(eintrag_id: int, version: int, request: Request, user: CurrentUser, db: DB):
+    """Enthüllt Passwort + Notiz einer FRÜHEREN Version – Schreibzugriff nötig, wird auditiert."""
+    e = db.tresor_eintraege.get(eintrag_id)
+    if e is None:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    _require_write(db, user, e.tresor_id)
+    _require_vault()
+    ct = db.tresor_eintraege.get_history_ciphertext(eintrag_id, version)
+    if ct is None:
+        raise HTTPException(404, "Version nicht gefunden")
+    try:
+        secret = vault_crypto.decrypt_secret(ct)
+    except vault_crypto.VaultDecryptError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Passwort ließ sich nicht entschlüsseln (Schlüssel geändert?).",
+        )
+    db.tresor_zugriff_log.log(
+        tresor_id=e.tresor_id, eintrag_id=e.id, eintrag_titel=e.titel,
+        user_id=user.id, username=user.username, aktion='reveal_verlauf', ip=_client_ip(request),
+    )
+    return {"version": version, "passwort": secret["passwort"], "notiz": secret["notiz"]}
+
+
+@router.post("/eintraege/{eintrag_id}/verlauf/{version}/wiederherstellen")
+def restore_verlauf(eintrag_id: int, version: int, data: VerlaufRestore,
+                    request: Request, user: CurrentUser, db: DB):
+    """Stellt Passwort + Notiz einer früheren Version wieder her: deren Ciphertext wird als
+    NEUE Version übernommen (nichts geht verloren, selbst wieder rücknehmbar). Titel/Benutzer/
+    URL bleiben unverändert. Schreibzugriff nötig, wird auditiert."""
+    e = db.tresor_eintraege.get(eintrag_id)
+    if e is None:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    _require_write(db, user, e.tresor_id)
+    _require_vault()
+    if version == e.version:
+        raise HTTPException(422, "Diese Version ist bereits der aktuelle Stand.")
+    ct = db.tresor_eintraege.get_history_ciphertext(eintrag_id, version)
+    if ct is None:
+        raise HTTPException(404, "Version nicht gefunden")
+    ok = db.tresor_eintraege.update(
+        eintrag_id, e.titel, e.benutzername, e.url, ct, user.username, data.expected_version,
+    )
+    if not ok:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+    db.tresor_zugriff_log.log(
+        tresor_id=e.tresor_id, eintrag_id=e.id, eintrag_titel=e.titel,
+        user_id=user.id, username=user.username, aktion='wiederhergestellt', ip=_client_ip(request),
+    )
+    return asdict(db.tresor_eintraege.get(eintrag_id))
+
+
 # ------------------------------------------------------------------- Freigaben
 @router.get("/{tresor_id}/freigaben")
 def list_freigaben(tresor_id: int, user: CurrentUser, db: DB):

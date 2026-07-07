@@ -92,6 +92,9 @@
                   <q-btn v-if="!revealed[e.id]" flat dense size="sm" no-caps icon="visibility"
                     color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
                   <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
+                    icon="history" color="grey-8" @click="openVerlauf(e)">
+                    <q-tooltip>Änderungsverlauf</q-tooltip></q-btn>
+                  <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
                     icon="edit" color="grey-8" @click="openEintragDialog(e)" />
                   <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
                     icon="delete" color="negative" @click="deleteEintrag(e)" />
@@ -225,9 +228,13 @@
         <q-card-section class="q-pt-none">
           <q-list bordered separator class="rounded-borders">
             <q-item v-for="z in zugriffe" :key="z.id">
-              <q-item-section avatar><q-icon name="visibility" color="grey-7" /></q-item-section>
+              <q-item-section avatar><q-icon :name="zugriffIcon(z.aktion)" color="grey-7" /></q-item-section>
               <q-item-section>
-                <q-item-label>{{ z.eintrag_titel || '(gelöscht)' }}</q-item-label>
+                <q-item-label>
+                  {{ z.eintrag_titel || '(gelöscht)' }}
+                  <q-chip v-if="z.aktion && z.aktion !== 'reveal'" dense square size="sm"
+                    color="blue-grey-1" text-color="blue-grey-9">{{ zugriffLabel(z.aktion) }}</q-chip>
+                </q-item-label>
                 <q-item-label caption>
                   {{ z.username || 'unbekannt' }} · {{ fmtTs(z.created_at) }}
                   <span v-if="z.ip" class="text-grey-6">· {{ z.ip }}</span>
@@ -237,6 +244,55 @@
           </q-list>
           <div v-if="zugriffe.length === 0" class="text-grey text-center q-py-sm">
             Noch keine Zugriffe protokolliert.
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- Passwort-Verlauf -->
+    <q-dialog v-model="verlaufDialog" :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:520px;max-width:640px'">
+        <q-card-section class="row items-center">
+          <div class="text-h6">Verlauf · {{ verlaufEintrag?.titel }}</div>
+          <q-space />
+          <q-btn flat dense round icon="close" v-close-popup />
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <div class="text-caption text-grey-7 q-mb-sm">
+            Jede Änderung ist eine Version. Eine frühere Version kannst du anzeigen und ihr
+            Passwort wiederherstellen – der aktuelle Stand bleibt dabei als Version erhalten.
+          </div>
+          <q-list bordered separator class="rounded-borders">
+            <q-item v-for="v in verlauf" :key="v.version">
+              <q-item-section>
+                <q-item-label>
+                  Version {{ v.version }}
+                  <q-chip v-if="v.aktuell" dense square size="sm" color="green-7" text-color="white">aktuell</q-chip>
+                </q-item-label>
+                <q-item-label caption>{{ v.updated_by || 'unbekannt' }} · {{ fmtTs(v.updated_at) }}</q-item-label>
+                <div v-if="verlaufReveals[v.version]" class="q-mt-xs">
+                  <q-chip dense square color="grey-2" text-color="grey-9" class="text-mono">
+                    {{ verlaufReveals[v.version].passwort || '(leer)' }}
+                  </q-chip>
+                  <q-btn flat dense round size="sm" icon="content_copy" color="primary"
+                    @click="copy(verlaufReveals[v.version].passwort, 'Passwort kopiert')" />
+                  <div v-if="verlaufReveals[v.version].notiz" class="text-caption text-grey-8 q-mt-xs">
+                    <q-icon name="sticky_note_2" size="xs" /> {{ verlaufReveals[v.version].notiz }}
+                  </div>
+                </div>
+              </q-item-section>
+              <q-item-section side top>
+                <div class="row items-center no-wrap">
+                  <q-btn v-if="!verlaufReveals[v.version]" flat dense size="sm" no-caps icon="visibility"
+                    color="primary" label="Anzeigen" :disable="!konfiguriert" @click="revealVerlauf(v)" />
+                  <q-btn v-if="!v.aktuell" flat dense size="sm" no-caps icon="restore" color="orange-8"
+                    label="Wiederherstellen" :disable="!konfiguriert" @click="restoreVerlauf(v)" />
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="!verlaufLoading && verlauf.length === 0" class="text-grey text-center q-py-sm">
+            Kein Verlauf vorhanden.
           </div>
         </q-card-section>
       </q-card>
@@ -506,6 +562,64 @@ async function openZugriffe(t) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Log konnte nicht geladen werden' })
   }
 }
+function zugriffLabel(a) {
+  return { reveal: 'angezeigt', reveal_verlauf: 'alte Version angezeigt',
+    wiederhergestellt: 'wiederhergestellt' }[a] || a
+}
+function zugriffIcon(a) {
+  return { wiederhergestellt: 'restore', reveal_verlauf: 'history' }[a] || 'visibility'
+}
+
+// ── Passwort-Verlauf ──
+const verlaufDialog = ref(false)
+const verlaufEintrag = ref(null)
+const verlauf = ref([])
+const verlaufReveals = ref({})     // version -> { passwort, notiz }
+const verlaufLoading = ref(false)
+async function openVerlauf(e) {
+  verlaufEintrag.value = e
+  verlauf.value = []
+  verlaufReveals.value = {}
+  verlaufDialog.value = true
+  verlaufLoading.value = true
+  try {
+    const { data } = await api.get(`/api/tresor/eintraege/${e.id}/verlauf`)
+    verlauf.value = data.verlauf
+  } catch (err) {
+    $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Verlauf konnte nicht geladen werden' })
+    verlaufDialog.value = false
+  } finally { verlaufLoading.value = false }
+}
+async function revealVerlauf(v) {
+  try {
+    const { data } = await api.get(`/api/tresor/eintraege/${verlaufEintrag.value.id}/verlauf/${v.version}/reveal`)
+    verlaufReveals.value = { ...verlaufReveals.value, [v.version]: { passwort: data.passwort, notiz: data.notiz } }
+  } catch (err) {
+    $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Anzeigen fehlgeschlagen' })
+  }
+}
+function restoreVerlauf(v) {
+  const e = verlaufEintrag.value
+  $q.dialog({
+    title: 'Passwort wiederherstellen',
+    message: `Das Passwort von „${e.titel}" auf den Stand von Version ${v.version} `
+      + `(${v.updated_by || 'unbekannt'}, ${fmtTs(v.updated_at)}) zurücksetzen? `
+      + `Der aktuelle Stand bleibt als frühere Version erhalten.`,
+    cancel: true, ok: { label: 'Wiederherstellen', color: 'primary' },
+  }).onOk(async () => {
+    try {
+      await api.post(`/api/tresor/eintraege/${e.id}/verlauf/${v.version}/wiederherstellen`,
+        { expected_version: e.version })
+      $q.notify({ type: 'positive', message: 'Passwort wiederhergestellt' })
+      verlaufDialog.value = false
+      hide(e.id)
+      await Promise.all([loadEintraege(selectedId.value), loadTresore()])
+    } catch (err) {
+      $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Wiederherstellen fehlgeschlagen' })
+    }
+  })
+}
+
 function fmtTs(ts) {
   if (!ts) return ''
   const d = new Date(ts)
