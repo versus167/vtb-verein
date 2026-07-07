@@ -97,6 +97,15 @@ PERMISSION_GROUPS = [
             (Permission.SCHLIESSANLAGE_PROTOKOLL, 'Zutrittsprotokoll einsehen'),
         ],
     },
+    {
+        'label': 'Passwort-Tresor', 'icon': 'vpn_key',
+        'permissions': [
+            # Der Lese-/Schreibzugriff auf einzelne Tresore läuft NICHT hierüber, sondern
+            # per-Tresor über die Freigaben (tresor_freigabe). Dieses Recht ist nur fürs
+            # Verwalten: Tresore anlegen/löschen, Freigaben vergeben, alle Tresore sehen.
+            (Permission.TRESOR_VERWALTEN, 'Verwalten (Tresore anlegen, Freigaben vergeben)'),
+        ],
+    },
 ]
 
 
