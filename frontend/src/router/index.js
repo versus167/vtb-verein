@@ -153,6 +153,12 @@ const routes = [
         meta: { permission: 'system.config' },
       },
       {
+        path: 'konsistenz',
+        name: 'konsistenz',
+        component: () => import('pages/KonsistenzPage.vue'),
+        meta: { adminOnly: true },
+      },
+      {
         path: 'schliessanlage',
         name: 'schliessanlage',
         component: () => import('pages/SchliessanlagePage.vue'),
