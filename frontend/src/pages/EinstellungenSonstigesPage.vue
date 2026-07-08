@@ -11,6 +11,10 @@
         <SettingsTile to="prune" icon="cleaning_services" title="Datenbereinigung" caption="Papierkorb bereinigen" />
       </div>
 
+      <div v-if="auth.user?.role === 'admin'" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="konsistenz" icon="fact_check" title="Konsistenzprüfung" caption="Beziehungen prüfen" />
+      </div>
+
       <div v-if="auth.hasPermission('fibu.export')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="fibu-export" icon="account_balance" title="Fibu-Export" caption="Buchungen exportieren" />
       </div>

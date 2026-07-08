@@ -38,6 +38,7 @@ from backend.api.imports import router as imports_router
 from backend.api.berichte import router as berichte_router
 from backend.api.protokoll import router as protokoll_router
 from backend.api.prune import router as prune_router
+from backend.api.konsistenz import router as konsistenz_router
 from backend.api.schliessanlage import router as schliessanlage_router
 from backend.api.tresor import router as tresor_router
 
@@ -110,6 +111,7 @@ app.include_router(imports_router, prefix="/api")
 app.include_router(berichte_router, prefix="/api")
 app.include_router(protokoll_router, prefix="/api")
 app.include_router(prune_router, prefix="/api")
+app.include_router(konsistenz_router, prefix="/api")
 app.include_router(schliessanlage_router, prefix="/api")
 app.include_router(tresor_router, prefix="/api")
 
