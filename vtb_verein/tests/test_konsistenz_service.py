@@ -11,6 +11,7 @@ from app.services.konsistenz_service import (
     ForeignKey,
     KonsistenzService,
     build_fk_catalog_sql,
+    build_reparatur_verwaiste_rechte_sql,
     build_softdelete_tables_sql,
     build_verletzung_count_sql,
     build_verletzung_sample_sql,
@@ -169,3 +170,35 @@ class TestPruefung:
         assert report["geprueft"] == 1
         assert report["befunde"] == []
         assert report["alles_konsistent"] is True
+
+
+class TestReparaturVerwaisteRechte:
+    def test_builder_trifft_nur_aktive_rechte_geloeschter_user(self):
+        sql, params = build_reparatur_verwaiste_rechte_sql()
+        assert sql.startswith("UPDATE user_permissions")
+        assert "version = version + 1" in sql          # löst den Audit-Trigger aus
+        assert "FROM users u" in sql
+        assert "up.deleted_at IS NULL" in sql          # nur aktive Rechte
+        assert "u.deleted_at IS NOT NULL" in sql       # nur gelöschte User
+        assert params == []
+
+    def test_service_gibt_bereinigte_anzahl_und_akteur_doppelt(self):
+        class _Cur:
+            rowcount = 7
+            def execute(self, sql, params=()):
+                self.last_params = params
+            def close(self):
+                pass
+
+        class _DB:
+            def __init__(self):
+                self._cur = _Cur()
+            @contextmanager
+            def cursor(self):
+                yield self._cur
+
+        db = _DB()
+        result = KonsistenzService(db).repariere_verwaiste_rechte(actor="admin")
+        assert result == {"bereinigt": 7}
+        # Akteur füllt deleted_by UND updated_by
+        assert db._cur.last_params == ("admin", "admin")
