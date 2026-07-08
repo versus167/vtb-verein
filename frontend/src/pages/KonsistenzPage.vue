@@ -34,6 +34,23 @@
         <b>{{ report.summe_verletzungen }}</b> hängende Verweise in
         <b>{{ report.befunde.length }}</b> von {{ report.geprueft }} geprüften Beziehungen.
       </q-banner>
+
+      <q-banner
+        v-if="verwaisteRechte > 0" dense rounded
+        class="bg-blue-grey-1 text-blue-grey-10 q-mt-sm"
+      >
+        <template #avatar><q-icon name="build" color="blue-grey-8" /></template>
+        <b>Einmalige Altlast-Bereinigung verfügbar:</b>
+        {{ verwaisteRechte }} Rechte-Einträge gehören bereits gelöschten Benutzern und können
+        gefahrlos entzogen werden – das entspricht dem heutigen Verhalten beim Löschen eines
+        Benutzers und muss nur einmal nachgeholt werden.
+        <template #action>
+          <q-btn
+            color="orange-8" icon="cleaning_services" label="Verwaiste Rechte bereinigen"
+            :loading="reparatur" @click="confirmRepair = true"
+          />
+        </template>
+      </q-banner>
     </div>
 
     <q-table
@@ -73,11 +90,33 @@
     <div v-if="report?.generated_at" class="text-grey-7 q-mt-sm text-caption">
       Stand: {{ fmtDate(report.generated_at) }}
     </div>
+
+    <q-dialog v-model="confirmRepair">
+      <q-card style="min-width: 380px">
+        <q-card-section class="row items-center">
+          <q-icon name="build" color="orange-8" size="sm" class="q-mr-sm" />
+          <span class="text-h6">Verwaiste Rechte bereinigen?</span>
+        </q-card-section>
+        <q-card-section>
+          Es werden <b>{{ verwaisteRechte }}</b> Rechte-Einträge bereits gelöschter Benutzer
+          entzogen (soft-delete). Betroffen sind ausschließlich Rechte zu Benutzern, die schon
+          im Papierkorb liegen – alle anderen Befunde bleiben unberührt. Der Schritt ist
+          einmalig und kann ohne Schaden wiederholt werden.
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn
+            color="orange-8" label="Bereinigen" :loading="reparatur"
+            @click="repariereVerwaisteRechte"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -86,9 +125,19 @@ defineOptions({ name: 'KonsistenzPage' })
 
 const $q = useQuasar()
 const loading = ref(false)
+const reparatur = ref(false)
+const confirmRepair = ref(false)
 const report = ref(null)
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
+
+// Anzahl der verwaisten Rechte-Einträge (user_permissions -> gelöschter User) im Report.
+const verwaisteRechte = computed(() => {
+  const b = report.value?.befunde?.find(
+    (x) => x.child_table === 'user_permissions' && x.parent_table === 'users',
+  )
+  return b?.verletzungen ?? 0
+})
 
 const columns = [
   { name: 'beziehung', label: 'Beziehung (Kind → Parent)', field: 'child_table', align: 'left' },
@@ -105,6 +154,20 @@ async function reload() {
     $q.notify({ type: 'negative', message: 'Prüfung konnte nicht geladen werden' })
   } finally {
     loading.value = false
+  }
+}
+
+async function repariereVerwaisteRechte() {
+  reparatur.value = true
+  try {
+    const { data } = await api.post('/api/konsistenz/reparatur/verwaiste-rechte')
+    confirmRepair.value = false
+    $q.notify({ type: 'positive', message: `${data.bereinigt} verwaiste Rechte-Einträge bereinigt` })
+    await reload()
+  } catch {
+    $q.notify({ type: 'negative', message: 'Bereinigung fehlgeschlagen' })
+  } finally {
+    reparatur.value = false
   }
 }
 

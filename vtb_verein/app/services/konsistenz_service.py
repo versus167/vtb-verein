@@ -109,8 +109,29 @@ def build_verletzung_sample_sql(fk: ForeignKey, limit: int = DEFAULT_SAMPLE_LIMI
     return sql, []
 
 
+def build_reparatur_verwaiste_rechte_sql() -> tuple[str, list]:
+    """Einmalige Altlast-Bereinigung: soft-löscht aktive ``user_permissions``, deren User
+    bereits soft-gelöscht ist.
+
+    Entspricht exakt dem heutigen Verhalten beim Benutzer-Löschen
+    (``revoke_all_permissions_for_user``), nur nachgezogen für User, die vor dieser Logik
+    gelöscht wurden. Idempotent: ein zweiter Lauf findet nichts mehr. Zwei Platzhalter für
+    den Akteur (``deleted_by`` + ``updated_by``).
+    """
+    sql = (
+        "UPDATE user_permissions up "
+        "SET deleted_at = now(), deleted_by = %s, "
+        "    updated_at = now(), updated_by = %s, version = version + 1 "
+        f"WHERE {_child_aktiv('up')} "
+        "  AND EXISTS (SELECT 1 FROM users u "
+        f"             WHERE u.id = up.user_id AND {_parent_geloescht('u')})"
+    )
+    return sql, []
+
+
 class KonsistenzService:
-    """Orchestriert den generischen Konsistenz-Scan. Ausschließlich read-only."""
+    """Orchestriert den generischen Konsistenz-Scan (read-only) plus gezielte,
+    einmalige Altlast-Reparaturen."""
 
     def __init__(self, db):
         self._db = db
@@ -180,3 +201,15 @@ class KonsistenzService:
             "summe_verletzungen": summe,
             "alles_konsistent": summe == 0,
         }
+
+    # --- Gezielte, einmalige Altlast-Reparaturen ----------------------------------
+    def repariere_verwaiste_rechte(self, actor: str) -> dict:
+        """Bereinigt die Rechte bereits gelöschter Benutzer (Altlast). Idempotent.
+
+        Bewusst KEIN generisches „alle hängenden Kinder löschen": die meisten Befunde
+        (Kontakte, Tickets, Audit-Verweise) sollen ausdrücklich bestehen bleiben.
+        """
+        sql, params = build_reparatur_verwaiste_rechte_sql()
+        with self._db.cursor() as cur:
+            cur.execute(sql, tuple([actor, actor] + params))
+            return {"bereinigt": cur.rowcount}
