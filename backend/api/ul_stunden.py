@@ -181,7 +181,11 @@ def list_meine(user: CurrentUser, db: DB, status_filter: Optional[str] = None,
     own_id = own.id if own else None
     target = mitglied_id if mitglied_id is not None else own_id
     if target is None:
-        raise HTTPException(status_code=400, detail="Kein Übungsleiter angegeben")
+        # Fremderfasser/Admin ohne eigenes Mitglied hat schlicht keine "eigenen"
+        # Abrechnungen – das ist kein Fehler, sondern eine leere Liste. Der Nutzer
+        # wechselt dann zu "Alle offenen" (#73) oder wählt einen Ziel-ÜL. Ohne diesen
+        # Zweig scheiterte der initiale Seitenaufbau als Admin (#88).
+        return []
     if target != own_id and not _can_erfassen_fremd(user):
         raise HTTPException(status_code=403, detail="Keine Berechtigung für fremde Abrechnungen")
     return [_abrechnung_dict(db, a)
