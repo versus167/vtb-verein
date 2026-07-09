@@ -61,8 +61,10 @@
                 color="grey-7" @click.stop="openSchlossLog(s)">
                 <q-tooltip>Zutrittslog</q-tooltip>
               </q-btn>
-              <q-btn v-if="status.darf_oeffnen" flat dense round size="sm" icon="lock_open"
-                color="primary" :loading="opening === s.id" @click.stop="doOeffnen(s)">
+              <!-- „Fernöffnen" ist die Hauptaktion, wenn das Öffnen-Recht da ist: gefüllter,
+                   größerer Button statt kleinem Flat-Icon – am Handy sonst kaum sicht-/tippbar (#89). -->
+              <q-btn v-if="status.darf_oeffnen" unelevated round color="primary" text-color="white"
+                size="md" icon="lock_open" :loading="opening === s.id" @click.stop="doOeffnen(s)">
                 <q-tooltip>Fernöffnen</q-tooltip>
               </q-btn>
             </div>
