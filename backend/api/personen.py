@@ -195,14 +195,15 @@ def _mitglied_to_dict(m) -> dict:
     }
 
 
-def _gueltig_heute(von, bis) -> bool:
-    """True, wenn der Zeitraum (von/bis als ISO-Datum) das heutige Datum einschließt."""
+def _aktiv_oder_kuenftig(von, bis) -> bool:
+    """True, solange die Zuordnung nicht bereits abgelaufen ist (bis < heute).
+
+    Aktive (heute im Zeitraum) UND erst künftig beginnende (von in der Zukunft)
+    Abteilungen/Funktionen bleiben damit in der Personenliste sichtbar; nur bereits
+    beendete werden ausgeblendet. Die künftigen kennzeichnet das Frontend mit
+    „ab <Beginndatum>" (Ticket #91)."""
     heute = date.today().isoformat()
-    if von and von > heute:
-        return False
-    if bis and bis < heute:
-        return False
-    return True
+    return not (bis and bis < heute)
 
 
 def _last_edited_sql(mitglied_alias: str, user_alias: Optional[str]) -> str:
@@ -232,9 +233,11 @@ def _last_edited_sql(mitglied_alias: str, user_alias: Optional[str]) -> str:
 def _person_row(user, mitglied, abteilungen: list, funktionen: list,
                 last_edited: Optional[str] = None,
                 lizenz_aktuell_gueltig: Optional[bool] = None) -> dict:
-    # In der Personenliste nur aktuell (heute) gültige Abteilungen/Funktionen zeigen
-    abteilungen = [z for z in abteilungen if _gueltig_heute(z.von, z.bis)]
-    funktionen = [f for f in funktionen if _gueltig_heute(f.von, f.bis)]
+    # In der Personenliste aktive UND erst künftig beginnende Abteilungen/Funktionen
+    # zeigen; bereits abgelaufene bleiben ausgeblendet. Künftige (von in der Zukunft)
+    # kennzeichnet das Frontend mit „ab <Beginndatum>" (Ticket #91).
+    abteilungen = [z for z in abteilungen if _aktiv_oder_kuenftig(z.von, z.bis)]
+    funktionen = [f for f in funktionen if _aktiv_oder_kuenftig(f.von, f.bis)]
     # "Zuletzt bearbeitet": Die Personenliste reicht den über alle Unterdatensätze
     # berechneten Wert herein (s. _last_edited_sql). Ohne Vorgabe (Einzel-Endpoints)
     # genügt das Maximum aus User- und Mitglied-updated_at.
