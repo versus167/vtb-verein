@@ -53,7 +53,9 @@ class PermissionRepository(BaseRepository):
         Zwei konstante Queries, unabhängig von der Anzahl der Funktionen.
         """
         if stichtag is None:
-            # Serverzeit, identische Semantik wie _gueltig_heute (backend/api/personen.py)
+            # Serverzeit als Stichtag – gleiche date.today()-Basis wie die Personenliste
+            # (backend/api/personen.py). Rechte gelten nur, solange die Funktion HEUTE
+            # gültig ist; künftige Funktionen vererben noch keine Rechte.
             stichtag = date.today().isoformat()
 
         with self.cursor() as cur:

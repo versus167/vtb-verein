@@ -83,14 +83,17 @@
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
             <q-chip v-for="ab in p.abteilungen" :key="ab.id" dense size="sm"
               :color="abteilungColor(ab.abteilung_id)" text-color="white">
-              {{ ab.abteilung_kuerzel || ab.abteilung_name }}
+              {{ ab.abteilung_kuerzel || ab.abteilung_name }}<template v-if="istZukuenftig(ab.von)"><q-icon
+                name="schedule" size="12px" class="q-ml-xs" /> ab {{ formatDate(ab.von) }}</template>
             </q-chip>
           </div>
           <div v-if="p.funktionen?.length" class="row items-center q-gutter-xs q-mb-xs">
             <q-chip v-for="f in p.funktionen" :key="f.id" dense size="sm"
               color="indigo" text-color="white">
               {{ funktionLabel(f.funktion) }}<span v-if="f.abteilung_name"
-                class="text-indigo-2"> · {{ f.abteilung_name }}</span>
+                class="text-indigo-2"> · {{ f.abteilung_name }}</span><span
+                v-if="istZukuenftig(f.von)" class="text-indigo-2"><q-icon name="schedule"
+                size="12px" class="q-ml-xs" /> ab {{ formatDate(f.von) }}</span>
             </q-chip>
           </div>
           <div v-if="p.last_seen" class="text-caption text-grey-5">
@@ -251,7 +254,8 @@
         <q-td :props="props">
           <q-chip v-for="ab in props.row.abteilungen" :key="ab.id" dense size="sm"
             :color="abteilungColor(ab.abteilung_id)" text-color="white" class="q-mr-xs">
-            {{ ab.abteilung_kuerzel || ab.abteilung_name }}
+            {{ ab.abteilung_kuerzel || ab.abteilung_name }}<template v-if="istZukuenftig(ab.von)"><q-icon
+              name="schedule" size="12px" class="q-ml-xs" /> ab {{ formatDate(ab.von) }}</template>
           </q-chip>
         </q-td>
       </template>
@@ -262,7 +266,9 @@
             <q-chip v-for="f in props.row.funktionen" :key="f.id" dense size="sm"
               color="indigo" text-color="white" class="q-ma-none">
               {{ funktionLabel(f.funktion) }}<span v-if="f.abteilung_name"
-                class="text-indigo-2"> · {{ f.abteilung_name }}</span>
+                class="text-indigo-2"> · {{ f.abteilung_name }}</span><span
+                v-if="istZukuenftig(f.von)" class="text-indigo-2"><q-icon name="schedule"
+                size="12px" class="q-ml-xs" /> ab {{ formatDate(f.von) }}</span>
             </q-chip>
           </div>
           <span v-else class="text-grey">—</span>
@@ -796,6 +802,12 @@ function resetAllFilters() {
 function formatDate(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('de-DE')
+}
+
+// Zuordnung (Abteilung/Funktion), deren Beginndatum in der Zukunft liegt? Solche werden
+// in der Liste bereits angezeigt und mit „ab <Beginndatum>" gekennzeichnet (Ticket #91).
+function istZukuenftig(von) {
+  return !!von && von > heuteIso()
 }
 
 // ── Optionen ───────────────────────────────────────────────
