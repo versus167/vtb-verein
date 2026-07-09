@@ -72,9 +72,33 @@ body.body--dark {
   .text-grey-8 {
     color: #a0a0b0 !important;
   }
+  // grey-9/10 sind im Light Mode fast schwarzer Fließtext → im Dark Mode heller Primärtext
+  .text-grey-9,
+  .text-grey-10 { color: #e6e6ea !important; }
 
-  // Kassenbuch-Zeilenfarben im Dark Mode (gedämpfte Töne)
-  .bg-green-1 { background-color: #1a2e1a !important; }
-  .bg-red-1   { background-color: #2e1a1a !important; }
-  .bg-grey-1  { background-color: #1a1a1e !important; }
+  // ── Helle Tint-Flächen + dunkle Farbtexte (Banner-/Chip-Muster bg-X-1 + text-X-9/10) ──
+  //
+  // Im Light Mode werden überall dezente helle Tönungen mit dunklem, farbigem Text
+  // benutzt (z. B. Hinweis-Banner `bg-blue-1 text-blue-10`). Im Dark Mode sind ALLE
+  // Flächen dunkel – daher die Tint-Hintergründe auf dunkle Töne und die dunklen
+  // Farbtexte auf helle, farbtreue Töne umbiegen, sonst helle Insel-Kacheln mit kaum
+  // lesbarem Text (Ticket #87). Farbton bleibt erhalten, damit die Semantik (grün=ok,
+  // rot=Fehler, …) sichtbar bleibt.
+  .bg-grey-1       { background-color: #1a1a1e !important; }
+  .bg-grey-2       { background-color: #24242b !important; }
+  .bg-green-1      { background-color: #1a2e1a !important; }
+  .bg-red-1        { background-color: #2e1a1a !important; }
+  .bg-blue-1       { background-color: #16212e !important; }
+  .bg-blue-grey-1  { background-color: #232d34 !important; }
+  .bg-amber-1      { background-color: #2a2410 !important; }
+  .bg-amber-2      { background-color: #322a12 !important; }
+  .bg-orange-1     { background-color: #2b2110 !important; }
+  .bg-purple-1     { background-color: #241a2b !important; }
+
+  .text-red-9,    .text-red-10    { color: #ef9a9a !important; }
+  .text-green-9,  .text-green-10  { color: #a5d6a7 !important; }
+  .text-blue-9,   .text-blue-10   { color: #90caf9 !important; }
+  .text-orange-9, .text-orange-10 { color: #ffcc80 !important; }
+  .text-amber-9,  .text-amber-10  { color: #ffd54f !important; }
+  .text-blue-grey-10               { color: #b0bec5 !important; }
 }
