@@ -53,7 +53,7 @@
         <!-- Mitgliederentwicklung -->
         <div class="col-12 col-md-6">
           <q-card flat bordered class="fit">
-            <q-card-section class="row items-center q-gutter-sm no-wrap">
+            <q-card-section class="row items-center q-gutter-sm">
               <div>
                 <div class="text-h6">Mitgliederentwicklung</div>
                 <div class="text-caption text-grey-7">
@@ -63,10 +63,10 @@
               <q-space />
               <q-btn-toggle
                 v-model="entwicklungGran"
-                dense
+                :dense="$q.screen.gt.sm"
                 no-caps
                 outline
-                size="sm"
+                :size="$q.screen.lt.md ? 'md' : 'sm'"
                 toggle-color="primary"
                 :options="[
                   { label: '12 Monate', value: 'monat' },

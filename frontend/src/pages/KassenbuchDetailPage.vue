@@ -2,7 +2,7 @@
   <q-page padding>
     <!-- Header -->
     <div class="row items-center q-mb-sm">
-      <q-btn flat round dense icon="arrow_back" :to="{ name: 'kassenbuch' }" class="q-mr-sm" />
+      <q-btn flat round :dense="$q.screen.gt.sm" icon="arrow_back" :to="{ name: 'kassenbuch' }" class="q-mr-sm" />
       <div class="col">
         <div class="text-h5">{{ kasse?.name ?? 'Kassenbuch' }}</div>
         <div v-if="kasse?.beschreibung" class="text-caption text-grey">{{ kasse.beschreibung }}</div>
@@ -19,7 +19,7 @@
     <div class="row q-gutter-sm q-mb-sm items-center">
       <q-btn
         v-if="$q.screen.lt.md"
-        flat round dense icon="filter_list"
+        flat round icon="filter_list"
         :color="filterAktiv ? 'primary' : 'grey'"
         @click="filterOpen = !filterOpen"
       >
@@ -120,7 +120,7 @@
             <q-chip v-if="b.deleted_at" dense icon="block" color="grey-4" text-color="grey-8" size="sm" class="q-ml-xs">
               Storniert
             </q-chip>
-            <span class="text-caption text-grey q-ml-sm">{{ b.buchungsdatum }}</span>
+            <span class="text-caption text-grey q-ml-sm">{{ formatDate(b.buchungsdatum) }}</span>
           </div>
 
           <!-- Buchungstext + Kategorie -->
@@ -199,7 +199,7 @@
           </q-td>
 
           <q-td key="buchungsdatum" :props="props" :class="props.row.deleted_at ? 'text-grey' : ''">
-            {{ props.row.buchungsdatum }}
+            {{ formatDate(props.row.buchungsdatum) }}
           </q-td>
 
           <q-td key="buchungstext" :props="props" :class="props.row.deleted_at ? 'text-grey text-strike' : ''">
@@ -681,7 +681,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
-import { formatDateTime } from 'src/utils/datetime'
+import { formatDate, formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const route = useRoute()
