@@ -371,11 +371,17 @@ Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
 
-    with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as srv:
+    if settings.SMTP_PORT == 465:
+        srv = smtplib.SMTP_SSL(settings.SMTP_SERVER, settings.SMTP_PORT)
+    else:
+        srv = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
         if settings.SMTP_USE_TLS:
             srv.starttls()
+    try:
         srv.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
         srv.sendmail(settings.MAIL_FROM, recipient, msg.as_string())
+    finally:
+        srv.quit()
 
 
 @router.post("/magic-link/request")
