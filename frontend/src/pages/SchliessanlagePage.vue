@@ -39,7 +39,9 @@
             <q-item-label caption>
               <span v-if="s.letztes_event_at">
                 letzter Vorgang: {{ fmtDateTime(s.letztes_event_at) }}
-                ({{ recordTypeLabel(s.letztes_event_type) }})
+                <template v-if="recordTypeLabel(s.letztes_event_type)">
+                  ({{ recordTypeLabel(s.letztes_event_type) }})
+                </template>
               </span>
               <span v-else>noch keine Zutritte</span>
             </q-item-label>
@@ -57,7 +59,8 @@
                 :class="akkuLow(s.akku_prozent) ? 'text-negative' : 'text-grey-7'">
                 <q-icon :name="akkuIcon(s.akku_prozent)" size="18px" /> {{ s.akku_prozent }}%
               </span>
-              <q-btn v-if="status.darf_protokoll" flat dense round size="sm" icon="history"
+              <q-btn v-if="status.darf_protokoll" flat round :dense="$q.screen.gt.sm"
+                :size="$q.screen.lt.md ? 'md' : 'sm'" icon="history"
                 color="grey-7" @click.stop="openSchlossLog(s)">
                 <q-tooltip>Zutrittslog</q-tooltip>
               </q-btn>
@@ -518,7 +521,8 @@ const RECORD_TYPES = {
   36: 'Verriegelt (mech. Schlüssel)', 37: 'Fernbedienung', 44: 'Sabotage-Alarm', 45: 'Auto-Lock',
   46: 'Entriegeln (Unlock-Key)', 47: 'Verriegeln (Lock-Key)', 48: 'Mehrf. Falsch-Passcode',
 }
-const recordTypeLabel = (t) => (t == null ? '–' : (RECORD_TYPES[t] || ('?' + t)))
+// Unbekannte Eventtypen ohne Label ('' -> Klammerzusatz entfällt) statt kryptischem '?17'.
+const recordTypeLabel = (t) => (t == null ? '' : (RECORD_TYPES[t] || ''))
 
 // Credential-Typen am Schloss (read-only Mirror) → Anzeige-Reihenfolge + Icon/Label.
 // IC-Karten bewusst NICHT hier: die verwalten wir über die App und zeigen sie oben unter

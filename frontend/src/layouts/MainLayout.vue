@@ -2,30 +2,33 @@
   <q-layout view="lHh Lpr lFf">
     <q-header elevated>
       <q-toolbar>
-        <q-btn flat dense round icon="menu" @click="drawer = !drawer" />
+        <!-- Kopfzeilen-Buttons am Handy ohne dense (42 statt 34 px) – leichter treffbar. -->
+        <q-btn flat :dense="$q.screen.gt.sm" round icon="menu" @click="drawer = !drawer" />
         <q-toolbar-title>
           VTB
-          <span v-if="appVersion" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
+          <!-- Am Handy reicht der Platz neben den größeren Buttons nicht – Version steht dort im Konto-Menü. -->
+          <span v-if="appVersion && $q.screen.gt.xs" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
         </q-toolbar-title>
         <q-btn
           v-if="hasHandler"
-          flat dense round icon="refresh"
+          flat :dense="$q.screen.gt.sm" round icon="refresh"
           :loading="refreshing"
           @click="triggerRefresh"
         >
           <q-tooltip>Aktualisieren</q-tooltip>
         </q-btn>
         <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
-        <q-btn flat dense round :icon="darkModeIcon" @click="toggleDarkMode">
+        <q-btn flat :dense="$q.screen.gt.sm" round :icon="darkModeIcon" @click="toggleDarkMode">
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
-        <q-btn flat dense round icon="account_circle">
+        <q-btn flat :dense="$q.screen.gt.sm" round icon="account_circle">
           <q-menu>
             <q-list style="min-width: 160px">
               <q-item>
                 <q-item-section>
                   <q-item-label class="text-weight-bold">{{ auth.user?.username }}</q-item-label>
                   <q-item-label caption>{{ auth.user?.role }}</q-item-label>
+                  <q-item-label v-if="appVersion && $q.screen.lt.sm" caption>{{ appVersion }}</q-item-label>
                 </q-item-section>
               </q-item>
               <q-separator />

@@ -29,7 +29,32 @@
               </q-item-label>
             </q-item-section>
             <q-item-section side v-if="darfVerwalten">
-              <div class="row items-center no-wrap">
+              <!-- Mobil: EIN großes Menü statt vier kleiner Icons – leichter treffbar,
+                   und die Zeile selbst bleibt das große Tippziel zum Öffnen. -->
+              <q-btn v-if="$q.screen.lt.md" flat round icon="more_vert" color="grey-7"
+                aria-label="Tresor-Aktionen" @click.stop>
+                <q-menu auto-close>
+                  <q-list style="min-width: 220px">
+                    <q-item clickable @click="openFreigaben(t)">
+                      <q-item-section avatar><q-icon name="group" color="grey-7" /></q-item-section>
+                      <q-item-section>Freigaben</q-item-section>
+                    </q-item>
+                    <q-item clickable @click="openZugriffe(t)">
+                      <q-item-section avatar><q-icon name="history" color="grey-7" /></q-item-section>
+                      <q-item-section>Zugriffs-Log</q-item-section>
+                    </q-item>
+                    <q-item clickable @click="openTresorDialog(t)">
+                      <q-item-section avatar><q-icon name="edit" color="primary" /></q-item-section>
+                      <q-item-section>Bearbeiten</q-item-section>
+                    </q-item>
+                    <q-item clickable @click="deleteTresor(t)">
+                      <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
+                      <q-item-section class="text-negative">Löschen</q-item-section>
+                    </q-item>
+                  </q-list>
+                </q-menu>
+              </q-btn>
+              <div v-else class="row items-center no-wrap">
                 <q-btn flat dense round size="sm" icon="group" color="grey-7"
                   @click.stop="openFreigaben(t)"><q-tooltip>Freigaben</q-tooltip></q-btn>
                 <q-btn flat dense round size="sm" icon="history" color="grey-7"
@@ -65,7 +90,7 @@
                 <q-item-label caption>
                   <span v-if="e.benutzername">
                     <q-icon name="person" size="xs" /> {{ e.benutzername }}
-                    <q-btn flat dense round size="xs" icon="content_copy"
+                    <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'xs'" icon="content_copy"
                       @click="copy(e.benutzername, 'Benutzername kopiert')" />
                   </span>
                   <a v-if="e.url" :href="e.url" target="_blank" rel="noopener"
@@ -77,9 +102,9 @@
                   <q-chip dense square color="grey-2" text-color="grey-9" class="text-mono">
                     {{ revealed[e.id].passwort || '(leer)' }}
                   </q-chip>
-                  <q-btn flat dense round size="sm" icon="content_copy" color="primary"
+                  <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'sm'" icon="content_copy" color="primary"
                     @click="copy(revealed[e.id].passwort, 'Passwort kopiert')" />
-                  <q-btn flat dense round size="sm" icon="visibility_off" color="grey-7"
+                  <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'sm'" icon="visibility_off" color="grey-7"
                     @click="hide(e.id)" />
                   <div v-if="revealed[e.id].notiz" class="text-caption text-grey-8 q-mt-xs">
                     <q-icon name="sticky_note_2" size="xs" /> {{ revealed[e.id].notiz }}
@@ -88,7 +113,31 @@
               </q-item-section>
 
               <q-item-section side top>
-                <div class="row items-center no-wrap">
+                <!-- Mobil: „Anzeigen" in voller Größe, Schreibaktionen in EINEM Menü. -->
+                <div v-if="$q.screen.lt.md" class="row items-center no-wrap">
+                  <q-btn v-if="!revealed[e.id]" outline no-caps icon="visibility"
+                    color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
+                  <q-btn v-if="selectedTresor?.darf_schreiben" flat round icon="more_vert"
+                    color="grey-8" aria-label="Eintrag-Aktionen">
+                    <q-menu auto-close>
+                      <q-list style="min-width: 220px">
+                        <q-item clickable @click="openVerlauf(e)">
+                          <q-item-section avatar><q-icon name="history" color="grey-7" /></q-item-section>
+                          <q-item-section>Änderungsverlauf</q-item-section>
+                        </q-item>
+                        <q-item clickable @click="openEintragDialog(e)">
+                          <q-item-section avatar><q-icon name="edit" color="primary" /></q-item-section>
+                          <q-item-section>Bearbeiten</q-item-section>
+                        </q-item>
+                        <q-item clickable @click="deleteEintrag(e)">
+                          <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
+                          <q-item-section class="text-negative">Löschen</q-item-section>
+                        </q-item>
+                      </q-list>
+                    </q-menu>
+                  </q-btn>
+                </div>
+                <div v-else class="row items-center no-wrap">
                   <q-btn v-if="!revealed[e.id]" flat dense size="sm" no-caps icon="visibility"
                     color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
                   <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
@@ -107,7 +156,7 @@
           </div>
         </div>
         <div v-else class="text-grey text-center q-py-xl">
-          Wähle links einen Tresor aus.
+          Wähle {{ $q.screen.lt.md ? 'oben' : 'links' }} einen Tresor aus.
         </div>
       </div>
     </div>
@@ -274,7 +323,7 @@
                   <q-chip dense square color="grey-2" text-color="grey-9" class="text-mono">
                     {{ verlaufReveals[v.version].passwort || '(leer)' }}
                   </q-chip>
-                  <q-btn flat dense round size="sm" icon="content_copy" color="primary"
+                  <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'sm'" icon="content_copy" color="primary"
                     @click="copy(verlaufReveals[v.version].passwort, 'Passwort kopiert')" />
                   <div v-if="verlaufReveals[v.version].notiz" class="text-caption text-grey-8 q-mt-xs">
                     <q-icon name="sticky_note_2" size="xs" /> {{ verlaufReveals[v.version].notiz }}
@@ -283,10 +332,12 @@
               </q-item-section>
               <q-item-section side top>
                 <div class="row items-center no-wrap">
-                  <q-btn v-if="!verlaufReveals[v.version]" flat dense size="sm" no-caps icon="visibility"
-                    color="primary" label="Anzeigen" :disable="!konfiguriert" @click="revealVerlauf(v)" />
-                  <q-btn v-if="!v.aktuell" flat dense size="sm" no-caps icon="restore" color="orange-8"
-                    label="Wiederherstellen" :disable="!konfiguriert" @click="restoreVerlauf(v)" />
+                  <q-btn v-if="!verlaufReveals[v.version]" flat dense :size="$q.screen.lt.md ? 'md' : 'sm'"
+                    no-caps icon="visibility" color="primary" label="Anzeigen"
+                    :disable="!konfiguriert" @click="revealVerlauf(v)" />
+                  <q-btn v-if="!v.aktuell" flat dense :size="$q.screen.lt.md ? 'md' : 'sm'"
+                    no-caps icon="restore" color="orange-8" label="Wiederherstellen"
+                    :disable="!konfiguriert" @click="restoreVerlauf(v)" />
                 </div>
               </q-item-section>
             </q-item>

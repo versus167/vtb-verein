@@ -1,7 +1,7 @@
 <template>
   <!-- Trigger in der festen Kopfzeile. Früher ein FAB unten rechts, der auf
        Listen-Seiten den Pagination-Pfeil verdeckt hat (#69). -->
-  <q-btn id="feedback-fab" flat dense round icon="feedback"
+  <q-btn id="feedback-fab" flat :dense="$q.screen.gt.sm" round icon="feedback"
     :loading="capturing" @click="onFabClick">
     <q-tooltip>Feedback / Screenshot</q-tooltip>
   </q-btn>

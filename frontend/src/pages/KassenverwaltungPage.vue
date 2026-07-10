@@ -14,11 +14,11 @@
       <div>Noch keine Kassen angelegt.</div>
     </div>
 
-    <div v-else class="row q-gutter-md">
+    <!-- q-col-gutter (nicht q-gutter): q-gutter verbreitert col-12-Zeilen über den
+         Viewport hinaus -> horizontales Scrollen am Handy. -->
+    <div v-else class="row q-col-gutter-md">
+      <div v-for="k in kassen" :key="k.id" class="col-12 col-sm-5 col-md-3">
       <q-card
-        v-for="k in kassen"
-        :key="k.id"
-        class="col-12 col-sm-5 col-md-3"
         bordered
         flat
       >
@@ -48,6 +48,7 @@
           </q-btn>
         </q-card-actions>
       </q-card>
+      </div>
     </div>
 
     <!-- Kategorien -->

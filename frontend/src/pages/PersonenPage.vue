@@ -101,49 +101,50 @@
           </div>
         </q-card-section>
         <q-separator />
-        <q-card-actions class="q-px-sm q-py-xs">
-          <q-btn v-if="canManageUsers && p.user_id" flat dense round icon="edit" color="primary" size="sm"
+        <!-- Aktions-Icons in Standardgröße (statt dense/sm): am Handy sicher treffbar; wrap erlaubt eine 2. Zeile. -->
+        <q-card-actions class="q-px-sm q-py-xs wrap">
+          <q-btn v-if="canManageUsers && p.user_id" flat round icon="edit" color="primary"
             @click="openEditUserDialog(p)">
             <q-tooltip>Account bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-if="canManageUsers && p.mitglied && !p.user_id" flat dense round icon="manage_accounts" color="primary" size="sm"
+          <q-btn v-if="canManageUsers && p.mitglied && !p.user_id" flat round icon="manage_accounts" color="primary"
             @click="openNutzerDialog(p)">
             <q-tooltip>Login-Account anlegen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied" flat dense round icon="person" color="teal" size="sm"
+          <q-btn v-if="p.mitglied" flat round icon="person" color="teal"
             @click="openEditMitgliedDialog(p)">
             <q-tooltip>Vereinsdaten bearbeiten</q-tooltip>
           </q-btn>
-          <q-btn v-else-if="p.user_id" flat dense round icon="person_add" color="teal" size="sm"
+          <q-btn v-else-if="p.user_id" flat round icon="person_add" color="teal"
             @click="openAddMitgliedDialog(p)">
             <q-tooltip>Als Vereinsmitglied erfassen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied" flat dense round icon="group" color="purple" size="sm"
+          <q-btn v-if="p.mitglied" flat round icon="group" color="purple"
             @click="openAbteilungenDialog(p)">
             <q-tooltip>Abteilungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied" flat dense round icon="badge" color="indigo" size="sm"
+          <q-btn v-if="p.mitglied" flat round icon="badge" color="indigo"
             @click="openFunktionenDialog(p)">
             <q-tooltip>Funktionen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied" flat dense round icon="contact_phone" color="cyan-8" size="sm"
+          <q-btn v-if="p.mitglied" flat round icon="contact_phone" color="cyan-8"
             @click="openKontakteDialog(p)">
             <q-tooltip>Kontaktdaten</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.mitglied" flat dense round icon="groups" color="cyan-8" size="sm"
+          <q-btn v-if="p.mitglied" flat round icon="groups" color="cyan-8"
             @click="openMannschaftenDialog(p)">
             <q-tooltip>Mannschaften</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.user_id" flat dense round icon="security" color="grey" size="sm"
+          <q-btn v-if="p.user_id" flat round icon="security" color="grey"
             @click="$router.push({ name: 'user-permissions', params: { id: p.user_id } })">
             <q-tooltip>Berechtigungen</q-tooltip>
           </q-btn>
-          <q-btn v-if="p.user_id || p.mitglied" flat dense round icon="history" color="grey" size="sm"
+          <q-btn v-if="p.user_id || p.mitglied" flat round icon="history" color="grey"
             @click="openHistoryDialog(p)">
             <q-tooltip>Änderungshistorie</q-tooltip>
           </q-btn>
           <q-space />
-          <q-btn flat dense round icon="delete" color="negative" size="sm"
+          <q-btn flat round icon="delete" color="negative"
             :disable="p.user_id === auth.user?.id"
             @click="confirmDelete(p)">
             <q-tooltip>Löschen</q-tooltip>
