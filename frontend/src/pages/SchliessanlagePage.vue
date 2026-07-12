@@ -233,15 +233,15 @@
 
     <!-- ====================== Zutrittslog (Schloss) ====================== -->
     <q-dialog v-model="logDialog" :maximized="$q.screen.lt.sm">
-      <q-card style="min-width:min(560px,96vw)">
-        <q-card-section class="row items-center">
+      <q-card class="column no-wrap" :style="`min-width:min(560px,96vw)${$q.screen.lt.sm ? '' : ';max-height:85vh'}`">
+        <q-card-section class="row items-center col-auto">
           <q-icon name="history" class="q-mr-sm" />
           <div class="text-h6">Zutrittslog</div>
           <div v-if="logSchloss" class="text-caption text-grey q-ml-sm">{{ logSchloss.name }}</div>
           <q-space />
           <q-btn flat dense icon="close" v-close-popup />
         </q-card-section>
-        <q-card-section class="q-pt-none">
+        <q-card-section class="q-pt-none col scroll">
           <div v-if="logDarfProtokoll" class="text-caption text-grey-6 q-mb-xs">
             <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
             nur zweckgebunden einsehen (DSGVO).
