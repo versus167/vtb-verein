@@ -284,15 +284,15 @@
 
     <!-- ====================== Chip-Detail ====================== -->
     <q-dialog v-model="chipDialog" :maximized="$q.screen.lt.sm">
-      <q-card style="min-width:min(640px,96vw)">
-        <q-card-section class="row items-center">
+      <q-card class="column no-wrap" :style="`min-width:min(640px,96vw)${$q.screen.lt.sm ? '' : ';max-height:85vh'}`">
+        <q-card-section class="row items-center col-auto">
           <div class="text-h6">{{ chipDetail.chip?.bezeichnung || ('Chip #' + chipDetail.chip?.id) }}</div>
           <q-space />
           <q-btn v-if="status.darf_verwalten" flat dense icon="edit" @click="openChipEdit" />
           <q-btn v-if="status.darf_verwalten" flat dense icon="delete" color="negative" @click="deleteChip" />
           <q-btn flat dense icon="close" v-close-popup />
         </q-card-section>
-        <q-card-section class="q-pt-none">
+        <q-card-section class="q-pt-none col scroll">
           <div class="text-caption text-grey-7">
             Nr. {{ chipDetail.chip?.kartennummer }} ·
             {{ chipDetail.chip?.mitglied_id ? ('ausgegeben an ' + mitgliedName(chipDetail.chip))
