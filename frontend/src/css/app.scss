@@ -1,3 +1,12 @@
+// ── VTB-Marken-Gelb als Quasar-Color ─────────────────────────────────────────
+//
+// Registriert $vtb-gelb (aus quasar.variables.scss, global injiziert) als über
+// `color="vtb-gelb"` nutzbare Farbe für Quasar-Props (Buttons, Inputs, Tabs …).
+// Sonst würde `color="yellow"` das abweichende Quasar-Standardgelb (#ffeb3b)
+// statt des Vereinsgelbs verwenden.
+.text-vtb-gelb { color: $vtb-gelb !important; }
+.bg-vtb-gelb   { background: $vtb-gelb !important; }
+
 // ── Dark Mode Theme ──────────────────────────────────────────────────────────
 //
 // Modernes dunkles Grau mit hohem Textkontrast.

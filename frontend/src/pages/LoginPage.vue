@@ -17,8 +17,8 @@
             dense
             align="justify"
             class="q-mb-md"
-            active-color="yellow"
-            indicator-color="yellow"
+            active-color="vtb-gelb"
+            indicator-color="vtb-gelb"
           >
             <q-tab name="password" label="Passwort" />
             <q-tab name="magic" label="Login-Link" />
@@ -33,7 +33,7 @@
                   label="Benutzername"
                   outlined
                   dark
-                  color="yellow"
+                  color="vtb-gelb"
                   autofocus
                   no-error-icon
                   lazy-rules="ondemand"
@@ -50,7 +50,7 @@
                   label="Passwort"
                   outlined
                   dark
-                  color="yellow"
+                  color="vtb-gelb"
                   no-error-icon
                   lazy-rules="ondemand"
                   :type="showPassword ? 'text' : 'password'"
@@ -78,7 +78,7 @@
                 <q-btn
                   type="submit"
                   label="Anmelden"
-                  color="yellow"
+                  color="vtb-gelb"
                   text-color="primary"
                   no-caps
                   class="full-width login-btn text-weight-bold"
@@ -102,7 +102,7 @@
                     type="email"
                     outlined
                     dark
-                    color="yellow"
+                    color="vtb-gelb"
                     autofocus
                     no-error-icon
                     lazy-rules="ondemand"
@@ -121,7 +121,7 @@
                   <q-btn
                     type="submit"
                     label="Login-Link anfordern"
-                    color="yellow"
+                    color="vtb-gelb"
                     text-color="primary"
                     no-caps
                     class="full-width login-btn text-weight-bold"
@@ -139,7 +139,7 @@
                   Falls ein Konto mit dieser Adresse existiert, haben wir dir einen Login-Link geschickt.
                   Bitte prüfe auch deinen Spam-Ordner.
                 </div>
-                <q-btn flat label="Nochmal versuchen" color="yellow" no-caps @click="magicSent = false" />
+                <q-btn flat label="Nochmal versuchen" color="vtb-gelb" no-caps @click="magicSent = false" />
               </div>
             </q-tab-panel>
           </q-tab-panels>
@@ -340,7 +340,7 @@ async function onRequestMagicLink() {
   border-radius: 12px;
 }
 :deep(.q-field--outlined .q-field__control:before) {
-  border-color: rgba(254, 235, 3, 0.5);
+  border-color: rgba($vtb-gelb, 0.5);
 }
 :deep(.q-field--outlined:hover .q-field__control:before) {
   border-color: $vtb-gelb;
