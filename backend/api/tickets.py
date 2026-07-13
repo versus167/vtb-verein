@@ -131,14 +131,18 @@ def _can_verwalten(ticket: Ticket, user, db) -> bool:
 
 
 def _enrich(ticket_dict: dict, db) -> dict:
-    """Fügt gemeldet_von_username und bereich_name hinzu."""
-    from app.services.user_service import UserService
-    user = db.get_user_by_id(ticket_dict.get('gemeldet_von'))
-    ticket_dict['gemeldet_von_username'] = user.username if user else f'#{ticket_dict.get("gemeldet_von")}'
+    """Fügt gemeldet_von_username und bereich_name hinzu.
+
+    Nutzt bewusst schlanke Lookups (get_username / get_bereich statt get_user_by_id /
+    get_bereiche), damit ein einzelnes Ticket nicht den kompletten Effektiv-Rechte-
+    Fanout des Melders und alle Bereiche lädt (siehe Ticket-Performance).
+    """
+    gemeldet_von = ticket_dict.get('gemeldet_von')
+    username = db.get_username(gemeldet_von) if gemeldet_von else None
+    ticket_dict['gemeldet_von_username'] = username or f'#{gemeldet_von}'
     bereich_id = ticket_dict.get('bereich_id')
     if bereich_id:
-        bereiche = db.tickets.get_bereiche()
-        b = next((b for b in bereiche if b.id == bereich_id), None)
+        b = db.tickets.get_bereich(bereich_id)
         ticket_dict['bereich_name'] = b.name if b else None
     else:
         ticket_dict['bereich_name'] = None
@@ -416,7 +420,7 @@ def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB)
     if data.status in TicketStatus.ABGESCHLOSSEN and not _can_close(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Recht zum Abschließen dieses Tickets.")
     try:
-        ok = db.tickets.change_status(ticket_id, data.status, changed_by=user.username, version=data.expected_version)
+        ok = db.tickets.change_status(ticket, data.status, changed_by=user.username, version=data.expected_version)
     except UngueltigerStatusWechselError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     if not ok:
@@ -504,8 +508,10 @@ def delete_anhang(ticket_id: int, anhang_id: int, user: CurrentUser, db: DB):
 
 def _enrich_kommentar(k: TicketKommentar, db) -> dict:
     d = asdict(k)
-    author = db.get_user_by_id(k.autor_id) if k.autor_id else None
-    d['autor_username'] = author.username if author else f'User {k.autor_id}'
+    # Schlanker Namens-Lookup (get_username statt get_user_by_id) – wird pro Kommentar
+    # einer Liste aufgerufen, deshalb kein Effektiv-Rechte-Fanout je Autor.
+    username = db.get_username(k.autor_id) if k.autor_id else None
+    d['autor_username'] = username or f'User {k.autor_id}'
     return d
 
 
