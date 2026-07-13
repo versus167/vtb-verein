@@ -1,0 +1,23 @@
+// ── VTB-Vereinsfarben ────────────────────────────────────────────────────────
+//
+// Einzige Quelle für Markenfarben im Frontend. Werte stammen aus der
+// Wappen-Neuzeichnung (2026). Für Blautöne im UI ausschließlich $vtb-blau
+// (bzw. semantisch `primary`) verwenden — keine anderen Blau-Hexwerte.
+// VTB-Gelb nur als Akzent-/Hintergrundfarbe einsetzen, nie als Buttonfarbe
+// mit weißem Text (Kontrast).
+
+$vtb-blau: #023a90; // Wappenblau
+$vtb-gelb: #feeb03; // Wappengelb
+
+// Quasar-Markenfarben
+$primary: $vtb-blau;
+$secondary: #26a69a; // Quasar-Default
+$accent: #9c27b0; // Quasar-Default
+
+$dark: #1d1d1d;
+$dark-page: #121212;
+
+$positive: #21ba45;
+$negative: #c10015;
+$info: #31ccec;
+$warning: #f2c037;

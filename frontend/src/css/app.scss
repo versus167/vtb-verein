@@ -50,7 +50,8 @@ body.body--dark {
     border-color: #3a3a46;
   }
   .q-field--outlined:hover .q-field__control {
-    border-color: #6060ff;
+    // VTB-Blau aufgehellt (Dark-Mode-tauglicher Hover-Ton)
+    border-color: #5b84c4;
   }
 
   // Chip

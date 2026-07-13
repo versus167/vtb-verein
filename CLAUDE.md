@@ -62,6 +62,10 @@ Code.
 - Bereichsinterne Unterteilung über in-page `q-tabs`, nicht über verschachtelte Nav-Punkte.
   Auto-Refresh via `usePageRefresh(handler)`. Router-Guard (`boot/auth.js`) behandelt
   `meta.permission` als ODER bei Array; Admins umgehen alle Checks.
+- **Vereinsfarben:** zentral in `frontend/src/css/quasar.variables.scss` definiert
+  (`$vtb-blau: #023a90` = `$primary`, `$vtb-gelb: #feeb03`). Als Blauton im UI
+  ausschließlich das VTB-Blau verwenden (semantisch über `primary`) — keine anderen
+  Blau-Hexwerte in Komponenten. Gelb nur als Akzent/Hintergrund, nie mit weißem Text.
 
 ## Release-/Commit-Workflow
 - **Nur nach ausdrücklicher Rücksprache committen** — nie selbstständig. Auf `master` erst
