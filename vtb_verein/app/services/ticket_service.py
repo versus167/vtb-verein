@@ -76,7 +76,9 @@ class TicketService:
     # -----------------------------------
 
     def _notify(self, user_ids: list[int], exclude_user_id: Optional[int], title: str, message: str) -> None:
-        """Lädt User-Objekte und sendet Benachrichtigungen; überspringt den auslösenden User."""
+        """Lädt User-Objekte (im Request-Thread) und stößt den Versand nicht-blockierend an;
+        überspringt den auslösenden User. Der eigentliche SMTP-/Matrix-Versand läuft im
+        Hintergrund, damit ein hängender Mailserver den Request nicht ausbremst."""
         from app.services.notification_service import NotificationService
         seen: set[int] = set()
         for uid in user_ids:
@@ -85,7 +87,7 @@ class TicketService:
             seen.add(uid)
             user = self._user_repo.get_by_id(uid)
             if user and user.active:
-                NotificationService.send_notification(user, title, message)
+                NotificationService.send_notification_async(user, title, message)
 
     def _bereich_user_ids(self, bereich_id: Optional[int]) -> list[int]:
         """User-IDs mit bearbeiten- oder schliessen-Recht im Bereich."""

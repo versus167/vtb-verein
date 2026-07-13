@@ -6,9 +6,18 @@ Bevorzugter Kanal: Matrix (wenn konfiguriert), Fallback immer E-Mail.
 from app.models.user import User
 from app.services.email_service import EmailService
 from app.services.matrix_service import MatrixService
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Kleiner Hintergrund-Pool für nicht-blockierenden Versand. Benachrichtigungen
+# sind best-effort – der auslösende HTTP-Request (z. B. Ticket-Statuswechsel)
+# soll NICHT auf SMTP/Matrix warten (IONOS-Timeouts u. Ä.).
+# WICHTIG: Im Hintergrund-Thread dürfen KEINE DB-Zugriffe passieren – die
+# get_db()-Verbindung ist ein nicht-thread-sicheres Singleton. Aufrufer laden
+# das User-Objekt daher im Request-Thread und übergeben es fertig.
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="notify")
 
 
 class NotificationService:
@@ -50,6 +59,14 @@ class NotificationService:
 
         logger.error(f"Benachrichtigung an {user.username} konnte nicht versendet werden")
         return False
+
+    @staticmethod
+    def send_notification_async(user: User, title: str, message: str) -> None:
+        """Nicht-blockierender Versand: reiht den Versand in den Hintergrund-Pool
+        ein und kehrt sofort zurück. Voraussetzung: `user` ist bereits vollständig
+        geladen – im Hintergrund-Thread findet kein DB-Zugriff statt.
+        Fehler werden innerhalb von send_notification geloggt (best-effort)."""
+        _executor.submit(NotificationService.send_notification, user, title, message)
 
     @staticmethod
     def send_member_notification(user: User, subject: str, member_name: str, message: str) -> bool:

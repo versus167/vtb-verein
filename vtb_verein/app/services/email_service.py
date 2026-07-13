@@ -131,10 +131,12 @@ VTB Vereinsverwaltung
                 html_part = MIMEText(html_body, 'html', 'utf-8')
                 msg.attach(html_part)
             
-            # SMTP-Verbindung aufbauen
+            # SMTP-Verbindung aufbauen (mit Timeout, damit ein hängender
+            # Mailserver den aufrufenden Request nicht endlos blockiert)
             with smtplib.SMTP(
-                EmailConfig.get_smtp_server(), 
-                EmailConfig.get_smtp_port()
+                EmailConfig.get_smtp_server(),
+                EmailConfig.get_smtp_port(),
+                timeout=EmailConfig.get_smtp_timeout()
             ) as server:
                 if EmailConfig.get_use_tls():
                     server.starttls()
