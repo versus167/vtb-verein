@@ -32,6 +32,7 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 ✅ **Beiträge**
 - Beitragsregeln (Verein vs. Abteilung), Einzugsturnus, Gültigkeitszeitraum
 - Bedingungen nach Abteilungsstatus, Funktion und **Alter** *(v26)*
+- Flexible Ein-/Ausschlüsse je Abteilungsliste *(v40/v41)*, einstellbare Quartals-Rückschau *(v49)*
 - Sollstellungs-Lauf (Vorschau + Abrechnung), SEPA-Export, Umbuchung in Abteilungskasse
 
 ✅ **Gebühren (Aufnahme-/Einmalgebühren)** *(Schema v28)*
@@ -42,7 +43,13 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 - Mehrere Barkassen (vereinsweit oder je Abteilung), Beträge in **Cent** (kein Float)
 - Belegnummer `YYYY-NNN`, Stornierung (Soft-Delete), Bestandsberechnung per SQL
 - Verwaltete Kassen-Kategorien statt Freitext *(Schema v38)*
-- Revisionssicherer CSV-Export mit Exportsperre
+- Kassenzählung mit Stückelung/Zählprotokoll und automatischer Differenzbuchung *(v42/v62)*
+- Ressourcen-genaue Kassenrechte über eigene ACL (`kasse_berechtigungen`)
+
+✅ **Fibu-Export (hmd FBASC)** *(Schema v45/v55/v61–v64)*
+- Delta-Export der Sollstellungen und Kassenbuchungen im FBASC-Format (statt generischem CSV)
+- Exportsperre/Storno-Läufe, konfigurierbare Sach-/Gegenkonten, Kostenträger je Kategorie
+- ÜL-Honorare als Kreditor je Übungsleiter
 
 ✅ **Funktionsbasierte Berechtigungen** *(Schema v35/v36, siehe [BERECHTIGUNGEN.md](BERECHTIGUNGEN.md))*
 - Rechte hängen an Vereins-Funktionen statt an festen Rollen
@@ -58,7 +65,28 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 ✅ **Zugriffsprotokoll** *(Schema v40)*
 - Append-only `access_log` für An-/Abmeldungen und Seitenaufrufe (Protokoll-Seite), 90-Tage-Prune
 
-✅ **Tickets** & **Anhänge** (Fotos/PDFs), domänenspezifische Ablage
+✅ **Übungsleiter-Stundenerfassung** *(Schema v52–v55/v59)*
+- Erfassung von ÜL-Stunden je Abrechnung mit Sätzen und Trainerlizenz-Klassifikation
+- Lizenz-Gültigkeitsfenster am Mitglied (von/bis), Bestätigungs-Workflow, Stundennachweis-PDF
+- Rechte über `ulstunden.*` (erfassen, erfassen_fremd, bestätigen, verwalten)
+
+✅ **Zutrittskontrolle / Schließsystem (TTLock)** *(Schema v56–v59/v64)*
+- Cloud-Anbindung (TTLock): Schlösser, Chip-Schlüssel und Tür-Berechtigungen
+- Kurzzeitiges App-Öffnen ohne Chip, read-only Credential-Mirror (Fingerprints, Passcodes, Karten)
+- Konnektivitäts-Log je Schloss (seit wann offline), append-only Zutritts-Protokoll
+- Rechte über `schliessanlage.*` (read, oeffnen, protokoll, verwalten)
+
+✅ **Passwort-Tresor** *(Schema v65)*
+- Verschlüsselte Zugangsdaten in benannten Tresoren (BYTEA), Zugriffs-Log
+- Ressourcen-genaue Freigaben (`tresor_freigabe`) an User / Abteilung / Funktion mit Aktiv-am-Stichtag-Semantik
+
+✅ **Tickets** *(Bereiche, Kategorien, bereichsspezifische Rechte)*
+- Ticket-Bereiche mit eigener ACL (`ticket_bereich_berechtigungen`: lesen/bearbeiten/schließen)
+- **Anhänge** (Fotos/PDFs) in domänenspezifischer Ablage
+- Rechte über `tickets.*` (create, read, edit, close, assign, bereiche_verwalten …)
+
+✅ **Benachrichtigungen (mehrkanalig)** *(Schema v67)*
+- E-Mail, Telegram, Matrix und **Web-Push** (`push_subscriptions`) als je Profil wählbare Kanäle
 
 ✅ **Audit-Trail & Soft-Delete** durchgängig
 - `*_history`-Tabellen je Entität, automatisch via DB-Trigger (INSERT/UPDATE)
@@ -127,7 +155,7 @@ docker compose build --no-cache # neu bauen
 
 ### Option 2: Lokale Entwicklung
 
-**Voraussetzungen:** Python 3.11+, Node 20+, eine erreichbare PostgreSQL-Instanz.
+**Voraussetzungen:** Python 3.12+, Node 22+, eine erreichbare PostgreSQL-Instanz.
 
 1. **PostgreSQL bereitstellen** (Beispiel via Docker):
    ```bash
@@ -209,7 +237,8 @@ vtb-verein/
 ├── TODO.md                      # Roadmap / offene Aufgaben
 ├── frontend/                    # Quasar/Vue Single-Page-App (PWA)
 │   ├── src/pages/               # Seiten (Personen, Abteilungen, Mannschaften, Beiträge,
-│   │                            #   Gebühren, Kassenbuch, Tickets, Import, Berichte, Protokoll …)
+│   │                            #   Gebühren, Kassenbuch, ÜL-Stunden, Schließanlage, Tresor,
+│   │                            #   Tickets, Import, Berichte, Protokoll …)
 │   ├── src/layouts/             # MainLayout (Navigation)
 │   ├── src/router/              # Routen (+ meta.permission)
 │   ├── src/stores/              # Pinia (auth)
@@ -233,7 +262,7 @@ vtb-verein/
 Das Schema wird **nicht** über Alembic zur Laufzeit verwaltet, sondern über eine eigene,
 versionierte Pipeline in `vtb_verein/app/db/database.py`:
 
-- `SCHEMA_VERSION` definiert die Zielversion (aktuell **40**).
+- `SCHEMA_VERSION` definiert die Zielversion (aktuell **67**).
 - Beim Backend-Start vergleicht `Database._init_schema()` die DB-Version und führt fehlende
   `_migrate_vX_to_vY()`-Schritte sequenziell aus (jeweils in eigener Transaktion).
 - Neue Migration = neue `_migrate_…`-Funktion + Eintrag in `migration_map` + `SCHEMA_VERSION`
@@ -247,14 +276,25 @@ INSERT/UPDATE-Trigger). Beträge im Kassenbuch in **Cent** (Integer).
 Jüngste Meilensteine: v24 mehrere Kontaktdaten · v25 Funktions-Pflichtzeitraum ·
 v26 altersabhängige Beitragsregeln · v27 Mannschaften · v28 Aufnahme-/Einmalgebühren ·
 v29 SPG-Import-Felder · v35/v36 funktionsbasierte Berechtigungen · v37 serverseitige
-Sessions · v38 verwaltete Kassen-Kategorien · v40 Zugriffsprotokoll (`access_log`).
+Sessions · v38 verwaltete Kassen-Kategorien · v40 Zugriffsprotokoll (`access_log`) ·
+v42/v62 Kassenzählung + Differenzbuchung · v45/v61–v64 Fibu-Export (hmd FBASC) ·
+v46 Magic-Link-Härtung (Token-Hash) · v47/v48 konfigurierbarer Prune · v50 Zeitstempel
+tabellenweit auf `TIMESTAMPTZ` · v52–v55/v59 ÜL-Stundenerfassung · v56–v59/v64
+Zutrittskontrolle (TTLock) · v65 Passwort-Tresor · v67 Web-Push.
 
 ## Permissions
 
 Feingranulare Permission-Matrix in der Form `ressource.aktion`, geprüft im API-Layer
 (`user.has_permission(...)` + `backend/core/deps.py`). Ressourcen u.a.:
 `personen.*`, `abteilungen.*`, `mannschaften.*`, `beitraege.*`, `gebuehren.*`,
-`kassen.*`, `berichte.*`, `tickets.*`, `protokoll.*`, `system.config`.
+`kassen.verwalten`, `fibu.export`, `funktionen.verwalten`, `ulstunden.*`,
+`schliessanlage.*`, `tresor.verwalten`, `berichte.*`, `tickets.*`,
+`system.config`/`system.protokoll`.
+
+**Ressourcen-genaue Rechte** (einzelne Kasse, Tresor, Ticket-Bereich) laufen **nicht** über
+globale Permissions, sondern über eigene ACL-Tabellen (`kasse_berechtigungen`,
+`tresor_freigabe`, `ticket_bereich_berechtigungen`); die globalen `*.verwalten`-Rechte gelten
+nur fürs Anlegen/Verwalten.
 
 Berechtigungen sind **funktionsbasiert**, nicht rollenbasiert (Umbau Ticket #22,
 Stufen A–E, Details in [BERECHTIGUNGEN.md](BERECHTIGUNGEN.md)):
@@ -276,19 +316,23 @@ effektiv = Sockel (BASE_PERMISSIONS) ∪ Funktionsrechte ∪ individuelle Grants
 ## Tests
 
 ```bash
-# immer über das venv ausführen
+# immer über das venv ausführen (nie System-Python); Warnungen gelten als Fehler
 ./venv/bin/python -m pytest vtb_verein/tests/ -q
 ```
 
-Aktuell sind einige Unit-Tests vorhanden (`test_anhang_service`, `test_beitrags_service`,
-`test_effective_permissions`, `test_iban`, `test_kassen_kategorie`,
-`test_notification_services`). Eine PostgreSQL-Test-Fixture (conftest) existiert noch nicht;
-DB-nahe Tests werden derzeit gegen einen Wegwerf-PostgreSQL-Container gefahren.
+Die Suite umfasst reine Unit-Tests (z. B. `test_iban`, `test_effective_permissions`,
+`test_beitrags_service`, `test_gebuehren_service`, `test_kassen_kategorie`,
+`test_ul_stunden_service`, `test_vault_crypto`) sowie **DB-nahe Integrationstests**
+(z. B. `test_tresor_integration`, `test_prune_integration`, `test_schloss_status_log_integration`,
+`test_ticket_bereich_berechtigung_integration`). Letztere **skippen automatisch**, solange
+`VTB_TEST_DATABASE_URL` nicht auf einen leeren Wegwerf-PostgreSQL zeigt (z. B.
+`docker run … postgres:18`); `VereinsDB` legt das Schema beim Connect an. Beide Schema-Pfade
+(Frischaufbau *und* Migration) werden geprüft.
 
 ## Roadmap
 
 Siehe [TODO.md](TODO.md). Offene Schwerpunkte u.a.: Mitglieder-Export (CSV/Excel),
-Pagination für große Listen und Fibu-Export der Sollstellungen.
+Pagination für große Listen und die Aufbewahrung/Archivierung ausgetretener Mitglieder.
 
 ## Lizenz
 
