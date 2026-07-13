@@ -8,3 +8,4 @@ python-dotenv>=1.0.0
 psycopg[binary]>=3.1
 reportlab>=4.0
 cryptography>=42.0  # At-rest-Verschlüsselung der Passwort-Tresor-Secrets (#85, Fernet)
+pywebpush>=1.14     # Web-Push-Benachrichtigungen (#96, VAPID)

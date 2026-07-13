@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 66
+SCHEMA_VERSION = 67
 
 
 # ---------------------------------------------------------------------------
@@ -1233,6 +1233,89 @@ _TRESOR_TRIGGERS = (
 )
 
 
+# ============================================================================
+# Web-Push-Subscriptions (Schema v67, Ticket #96)
+# ----------------------------------------------------------------------------
+# Pro Gerät/Browser eine Subscription (endpoint + Schlüssel p256dh/auth), die der
+# Nutzer über den Service Worker anlegt. Analog zu user_sessions: geräte-gebunden,
+# Soft-Revoke über revoked_at/revoked_by (kein Hard-Delete), *_history + Audit-
+# Trigger. Wird eine Subscription vom Push-Dienst mit 404/410 abgewiesen, revoken
+# wir sie (Standard-Push-Hygiene). Zeitbasiertes Prune analog user_sessions.
+# ============================================================================
+_DDL_PUSH_SUBSCRIPTIONS = """
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id            SERIAL PRIMARY KEY,
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      endpoint      TEXT UNIQUE NOT NULL,
+      p256dh        TEXT NOT NULL,
+      auth          TEXT NOT NULL,
+      user_agent    TEXT,
+      device_label  TEXT,
+      last_used_at  TEXT,
+      revoked_at    TEXT,
+      revoked_by    TEXT,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS push_subscriptions_history (
+      id            INTEGER NOT NULL,
+      version       INTEGER NOT NULL,
+      user_id       INTEGER NOT NULL,
+      endpoint      TEXT NOT NULL,
+      p256dh        TEXT NOT NULL,
+      auth          TEXT NOT NULL,
+      user_agent    TEXT,
+      device_label  TEXT,
+      last_used_at  TEXT,
+      revoked_at    TEXT,
+      revoked_by    TEXT,
+      created_at    TEXT NOT NULL,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT = """
+CREATE OR REPLACE FUNCTION fn_push_subscriptions_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO push_subscriptions_history (
+        id, version, user_id, endpoint, p256dh, auth, user_agent, device_label,
+        last_used_at, revoked_at, revoked_by, created_at
+    ) VALUES (
+        NEW.id, NEW.version, NEW.user_id, NEW.endpoint, NEW.p256dh, NEW.auth, NEW.user_agent, NEW.device_label,
+        NEW.last_used_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+    );
+    RETURN NEW;
+END; $$;
+"""
+
+_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE = """
+CREATE OR REPLACE FUNCTION fn_push_subscriptions_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.version != OLD.version THEN
+        INSERT INTO push_subscriptions_history (
+            id, version, user_id, endpoint, p256dh, auth, user_agent, device_label,
+            last_used_at, revoked_at, revoked_by, created_at
+        ) VALUES (
+            NEW.id, NEW.version, NEW.user_id, NEW.endpoint, NEW.p256dh, NEW.auth, NEW.user_agent, NEW.device_label,
+            NEW.last_used_at, NEW.revoked_at, NEW.revoked_by, NEW.created_at
+        );
+    END IF;
+    RETURN NEW;
+END; $$;
+"""
+
+_PUSH_SUBSCRIPTIONS_TRIGGERS = (
+    ('trig_push_subscriptions_audit_insert', 'INSERT', 'push_subscriptions', 'fn_push_subscriptions_audit_insert'),
+    ('trig_push_subscriptions_audit_update', 'UPDATE', 'push_subscriptions', 'fn_push_subscriptions_audit_update'),
+)
+
+_PUSH_SUBSCRIPTIONS_INDEXES = (
+    ("idx_push_subscriptions_user_id",     "push_subscriptions(user_id)"),
+    ("idx_push_subscriptions_revoked_at",  "push_subscriptions(revoked_at)"),
+    ("idx_push_subscriptions_history_id",  "push_subscriptions_history(id)"),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -1345,6 +1428,7 @@ class Database:
             64: self._migrate_v63_to_v64,
             65: self._migrate_v64_to_v65,
             66: self._migrate_v65_to_v66,
+            67: self._migrate_v66_to_v67,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4257,6 +4341,30 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 66 WHERE id = 1")
 
+    def _migrate_v66_to_v67(self) -> None:
+        """Web-Push-Subscriptions (#96): push_subscriptions als zusätzlicher
+        Benachrichtigungskanal.
+
+        Neue Tabelle push_subscriptions (+ _history, Audit-Trigger), analog
+        user_sessions geräte-gebunden mit Soft-Revoke (revoked_at/by). Kein neues
+        globales Recht – jeder Nutzer verwaltet nur seine eigenen Geräte über die
+        Push-Endpunkte. Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem
+        Fresh-Schema. Zum Schluss _normalize_audit_timestamps (Typen fresh == migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
+            cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
+            cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
+            for name, event, table, fn in _PUSH_SUBSCRIPTIONS_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _PUSH_SUBSCRIPTIONS_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 67 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -5499,6 +5607,9 @@ class Database:
         # Passwort-Tresor (Schema v66): Tresore, Freigaben, verschlüsselte Einträge +
         # append-only Zugriffslog. DDL geteilt mit Migration v65→v66.
         cur.execute(_DDL_TRESOR)
+        # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
+        # DDL geteilt mit Migration v66→v67.
+        cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -5714,6 +5825,8 @@ class Database:
         cur.execute(_FN_TRESOR_FREIGABE_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_INSERT)
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
+        cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
+        cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -6319,6 +6432,7 @@ class Database:
             *_ZUTRITT_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
+            *_PUSH_SUBSCRIPTIONS_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -6433,6 +6547,7 @@ class Database:
             *_ZUTRITT_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
+            *_PUSH_SUBSCRIPTIONS_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 

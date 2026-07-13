@@ -24,17 +24,29 @@ class NotificationService:
     """Zentrale Service für Versand von Benachrichtigungen"""
 
     @staticmethod
-    def send_notification(user: User, title: str, message: str) -> bool:
+    def send_notification(user: User, title: str, message: str, push_service=None) -> bool:
         """
         Sendet Benachrichtigung über bevorzugten Kanal mit E-Mail-Fallback.
 
+        Der bevorzugte Kanal (user.preferred_contact) wird zuerst versucht,
+        E-Mail bleibt immer garantierter Fallback ("erster Erfolg gewinnt"):
+          - 'matrix' → Matrix (falls matrix_id gesetzt)
+          - 'push'   → Web-Push an alle Geräte (falls push_service übergeben & konfiguriert)
+
+        Args:
+            push_service: optionaler PushService (nur nötig, wenn Push zugestellt
+                werden soll; ohne ihn wird der Push-Kanal übersprungen → E-Mail).
+
         Returns:
-            True wenn erfolgreich versendet
+            True wenn über mindestens einen Kanal erfolgreich versendet
         """
         channels_to_try = []
 
         if user.preferred_contact == 'matrix' and user.matrix_id:
             channels_to_try.append(('matrix', user.matrix_id))
+
+        if user.preferred_contact == 'push' and push_service is not None:
+            channels_to_try.append(('push', None))
 
         channels_to_try.append(('email', user.email))
 
@@ -42,6 +54,8 @@ class NotificationService:
             try:
                 if channel == 'matrix':
                     success = MatrixService.send_notification(address, title, message)
+                elif channel == 'push':
+                    success = push_service.send_to_user(user.id, title, message) > 0
                 else:
                     success = EmailService.send_text_email(
                         recipient_email=address,
@@ -61,12 +75,13 @@ class NotificationService:
         return False
 
     @staticmethod
-    def send_notification_async(user: User, title: str, message: str) -> None:
+    def send_notification_async(user: User, title: str, message: str, push_service=None) -> None:
         """Nicht-blockierender Versand: reiht den Versand in den Hintergrund-Pool
         ein und kehrt sofort zurück. Voraussetzung: `user` ist bereits vollständig
-        geladen – im Hintergrund-Thread findet kein DB-Zugriff statt.
-        Fehler werden innerhalb von send_notification geloggt (best-effort)."""
-        _executor.submit(NotificationService.send_notification, user, title, message)
+        geladen. Der Hintergrund-Thread nutzt für Push denselben DB-Singleton wie
+        die FastAPI-Worker (psycopg-Connection ist thread-safe); Fehler werden
+        innerhalb von send_notification geloggt (best-effort)."""
+        _executor.submit(NotificationService.send_notification, user, title, message, push_service)
 
     @staticmethod
     def send_member_notification(user: User, subject: str, member_name: str, message: str) -> bool:

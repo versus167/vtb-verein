@@ -223,6 +223,7 @@ def send_test_notification(user: CurrentUser, db: DB):
         fresh,
         title="Test-Nachricht",
         message="Dies ist eine Test-Benachrichtigung von der VTB-Vereinsverwaltung.",
+        push_service=db.push,
     )
     if not result:
         raise HTTPException(status_code=500, detail="Nachricht konnte nicht versendet werden")

@@ -27,6 +27,8 @@ from app.db.user_repository import UserRepository
 from app.db.permission_repository import PermissionRepository
 from app.db.auth_token_repository import AuthTokenRepository
 from app.db.user_session_repository import UserSessionRepository
+from app.db.push_subscription_repository import PushSubscriptionRepository
+from app.services.push_service import PushService
 from app.db.access_log_repository import AccessLogRepository
 from app.db.prune_einstellungen_repository import PruneEinstellungenRepository
 from app.db.kasse_repository import KasseRepository
@@ -161,6 +163,10 @@ class VereinsDB:
             fibu_einstellungen_repo=self._fibu_einstellungen_repo,
         )
 
+        # Web-Push (#96): geräte-gebundene Subscriptions + Versand-Service
+        self._push_subscription_repo = PushSubscriptionRepository(self.conn)
+        self._push_service = PushService(self._push_subscription_repo)
+
         self._ticket_repo = TicketRepository(self.conn)
         self._ticket_kommentar_repo = TicketKommentarRepository(self.conn)
         self._ticket_anhang_repo = TicketAnhangRepository(self.conn)
@@ -179,6 +185,7 @@ class VereinsDB:
             berechtigung_repo=self._ticket_bereich_berechtigung_repo,
             user_repo=self._user_repo,
             anhang_service=self._anhang_service,
+            push_service=self._push_service,
         )
 
         # Passwort-Tresor (#85)
@@ -186,6 +193,11 @@ class VereinsDB:
         self._tresor_freigabe_repo = TresorFreigabeRepository(self.conn)
         self._tresor_eintrag_repo = TresorEintragRepository(self.conn)
         self._tresor_zugriff_log_repo = TresorZugriffLogRepository(self.conn)
+
+    @property
+    def push(self) -> PushService:
+        """Web-Push-Service (#96): Subscriptions verwalten + Versand."""
+        return self._push_service
 
     @property
     def user_repository(self) -> UserRepository:
