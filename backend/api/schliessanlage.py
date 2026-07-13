@@ -215,6 +215,18 @@ def schloesser_liste(user: CurrentUser, db: DB):
     return schloesser
 
 
+@router.get("/logs")
+def gesamt_log(user: CurrentUser, db: DB, limit: int = 100):
+    """Gesamt-Zutrittslog über alle (sichtbaren) Schlösser, neueste zuerst.
+    Bewegungsdaten sind DSGVO-sensibel → eigenes Recht `schliessanlage.protokoll`;
+    der Abteilungs-Scope greift wie bei den Einzel-Logs."""
+    _require(user, Permission.SCHLIESSANLAGE_PROTOKOLL, "Zutrittsprotokoll einsehen")
+    limit = max(1, min(limit, 500))
+    visible = visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_PROTOKOLL)
+    return db.tuer_zutritt_logs.list_neueste(
+        limit=limit, schloss_ids=None if visible is None else list(visible))
+
+
 @router.get("/schloesser/{schloss_id}")
 def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
     _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")

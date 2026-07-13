@@ -135,6 +135,9 @@ class TuerSchloss:
     letztes_event_type: Optional[int] = None
     # per Subquery befüllt: seit wann gilt der aktuelle gateway_online-Status (#82)
     gateway_online_seit: Optional[str] = None
+    # per Subquery befüllt: wer den letzten Vorgang ausgelöst hat (Mitglied > Chip >
+    # Cloud-Credential-Name > TTLock-Konto) — Anzeige "vor 12 min · IC-Karte – Max M."
+    letztes_event_wer: Optional[str] = None
     # per JOIN befüllt (Anzeige)
     abteilung_name: Optional[str] = None
     version: int = 1
