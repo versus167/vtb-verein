@@ -7,37 +7,367 @@
 .text-vtb-gelb { color: $vtb-gelb !important; }
 .bg-vtb-gelb   { background: $vtb-gelb !important; }
 
+// ── Navigations-Drawer in Vereinsfarben ──────────────────────────────────────
+//
+// Light Mode: weißes Menü mit blauen Icons, aktiver Punkt mit gelbem Balken
+// und zarter Gelb-Tönung (Gelb als Akzent, nicht als Fläche). Dark Mode:
+// Navy-Menü, aktiver Punkt gelb — spiegelbildlich. Der aktive Zustand kommt
+// aus MainLayout.vue über active-class="vtb-nav-active".
+
+// Wappen-Home-Feld ganz oben im Menü: führt die blaue Header-Leiste nahtlos
+// im Menü weiter (gleiche Höhe 50px, gleiche Farbe) — wirkt wie EIN durch-
+// gehender Balken über die volle Breite. Zugleich Home-Button; auf der
+// Übersicht wird nur der Schriftzug gelb, kein zweiter gelber Balken.
+.vtb-drawer-home {
+  // 50px Toolbar-Höhe + 2px Gelbstreifen: der Rand zählt (border-box) in die
+  // Höhe hinein, beim Header sitzt er außen — so schließen beide Linien bündig.
+  min-height: 52px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  // Setzt den gelben Querstreifen des Headers im Menü fort (eine Linie)
+  border-bottom: 2px solid $vtb-gelb;
+
+  .vtb-drawer-home__logo {
+    width: 30px;
+    height: 30px;
+  }
+}
+body:not(.body--dark) .q-drawer .vtb-drawer-home,
+body:not(.body--dark) .q-drawer .vtb-drawer-home.vtb-nav-active {
+  background: $vtb-blau;
+  color: #fff;
+  box-shadow: none;
+}
+body:not(.body--dark) .q-drawer .vtb-drawer-home.vtb-nav-active {
+  color: $vtb-gelb;
+  box-shadow: inset 4px 0 0 0 $vtb-gelb;
+}
+body.body--dark .vtb-drawer-home,
+body.body--dark .vtb-drawer-home.vtb-nav-active {
+  background: $vtb-navy-kopf;
+  color: #fff;
+  box-shadow: none;
+}
+body.body--dark .vtb-drawer-home.vtb-nav-active {
+  color: $vtb-gelb;
+  box-shadow: inset 4px 0 0 0 $vtb-gelb;
+}
+
+// Versions-Angabe dezent unten links im Menü; die Scroll-Fläche endet darüber,
+// damit nichts überlappt.
+.vtb-drawer-scroll {
+  height: calc(100% - 28px);
+}
+.vtb-drawer-version {
+  height: 28px;
+  line-height: 28px;
+  padding-left: 16px;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.45);
+}
+body.body--dark .vtb-drawer-version {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+// ── In-Page-Tabs (wiederverwendbar: class="vtb-tabs" ans q-tabs hängen) ──────
+// Segment-Pillen statt Unterstrich-Tabs: abgerundete Leiste, der aktive
+// Reiter ist eine gefüllte Primär-Pille. KEIN active-color/indicator-color
+// am q-tabs setzen (die !important-Textfarben würden das Weiß überstimmen).
+.vtb-tabs {
+  display: inline-flex;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 24px;
+  background: #fff;
+  padding: 3px;
+  color: rgba(0, 0, 0, 0.55);
+
+  .q-tab {
+    border-radius: 20px;
+    min-height: 40px;
+    padding: 0 20px;
+  }
+  .q-tab--active {
+    background: $vtb-blau;
+    color: #fff;
+  }
+  .q-tab__label {
+    font-weight: 600;
+  }
+  .q-tab__indicator {
+    display: none;
+  }
+}
+@media (min-width: 600px) {
+  .vtb-tabs .q-tab {
+    min-width: 180px;
+  }
+}
+body.body--dark .vtb-tabs {
+  border-color: $vtb-navy-linie;
+  background: $vtb-navy-flaeche;
+  color: #9fb0cc;
+
+  .q-tab--active {
+    background: $vtb-blau-btn-dark;
+    color: #fff;
+  }
+}
+
+// ── Segmentierter Umschalter (wiederverwendbar: class="vtb-segment") ─────────
+// Für Filter-Pillen (q-btn-toggle): helle Leiste mit feinem Rand, aktives
+// Segment als gefüllte Primär-Pille.
+.vtb-segment {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 24px;
+  background: #fff;
+  padding: 3px;
+
+  .q-btn {
+    border-radius: 20px !important;
+    padding: 2px 14px;
+    font-weight: 600;
+    color: rgba(0, 0, 0, 0.55);
+  }
+}
+body.body--dark .vtb-segment {
+  border-color: $vtb-navy-linie;
+  background: $vtb-navy-flaeche;
+
+  .q-btn {
+    color: #9fb0cc;
+  }
+}
+
+// ── Feedback-Dialog ──────────────────────────────────────────────────────────
+// Global gestylt: q-dialog rendert im Portal außerhalb des Layout-Baums.
+.vtb-feedback-dialog {
+  border-radius: 14px;
+}
+.vtb-feedback-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba($vtb-blau, 0.08);
+  flex-shrink: 0;
+}
+body.body--dark .vtb-feedback-icon {
+  background: rgba($vtb-blau-hell, 0.16);
+}
+.vtb-feedback-shot {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+}
+body.body--dark .vtb-feedback-shot {
+  border-color: $vtb-navy-linie;
+}
+.vtb-feedback-senden {
+  border-radius: 10px;
+}
+
+// ── Konto-Menü (Header) ──────────────────────────────────────────────────────
+// Global gestylt: q-menu rendert im Portal außerhalb des Layout-Baums,
+// scoped Styles würden dort nicht greifen.
+.vtb-konto-menu {
+  border-radius: 12px;
+}
+.vtb-konto-kopf {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba($vtb-blau, 0.06);
+}
+.vtb-konto-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: $vtb-blau;
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  border: 2px solid $vtb-gelb;
+  flex-shrink: 0;
+}
+.vtb-konto-rolle {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.55);
+}
+.vtb-konto-version {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.4);
+}
+.vtb-konto-menu .q-item .q-icon {
+  color: $vtb-blau;
+}
+.vtb-konto-abmelden,
+.vtb-konto-abmelden .q-icon {
+  color: $negative !important;
+}
+body.body--dark {
+  .vtb-konto-kopf {
+    background: rgba($vtb-gelb, 0.07);
+  }
+  .vtb-konto-rolle {
+    color: rgba(255, 255, 255, 0.6);
+  }
+  .vtb-konto-version {
+    color: rgba(255, 255, 255, 0.4);
+  }
+  .vtb-konto-menu .q-item .q-icon {
+    color: $vtb-blau-hell;
+  }
+  .vtb-konto-abmelden,
+  .vtb-konto-abmelden .q-icon {
+    color: #ef9a9a !important;
+  }
+}
+
+// Gelber Querstreifen über die volle Breite: Unterkante von Header UND
+// blauem Home-Band im Menü — wirkt als eine durchgehende Linie. Der
+// senkrechte Menü-Trennstreifen bleibt dezent grau (hell) bzw. Navy (dunkel).
+.q-header {
+  border-bottom: 2px solid $vtb-gelb;
+}
+
+// Inhaltsfläche im Hellmodus zart blaugrau abtönen — weiße Karten/Kacheln
+// heben sich dadurch sichtbar ab statt auf Weiß zu verschwimmen.
+body:not(.body--dark) .q-page-container {
+  background: #f3f5f9;
+}
+
+// Begrüßung mit gelbem Unterstrich als kleines Branding-Element
+.dashboard-gruss {
+  display: inline-block;
+  padding-bottom: 4px;
+  border-bottom: 3px solid $vtb-gelb;
+}
+
+// Kachel-Hover im Hellmodus: blauer Rahmen (als Schatten-Ring, verschiebt
+// nichts) zusätzlich zum leichten Anheben. Dark-Pendant (gelbe Kante) steht
+// im Dark-Mode-Block.
+body:not(.body--dark) .settings-tile:hover {
+  box-shadow:
+    0 0 0 2px $vtb-blau,
+    0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+// Hover-/Fokus-Effekt im Menü in Blau statt Quasar-Grau (der Overlay nutzt
+// die Farbe des .q-focus-helper, die Deckkraft steuert Quasar selbst)
+body:not(.body--dark) .q-drawer .q-item .q-focus-helper {
+  background: $vtb-blau;
+}
+body.body--dark .q-drawer .q-item .q-focus-helper {
+  background: $vtb-blau-hell;
+}
+
+body:not(.body--dark) .q-drawer {
+  .q-item .q-icon {
+    color: $vtb-blau;
+  }
+
+  .vtb-nav-active {
+    background: rgba($vtb-gelb, 0.28);
+    color: $vtb-blau;
+    font-weight: 600;
+    // Gelber Markierungsbalken am linken Rand
+    box-shadow: inset 4px 0 0 0 $vtb-gelb;
+  }
+}
+
+body.body--dark .vtb-nav-active {
+  background: rgba($vtb-gelb, 0.12);
+  color: $vtb-gelb;
+  // Gelber Markierungsbalken am linken Rand
+  box-shadow: inset 4px 0 0 0 $vtb-gelb;
+
+  .q-icon {
+    color: $vtb-gelb;
+  }
+}
+
 // ── Dark Mode Theme ──────────────────────────────────────────────────────────
 //
-// Modernes dunkles Grau mit hohem Textkontrast.
-// Quasar setzt body.body--dark wenn Dark-Mode aktiv ist.
+// Bläuliches Navy statt Schwarz — alle Töne aus dem Wappenblau abgeleitet
+// (Variablen in quasar.variables.scss). Quasar setzt body.body--dark, wenn
+// Dark-Mode aktiv ist.
 //
 // Farbschema:
-//   Seitenhintegrund  #111115  (fast schwarz, minimaler Blauanteil)
-//   Oberflächen       #1e1e24  (Karten, Drawer, Header)
-//   Erhöhte Flächen   #28282f  (Dialoge, Tooltips, Hover)
-//   Text primär       #f0f0f2  (fast weiß, hoher Kontrast)
-//   Text sekundär     #a0a0b0  (Captions, Hints)
-//   Trennlinie        #2e2e38
+//   Seitenhintergrund  $vtb-navy-page     (#0a1428)
+//   Oberflächen        $vtb-navy-flaeche  (#13233f — Karten, Dialoge, Tabellen)
+//   Header             $vtb-navy-kopf     (#132a55)
+//   Drawer/Menü        $vtb-navy-menue    (#0f1d3a)
+//   Erhöhte Flächen    $vtb-navy-hoch     (#1b2f52 — Chips, Toggles, Hover)
+//   Trennlinie/Rahmen  $vtb-navy-linie    (#26395c)
+//   Text primär        #eef2f9
+//   Text sekundär      #9fb0cc
 
 body.body--dark {
   // Quasar-interne Hintergrundvariablen
-  --q-color-dark:      #1e1e24;
-  --q-color-dark-page: #111115;
+  --q-color-dark:      #{$vtb-navy-flaeche};
+  --q-color-dark-page: #{$vtb-navy-page};
 
   // Seitentext
-  color: #f0f0f2;
+  color: #eef2f9;
 
   // Karten
   .q-card {
-    background: #1e1e24;
-    color: #f0f0f2;
+    background: $vtb-navy-flaeche;
+    color: #eef2f9;
   }
 
-  // Drawer & Header
-  .q-header,
+  // Header blau-navy, Menü etwas tiefer als die Inhaltsflächen.
+  // Gelbe Querlinie hier erneut setzen: Quasars Dark-Mode-Regel stellt
+  // Header-/Drawer-Rahmenfarben sonst auf blasses Weiß um.
+  .q-header {
+    background: $vtb-navy-kopf;
+    border-bottom: 2px solid $vtb-gelb;
+  }
   .q-drawer {
-    background: #1e1e24;
+    background: $vtb-navy-menue;
+  }
+  // Senkrechter Trennstreifen dezent in Navy (gelb ist nur die Querlinie oben)
+  .q-drawer--bordered {
+    border-right: 1px solid $vtb-navy-linie;
+  }
+
+  // Primärfarbe aufhellen: das Wappenblau #023a90 ist auf Navy-Flächen fast
+  // unsichtbar — Texte/Icons heller Blauton, Button-Flächen satteres Blau.
+  .text-primary {
+    color: $vtb-blau-hell !important;
+  }
+  .bg-primary {
+    background: $vtb-blau-btn-dark !important;
+  }
+
+  // Elevation wirkt im Dark Mode als heller Schleier (Quasar zeichnet
+  // Schatten dunkler Flächen weißlich) → Flächen flach und klar: Karten
+  // und Menüs ohne Schatten, dafür feine Navy-Kante. Kacheln quittieren
+  // Hover mit gelber Kante statt Schatten. Login-Karte hat ihr eigenes,
+  // bewusst modus-unabhängiges Design und bleibt außen vor.
+  .q-card:not(.login-card),
+  .q-menu {
+    box-shadow: none;
+    border: 1px solid $vtb-navy-linie;
+  }
+  .settings-tile:hover {
+    box-shadow: none !important;
+    border-color: $vtb-gelb;
+  }
+  // Kachel-Innenleben im Dark Mode: Icon-Badge heller Blauton, Pfeil gedimmt
+  .settings-tile__icon {
+    background: rgba($vtb-blau-hell, 0.16);
+  }
+  .settings-tile__pfeil {
+    color: rgba(255, 255, 255, 0.35);
   }
 
   // Tabellen: Zebrastreifen & Hover
@@ -47,32 +377,36 @@ body.body--dark {
 
   // Trennlinien
   .q-separator {
-    background: #2e2e38;
+    background: $vtb-navy-linie;
   }
 
   // Inputs & Selects
   .q-field__native,
   .q-field__input {
-    color: #f0f0f2;
+    color: #eef2f9;
   }
   .q-field--outlined .q-field__control {
-    border-color: #3a3a46;
+    border-color: #2c4066;
   }
   .q-field--outlined:hover .q-field__control {
-    // VTB-Blau aufgehellt (Dark-Mode-tauglicher Hover-Ton)
-    border-color: #5b84c4;
+    border-color: $vtb-blau-hell;
   }
 
   // Chip
   .q-chip {
-    background: #28282f;
-    color: #d0d0e0;
+    background: $vtb-navy-hoch;
+    color: #d3ddf0;
+  }
+
+  // Begrüßung auf der Übersicht in Vereinsgelb
+  .dashboard-gruss {
+    color: $vtb-gelb;
   }
 
   // Timeline
   .q-timeline__subtitle,
   .q-timeline__dot:before {
-    color: #a0a0b0;
+    color: #9fb0cc;
   }
 
   // Captions und sekundärer Text
@@ -80,35 +414,50 @@ body.body--dark {
   .text-grey-6,
   .text-grey-7,
   .text-grey-8 {
-    color: #a0a0b0 !important;
+    color: #9fb0cc !important;
+  }
+  .text-grey-5 {
+    color: #8093b5 !important;
   }
   // grey-9/10 sind im Light Mode fast schwarzer Fließtext → im Dark Mode heller Primärtext
   .text-grey-9,
-  .text-grey-10 { color: #e6e6ea !important; }
+  .text-grey-10 { color: #e8edf7 !important; }
 
   // ── Helle Tint-Flächen + dunkle Farbtexte (Banner-/Chip-Muster bg-X-1 + text-X-9/10) ──
   //
   // Im Light Mode werden überall dezente helle Tönungen mit dunklem, farbigem Text
-  // benutzt (z. B. Hinweis-Banner `bg-blue-1 text-blue-10`). Im Dark Mode sind ALLE
-  // Flächen dunkel – daher die Tint-Hintergründe auf dunkle Töne und die dunklen
-  // Farbtexte auf helle, farbtreue Töne umbiegen, sonst helle Insel-Kacheln mit kaum
-  // lesbarem Text (Ticket #87). Farbton bleibt erhalten, damit die Semantik (grün=ok,
-  // rot=Fehler, …) sichtbar bleibt.
-  .bg-grey-1       { background-color: #1a1a1e !important; }
-  .bg-grey-2       { background-color: #24242b !important; }
-  .bg-green-1      { background-color: #1a2e1a !important; }
-  .bg-red-1        { background-color: #2e1a1a !important; }
-  .bg-blue-1       { background-color: #16212e !important; }
-  .bg-blue-grey-1  { background-color: #232d34 !important; }
-  .bg-amber-1      { background-color: #2a2410 !important; }
-  .bg-amber-2      { background-color: #322a12 !important; }
-  .bg-orange-1     { background-color: #2b2110 !important; }
-  .bg-purple-1     { background-color: #241a2b !important; }
+  // benutzt (z. B. Hinweis-Banner `bg-blue-1 text-blue-10`, Status-Chips `green-3`).
+  // Im Dark Mode sind ALLE Flächen dunkel – daher die Tint-Hintergründe auf dunkle,
+  // navy-verwandte Töne und die dunklen Farbtexte auf helle, farbtreue Töne umbiegen,
+  // sonst helle Insel-Kacheln mit kaum lesbarem Text (Ticket #87). Farbton bleibt
+  // erhalten, damit die Semantik (grün=ok, rot=Fehler, …) sichtbar bleibt.
+  .bg-white        { background: $vtb-navy-hoch !important; }
+  .bg-grey-1       { background-color: #101d38 !important; }
+  .bg-grey-2       { background-color: #16264a !important; }
+  .bg-grey-3       { background-color: $vtb-navy-hoch !important; }
+  .bg-grey-4       { background-color: #22365c !important; }
+  .bg-green-1      { background-color: #0f3123 !important; }
+  .bg-green-2      { background-color: #14402d !important; }
+  .bg-green-3      { background-color: #175033 !important; }
+  .bg-red-1        { background-color: #3a1a24 !important; }
+  .bg-red-2        { background-color: #45202c !important; }
+  .bg-red-3        { background-color: #542532 !important; }
+  .bg-blue-1       { background-color: #14294e !important; }
+  .bg-blue-grey-1  { background-color: #1b2c44 !important; }
+  .bg-blue-grey-2  { background-color: #24354f !important; }
+  .bg-teal-1       { background-color: #12333a !important; }
+  .bg-amber-1      { background-color: #302a12 !important; }
+  .bg-amber-2      { background-color: #383014 !important; }
+  .bg-orange-1     { background-color: #33240f !important; }
+  .bg-orange-3     { background-color: #4a3312 !important; }
+  .bg-purple-1     { background-color: #2a1c3e !important; }
 
   .text-red-9,    .text-red-10    { color: #ef9a9a !important; }
   .text-green-9,  .text-green-10  { color: #a5d6a7 !important; }
   .text-blue-9,   .text-blue-10   { color: #90caf9 !important; }
   .text-orange-9, .text-orange-10 { color: #ffcc80 !important; }
   .text-amber-9,  .text-amber-10  { color: #ffd54f !important; }
+  .text-teal-9                     { color: #80cbc4 !important; }
+  .text-blue-grey-9,
   .text-blue-grey-10               { color: #b0bec5 !important; }
 }

@@ -10,12 +10,15 @@
   <q-dialog id="feedback-dialog" v-model="dialogOpen"
     :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
     @hide="onDialogHide">
-    <q-card :style="$q.screen.lt.sm
+    <q-card class="vtb-feedback-dialog" :style="$q.screen.lt.sm
       ? 'width:100%;border-radius:16px 16px 0 0'
       : 'min-width:480px;max-width:620px'">
 
       <q-card-section class="row items-center q-pb-none">
-        <div class="text-h6">Feedback / Ticket anlegen</div>
+        <div class="vtb-feedback-icon">
+          <q-icon name="feedback" size="22px" color="primary" />
+        </div>
+        <div class="text-subtitle1 text-weight-bold q-ml-sm">Feedback / Ticket anlegen</div>
         <q-space />
         <q-btn flat round dense icon="close" v-close-popup />
       </q-card-section>
@@ -24,17 +27,16 @@
       <q-card-section class="q-gutter-sm">
         <!-- Screenshot-Vorschau -->
         <div v-if="screenshotUrl">
-          <img :src="screenshotUrl"
-            style="width:100%;max-height:220px;object-fit:contain;border:1px solid #ddd;border-radius:6px" />
+          <img :src="screenshotUrl" class="vtb-feedback-shot" />
           <div class="row q-gutter-xs q-mt-xs">
-            <q-btn flat dense size="sm" icon="refresh" label="Neu aufnehmen"
+            <q-btn flat dense size="sm" icon="refresh" color="primary" label="Neu aufnehmen" no-caps
               :loading="capturing" @click="retake" />
-            <q-btn flat dense size="sm" icon="hide_image" color="grey" label="Entfernen"
+            <q-btn flat dense size="sm" icon="hide_image" color="grey" label="Entfernen" no-caps
               @click="removeScreenshot" />
           </div>
         </div>
         <div v-else>
-          <q-btn flat dense size="sm" icon="screenshot_monitor" label="Screenshot aufnehmen"
+          <q-btn flat dense size="sm" icon="screenshot_monitor" color="primary" label="Screenshot aufnehmen" no-caps
             :loading="capturing" @click="retake" />
         </div>
 
@@ -49,9 +51,9 @@
 
       <q-separator />
       <q-card-actions align="right">
-        <q-btn flat label="Abbrechen" v-close-popup />
-        <q-btn label="Ticket anlegen" icon="send" color="primary" unelevated
-          :loading="saving" @click="onSave" />
+        <q-btn flat label="Abbrechen" no-caps v-close-popup />
+        <q-btn label="Ticket anlegen" icon="send" color="primary" unelevated no-caps
+          class="vtb-feedback-senden" :loading="saving" @click="onSave" />
       </q-card-actions>
     </q-card>
   </q-dialog>
