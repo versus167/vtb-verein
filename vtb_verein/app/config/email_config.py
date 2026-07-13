@@ -30,6 +30,12 @@ class EmailConfig:
     @staticmethod
     def get_use_tls() -> bool:
         return os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
+
+    @staticmethod
+    def get_smtp_timeout() -> int:
+        """Timeout (Sekunden) für die SMTP-Verbindung, damit ein hängender/
+        blockender Mailserver (z. B. IONOS) den Request nicht endlos aufhält."""
+        return int(os.getenv('SMTP_TIMEOUT', '10'))
     
     @staticmethod
     def get_base_url() -> str:
