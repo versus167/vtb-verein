@@ -565,6 +565,10 @@ class VereinsDB:
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         return self._user_repo.get_by_id(user_id)
 
+    def get_username(self, user_id: int) -> Optional[str]:
+        """Schlanker Namens-Lookup ohne Permission-Fanout (für Anzeige-Zwecke)."""
+        return self._user_repo.get_username(user_id)
+
     def list_users(self) -> List[User]:
         return self._user_repo.list_all()
 

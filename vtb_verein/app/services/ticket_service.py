@@ -164,9 +164,11 @@ class TicketService:
                          f"Dir wurde Ticket \"{ticket.titel}\" zugewiesen.\n\nZugewiesen von: {updated_by}")
         return result
 
-    def change_status(self, ticket_id: int, new_status: str, changed_by: str, version: int) -> bool:
-        """Statuswechsel mit Übergangsprüfung. Setzt geschlossen_am/geschlossen_von bei 'erledigt'."""
-        ticket = self.get_ticket(ticket_id)
+    def change_status(self, ticket: Ticket, new_status: str, changed_by: str, version: int) -> bool:
+        """Statuswechsel mit Übergangsprüfung. Setzt geschlossen_am/geschlossen_von bei 'erledigt'.
+
+        Erwartet das bereits geladene Ticket (der Aufrufer hat es ohnehin für die
+        Rechteprüfung geladen) – spart einen zusätzlichen DB-Roundtrip."""
         erlaubt = STATUS_UEBERGAENGE.get(ticket.status, [])
         if new_status not in erlaubt:
             raise UngueltigerStatusWechselError(
@@ -179,7 +181,7 @@ class TicketService:
         result = self._ticket_repo.update(ticket, changed_by)
         if result:
             self._notify(self._ticket_empfaenger(ticket), self._actor_id(changed_by),
-                         f"🎫 Ticket #{ticket_id} → {new_status}",
+                         f"🎫 Ticket #{ticket.id} → {new_status}",
                          f"Status von \"{ticket.titel}\" wurde auf \"{new_status}\" geändert.\n\nGeändert von: {changed_by}")
         return result
 
@@ -300,6 +302,9 @@ class TicketService:
 
     def get_bereiche(self) -> list[TicketBereich]:
         return self._bereich_repo.list_all()
+
+    def get_bereich(self, id: int) -> Optional[TicketBereich]:
+        return self._bereich_repo.get(id)
 
     def create_bereich(self, bereich: TicketBereich, created_by: str) -> TicketBereich:
         return self._bereich_repo.create(bereich, created_by)

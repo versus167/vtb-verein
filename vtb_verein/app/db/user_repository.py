@@ -89,6 +89,17 @@ class UserRepository(BaseRepository):
                 return None
             return self._load_permissions(self._row_to_user(row))
     
+    def get_username(self, user_id: int) -> Optional[str]:
+        """Nur den Benutzernamen laden – ohne den teuren Permission-Fanout von
+        get_by_id (_load_permissions). Für reine Anzeige-Lookups (z. B. Melder-Name)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT username FROM users WHERE id = %s AND deleted_at IS NULL",
+                (user_id,)
+            )
+            row = cur.fetchone()
+            return row['username'] if row else None
+
     def list_all(self) -> List[User]:
         """List all users (only non-deleted)."""
         with self.cursor() as cur:
