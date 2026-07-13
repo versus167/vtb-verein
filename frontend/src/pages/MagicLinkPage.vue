@@ -1,60 +1,73 @@
 <template>
-  <div class="flex flex-center" :class="$q.dark.isActive ? 'login-bg--dark' : 'bg-grey-2'" style="min-height: 100vh">
-    <q-card style="min-width: 360px; max-width: 420px; width: 100%">
-      <q-card-section class="text-center q-pb-none">
-        <q-icon name="corporate_fare" size="4rem" color="primary" />
-        <div class="text-h5 q-mt-sm">Vereinsverwaltung</div>
-        <div class="text-caption text-grey">VTB</div>
-      </q-card-section>
+  <div class="login-screen">
+    <div class="login-panel">
+      <div class="login-badge">
+        <img src="/icons/vtb-wappen-512.png" alt="VTB-Wappen" />
+      </div>
 
-      <q-card-section class="text-center q-gutter-md">
-        <!-- Auswahl: Sitzungsdauer -->
-        <template v-if="state === 'prompt'">
-          <q-icon name="login" size="3rem" color="primary" />
-          <div class="text-h6">Fast geschafft</div>
-          <div class="text-body2 text-grey-7">
-            Klicke auf „Einloggen“, um fortzufahren.
-          </div>
-          <q-checkbox v-model="rememberMe" label="30 Tage eingeloggt bleiben" />
-          <q-btn
-            unelevated
-            color="primary"
-            label="Einloggen"
-            class="full-width q-mt-sm"
-            @click="doLogin"
-          />
-        </template>
+      <q-card flat dark class="login-card">
+        <q-card-section class="text-center q-pb-none">
+          <div class="login-title text-h5 text-weight-bold">VTB Chemnitz</div>
+          <div class="login-subtitle">Vereinsverwaltung</div>
+        </q-card-section>
 
-        <!-- Prüfung läuft -->
-        <template v-else-if="state === 'loading'">
-          <q-spinner-dots color="primary" size="3rem" />
-          <div class="text-body2 text-grey-7">Link wird geprüft …</div>
-        </template>
+        <!-- q-gutter-y-md statt q-gutter-md: der horizontale Gutter-Anteil würde
+             den Vollbreite-Button aus der Mitte schieben -->
+        <q-card-section class="text-center q-gutter-y-md">
+          <!-- Auswahl: Sitzungsdauer -->
+          <template v-if="state === 'prompt'">
+            <q-icon name="login" size="3rem" color="vtb-gelb" />
+            <div class="text-h6">Fast geschafft</div>
+            <div class="text-body2 login-hint">
+              Klicke auf „Einloggen“, um fortzufahren.
+            </div>
+            <q-checkbox v-model="rememberMe" dark label="30 Tage eingeloggt bleiben" />
+            <q-btn
+              unelevated
+              color="vtb-gelb"
+              text-color="primary"
+              label="Einloggen"
+              no-caps
+              size="lg"
+              class="full-width login-btn text-weight-bold q-mt-sm"
+              @click="doLogin"
+            />
+          </template>
 
-        <!-- Erfolg -->
-        <template v-else-if="state === 'success'">
-          <q-icon name="check_circle" size="3rem" color="positive" />
-          <div class="text-h6">Erfolgreich eingeloggt</div>
-          <div class="text-body2 text-grey-7">Du wirst weitergeleitet …</div>
-        </template>
+          <!-- Prüfung läuft -->
+          <template v-else-if="state === 'loading'">
+            <q-spinner-dots color="vtb-gelb" size="3rem" />
+            <div class="text-body2 login-hint">Link wird geprüft …</div>
+          </template>
 
-        <!-- Fehler -->
-        <template v-else>
-          <q-icon name="error_outline" size="3rem" color="negative" />
-          <div class="text-h6">Link ungültig</div>
-          <div class="text-body2 text-grey-7">
-            {{ errorMsg }}
-          </div>
-          <q-btn
-            unelevated
-            color="primary"
-            label="Zurück zum Login"
-            class="full-width q-mt-md"
-            @click="$router.push({ name: 'login' })"
-          />
-        </template>
-      </q-card-section>
-    </q-card>
+          <!-- Erfolg -->
+          <template v-else-if="state === 'success'">
+            <q-icon name="check_circle" size="3rem" color="positive" />
+            <div class="text-h6">Erfolgreich eingeloggt</div>
+            <div class="text-body2 login-hint">Du wirst weitergeleitet …</div>
+          </template>
+
+          <!-- Fehler -->
+          <template v-else>
+            <q-icon name="error_outline" size="3rem" color="vtb-gelb" />
+            <div class="text-h6">Link ungültig</div>
+            <div class="login-error text-body2">
+              {{ errorMsg }}
+            </div>
+            <q-btn
+              unelevated
+              color="vtb-gelb"
+              text-color="primary"
+              label="Zurück zum Login"
+              no-caps
+              size="lg"
+              class="full-width login-btn text-weight-bold q-mt-md"
+              @click="$router.push({ name: 'login' })"
+            />
+          </template>
+        </q-card-section>
+      </q-card>
+    </div>
   </div>
 </template>
 
@@ -96,9 +109,95 @@ async function doLogin() {
 }
 </script>
 
-<style scoped>
-/* Im Darkmode dunkler als die Karte (#1d1d1d), damit sie sich abhebt. */
-.login-bg--dark {
-  background-color: #121212;
+<style lang="scss" scoped>
+/* Gleicher Look wie die Login-Seite (LoginPage.vue): bewusst in beiden Modi
+   identisch — Gelb außen als Fortsetzung des PWA-Splash, Wappenblau als Karte. */
+.login-screen {
+  min-height: 100vh;
+  /* dvh = sichtbare Höhe ohne Browser-Adressleiste (sonst scrollt es am Handy) */
+  min-height: 100dvh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(165deg, #fff05a 0%, $vtb-gelb 45%, #e3d100 100%);
+}
+
+.login-panel {
+  position: relative;
+  width: 100%;
+  max-width: 430px;
+  /* Platz für die obere Wappenhälfte, die über der Karte thront */
+  padding-top: 105px;
+  /* Nicht mittig, sondern etwas erhöht — auf kleinen Displays kompakt. */
+  margin-top: clamp(12px, 6vh, 110px);
+  animation: login-pop 0.45s ease-out;
+}
+
+@keyframes login-pop {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Großes freistehendes Wappen, halb über der Kartenkante thronend */
+.login-badge {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+
+  img {
+    width: 190px;
+    height: 190px;
+    filter: drop-shadow(0 14px 22px rgba(60, 50, 0, 0.45));
+  }
+}
+
+/* Doppelte Klasse für höhere Spezifität: muss den globalen
+   Dark-Mode-Kartenstil (body--dark .q-card) übertrumpfen. */
+.q-card.login-card {
+  border-radius: 20px;
+  /* Platz für die untere Wappenhälfte, die in die Karte hineinragt */
+  padding-top: 92px;
+  color: #fff;
+  /* Wappenblau mit leichtem Verlauf */
+  background: linear-gradient(170deg, #0d3a85 0%, $vtb-blau 45%, #022a68 100%);
+  /* Kräftiger Schlagschatten — das helle Gelb verschluckt zarte Schatten,
+     daher hohe Deckkraft und warmer, dunkler Ton (wirkt auf Gelb natürlich). */
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.35),
+    0 28px 55px -8px rgba(75, 62, 0, 0.65);
+}
+
+.login-title {
+  color: $vtb-gelb;
+  letter-spacing: 0.5px;
+}
+
+.login-subtitle {
+  margin-top: 2px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.login-hint {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.login-btn {
+  border-radius: 12px;
+}
+
+/* Fehlermeldungen in Gelb auf der blauen Karte */
+.login-error {
+  font-weight: 600;
+  color: $vtb-gelb;
 }
 </style>
