@@ -354,7 +354,7 @@ class UserService:
         Args:
             user_id: ID des Users
             matrix_id: Matrix User-ID (optional)
-            preferred_contact: Bevorzugter Kanal ('email', 'matrix')
+            preferred_contact: Bevorzugter Kanal ('email', 'matrix', 'push')
             updated_by: Username des Updaters
             expected_version: Expected version for optimistic locking
 
@@ -364,7 +364,7 @@ class UserService:
         Raises:
             ValueError: Bei Validierungsfehler oder optimistic locking Fehler
         """
-        valid_channels = ['email', 'matrix']
+        valid_channels = ['email', 'matrix', 'push']
         if preferred_contact not in valid_channels:
             raise ValueError(f"preferred_contact muss einer sein von: {', '.join(valid_channels)}")
 

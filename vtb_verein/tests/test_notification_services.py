@@ -128,3 +128,41 @@ class TestNotificationService:
 
         assert result is True
         mock_email.send_text_email.assert_called_once()
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_primary(self, mock_email):
+        """preferred_contact='push': Push-Service liefert → keine E-Mail."""
+        user = self._create_test_user(preferred_contact='push')
+        push = MagicMock()
+        push.send_to_user.return_value = 1  # ein Gerät erreicht
+
+        result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
+
+        assert result is True
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message')
+        mock_email.send_text_email.assert_not_called()
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_fallback_to_email(self, mock_email):
+        """preferred_contact='push', aber kein Gerät erreicht (0) → E-Mail-Fallback."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='push')
+        push = MagicMock()
+        push.send_to_user.return_value = 0
+
+        result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
+
+        assert result is True
+        push.send_to_user.assert_called_once()
+        mock_email.send_text_email.assert_called_once()
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_without_service_uses_email(self, mock_email):
+        """preferred_contact='push' ohne push_service → Push wird übersprungen, E-Mail."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='push')
+
+        result = NotificationService.send_notification(user, 'Test', 'message')
+
+        assert result is True
+        mock_email.send_text_email.assert_called_once()

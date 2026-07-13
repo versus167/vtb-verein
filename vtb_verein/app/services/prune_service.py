@@ -86,6 +86,9 @@ class PruneEntity:
 # Schließanlage/Zutritt und Übungsleiter-Abrechnung.
 # BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren –
 # Aufbewahrungspflicht) und users (Auth-/Audit-verflochten, Last-Admin-Schutz).
+# Ebenfalls NICHT drin: geräte-gebundene Tabellen mit revoked_at statt deleted_at
+# (user_sessions, push_subscriptions) – sie haben eigene zeitbasierte Cleanups
+# (cleanup_expired / cleanup_revoked) analog access_log, kein deleted_at-Prune.
 # Vollständigkeit der Child-Refs wird per Schema-Drift-Test (test_prune_integration.py)
 # gegen die echten FKs abgesichert – neue FK auf eine geprunte Tabelle -> Test rot.
 #

@@ -175,6 +175,21 @@
                 map-options
               />
 
+              <!-- Web-Push je Gerät (#96) -->
+              <div v-if="pushSupported" class="q-mt-sm">
+                <q-toggle
+                  :model-value="pushSubscribed"
+                  :disable="pushBusy || !pushConfigured"
+                  label="Push auf diesem Gerät aktivieren"
+                  @update:model-value="onTogglePush"
+                />
+                <div class="text-caption text-grey-7">
+                  <span v-if="!pushConfigured">Push ist serverseitig noch nicht konfiguriert.</span>
+                  <span v-else-if="pushSubscribed">Dieses Gerät empfängt Push-Benachrichtigungen.</span>
+                  <span v-else>Aktivieren, um „Push“ als Kanal nutzen zu können.</span>
+                </div>
+              </div>
+
               <div v-if="contactError" class="text-negative text-caption">{{ contactError }}</div>
 
               <div class="row q-gutter-sm">
@@ -363,6 +378,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { usePush } from 'src/composables/usePush'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -430,18 +446,31 @@ const contactError = ref('')
 const savingContact = ref(false)
 const sendingTest = ref(false)
 
-const contactOptions = [
-  { label: 'E-Mail', value: 'email' },
-  { label: 'Matrix', value: 'matrix' },
-]
+// Web-Push (#96)
+const push = usePush()
+const pushSupported = ref(false)
+const pushConfigured = ref(false)
+const pushSubscribed = ref(false)
+const pushBusy = ref(false)
+
+const contactOptions = computed(() => {
+  const opts = [
+    { label: 'E-Mail', value: 'email' },
+    { label: 'Matrix', value: 'matrix' },
+  ]
+  // 'Push' nur anbieten, wenn serverseitig konfiguriert (sonst liefe es ins Leere → E-Mail)
+  if (pushConfigured.value) opts.push({ label: 'Push', value: 'push' })
+  return opts
+})
 
 async function load() {
   const { data } = await api.get('/api/auth/me')
   me.value = data
   matrixId.value = data.matrix_id ?? ''
-  preferredContact.value = ['email', 'matrix'].includes(data.preferred_contact)
+  preferredContact.value = ['email', 'matrix', 'push'].includes(data.preferred_contact)
     ? data.preferred_contact
     : 'email'
+  await refreshPushState()
   try {
     const { data: perms } = await api.get('/api/auth/me/permissions')
     permData.value = perms
@@ -515,6 +544,38 @@ async function onSendTest() {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Versand fehlgeschlagen' })
   } finally {
     sendingTest.value = false
+  }
+}
+
+async function refreshPushState() {
+  pushSupported.value = push.isSupported()
+  if (!pushSupported.value) return
+  try {
+    const status = await push.serverStatus()
+    pushConfigured.value = !!status.configured
+    pushSubscribed.value = await push.isSubscribed()
+  } catch { /* Push-Status optional – Toggle bleibt aus */ }
+}
+
+async function onTogglePush(value) {
+  pushBusy.value = true
+  try {
+    if (value) {
+      await push.subscribe()
+      pushSubscribed.value = true
+      $q.notify({ type: 'positive', message: 'Push auf diesem Gerät aktiviert' })
+    } else {
+      await push.unsubscribe()
+      pushSubscribed.value = false
+      // Bevorzugten Kanal nicht auf einem toten Push-Gerät stehen lassen
+      if (preferredContact.value === 'push') preferredContact.value = 'email'
+      $q.notify({ type: 'info', message: 'Push auf diesem Gerät deaktiviert' })
+    }
+  } catch (e) {
+    pushSubscribed.value = await push.isSubscribed()
+    $q.notify({ type: 'negative', message: e.message || 'Push konnte nicht geändert werden' })
+  } finally {
+    pushBusy.value = false
   }
 }
 

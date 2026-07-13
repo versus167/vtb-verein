@@ -26,6 +26,7 @@ from app.db.user_repository import UserRepository
 
 if TYPE_CHECKING:
     from app.services.anhang_service import AnhangService
+    from app.services.push_service import PushService
 
 
 class TicketNichtGefundenError(Exception):
@@ -60,6 +61,7 @@ class TicketService:
         berechtigung_repo: TicketBereichBerechtigungRepository,
         user_repo: UserRepository,
         anhang_service: "AnhangService | None" = None,
+        push_service: "PushService | None" = None,
     ):
         self._ticket_repo = ticket_repo
         self._kommentar_repo = kommentar_repo
@@ -70,6 +72,7 @@ class TicketService:
         self._berechtigung_repo = berechtigung_repo
         self._user_repo = user_repo
         self._anhang_service = anhang_service
+        self._push_service = push_service
 
     # -----------------------------------
     # Benachrichtigungen (intern)
@@ -87,7 +90,8 @@ class TicketService:
             seen.add(uid)
             user = self._user_repo.get_by_id(uid)
             if user and user.active:
-                NotificationService.send_notification_async(user, title, message)
+                NotificationService.send_notification_async(
+                    user, title, message, push_service=self._push_service)
 
     def _bereich_user_ids(self, bereich_id: Optional[int]) -> list[int]:
         """User-IDs mit bearbeiten- oder schliessen-Recht im Bereich."""
