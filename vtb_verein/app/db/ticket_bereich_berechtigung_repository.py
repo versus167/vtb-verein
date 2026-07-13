@@ -149,19 +149,28 @@ class TicketBereichBerechtigungRepository:
     ) -> None:
         """
         Legt eine Berechtigung an oder aktualisiert sie (Upsert via UNIQUE-Constraint).
+        Reaktiviert ggf. einen soft-gelöschten Eintrag.
         Wenn alle drei Flags False sind, wird die Berechtigung per Soft-Delete entfernt.
         """
-        existing = self.get_berechtigung(bereich_id, user_id)
-
-        # Alle False -> Soft-Delete falls vorhanden
+        # Alle False -> Soft-Delete falls (aktiv) vorhanden
         if not darf_lesen and not darf_bearbeiten and not darf_schliessen:
-            if existing:
-                self.mark_berechtigung_deleted(bereich_id, user_id, by)
+            self.mark_berechtigung_deleted(bereich_id, user_id, by)
             return
 
+        # UNIQUE (bereich_id, user_id) gilt auch für soft-gelöschte Zeilen,
+        # daher jede vorhandene Zeile suchen (nicht nur aktive) und ggf.
+        # reaktivieren statt neu einzufügen.
         cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT id FROM ticket_bereich_berechtigungen
+            WHERE bereich_id = %s AND user_id = %s
+            """,
+            (bereich_id, user_id),
+        )
+        existing = cur.fetchone()
+
         if existing is None:
-            # Neu anlegen (auch wenn es ein gelöschtes gibt - UNIQUE nur auf aktiven)
             cur.execute(
                 """
                 INSERT INTO ticket_bereich_berechtigungen
@@ -176,17 +185,19 @@ class TicketBereichBerechtigungRepository:
                 ),
             )
         else:
-            # Aktualisieren
+            # Aktualisieren bzw. reaktivieren (deleted_at zurücksetzen)
             cur.execute(
                 """
                 UPDATE ticket_bereich_berechtigungen
                 SET darf_lesen      = %s,
                     darf_bearbeiten = %s,
                     darf_schliessen = %s,
+                    deleted_at      = NULL,
+                    deleted_by      = NULL,
                     updated_at      = CURRENT_TIMESTAMP,
                     updated_by      = %s,
                     version         = version + 1
-                WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
+                WHERE bereich_id = %s AND user_id = %s
                 """,
                 (
                     int(darf_lesen), int(darf_bearbeiten), int(darf_schliessen),
