@@ -17,6 +17,7 @@ Beispiele:
     python3 tools/vtb_tickets.py comment 42 "Gefixt in $(git rev-parse --short HEAD)" --intern
     python3 tools/vtb_tickets.py status 42 erledigt
     python3 tools/vtb_tickets.py resolve 42 -m "Behoben in abc1234"   # Kommentar + erledigt
+    python3 tools/vtb_tickets.py create "Titel" -b "Beschreibung" -p niedrig
 """
 from __future__ import annotations
 
@@ -281,6 +282,18 @@ def cmd_status(client: Client, args) -> None:
     print(f"Ticket #{args.id}: Status → {args.status}")
 
 
+def cmd_create(client: Client, args) -> None:
+    if args.prio not in PRIO_RANG:
+        sys.exit(f"Ungültige Priorität '{args.prio}'. Gültig: {', '.join(PRIO_RANG)}")
+    ticket = client.post("/tickets/", {
+        "titel": args.titel,
+        "beschreibung": args.beschreibung or "",
+        "prioritaet": args.prio,
+        "bereich_id": client.bereich_id(client.cfg["bereich"]),
+    })
+    print(f"Ticket #{ticket['id']} angelegt: {ticket['titel']} (Prio {ticket['prioritaet']})")
+
+
 def cmd_resolve(client: Client, args) -> None:
     if args.message:
         sicht = "intern" if args.intern else "oeffentlich"
@@ -322,6 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id", type=int)
     sp.add_argument("status", help=f"einer von: {', '.join(GUELTIGE_STATUS)}")
     sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("create", help="Neues Ticket im konfigurierten Bereich anlegen")
+    sp.add_argument("titel")
+    sp.add_argument("-b", "--beschreibung", help="Beschreibung (Markdown/Text)")
+    sp.add_argument("-p", "--prio", default="normal",
+                    help=f"eine von: {', '.join(PRIO_RANG)} (Default: normal)")
+    sp.set_defaults(func=cmd_create)
 
     sp = sub.add_parser("resolve", help="Optional kommentieren und auf 'erledigt' setzen")
     sp.add_argument("id", type=int)
