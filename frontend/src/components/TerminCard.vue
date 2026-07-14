@@ -16,7 +16,8 @@
       </div>
       <q-badge v-if="abgesagt" color="white" text-color="negative"
         class="q-mr-sm text-weight-bold">ABGESAGT</q-badge>
-      <q-btn v-if="darfVerwalten && !kompakt" flat round dense icon="more_vert" color="white"
+      <!-- Verwalter bekommen das Menü auch am Dashboard (kompakt) – direkt editieren -->
+      <q-btn v-if="darfVerwalten" flat round dense icon="more_vert" color="white"
         @click.stop>
         <q-menu auto-close>
           <q-list dense style="min-width: 170px">

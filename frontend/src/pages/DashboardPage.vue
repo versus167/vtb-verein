@@ -12,11 +12,16 @@
       </div>
       <div class="row q-col-gutter-md">
         <div v-for="t in naechsteTermine" :key="t.id" class="col-12 col-md-6">
-          <TerminCard :termin="t" kompakt @reload="ladeNaechsteTermine"
-            @oeffnen="router.push({ name: 'termine' })" />
+          <TerminCard :termin="t" kompakt :darf-verwalten="darfTerminVerwalten(t)"
+            @reload="ladeNaechsteTermine" @oeffnen="router.push({ name: 'termine' })"
+            @bearbeiten="openEdit" @absagen="setStatus($event, 'absagen')"
+            @reaktivieren="setStatus($event, 'reaktivieren')" @loeschen="confirmDelete" />
         </div>
       </div>
     </div>
+
+    <!-- Termin bearbeiten (Verwalter, direkt vom Dashboard) -->
+    <TerminFormDialog v-model="editOpen" :termin="editTermin" @saved="ladeNaechsteTermine" />
 
     <div class="row q-col-gutter-md">
       <div v-if="auth.hasPermission('personen.read')" class="col-6 col-sm-4 col-md-3">
@@ -77,6 +82,8 @@ import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
 import SettingsTile from 'src/components/SettingsTile.vue'
 import TerminCard from 'components/TerminCard.vue'
+import TerminFormDialog from 'components/TerminFormDialog.vue'
+import { useTerminAktionen } from 'src/composables/useTermine'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -132,4 +139,17 @@ async function ladeNaechsteTermine() {
     naechsteTermine.value = data.slice(0, 3)
   } catch { /* ignorieren */ }
 }
+
+// Verwalter editieren direkt vom Dashboard (zugriff kommt je Termin aus /meine)
+function darfTerminVerwalten(t) {
+  return auth.hasPermission('termine.verwalten') || t.zugriff === 'verwalten'
+}
+
+const editOpen = ref(false)
+const editTermin = ref(null)
+function openEdit(t) {
+  editTermin.value = t
+  editOpen.value = true
+}
+const { setStatus, confirmDelete } = useTerminAktionen(ladeNaechsteTermine)
 </script>

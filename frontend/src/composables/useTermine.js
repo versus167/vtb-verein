@@ -1,5 +1,7 @@
 // Geteilte Helfer für Termine-Darstellung (TerminePage, TerminCard, Dashboard-Widget).
 // Zeiten sind lokale Wandzeit als Text ('YYYY-MM-DDTHH:MM' bzw. 'HH:MM').
+import { useQuasar } from 'quasar'
+import { api } from 'src/boot/axios'
 
 // Zu-/Absage-Kategorien (RSVP) inkl. Icon + semantischer Farbe (Vereinskonvention:
 // positive/warning/negative – kein Fremd-Blau).
@@ -42,4 +44,37 @@ export function datumLabel(iso) {
   if (!iso) return ''
   return new Date(`${iso}T12:00`).toLocaleDateString('de-DE',
     { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+// Verwalter-Aktionen (Absagen/Reaktivieren/Löschen) – geteilt zwischen
+// TerminePage und Dashboard-Widget. `reload` wird nach jeder Änderung gerufen.
+export function useTerminAktionen(reload) {
+  const $q = useQuasar()
+
+  async function setStatus(t, aktion) {
+    try {
+      await api.post(`/api/termine/${t.id}/${aktion}`, { expected_version: t.version })
+      await reload()
+      $q.notify({ type: 'positive', message: aktion === 'absagen' ? 'Termin abgesagt' : 'Termin reaktiviert' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+    }
+  }
+
+  function confirmDelete(t) {
+    $q.dialog({
+      title: 'Termin löschen',
+      message: `„${terminTitel(t)}" am ${datumLabel(t.beginn.slice(0, 10))} wirklich löschen?`,
+      cancel: true, persistent: true,
+    }).onOk(async () => {
+      try {
+        await api.delete(`/api/termine/${t.id}`)
+        await reload()
+      } catch (e) {
+        $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+      }
+    })
+  }
+
+  return { setStatus, confirmDelete }
 }

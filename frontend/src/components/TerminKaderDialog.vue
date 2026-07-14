@@ -1,30 +1,36 @@
 <template>
-  <q-dialog v-model="open" @show="load">
-    <q-card style="min-width: 340px; max-width: 92vw">
-      <q-card-section class="row items-center q-pb-none">
+  <!-- Auf Handy/Tablet Vollbild (lange Kader-Listen), am Desktop normales Dialog-Fenster -->
+  <q-dialog v-model="open" :maximized="$q.screen.lt.md" @show="load">
+    <!-- Nur im Vollbild (Handy/Tablet) Flex-Spalte mit scrollender Liste; am Desktop
+         normale Auto-Höhe — dort würde `col` (flex-basis 0) den Inhalt kollabieren. -->
+    <q-card :class="$q.screen.lt.md ? 'column no-wrap' : ''"
+      :style="$q.screen.lt.md ? '' : 'min-width: 380px; max-width: 92vw'">
+      <q-card-section class="row items-center q-pb-none"
+        :class="$q.screen.lt.md ? 'col-auto' : ''">
         <div class="text-h6">Kader &amp; Antworten</div>
         <q-space />
         <q-btn flat round dense icon="close" v-close-popup />
       </q-card-section>
 
-      <q-card-section style="min-height: 120px" class="relative-position">
+      <q-card-section style="min-height: 120px" class="relative-position"
+        :class="$q.screen.lt.md ? 'col scroll' : ''">
         <q-inner-loading :showing="loading" />
         <div v-if="!loading && kader.length === 0" class="text-grey text-center q-py-md">
           Kein Kader hinterlegt.
         </div>
         <div v-for="grp in gruppen" :key="grp.key" class="q-mb-md">
-          <div class="text-caption text-weight-bold text-grey-8 q-mb-xs">
-            <q-icon :name="grp.icon" :color="grp.color" size="16px" class="q-mr-xs" />{{ grp.label }} ({{ grp.leute.length }})
+          <div class="text-subtitle2 text-weight-bold text-grey-8 q-mb-xs">
+            <q-icon :name="grp.icon" :color="grp.color" size="18px" class="q-mr-xs" />{{ grp.label }} ({{ grp.leute.length }})
           </div>
-          <q-list dense separator>
-            <q-item v-for="p in grp.leute" :key="p.mitglied_id">
+          <q-list separator>
+            <q-item v-for="p in grp.leute" :key="p.mitglied_id" class="q-px-none">
               <q-item-section>
-                <q-item-label>{{ p.name }}</q-item-label>
-                <q-item-label v-if="p.rollen" caption>{{ p.rollen }}</q-item-label>
+                <q-item-label class="kader-dialog__name">{{ p.name }}</q-item-label>
+                <q-item-label v-if="p.rollen" caption class="kader-dialog__rolle">{{ p.rollen }}</q-item-label>
               </q-item-section>
               <q-item-section v-if="darfVerwalten" side>
                 <div class="row no-wrap q-gutter-xs">
-                  <q-btn v-for="a in ANTWORTEN" :key="a.key" flat dense round size="sm"
+                  <q-btn v-for="a in ANTWORTEN" :key="a.key" flat dense round :size="btnSize"
                     :icon="a.icon" :color="p.antwort === a.key ? a.color : 'grey-5'"
                     :disable="busy" @click="setFuer(p, a.key)">
                     <q-tooltip>{{ a.label }}</q-tooltip>
@@ -61,6 +67,9 @@ const open = computed({
 const kader = ref([])
 const loading = ref(false)
 const busy = ref(false)
+
+// Auf Touch-Geräten größere Buttons (bessere Trefferfläche)
+const btnSize = computed(() => ($q.screen.lt.md ? 'md' : 'sm'))
 
 // Gruppen in fester Reihenfolge: Zusage, Vielleicht, Absage, dann Offen.
 const GRUPPEN = [
@@ -102,3 +111,21 @@ async function setFuer(p, key) {
   }
 }
 </script>
+
+<style lang="scss" scoped>
+.kader-dialog__name {
+  font-size: 15px;
+}
+.kader-dialog__rolle {
+  font-size: 13px;
+}
+// Handy/Tablet: Liste läuft im Vollbild, Schrift entsprechend größer
+@media (max-width: $breakpoint-sm-max) {
+  .kader-dialog__name {
+    font-size: 17px;
+  }
+  .kader-dialog__rolle {
+    font-size: 14px;
+  }
+}
+</style>
