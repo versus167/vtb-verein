@@ -29,8 +29,8 @@
         Alles konsistent – {{ report.geprueft }} Beziehungen geprüft, keine hängenden
         Verweise gefunden.
       </q-banner>
-      <q-banner v-else dense rounded class="bg-orange-1 text-orange-10">
-        <template #avatar><q-icon name="warning" color="orange-10" /></template>
+      <q-banner v-else dense rounded class="vtb-warnung">
+        <template #avatar><q-icon name="warning" /></template>
         <b>{{ report.summe_verletzungen }}</b> hängende Verweise in
         <b>{{ report.befunde.length }}</b> von {{ report.geprueft }} geprüften Beziehungen.
       </q-banner>

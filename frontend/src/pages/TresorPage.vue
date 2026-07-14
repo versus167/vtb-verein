@@ -1,36 +1,42 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="row items-center q-mb-md q-gutter-sm">
+    <!-- Kopfzeile im Schließanlage-Stil: Titel + Aktion, darunter Status-Pills -->
+    <div class="row items-center q-mb-sm">
       <div class="text-h5">Passwörter</div>
       <q-space />
-      <q-btn v-if="darfVerwalten" color="primary" unelevated icon="add" label="Neuer Tresor"
-        @click="openTresorDialog()" />
+      <q-btn v-if="darfVerwalten" color="primary" unelevated no-caps icon="add" label="Neuer Tresor"
+        class="vtb-neu-btn" @click="openTresorDialog()" />
+    </div>
+    <div class="row items-center q-gutter-xs q-mb-md">
+      <span class="vtb-pill"><q-icon name="lock" size="13px" />
+        {{ tresore.length }} {{ tresore.length === 1 ? 'Tresor' : 'Tresore' }}</span>
+      <span class="vtb-pill"><q-icon name="vpn_key" size="13px" />
+        {{ gesamtEintraege }} {{ gesamtEintraege === 1 ? 'Eintrag' : 'Einträge' }}</span>
     </div>
 
-    <q-banner v-if="!konfiguriert" class="bg-orange-1 text-orange-9 q-mb-md" rounded dense>
-      <template #avatar><q-icon name="warning" color="orange-9" /></template>
+    <q-banner v-if="!konfiguriert" class="vtb-warnung q-mb-md" rounded dense>
+      <template #avatar><q-icon name="warning" /></template>
       Der Tresor ist serverseitig nicht konfiguriert (<code>VTB_VAULT_KEY</code> fehlt).
       Passwörter können derzeit weder angezeigt noch gespeichert werden.
     </q-banner>
 
     <div class="row q-col-gutter-md">
-      <!-- Tresor-Liste -->
+      <!-- Tresor-Karten -->
       <div class="col-12 col-md-4">
-        <q-list bordered separator class="rounded-borders">
-          <q-item v-for="t in tresore" :key="t.id" clickable
-            :active="t.id === selectedId" active-class="bg-blue-1"
-            @click="select(t.id)">
-            <q-item-section avatar><q-icon name="folder" color="primary" /></q-item-section>
-            <q-item-section>
-              <q-item-label>{{ t.name }}</q-item-label>
-              <q-item-label caption>
-                {{ t.eintrag_anzahl }} {{ t.eintrag_anzahl === 1 ? 'Eintrag' : 'Einträge' }}
-                <span v-if="!t.darf_schreiben" class="text-grey-6">· nur lesen</span>
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side v-if="darfVerwalten">
+        <q-card v-for="t in tresore" :key="t.id" class="vtb-karte cursor-pointer q-mb-md"
+          :class="{ 'vtb-karte--aktiv': t.id === selectedId }" @click="select(t.id)">
+          <q-card-section class="row items-center no-wrap q-gutter-sm">
+            <div class="vtb-icon"><q-icon name="lock" size="24px" /></div>
+            <div class="col" style="min-width: 0">
+              <div class="text-weight-bold ellipsis">{{ t.name }}</div>
+              <div class="row items-center q-gutter-xs q-mt-xs no-wrap">
+                <span class="vtb-pill">{{ t.eintrag_anzahl }} {{ t.eintrag_anzahl === 1 ? 'Eintrag' : 'Einträge' }}</span>
+                <span v-if="!t.darf_schreiben" class="vtb-pill vtb-pill--achtung">nur lesen</span>
+              </div>
+            </div>
+            <div v-if="darfVerwalten">
               <!-- Mobil: EIN großes Menü statt vier kleiner Icons – leichter treffbar,
-                   und die Zeile selbst bleibt das große Tippziel zum Öffnen. -->
+                   und die Karte selbst bleibt das große Tippziel zum Öffnen. -->
               <q-btn v-if="$q.screen.lt.md" flat round icon="more_vert" color="grey-7"
                 aria-label="Tresor-Aktionen" @click.stop>
                 <q-menu auto-close>
@@ -64,9 +70,9 @@
                 <q-btn flat dense round size="sm" icon="delete" color="negative"
                   @click.stop="deleteTresor(t)" />
               </div>
-            </q-item-section>
-          </q-item>
-        </q-list>
+            </div>
+          </q-card-section>
+        </q-card>
         <div v-if="tresore.length === 0" class="text-grey text-center q-py-lg">
           Kein Tresor vorhanden.
           <span v-if="darfVerwalten">Lege den ersten an.</span>
@@ -83,11 +89,12 @@
               icon="add" label="Neuer Eintrag" :disable="!konfiguriert" @click="openEintragDialog()" />
           </div>
 
-          <q-list bordered separator class="rounded-borders">
-            <q-item v-for="e in eintraege" :key="e.id">
-              <q-item-section>
-                <q-item-label>{{ e.titel }}</q-item-label>
-                <q-item-label caption>
+          <q-card v-for="e in eintraege" :key="e.id" class="vtb-karte q-mb-md">
+            <q-card-section class="row items-start no-wrap q-gutter-sm">
+              <div class="vtb-icon vtb-icon--klein"><q-icon name="vpn_key" size="20px" /></div>
+              <div class="col" style="min-width: 0">
+                <div class="text-weight-bold ellipsis">{{ e.titel }}</div>
+                <div class="text-caption text-grey">
                   <span v-if="e.benutzername">
                     <q-icon name="person" size="xs" /> {{ e.benutzername }}
                     <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'xs'" icon="content_copy"
@@ -95,7 +102,7 @@
                   </span>
                   <a v-if="e.url" :href="e.url" target="_blank" rel="noopener"
                     class="q-ml-sm text-primary">{{ e.url }}</a>
-                </q-item-label>
+                </div>
 
                 <!-- Enthülltes Passwort -->
                 <div v-if="revealed[e.id]" class="q-mt-xs">
@@ -110,47 +117,45 @@
                     <q-icon name="sticky_note_2" size="xs" /> {{ revealed[e.id].notiz }}
                   </div>
                 </div>
-              </q-item-section>
+              </div>
 
-              <q-item-section side top>
-                <!-- Mobil: „Anzeigen" in voller Größe, Schreibaktionen in EINEM Menü. -->
-                <div v-if="$q.screen.lt.md" class="row items-center no-wrap">
-                  <q-btn v-if="!revealed[e.id]" outline no-caps icon="visibility"
-                    color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
-                  <q-btn v-if="selectedTresor?.darf_schreiben" flat round icon="more_vert"
-                    color="grey-8" aria-label="Eintrag-Aktionen">
-                    <q-menu auto-close>
-                      <q-list style="min-width: 220px">
-                        <q-item clickable @click="openVerlauf(e)">
-                          <q-item-section avatar><q-icon name="history" color="grey-7" /></q-item-section>
-                          <q-item-section>Änderungsverlauf</q-item-section>
-                        </q-item>
-                        <q-item clickable @click="openEintragDialog(e)">
-                          <q-item-section avatar><q-icon name="edit" color="primary" /></q-item-section>
-                          <q-item-section>Bearbeiten</q-item-section>
-                        </q-item>
-                        <q-item clickable @click="deleteEintrag(e)">
-                          <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
-                          <q-item-section class="text-negative">Löschen</q-item-section>
-                        </q-item>
-                      </q-list>
-                    </q-menu>
-                  </q-btn>
-                </div>
-                <div v-else class="row items-center no-wrap">
-                  <q-btn v-if="!revealed[e.id]" flat dense size="sm" no-caps icon="visibility"
-                    color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
-                  <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
-                    icon="history" color="grey-8" @click="openVerlauf(e)">
-                    <q-tooltip>Änderungsverlauf</q-tooltip></q-btn>
-                  <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
-                    icon="edit" color="grey-8" @click="openEintragDialog(e)" />
-                  <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
-                    icon="delete" color="negative" @click="deleteEintrag(e)" />
-                </div>
-              </q-item-section>
-            </q-item>
-          </q-list>
+              <!-- Mobil: „Anzeigen" in voller Größe, Schreibaktionen in EINEM Menü. -->
+              <div v-if="$q.screen.lt.md" class="row items-center no-wrap">
+                <q-btn v-if="!revealed[e.id]" outline no-caps icon="visibility"
+                  color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
+                <q-btn v-if="selectedTresor?.darf_schreiben" flat round icon="more_vert"
+                  color="grey-8" aria-label="Eintrag-Aktionen">
+                  <q-menu auto-close>
+                    <q-list style="min-width: 220px">
+                      <q-item clickable @click="openVerlauf(e)">
+                        <q-item-section avatar><q-icon name="history" color="grey-7" /></q-item-section>
+                        <q-item-section>Änderungsverlauf</q-item-section>
+                      </q-item>
+                      <q-item clickable @click="openEintragDialog(e)">
+                        <q-item-section avatar><q-icon name="edit" color="primary" /></q-item-section>
+                        <q-item-section>Bearbeiten</q-item-section>
+                      </q-item>
+                      <q-item clickable @click="deleteEintrag(e)">
+                        <q-item-section avatar><q-icon name="delete" color="negative" /></q-item-section>
+                        <q-item-section class="text-negative">Löschen</q-item-section>
+                      </q-item>
+                    </q-list>
+                  </q-menu>
+                </q-btn>
+              </div>
+              <div v-else class="row items-center no-wrap">
+                <q-btn v-if="!revealed[e.id]" flat dense size="sm" no-caps icon="visibility"
+                  color="primary" label="Anzeigen" :disable="!konfiguriert" @click="reveal(e)" />
+                <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
+                  icon="history" color="grey-8" @click="openVerlauf(e)">
+                  <q-tooltip>Änderungsverlauf</q-tooltip></q-btn>
+                <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
+                  icon="edit" color="grey-8" @click="openEintragDialog(e)" />
+                <q-btn v-if="selectedTresor?.darf_schreiben" flat dense round size="sm"
+                  icon="delete" color="negative" @click="deleteEintrag(e)" />
+              </div>
+            </q-card-section>
+          </q-card>
           <div v-if="eintraege.length === 0" class="text-grey text-center q-py-lg">
             Noch keine Einträge in diesem Tresor.
           </div>
@@ -372,6 +377,7 @@ const saving = ref(false)
 const showPw = ref(false)
 
 const selectedTresor = computed(() => tresore.value.find(t => t.id === selectedId.value) || null)
+const gesamtEintraege = computed(() => tresore.value.reduce((sum, t) => sum + (t.eintrag_anzahl || 0), 0))
 
 // ── Laden ──
 async function loadStatus() {

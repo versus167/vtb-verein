@@ -51,8 +51,8 @@
         color="negative" label="Gelöschte anzeigen" />
     </div>
 
-    <q-banner v-if="zeigeGeloeschte" dense class="bg-red-1 text-red-10 q-mb-md" rounded>
-      <template #avatar><q-icon name="delete_sweep" color="negative" /></template>
+    <q-banner v-if="zeigeGeloeschte" dense class="vtb-warnung q-mb-md" rounded>
+      <template #avatar><q-icon name="delete_sweep" /></template>
       Gelöschte (verborgene) Tickets – für die öffentliche Ansicht ausgeblendet.
       Verwalter können sie wiederherstellen.
     </q-banner>
@@ -201,12 +201,12 @@
             <template v-if="selectedTicket">
 
               <!-- ── Gelöscht-Hinweis + Wiederherstellen ── -->
-              <q-banner v-if="selectedIstGeloescht" class="bg-red-1 text-red-10 q-mb-md" rounded>
-                <template #avatar><q-icon name="delete" color="negative" /></template>
+              <q-banner v-if="selectedIstGeloescht" class="vtb-warnung q-mb-md" rounded>
+                <template #avatar><q-icon name="delete" /></template>
                 Dieses Ticket ist verborgen (gelöscht{{ selectedTicket.deleted_by ? ' von ' + selectedTicket.deleted_by : '' }}).
                 Es erscheint nicht in der öffentlichen Ansicht.
                 <template v-if="canVerwaltenSelected" #action>
-                  <q-btn flat color="negative" icon="restore" label="Wiederherstellen" @click="onRestore()" />
+                  <q-btn flat icon="restore" label="Wiederherstellen" @click="onRestore()" />
                 </template>
               </q-banner>
 

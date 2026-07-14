@@ -20,8 +20,8 @@
           :disable="!kannExportieren" :loading="exportiere" @click="doExport" />
       </div>
 
-      <q-banner v-if="vorschau && vorschau.fehler.length" class="bg-orange-1 text-orange-10 q-mb-md" rounded>
-        <template #avatar><q-icon name="warning" color="orange" /></template>
+      <q-banner v-if="vorschau && vorschau.fehler.length" class="vtb-warnung q-mb-md" rounded>
+        <template #avatar><q-icon name="warning" /></template>
         <div class="text-weight-medium">{{ vorschau.fehler.length }} Position(en) nicht exportierbar – bitte Konten/Mitgliedsnummern ergänzen:</div>
         <ul class="q-my-xs">
           <li v-for="(f, i) in vorschau.fehler" :key="i">

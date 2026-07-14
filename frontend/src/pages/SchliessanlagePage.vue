@@ -1,6 +1,6 @@
 <template>
   <q-page class="q-pa-md">
-    <q-banner v-if="!status.konfiguriert" class="schl-warnung q-mb-md" rounded dense>
+    <q-banner v-if="!status.konfiguriert" class="vtb-warnung q-mb-md" rounded dense>
       <template #avatar><q-icon name="warning" size="26px" /></template>
       Kein TTLock-Konto konfiguriert (TTLOCK_* in der .env). Inventar/Logs können nicht
       synchronisiert werden.
@@ -1312,17 +1312,6 @@ function deleteChip() {
   border-radius: 8px;
   padding: 4px 10px;
 }
-.schl-warnung {
-  border: 1px solid rgba(193, 0, 21, 0.35);
-  border-left: 4px solid $negative;
-  border-radius: 10px;
-  background: rgba(193, 0, 21, 0.06);
-  color: #8f0013;
-
-  .q-icon {
-    color: $negative;
-  }
-}
 .schl-neu-btn {
   min-width: 220px;
 }
@@ -1381,16 +1370,6 @@ body.body--dark {
     background: rgba($vtb-blau-hell, 0.18);
     color: $vtb-blau-hell;
   }
-  .schl-warnung {
-    background: rgba(229, 57, 53, 0.12);
-    border-color: rgba(229, 57, 53, 0.4);
-    border-left-color: #ef9a9a;
-    color: #ef9a9a;
-
-    .q-icon {
-      color: #ef9a9a;
-    }
-  }
   .schl-log-icon {
     background: rgba(255, 255, 255, 0.08);
     color: #9fb0cc;
@@ -1408,6 +1387,97 @@ body.body--dark {
     color: #9fb0cc;
   }
 }
+
+/* VTB-Look Hell-Modus: Karten/Dialoge sind Wappenblau (app.scss) — die für
+   weiße Karten gedachten Grau-/Tint-Töne dort aufhellen (wie im Dark Mode).
+   Die Pills im Seitenkopf liegen dagegen direkt auf dem gelben Grund und
+   behalten kräftige dunkle Farben. */
+body:not(.body--dark) {
+  /* Elemente, die immer auf blauen Flächen sitzen (Karten & Dialoge) */
+  .schl-icon {
+    background: rgba(255, 255, 255, 0.12);
+    color: $vtb-gelb;
+  }
+  .schl-icon--aus {
+    background: rgba(255, 255, 255, 0.08);
+    color: #9fb0cc;
+  }
+  .schl-stat {
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  .schl-stat__label {
+    color: rgba(255, 255, 255, 0.65);
+  }
+  .schl-log-icon {
+    background: rgba(255, 255, 255, 0.1);
+    color: #c6d2e8;
+  }
+  .schl-log-icon--ok {
+    background: rgba(33, 186, 69, 0.25);
+    color: #a5d6a7;
+  }
+  .schl-log-icon--fehler {
+    background: rgba(229, 57, 53, 0.25);
+    color: #ef9a9a;
+  }
+  .schl-dsgvo {
+    background: rgba(255, 255, 255, 0.08);
+    color: #c6d2e8;
+  }
+  /* Hover-Ring in Gelb — Blau auf Blau wäre unsichtbar */
+  .schl-karte:hover {
+    box-shadow:
+      0 0 0 2px $vtb-gelb,
+      0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Standort-Überschriften liegen auf Gelb → Wappenblau */
+  .schl-gruppe {
+    color: rgba($vtb-blau, 0.8);
+  }
+
+  /* Pills im Seitenkopf (auf Gelb): Grundton blau, Statusfarben kräftig.
+     Die Varianten stehen NACH dem Grundton, damit sie ihn überstimmen. */
+  .schl-pill {
+    background: rgba($vtb-blau, 0.1);
+    color: $vtb-blau;
+  }
+  .schl-pill--ok {
+    background: rgba(33, 186, 69, 0.18);
+    color: #14652f;
+  }
+  .schl-pill--achtung {
+    background: rgba(242, 192, 55, 0.35);
+    color: #6d5600;
+  }
+  .schl-pill--warn {
+    background: rgba(193, 0, 21, 0.12);
+    color: #a30017;
+  }
+
+  /* Pills auf blauen Karten/Dialogen: helle Töne wie im Dark Mode */
+  .q-card .schl-pill,
+  .q-dialog .schl-pill {
+    background: rgba(255, 255, 255, 0.12);
+    color: #dbe4f2;
+  }
+  .q-card .schl-pill--ok,
+  .q-dialog .schl-pill--ok {
+    background: rgba(33, 186, 69, 0.28);
+    color: #a5d6a7;
+  }
+  .q-card .schl-pill--achtung,
+  .q-dialog .schl-pill--achtung {
+    background: rgba(242, 192, 55, 0.24);
+    color: #ffd54f;
+  }
+  .q-card .schl-pill--warn,
+  .q-dialog .schl-pill--warn {
+    background: rgba(229, 57, 53, 0.28);
+    color: #ef9a9a;
+  }
+}
+
 /* Vollbild-Dialoge (Handy) ohne Eckenrundung */
 .q-dialog__inner--maximized .schl-dialog {
   border-radius: 0;
