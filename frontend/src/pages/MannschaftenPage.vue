@@ -59,41 +59,44 @@
           <q-card>
             <q-card-section class="q-pt-sm">
               <q-inner-loading :showing="kaderLoadingId === m.id" />
+              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="group_add"
+                label="Mitglieder hinzufügen" color="primary" size="sm" class="q-mb-sm" @click="openPicker(m)" />
               <div v-if="kaderLoadingId !== m.id && (kaderByTeam[m.id]?.length ?? 0) === 0"
                 class="text-grey text-center q-py-sm">Noch keine Mitglieder im Kader.</div>
               <q-list dense separator>
-                <q-item v-for="z in (kaderByTeam[m.id] ?? [])" :key="z.id">
-                  <q-item-section>
-                    <q-item-label>{{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}</q-item-label>
-                    <q-item-label caption>
-                      <q-chip dense size="xs" :color="rolleColor(z.rolle)" text-color="white">{{ rolleLabel(z.rolle) }}</q-chip>
-                      <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
-                    </q-item-label>
-                  </q-item-section>
-                  <q-item-section side v-if="auth.hasPermission('mannschaften.write')">
-                    <div class="row q-gutter-xs">
-                      <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKader(m, z)" />
-                      <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeKader(m, z)" />
+                <template v-for="z in (kaderByTeam[m.id] ?? [])" :key="z.id">
+                  <q-item>
+                    <q-item-section>
+                      <q-item-label>{{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}</q-item-label>
+                      <q-item-label caption>
+                        <q-chip dense size="xs" :color="rolleColor(z.rolle)" text-color="white">{{ rolleLabel(z.rolle) }}</q-chip>
+                        <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
+                      </q-item-label>
+                    </q-item-section>
+                    <q-item-section side v-if="auth.hasPermission('mannschaften.write')">
+                      <div class="row q-gutter-xs">
+                        <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKader(m, z)" />
+                        <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeKader(m, z)" />
+                      </div>
+                    </q-item-section>
+                  </q-item>
+                  <!-- Inline-Bearbeitung von Rolle/Zeitraum direkt unter dem Spieler -->
+                  <div v-if="editingKaderId === z.id && kaderFormTeamId === m.id"
+                    class="q-px-md q-pb-sm q-gutter-sm">
+                    <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
+                      emit-value map-options label="Rolle *" outlined dense />
+                    <div class="row q-gutter-sm">
+                      <q-input v-model="kaderForm.von" label="Von *" outlined dense type="date" class="col" />
+                      <q-input v-model="kaderForm.bis" label="Bis" outlined dense type="date" class="col" />
                     </div>
-                  </q-item-section>
-                </q-item>
+                    <div class="row q-gutter-sm">
+                      <q-btn flat label="Abbrechen" @click="kaderFormTeamId = null" />
+                      <q-btn unelevated label="Speichern"
+                        color="primary" :loading="kaderSaving" @click="saveKader(m)" />
+                    </div>
+                  </div>
+                </template>
               </q-list>
-              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="group_add"
-                label="Mitglieder hinzufügen" color="primary" size="sm" class="q-mt-xs" @click="openPicker(m)" />
-              <!-- Inline-Form nur noch zum Bearbeiten von Rolle/Zeitraum -->
-              <div v-if="kaderFormTeamId === m.id && editingKaderId" class="q-mt-sm q-gutter-sm">
-                <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
-                  emit-value map-options label="Rolle *" outlined dense />
-                <div class="row q-gutter-sm">
-                  <q-input v-model="kaderForm.von" label="Von *" outlined dense type="date" class="col" />
-                  <q-input v-model="kaderForm.bis" label="Bis" outlined dense type="date" class="col" />
-                </div>
-                <div class="row q-gutter-sm">
-                  <q-btn flat label="Abbrechen" @click="kaderFormTeamId = null" />
-                  <q-btn unelevated :label="editingKaderId ? 'Speichern' : 'Hinzufügen'"
-                    color="primary" :loading="kaderSaving" @click="saveKader(m)" />
-                </div>
-              </div>
             </q-card-section>
           </q-card>
         </q-expansion-item>
