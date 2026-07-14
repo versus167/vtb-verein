@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
+from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/termine", tags=["termine"])
@@ -45,6 +46,11 @@ class TerminUpdate(TerminCreate):
 
 class TerminAktion(BaseModel):
     expected_version: int
+
+
+class ZusageSet(BaseModel):
+    antwort: str                             # 'zu' | 'vielleicht' | 'ab'
+    kommentar: Optional[str] = None
 
 
 # ----------------------------------------------------------------- Authorisierung
@@ -105,6 +111,49 @@ def _validate_termin(data: TerminCreate) -> None:
             setattr(data, feld, wert.strip() or None)
 
 
+def _clean(s: Optional[str]) -> Optional[str]:
+    return (s.strip() or None) if s is not None else None
+
+
+def _validate_antwort(antwort: str) -> None:
+    if antwort not in VALID_ANTWORTEN:
+        raise HTTPException(422, f"Ungültige Antwort (erlaubt: {', '.join(VALID_ANTWORTEN)})")
+
+
+def _lade_termin(db: DB, termin_id: int):
+    t = db.termine.get(termin_id)
+    if t is None:
+        raise HTTPException(404, "Termin nicht gefunden")
+    return t
+
+
+# --------------------------------------------------------------------- Zusagen
+def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
+    """Reichert Termin-Dicts (asdict) um RSVP-Infos an: `zusagen` (Zähler je
+    Antwort), `meine_antwort` (eigene aktive Antwort | None) und `kann_zusagen`
+    (ob der User als aktives Kader-Mitglied am Termin-Datum selbst antworten darf)."""
+    if not termine:
+        return termine
+    ids = [t['id'] for t in termine]
+    counts = db.termin_zusagen.counts_for_termine(ids)
+    mitglied = db.get_mitglied_by_user_id(user.id)
+    mitglied_id = mitglied.id if mitglied else None
+    meine = db.termin_zusagen.answer_for(mitglied_id, ids) if mitglied_id else {}
+    kader_cache: dict[tuple, bool] = {}
+    for t in termine:
+        tag = (t.get('beginn') or '')[:10] or None
+        key = (t['mannschaft_id'], tag)
+        if key not in kader_cache:
+            kader_cache[key] = (
+                mitglied_id is not None
+                and db.termine.get_kader_mitglied_id(user.id, t['mannschaft_id'], tag) is not None
+            )
+        t['zusagen'] = counts.get(t['id'], {'zu': 0, 'vielleicht': 0, 'ab': 0})
+        t['meine_antwort'] = meine.get(t['id'])
+        t['kann_zusagen'] = kader_cache[key]
+    return termine
+
+
 # ------------------------------------------------------------------ Mannschaften
 @router.get("/mannschaften")
 def list_meine_mannschaften(user: CurrentUser, db: DB):
@@ -126,7 +175,7 @@ def list_termine(mannschaft_id: int, user: CurrentUser, db: DB,
     return {
         "zugriff": zugriff,
         "darf_verwalten": zugriff == 'verwalten',
-        "termine": [asdict(t) for t in termine],
+        "termine": _enrich_zusagen(db, user, [asdict(t) for t in termine]),
     }
 
 
@@ -152,7 +201,7 @@ def meine_termine(user: CurrentUser, db: DB,
     Ohne von-Filter ab heute (Vergangenes blendet das Frontend explizit ein)."""
     if von is None and bis is None:
         von = date.today().isoformat()
-    return db.termine.list_for_user(user.id, von=von, bis=bis)
+    return _enrich_zusagen(db, user, db.termine.list_for_user(user.id, von=von, bis=bis))
 
 
 # --------------------------------------------------------------- Einzel-Termine
@@ -205,3 +254,64 @@ def delete_termin(termin_id: int, user: CurrentUser, db: DB):
         raise HTTPException(404, "Termin nicht gefunden")
     _require_verwalten(db, user, t.mannschaft_id)
     db.termine.mark_deleted(termin_id, user.username)
+
+
+# ------------------------------------------------------------- Zu-/Absagen (RSVP)
+@router.put("/{termin_id}/zusage")
+def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB):
+    """Eigene Zu-/Absage. Verlangt Lese-Zugriff auf die Mannschaft UND ein aktives
+    Kader-Mitglied des Users am Termin-Datum."""
+    t = _lade_termin(db, termin_id)
+    _require_lesen(db, user, t.mannschaft_id)
+    _validate_antwort(data.antwort)
+    mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
+    if mitglied_id is None:
+        raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
+    z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
+                                      _clean(data.kommentar), user.username)
+    return asdict(z)
+
+
+@router.put("/{termin_id}/zusage/{mitglied_id}")
+def set_fremde_zusage(termin_id: int, mitglied_id: int, data: ZusageSet,
+                      user: CurrentUser, db: DB):
+    """Zu-/Absage für ein anderes Kader-Mitglied setzen (nur Verwalter)."""
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    _validate_antwort(data.antwort)
+    if not db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, t.beginn[:10]):
+        raise HTTPException(422, "Mitglied ist am Termin-Datum nicht im Kader")
+    z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
+                                      _clean(data.kommentar), user.username)
+    return asdict(z)
+
+
+@router.delete("/{termin_id}/zusage", status_code=status.HTTP_204_NO_CONTENT)
+def remove_eigene_zusage(termin_id: int, user: CurrentUser, db: DB):
+    """Eigene Zu-/Absage zurücknehmen (Soft-Delete)."""
+    t = _lade_termin(db, termin_id)
+    _require_lesen(db, user, t.mannschaft_id)
+    mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
+    if mitglied_id is None:
+        raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
+    db.termin_zusagen.remove_antwort(termin_id, mitglied_id, user.username)
+
+
+@router.delete("/{termin_id}/zusage/{mitglied_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_fremde_zusage(termin_id: int, mitglied_id: int, user: CurrentUser, db: DB):
+    """Zu-/Absage eines anderen Kader-Mitglieds zurücknehmen (nur Verwalter)."""
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    db.termin_zusagen.remove_antwort(termin_id, mitglied_id, user.username)
+
+
+@router.get("/{termin_id}/kader")
+def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
+    """Aktiver Kader der Termin-Mannschaft (Stichtag = Termin-Datum) inkl. Antworten –
+    für den Kader-/Übersichtsdialog. Verlangt Lese-Zugriff."""
+    t = _lade_termin(db, termin_id)
+    zugriff = _require_lesen(db, user, t.mannschaft_id)
+    return {
+        "darf_verwalten": zugriff == 'verwalten',
+        "kader": db.termin_zusagen.list_kader_with_zusage(termin_id),
+    }

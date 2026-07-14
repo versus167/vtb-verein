@@ -146,8 +146,11 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("tresor_freigabe", "tresor_id"),
                 )),
     # --- Spielbetrieb: Mannschafts-Termine (#95, Blatt vor mannschaft) ---
+    PruneEntity("termin_zusage", "Termin-Zusagen", "termin_zusage",
+                history_table="termin_zusage_history"),
     PruneEntity("termin", "Termine", "termine",
-                history_table="termine_history"),
+                history_table="termine_history",
+                children=(ChildRef("termin_zusage", "termin_id"),)),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
@@ -173,6 +176,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_kontakt", "mitglied_id"),
                     ChildRef("mitglied_mannschaft", "mitglied_id"),
                     ChildRef("schluessel_chip", "mitglied_id"),
+                    ChildRef("termin_zusage", "mitglied_id"),
                     ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
                     ChildRef("ul_abrechnung", "mitglied_id"),
                     ChildRef("ul_satz", "mitglied_id"),

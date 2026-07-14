@@ -144,6 +144,45 @@ class TerminRepository(BaseRepository):
                 return None
             return 'verwalten' if row['darf_verwalten'] else 'lesen'
 
+    def get_kader_mitglied_id(self, user_id: int, mannschaft_id: int,
+                              stichtag: Optional[str] = None) -> Optional[int]:
+        """mitglied_id des Users im aktiven Kader der Mannschaft (am Stichtag) – für die
+        eigene Zu-/Absage. None, wenn der User dort kein aktives Kader-Mitglied ist."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id
+                FROM mitglied m
+                JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL AND mm.mannschaft_id = %(mid)s
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                WHERE m.user_id = %(uid)s AND m.deleted_at IS NULL
+                LIMIT 1
+                """,
+                {"uid": user_id, "mid": mannschaft_id, "tag": tag},
+            )
+            row = cur.fetchone()
+            return row['id'] if row else None
+
+    def is_mitglied_in_kader(self, mitglied_id: int, mannschaft_id: int,
+                             stichtag: Optional[str] = None) -> bool:
+        """Ob ein Mitglied am Stichtag aktiv im Kader der Mannschaft steht
+        (On-behalf-Prüfung, wenn ein Verwalter für ein anderes Mitglied setzt)."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM mitglied_mannschaft
+                WHERE mitglied_id = %(mid)s AND mannschaft_id = %(man)s
+                  AND deleted_at IS NULL
+                  AND von <= %(tag)s AND (bis IS NULL OR bis >= %(tag)s)
+                LIMIT 1
+                """,
+                {"mid": mitglied_id, "man": mannschaft_id, "tag": tag},
+            )
+            return cur.fetchone() is not None
+
     def list_mannschaften_for_user(self, user_id: int,
                                    stichtag: Optional[str] = None) -> list[dict]:
         """Aktive Mannschaften, in deren Kader der User am Stichtag steht, mit der

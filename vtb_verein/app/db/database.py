@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 68
+SCHEMA_VERSION = 69
 
 
 # ---------------------------------------------------------------------------
@@ -1409,6 +1409,80 @@ _TERMINE_TRIGGERS = (
 )
 
 
+# ============================================================================
+# Termin-Zusagen (RSVP, #95 Etappe 2, Schema v68→v69): je Termin eine aktive
+# Antwort ('zu'/'vielleicht'/'ab') pro Kader-Mitglied. Zugriff über dieselbe
+# Kader-ACL wie die Termine (kein neues globales Recht). Soft-Delete = Antwort
+# zurücknehmen; erneutes Setzen re-aktiviert per UPDATE (version-Bump → History).
+# Aktive Eindeutigkeit via partiellem Unique-Index (Muster wie ticket_teilnehmer).
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v68→v69.
+# ============================================================================
+_TERMIN_ZUSAGE_COLS = (
+    "id, version, termin_id, mitglied_id, antwort, kommentar, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TERMIN_ZUSAGE_VALS = ", ".join("NEW." + c.strip() for c in _TERMIN_ZUSAGE_COLS.split(","))
+
+_FN_TERMIN_ZUSAGE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_zusage_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO termin_zusage_history ({_TERMIN_ZUSAGE_COLS}) VALUES ({_TERMIN_ZUSAGE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TERMIN_ZUSAGE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_zusage_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO termin_zusage_history ({_TERMIN_ZUSAGE_COLS}) VALUES ({_TERMIN_ZUSAGE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TERMIN_ZUSAGE = """
+    CREATE TABLE IF NOT EXISTS termin_zusage (
+      id           SERIAL PRIMARY KEY,
+      termin_id    INTEGER NOT NULL REFERENCES termine(id),
+      mitglied_id  INTEGER NOT NULL REFERENCES mitglied(id),
+      antwort      TEXT NOT NULL,
+      kommentar    TEXT,
+      version      INTEGER NOT NULL DEFAULT 1,
+      created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by   TEXT NOT NULL,
+      deleted_at   TEXT,
+      deleted_by   TEXT,
+      CHECK (antwort IN ('zu', 'vielleicht', 'ab'))
+    );
+    CREATE TABLE IF NOT EXISTS termin_zusage_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      termin_id INTEGER, mitglied_id INTEGER, antwort TEXT, kommentar TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TERMIN_ZUSAGE_INDEXES = (
+    ("idx_termin_zusage_termin_id",   "termin_zusage(termin_id)"),
+    ("idx_termin_zusage_mitglied_id", "termin_zusage(mitglied_id)"),
+    ("idx_termin_zusage_deleted_at",  "termin_zusage(deleted_at)"),
+    ("idx_termin_zusage_history_id",  "termin_zusage_history(id)"),
+)
+
+_TERMIN_ZUSAGE_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_termin_zusage_active "
+    "ON termin_zusage (termin_id, mitglied_id) WHERE deleted_at IS NULL",
+)
+
+_TERMIN_ZUSAGE_TRIGGERS = (
+    ('trig_termin_zusage_audit_insert', 'INSERT', 'termin_zusage', 'fn_termin_zusage_audit_insert'),
+    ('trig_termin_zusage_audit_update', 'UPDATE', 'termin_zusage', 'fn_termin_zusage_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -1523,6 +1597,7 @@ class Database:
             66: self._migrate_v65_to_v66,
             67: self._migrate_v66_to_v67,
             68: self._migrate_v67_to_v68,
+            69: self._migrate_v68_to_v69,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4496,6 +4571,33 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 68 WHERE id = 1")
 
+    def _migrate_v68_to_v69(self) -> None:
+        """Termin-Zusagen (RSVP, #95 Etappe 2).
+
+        Neue Tabelle termin_zusage (+ _history, Audit-Trigger): je Termin eine
+        aktive Antwort ('zu'/'vielleicht'/'ab') pro Kader-Mitglied. Zugriff über
+        dieselbe Kader-ACL wie die Termine – KEIN neues globales Recht. Aktive
+        Eindeutigkeit via partiellem Unique-Index (Muster wie ticket_teilnehmer).
+
+        Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem Fresh-Schema.
+        Zum Schluss _normalize_audit_timestamps (Typen fresh == migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TERMIN_ZUSAGE)
+            cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_UPDATE)
+            for name, event, table, fn in _TERMIN_ZUSAGE_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TERMIN_ZUSAGE_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _TERMIN_ZUSAGE_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 69 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -5744,6 +5846,8 @@ class Database:
         # Mannschafts-Termine (Schema v68): Training/Spiel/Sonstiges je Mannschaft,
         # Zugriff über Kader-ACL. DDL geteilt mit Migration v67→v68.
         cur.execute(_DDL_TERMINE)
+        # Termin-Zusagen (Schema v69): RSVP je Kader-Mitglied. DDL geteilt mit v68→v69.
+        cur.execute(_DDL_TERMIN_ZUSAGE)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -5963,6 +6067,8 @@ class Database:
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
         cur.execute(_FN_TERMINE_AUDIT_INSERT)
         cur.execute(_FN_TERMINE_AUDIT_UPDATE)
+        cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_INSERT)
+        cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -6570,6 +6676,7 @@ class Database:
             *_TRESOR_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
             *_TERMINE_TRIGGERS,
+            *_TERMIN_ZUSAGE_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -6686,6 +6793,7 @@ class Database:
             *_TRESOR_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
+            *_TERMIN_ZUSAGE_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -6701,6 +6809,8 @@ class Database:
         for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TERMINE_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _TERMIN_ZUSAGE_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------

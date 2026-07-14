@@ -20,59 +20,17 @@
     </div>
 
     <q-inner-loading :showing="loading" />
-    <div v-if="!loading && gruppen.length === 0" class="text-grey text-center q-py-xl">
+    <div v-if="!loading && termine.length === 0" class="text-grey text-center q-py-xl">
       Keine Termine{{ vergangene ? '' : ' ab heute' }}.
     </div>
 
-    <!-- Gruppierte Liste nach Datum -->
-    <div v-for="g in gruppen" :key="g.datum" class="q-mb-md">
-      <div class="text-subtitle2 text-weight-medium text-grey-8 q-mb-xs">{{ datumLabel(g.datum) }}</div>
-      <q-list bordered separator class="rounded-borders">
-        <q-item v-for="t in g.termine" :key="t.id">
-          <q-item-section avatar>
-            <q-icon :name="typIcon(t.typ)" :color="t.status === 'abgesagt' ? 'grey-5' : 'primary'" />
-          </q-item-section>
-          <q-item-section>
-            <q-item-label :class="{ 'text-strike text-grey-6': t.status === 'abgesagt' }">
-              {{ uhrzeit(t.beginn) }}<span v-if="t.ende"> – {{ uhrzeit(t.ende) }}</span> Uhr ·
-              {{ terminTitel(t) }}
-            </q-item-label>
-            <q-item-label caption>
-              <span v-if="t.ort">{{ t.ort }}</span>
-              <span v-if="t.treffpunkt"> · Treffpunkt: {{ t.treffpunkt }}<template v-if="t.treffpunkt_zeit"> ({{ t.treffpunkt_zeit }} Uhr)</template></span>
-              <span v-if="t.beschreibung"> · {{ t.beschreibung }}</span>
-            </q-item-label>
-          </q-item-section>
-          <q-item-section side>
-            <div class="row items-center q-gutter-xs no-wrap">
-              <q-chip v-if="tab === 'meine'" dense size="sm" color="grey-3">{{ t.mannschaft_name }}</q-chip>
-              <q-chip v-if="t.status === 'abgesagt'" dense size="sm" color="negative" text-color="white">Abgesagt</q-chip>
-              <q-btn v-if="kannVerwalten(t)" flat dense round icon="more_vert" size="sm">
-                <q-menu auto-close>
-                  <q-list dense style="min-width: 160px">
-                    <q-item clickable @click="openEdit(t)">
-                      <q-item-section avatar><q-icon name="edit" size="xs" /></q-item-section>
-                      <q-item-section>Bearbeiten</q-item-section>
-                    </q-item>
-                    <q-item v-if="t.status === 'geplant'" clickable @click="setStatus(t, 'absagen')">
-                      <q-item-section avatar><q-icon name="event_busy" size="xs" /></q-item-section>
-                      <q-item-section>Absagen</q-item-section>
-                    </q-item>
-                    <q-item v-else clickable @click="setStatus(t, 'reaktivieren')">
-                      <q-item-section avatar><q-icon name="event_available" size="xs" /></q-item-section>
-                      <q-item-section>Reaktivieren</q-item-section>
-                    </q-item>
-                    <q-item clickable @click="confirmDelete(t)">
-                      <q-item-section avatar><q-icon name="delete" size="xs" color="negative" /></q-item-section>
-                      <q-item-section class="text-negative">Löschen</q-item-section>
-                    </q-item>
-                  </q-list>
-                </q-menu>
-              </q-btn>
-            </div>
-          </q-item-section>
-        </q-item>
-      </q-list>
+    <!-- Card-Liste (nach beginn sortiert; Datum steckt in der Card) -->
+    <div class="column q-gutter-md">
+      <TerminCard v-for="t in termine" :key="t.id" :termin="t"
+        :darf-verwalten="kannVerwalten(t)"
+        @bearbeiten="openEdit" @absagen="setStatus($event, 'absagen')"
+        @reaktivieren="setStatus($event, 'reaktivieren')" @loeschen="confirmDelete"
+        @reload="loadTermine" />
     </div>
 
     <!-- Termin anlegen/bearbeiten -->
@@ -116,6 +74,8 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import TerminCard from 'components/TerminCard.vue'
+import { terminTitel, uhrzeit, datumLabel } from 'src/composables/useTermine'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -138,35 +98,9 @@ const typOptionen = [
   { label: 'Sonstiges', value: 'sonstiges' },
 ]
 
-function typIcon(typ) {
-  return { training: 'fitness_center', spiel: 'sports_soccer' }[typ] ?? 'event'
-}
 function teamLabel(m) {
   return m.saison ? `${m.name} (${m.saison})` : m.name
 }
-function terminTitel(t) {
-  if (t.typ === 'spiel') {
-    const ha = t.heim_auswaerts === 'heim' ? ' (H)' : t.heim_auswaerts === 'auswaerts' ? ' (A)' : ''
-    return `Spiel${t.gegner ? ` vs. ${t.gegner}` : ''}${ha}`
-  }
-  return t.typ === 'training' ? 'Training' : 'Sonstiges'
-}
-function uhrzeit(wandzeit) {
-  return (wandzeit ?? '').slice(11, 16)
-}
-function datumLabel(iso) {
-  return new Date(`${iso}T12:00`).toLocaleDateString('de-DE',
-    { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
-}
-
-const gruppen = computed(() => {
-  const byDatum = {}
-  for (const t of termine.value) {
-    const key = (t.beginn ?? '').slice(0, 10)
-    ;(byDatum[key] ??= []).push(t)
-  }
-  return Object.keys(byDatum).sort().map(datum => ({ datum, termine: byDatum[datum] }))
-})
 
 function kannVerwalten(t) {
   if (auth.hasPermission('termine.verwalten')) return true
