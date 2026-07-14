@@ -52,11 +52,19 @@ export default configure(function (/* ctx */) {
     animations: [],
 
     pwa: {
-      workboxMode: 'GenerateSW',
+      workboxMode: 'InjectManifest',
       injectPwaMetaTags: true,
       swFilename: 'sw.js',
       manifestFilename: 'manifest.json',
       useCredentialsForManifestTag: false,
+      // Der Custom-SW (custom-service-worker.js, enthält die Push-Handler) wird
+      // via esbuild gebaut. Standardmäßig gilt das App-Browser-Target (inkl.
+      // safari13.1) — dorthin kann esbuild workbox' Destructuring nicht
+      // heruntertranspilieren ("not supported yet"). Ein Service Worker läuft
+      // ohnehin nur in modernen Browsern, daher hier ein modernes Target.
+      extendPWACustomSWConf (esbuildConf) {
+        esbuildConf.target = 'es2020'
+      },
     },
   }
 })
