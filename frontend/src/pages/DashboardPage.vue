@@ -11,6 +11,10 @@
         <SettingsTile to="mannschaften" icon="sports_soccer" title="Mannschaften" caption="Teams & Kader verwalten" />
       </div>
 
+      <div v-if="hatTermineZugriff || auth.hasPermission('termine.verwalten')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="termine" icon="event" title="Termine" caption="Training & Spiele" />
+      </div>
+
       <div v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile :to="kassenZiel" icon="account_balance_wallet" title="Kassenbuch" caption="Buchungen & Berichte" />
       </div>
@@ -60,6 +64,7 @@ const auth = useAuthStore()
 
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
+const hatTermineZugriff = ref(false)
 
 const kassenZiel = computed(() =>
   auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch',
@@ -92,6 +97,10 @@ onMounted(async () => {
   try {
     const { data } = await api.get('/api/tresor')
     hatTresorZugriff.value = data.length > 0
+  } catch { /* ignorieren */ }
+  try {
+    const { data } = await api.get('/api/termine/mannschaften')
+    hatTermineZugriff.value = data.length > 0
   } catch { /* ignorieren */ }
 })
 </script>

@@ -42,6 +42,7 @@ from backend.api.konsistenz import router as konsistenz_router
 from backend.api.schliessanlage import router as schliessanlage_router
 from backend.api.tresor import router as tresor_router
 from backend.api.push import router as push_router
+from backend.api.termine import router as termine_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -116,6 +117,7 @@ app.include_router(konsistenz_router, prefix="/api")
 app.include_router(schliessanlage_router, prefix="/api")
 app.include_router(tresor_router, prefix="/api")
 app.include_router(push_router, prefix="/api")
+app.include_router(termine_router, prefix="/api")
 
 
 

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 67
+SCHEMA_VERSION = 68
 
 
 # ---------------------------------------------------------------------------
@@ -1316,6 +1316,99 @@ _PUSH_SUBSCRIPTIONS_INDEXES = (
 )
 
 
+# ============================================================================
+# Mannschafts-Termine (Schema v68, Spielbetrieb Etappe 1, #95)
+# ----------------------------------------------------------------------------
+# Termine (Training/Spiel/Sonstiges) je Mannschaft. Zugriff über die Kader-ACL
+# (mitglied_mannschaft): trainer/betreuer/uebungsleiter verwalten, alle aktiven
+# Kader-Mitglieder lesen; nur das übergreifende Verwalten hängt am globalen
+# Recht `termine.verwalten` (analog kassen.verwalten/tresor.verwalten).
+# beginn/ende sind lokale Wandzeit als TEXT ('YYYY-MM-DDTHH:MM') — wie alle
+# Domänen-Daten; sie gehören bewusst NICHT in _AUDIT_TS_COLUMNS.
+# serie_id (Vorgriff Terminserien, noch ohne FK) und extern_ref (DFBnet-
+# Spielkennung für den Spielplan-Import, Etappe 3) sind vorbereitet.
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v67→v68.
+# ============================================================================
+_TERMINE_COLS = (
+    "id, version, mannschaft_id, serie_id, typ, beginn, ende, ort, treffpunkt, "
+    "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TERMINE_VALS = ", ".join("NEW." + c.strip() for c in _TERMINE_COLS.split(","))
+
+_FN_TERMINE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_termine_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO termine_history ({_TERMINE_COLS}) VALUES ({_TERMINE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TERMINE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_termine_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO termine_history ({_TERMINE_COLS}) VALUES ({_TERMINE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TERMINE = """
+    CREATE TABLE IF NOT EXISTS termine (
+      id              SERIAL PRIMARY KEY,
+      mannschaft_id   INTEGER NOT NULL REFERENCES mannschaft(id),
+      serie_id        INTEGER,
+      typ             TEXT NOT NULL,
+      beginn          TEXT NOT NULL,
+      ende            TEXT,
+      ort             TEXT,
+      treffpunkt      TEXT,
+      treffpunkt_zeit TEXT,
+      gegner          TEXT,
+      heim_auswaerts  TEXT,
+      extern_ref      TEXT,
+      status          TEXT NOT NULL DEFAULT 'geplant',
+      beschreibung    TEXT,
+      version         INTEGER NOT NULL DEFAULT 1,
+      created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by      TEXT NOT NULL,
+      deleted_at      TEXT,
+      deleted_by      TEXT,
+      CHECK (typ IN ('training', 'spiel', 'sonstiges')),
+      CHECK (status IN ('geplant', 'abgesagt')),
+      CHECK (heim_auswaerts IN ('heim', 'auswaerts'))
+    );
+    CREATE TABLE IF NOT EXISTS termine_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      mannschaft_id INTEGER, serie_id INTEGER, typ TEXT, beginn TEXT, ende TEXT,
+      ort TEXT, treffpunkt TEXT, treffpunkt_zeit TEXT, gegner TEXT,
+      heim_auswaerts TEXT, extern_ref TEXT, status TEXT, beschreibung TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TERMINE_INDEXES = (
+    ("idx_termine_mannschaft_id", "termine(mannschaft_id)"),
+    ("idx_termine_beginn",        "termine(beginn)"),
+    ("idx_termine_deleted_at",    "termine(deleted_at)"),
+    ("idx_termine_history_id",    "termine_history(id)"),
+)
+
+_TERMINE_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_termine_extern_ref "
+    "ON termine (extern_ref) WHERE deleted_at IS NULL AND extern_ref IS NOT NULL",
+)
+
+_TERMINE_TRIGGERS = (
+    ('trig_termine_audit_insert', 'INSERT', 'termine', 'fn_termine_audit_insert'),
+    ('trig_termine_audit_update', 'UPDATE', 'termine', 'fn_termine_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -1429,6 +1522,7 @@ class Database:
             65: self._migrate_v64_to_v65,
             66: self._migrate_v65_to_v66,
             67: self._migrate_v66_to_v67,
+            68: self._migrate_v67_to_v68,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4365,6 +4459,43 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 67 WHERE id = 1")
 
+    def _migrate_v67_to_v68(self) -> None:
+        """Mannschafts-Termine (#95, Spielbetrieb Etappe 1).
+
+        Neue Tabelle termine (+ _history, Audit-Trigger): Training/Spiel/Sonstiges
+        je Mannschaft. Zugriff über die Kader-ACL (mitglied_mannschaft) – trainer/
+        betreuer/uebungsleiter verwalten, aktive Kader-Mitglieder lesen; nur das
+        übergreifende Verwalten hängt am neuen globalen Recht `termine.verwalten`,
+        das Bestands-Admins hier nachgezogen bekommen (Fresh == Upgrade).
+
+        Idempotent; geteilte DDL/Trigger/Index-Konstanten mit dem Fresh-Schema.
+        Zum Schluss _normalize_audit_timestamps (Typen fresh == migriert);
+        beginn/ende bleiben bewusst TEXT (Wandzeit, keine Audit-Instants).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TERMINE)
+            cur.execute(_FN_TERMINE_AUDIT_INSERT)
+            cur.execute(_FN_TERMINE_AUDIT_UPDATE)
+            for name, event, table, fn in _TERMINE_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TERMINE_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _TERMINE_UNIQUE_INDEXES:
+                cur.execute(sql)
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, 'termine.verwalten', 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 68 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -5610,6 +5741,9 @@ class Database:
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
+        # Mannschafts-Termine (Schema v68): Training/Spiel/Sonstiges je Mannschaft,
+        # Zugriff über Kader-ACL. DDL geteilt mit Migration v67→v68.
+        cur.execute(_DDL_TERMINE)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -5827,6 +5961,8 @@ class Database:
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
+        cur.execute(_FN_TERMINE_AUDIT_INSERT)
+        cur.execute(_FN_TERMINE_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -6433,6 +6569,7 @@ class Database:
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
+            *_TERMINE_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -6548,6 +6685,7 @@ class Database:
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
+            *_TERMINE_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -6561,6 +6699,8 @@ class Database:
         for sql in _ZUTRITT_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _TERMINE_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------
@@ -6583,6 +6723,7 @@ class Database:
             'schliessanlage.read', 'schliessanlage.verwalten', 'schliessanlage.protokoll',
             'schliessanlage.oeffnen',
             'tresor.verwalten',
+            'termine.verwalten',
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()
