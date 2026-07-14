@@ -10,6 +10,15 @@ _SELECT = """
            s.aktiv, s.notiz, s.letzter_log_serverdate, s.letztes_event_at, s.letztes_event_type,
            (SELECT MAX(sl.geaendert_am) FROM tuer_schloss_status_log sl
               WHERE sl.schloss_id = s.id) AS gateway_online_seit,
+           (SELECT COALESCE(
+                     NULLIF(TRIM(COALESCE(m.vorname, '') || ' ' || COALESCE(m.nachname, '')), ''),
+                     c.bezeichnung, l.key_name, l.ttlock_username)
+              FROM tuer_zutritt_log l
+              LEFT JOIN mitglied m ON m.id = l.mitglied_id
+              LEFT JOIN schluessel_chip c ON c.id = l.chip_id
+              WHERE l.schloss_id = s.id
+              ORDER BY l.server_date DESC NULLS LAST
+              LIMIT 1) AS letztes_event_wer,
            ab.name AS abteilung_name,
            s.version, s.created_at, s.created_by, s.updated_at, s.updated_by,
            s.deleted_at, s.deleted_by

@@ -1,13 +1,11 @@
 <template>
   <q-layout view="lHh Lpr lFf">
-    <q-header elevated>
+    <q-header>
       <q-toolbar>
         <!-- Kopfzeilen-Buttons am Handy ohne dense (42 statt 34 px) – leichter treffbar. -->
         <q-btn flat :dense="$q.screen.gt.sm" round icon="menu" @click="drawer = !drawer" />
         <q-toolbar-title>
-          VTB
-          <!-- Am Handy reicht der Platz neben den größeren Buttons nicht – Version steht dort im Konto-Menü. -->
-          <span v-if="appVersion && $q.screen.gt.xs" class="text-caption q-ml-xs" style="opacity: 0.7">{{ appVersion }}</span>
+          VTB<span v-if="pageTitle"> – {{ pageTitle }}</span>
         </q-toolbar-title>
         <q-btn
           v-if="hasHandler"
@@ -22,16 +20,17 @@
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
         <q-btn flat :dense="$q.screen.gt.sm" round icon="account_circle">
-          <q-menu>
-            <q-list style="min-width: 160px">
-              <q-item>
-                <q-item-section>
-                  <q-item-label class="text-weight-bold">{{ auth.user?.username }}</q-item-label>
-                  <q-item-label caption>{{ auth.user?.role }}</q-item-label>
-                  <q-item-label v-if="appVersion && $q.screen.lt.sm" caption>{{ appVersion }}</q-item-label>
-                </q-item-section>
-              </q-item>
-              <q-separator />
+          <q-menu class="vtb-konto-menu">
+            <div class="vtb-konto-kopf">
+              <div class="vtb-konto-avatar">{{ kontoInitial }}</div>
+              <div>
+                <div class="text-weight-bold">{{ auth.user?.username }}</div>
+                <div class="vtb-konto-rolle">{{ kontoRolle }}</div>
+                <div v-if="appVersion && $q.screen.lt.sm" class="vtb-konto-version">{{ appVersion }}</div>
+              </div>
+            </div>
+            <q-separator />
+            <q-list style="min-width: 230px">
               <q-item clickable v-close-popup :to="{ name: 'profile' }">
                 <q-item-section avatar><q-icon name="person" /></q-item-section>
                 <q-item-section>Mein Profil</q-item-section>
@@ -44,7 +43,8 @@
                 <q-item-section avatar><q-icon name="refresh" /></q-item-section>
                 <q-item-section>App neu laden</q-item-section>
               </q-item>
-              <q-item clickable v-close-popup @click="onLogout">
+              <q-separator />
+              <q-item clickable v-close-popup class="vtb-konto-abmelden" @click="onLogout">
                 <q-item-section avatar><q-icon name="logout" /></q-item-section>
                 <q-item-section>Abmelden</q-item-section>
               </q-item>
@@ -55,20 +55,21 @@
     </q-header>
 
     <q-drawer v-model="drawer" show-if-above bordered>
-      <q-scroll-area class="fit">
+      <q-scroll-area class="vtb-drawer-scroll">
         <q-list>
-          <q-item-label header>Navigation</q-item-label>
-
-          <q-item clickable :to="{ name: 'dashboard' }" active-class="bg-primary text-white">
-            <q-item-section avatar><q-icon name="home" /></q-item-section>
-            <q-item-section>Übersicht</q-item-section>
+          <!-- Wappen als Home-Button: gleiche Höhe wie die Header-Leiste daneben -->
+          <q-item clickable :to="{ name: 'dashboard' }" exact active-class="vtb-nav-active" class="vtb-drawer-home">
+            <q-item-section avatar>
+              <img src="/icons/vtb-wappen-512.png" alt="VTB-Wappen" class="vtb-drawer-home__logo" />
+            </q-item-section>
+            <q-item-section>Home</q-item-section>
           </q-item>
 
           <q-item
             v-if="auth.hasPermission('mannschaften.read')"
             clickable
             :to="{ name: 'mannschaften' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="sports_soccer" /></q-item-section>
             <q-item-section>Mannschaften</q-item-section>
@@ -78,7 +79,7 @@
             v-if="auth.hasPermission('personen.read')"
             clickable
             :to="{ name: 'personen' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="people" /></q-item-section>
             <q-item-section>Personen</q-item-section>
@@ -88,7 +89,7 @@
             v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')"
             clickable
             :to="{ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="account_balance_wallet" /></q-item-section>
             <q-item-section>Kassenbuch</q-item-section>
@@ -98,7 +99,7 @@
             v-if="auth.hasPermission('schliessanlage.read')"
             clickable
             :to="{ name: 'schliessanlage' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="lock" /></q-item-section>
             <q-item-section>Schließanlage</q-item-section>
@@ -108,7 +109,7 @@
             v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')"
             clickable
             :to="{ name: 'tresor' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="vpn_key" /></q-item-section>
             <q-item-section>Passwörter</q-item-section>
@@ -118,7 +119,7 @@
             v-if="auth.hasPermission('berichte.read')"
             clickable
             :to="{ name: 'berichte' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="insights" /></q-item-section>
             <q-item-section>Berichte</q-item-section>
@@ -127,7 +128,7 @@
           <q-item
             clickable
             :to="{ name: 'tickets' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="confirmation_number" /></q-item-section>
             <q-item-section>Tickets</q-item-section>
@@ -137,7 +138,7 @@
             v-if="auth.hasPermission('beitraege.read')"
             clickable
             :to="{ name: 'beitraege' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="euro" /></q-item-section>
             <q-item-section>Beiträge</q-item-section>
@@ -147,7 +148,7 @@
             v-if="auth.hasPermission('gebuehren.read')"
             clickable
             :to="{ name: 'gebuehren' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="receipt_long" /></q-item-section>
             <q-item-section>Gebühren</q-item-section>
@@ -157,7 +158,7 @@
             v-if="auth.hasPermission('ulstunden.erfassen') || auth.hasPermission('ulstunden.erfassen_fremd') || auth.hasPermission('ulstunden.bestaetigen') || auth.hasPermission('ulstunden.verwalten')"
             clickable
             :to="{ name: 'uebungsleiter' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="sports" /></q-item-section>
             <q-item-section>Übungsleiter</q-item-section>
@@ -167,7 +168,7 @@
             v-if="hatEinstellungenZugriff"
             clickable
             :to="{ name: 'einstellungen' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="tune" /></q-item-section>
             <q-item-section>Einstellungen</q-item-section>
@@ -177,7 +178,7 @@
             v-if="hatSonstigesZugriff"
             clickable
             :to="{ name: 'sonstiges' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="more_horiz" /></q-item-section>
             <q-item-section>Sonstiges</q-item-section>
@@ -187,13 +188,14 @@
             v-if="false"
             clickable
             :to="{ name: 'users' }"
-            active-class="bg-primary text-white"
+            active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="manage_accounts" /></q-item-section>
             <q-item-section>Benutzerverwaltung</q-item-section>
           </q-item>
         </q-list>
       </q-scroll-area>
+      <div v-if="appVersion" class="vtb-drawer-version">{{ appVersion }}</div>
     </q-drawer>
 
     <q-page-container>
@@ -242,8 +244,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -251,9 +253,27 @@ import FeedbackFab from 'src/components/FeedbackFab.vue'
 import { useRefreshControl, installAutoRefresh } from 'src/composables/useRefresh'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 const $q = useQuasar()
 const drawer = ref($q.screen.gt.sm)
+
+// Konto-Menü: Avatar-Initial und lesbare Rollenbezeichnung
+const kontoInitial = computed(() => (auth.user?.username || '?').charAt(0).toUpperCase())
+const kontoRolle = computed(() => {
+  const rollen = { admin: 'Administrator', mitglied: 'Mitglied' }
+  return rollen[auth.user?.role] || auth.user?.role || ''
+})
+
+// Seitentitel aus der Route (meta.title) — im Header und im Browser-Tab.
+const pageTitle = computed(() => route.meta?.title || '')
+watch(
+  pageTitle,
+  (t) => {
+    document.title = t ? `VTB – ${t}` : 'VTB Vereinsverwaltung'
+  },
+  { immediate: true },
+)
 
 // Zwei gebündelte Bereiche: „Einstellungen" (Funktionen/Abteilungen) und „Sonstiges"
 // (Import/Bereinigung/Fibu-Export/Protokoll). Jeweils sichtbar, sobald der Nutzer

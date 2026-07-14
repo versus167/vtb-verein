@@ -61,6 +61,25 @@ class TuerZutrittLogRepository(BaseRepository):
             )
             return cur.fetchone()['m']
 
+    def list_neueste(self, limit: int = 100,
+                     schloss_ids: Optional[list[int]] = None) -> list[TuerZutrittLog]:
+        """Gesamt-Log über ALLE Schlösser, neueste zuerst; optional auf sichtbare
+        Schlösser eingeschränkt (Abteilungs-Scope, Phase 3)."""
+        where = ""
+        params: list = []
+        if schloss_ids is not None:
+            if not schloss_ids:
+                return []
+            where = " WHERE l.schloss_id = ANY(%s)"
+            params.append(list(schloss_ids))
+        params.append(limit)
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + where + " ORDER BY l.lock_date DESC NULLS LAST, l.id DESC LIMIT %s",
+                params,
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def list_for_schloss(self, schloss_id: int, limit: int = 200) -> list[TuerZutrittLog]:
         with self.cursor() as cur:
             cur.execute(

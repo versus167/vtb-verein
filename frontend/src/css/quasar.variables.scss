@@ -2,20 +2,30 @@
 //
 // Einzige Quelle für Markenfarben im Frontend. Werte stammen aus der
 // Wappen-Neuzeichnung (2026). Für Blautöne im UI ausschließlich $vtb-blau
-// (bzw. semantisch `primary`) verwenden — keine anderen Blau-Hexwerte.
+// bzw. die hier abgeleiteten Töne verwenden — keine anderen Blau-Hexwerte.
 // VTB-Gelb nur als Akzent-/Hintergrundfarbe einsetzen, nie als Buttonfarbe
 // mit weißem Text (Kontrast).
 
 $vtb-blau: #023a90; // Wappenblau
 $vtb-gelb: #feeb03; // Wappengelb
 
+// Abgeleitete Blautöne (Dark Mode = "Navy" statt Schwarz, Basis Wappenblau)
+$vtb-navy-page: #0a1428; // Seitenhintergrund dunkel
+$vtb-navy-flaeche: #13233f; // Karten, Dialoge, Tabellen
+$vtb-navy-kopf: #132a55; // Header dunkel (etwas blauer als Flächen)
+$vtb-navy-menue: #0f1d3a; // Drawer/Menü dunkel (etwas tiefer als Flächen)
+$vtb-navy-hoch: #1b2f52; // erhöhte Flächen: Chips, Toggles, Hover
+$vtb-navy-linie: #26395c; // Trennlinien, Rahmen
+$vtb-blau-hell: #5b84c4; // aufgehellte Blau-Akzente auf dunklem Grund
+$vtb-blau-btn-dark: #1a4fae; // Primär-Buttons im Dark Mode (satter, hebt sich von Navy ab)
+
 // Quasar-Markenfarben
 $primary: $vtb-blau;
 $secondary: #26a69a; // Quasar-Default
 $accent: #9c27b0; // Quasar-Default
 
-$dark: #1d1d1d;
-$dark-page: #121212;
+$dark: $vtb-navy-flaeche;
+$dark-page: $vtb-navy-page;
 
 $positive: #21ba45;
 $negative: #c10015;

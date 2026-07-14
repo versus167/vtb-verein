@@ -1360,6 +1360,7 @@ onMounted(() => {
   background-color: #f5f5f5;
 }
 .page--dark .stripe {
-  background-color: #2d2d2d;
+  /* Navy-Ton passend zum dunklen Theme (statt Neutralgrau) */
+  background-color: #16264a;
 }
 </style>

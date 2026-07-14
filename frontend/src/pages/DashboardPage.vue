@@ -1,141 +1,50 @@
 <template>
   <q-page padding>
-    <div class="text-h4 q-mb-md">Willkommen, {{ auth.user?.username }}!</div>
-    <div class="text-subtitle1 q-mb-lg text-grey-7">Was möchten Sie tun?</div>
+    <div class="text-h6 q-mb-lg dashboard-gruss">Willkommen, {{ auth.user?.username }}!</div>
 
     <div class="row q-col-gutter-md">
-      <div
-        v-if="auth.hasPermission('personen.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'personen' })">
-          <q-card-section class="text-center">
-            <q-icon name="people" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Personen</div>
-            <div class="text-caption text-grey">Personen verwalten</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="auth.hasPermission('personen.read')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="personen" icon="people" title="Personen" caption="Personen verwalten" />
       </div>
 
-      <div
-        v-if="auth.hasPermission('mannschaften.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'mannschaften' })">
-          <q-card-section class="text-center">
-            <q-icon name="sports_soccer" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Mannschaften</div>
-            <div class="text-caption text-grey">Teams & Kader verwalten</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="auth.hasPermission('mannschaften.read')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="mannschaften" icon="sports_soccer" title="Mannschaften" caption="Teams & Kader verwalten" />
       </div>
 
       <div v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')" class="col-6 col-sm-4 col-md-3">
-        <q-card
-          class="cursor-pointer dashboard-card fit"
-          @click="router.push({ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' })"
-        >
-          <q-card-section class="text-center">
-            <q-icon name="account_balance_wallet" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Kassenbuch</div>
-            <div class="text-caption text-grey">Buchungen & Berichte</div>
-          </q-card-section>
-        </q-card>
+        <SettingsTile :to="kassenZiel" icon="account_balance_wallet" title="Kassenbuch" caption="Buchungen & Berichte" />
       </div>
 
-      <div
-        v-if="auth.hasPermission('schliessanlage.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'schliessanlage' })">
-          <q-card-section class="text-center">
-            <q-icon name="lock" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Schließanlage</div>
-            <div class="text-caption text-grey">Zutritt & Schlösser</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="auth.hasPermission('schliessanlage.read')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="schliessanlage" icon="lock" title="Schließanlage" caption="Zutritt & Schlösser" />
       </div>
 
-      <div
-        v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tresor' })">
-          <q-card-section class="text-center">
-            <q-icon name="vpn_key" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Passwörter</div>
-            <div class="text-caption text-grey">Vereins-Tresor</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="tresor" icon="vpn_key" title="Passwörter" caption="Vereins-Tresor" />
       </div>
 
       <div class="col-6 col-sm-4 col-md-3">
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'tickets' })">
-          <q-card-section class="text-center">
-            <q-icon name="confirmation_number" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Tickets</div>
-            <div class="text-caption text-grey">Anfragen & Aufgaben</div>
-          </q-card-section>
-        </q-card>
+        <SettingsTile to="tickets" icon="confirmation_number" title="Tickets" caption="Anfragen & Aufgaben" />
       </div>
 
-      <div
-        v-if="hatUebungsleiterZugriff"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'uebungsleiter' })">
-          <q-card-section class="text-center">
-            <q-icon name="sports" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Übungsleiter</div>
-            <div class="text-caption text-grey">Stunden & Vergütung</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="hatUebungsleiterZugriff" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="uebungsleiter" icon="sports" title="Übungsleiter" caption="Stunden & Vergütung" />
       </div>
 
-      <div
-        v-if="auth.hasPermission('berichte.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'berichte' })">
-          <q-card-section class="text-center">
-            <q-icon name="insights" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Berichte</div>
-            <div class="text-caption text-grey">Statistik & Kennzahlen</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="auth.hasPermission('berichte.read')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="berichte" icon="insights" title="Berichte" caption="Statistik & Kennzahlen" />
       </div>
 
-      <div
-        v-if="auth.hasPermission('abteilungen.read')"
-        class="col-6 col-sm-4 col-md-3"
-      >
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'abteilungen' })">
-          <q-card-section class="text-center">
-            <q-icon name="account_tree" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Abteilungen</div>
-            <div class="text-caption text-grey">Abteilungen verwalten</div>
-          </q-card-section>
-        </q-card>
+      <div v-if="auth.hasPermission('abteilungen.read')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="abteilungen" icon="account_tree" title="Abteilungen" caption="Abteilungen verwalten" />
       </div>
 
       <div v-if="zeigeEinstellungen" class="col-6 col-sm-4 col-md-3">
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'einstellungen' })">
-          <q-card-section class="text-center">
-            <q-icon name="tune" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Einstellungen</div>
-            <div class="text-caption text-grey">Funktionen, Abteilungen</div>
-          </q-card-section>
-        </q-card>
+        <SettingsTile to="einstellungen" icon="tune" title="Einstellungen" caption="Funktionen, Abteilungen" />
       </div>
 
       <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
-        <q-card class="cursor-pointer dashboard-card fit" @click="router.push({ name: 'sonstiges' })">
-          <q-card-section class="text-center">
-            <q-icon name="more_horiz" size="3rem" color="primary" />
-            <div class="text-h6 q-mt-sm">Sonstiges</div>
-            <div class="text-caption text-grey">Import, Bereinigen, Fibu, Protokoll</div>
-          </q-card-section>
-        </q-card>
+        <SettingsTile to="sonstiges" icon="more_horiz" title="Sonstiges" caption="Import, Bereinigen, Fibu, Protokoll" />
       </div>
     </div>
   </q-page>
@@ -143,15 +52,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
+import SettingsTile from 'src/components/SettingsTile.vue'
 
-const router = useRouter()
 const auth = useAuthStore()
 
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
+
+const kassenZiel = computed(() =>
+  auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch',
+)
 
 const hatUebungsleiterZugriff = computed(() =>
   auth.hasPermission('ulstunden.erfassen') ||
@@ -183,11 +95,3 @@ onMounted(async () => {
   } catch { /* ignorieren */ }
 })
 </script>
-
-<style scoped>
-.dashboard-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  transform: translateY(-2px);
-  transition: all 0.2s ease;
-}
-</style>
