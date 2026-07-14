@@ -34,7 +34,7 @@
         <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
       </template>
     </q-select>
-    <q-banner v-if="zielMitgliedId && sicht === 'einzel'" dense class="bg-amber-1 text-amber-9 q-mb-md rounded-borders">
+    <q-banner v-if="zielMitgliedId && sicht === 'einzel'" dense class="vtb-warnung q-mb-md">
       <template #avatar><q-icon name="edit_note" /></template>
       Fremderfassung für <b>{{ zielLabel }}</b> – Anlegen und Bearbeiten erfolgen für diesen Übungsleiter.
     </q-banner>
