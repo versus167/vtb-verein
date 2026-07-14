@@ -746,11 +746,17 @@ const chipsGefiltert = computed(() =>
 const statusLogClass = (o) =>
   o === true ? 'schl-log-icon--ok' : o === false ? 'schl-log-icon--fehler' : ''
 const mitgliedName = (x) => `${x.mitglied_vorname || ''} ${x.mitglied_nachname || ''}`.trim() || ('Mitglied #' + x.mitglied_id)
-// Wer hat geöffnet: aufgelöstes Mitglied > Chip-Bezeichnung > Cloud-Credential-Name (key_name)
-// > TTLock-Sammelkonto. key_name benennt das Credential (eKey/Fingerprint), ist also
-// aussagekräftiger als das geteilte ttlock_username.
-const logWer = (l) => (l.mitglied_vorname ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
-  : l.chip_bezeichnung || l.key_name || l.ttlock_username || '')
+// Wer hat womit geöffnet: aufgelöstes Mitglied UND – bei IC-Karten – die Karten-
+// Bezeichnung ("Max M. · karte1"), damit erkennbar bleibt, welche Karte benutzt wurde
+// (#100). Ohne Mitglied fällt es auf Chip-Bezeichnung > Cloud-Credential-Name (key_name,
+// z. B. eKey/Fingerprint, aussagekräftiger als das geteilte ttlock_username) > TTLock-
+// Sammelkonto zurück.
+const logWer = (l) => {
+  const person = l.mitglied_vorname ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim() : ''
+  const karte = l.chip_bezeichnung || ''
+  if (person && karte) return `${person} · ${karte}`
+  return person || karte || l.key_name || l.ttlock_username || ''
+}
 
 async function loadStatus() {
   const { data } = await api.get('/api/schliessanlage/status')
