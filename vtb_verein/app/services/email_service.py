@@ -9,7 +9,100 @@ from app.config.email_config import EmailConfig
 
 class EmailService:
     """Service für E-Mail-Versand via SMTP"""
-    
+
+    # ── VTB-Mail-Design (wie Login-Seite) ────────────────────────────────
+    # Farben aus frontend/src/css/quasar.variables.scss. E-Mail-Clients
+    # (v. a. Outlook mit Word-Renderer) beherrschen weder Gradients noch
+    # rgba()/Flexbox — daher Tabellen-Layout, Inline-Styles und auf dem
+    # jeweiligen Grund vorgemischte Volltonfarben.
+    _VTB_BLAU = "#023a90"       # Wappenblau ($vtb-blau / $primary)
+    _VTB_GELB = "#feeb03"       # Wappengelb ($vtb-gelb)
+    _BLAU_TEXT_65 = "#a6bad8"   # entspricht weiß 65 % auf Wappenblau (Untertitel)
+    _BLAU_TEXT_75 = "#c0cee3"   # entspricht weiß 75 % auf Wappenblau (Hinweise)
+    _GELB_TEXT_45 = "#8c8102"   # entspricht schwarz 45 % auf Gelb (Fußzeile)
+
+    @staticmethod
+    def _render_vtb_email(
+        headline: str,
+        username: str,
+        intro_html: str,
+        button_label: str,
+        button_url: str,
+        hints: list,
+        preheader: str,
+    ) -> str:
+        """
+        Rendert eine E-Mail im Look der Login-Seite: Wappen auf gelbem
+        Grund, darunter die blaue Karte mit gelbem Voll-Breite-Button.
+
+        Args:
+            headline: Zweck der Mail (weiße Zeile unter dem Vereinsnamen)
+            username: Benutzername für die Anrede
+            intro_html: Text zwischen Anrede und Button (darf HTML enthalten)
+            button_label: Beschriftung des gelben Buttons
+            button_url: Ziel des Buttons (wird auch als Fallback-Link gezeigt)
+            hints: Hinweiszeilen unter dem Button (dürfen HTML enthalten)
+            preheader: Vorschautext im Posteingang (in der Mail unsichtbar)
+        """
+        blau = EmailService._VTB_BLAU
+        gelb = EmailService._VTB_GELB
+        wappen_url = f"{EmailConfig.get_base_url()}/icons/vtb-wappen-512.png"
+        hints_html = "".join(
+            f'<p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5;'
+            f' color: {EmailService._BLAU_TEXT_75};">{hint}</p>'
+            for hint in hints
+        )
+        return f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; background-color: {gelb};">
+    <div style="display: none; max-height: 0; overflow: hidden;">{preheader}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{gelb}">
+        <tr>
+            <td align="center" style="padding: 36px 16px 28px;">
+                <img src="{wappen_url}" alt="VTB-Wappen" width="150"
+                     style="display: block; width: 150px; height: auto; margin: 0 auto;">
+                <!--[if mso]><table role="presentation" width="460" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                       bgcolor="{blau}"
+                       style="max-width: 460px; margin-top: 20px; background-color: {blau}; border-radius: 20px;">
+                    <tr>
+                        <td style="padding: 34px 30px 30px; font-family: Arial, Helvetica, sans-serif; color: #ffffff;">
+                            <div style="text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 0.5px; color: {gelb};">VTB Chemnitz</div>
+                            <div style="text-align: center; font-size: 13px; padding-top: 2px; color: {EmailService._BLAU_TEXT_65};">Vereinsverwaltung</div>
+                            <div style="text-align: center; font-size: 17px; font-weight: bold; padding-top: 28px; color: #ffffff;">{headline}</div>
+                            <p style="margin: 20px 0 0; font-size: 15px; line-height: 1.6; color: #ffffff;">Hallo <strong>{username}</strong>,</p>
+                            <p style="margin: 10px 0 0; font-size: 15px; line-height: 1.6; color: #ffffff;">{intro_html}</p>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 28px 0 6px;">
+                                <tr>
+                                    <td align="center" bgcolor="{gelb}" style="border-radius: 12px;">
+                                        <a href="{button_url}"
+                                           style="display: block; padding: 15px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 16px; font-weight: bold; text-align: center; color: {blau}; text-decoration: none; border-radius: 12px;">{button_label}</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            {hints_html}
+                            <p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: {EmailService._BLAU_TEXT_75};">
+                                Falls der Button nicht funktioniert, öffne diesen Link:<br>
+                                <a href="{button_url}" style="color: {gelb}; word-break: break-all;">{button_url}</a>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+                <!--[if mso]></td></tr></table><![endif]-->
+                <p style="margin: 20px 0 0; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: {EmailService._GELB_TEXT_45};">
+                    Viele Grüße<br>VTB Vereinsverwaltung
+                </p>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+"""
+
     @staticmethod
     def send_magic_link(recipient_email: str, token: str, username: str) -> bool:
         """
@@ -48,47 +141,19 @@ Viele Grüße,
 VTB Vereinsverwaltung
 """
         
-        # HTML-Version
-        html_body = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-</head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #2c3e50;">Login-Link für VTB Vereinsverwaltung</h2>
-        
-        <p>Hallo <strong>{username}</strong>,</p>
-        
-        <p>hier ist dein Login-Link für die Vereinsverwaltung:</p>
-        
-        <div style="margin: 30px 0;">
-            <a href="{magic_link}" 
-               style="display: inline-block; padding: 12px 24px; background-color: #3498db; 
-                      color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                Jetzt einloggen
-            </a>
-        </div>
-        
-        <p style="color: #7f8c8d; font-size: 14px;">
-            Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.
-        </p>
-        
-        <p style="color: #7f8c8d; font-size: 14px;">
-            Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.
-        </p>
-        
-        <hr style="border: none; border-top: 1px solid #ecf0f1; margin: 30px 0;">
-        
-        <p style="color: #95a5a6; font-size: 12px;">
-            Viele Grüße,<br>
-            VTB Vereinsverwaltung
-        </p>
-    </div>
-</body>
-</html>
-"""
+        # HTML-Version im Design der Login-Seite
+        html_body = EmailService._render_vtb_email(
+            headline="Dein Login-Link",
+            username=username,
+            intro_html="hier ist dein Login-Link für die Vereinsverwaltung:",
+            button_label="Jetzt einloggen",
+            button_url=magic_link,
+            hints=[
+                "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.",
+                "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.",
+            ],
+            preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig.",
+        )
         
         return EmailService._send_email(
             to=recipient_email,
@@ -191,50 +256,24 @@ Viele Grüße,
 VTB Vereinsverwaltung
 """
 
-        html_body = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-</head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #2c3e50;">Willkommen in der VTB Vereinsverwaltung</h2>
-
-        <p>Hallo <strong>{username}</strong>,</p>
-
-        <p>dein Account wurde eingerichtet. Du kannst die App ab sofort nutzen:</p>
-
-        <p>
-            <a href="{base_url}" style="color: #3498db;">{base_url}</a>
-        </p>
-
-        <p>Für deinen ersten Login haben wir dir bereits einen Link vorbereitet –
-        du brauchst kein Passwort:</p>
-
-        <div style="margin: 30px 0;">
-            <a href="{magic_link}"
-               style="display: inline-block; padding: 12px 24px; background-color: #3498db;
-                      color: white; text-decoration: none; border-radius: 4px; font-weight: bold;">
-                Jetzt einloggen
-            </a>
-        </div>
-
-        <p style="color: #7f8c8d; font-size: 14px;">
-            Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.
-            Danach kannst du dir jederzeit über die App einen neuen Login-Link anfordern.
-        </p>
-
-        <hr style="border: none; border-top: 1px solid #ecf0f1; margin: 30px 0;">
-
-        <p style="color: #95a5a6; font-size: 12px;">
-            Viele Grüße,<br>
-            VTB Vereinsverwaltung
-        </p>
-    </div>
-</body>
-</html>
-"""
+        # HTML-Version im Design der Login-Seite
+        html_body = EmailService._render_vtb_email(
+            headline="Willkommen!",
+            username=username,
+            intro_html=(
+                f'dein Account wurde eingerichtet. Du erreichst die App ab sofort unter '
+                f'<a href="{base_url}" style="color: {EmailService._VTB_GELB};">{base_url}</a>.'
+                f'<br><br>Für deinen ersten Login haben wir dir bereits einen Link '
+                f'vorbereitet – du brauchst kein Passwort:'
+            ),
+            button_label="Jetzt einloggen",
+            button_url=magic_link,
+            hints=[
+                "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden. "
+                "Danach kannst du dir jederzeit über die App einen neuen Login-Link anfordern.",
+            ],
+            preheader="Dein Zugang zur VTB Vereinsverwaltung ist eingerichtet.",
+        )
 
         return EmailService._send_email(
             to=recipient_email,
