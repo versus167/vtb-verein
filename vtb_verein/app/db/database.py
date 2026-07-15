@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 70
+SCHEMA_VERSION = 71
 
 
 # ---------------------------------------------------------------------------
@@ -1320,7 +1320,7 @@ _PUSH_SUBSCRIPTIONS_INDEXES = (
 # Mannschafts-Termine (Schema v68, Spielbetrieb Etappe 1, #95)
 # ----------------------------------------------------------------------------
 # Termine (Training/Spiel/Sonstiges) je Mannschaft. Zugriff über die Kader-ACL
-# (mitglied_mannschaft): trainer/betreuer/uebungsleiter verwalten, alle aktiven
+# (mitglied_mannschaft): betreuer/uebungsleiter verwalten, alle aktiven
 # Kader-Mitglieder lesen; nur das übergreifende Verwalten hängt am globalen
 # Recht `termine.verwalten` (analog kassen.verwalten/tresor.verwalten).
 # beginn/ende sind lokale Wandzeit als TEXT ('YYYY-MM-DDTHH:MM') — wie alle
@@ -1688,6 +1688,7 @@ class Database:
             68: self._migrate_v67_to_v68,
             69: self._migrate_v68_to_v69,
             70: self._migrate_v69_to_v70,
+            71: self._migrate_v70_to_v71,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4716,6 +4717,29 @@ class Database:
                 cur.execute(sql)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 70 WHERE id = 1")
+
+    def _migrate_v70_to_v71(self) -> None:
+        """Kader-Rolle 'trainer' entfällt (#103): Trainer und Übungsleiter sind
+        im Verein dasselbe – 'uebungsleiter' reicht.
+
+        Reine Daten-Migration (kein DDL – rolle ist ein freies TEXT-Feld, ohne
+        CHECK): bestehende Kader-Zuordnungen mit rolle='trainer' werden auf
+        'uebungsleiter' gezogen. Der version-Bump lässt den Audit-Trigger die
+        Umstellung in mitglied_mannschaft_history festhalten. Idempotent: ein
+        erneuter Lauf findet keine 'trainer'-Zeilen mehr.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied_mannschaft
+                SET rolle = 'uebungsleiter',
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'SYSTEM'
+                WHERE rolle = 'trainer'
+                """
+            )
+            cur.execute("UPDATE schema_version SET version = 71 WHERE id = 1")
 
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (

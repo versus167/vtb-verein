@@ -83,7 +83,7 @@ class Permission:
     # --- Termine / Spielbetrieb ---
     # Termine ALLER Mannschaften verwalten (umgeht die Kader-ACL). Der reguläre
     # Zugriff läuft NICHT hierüber, sondern über die Kader-Zugehörigkeit
-    # (mitglied_mannschaft): trainer/betreuer/uebungsleiter verwalten die Termine
+    # (mitglied_mannschaft): betreuer/uebungsleiter verwalten die Termine
     # ihrer Mannschaft, alle aktiven Kader-Mitglieder lesen sie.
     TERMINE_VERWALTEN    = 'termine.verwalten'
 

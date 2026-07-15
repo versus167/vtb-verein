@@ -2,7 +2,7 @@
 
 Ein Termin (Training/Spiel/Sonstiges) gehört zu genau einer Mannschaft. Der Zugriff
 wird NICHT über globale Rechte geregelt, sondern über die Kader-Zugehörigkeit
-(mitglied_mannschaft): trainer/betreuer/uebungsleiter verwalten, alle aktiven
+(mitglied_mannschaft): betreuer/uebungsleiter verwalten, alle aktiven
 Kader-Mitglieder lesen. Nur das übergreifende Verwalten hängt an termine.verwalten.
 
 Zeiten sind lokale Wandzeit als TEXT ('YYYY-MM-DDTHH:MM' bzw. 'HH:MM') — wie alle

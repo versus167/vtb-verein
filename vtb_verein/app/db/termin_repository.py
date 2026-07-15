@@ -2,7 +2,7 @@
 
 Der Zugriff auf Termine ergibt sich aus der Kader-Zugehörigkeit (mitglied_mannschaft),
 NICHT aus globalen Rechten: Wer am Stichtag aktiv (von/bis) im Kader ist, liest die
-Termine seiner Mannschaft; die Rollen trainer/betreuer/uebungsleiter verwalten sie.
+Termine seiner Mannschaft; die Rollen betreuer/uebungsleiter verwalten sie.
 Nur das übergreifende Verwalten (alle Mannschaften) hängt am globalen Recht
 termine.verwalten – Admins umgehen die ACL ohnehin (das entscheidet die API-Schicht).
 
@@ -18,8 +18,9 @@ from app.db.base_repository import BaseRepository
 
 VALID_TYPEN = ('training', 'spiel', 'sonstiges')
 VALID_STATUS = ('geplant', 'abgesagt')
-# Kader-Rollen, die Termine ihrer Mannschaft verwalten dürfen.
-VERWALTEN_ROLLEN = ('trainer', 'betreuer', 'uebungsleiter')
+# Kader-Rollen, die Termine ihrer Mannschaft verwalten dürfen ('trainer' mit #103
+# abgeschafft, siehe VALID_ROLLEN in mitglied_mannschaft_repository).
+VERWALTEN_ROLLEN = ('betreuer', 'uebungsleiter')
 
 # Gemeinsame CTE: aktive Kader-Zugehörigkeiten des Users am Stichtag.
 # Erwartet die benannten Parameter %(uid)s (user_id) und %(tag)s (ISO-Datum).
@@ -127,7 +128,7 @@ class TerminRepository(BaseRepository):
                             stichtag: Optional[str] = None) -> Optional[str]:
         """Effektive Zugriffsstufe des Users auf die Termine einer Mannschaft:
         None (kein Zugriff) | 'lesen' | 'verwalten'. Mehrfach-Zugehörigkeit
-        (z. B. spieler + trainer) ergibt die höchste Stufe. Admin-/termine.verwalten-
+        (z. B. spieler + uebungsleiter) ergibt die höchste Stufe. Admin-/termine.verwalten-
         Bypass regelt die API-Schicht."""
         tag = stichtag or date.today().isoformat()
         with self.cursor() as cur:

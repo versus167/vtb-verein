@@ -229,12 +229,11 @@ const loading = ref(false)
 const rolleOptionen = [
   { label: 'Spieler', value: 'spieler' },
   { label: 'Übungsleiter', value: 'uebungsleiter' },
-  { label: 'Trainer', value: 'trainer' },
   { label: 'Betreuer', value: 'betreuer' },
 ]
 function rolleLabel(r) { return rolleOptionen.find(o => o.value === r)?.label ?? r }
 function rolleColor(r) {
-  return { spieler: 'blue', uebungsleiter: 'indigo', trainer: 'deep-purple', betreuer: 'teal' }[r] ?? 'grey'
+  return { spieler: 'blue', uebungsleiter: 'indigo', betreuer: 'teal' }[r] ?? 'grey'
 }
 
 async function load() {

@@ -3,7 +3,7 @@
 Prüft das Schema v68 (termine + History-Trigger + CHECKs + partieller extern_ref-Unique),
 das Repository-CRUD (versions-gegatetes Update, set_status, Soft-Delete) und vor allem
 die Kader-ACL „wer darf die Termine welcher Mannschaft?" inkl. der Aktiv-am-Stichtag-
-Semantik (von/bis) und der Rollen-Stufen (spieler=lesen, trainer/betreuer/uebungsleiter
+Semantik (von/bis) und der Rollen-Stufen (spieler=lesen, betreuer/uebungsleiter
 =verwalten).
 
 Läuft nur, wenn ``VTB_TEST_DATABASE_URL`` auf eine (leere) Wegwerf-DB zeigt – VereinsDB legt
@@ -186,7 +186,7 @@ def test_set_status_und_soft_delete(db):
 # ------------------------------------------------------------------------- ACL
 def test_acl_rollen_stufen(db):
     mid = _make_mannschaft(db)
-    fall = (("spieler", 'lesen'), ("trainer", 'verwalten'),
+    fall = (("spieler", 'lesen'),
             ("betreuer", 'verwalten'), ("uebungsleiter", 'verwalten'))
     for i, (rolle, erwartet) in enumerate(fall):
         uid = _make_user_im_kader(db, mid, rolle, username=f"termintester{i}")
@@ -195,8 +195,8 @@ def test_acl_rollen_stufen(db):
 
 def test_acl_stichtag_und_fremde(db):
     mid = _make_mannschaft(db)
-    abgelaufen = _make_user_im_kader(db, mid, "trainer", bis=YESTERDAY, username="termintester1")
-    zukunft = _make_user_im_kader(db, mid, "trainer", von=TOMORROW, username="termintester2")
+    abgelaufen = _make_user_im_kader(db, mid, "uebungsleiter", bis=YESTERDAY, username="termintester1")
+    zukunft = _make_user_im_kader(db, mid, "uebungsleiter", von=TOMORROW, username="termintester2")
     ohne_kader = _make_user_im_kader(db, _make_mannschaft(db, name="Andere"), "spieler",
                                      username="termintester3")
     assert db.termine.get_access_for_user(abgelaufen, mid) is None
@@ -207,11 +207,11 @@ def test_acl_stichtag_und_fremde(db):
 def test_acl_doppelrolle_ergibt_hoechste_stufe(db):
     mid = _make_mannschaft(db)
     uid = _make_user_im_kader(db, mid, "spieler")
-    with db.cursor() as cur:  # zweite Zuordnung: gleiche Person zusätzlich Trainer
+    with db.cursor() as cur:  # zweite Zuordnung: gleiche Person zusätzlich Übungsleiter
         cur.execute("SELECT mitglied_id FROM mitglied_mannschaft WHERE mannschaft_id=%s", (mid,))
         mitglied_id = cur.fetchone()['mitglied_id']
         cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,von,created_by,updated_by) "
-                    "VALUES (%s,%s,'trainer',%s,'t','t')", (mitglied_id, mid, LASTWEEK))
+                    "VALUES (%s,%s,'uebungsleiter',%s,'t','t')", (mitglied_id, mid, LASTWEEK))
     assert db.termine.get_access_for_user(uid, mid) == 'verwalten'
     teams = db.termine.list_mannschaften_for_user(uid)
     assert len(teams) == 1 and teams[0]['zugriff'] == 'verwalten'
@@ -225,7 +225,7 @@ def test_meine_termine_ueber_mehrere_teams(db):
         cur.execute("SELECT mitglied_id FROM mitglied_mannschaft WHERE mannschaft_id=%s", (m1,))
         mitglied_id = cur.fetchone()['mitglied_id']
         cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,von,created_by,updated_by) "
-                    "VALUES (%s,%s,'trainer',%s,'t','t')", (mitglied_id, m2, LASTWEEK))
+                    "VALUES (%s,%s,'uebungsleiter',%s,'t','t')", (mitglied_id, m2, LASTWEEK))
     t_gestern = _create_termin(db, m1, f"{YESTERDAY}T19:00")
     t1 = _create_termin(db, m2, f"{TOMORROW}T18:00")
     t2 = _create_termin(db, m1, f"{TOMORROW}T19:00")

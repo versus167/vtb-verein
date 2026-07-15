@@ -3,7 +3,9 @@ from dataclasses import dataclass
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
-VALID_ROLLEN = ('spieler', 'uebungsleiter', 'trainer', 'betreuer')
+# 'trainer' wurde mit #103 abgeschafft (== uebungsleiter); Bestand per Migration
+# v71 auf 'uebungsleiter' gezogen.
+VALID_ROLLEN = ('spieler', 'uebungsleiter', 'betreuer')
 
 
 @dataclass
