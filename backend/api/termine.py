@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
+from app.db.termin_serie_repository import VALID_SERIE_TYPEN
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/termine", tags=["termine"])
@@ -51,6 +52,31 @@ class TerminAktion(BaseModel):
 class ZusageSet(BaseModel):
     antwort: str                             # 'zu' | 'vielleicht' | 'ab'
     kommentar: Optional[str] = None
+
+
+class SerieCreate(BaseModel):
+    typ: str = 'training'                    # 'training' | 'sonstiges' (keine Spiel-Serien)
+    beginn_zeit: str                         # 'HH:MM'
+    ende_zeit: Optional[str] = None
+    ort: Optional[str] = None
+    treffpunkt: Optional[str] = None
+    treffpunkt_zeit: Optional[str] = None    # 'HH:MM'
+    beschreibung: Optional[str] = None
+    start_datum: str                         # 'YYYY-MM-DD' (Anker = Wochentag, später fix)
+    ende_datum: Optional[str] = None         # None = offenes Ende
+
+
+class SerieUpdate(BaseModel):
+    """Volle Serien-Bearbeitung – nur start_datum/Wochentag bleibt fix."""
+    typ: str = 'training'
+    beginn_zeit: str
+    ende_zeit: Optional[str] = None
+    ort: Optional[str] = None
+    treffpunkt: Optional[str] = None
+    treffpunkt_zeit: Optional[str] = None
+    beschreibung: Optional[str] = None
+    ende_datum: Optional[str] = None
+    expected_version: int
 
 
 # ----------------------------------------------------------------- Authorisierung
@@ -113,6 +139,43 @@ def _validate_termin(data: TerminCreate) -> None:
 
 def _clean(s: Optional[str]) -> Optional[str]:
     return (s.strip() or None) if s is not None else None
+
+
+def _parse_uhrzeit(wert: str, feld: str) -> None:
+    try:
+        datetime.strptime(wert, '%H:%M')
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"{feld} muss das Format HH:MM haben")
+
+
+def _parse_datum(wert: str, feld: str) -> None:
+    try:
+        date.fromisoformat(wert)
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"{feld} muss das Format JJJJ-MM-TT haben")
+
+
+def _validate_serie(data) -> None:
+    """Gemeinsame Feld-Validierung für SerieCreate/SerieUpdate (normalisiert Strings)."""
+    if data.typ not in VALID_SERIE_TYPEN:
+        raise HTTPException(422, f"Ungültiger Typ (erlaubt: {', '.join(VALID_SERIE_TYPEN)})")
+    _parse_uhrzeit(data.beginn_zeit, "beginn_zeit")
+    if data.ende_zeit:
+        _parse_uhrzeit(data.ende_zeit, "ende_zeit")
+        if data.ende_zeit <= data.beginn_zeit:
+            raise HTTPException(422, "ende_zeit muss nach beginn_zeit liegen")
+    else:
+        data.ende_zeit = None
+    if data.treffpunkt_zeit:
+        _parse_uhrzeit(data.treffpunkt_zeit, "treffpunkt_zeit")
+    else:
+        data.treffpunkt_zeit = None
+    if data.ende_datum:
+        _parse_datum(data.ende_datum, "ende_datum")
+    else:
+        data.ende_datum = None
+    for feld in ('ort', 'treffpunkt', 'beschreibung'):
+        setattr(data, feld, _clean(getattr(data, feld)))
 
 
 def _validate_antwort(antwort: str) -> None:
@@ -178,6 +241,7 @@ def list_termine(mannschaft_id: int, user: CurrentUser, db: DB,
     if db.get_mannschaft(mannschaft_id) is None:
         raise HTTPException(404, "Mannschaft nicht gefunden")
     zugriff = _require_lesen(db, user, mannschaft_id)
+    db.termin_serien.materialize_due([mannschaft_id])   # Serien rollierend nachziehen
     termine = db.termine.list_for_mannschaft(mannschaft_id, von=von, bis=bis)
     return {
         "zugriff": zugriff,
@@ -208,6 +272,7 @@ def meine_termine(user: CurrentUser, db: DB,
     Ohne von-Filter ab heute (Vergangenes blendet das Frontend explizit ein)."""
     if von is None and bis is None:
         von = date.today().isoformat()
+    db.termin_serien.materialize_due()   # alle fälligen Serien rollierend nachziehen
     return _enrich_zusagen(db, user, db.termine.list_for_user(user.id, von=von, bis=bis))
 
 
@@ -332,3 +397,66 @@ def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
         "darf_verwalten": zugriff == 'verwalten',
         "kader": db.termin_zusagen.list_kader_with_zusage(termin_id),
     }
+
+
+# ----------------------------------------------------------------- Terminserien
+@router.get("/mannschaften/{mannschaft_id}/serien")
+def list_serien(mannschaft_id: int, user: CurrentUser, db: DB):
+    if db.get_mannschaft(mannschaft_id) is None:
+        raise HTTPException(404, "Mannschaft nicht gefunden")
+    zugriff = _require_lesen(db, user, mannschaft_id)
+    return {
+        "darf_verwalten": zugriff == 'verwalten',
+        "serien": [asdict(s) for s in db.termin_serien.list_for_mannschaft(mannschaft_id)],
+    }
+
+
+@router.post("/mannschaften/{mannschaft_id}/serien", status_code=status.HTTP_201_CREATED)
+def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: DB):
+    if db.get_mannschaft(mannschaft_id) is None:
+        raise HTTPException(404, "Mannschaft nicht gefunden")
+    _require_verwalten(db, user, mannschaft_id)
+    _validate_serie(data)
+    _parse_datum(data.start_datum, "start_datum")
+    if data.ende_datum and data.ende_datum < data.start_datum:
+        raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
+    s = db.termin_serien.create(
+        mannschaft_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
+        data.treffpunkt, data.treffpunkt_zeit, data.beschreibung,
+        data.start_datum, data.ende_datum, user.username,
+    )
+    db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
+    return asdict(db.termin_serien.get(s.id))
+
+
+@router.put("/serien/{serie_id}")
+def update_serie(serie_id: int, data: SerieUpdate, user: CurrentUser, db: DB):
+    """Volle Serien-Bearbeitung: neue Werte gelten für zukünftige, noch unveränderte,
+    geplante Instanzen; individuell geänderte/abgesagte/vergangene bleiben unberührt.
+    Wochentag (start_datum) ist fix – dafür Serie löschen und neu anlegen."""
+    s = db.termin_serien.get(serie_id)
+    if s is None:
+        raise HTTPException(404, "Serie nicht gefunden")
+    _require_verwalten(db, user, s.mannschaft_id)
+    _validate_serie(data)
+    if data.ende_datum and data.ende_datum < s.start_datum:
+        raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
+    ok = db.termin_serien.update(
+        serie_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
+        data.treffpunkt, data.treffpunkt_zeit, data.beschreibung, data.ende_datum,
+        user.username, data.expected_version,
+    )
+    if not ok:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+    db.termin_serien.materialize_due([s.mannschaft_id])   # bei Verlängerung nachziehen
+    return asdict(db.termin_serien.get(serie_id))
+
+
+@router.delete("/serien/{serie_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_serie(serie_id: int, user: CurrentUser, db: DB):
+    """Serie löschen: ALLE Instanzen ab heute werden mit entfernt, Vergangenheit bleibt."""
+    s = db.termin_serien.get(serie_id)
+    if s is None:
+        raise HTTPException(404, "Serie nicht gefunden")
+    _require_verwalten(db, user, s.mannschaft_id)
+    db.termin_serien.mark_deleted(serie_id, user.username)

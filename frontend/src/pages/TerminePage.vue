@@ -3,6 +3,8 @@
     <div class="row items-center q-mb-md">
       <div class="text-h5">Termine</div>
       <q-space />
+      <q-btn v-if="darfVerwalten && tab !== 'meine'" flat color="primary"
+        icon="repeat" label="Serien" class="q-mr-sm" @click="serienOffen = true" />
       <q-btn v-if="darfVerwalten && tab !== 'meine'" color="primary" unelevated
         icon="add" label="Neuer Termin" :round="$q.screen.lt.sm" @click="openCreate" />
     </div>
@@ -36,6 +38,10 @@
     <!-- Termin anlegen/bearbeiten -->
     <TerminFormDialog v-model="formOpen" :termin="formTermin" :mannschaft-id="tab"
       @saved="loadTermine" />
+
+    <!-- Terminserien verwalten (nur im Team-Tab) -->
+    <TerminSerienDialog v-if="tab !== 'meine'" v-model="serienOffen"
+      :mannschaft-id="tab" @geaendert="loadTermine" />
   </q-page>
 </template>
 
@@ -47,6 +53,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import TerminCard from 'components/TerminCard.vue'
 import TerminFormDialog from 'components/TerminFormDialog.vue'
+import TerminSerienDialog from 'components/TerminSerienDialog.vue'
 import { useTerminAktionen } from 'src/composables/useTermine'
 
 const $q = useQuasar()
@@ -129,4 +136,7 @@ function openEdit(t) {
 }
 
 const { setStatus, confirmDelete } = useTerminAktionen(loadTermine)
+
+// ── Terminserien ──────────────────────────────────────────
+const serienOffen = ref(false)
 </script>

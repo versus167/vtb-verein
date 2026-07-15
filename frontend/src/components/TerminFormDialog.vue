@@ -21,6 +21,18 @@
             :options="[{ label: 'Heim', value: 'heim' }, { label: 'Auswärts', value: 'auswaerts' }]" />
         </template>
         <q-input v-model="form.beschreibung" label="Beschreibung" outlined dense type="textarea" autogrow />
+        <!-- Serien nur beim Anlegen und nicht für Spiele -->
+        <template v-if="!form.id && form.typ !== 'spiel'">
+          <q-toggle v-model="form.wiederholen" label="Wöchentlich wiederholen" dense />
+          <template v-if="form.wiederholen">
+            <q-input v-model="form.serieEnde" label="Wiederholen bis (optional)"
+              outlined dense type="date" clearable />
+            <div class="text-caption text-grey-7">
+              Termine werden rollierend 8 Wochen im Voraus erzeugt; der Wochentag
+              ergibt sich aus dem Datum oben.
+            </div>
+          </template>
+        </template>
         <div v-if="formError" class="text-negative text-caption">{{ formError }}</div>
       </q-card-section>
       <q-card-actions align="right">
@@ -66,7 +78,7 @@ function leeresFormular() {
   return { id: null, version: null, typ: 'training',
            datum: new Date().toISOString().slice(0, 10), zeit: '', endeZeit: '',
            ort: '', treffpunkt: '', treffpunktZeit: '', gegner: '', heimAuswaerts: 'heim',
-           beschreibung: '' }
+           beschreibung: '', wiederholen: false, serieEnde: '' }
 }
 
 watch(open, (offen) => {
@@ -91,6 +103,24 @@ async function save() {
   saving.value = true
   formError.value = ''
   try {
+    if (!f.id && f.wiederholen && f.typ !== 'spiel') {
+      // Wöchentliche Serie statt Einzeltermin
+      await api.post(`/api/termine/mannschaften/${props.mannschaftId}/serien`, {
+        typ: f.typ,
+        beginn_zeit: f.zeit,
+        ende_zeit: f.endeZeit || null,
+        ort: f.ort || null,
+        treffpunkt: f.treffpunkt || null,
+        treffpunkt_zeit: f.treffpunktZeit || null,
+        beschreibung: f.beschreibung || null,
+        start_datum: f.datum,
+        ende_datum: f.serieEnde || null,
+      })
+      open.value = false
+      emit('saved')
+      $q.notify({ type: 'positive', message: 'Serie angelegt' })
+      return
+    }
     const payload = {
       typ: f.typ,
       beginn: `${f.datum}T${f.zeit}`,

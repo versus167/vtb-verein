@@ -15,6 +15,10 @@
           {{ untertitel }}
         </div>
       </div>
+      <q-icon v-if="termin.serie_id" name="repeat" color="white" size="18px"
+        class="q-mr-xs" style="opacity:.85">
+        <q-tooltip>Teil einer Serie</q-tooltip>
+      </q-icon>
       <q-badge v-if="abgesagt" color="white" text-color="negative"
         class="q-mr-sm text-weight-bold">ABGESAGT</q-badge>
       <!-- Verwalter bekommen das Menü auch am Dashboard (kompakt) – direkt editieren -->

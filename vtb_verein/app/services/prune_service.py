@@ -151,6 +151,9 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("termin", "Termine", "termine",
                 history_table="termine_history",
                 children=(ChildRef("termin_zusage", "termin_id"),)),
+    PruneEntity("termin_serie", "Terminserien", "termin_serie",
+                history_table="termin_serie_history",
+                children=(ChildRef("termine", "serie_id"),)),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
@@ -164,6 +167,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="mannschaft_history",
                 children=(
                     ChildRef("mitglied_mannschaft", "mannschaft_id"),
+                    ChildRef("termin_serie", "mannschaft_id"),
                     ChildRef("termine", "mannschaft_id"),
                 )),
     PruneEntity("mitglied", "Mitglieder", "mitglied",
