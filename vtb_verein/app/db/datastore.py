@@ -74,6 +74,9 @@ from app.db.tresor_repository import TresorRepository
 from app.db.tresor_freigabe_repository import TresorFreigabeRepository
 from app.db.tresor_eintrag_repository import TresorEintragRepository
 from app.db.tresor_zugriff_log_repository import TresorZugriffLogRepository
+from app.db.termin_repository import TerminRepository
+from app.db.termin_zusage_repository import TerminZusageRepository
+from app.db.termin_serie_repository import TerminSerieRepository
 from app.services.zutritt_service import ZutrittService
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
@@ -193,6 +196,13 @@ class VereinsDB:
         self._tresor_freigabe_repo = TresorFreigabeRepository(self.conn)
         self._tresor_eintrag_repo = TresorEintragRepository(self.conn)
         self._tresor_zugriff_log_repo = TresorZugriffLogRepository(self.conn)
+
+        # Mannschafts-Termine (#95, Spielbetrieb Etappe 1)
+        self._termin_repo = TerminRepository(self.conn)
+        # Termin-Zusagen/RSVP (#95, Etappe 2)
+        self._termin_zusage_repo = TerminZusageRepository(self.conn)
+        # Terminserien (#95): wöchentliche Vorlagen, rollierend materialisiert
+        self._termin_serie_repo = TerminSerieRepository(self.conn)
 
     @property
     def push(self) -> PushService:
@@ -336,6 +346,21 @@ class VereinsDB:
     @property
     def tresor_zugriff_log(self) -> TresorZugriffLogRepository:
         return self._tresor_zugriff_log_repo
+
+    # --- Mannschafts-Termine (#95, Spielbetrieb Etappe 1) ---
+    @property
+    def termine(self) -> TerminRepository:
+        return self._termin_repo
+
+    # --- Termin-Zusagen/RSVP (#95, Etappe 2) ---
+    @property
+    def termin_zusagen(self) -> TerminZusageRepository:
+        return self._termin_zusage_repo
+
+    # --- Terminserien (#95) ---
+    @property
+    def termin_serien(self) -> TerminSerieRepository:
+        return self._termin_serie_repo
 
     def cursor(self):
         return self._database.cursor()

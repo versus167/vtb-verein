@@ -179,6 +179,14 @@ const routes = [
         meta: { title: 'Passwörter' },
       },
       {
+        // Kein meta.permission: der Zugriff ist ACL-basiert (Kader-Zugehörigkeit)
+        // wie bei Kassenbuch/Tresor – die Seite/Backend setzen ihn je Mannschaft durch.
+        path: 'termine',
+        name: 'termine',
+        component: () => import('pages/TerminePage.vue'),
+        meta: { title: 'Termine' },
+      },
+      {
         path: 'import',
         name: 'import',
         component: () => import('pages/ImportPage.vue'),

@@ -76,6 +76,16 @@
           </q-item>
 
           <q-item
+            v-if="hatTermineZugriff || auth.hasPermission('termine.verwalten')"
+            clickable
+            :to="{ name: 'termine' }"
+            active-class="vtb-nav-active"
+          >
+            <q-item-section avatar><q-icon name="event" /></q-item-section>
+            <q-item-section>Termine</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('personen.read')"
             clickable
             :to="{ name: 'personen' }"
@@ -321,6 +331,7 @@ function toggleDarkMode() {
 
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
+const hatTermineZugriff = ref(false)
 
 const appVersion = ref('')
 
@@ -351,10 +362,20 @@ async function loadTresorZugriff() {
   }
 }
 
+async function loadTermineZugriff() {
+  try {
+    const { data } = await api.get('/api/termine/mannschaften')
+    hatTermineZugriff.value = data.length > 0
+  } catch {
+    hatTermineZugriff.value = false
+  }
+}
+
 async function onLogout() {
   await auth.logoutServer()
   hatKassenZugriff.value = false
   hatTresorZugriff.value = false
+  hatTermineZugriff.value = false
   router.push({ name: 'login' })
 }
 
@@ -389,6 +410,7 @@ onMounted(() => {
   installAutoRefresh()
   loadKassenZugriff()
   loadTresorZugriff()
+  loadTermineZugriff()
   loadAppVersion()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true

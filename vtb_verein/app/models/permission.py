@@ -80,6 +80,13 @@ class Permission:
     # NICHT hierüber, sondern per-Tresor über tresor_freigabe geregelt (analog Kassen).
     TRESOR_VERWALTEN     = 'tresor.verwalten'
 
+    # --- Termine / Spielbetrieb ---
+    # Termine ALLER Mannschaften verwalten (umgeht die Kader-ACL). Der reguläre
+    # Zugriff läuft NICHT hierüber, sondern über die Kader-Zugehörigkeit
+    # (mitglied_mannschaft): trainer/betreuer/uebungsleiter verwalten die Termine
+    # ihrer Mannschaft, alle aktiven Kader-Mitglieder lesen sie.
+    TERMINE_VERWALTEN    = 'termine.verwalten'
+
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben
     TICKETS_ACCESS           = 'tickets.access'
