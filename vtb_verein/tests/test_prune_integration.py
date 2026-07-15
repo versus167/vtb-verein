@@ -408,6 +408,64 @@ def test_protokoll_seitenaufrufe_retention(db):
         assert cur.fetchone()["n"] == 2     # frischer Seitenaufruf + Auth-Event bleiben
 
 
+def test_alters_archivierung_vergangene_termine(db):
+    """ArchiveRule: aktive Termine älter als das Fenster werden (samt aktiver Zusagen) in
+    den Papierkorb verschoben; künftige Termine bleiben aktiv. Reversibel (soft-delete),
+    daher NICHT in summe_loeschbar, sondern in summe_archivierbar. Idempotent."""
+    from app.services.prune_service import PruneService, TERMIN_ALTER
+    with db.cursor() as cur:
+        cur.execute(
+            "TRUNCATE termine, termine_history, termin_zusage, termin_zusage_history, "
+            "mannschaft, mannschaft_history RESTART IDENTITY CASCADE"
+        )
+    db.prune_einstellungen.upsert(TERMIN_ALTER, 30, 0, 1, updated_by="t")  # Alter: 30 Tage
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO abteilung (name,created_by,updated_by) "
+                    "VALUES ('Arch-Abt','t','t') RETURNING id")
+        aid = cur.fetchone()["id"]
+        cur.execute("INSERT INTO mannschaft (abteilung_id,name,saison,created_by,updated_by) "
+                    "VALUES (%s,'M','2020/21','t','t') RETURNING id", (aid,))
+        mid = cur.fetchone()["id"]
+        # alter Termin (vor 90 Tagen) + Zusage, künftiger Termin (in 7 Tagen)
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,created_by,updated_by) "
+                    "VALUES (%s,'training',"
+                    "(now()-make_interval(days=>90))::date::text||'T19:00','t','t') RETURNING id",
+                    (mid,))
+        alt = cur.fetchone()["id"]
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,created_by,updated_by) "
+                    "VALUES (%s,'training',"
+                    "(now()+make_interval(days=>7))::date::text||'T19:00','t','t') RETURNING id",
+                    (mid,))
+        neu = cur.fetchone()["id"]
+        cur.execute("INSERT INTO mitglied (vorname,nachname,zahlungsart) "
+                    "VALUES ('A','B','lastschrift') RETURNING id")
+        pid = cur.fetchone()["id"]
+        cur.execute("INSERT INTO termin_zusage (termin_id,mitglied_id,antwort,created_by,updated_by) "
+                    "VALUES (%s,%s,'zu','t','t')", (alt, pid))
+
+    svc = PruneService(db)
+    report = svc.report()
+    rep = {e["name"]: e for e in report["entities"]}[TERMIN_ALTER]
+    assert rep["archivierbar"] == 1 and rep["loeschbar"] == 0 and rep["soft_delete"] is False
+    assert report["summe_archivierbar"] == 1
+
+    res = svc.prune(dry_run=False)
+    assert res["summe_archiviert"] == 1
+    assert {e["name"]: e for e in res["entities"]}[TERMIN_ALTER]["archiviert"] == 1
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at IS NOT NULL AS d FROM termine WHERE id=%s", (alt,))
+        assert cur.fetchone()["d"] is True                       # alter Termin archiviert
+        cur.execute("SELECT deleted_at IS NOT NULL AS d FROM termine WHERE id=%s", (neu,))
+        assert cur.fetchone()["d"] is False                      # künftiger bleibt aktiv
+        cur.execute("SELECT deleted_at IS NOT NULL AS d FROM termin_zusage WHERE termin_id=%s", (alt,))
+        assert cur.fetchone()["d"] is True                       # Zusage mit-archiviert
+        cur.execute("SELECT count(*) n FROM termine_history WHERE id=%s", (alt,))
+        assert cur.fetchone()["n"] >= 1                          # version-Bump -> Audit-History
+
+    # zweiter Lauf: nichts mehr fällig (idempotent)
+    assert svc.prune(dry_run=False)["summe_archiviert"] == 0
+
+
 def test_papierkorb_zaehler(db):
     """Papierkorb zählt nur soft-deleted, nicht aktive Datensätze."""
     m = _ins_mitglied(db)
