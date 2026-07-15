@@ -14,8 +14,8 @@
 
     <!-- Filter -->
     <div class="row q-gutter-sm q-mb-md items-center wrap">
-      <q-btn-toggle v-model="filter" :options="filterOptions" unelevated dense
-        toggle-color="primary" color="white" text-color="primary" />
+      <q-btn-toggle v-model="filter" :options="filterOptions" unelevated rounded dense no-caps
+        toggle-color="primary" class="vtb-segment" />
       <q-select v-model="abteilungFilter" :options="alleAbteilungen" 
         option-value="id" option-label="name" emit-value map-options label="Abteilung"
         outlined dense clearable style="min-width: 180px" />
@@ -1347,17 +1347,20 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Zebra-Streifen – hell. Im Darkmode (page--dark) dunkler Überzug statt
-   Hellgrau, damit weiße Schrift lesbar bleibt. */
+/* Zebra-Streifen: Tabellen sind in beiden Modi dunkelblaue Flächen —
+   heller Überzug statt Hellgrau, damit die weiße Schrift lesbar bleibt
+   (Hellgrau + weißer Text = unsichtbare Zeilen, Ticket #102). */
 :deep(.q-table tbody tr:nth-child(even) td) {
-  background-color: #f5f5f5;
+  background-color: rgba(255, 255, 255, 0.07);
 }
 .page--dark :deep(.q-table tbody tr:nth-child(even) td) {
   background-color: rgba(255, 255, 255, 0.07);
 }
 
-.stripe {
-  background-color: #f5f5f5;
+/* Zebra der Karten-Liste: auf Wappenblau ein etwas hellerer Blauton.
+   body-Prefix nötig, um die globale Karten-Farbe zu überstimmen. */
+body:not(.body--dark) .q-card.stripe {
+  background-color: #0b4099;
 }
 .page--dark .stripe {
   /* Navy-Ton passend zum dunklen Theme (statt Neutralgrau) */

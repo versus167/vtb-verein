@@ -520,15 +520,26 @@ body:not(.body--dark) {
     color: $vtb-blau !important;
   }
 
-  // Tabellen: Kopf-/Fußzeile und Hover auf Blau abgestimmt
+  // Tabellen: Kopf-/Fußzeile, Hover und Auswahl auf Blau abgestimmt
   .q-table th {
     color: rgba(255, 255, 255, 0.75);
   }
   .q-table tbody tr:hover td {
     background: rgba(255, 255, 255, 0.06) !important;
   }
+  .q-table tbody tr.selected td {
+    background: rgba(255, 255, 255, 0.14) !important;
+  }
   .q-table__bottom {
     color: rgba(255, 255, 255, 0.7);
+  }
+
+  // Tab-Panels bringen einen eigenen weißen Hintergrund mit — auf blauen
+  // Flächen transparent machen, sonst entstehen weiße Kästen, in denen der
+  // hell remappte Text unsichtbar ist (z. B. Mitglied-Dialog, Ticket #102)
+  .q-card:not(.login-card) .q-tab-panels,
+  .q-menu .q-tab-panels {
+    background: transparent;
   }
 
   // Trennlinien auf blauen Flächen
@@ -630,6 +641,25 @@ body:not(.body--dark) {
     .text-teal-9                     { color: #80cbc4 !important; }
     .text-blue-grey-9,
     .text-blue-grey-10               { color: #b0bec5 !important; }
+
+    // Dieselben Remaps, wenn die Textklasse direkt AM Flächen-Element hängt
+    // (z. B. Ticket-Statuskarten: :class="'bg-blue-1 text-grey-9'" am q-card —
+    // die Descendant-Regeln oben greifen dort nicht; Ticket #101/#102)
+    &.text-grey,
+    &.text-grey-6,
+    &.text-grey-7,
+    &.text-grey-8 { color: rgba(255, 255, 255, 0.7) !important; }
+    &.text-grey-5 { color: rgba(255, 255, 255, 0.55) !important; }
+    &.text-grey-9,
+    &.text-grey-10 { color: #f4f7fc !important; }
+    &.text-red-9,    &.text-red-10    { color: #ef9a9a !important; }
+    &.text-green-9,  &.text-green-10  { color: #a5d6a7 !important; }
+    &.text-blue-9,   &.text-blue-10   { color: #90caf9 !important; }
+    &.text-orange-9, &.text-orange-10 { color: #ffcc80 !important; }
+    &.text-amber-9,  &.text-amber-10  { color: #ffd54f !important; }
+    &.text-teal-9                     { color: #80cbc4 !important; }
+    &.text-blue-grey-9,
+    &.text-blue-grey-10              { color: #b0bec5 !important; }
   }
 
   // ── Helle Tint-Flächen (Banner-/Chip-Muster bg-X-1/2/3) ──
@@ -657,6 +687,21 @@ body:not(.body--dark) {
   .bg-orange-1     { background-color: #33240f !important; }
   .bg-orange-3     { background-color: #4a3312 !important; }
   .bg-purple-1     { background-color: #2a1c3e !important; }
+
+  // Ausnahme vom bg-white-Remap: explizit weiße Badges (z. B. „ABGESAGT"
+  // auf dem roten Termin-Kopfbalken) bleiben weiß mit eigener Textfarbe
+  .q-badge.bg-white {
+    background: #fff !important;
+  }
+  .q-badge.bg-white.text-negative {
+    color: $negative !important;
+  }
+
+  // Termin-Karten (#95): Kopfbalken in tieferem Blau — der bg-primary-Balken
+  // würde sonst mit der Wappenblau-Karte verschmelzen
+  .termin-card__kopf.bg-primary {
+    background: $vtb-blau-tief !important;
+  }
 
   // Kachel-Innenleben: gelbes Icon auf zarter heller Scheibe, Pfeil gedimmt
   .settings-tile__icon {
