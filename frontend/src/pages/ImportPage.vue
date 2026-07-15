@@ -25,8 +25,8 @@
           </div>
         </div>
 
-        <q-banner v-if="commit" dense class="bg-orange-1 text-orange-9">
-          <template #avatar><q-icon name="warning" color="orange" /></template>
+        <q-banner v-if="commit" dense class="vtb-warnung">
+          <template #avatar><q-icon name="warning" /></template>
           COMMIT ist aktiv – der Import schreibt direkt in die Datenbank.
         </q-banner>
 
@@ -53,8 +53,8 @@
           </q-chip>
         </div>
 
-        <q-banner v-if="result.aborted" class="bg-red-1 text-red-9 q-mt-sm" dense>
-          <template #avatar><q-icon name="error" color="negative" /></template>
+        <q-banner v-if="result.aborted" class="vtb-warnung q-mt-sm" dense>
+          <template #avatar><q-icon name="error" /></template>
           <div class="text-weight-medium">Abgebrochen – nichts geschrieben</div>
           {{ result.abort_reason }}
         </q-banner>

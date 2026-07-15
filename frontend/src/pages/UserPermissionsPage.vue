@@ -17,8 +17,8 @@
         Administratoren haben unabhängig von dieser Matrix immer alle Rechte.
       </q-banner>
 
-      <q-banner v-if="hasOverrides" class="bg-orange-1 text-orange-10 q-mb-md rounded-borders">
-        <template #avatar><q-icon name="tune" color="orange" /></template>
+      <q-banner v-if="hasOverrides" class="vtb-warnung q-mb-md">
+        <template #avatar><q-icon name="tune" /></template>
         Es sind individuelle Anpassungen gesetzt
         ({{ grants.length }} gewährt, {{ denies.length }} entzogen).
       </q-banner>

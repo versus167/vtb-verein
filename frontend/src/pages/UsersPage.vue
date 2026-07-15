@@ -95,7 +95,7 @@
           <q-select v-model="editForm.role" label="Rolle" outlined :options="roleOptions"
             emit-value map-options />
           <q-checkbox v-model="editForm.active" label="Aktiv" />
-          <q-banner v-if="lastAdminWarning" class="bg-warning text-white rounded-borders">
+          <q-banner v-if="lastAdminWarning" class="vtb-warnung">
             <template #avatar><q-icon name="warning" /></template>
             Dies ist der letzte aktive Administrator!
           </q-banner>
