@@ -22,7 +22,8 @@
       Die Tabelle zeigt, was ein späterer Bereinigungslauf <i>entfernen würde</i>:
       gelöschte (im Papierkorb liegende) Einträge, die alt genug und von nichts mehr
       abhängig sind. Die Werte je Bereich sind einstellbar; ohne eigenen Wert gilt der
-      Standard.
+      Standard. Orange markierte Bereiche (z.&nbsp;B. „Vergangene Termine") werden nach
+      Alter zunächst nur <i>in den Papierkorb verschoben</i> und bleiben wiederherstellbar.
     </q-banner>
 
     <div class="row items-center q-mb-md text-grey-8" v-if="report">
@@ -30,6 +31,10 @@
         Insgesamt löschbar: <b>{{ report.summe_loeschbar }}</b> Einträge,
         History: <b>{{ report.summe_history_loeschbar }}</b> von
         {{ report.summe_history_gesamt }} Zeilen löschbar.
+        <span v-if="report.summe_archivierbar">
+          · <b>{{ report.summe_archivierbar }}</b> Datensätze werden altersbedingt
+          archiviert (Papierkorb).
+        </span>
       </div>
       <div class="col-auto" v-if="report.generated_at">
         Stand: {{ fmtDate(report.generated_at) }}
@@ -49,7 +54,14 @@
       <template #body-cell-loeschbar="props">
         <q-td :props="props">
           <q-chip
-            v-if="props.row.loeschbar > 0"
+            v-if="props.row.archiviert_statt_geloescht && props.row.archivierbar > 0"
+            dense color="orange-8" text-color="white" icon="archive"
+            :label="props.row.archivierbar"
+          >
+            <q-tooltip>Werden in den Papierkorb verschoben (wiederherstellbar)</q-tooltip>
+          </q-chip>
+          <q-chip
+            v-else-if="props.row.loeschbar > 0"
             dense color="negative" text-color="white" :label="props.row.loeschbar"
           />
           <span v-else>0</span>
@@ -123,10 +135,17 @@
           <span class="text-h6">Endgültig löschen?</span>
         </q-card-section>
         <q-card-section v-if="report">
-          Es werden <b>{{ report.summe_loeschbar }}</b> Datensätze und
-          <b>{{ report.summe_history_loeschbar }}</b> History-Zeilen
-          <b>unwiderruflich</b> gelöscht. Eine Wiederherstellung ist danach nicht
-          mehr möglich.
+          <template v-if="report.summe_loeschbar + report.summe_history_loeschbar > 0">
+            Es werden <b>{{ report.summe_loeschbar }}</b> Datensätze und
+            <b>{{ report.summe_history_loeschbar }}</b> History-Zeilen
+            <b>unwiderruflich</b> gelöscht. Eine Wiederherstellung ist danach nicht
+            mehr möglich.
+          </template>
+          <div v-if="report.summe_archivierbar" class="q-mt-sm text-orange-9">
+            Außerdem werden <b>{{ report.summe_archivierbar }}</b> altersbedingt fällige
+            Datensätze in den Papierkorb verschoben – wiederherstellbar, bis der reguläre
+            Prune sie später endgültig entfernt.
+          </div>
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
@@ -155,7 +174,9 @@ const rows = ref([])
 const report = ref(null)
 
 const nothingToDelete = computed(() =>
-  !report.value || (report.value.summe_loeschbar + report.value.summe_history_loeschbar) === 0,
+  !report.value ||
+  (report.value.summe_loeschbar + report.value.summe_history_loeschbar
+    + (report.value.summe_archivierbar || 0)) === 0,
 )
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
@@ -225,7 +246,8 @@ async function execute() {
     confirmOpen.value = false
     $q.notify({
       type: 'positive',
-      message: `Bereinigt: ${data.summe_geloescht} Datensätze, ${data.summe_history_geloescht} History-Zeilen`,
+      message: `Bereinigt: ${data.summe_geloescht} Datensätze, ${data.summe_history_geloescht} History-Zeilen`
+        + (data.summe_archiviert ? `, ${data.summe_archiviert} archiviert` : ''),
     })
     await reload()
   } catch {

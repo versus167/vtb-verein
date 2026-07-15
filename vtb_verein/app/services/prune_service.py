@@ -28,7 +28,7 @@ Das echte Löschen (``prune()``) folgt in den nächsten Phasen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 
@@ -43,6 +43,14 @@ DEFAULT_HISTORY_RETENTION_DAYS = 365   # History: eigenes, längeres Fenster
 # und einstellbar ist (Schlüssel auch in der Override-Tabelle prune_einstellungen nutzbar).
 ACCESS_LOG_PAGE = "access_log_page"
 DEFAULT_PAGE_VIEW_RETENTION_DAYS = 90
+
+# Alters-Archivierung (generisch, siehe ArchiveRule): datierte Datensätze werden nach
+# Alter auf soft-deleted gesetzt (in den Papierkorb verschoben) – KEIN Hard-Delete.
+# Danach greift der reguläre Prune wie bei jedem anderen Papierkorb-Eintrag. Erste Regel:
+# vergangene Mannschafts-Termine (#104). Dieselbe Mechanik ist später wiederverwendbar
+# (z.B. ausgeschiedene Mitglieder per austrittsdatum + passenden Kind-Kaskaden).
+TERMIN_ALTER = "termin_alter"
+DEFAULT_TERMIN_ALTER_RETENTION_DAYS = 365
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,27 @@ class PruneEntity:
     retention_days: int = DEFAULT_RETENTION_DAYS
     keep_min: int = DEFAULT_KEEP_MIN
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
+
+
+@dataclass(frozen=True)
+class ArchiveRule:
+    """Generische Alters-Archivierung: aktive, datierte Datensätze werden nach Alter
+    (Tage) auf ``deleted_at`` gesetzt (in den Papierkorb verschoben) – erst die Kinder
+    (``children``, Blatt zuerst), dann der Datensatz selbst. Das ist ein reversibler
+    Soft-Delete; das endgültige Entfernen übernimmt danach der reguläre Prune über die
+    passende ``PruneEntity``.
+
+    ``date_expr`` ist ein SQL-Ausdruck auf ``table`` (TEXT/ISO oder Timestamp); über den
+    Datumsanteil (``LEFT(...,10)``) entscheidet sich die Fälligkeit. Bewusst schlank und
+    domänen-neutral gehalten, damit weitere Regeln (z.B. ausgeschiedene Mitglieder per
+    ``austrittsdatum``) nur ein weiterer Registry-Eintrag sind.
+    """
+    name: str                       # Schlüssel (auch in prune_einstellungen nutzbar)
+    label: str                      # Anzeigename (DE)
+    table: str                      # Live-Tabelle
+    date_expr: str                  # z.B. "COALESCE(NULLIF(ende, ''), beginn)"
+    default_days: int = DEFAULT_TERMIN_ALTER_RETENTION_DAYS
+    children: tuple[ChildRef, ...] = field(default_factory=tuple)
 
 
 # Reihenfolge: Blatt → Wurzel. So sind beim echten Lauf die Kinder schon weg, bevor
@@ -238,6 +267,20 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
 )
 
 
+# Alters-Archivierung (siehe ArchiveRule): fällige Datensätze wandern in den Papierkorb;
+# ihre Kinder werden mit-soft-gelöscht (Blatt zuerst). Das endgültige Entfernen erledigt
+# danach der reguläre Prune (PRUNE_REGISTRY). Die passenden PruneEntity-Einträge (termin,
+# termin_zusage) existieren bereits – hier wird nur der Eintritt in den Papierkorb datiert.
+ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
+    ArchiveRule(
+        TERMIN_ALTER, "Vergangene Termine", "termine",
+        date_expr="COALESCE(NULLIF(ende, ''), beginn)",
+        default_days=DEFAULT_TERMIN_ALTER_RETENTION_DAYS,
+        children=(ChildRef("termin_zusage", "termin_id"),),
+    ),
+)
+
+
 # --- Reine SQL-Bausteine (ohne DB testbar) ----------------------------------------
 # Hilfsausdruck: deleted_at/created_at-Spalten sind teils TEXT (ISO-Strings), teils
 # TIMESTAMP. Erst nach ::text casten – dann ist NULLIF(...,'') für beide Typen gültig
@@ -365,6 +408,43 @@ def build_history_prune_delete_sql(entity: PruneEntity) -> tuple[str, list]:
     return sql, []  # history_retention_days wird vom Service als Param ergänzt
 
 
+# --- Alters-Archivierung (ArchiveRule) --------------------------------------------
+# Alle Bausteine erwarten den Stichtag (ISO-Datum 'YYYY-MM-DD') als %s-Parameter; ein
+# Datensatz ist fällig, wenn sein Datumsanteil VOR dem Stichtag liegt und er noch aktiv
+# ist. Datums-only (kein keep_min/History) – die Rückholung sichert danach der Papierkorb.
+def _archive_faellig_where(rule: ArchiveRule) -> str:
+    return f"deleted_at IS NULL AND LEFT(({rule.date_expr})::text, 10) < %s"
+
+
+def build_archive_count_sql(rule: ArchiveRule) -> str:
+    """Zahl der aktuell fälligen (zu archivierenden) Datensätze. Param: Stichtag."""
+    return f"SELECT COUNT(*) AS n FROM {rule.table} WHERE {_archive_faellig_where(rule)}"
+
+
+def build_archive_active_sql(rule: ArchiveRule) -> str:
+    """Zahl der aktiven Datensätze insgesamt (Mengengefühl für den Report)."""
+    return f"SELECT COUNT(*) AS n FROM {rule.table} WHERE deleted_at IS NULL"
+
+
+def build_archive_parent_delete_sql(rule: ArchiveRule) -> str:
+    """Soft-Delete der fälligen Datensätze (version-Bump → Audit-History).
+    Params: deleted_by, Stichtag."""
+    return (
+        f"UPDATE {rule.table} SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+        f"version = version + 1 WHERE {_archive_faellig_where(rule)}"
+    )
+
+
+def build_archive_child_delete_sql(rule: ArchiveRule, child: ChildRef) -> str:
+    """Soft-Delete der aktiven Kinder fälliger Datensätze (VOR dem Eltern-Soft-Delete).
+    Params: deleted_by, Stichtag."""
+    return (
+        f"UPDATE {child.table} SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+        f"version = version + 1 WHERE deleted_at IS NULL AND {child.fk} IN ("
+        f"SELECT {child.parent_col} FROM {rule.table} WHERE {_archive_faellig_where(rule)})"
+    )
+
+
 class PruneService:
     """Orchestriert die Prune-Registry. Phase 0: ausschließlich Dry-Run-Report.
 
@@ -424,6 +504,38 @@ class PruneService:
             "history_loeschbar": None,
         }
 
+    def archive_retention(self, rule: ArchiveRule) -> tuple[int, bool]:
+        """Wirksames Alters-Fenster (Tage) einer ArchiveRule + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(rule.name)
+        if o:
+            return o["retention_days"], True
+        return rule.default_days, False
+
+    def _archive_report_row(self, rule: ArchiveRule) -> dict:
+        """Report-Zeile einer Alters-Archivierung: ``archivierbar`` = fällige Datensätze,
+        die der nächste Lauf in den Papierkorb verschiebt (reversibel, KEIN Hard-Delete –
+        daher ``loeschbar = 0`` und nicht in ``summe_loeschbar``)."""
+        days, is_override = self.archive_retention(rule)
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        return {
+            "name": rule.name,
+            "label": rule.label,
+            "table": rule.table,
+            "soft_delete": False,            # kein Papierkorb-Ausgangspunkt/keep_min/History
+            "retention_days": days,          # hier: Alters-Fenster in Tagen
+            "keep_min": None,
+            "history_retention_days": None,
+            "is_override": is_override,
+            "eintraege": self._count(build_archive_active_sql(rule), []),
+            "im_papierkorb": None,
+            "loeschbar": 0,
+            "archivierbar": self._count(build_archive_count_sql(rule), [cutoff]),
+            "archiviert_statt_geloescht": True,
+            "history_table": None,
+            "history_gesamt": None,
+            "history_loeschbar": None,
+        }
+
     def einstellungen(self) -> list[dict]:
         """Konfigurations-Sicht für die Admin-UI: Struktur + wirksame Tunables je Entität."""
         cfg = self.effective_config()
@@ -438,6 +550,7 @@ class PruneService:
             }
             for e in PRUNE_REGISTRY
         ]
+        rows.extend(self._archive_report_row(r) for r in ARCHIVE_REGISTRY)
         rows.append(self._access_log_report_row())
         return rows
 
@@ -489,6 +602,14 @@ class PruneService:
                 "history_loeschbar": history_loeschbar,
             })
 
+        # Alters-Archivierung: fällige datierte Datensätze -> Papierkorb (reversibel,
+        # separat von summe_loeschbar, da KEIN endgültiges Löschen).
+        summe_archivierbar = 0
+        for rule in ARCHIVE_REGISTRY:
+            row = self._archive_report_row(rule)
+            summe_archivierbar += row["archivierbar"]
+            entities.append(row)
+
         # Sonder-Bereich: Protokoll-Seitenaufrufe (Hard-Delete nach Alter)
         protokoll = self._access_log_report_row()
         summe_loeschbar += protokoll["loeschbar"]
@@ -499,6 +620,7 @@ class PruneService:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "entities": entities,
             "summe_loeschbar": summe_loeschbar,
+            "summe_archivierbar": summe_archivierbar,
             "summe_history_loeschbar": summe_history,
             "summe_history_gesamt": summe_history_gesamt,
         }
@@ -531,6 +653,31 @@ class PruneService:
         summe_history = 0
         # Datei-Namen je Entität, die nach erfolgreichem Commit von Platte sollen.
         dateien: dict[str, list] = {}
+
+        # 0) Alters-Archivierung: fällige datierte Datensätze in den Papierkorb (soft-delete,
+        #    Kinder zuerst). Eigene Transaktion – reversibel und unabhängig vom Hard-Delete.
+        #    Frisch archivierte Zeilen (deleted_at = jetzt) sind für den folgenden Hard-Delete
+        #    noch nicht alt genug, daher bleibt „Vorschau = Aktion" für das Löschen erhalten.
+        archiv_entities: list[dict] = []
+        summe_archiviert = 0
+        for rule in ARCHIVE_REGISTRY:
+            days, _ = self.archive_retention(rule)
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            with self._db.cursor() as cur:
+                for child in rule.children:
+                    cur.execute(build_archive_child_delete_sql(rule, child),
+                                ("SYSTEM-PRUNE", cutoff))
+                cur.execute(build_archive_parent_delete_sql(rule), ("SYSTEM-PRUNE", cutoff))
+                n = cur.rowcount
+            summe_archiviert += n
+            archiv_entities.append({
+                "name": rule.name,
+                "label": rule.label,
+                "archiviert": n,
+                "geloescht": 0,
+                "history_geloescht": None,
+                "dateien_geloescht": 0,
+            })
 
         with self._db.cursor() as cur:
             # 1) History prunen (datums-only)
@@ -601,11 +748,15 @@ class PruneService:
             "dateien_geloescht": 0,
         })
 
+        # Archiv-Zeilen anhängen, damit die UI sie je Bereich anzeigen kann.
+        entities.extend(archiv_entities)
+
         return {
             "dry_run": False,
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "entities": entities,
             "summe_geloescht": summe_loeschbar,
+            "summe_archiviert": summe_archiviert,
             "summe_history_geloescht": summe_history,
             "summe_dateien_geloescht": summe_dateien,
         }
