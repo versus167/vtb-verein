@@ -22,7 +22,7 @@ class EmailService:
     _GELB_TEXT_45 = "#8c8102"   # entspricht schwarz 45 % auf Gelb (Fußzeile)
 
     @staticmethod
-    def _render_vtb_email(
+    def render_vtb_email(
         headline: str,
         username: str,
         intro_html: str,
@@ -34,6 +34,9 @@ class EmailService:
         """
         Rendert eine E-Mail im Look der Login-Seite: Wappen auf gelbem
         Grund, darunter die blaue Karte mit gelbem Voll-Breite-Button.
+
+        Zentrale Vorlage für ALLE Button-Mails des Systems — wird auch vom
+        FastAPI-Backend genutzt (backend/api/auth.py, Magic-Link-Versand).
 
         Args:
             headline: Zweck der Mail (weiße Zeile unter dem Vereinsnamen)
@@ -142,7 +145,7 @@ VTB Vereinsverwaltung
 """
         
         # HTML-Version im Design der Login-Seite
-        html_body = EmailService._render_vtb_email(
+        html_body = EmailService.render_vtb_email(
             headline="Dein Login-Link",
             username=username,
             intro_html="hier ist dein Login-Link für die Vereinsverwaltung:",
@@ -257,7 +260,7 @@ VTB Vereinsverwaltung
 """
 
         # HTML-Version im Design der Login-Seite
-        html_body = EmailService._render_vtb_email(
+        html_body = EmailService.render_vtb_email(
             headline="Willkommen!",
             username=username,
             intro_html=(

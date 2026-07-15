@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from app.services.user_service import UserService
+from app.services.email_service import EmailService
 from ..core.db import get_db, get_db as _get_db
 from ..core.security import create_access_token
 from ..core.deps import CurrentUser, CurrentSessionId, DB
@@ -341,29 +342,20 @@ def _send_magic_link_email(recipient: str, username: str, token: str) -> None:
         "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.\n\n"
         "Viele Grüße,\nVTB Vereinsverwaltung"
     )
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"></head>
-<body style="font-family:Arial,sans-serif;line-height:1.6;color:#333">
-<div style="max-width:600px;margin:0 auto;padding:20px">
-<h2 style="color:#2c3e50">Login-Link für VTB Vereinsverwaltung</h2>
-<p>Hallo <strong>{username}</strong>,</p>
-<p>hier ist dein Login-Link für die Vereinsverwaltung:</p>
-<div style="margin:30px 0">
-<a href="{magic_url}"
-   style="display:inline-block;padding:12px 24px;background-color:#3498db;
-          color:white;text-decoration:none;border-radius:4px;font-weight:bold">
-Jetzt einloggen
-</a>
-</div>
-<p style="color:#7f8c8d;font-size:14px">
-Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.
-</p>
-<p style="color:#7f8c8d;font-size:14px">
-Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.
-</p>
-<hr style="border:none;border-top:1px solid #ecf0f1;margin:30px 0">
-<p style="color:#95a5a6;font-size:12px">Viele Grüße,<br>VTB Vereinsverwaltung</p>
-</div></body></html>"""
+    # HTML im VTB-Design — dieselbe Vorlage wie die Willkommens-Mail, damit
+    # alle System-Mails einheitlich aussehen (Wappen auf Gelb, blaue Karte).
+    html = EmailService.render_vtb_email(
+        headline="Dein Login-Link",
+        username=username,
+        intro_html="hier ist dein Login-Link für die Vereinsverwaltung:",
+        button_label="Jetzt einloggen",
+        button_url=magic_url,
+        hints=[
+            "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.",
+            "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.",
+        ],
+        preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig.",
+    )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
