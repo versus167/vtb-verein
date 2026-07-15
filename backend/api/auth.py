@@ -75,8 +75,18 @@ class SessionUser(BaseModel):
     durchgesetzt wird die Berechtigung ohnehin serverseitig je Request."""
     id: int
     username: str
+    display_name: str
     role: str
     permissions: list[str]
+
+
+def _klarname(db, user) -> str:
+    """Anzeigename fürs UI (#105): „Vorname Nachname" des verknüpften Mitglieds,
+    ohne Verknüpfung (oder ohne Namen) der Username."""
+    m = db.get_mitglied_by_user_id(user.id)
+    if m is not None and (m.vorname or m.nachname):
+        return f"{m.vorname or ''} {m.nachname or ''}".strip()
+    return user.username
 
 
 def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
@@ -106,6 +116,7 @@ def _clear_session_cookie(response: Response) -> None:
 class UserInfo(BaseModel):
     id: int
     username: str
+    display_name: str
     email: str
     role: str
     permissions: list[str]
@@ -150,6 +161,7 @@ def login(
     return SessionUser(
         id=user.id,
         username=user.username,
+        display_name=_klarname(db, user),
         role=user.role,
         permissions=list(user.permissions),
     )
@@ -167,6 +179,7 @@ def get_me(user: CurrentUser, db: DB):
     return UserInfo(
         id=fresh.id,
         username=fresh.username,
+        display_name=_klarname(db, fresh),
         email=fresh.email,
         role=fresh.role,
         permissions=list(fresh.permissions),
@@ -473,6 +486,7 @@ def validate_magic_link(data: MagicLinkValidate, request: Request, response: Res
     return SessionUser(
         id=user.id,
         username=user.username,
+        display_name=_klarname(db, user),
         role=user.role,
         permissions=list(user.permissions),
     )

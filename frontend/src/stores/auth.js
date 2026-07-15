@@ -32,7 +32,7 @@ export const useAuthStore = defineStore('auth', {
 
     _applyUser(data) {
       // Server setzt das Session-Cookie; hier nur die User-Infos übernehmen.
-      this.user = { id: data.id, username: data.username, role: data.role, permissions: data.permissions }
+      this.user = { id: data.id, username: data.username, display_name: data.display_name, role: data.role, permissions: data.permissions }
       localStorage.setItem('vtb_user', JSON.stringify(this.user))
     },
 

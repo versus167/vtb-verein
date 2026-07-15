@@ -35,7 +35,8 @@ class TestTsIso:
 class TestUserInfoMitDatetime:
     def test_datetime_felder_validieren(self):
         ui = UserInfo(
-            id=1, username='vsuess', email='v@example.org', role='admin',
+            id=1, username='vsuess', display_name='Volker Süß',
+            email='v@example.org', role='admin',
             permissions=[],
             last_login=_ts_iso(datetime(2026, 6, 23, 9, 12, 34, tzinfo=timezone.utc)),
             last_seen=_ts_iso(datetime(2026, 6, 23, 10, 0, 0, tzinfo=timezone.utc)),

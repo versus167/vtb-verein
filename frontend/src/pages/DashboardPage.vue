@@ -1,6 +1,6 @@
 <template>
   <q-page padding>
-    <div class="text-h6 q-mb-lg dashboard-gruss">Willkommen, {{ auth.user?.username }}!</div>
+    <div class="text-h6 q-mb-lg dashboard-gruss">Willkommen, {{ auth.user?.display_name || auth.user?.username }}!</div>
 
     <!-- Nächste Termine (die nächsten Termine der eigenen Teams als Cards) -->
     <div v-if="naechsteTermine.length" class="q-mb-lg">
