@@ -10,8 +10,9 @@
       </div>
       <div class="col termin-card__titel text-white">
         <div class="text-subtitle1 text-weight-bold ellipsis">{{ terminTitel(termin) }}</div>
-        <div v-if="termin.mannschaft_name" class="text-caption ellipsis" style="opacity:.85">
-          {{ termin.mannschaft_name }}
+        <!-- Ort/Bemerkung mit in der Kopfzeile, „wenn Platz ist" (Ellipsis) -->
+        <div v-if="untertitel" class="text-caption ellipsis" style="opacity:.85">
+          {{ untertitel }}
         </div>
       </div>
       <q-badge v-if="abgesagt" color="white" text-color="negative"
@@ -114,10 +115,14 @@ const treffen = computed(() => props.termin.treffpunkt_zeit || '--:--')
 const beginn = computed(() => uhrzeit(props.termin.beginn) || '--:--')
 const ende = computed(() => uhrzeit(props.termin.ende) || '--:--')
 const klickbar = computed(() => props.kompakt)
-const metaText = computed(() => {
+// Kopfzeile 2: Mannschaft · Ort · Bemerkung (Ellipsis, wenn der Platz ausgeht)
+const untertitel = computed(() => {
   const t = props.termin
-  return [t.ort, t.treffpunkt ? `Treffpunkt: ${t.treffpunkt}` : null].filter(Boolean).join(' · ')
+  return [t.mannschaft_name, t.ort, t.beschreibung].filter(Boolean).join(' · ')
 })
+// Ort steht im Kopf – hier nur noch der Treffpunkt
+const metaText = computed(() =>
+  props.termin.treffpunkt ? `Treffpunkt: ${props.termin.treffpunkt}` : '')
 
 function zaehler(key) {
   return props.termin.zusagen?.[key] ?? 0
