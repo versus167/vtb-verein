@@ -73,4 +73,5 @@ Code.
 - Merge nach `master` per `git merge --no-ff` mit Titel `Merge: <Beschreibung> (#NN) (vVERSION)`.
 - Bei jedem master-Merge die `VERSION`-Datei auf `YYYY.MM.DD.N` bumpen (laufende Nr. `N`
   hochzählen). Anzeige `v.…` über `/api/app-info`.
-- Commit-Messages enden mit dem Trailer `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- Commit-Messages enden mit dem Trailer `Co-Authored-By: Claude <Modellname> <noreply@anthropic.com>`,
+  wobei `<Modellname>` das tatsächlich verwendete Modell ist (z. B. `Claude Fable 5`).
