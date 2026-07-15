@@ -2,7 +2,7 @@
 
 Zugriffsmodell (analog Kassen/Tresor, hier mit dem Kader als ACL): wer am Stichtag
 aktiv im Kader einer Mannschaft steht (mitglied_mannschaft, von/bis), liest deren
-Termine; die Kader-Rollen trainer/betreuer/uebungsleiter verwalten sie (anlegen,
+Termine; die Kader-Rollen betreuer/uebungsleiter verwalten sie (anlegen,
 bearbeiten, absagen, löschen). Nur das übergreifende Verwalten aller Mannschaften
 hängt am globalen Recht `termine.verwalten`; Admins dürfen ohnehin alles.
 

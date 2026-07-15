@@ -665,12 +665,11 @@ const teamForm = ref({ mannschaft_id: null, rolle: 'spieler', von: null, bis: nu
 const teamRolleOptionen = [
   { label: 'Spieler', value: 'spieler' },
   { label: 'Übungsleiter', value: 'uebungsleiter' },
-  { label: 'Trainer', value: 'trainer' },
   { label: 'Betreuer', value: 'betreuer' },
 ]
 function teamRolleLabel(r) { return teamRolleOptionen.find(o => o.value === r)?.label ?? r }
 function teamRolleColor(r) {
-  return { spieler: 'blue', uebungsleiter: 'indigo', trainer: 'deep-purple', betreuer: 'teal' }[r] ?? 'grey'
+  return { spieler: 'blue', uebungsleiter: 'indigo', betreuer: 'teal' }[r] ?? 'grey'
 }
 function filterTeams(val, update) {
   const needle = val.toLowerCase()
