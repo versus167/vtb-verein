@@ -165,16 +165,20 @@ def test_kader_mit_zusage_inklusive_offen(db):
     mid = _make_mannschaft(db)
     _u1, m1 = _make_kader_mitglied(db, mid, rolle="trainer", username="zusagetester1", nachname="Alpha")
     _u2, m2 = _make_kader_mitglied(db, mid, rolle="spieler", username="zusagetester2", nachname="Beta")
+    _u3, m3 = _make_kader_mitglied(db, mid, rolle="spieler", username="zusagetester3", nachname="Gamma")
     # Mitglied außerhalb des Kaders zählt nicht mit
     _make_kader_mitglied(db, _make_mannschaft(db, name="Andere"), username="zusagetester9", nachname="Fremd")
     t = _termin(db, mid)
     db.termin_zusagen.set_antwort(t.id, m1, 'zu', None, 't')
+    db.termin_zusagen.set_antwort(t.id, m2, 'ab', 'im Urlaub', 't')
 
     kader = db.termin_zusagen.list_kader_with_zusage(t.id)
-    assert len(kader) == 2
+    assert len(kader) == 3
     by_id = {k['mitglied_id']: k for k in kader}
     assert by_id[m1]['antwort'] == 'zu' and 'trainer' in by_id[m1]['rollen']
-    assert by_id[m2]['antwort'] is None                       # offen
+    assert by_id[m1]['kommentar'] is None
+    assert by_id[m2]['antwort'] == 'ab' and by_id[m2]['kommentar'] == 'im Urlaub'
+    assert by_id[m3]['antwort'] is None                       # offen
     assert by_id[m1]['name'] == 'Zusage Alpha'
 
 

@@ -260,15 +260,21 @@ def delete_termin(termin_id: int, user: CurrentUser, db: DB):
 @router.put("/{termin_id}/zusage")
 def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB):
     """Eigene Zu-/Absage. Verlangt Lese-Zugriff auf die Mannschaft UND ein aktives
-    Kader-Mitglied des Users am Termin-Datum."""
+    Kader-Mitglied des Users am Termin-Datum. Bei 'ab'/'vielleicht' ist ein
+    Kommentar Pflicht (Begründung, im Kader-Dialog für die ganze Mannschaft
+    sichtbar) – bewusst NUR hier, nicht im On-behalf-Endpunkt (Verwalter tragen
+    z. B. telefonische Absagen formlos ein)."""
     t = _lade_termin(db, termin_id)
     _require_lesen(db, user, t.mannschaft_id)
     _validate_antwort(data.antwort)
+    kommentar = _clean(data.kommentar)
+    if data.antwort in ('vielleicht', 'ab') and not kommentar:
+        raise HTTPException(422, "Bei Absage/Vielleicht ist ein kurzer Kommentar erforderlich")
     mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
     if mitglied_id is None:
         raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
     z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
-                                      _clean(data.kommentar), user.username)
+                                      kommentar, user.username)
     return asdict(z)
 
 

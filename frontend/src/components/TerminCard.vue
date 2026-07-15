@@ -131,13 +131,26 @@ function onKopfClick() {
   if (props.kompakt) emit('oeffnen', props.termin)
 }
 
-async function toggle(key) {
+function toggle(key) {
+  if (props.termin.meine_antwort === key) return senden(key, null, true)  // zurücknehmen
+  if (key === 'zu') return senden(key, null)
+  // Absage/Vielleicht: Kommentar ist Pflicht (für die ganze Mannschaft sichtbar)
+  const a = ANTWORTEN.find(x => x.key === key)
+  $q.dialog({
+    title: a.label,
+    message: 'Bitte kurz begründen (für die Mannschaft sichtbar):',
+    prompt: { model: '', type: 'textarea', isValid: v => v.trim().length > 0 },
+    cancel: true,
+  }).onOk(kommentar => senden(key, kommentar.trim()))
+}
+
+async function senden(key, kommentar, zuruecknehmen = false) {
   busy.value = true
   try {
-    if (props.termin.meine_antwort === key) {
+    if (zuruecknehmen) {
       await api.delete(`/api/termine/${props.termin.id}/zusage`)
     } else {
-      await api.put(`/api/termine/${props.termin.id}/zusage`, { antwort: key })
+      await api.put(`/api/termine/${props.termin.id}/zusage`, { antwort: key, kommentar })
     }
     emit('reload')
   } catch (e) {

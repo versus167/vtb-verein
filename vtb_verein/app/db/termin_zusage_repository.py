@@ -108,7 +108,7 @@ class TerminZusageRepository(BaseRepository):
                 )
                 SELECT m.id AS mitglied_id, m.vorname, m.nachname,
                        string_agg(DISTINCT mm.rolle, ', ' ORDER BY mm.rolle) AS rollen,
-                       z.antwort
+                       z.antwort, z.kommentar
                 FROM t
                 JOIN mitglied_mannschaft mm ON mm.mannschaft_id = t.mannschaft_id
                     AND mm.deleted_at IS NULL
@@ -116,7 +116,7 @@ class TerminZusageRepository(BaseRepository):
                 JOIN mitglied m ON m.id = mm.mitglied_id AND m.deleted_at IS NULL
                 LEFT JOIN termin_zusage z ON z.termin_id = %(tid)s
                     AND z.mitglied_id = m.id AND z.deleted_at IS NULL
-                GROUP BY m.id, m.vorname, m.nachname, z.antwort
+                GROUP BY m.id, m.vorname, m.nachname, z.antwort, z.kommentar
                 ORDER BY lower(m.nachname), lower(m.vorname)
                 """,
                 {"tid": termin_id},
@@ -124,6 +124,7 @@ class TerminZusageRepository(BaseRepository):
             return [
                 {"mitglied_id": r['mitglied_id'],
                  "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
-                 "rollen": r['rollen'], "antwort": r['antwort']}
+                 "rollen": r['rollen'], "antwort": r['antwort'],
+                 "kommentar": r['kommentar']}
                 for r in cur.fetchall()
             ]

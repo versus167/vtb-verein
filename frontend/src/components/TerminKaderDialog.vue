@@ -27,6 +27,9 @@
               <q-item-section>
                 <q-item-label class="kader-dialog__name">{{ p.name }}</q-item-label>
                 <q-item-label v-if="p.rollen" caption class="kader-dialog__rolle">{{ p.rollen }}</q-item-label>
+                <q-item-label v-if="p.kommentar" caption class="kader-dialog__rolle text-italic">
+                  „{{ p.kommentar }}"
+                </q-item-label>
               </q-item-section>
               <q-item-section v-if="darfVerwalten" side>
                 <div class="row no-wrap q-gutter-xs">
