@@ -74,7 +74,7 @@
         :flat="termin.meine_antwort !== a.key" :unelevated="termin.meine_antwort === a.key"
         :color="termin.meine_antwort === a.key ? a.color : 'grey-7'"
         :text-color="termin.meine_antwort === a.key ? 'white' : undefined"
-        dense no-caps square :disable="!termin.kann_zusagen || busy" @click="toggle(a.key)">
+        dense no-caps square :disable="!termin.kann_zusagen || busy || abgesagt" @click="toggle(a.key)">
         <q-icon :name="a.icon" size="20px" />
         <span class="q-ml-xs text-weight-medium">{{ zaehler(a.key) }}</span>
         <q-tooltip>{{ a.label }}</q-tooltip>
@@ -86,8 +86,9 @@
       </q-btn>
     </div>
 
+    <!-- Abgesagt friert die Antworten ein: Setz-Buttons im Dialog ausblenden -->
     <TerminKaderDialog v-model="kaderOffen" :termin-id="termin.id"
-      :darf-verwalten="darfVerwalten" @geaendert="emit('reload')" />
+      :darf-verwalten="darfVerwalten && !abgesagt" @geaendert="emit('reload')" />
   </q-card>
 </template>
 

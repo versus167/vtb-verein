@@ -127,6 +127,13 @@ def _lade_termin(db: DB, termin_id: int):
     return t
 
 
+def _require_nicht_abgesagt(t) -> None:
+    """Abgesagte Termine frieren die Zu-/Absagen ein (auch Zurücknehmen) –
+    erst Reaktivieren macht sie wieder änderbar."""
+    if t.status == 'abgesagt':
+        raise HTTPException(422, "Termin ist abgesagt – Zu-/Absagen sind gesperrt")
+
+
 # --------------------------------------------------------------------- Zusagen
 def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
     """Reichert Termin-Dicts (asdict) um RSVP-Infos an: `zusagen` (Zähler je
@@ -266,6 +273,7 @@ def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB
     z. B. telefonische Absagen formlos ein)."""
     t = _lade_termin(db, termin_id)
     _require_lesen(db, user, t.mannschaft_id)
+    _require_nicht_abgesagt(t)
     _validate_antwort(data.antwort)
     kommentar = _clean(data.kommentar)
     if data.antwort in ('vielleicht', 'ab') and not kommentar:
@@ -284,6 +292,7 @@ def set_fremde_zusage(termin_id: int, mitglied_id: int, data: ZusageSet,
     """Zu-/Absage für ein anderes Kader-Mitglied setzen (nur Verwalter)."""
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
+    _require_nicht_abgesagt(t)
     _validate_antwort(data.antwort)
     if not db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, t.beginn[:10]):
         raise HTTPException(422, "Mitglied ist am Termin-Datum nicht im Kader")
@@ -297,6 +306,7 @@ def remove_eigene_zusage(termin_id: int, user: CurrentUser, db: DB):
     """Eigene Zu-/Absage zurücknehmen (Soft-Delete)."""
     t = _lade_termin(db, termin_id)
     _require_lesen(db, user, t.mannschaft_id)
+    _require_nicht_abgesagt(t)
     mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
     if mitglied_id is None:
         raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
@@ -308,6 +318,7 @@ def remove_fremde_zusage(termin_id: int, mitglied_id: int, user: CurrentUser, db
     """Zu-/Absage eines anderen Kader-Mitglieds zurücknehmen (nur Verwalter)."""
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
+    _require_nicht_abgesagt(t)
     db.termin_zusagen.remove_antwort(termin_id, mitglied_id, user.username)
 
 
