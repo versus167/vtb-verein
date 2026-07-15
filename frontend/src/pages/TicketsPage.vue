@@ -462,7 +462,7 @@ const loading = ref(false)
 // ── Filter ─────────────────────────────────────────────────────────────────
 const filterBereich = ref(null)
 const filterStatus = ref(null)
-const filterNurMeine = ref(false)
+const filterNurMeine = ref(true)   // Standardansicht: nur eigene/zuständige Tickets
 const filterMitAbgeschlossenen = ref(false)
 // "Einblenden": gelöschte (verborgene) Tickets anzeigen – nur für Verwalter.
 const zeigeGeloeschte = ref(false)
