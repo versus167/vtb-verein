@@ -254,13 +254,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
-import { useRefreshControl, installAutoRefresh } from 'src/composables/useRefresh'
+import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
 
 const router = useRouter()
 const route = useRoute()
@@ -371,6 +371,14 @@ async function loadTermineZugriff() {
   }
 }
 
+// Alle ACL-Proben zusammen – läuft beim Mount UND bei jedem Auto-/Manuell-
+// Refresh (registerGlobalRefresh): ein einmalig fehlgeschlagener Aufruf oder
+// eine erst nach dem Login vergebene Kader-/ACL-Zuordnung ließ die Nav-Punkte
+// sonst dauerhaft verschwinden, während sich die Dashboard-Kacheln erholten.
+function ladeZugriffsProben() {
+  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff()])
+}
+
 async function onLogout() {
   await auth.logoutServer()
   hatKassenZugriff.value = false
@@ -406,11 +414,13 @@ function triggerInstall() {
   }
 }
 
+let unregisterZugriffsProben = null
+onBeforeUnmount(() => unregisterZugriffsProben?.())
+
 onMounted(() => {
   installAutoRefresh()
-  loadKassenZugriff()
-  loadTresorZugriff()
-  loadTermineZugriff()
+  unregisterZugriffsProben = registerGlobalRefresh(ladeZugriffsProben)
+  ladeZugriffsProben()
   loadAppVersion()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true

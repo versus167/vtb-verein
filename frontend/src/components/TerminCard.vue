@@ -19,6 +19,9 @@
         class="q-mr-xs" style="opacity:.85">
         <q-tooltip>Teil einer Serie</q-tooltip>
       </q-icon>
+      <!-- „Meine Termine": als Gast eingetragen (Antwort ohne Kader-Zugehörigkeit) -->
+      <q-badge v-if="termin.gast" color="vtb-gelb" text-color="primary"
+        class="q-mr-sm text-weight-bold">GAST</q-badge>
       <q-badge v-if="abgesagt" color="white" text-color="negative"
         class="q-mr-sm text-weight-bold">ABGESAGT</q-badge>
       <!-- Verwalter bekommen das Menü auch am Dashboard (kompakt) – direkt editieren -->

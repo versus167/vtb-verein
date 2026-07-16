@@ -1,11 +1,16 @@
 """Repository für Termin-Zusagen (RSVP, #95 Spielbetrieb Etappe 2).
 
-Je Termin höchstens eine aktive Antwort pro Kader-Mitglied – erzwungen über den
+Je Termin höchstens eine aktive Antwort pro Mitglied – erzwungen über den
 partiellen Unique-Index uix_termin_zusage_active (termin_id, mitglied_id) WHERE
 deleted_at IS NULL. Setzen ist ein Upsert: existiert eine aktive Zeile, wird sie per
 UPDATE fortgeschrieben (version+1 → History-Trigger); sonst eine neue angelegt.
 Zurücknehmen = Soft-Delete. Zugriff/ACL (wer für wen setzen darf) entscheidet die
-API-Schicht über die Kader-Zugehörigkeit (siehe TerminRepository)."""
+API-Schicht über die Kader-Zugehörigkeit (siehe TerminRepository).
+
+Gäste: eine aktive Antwort eines Mitglieds, das am Termin-Datum NICHT im Kader
+der Termin-Mannschaft steht, macht dieses Mitglied zum Gast des Termins –
+es gibt keine eigene Gast-Tabelle. Verwalter tragen Gäste aus der Abteilung
+per set_antwort ein; Zurücknehmen beendet den Gast-Status."""
 from app.models.termin_zusage import TerminZusage
 from app.db.base_repository import BaseRepository
 
@@ -95,6 +100,74 @@ class TerminZusageRepository(BaseRepository):
                 (mitglied_id, list(termin_ids)),
             )
             return {r['termin_id']: r['antwort'] for r in cur.fetchall()}
+
+    def has_active_zusage(self, termin_id: int, user_id: int) -> bool:
+        """Ob das mit dem User verknüpfte Mitglied eine aktive Zu-/Absage zu dem
+        Termin hat – öffnet Gästen (Antwort ohne Kader-Zugehörigkeit) den Lese-
+        und Selbst-Antwort-Zugriff auf genau diesen Termin."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM termin_zusage z
+                JOIN mitglied m ON m.id = z.mitglied_id AND m.deleted_at IS NULL
+                WHERE z.termin_id = %s AND z.deleted_at IS NULL AND m.user_id = %s
+                LIMIT 1
+                """,
+                (termin_id, user_id),
+            )
+            return cur.fetchone() is not None
+
+    def list_user_ids_mit_zusage(self, termin_id: int) -> list[int]:
+        """user_ids aller Mitglieder mit aktiver Antwort zum Termin (Kader wie
+        Gäste) – ergänzt den Kader-Empfängerkreis der Termin-Benachrichtigungen
+        um die Gäste (Dubletten filtert der Versand)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT m.user_id
+                FROM termin_zusage z
+                JOIN mitglied m ON m.id = z.mitglied_id AND m.deleted_at IS NULL
+                WHERE z.termin_id = %s AND z.deleted_at IS NULL
+                  AND m.user_id IS NOT NULL
+                """,
+                (termin_id,),
+            )
+            return [r['user_id'] for r in cur.fetchall()]
+
+    def list_gaeste_with_zusage(self, termin_id: int) -> list[dict]:
+        """Gäste des Termins: aktive Antworten von Mitgliedern, die am
+        Termin-Datum NICHT im Kader der Termin-Mannschaft stehen."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                WITH t AS (
+                    SELECT mannschaft_id, LEFT(beginn, 10) AS tag
+                    FROM termine WHERE id = %(tid)s AND deleted_at IS NULL
+                )
+                SELECT m.id AS mitglied_id, m.vorname, m.nachname,
+                       z.antwort, z.kommentar
+                FROM t
+                CROSS JOIN termin_zusage z
+                JOIN mitglied m ON m.id = z.mitglied_id AND m.deleted_at IS NULL
+                WHERE z.termin_id = %(tid)s AND z.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mitglied_mannschaft mm
+                      WHERE mm.mitglied_id = m.id
+                        AND mm.mannschaft_id = t.mannschaft_id
+                        AND mm.deleted_at IS NULL
+                        AND mm.von <= t.tag AND (mm.bis IS NULL OR mm.bis >= t.tag)
+                  )
+                ORDER BY lower(m.nachname), lower(m.vorname)
+                """,
+                {"tid": termin_id},
+            )
+            return [
+                {"mitglied_id": r['mitglied_id'],
+                 "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
+                 "rollen": None, "antwort": r['antwort'],
+                 "kommentar": r['kommentar']}
+                for r in cur.fetchall()
+            ]
 
     def list_kader_with_zusage(self, termin_id: int) -> list[dict]:
         """Aktiver Kader der Termin-Mannschaft (Stichtag = Termin-Datum) inkl. der

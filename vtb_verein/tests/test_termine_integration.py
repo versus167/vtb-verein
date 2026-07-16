@@ -241,6 +241,25 @@ def test_meine_termine_ueber_mehrere_teams(db):
     assert t_gestern.id in [t['id'] for t in alle]
 
 
+def test_list_kader_user_ids(db):
+    """Empfängerkreis für Benachrichtigungen: aktiver Kader mit Konto, Stichtag-genau."""
+    mid = _make_mannschaft(db)
+    u1 = _make_user_im_kader(db, mid, "spieler", username="termintester1")
+    u2 = _make_user_im_kader(db, mid, "uebungsleiter", username="termintester2")
+    _make_user_im_kader(db, mid, "spieler", mit_user=False)              # ohne Konto
+    u_alt = _make_user_im_kader(db, mid, "spieler", bis=YESTERDAY,
+                                username="termintester3")                # abgelaufen
+    _make_user_im_kader(db, _make_mannschaft(db, name="Andere"), "spieler",
+                        username="termintester4")                        # fremdes Team
+    with db.cursor() as cur:  # Doppelrolle: u2 zusätzlich als betreuer → trotzdem einmal
+        cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,von,created_by,updated_by) "
+                    "VALUES ((SELECT m.id FROM mitglied m WHERE m.user_id=%s),%s,'betreuer',%s,'t','t')",
+                    (u2, mid, LASTWEEK))
+    assert sorted(db.termine.list_kader_user_ids(mid)) == sorted([u1, u2])
+    # Am gestrigen Stichtag war auch das inzwischen ausgeschiedene Mitglied aktiv
+    assert sorted(db.termine.list_kader_user_ids(mid, YESTERDAY)) == sorted([u1, u2, u_alt])
+
+
 def test_mannschaften_listen(db):
     m1 = _make_mannschaft(db, name="Erste")
     _make_mannschaft(db, name="Zweite")

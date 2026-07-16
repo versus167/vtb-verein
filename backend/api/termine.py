@@ -8,9 +8,21 @@ hängt am globalen Recht `termine.verwalten`; Admins dürfen ohnehin alles.
 
 Zeiten sind lokale Wandzeit als TEXT: beginn/ende 'YYYY-MM-DDTHH:MM',
 treffpunkt_zeit 'HH:MM'. status wird nicht über PUT geändert, sondern über die
-Aktions-Endpunkte /absagen und /reaktivieren (klare Audit-Intention; in Etappe 2
-Hook für Benachrichtigungen). serie_id/extern_ref sind noch nicht per API setzbar
-(kommen mit Terminserien bzw. DFBnet-Import).
+Aktions-Endpunkte /absagen und /reaktivieren (klare Audit-Intention).
+
+Benachrichtigungen sind Opt-in: Anlegen/Bearbeiten/Absagen/Reaktivieren (und die
+Serien-Anlage) nehmen ein `benachrichtigen`-Flag entgegen; der Kader wird dann
+über termin_notification_service informiert (beim Bearbeiten nur, wenn sich
+fachlich etwas geändert hat). extern_ref ist noch nicht per API setzbar
+(kommt mit dem DFBnet-Import).
+
+Gäste: Verwalter können Mitglieder derselben ABTEILUNG (unabhängig von einer
+eigenen Kader-Zugehörigkeit) als Gäste zu einem Termin eintragen (z. B.
+AH-Spieler hilft in der Ersten aus).
+Gast = aktive Zu-/Absage ohne Kader-Zugehörigkeit am Termin-Datum, keine eigene
+Tabelle. Gäste sehen genau diesen Termin unter „Meine Termine", dürfen ihre
+Antwort selbst ändern und werden mitbenachrichtigt; Zurücknehmen der Antwort
+beendet den Gast-Status.
 """
 from dataclasses import asdict
 from datetime import date, datetime
@@ -23,6 +35,7 @@ from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from app.db.termin_serie_repository import VALID_SERIE_TYPEN
+from app.services import termin_notification_service as terminmeldung
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/termine", tags=["termine"])
@@ -39,6 +52,7 @@ class TerminCreate(BaseModel):
     gegner: Optional[str] = None             # nur typ='spiel'
     heim_auswaerts: Optional[str] = None     # 'heim' | 'auswaerts', nur typ='spiel'
     beschreibung: Optional[str] = None
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class TerminUpdate(TerminCreate):
@@ -47,6 +61,7 @@ class TerminUpdate(TerminCreate):
 
 class TerminAktion(BaseModel):
     expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class ZusageSet(BaseModel):
@@ -64,6 +79,7 @@ class SerieCreate(BaseModel):
     beschreibung: Optional[str] = None
     start_datum: str                         # 'YYYY-MM-DD' (Anker = Wochentag, später fix)
     ende_datum: Optional[str] = None         # None = offenes Ende
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class SerieUpdate(BaseModel):
@@ -104,6 +120,17 @@ def _require_verwalten(db: DB, user, mannschaft_id: int) -> None:
     if _zugriff(db, user, mannschaft_id) != 'verwalten':
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Keine Berechtigung, Termine dieser Mannschaft zu verwalten")
+
+
+def _require_lesen_termin(db: DB, user, t) -> str:
+    """Lese-Zugriff auf einen konkreten Termin: Kader-ACL der Mannschaft ODER
+    Gast (eigene aktive Zu-/Absage zu genau diesem Termin)."""
+    z = _zugriff(db, user, t.mannschaft_id)
+    if z is not None:
+        return z
+    if db.termin_zusagen.has_active_zusage(t.id, user.id):
+        return 'lesen'
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Kein Zugriff auf diesen Termin")
 
 
 # ------------------------------------------------------------------- Validierung
@@ -190,6 +217,18 @@ def _lade_termin(db: DB, termin_id: int):
     return t
 
 
+def _eigenes_rsvp_mitglied(db: DB, user, t) -> int:
+    """mitglied_id für die eigene Zu-/Absage: aktives Kader-Mitglied am
+    Termin-Datum oder Gast (eigenes Mitglied mit bestehender Antwort)."""
+    mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
+    if mitglied_id is not None:
+        return mitglied_id
+    mitglied = db.get_mitglied_by_user_id(user.id)
+    if mitglied is not None and db.termin_zusagen.has_active_zusage(t.id, user.id):
+        return mitglied.id
+    raise HTTPException(403, "Nur Kader-Mitglieder oder eingetragene Gäste können zu-/absagen")
+
+
 def _require_nicht_abgesagt(t) -> None:
     """Abgesagte Termine frieren die Zu-/Absagen ein (auch Zurücknehmen) –
     erst Reaktivieren macht sie wieder änderbar."""
@@ -201,7 +240,7 @@ def _require_nicht_abgesagt(t) -> None:
 def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
     """Reichert Termin-Dicts (asdict) um RSVP-Infos an: `zusagen` (Zähler je
     Antwort), `meine_antwort` (eigene aktive Antwort | None) und `kann_zusagen`
-    (ob der User als aktives Kader-Mitglied am Termin-Datum selbst antworten darf)."""
+    (aktives Kader-Mitglied am Termin-Datum ODER Gast mit bestehender Antwort)."""
     if not termine:
         return termine
     ids = [t['id'] for t in termine]
@@ -220,7 +259,7 @@ def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
             )
         t['zusagen'] = counts.get(t['id'], {'zu': 0, 'vielleicht': 0, 'ab': 0})
         t['meine_antwort'] = meine.get(t['id'])
-        t['kann_zusagen'] = kader_cache[key]
+        t['kann_zusagen'] = kader_cache[key] or t['id'] in meine
     return termine
 
 
@@ -261,6 +300,8 @@ def create_termin(mannschaft_id: int, data: TerminCreate, user: CurrentUser, db:
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
         data.beschreibung, user.username,
     )
+    if data.benachrichtigen:
+        terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU, user.id)
     return asdict(t)
 
 
@@ -291,7 +332,13 @@ def update_termin(termin_id: int, data: TerminUpdate, user: CurrentUser, db: DB)
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
-    return asdict(db.termine.get(termin_id))
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aenderungen = terminmeldung.diff_termin(t, neu)
+        if aenderungen:   # No-Op-Speichern erzeugt keine Nachricht
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+    return asdict(neu)
 
 
 def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
@@ -306,7 +353,12 @@ def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
                                data.expected_version)
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
-    return asdict(db.termine.get(termin_id))
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aktion = (terminmeldung.AKTION_ABGESAGT if neuer_status == 'abgesagt'
+                  else terminmeldung.AKTION_REAKTIVIERT)
+        terminmeldung.notify_termin(db, neu, aktion, user.id)
+    return asdict(neu)
 
 
 @router.post("/{termin_id}/absagen")
@@ -331,21 +383,19 @@ def delete_termin(termin_id: int, user: CurrentUser, db: DB):
 # ------------------------------------------------------------- Zu-/Absagen (RSVP)
 @router.put("/{termin_id}/zusage")
 def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB):
-    """Eigene Zu-/Absage. Verlangt Lese-Zugriff auf die Mannschaft UND ein aktives
-    Kader-Mitglied des Users am Termin-Datum. Bei 'ab'/'vielleicht' ist ein
-    Kommentar Pflicht (Begründung, im Kader-Dialog für die ganze Mannschaft
+    """Eigene Zu-/Absage. Verlangt aktives Kader-Mitglied am Termin-Datum ODER
+    Gast-Status (bestehende eigene Antwort zu diesem Termin). Bei 'ab'/'vielleicht'
+    ist ein Kommentar Pflicht (Begründung, im Kader-Dialog für die ganze Mannschaft
     sichtbar) – bewusst NUR hier, nicht im On-behalf-Endpunkt (Verwalter tragen
     z. B. telefonische Absagen formlos ein)."""
     t = _lade_termin(db, termin_id)
-    _require_lesen(db, user, t.mannschaft_id)
+    _require_lesen_termin(db, user, t)
     _require_nicht_abgesagt(t)
     _validate_antwort(data.antwort)
     kommentar = _clean(data.kommentar)
     if data.antwort in ('vielleicht', 'ab') and not kommentar:
         raise HTTPException(422, "Bei Absage/Vielleicht ist ein kurzer Kommentar erforderlich")
-    mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
-    if mitglied_id is None:
-        raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
+    mitglied_id = _eigenes_rsvp_mitglied(db, user, t)
     z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
                                       kommentar, user.username)
     return asdict(z)
@@ -354,13 +404,17 @@ def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB
 @router.put("/{termin_id}/zusage/{mitglied_id}")
 def set_fremde_zusage(termin_id: int, mitglied_id: int, data: ZusageSet,
                       user: CurrentUser, db: DB):
-    """Zu-/Absage für ein anderes Kader-Mitglied setzen (nur Verwalter)."""
+    """Zu-/Absage für ein anderes Mitglied setzen (nur Verwalter). Erlaubt für
+    Kader-Mitglieder sowie – als Gast-Eintrag – für Mitglieder der Abteilung."""
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
     _require_nicht_abgesagt(t)
     _validate_antwort(data.antwort)
-    if not db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, t.beginn[:10]):
-        raise HTTPException(422, "Mitglied ist am Termin-Datum nicht im Kader")
+    tag = t.beginn[:10]
+    if not (db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, tag)
+            or db.termine.is_mitglied_in_abteilung(mitglied_id, t.mannschaft_id, tag)):
+        raise HTTPException(422, "Mitglied ist am Termin-Datum weder im Kader noch "
+                                 "Mitglied der Abteilung")
     z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
                                       _clean(data.kommentar), user.username)
     return asdict(z)
@@ -368,14 +422,13 @@ def set_fremde_zusage(termin_id: int, mitglied_id: int, data: ZusageSet,
 
 @router.delete("/{termin_id}/zusage", status_code=status.HTTP_204_NO_CONTENT)
 def remove_eigene_zusage(termin_id: int, user: CurrentUser, db: DB):
-    """Eigene Zu-/Absage zurücknehmen (Soft-Delete)."""
+    """Eigene Zu-/Absage zurücknehmen (Soft-Delete). Für Gäste beendet das den
+    Gast-Status – der Termin verschwindet aus „Meine Termine"."""
     t = _lade_termin(db, termin_id)
-    _require_lesen(db, user, t.mannschaft_id)
+    _require_lesen_termin(db, user, t)
     _require_nicht_abgesagt(t)
-    mitglied_id = db.termine.get_kader_mitglied_id(user.id, t.mannschaft_id, t.beginn[:10])
-    if mitglied_id is None:
-        raise HTTPException(403, "Nur aktive Kader-Mitglieder können zu-/absagen")
-    db.termin_zusagen.remove_antwort(termin_id, mitglied_id, user.username)
+    db.termin_zusagen.remove_antwort(termin_id, _eigenes_rsvp_mitglied(db, user, t),
+                                     user.username)
 
 
 @router.delete("/{termin_id}/zusage/{mitglied_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -389,14 +442,25 @@ def remove_fremde_zusage(termin_id: int, mitglied_id: int, user: CurrentUser, db
 
 @router.get("/{termin_id}/kader")
 def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
-    """Aktiver Kader der Termin-Mannschaft (Stichtag = Termin-Datum) inkl. Antworten –
-    für den Kader-/Übersichtsdialog. Verlangt Lese-Zugriff."""
+    """Aktiver Kader der Termin-Mannschaft (Stichtag = Termin-Datum) inkl. Antworten,
+    plus Gäste – für den Kader-/Übersichtsdialog. Verlangt Lese-Zugriff
+    (Kader oder Gast)."""
     t = _lade_termin(db, termin_id)
-    zugriff = _require_lesen(db, user, t.mannschaft_id)
+    zugriff = _require_lesen_termin(db, user, t)
     return {
         "darf_verwalten": zugriff == 'verwalten',
         "kader": db.termin_zusagen.list_kader_with_zusage(termin_id),
+        "gaeste": db.termin_zusagen.list_gaeste_with_zusage(termin_id),
     }
+
+
+@router.get("/{termin_id}/gast-kandidaten")
+def gast_kandidaten(termin_id: int, user: CurrentUser, db: DB):
+    """Gast-Kandidaten fürs Eintragen durch Verwalter: Mitglieder der Abteilung
+    außerhalb des eigenen Kaders (Stichtag = Termin-Datum)."""
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    return db.termine.list_gast_kandidaten(t.mannschaft_id, t.beginn[:10])
 
 
 # ----------------------------------------------------------------- Terminserien
@@ -426,6 +490,8 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         data.start_datum, data.ende_datum, user.username,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
+    if data.benachrichtigen:
+        terminmeldung.notify_serie(db, s, user.id)
     return asdict(db.termin_serien.get(s.id))
 
 
