@@ -93,7 +93,9 @@ class TerminRepository(BaseRepository):
                       bis: Optional[str] = None,
                       stichtag: Optional[str] = None) -> list[dict]:
         """„Meine Termine": Termine aller Mannschaften, in deren Kader der User am
-        Stichtag aktiv ist – mit mannschaft_name und der Zugriffsstufe je Termin."""
+        Stichtag aktiv ist – mit mannschaft_name und der Zugriffsstufe je Termin.
+        Zusätzlich Gast-Termine: Termine mit aktiver Zu-/Absage des eigenen
+        Mitglieds außerhalb der eigenen Kader (gast=True, Stufe 'lesen')."""
         tag = stichtag or date.today().isoformat()
         with self.cursor() as cur:
             cur.execute(
@@ -102,12 +104,21 @@ class TerminRepository(BaseRepository):
                     SELECT mannschaft_id, bool_or(rolle = ANY(%(vroll)s)) AS darf_verwalten
                     FROM kader GROUP BY mannschaft_id
                 )
+                , gast AS (
+                    SELECT DISTINCT z.termin_id
+                    FROM termin_zusage z
+                    JOIN mitglied gm ON gm.id = z.mitglied_id AND gm.deleted_at IS NULL
+                    WHERE gm.user_id = %(uid)s AND z.deleted_at IS NULL
+                )
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
-                       ma.name AS mannschaft_name, z.darf_verwalten
+                       ma.name AS mannschaft_name, z.darf_verwalten,
+                       (z.mannschaft_id IS NULL) AS ist_gast
                 FROM termine t
-                JOIN zugriff z ON z.mannschaft_id = t.mannschaft_id
+                LEFT JOIN zugriff z ON z.mannschaft_id = t.mannschaft_id
                 JOIN mannschaft ma ON ma.id = t.mannschaft_id AND ma.deleted_at IS NULL
                 WHERE t.deleted_at IS NULL
+                  AND (z.mannschaft_id IS NOT NULL
+                       OR t.id IN (SELECT termin_id FROM gast))
                   AND (%(von)s::text IS NULL OR t.beginn >= %(von)s)
                   AND (%(bis)s::text IS NULL OR LEFT(t.beginn, 10) <= %(bis)s)
                 ORDER BY t.beginn, t.id
@@ -120,6 +131,7 @@ class TerminRepository(BaseRepository):
         for r in rows:
             d = _map(r).__dict__.copy()
             d["zugriff"] = 'verwalten' if r['darf_verwalten'] else 'lesen'
+            d["gast"] = r['ist_gast']
             result.append(d)
         return result
 
@@ -183,6 +195,72 @@ class TerminRepository(BaseRepository):
                 {"mid": mitglied_id, "man": mannschaft_id, "tag": tag},
             )
             return cur.fetchone() is not None
+
+    def is_mitglied_in_abteilung(self, mitglied_id: int, mannschaft_id: int,
+                                 stichtag: Optional[str] = None) -> bool:
+        """Ob ein Mitglied am Stichtag der Abteilung von `mannschaft_id` angehört
+        (mitglied_abteilung, Zeitfenster wie in der Tresor-ACL) – Gast-Kreis für
+        Termin-Einträge. Eine Kader-Zugehörigkeit ist bewusst NICHT nötig:
+        Abteilungs-Mitglied genügt (z. B. AH-Spieler hilft in der Ersten aus)."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM mitglied_abteilung mab
+                WHERE mab.mitglied_id = %(mid)s AND mab.deleted_at IS NULL
+                  AND (mab.von IS NULL OR mab.von <= %(tag)s)
+                  AND (mab.bis IS NULL OR mab.bis >= %(tag)s)
+                  AND mab.abteilung_id = (SELECT abteilung_id FROM mannschaft
+                                          WHERE id = %(man)s)
+                LIMIT 1
+                """,
+                {"mid": mitglied_id, "man": mannschaft_id, "tag": tag},
+            )
+            return cur.fetchone() is not None
+
+    def list_gast_kandidaten(self, mannschaft_id: int,
+                             stichtag: Optional[str] = None) -> list[dict]:
+        """Gast-Kandidaten für Termine der Mannschaft: Mitglieder, die am Stichtag
+        der Abteilung der Mannschaft angehören (mitglied_abteilung) und NICHT im
+        Kader der Mannschaft selbst stehen – eine eigene Kader-Zugehörigkeit ist
+        keine Voraussetzung. Ihre Mannschaften (falls vorhanden) kommen als
+        Auswahl-Label mit."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id AS mitglied_id, m.vorname, m.nachname,
+                       string_agg(DISTINCT ma.name, ', ' ORDER BY ma.name) AS mannschaften
+                FROM mitglied m
+                JOIN mitglied_abteilung mab ON mab.mitglied_id = m.id
+                    AND mab.deleted_at IS NULL
+                    AND (mab.von IS NULL OR mab.von <= %(tag)s)
+                    AND (mab.bis IS NULL OR mab.bis >= %(tag)s)
+                    AND mab.abteilung_id = (SELECT abteilung_id FROM mannschaft
+                                            WHERE id = %(man)s)
+                LEFT JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                LEFT JOIN mannschaft ma ON ma.id = mm.mannschaft_id AND ma.deleted_at IS NULL
+                WHERE m.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mitglied_mannschaft k
+                      WHERE k.mitglied_id = m.id AND k.mannschaft_id = %(man)s
+                        AND k.deleted_at IS NULL
+                        AND k.von <= %(tag)s AND (k.bis IS NULL OR k.bis >= %(tag)s)
+                  )
+                GROUP BY m.id, m.vorname, m.nachname
+                ORDER BY lower(m.nachname), lower(m.vorname)
+                """,
+                {"man": mannschaft_id, "tag": tag},
+            )
+            return [
+                {"mitglied_id": r['mitglied_id'],
+                 "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
+                 "mannschaften": r['mannschaften']}
+                for r in cur.fetchall()
+            ]
 
     def list_kader_user_ids(self, mannschaft_id: int,
                             stichtag: Optional[str] = None) -> list[int]:

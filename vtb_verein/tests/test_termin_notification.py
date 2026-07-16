@@ -60,11 +60,13 @@ def test_diff_termin_none_wird_strich():
 class _StubDB:
     """Minimaler Datastore-Ausschnitt für notify_termin/notify_serie."""
 
-    def __init__(self, kader_user_ids, users):
+    def __init__(self, kader_user_ids, users, gast_user_ids=()):
         self._users = users
         self.push = None
         self.termine = SimpleNamespace(
             list_kader_user_ids=lambda mid, tag=None: list(kader_user_ids))
+        self.termin_zusagen = SimpleNamespace(
+            list_user_ids_mit_zusage=lambda tid: list(gast_user_ids))
         self.users = SimpleNamespace(get_by_id=lambda uid: self._users.get(uid))
 
     def get_mannschaft(self, mannschaft_id):
@@ -95,6 +97,18 @@ def test_notify_termin_empfaengerkreis(gesendet):
     assert title == 'Neuer Termin – Erste'
     assert 'Training am Mi., 22.07.2026 18:30 (Erste)' in message
     assert 'Ort: Halle 1' in message
+
+
+def test_notify_termin_erreicht_gaeste(gesendet):
+    """Gäste (Zusage ohne Kader) gehören zum Empfängerkreis; Dubletten
+    zwischen Kader- und Zusagen-Liste werden nur einmal beliefert."""
+    users = {
+        2: SimpleNamespace(id=2, active=True),
+        5: SimpleNamespace(id=5, active=True),   # Gast
+    }
+    db = _StubDB(kader_user_ids=[2], users=users, gast_user_ids=[5, 2])
+    tn.notify_termin(db, _termin(), tn.AKTION_ABGESAGT, actor_user_id=1)
+    assert sorted(c[0] for c in gesendet) == [2, 5]
 
 
 def test_notify_termin_geaendert_mit_diff(gesendet):

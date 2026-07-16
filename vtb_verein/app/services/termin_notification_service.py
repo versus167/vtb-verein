@@ -3,7 +3,8 @@
 Beim Anlegen/Bearbeiten/Absagen/Reaktivieren eines Termins (und beim Anlegen
 einer Serie) fragt das Frontend ab, ob das Team informiert werden soll; die
 API reicht das als `benachrichtigen`-Flag hierher durch. Empfänger ist der am
-Termin-Datum aktive Kader (alle Rollen, mit Benutzerkonto) ohne den Auslöser.
+Termin-Datum aktive Kader (alle Rollen, mit Benutzerkonto) plus Gäste mit
+Zu-/Absage zum Termin, jeweils ohne den Auslöser.
 
 Versand best-effort und nicht-blockierend über NotificationService (bevorzugter
 Kanal des Users: Matrix/Push, Fallback E-Mail). User-Objekte werden im
@@ -130,9 +131,9 @@ def _send(db, user_ids: list[int], exclude_user_id: Optional[int],
 
 def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
                   aenderungen: Optional[list[str]] = None) -> None:
-    """Informiert den aktiven Kader (Stichtag = Termin-Datum) über den Termin.
-    Bei AKTION_GEAENDERT gehören die `aenderungen` (aus diff_termin) in die
-    Nachricht, sonst die Termin-Details."""
+    """Informiert den aktiven Kader (Stichtag = Termin-Datum) und die Gäste des
+    Termins. Bei AKTION_GEAENDERT gehören die `aenderungen` (aus diff_termin)
+    in die Nachricht, sonst die Termin-Details."""
     m_name = _mannschaft_name(db, termin.mannschaft_id)
     title = f"{_TITEL.get(aktion, aktion)} – {m_name}"
     zeilen = [f"{termin_titel(termin)} am {format_wandzeit(termin.beginn)} ({m_name})"]
@@ -145,6 +146,7 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
     elif aktion == AKTION_REAKTIVIERT:
         zeilen += ["", "Der abgesagte Termin findet wieder statt."]
     user_ids = db.termine.list_kader_user_ids(termin.mannschaft_id, termin.beginn[:10])
+    user_ids += db.termin_zusagen.list_user_ids_mit_zusage(termin.id)   # Gäste
     _send(db, user_ids, actor_user_id, title, "\n".join(zeilen))
 
 
