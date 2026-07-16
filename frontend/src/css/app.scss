@@ -497,6 +497,38 @@ body:not(.body--dark) {
     color: $vtb-gelb !important;
   }
 
+  // Aktive Listeneinträge (z. B. die gewählte Option im Select-Menü) färbt
+  // Quasar mit var(--q-primary) — Wappenblau auf Blau wäre unsichtbar → Gelb
+  .q-card:not(.login-card) .q-item--active,
+  .q-menu .q-item--active {
+    color: $vtb-gelb;
+  }
+
+  // Auswahl-Controls (Toggle/Checkbox/Radio) auf blauen Flächen: Quasar färbt
+  // den Aus-Zustand dunkelgrau und den An-Zustand mit var(--q-primary) —
+  // beides auf Wappenblau kaum sichtbar → Aus hell, An in Gelb als Akzent;
+  // das Häkchen auf dem dann gelben Kästchen Blau statt Weiß (nie Weiß auf Gelb).
+  // Explizit gefärbte Controls (color="positive" u. Ä.) behalten ihre
+  // text-*-Klassen (Quasar setzt die mit !important).
+  .q-card:not(.login-card),
+  .q-menu,
+  .q-table__container {
+    .q-toggle__inner,
+    .q-checkbox__inner,
+    .q-radio__inner {
+      color: rgba(255, 255, 255, 0.7);
+    }
+    .q-toggle__inner--truthy,
+    .q-checkbox__inner--truthy,
+    .q-checkbox__inner--indet,
+    .q-radio__inner--truthy {
+      color: $vtb-gelb;
+    }
+    .q-checkbox__svg {
+      color: $vtb-blau;
+    }
+  }
+
   // Gegenregel: Primär-Text AUF gelben Flächen bleibt Wappenblau — sonst
   // wird z. B. bei gelben Rundbuttons (color="vtb-gelb" text-color="primary")
   // das Icon gelb-auf-gelb unsichtbar. Deckt Klassen am selben Element und
@@ -764,6 +796,25 @@ body.body--dark {
   }
   .bg-primary {
     background: $vtb-blau-btn-dark !important;
+  }
+  // Aktive Listeneinträge (gewählte Select-Option): Quasar nutzt
+  // var(--q-primary) — auf Navy fast unsichtbar → heller Blauton wie oben
+  .q-item--active {
+    color: $vtb-blau-hell !important;
+  }
+
+  // Auswahl-Controls: Aus-Zustand (dunkelgrau) und An-Zustand (Wappenblau)
+  // sind auf Navy kaum sichtbar → analog zur text-primary-Behandlung
+  .q-toggle__inner,
+  .q-checkbox__inner,
+  .q-radio__inner {
+    color: rgba(255, 255, 255, 0.66);
+  }
+  .q-toggle__inner--truthy,
+  .q-checkbox__inner--truthy,
+  .q-checkbox__inner--indet,
+  .q-radio__inner--truthy {
+    color: $vtb-blau-hell !important;
   }
 
   // Elevation wirkt im Dark Mode als heller Schleier (Quasar zeichnet
