@@ -11,14 +11,30 @@ const currentHandler = ref(null)
 const refreshing = ref(false)
 let lastRefreshAt = 0
 
+// Layout-weite Reloads (ACL-Proben des MainLayout für Nav-Punkte): laufen bei
+// jedem Refresh zusätzlich zum Seiten-Handler mit. Ohne das blieb ein beim
+// Mount fehlgeschlagener (oder erst nach dem Login gültig gewordener)
+// Zugriff dauerhaft unsichtbar, während sich Seiteninhalte selbst heilen.
+const globalHandlers = new Set()
+
+// Registriert einen layout-weiten Reload; Rückgabe = Abmeldefunktion.
+export function registerGlobalRefresh(handler) {
+  globalHandlers.add(handler)
+  return () => globalHandlers.delete(handler)
+}
+
 // Nicht öfter automatisch nachladen als alle 30 s (gegen Fokus-Flackern).
 const AUTO_REFRESH_MIN_INTERVAL = 30_000
 
 async function triggerRefresh() {
-  if (!currentHandler.value || refreshing.value) return
+  if (refreshing.value) return
+  if (!currentHandler.value && globalHandlers.size === 0) return
   refreshing.value = true
   try {
-    await currentHandler.value()
+    await Promise.all([
+      ...(currentHandler.value ? [currentHandler.value()] : []),
+      ...[...globalHandlers].map((h) => h()),
+    ])
     lastRefreshAt = Date.now()
   } catch { /* Fehler meldet die Seite selbst */ } finally {
     refreshing.value = false
