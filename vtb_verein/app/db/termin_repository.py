@@ -184,6 +184,26 @@ class TerminRepository(BaseRepository):
             )
             return cur.fetchone() is not None
 
+    def list_kader_user_ids(self, mannschaft_id: int,
+                            stichtag: Optional[str] = None) -> list[int]:
+        """user_ids der am Stichtag aktiven Kader-Mitglieder MIT Benutzerkonto –
+        Empfängerkreis für Termin-Benachrichtigungen (DISTINCT: Doppelrollen
+        zählen einmal). Aktiv/gesperrt filtert der Versand über user.active."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT m.user_id
+                FROM mitglied m
+                JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL AND mm.mannschaft_id = %(mid)s
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                WHERE m.user_id IS NOT NULL AND m.deleted_at IS NULL
+                """,
+                {"mid": mannschaft_id, "tag": tag},
+            )
+            return [r['user_id'] for r in cur.fetchall()]
+
     def list_mannschaften_for_user(self, user_id: int,
                                    stichtag: Optional[str] = None) -> list[dict]:
         """Aktive Mannschaften, in deren Kader der User am Stichtag steht, mit der

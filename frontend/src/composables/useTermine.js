@@ -51,14 +51,29 @@ export function datumLabel(iso) {
 export function useTerminAktionen(reload) {
   const $q = useQuasar()
 
-  async function setStatus(t, aktion) {
-    try {
-      await api.post(`/api/termine/${t.id}/${aktion}`, { expected_version: t.version })
-      await reload()
-      $q.notify({ type: 'positive', message: aktion === 'absagen' ? 'Termin abgesagt' : 'Termin reaktiviert' })
-    } catch (e) {
-      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
-    }
+  function setStatus(t, aktion) {
+    const absagen = aktion === 'absagen'
+    $q.dialog({
+      title: absagen ? 'Termin absagen' : 'Termin reaktivieren',
+      message: `„${terminTitel(t)}" am ${datumLabel(t.beginn.slice(0, 10))} ${absagen ? 'absagen' : 'reaktivieren'}?`,
+      options: {
+        type: 'checkbox',
+        model: [],
+        items: [{ label: 'Team benachrichtigen', value: 'benachrichtigen' }],
+      },
+      cancel: true, persistent: true,
+    }).onOk(async (auswahl) => {
+      try {
+        await api.post(`/api/termine/${t.id}/${aktion}`, {
+          expected_version: t.version,
+          benachrichtigen: auswahl.includes('benachrichtigen'),
+        })
+        await reload()
+        $q.notify({ type: 'positive', message: absagen ? 'Termin abgesagt' : 'Termin reaktiviert' })
+      } catch (e) {
+        $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
+      }
+    })
   }
 
   function confirmDelete(t) {

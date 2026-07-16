@@ -33,6 +33,11 @@
             </div>
           </template>
         </template>
+        <q-toggle v-model="form.benachrichtigen" label="Team benachrichtigen" dense />
+        <div v-if="form.benachrichtigen" class="text-caption text-grey-7">
+          Der aktive Kader erhält nach dem Speichern eine Nachricht
+          (bevorzugter Kanal, sonst E-Mail).
+        </div>
         <div v-if="formError" class="text-negative text-caption">{{ formError }}</div>
       </q-card-section>
       <q-card-actions align="right">
@@ -78,7 +83,7 @@ function leeresFormular() {
   return { id: null, version: null, typ: 'training',
            datum: new Date().toISOString().slice(0, 10), zeit: '', endeZeit: '',
            ort: '', treffpunkt: '', treffpunktZeit: '', gegner: '', heimAuswaerts: 'heim',
-           beschreibung: '', wiederholen: false, serieEnde: '' }
+           beschreibung: '', wiederholen: false, serieEnde: '', benachrichtigen: false }
 }
 
 watch(open, (offen) => {
@@ -89,7 +94,7 @@ watch(open, (offen) => {
         datum: t.beginn.slice(0, 10), zeit: uhrzeit(t.beginn), endeZeit: uhrzeit(t.ende ?? ''),
         ort: t.ort ?? '', treffpunkt: t.treffpunkt ?? '', treffpunktZeit: t.treffpunkt_zeit ?? '',
         gegner: t.gegner ?? '', heimAuswaerts: t.heim_auswaerts ?? 'heim',
-        beschreibung: t.beschreibung ?? '' }
+        beschreibung: t.beschreibung ?? '', benachrichtigen: false }
     : leeresFormular()
   formError.value = ''
 })
@@ -115,6 +120,7 @@ async function save() {
         beschreibung: f.beschreibung || null,
         start_datum: f.datum,
         ende_datum: f.serieEnde || null,
+        benachrichtigen: f.benachrichtigen,
       })
       open.value = false
       emit('saved')
@@ -131,6 +137,7 @@ async function save() {
       gegner: f.typ === 'spiel' ? (f.gegner || null) : null,
       heim_auswaerts: f.typ === 'spiel' ? f.heimAuswaerts : null,
       beschreibung: f.beschreibung || null,
+      benachrichtigen: f.benachrichtigen,
     }
     if (f.id) {
       await api.put(`/api/termine/${f.id}`, { ...payload, expected_version: f.version })

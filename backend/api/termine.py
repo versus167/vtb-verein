@@ -8,9 +8,13 @@ hängt am globalen Recht `termine.verwalten`; Admins dürfen ohnehin alles.
 
 Zeiten sind lokale Wandzeit als TEXT: beginn/ende 'YYYY-MM-DDTHH:MM',
 treffpunkt_zeit 'HH:MM'. status wird nicht über PUT geändert, sondern über die
-Aktions-Endpunkte /absagen und /reaktivieren (klare Audit-Intention; in Etappe 2
-Hook für Benachrichtigungen). serie_id/extern_ref sind noch nicht per API setzbar
-(kommen mit Terminserien bzw. DFBnet-Import).
+Aktions-Endpunkte /absagen und /reaktivieren (klare Audit-Intention).
+
+Benachrichtigungen sind Opt-in: Anlegen/Bearbeiten/Absagen/Reaktivieren (und die
+Serien-Anlage) nehmen ein `benachrichtigen`-Flag entgegen; der Kader wird dann
+über termin_notification_service informiert (beim Bearbeiten nur, wenn sich
+fachlich etwas geändert hat). extern_ref ist noch nicht per API setzbar
+(kommt mit dem DFBnet-Import).
 """
 from dataclasses import asdict
 from datetime import date, datetime
@@ -23,6 +27,7 @@ from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from app.db.termin_serie_repository import VALID_SERIE_TYPEN
+from app.services import termin_notification_service as terminmeldung
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/termine", tags=["termine"])
@@ -39,6 +44,7 @@ class TerminCreate(BaseModel):
     gegner: Optional[str] = None             # nur typ='spiel'
     heim_auswaerts: Optional[str] = None     # 'heim' | 'auswaerts', nur typ='spiel'
     beschreibung: Optional[str] = None
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class TerminUpdate(TerminCreate):
@@ -47,6 +53,7 @@ class TerminUpdate(TerminCreate):
 
 class TerminAktion(BaseModel):
     expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class ZusageSet(BaseModel):
@@ -64,6 +71,7 @@ class SerieCreate(BaseModel):
     beschreibung: Optional[str] = None
     start_datum: str                         # 'YYYY-MM-DD' (Anker = Wochentag, später fix)
     ende_datum: Optional[str] = None         # None = offenes Ende
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class SerieUpdate(BaseModel):
@@ -261,6 +269,8 @@ def create_termin(mannschaft_id: int, data: TerminCreate, user: CurrentUser, db:
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
         data.beschreibung, user.username,
     )
+    if data.benachrichtigen:
+        terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU, user.id)
     return asdict(t)
 
 
@@ -291,7 +301,13 @@ def update_termin(termin_id: int, data: TerminUpdate, user: CurrentUser, db: DB)
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
-    return asdict(db.termine.get(termin_id))
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aenderungen = terminmeldung.diff_termin(t, neu)
+        if aenderungen:   # No-Op-Speichern erzeugt keine Nachricht
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+    return asdict(neu)
 
 
 def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
@@ -306,7 +322,12 @@ def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
                                data.expected_version)
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
-    return asdict(db.termine.get(termin_id))
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aktion = (terminmeldung.AKTION_ABGESAGT if neuer_status == 'abgesagt'
+                  else terminmeldung.AKTION_REAKTIVIERT)
+        terminmeldung.notify_termin(db, neu, aktion, user.id)
+    return asdict(neu)
 
 
 @router.post("/{termin_id}/absagen")
@@ -426,6 +447,8 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         data.start_datum, data.ende_datum, user.username,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
+    if data.benachrichtigen:
+        terminmeldung.notify_serie(db, s, user.id)
     return asdict(db.termin_serien.get(s.id))
 
 
