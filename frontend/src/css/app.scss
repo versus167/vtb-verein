@@ -154,6 +154,27 @@ body.body--dark .vtb-segment {
   }
 }
 
+// Kompakte Inline-Fehlermeldung für Formulare (Pflichtfeld, Speicherfehler …):
+// dieselbe Designsprache wie vtb-warnung (Vollrot, weiße Schrift, gelbes Icon),
+// nur klein — hebt sich auf Blau wie auf Gelb klar ab, anders als zarter roter
+// Kleintext, der auf der blauen Karte untergeht.
+.vtb-fehler {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: $negative;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.35;
+
+  .q-icon {
+    color: $vtb-gelb;
+    flex-shrink: 0;
+  }
+}
+
 // ── Kachel-Karten, Icon-Scheiben, Status-Pills (systemweit wiederverwendbar) ─
 // Designsprache der Schließanlage als globale Bausteine: Karten im Kachel-
 // Stil mit gelbem Hover-/Aktiv-Ring, runde Icon-Scheiben, Status-Pills.
@@ -316,8 +337,70 @@ body.body--dark .vtb-feedback-icon {
 body.body--dark .vtb-feedback-shot {
   border-color: $vtb-navy-linie;
 }
+// Live-Kamerabild im Feedback-Dialog (Foto für Nicht-App-Tickets)
+.vtb-feedback-video {
+  width: 100%;
+  max-height: 50vh;
+  border-radius: 10px;
+  background: #000;
+  display: block;
+}
+// Miniaturen der erfassten Bilder (mehrere Fotos/Uploads je Ticket)
+.vtb-foto-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+.vtb-foto-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.vtb-foto-thumb__x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+body.body--dark .vtb-foto-thumb {
+  border-color: $vtb-navy-linie;
+}
+
+// Button-Reihe im Feedback-Dialog: am Desktop nebeneinander, am Handy gestapelt
+// über die volle Breite mit fingergerechter Höhe (statt kleiner flat-Buttons).
+.vtb-btn-reihe {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 599px) {
+  .vtb-btn-reihe {
+    flex-direction: column;
+  }
+  .vtb-btn-reihe > .q-btn,
+  .vtb-btn-voll-mobil {
+    width: 100%;
+    min-height: 44px;
+  }
+}
 .vtb-feedback-senden {
   border-radius: 10px;
+}
+
+// ── Modale generell hervorheben ──────────────────────────────────────────────
+// Der Bereich um das Modal wird abgedunkelt und leicht weichgezeichnet (der
+// „Fokus-Effekt" moderner Oberflächen), das Modal selbst bekommt einen gelben
+// Rahmen im VTB-Look. Gilt für alle q-dialoge (Feedback, Bestätigungen, Formular-
+// Dialoge) in beiden Modi. Menüs (q-menu) sind keine Dialoge und bleiben außen vor.
+.q-dialog__backdrop {
+  background: rgba(2, 26, 64, 0.6); // dunkles Wappen-Navy statt neutralem Schwarz
+  backdrop-filter: blur(3px);
+}
+.q-dialog__inner > .q-card {
+  border: 2px solid $vtb-gelb;
 }
 
 // ── Konto-Menü (Header) ──────────────────────────────────────────────────────
@@ -566,11 +649,14 @@ body:not(.body--dark) {
   .q-table th {
     color: rgba(255, 255, 255, 0.75);
   }
+  // Hover/aktive Zeile in dezentem Vereinsgelb (statt neutralem Weiß-Schleier).
+  // Bewusst niedrige Deckkraft: der weiße Zeilentext bleibt lesbar — ein satter
+  // Gelbton mit weißer Schrift wäre unlesbar (nie weißer Text auf Gelb).
   .q-table tbody tr:hover td {
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: rgba($vtb-gelb, 0.1) !important;
   }
   .q-table tbody tr.selected td {
-    background: rgba(255, 255, 255, 0.14) !important;
+    background: rgba($vtb-gelb, 0.18) !important;
   }
   .q-table__bottom {
     color: rgba(255, 255, 255, 0.7);
@@ -637,6 +723,16 @@ body:not(.body--dark) {
     }
     .q-field--outlined:hover .q-field__control:before {
       border-color: $vtb-gelb;
+    }
+    // Fokus-Rand & -Label in Gelb: Quasar färbt den fokussierten Rahmen sonst
+    // mit der Primärfarbe (Wappenblau) — auf der blauen Karte blau-auf-blau,
+    // der Rand „verschwindet" beim Reinklicken (z. B. Feld „Titel").
+    .q-field--outlined.q-field--focused .q-field__control:before,
+    .q-field--outlined.q-field--focused .q-field__control:after {
+      border-color: $vtb-gelb;
+    }
+    .q-field--focused .q-field__label {
+      color: $vtb-gelb;
     }
     .q-field--filled .q-field__control {
       background: rgba(255, 255, 255, 0.08);
@@ -869,6 +965,17 @@ body.body--dark {
   }
   .q-field--outlined:hover .q-field__control {
     border-color: $vtb-blau-hell;
+  }
+  // Fokussiertes Feld in Gelb umranden (statt Wappenblau, das auf Navy kaum
+  // auffällt) — analog zum Hellmodus; deckt Control-Border und die Pseudo-
+  // Ränder ab, damit unabhängig vom Quasar-Mechanismus der gelbe Rand greift.
+  .q-field--outlined.q-field--focused .q-field__control,
+  .q-field--outlined.q-field--focused .q-field__control:before,
+  .q-field--outlined.q-field--focused .q-field__control:after {
+    border-color: $vtb-gelb;
+  }
+  .q-field--focused .q-field__label {
+    color: $vtb-gelb;
   }
 
   // Chip
