@@ -359,6 +359,12 @@ body.body--dark .vtb-feedback-shot {
 .vtb-konto-menu .q-item .q-icon {
   color: rgba(255, 255, 255, 0.85);
 }
+// Aktiver Router-Link („Mein Profil" auf der Profilseite): Quasar färbt ihn
+// $primary — auf dem blauen Menü unsichtbar (#109) → Gelb als Akzent.
+.vtb-konto-menu .q-item.q-router-link--active,
+.vtb-konto-menu .q-item.q-router-link--active .q-icon {
+  color: $vtb-gelb;
+}
 // Abmelden in hellem Rot — auf Wappenblau bleibt $negative sonst unlesbar
 .vtb-konto-abmelden,
 .vtb-konto-abmelden .q-icon {
@@ -376,6 +382,10 @@ body.body--dark {
   }
   .vtb-konto-menu .q-item .q-icon {
     color: $vtb-blau-hell;
+  }
+  .vtb-konto-menu .q-item.q-router-link--active,
+  .vtb-konto-menu .q-item.q-router-link--active .q-icon {
+    color: $vtb-gelb;
   }
   .vtb-konto-abmelden,
   .vtb-konto-abmelden .q-icon {

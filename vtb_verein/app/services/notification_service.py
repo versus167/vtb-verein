@@ -1,7 +1,9 @@
 """
-Notification-Service für E-Mail und Matrix Benachrichtigungen.
+Notification-Service für E-Mail-, Matrix- und Web-Push-Benachrichtigungen.
 
-Bevorzugter Kanal: Matrix (wenn konfiguriert), Fallback immer E-Mail.
+Web-Push ist ein additiver Kanal (#108): Geräte mit aktiver Push-Subscription
+werden immer beliefert. Der Hauptkanal (preferred_contact) bestimmt zusätzlich
+E-Mail bzw. Matrix; 'push' heißt "keine zusätzliche E-Mail, solange Push zustellt".
 """
 from app.models.user import User
 from app.services.email_service import EmailService
@@ -26,53 +28,67 @@ class NotificationService:
     @staticmethod
     def send_notification(user: User, title: str, message: str, push_service=None) -> bool:
         """
-        Sendet Benachrichtigung über bevorzugten Kanal mit E-Mail-Fallback.
+        Sendet eine Benachrichtigung; Web-Push ist additiver Kanal (#108).
 
-        Der bevorzugte Kanal (user.preferred_contact) wird zuerst versucht,
-        E-Mail bleibt immer garantierter Fallback ("erster Erfolg gewinnt"):
-          - 'matrix' → Matrix (falls matrix_id gesetzt)
-          - 'push'   → Web-Push an alle Geräte (falls push_service übergeben & konfiguriert)
+        Push geht immer zuerst best-effort an alle aktiven Geräte des Nutzers
+        (falls push_service übergeben & konfiguriert). Zusätzlich der Hauptkanal
+        nach user.preferred_contact:
+          - 'email' (Standard) → E-Mail
+          - 'matrix' → Matrix (falls matrix_id gesetzt), E-Mail-Fallback bei Fehlschlag
+          - 'push'   → keine zusätzliche E-Mail; erreicht Push aber kein Gerät,
+                       geht die Nachricht als Notfall-Fallback per E-Mail raus
 
         Args:
-            push_service: optionaler PushService (nur nötig, wenn Push zugestellt
-                werden soll; ohne ihn wird der Push-Kanal übersprungen → E-Mail).
+            push_service: optionaler PushService (ohne ihn entfällt der Push-Kanal;
+                bei preferred_contact='push' greift dann der E-Mail-Fallback).
 
         Returns:
             True wenn über mindestens einen Kanal erfolgreich versendet
         """
-        channels_to_try = []
-
-        if user.preferred_contact == 'matrix' and user.matrix_id:
-            channels_to_try.append(('matrix', user.matrix_id))
-
-        if user.preferred_contact == 'push' and push_service is not None:
-            channels_to_try.append(('push', None))
-
-        channels_to_try.append(('email', user.email))
-
-        for channel, address in channels_to_try:
+        push_ok = False
+        if push_service is not None:
             try:
-                if channel == 'matrix':
-                    success = MatrixService.send_notification(address, title, message)
-                elif channel == 'push':
-                    success = push_service.send_to_user(user.id, title, message) > 0
-                else:
-                    success = EmailService.send_text_email(
-                        recipient_email=address,
-                        subject=title,
-                        body=message
-                    )
-
-                if success:
-                    logger.info(f"Benachrichtigung an {user.username} via {channel} versendet")
-                    return True
-
+                push_ok = push_service.send_to_user(user.id, title, message) > 0
+                if push_ok:
+                    logger.info(f"Benachrichtigung an {user.username} via push versendet")
             except Exception as e:
-                logger.error(f"Fehler beim {channel}-Versand an {user.username}: {str(e)}")
-                continue
+                logger.error(f"Fehler beim push-Versand an {user.username}: {str(e)}")
 
-        logger.error(f"Benachrichtigung an {user.username} konnte nicht versendet werden")
-        return False
+        def send_email() -> bool:
+            try:
+                ok = EmailService.send_text_email(
+                    recipient_email=user.email,
+                    subject=title,
+                    body=message
+                )
+                if ok:
+                    logger.info(f"Benachrichtigung an {user.username} via email versendet")
+                return ok
+            except Exception as e:
+                logger.error(f"Fehler beim email-Versand an {user.username}: {str(e)}")
+                return False
+
+        if user.preferred_contact == 'push':
+            # E-Mail bewusst abgeschaltet — nur wenn Push kein Gerät erreicht
+            # hat, geht die Nachricht als Notfall-Fallback per E-Mail raus.
+            main_ok = push_ok or send_email()
+        elif user.preferred_contact == 'matrix' and user.matrix_id:
+            try:
+                main_ok = MatrixService.send_notification(user.matrix_id, title, message)
+                if main_ok:
+                    logger.info(f"Benachrichtigung an {user.username} via matrix versendet")
+            except Exception as e:
+                logger.error(f"Fehler beim matrix-Versand an {user.username}: {str(e)}")
+                main_ok = False
+            if not main_ok:
+                main_ok = send_email()
+        else:
+            main_ok = send_email()
+
+        if not (push_ok or main_ok):
+            logger.error(f"Benachrichtigung an {user.username} konnte nicht versendet werden")
+            return False
+        return True
 
     @staticmethod
     def send_notification_async(user: User, title: str, message: str, push_service=None) -> None:

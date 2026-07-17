@@ -39,47 +39,32 @@
         </q-card>
       </div>
 
-      <!-- Meine Berechtigungen (read-only) -->
-      <div class="col-12">
+      <!-- Meine Vereinsdaten (nur wenn Mitglied-Datensatz verknüpft) -->
+      <div v-if="meinMitglied" class="col-12">
         <q-card flat bordered>
           <q-card-section>
-            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Berechtigungen</div>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Vereinsdaten</div>
             <div class="text-caption text-grey-7 q-mb-md">
-              Diese Rechte ergeben sich aus deinen Funktionen im Verein.
-              Änderungen kann nur die Vereinsverwaltung vornehmen.
+              E-Mail kann nur von einem Administrator geändert werden.
             </div>
+            <div class="q-gutter-sm" style="max-width: 480px">
+              <q-input v-model="mitgliedForm.telefon" label="Telefon" outlined dense />
 
-            <q-banner v-if="me?.role === 'admin'" class="bg-blue-1 text-blue-10 rounded-borders q-mb-md">
-              <template #avatar><q-icon name="shield" color="blue" /></template>
-              Als Administrator hast du uneingeschränkten Zugriff auf alle Funktionen.
-            </q-banner>
-
-            <template v-if="me?.role !== 'admin' && permGroups.length">
-              <div v-for="group in permGroups" :key="group.label" class="q-mb-md">
-                <div class="row items-center q-mb-xs">
-                  <q-icon :name="group.icon" color="primary" size="sm" />
-                  <span class="text-subtitle2 text-weight-medium q-ml-sm">{{ group.label }}</span>
-                </div>
-                <q-list dense>
-                  <q-item v-for="perm in group.perms" :key="perm.key" class="q-px-none">
-                    <q-item-section avatar style="min-width: 32px">
-                      <q-icon name="check_circle" color="positive" size="xs" />
-                    </q-item-section>
-                    <q-item-section>{{ perm.label }}</q-item-section>
-                    <q-item-section side>
-                      <div class="row q-gutter-xs justify-end">
-                        <q-badge
-                          v-for="(c, i) in perm.origins" :key="i"
-                          color="teal-1" text-color="teal-9"
-                        >{{ c }}</q-badge>
-                      </div>
-                    </q-item-section>
-                  </q-item>
-                </q-list>
+              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Adresse</div>
+              <q-input v-model="mitgliedForm.strasse" label="Straße" outlined dense />
+              <div class="row q-gutter-sm">
+                <q-input v-model="mitgliedForm.plz" label="PLZ" outlined dense style="width: 100px" />
+                <q-input v-model="mitgliedForm.ort" label="Ort" outlined dense class="col" />
               </div>
-            </template>
-            <div v-else-if="me?.role !== 'admin'" class="text-caption text-grey-6">
-              Aktuell sind dir keine besonderen Berechtigungen zugeordnet.
+              <q-input v-model="mitgliedForm.land" label="Land" outlined dense />
+
+              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Bankverbindung</div>
+              <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
+              <q-input v-model="mitgliedForm.bic" label="BIC" outlined dense />
+              <q-input v-model="mitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
+
+              <div v-if="mitgliedError" class="text-negative text-caption">{{ mitgliedError }}</div>
+              <q-btn label="Speichern" color="primary" unelevated :loading="savingMitglied" @click="onSaveMitglied" />
             </div>
           </q-card-section>
         </q-card>
@@ -168,11 +153,12 @@
               <q-select
                 v-model="preferredContact"
                 :options="contactOptions"
-                label="Bevorzugter Kanal"
+                label="Hauptkanal"
                 outlined
                 dense
                 emit-value
                 map-options
+                hint="Geräte mit aktivem Push werden immer zusätzlich benachrichtigt."
               />
 
               <!-- Web-Push je Gerät (#96) -->
@@ -186,7 +172,7 @@
                 <div class="text-caption text-grey-7">
                   <span v-if="!pushConfigured">Push ist serverseitig noch nicht konfiguriert.</span>
                   <span v-else-if="pushSubscribed">Dieses Gerät empfängt Push-Benachrichtigungen.</span>
-                  <span v-else>Aktivieren, um „Push“ als Kanal nutzen zu können.</span>
+                  <span v-else>Aktivieren, um auf diesem Gerät Push-Benachrichtigungen zu erhalten.</span>
                 </div>
               </div>
 
@@ -208,37 +194,6 @@
                   @click="onSendTest"
                 />
               </div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-
-      <!-- Meine Vereinsdaten (nur wenn Mitglied-Datensatz verknüpft) -->
-      <div v-if="meinMitglied" class="col-12">
-        <q-card flat bordered>
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Vereinsdaten</div>
-            <div class="text-caption text-grey-7 q-mb-md">
-              E-Mail kann nur von einem Administrator geändert werden.
-            </div>
-            <div class="q-gutter-sm" style="max-width: 480px">
-              <q-input v-model="mitgliedForm.telefon" label="Telefon" outlined dense />
-
-              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Adresse</div>
-              <q-input v-model="mitgliedForm.strasse" label="Straße" outlined dense />
-              <div class="row q-gutter-sm">
-                <q-input v-model="mitgliedForm.plz" label="PLZ" outlined dense style="width: 100px" />
-                <q-input v-model="mitgliedForm.ort" label="Ort" outlined dense class="col" />
-              </div>
-              <q-input v-model="mitgliedForm.land" label="Land" outlined dense />
-
-              <div class="text-caption text-weight-medium text-grey-6 q-mt-sm">Bankverbindung</div>
-              <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
-              <q-input v-model="mitgliedForm.bic" label="BIC" outlined dense />
-              <q-input v-model="mitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
-
-              <div v-if="mitgliedError" class="text-negative text-caption">{{ mitgliedError }}</div>
-              <q-btn label="Speichern" color="primary" unelevated :loading="savingMitglied" @click="onSaveMitglied" />
             </div>
           </q-card-section>
         </q-card>
@@ -371,6 +326,52 @@
         </q-card>
       </div>
 
+      <!-- Meine Berechtigungen (read-only) — bewusst ganz unten, wird selten gebraucht -->
+      <div class="col-12">
+        <q-card flat bordered>
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-bold q-mb-sm">Meine Berechtigungen</div>
+            <div class="text-caption text-grey-7 q-mb-md">
+              Diese Rechte ergeben sich aus deinen Funktionen im Verein.
+              Änderungen kann nur die Vereinsverwaltung vornehmen.
+            </div>
+
+            <q-banner v-if="me?.role === 'admin'" class="bg-blue-1 text-blue-10 rounded-borders q-mb-md">
+              <template #avatar><q-icon name="shield" color="blue" /></template>
+              Als Administrator hast du uneingeschränkten Zugriff auf alle Funktionen.
+            </q-banner>
+
+            <template v-if="me?.role !== 'admin' && permGroups.length">
+              <div v-for="group in permGroups" :key="group.label" class="q-mb-md">
+                <div class="row items-center q-mb-xs">
+                  <q-icon :name="group.icon" color="primary" size="sm" />
+                  <span class="text-subtitle2 text-weight-medium q-ml-sm">{{ group.label }}</span>
+                </div>
+                <q-list dense>
+                  <q-item v-for="perm in group.perms" :key="perm.key" class="q-px-none">
+                    <q-item-section avatar style="min-width: 32px">
+                      <q-icon name="check_circle" color="positive" size="xs" />
+                    </q-item-section>
+                    <q-item-section>{{ perm.label }}</q-item-section>
+                    <q-item-section side>
+                      <div class="row q-gutter-xs justify-end">
+                        <q-badge
+                          v-for="(c, i) in perm.origins" :key="i"
+                          color="teal-1" text-color="teal-9"
+                        >{{ c }}</q-badge>
+                      </div>
+                    </q-item-section>
+                  </q-item>
+                </q-list>
+              </div>
+            </template>
+            <div v-else-if="me?.role !== 'admin'" class="text-caption text-grey-6">
+              Aktuell sind dir keine besonderen Berechtigungen zugeordnet.
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+
     </div>
   </q-page>
 </template>
@@ -458,8 +459,8 @@ const contactOptions = computed(() => {
     { label: 'E-Mail', value: 'email' },
     { label: 'Matrix', value: 'matrix' },
   ]
-  // 'Push' nur anbieten, wenn serverseitig konfiguriert (sonst liefe es ins Leere → E-Mail)
-  if (pushConfigured.value) opts.push({ label: 'Push', value: 'push' })
+  // 'Nur Push' nur anbieten, wenn serverseitig konfiguriert (sonst liefe es ins Leere → E-Mail)
+  if (pushConfigured.value) opts.push({ label: 'Nur Push (keine E-Mail)', value: 'push' })
   return opts
 })
 
