@@ -25,6 +25,7 @@ class MitgliedCreate(BaseModel):
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     status: str = "aktiv"
+    art: str = "mitglied"                   # 'mitglied' | 'gastspieler' (#95 Teil 2)
     zahlungsart: str = ""
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -40,6 +41,13 @@ class MitgliedCreate(BaseModel):
                      'trainerlizenz_nr', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return None if v == '' else v
+
+    @field_validator('art')
+    @classmethod
+    def _art_gueltig(cls, v):
+        if v not in ('mitglied', 'gastspieler'):
+            raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
+        return v
 
     @model_validator(mode='after')
     def _lizenz_gekoppelt(self):
@@ -74,9 +82,10 @@ def _require_delete(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Löschberechtigung")
 
 
-def _require_eintrittsdatum(value):
-    """Ein Vereinsmitglied muss immer ein Eintrittsdatum haben (Ticket #29)."""
-    if not (value or '').strip():
+def _require_eintrittsdatum(data):
+    """Jede Person im Personenstamm braucht ein Eintrittsdatum (Ticket #29) –
+    bei Gastspielern ist das der Beginn der Gastspielgenehmigung."""
+    if not (data.eintrittsdatum or '').strip():
         raise HTTPException(status_code=422, detail="Eintrittsdatum ist erforderlich")
 
 
@@ -102,11 +111,13 @@ def get_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
-    _require_eintrittsdatum(data.eintrittsdatum)
+    _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     from app.models.mitglied import Mitglied
     if data.mitgliedsnummer is None:
-        data.mitgliedsnummer = db.get_next_mitgliedsnummer()
+        # Gastspieler verbrauchen keine Mitgliedsnummer (bleibt NULL)
+        if data.art == 'mitglied':
+            data.mitgliedsnummer = db.get_next_mitgliedsnummer()
     elif not db.is_mitgliedsnummer_available(data.mitgliedsnummer):
         raise HTTPException(status_code=400, detail="Mitgliedsnummer bereits vergeben")
     m = Mitglied(**data.model_dump())
@@ -117,7 +128,7 @@ def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
 @router.put("/{mitglied_id}")
 def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
-    _require_eintrittsdatum(data.eintrittsdatum)
+    _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     existing = db.get_mitglied(mitglied_id)
     if existing is None:
@@ -125,6 +136,9 @@ def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, d
     for field, value in data.model_dump().items():
         setattr(existing, field, value)
     existing.id = mitglied_id
+    # Umwandlung Gastspieler → Vereinsmitglied: jetzt gehört eine Mitgliedsnummer dazu
+    if existing.art == 'mitglied' and existing.mitgliedsnummer is None:
+        existing.mitgliedsnummer = db.get_next_mitgliedsnummer()
     success = db.update_mitglied(existing, updated_by=user.username)
     if not success:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte neu laden")

@@ -54,6 +54,10 @@ class GebuehrenService:
             mitglied = self.db.get_mitglied(mitglied_id)
         except KeyError:
             return []
+        # Gastspieler treten nicht in den Verein ein → keine Aufnahmegebühr
+        # vorschlagen. (Manuelles Anlegen einer Forderung bleibt möglich.)
+        if getattr(mitglied, 'art', 'mitglied') == 'gastspieler':
+            return []
         alter = _alter_am(getattr(mitglied, 'geburtsdatum', None), datum)
 
         kandidaten = []

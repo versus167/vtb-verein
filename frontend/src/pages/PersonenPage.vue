@@ -61,9 +61,9 @@
                 {{ rolleLabel(p.role) }}
               </q-chip>
               <q-chip v-if="p.mitglied" dense size="sm"
-                :color="mitgliedStatusColor(p.mitglied.status)" text-color="white">
-                {{ mitgliedStatusLabel(p.mitglied.status) }}
-                <q-tooltip>Vereinsstatus</q-tooltip>
+                :color="mitgliedStatusColor(p.mitglied)" :text-color="mitgliedStatusTextColor(p.mitglied)">
+                {{ mitgliedStatusLabel(p.mitglied) }}
+                <q-tooltip>{{ p.mitglied.art === 'gastspieler' ? 'Gastspieler – kein Vereinsmitglied' : 'Vereinsstatus' }}</q-tooltip>
               </q-chip>
               <q-icon v-if="p.user_id && p.active" name="check_circle" color="positive" size="sm">
                 <q-tooltip>Login aktiv</q-tooltip>
@@ -211,11 +211,11 @@
               :color="props.row.active ? 'positive' : 'negative'" size="sm">
               <q-tooltip>Login {{ props.row.active ? 'aktiv' : 'inaktiv' }}</q-tooltip>
             </q-icon>
-            <!-- Vereinsstatus: nur bei Mitglied-Zeilen -->
+            <!-- Vereinsstatus: nur bei Mitglied-Zeilen (Gastspieler mit eigenem Chip) -->
             <q-chip v-if="props.row.mitglied" dense size="sm" class="q-ma-none"
-              :color="mitgliedStatusColor(props.row.mitglied.status)" text-color="white">
-              {{ mitgliedStatusLabel(props.row.mitglied.status) }}
-              <q-tooltip>Vereinsstatus</q-tooltip>
+              :color="mitgliedStatusColor(props.row.mitglied)" :text-color="mitgliedStatusTextColor(props.row.mitglied)">
+              {{ mitgliedStatusLabel(props.row.mitglied) }}
+              <q-tooltip>{{ props.row.mitglied.art === 'gastspieler' ? 'Gastspieler – kein Vereinsmitglied' : 'Vereinsstatus' }}</q-tooltip>
             </q-chip>
             <span v-if="!props.row.user_id && !props.row.mitglied" class="text-grey">—</span>
           </div>
@@ -343,18 +343,29 @@
           <!-- Tab: Vereinsmitglied -->
           <q-tab-panels v-model="createTab" animated>
             <q-tab-panel name="mitglied" class="q-gutter-sm q-pa-none">
+              <q-btn-toggle v-model="createForm.art" :options="artOptions"
+                unelevated rounded dense no-caps toggle-color="primary" />
+              <div v-if="createForm.art === 'gastspieler'" class="text-caption text-grey-6">
+                <q-icon name="info" size="xs" /> Gastspieler (Gastspielgenehmigung) sind keine
+                Vereinsmitglieder: keine Mitgliedsnummer, keine Beiträge, zählen nicht in der
+                Statistik – können aber Abteilungen/Mannschaften zugeordnet werden.
+              </div>
               <div class="row q-gutter-sm">
                 <q-input v-model="createForm.vorname" label="Vorname *" outlined dense class="col" />
                 <q-input v-model="createForm.nachname" label="Nachname *" outlined dense class="col" />
               </div>
               <div class="row q-gutter-sm">
-                <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" />
-                <q-input v-model="createForm.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" />
+                <!-- Auch Gastspieler haben einen Eintritt: Beginn der Gastspielgenehmigung (Pflicht) -->
+                <q-input v-model="createForm.eintrittsdatum" label="Eintrittsdatum *"
+                  outlined dense type="date" class="col" />
+                <q-input v-model="createForm.geburtsdatum"
+                  :label="createForm.art === 'gastspieler' ? 'Geburtsdatum' : 'Geburtsdatum *'"
+                  outlined dense type="date" class="col" />
                 <q-select v-model="createForm.geschlecht" :options="geschlechtOptions"
                   label="Geschlecht" outlined dense emit-value map-options clearable class="col" />
               </div>
-              <q-select v-model="createForm.mitglied_status" :options="mitgliedStatusOptions"
-                label="Vereinsstatus" outlined dense emit-value map-options />
+              <q-select v-if="createForm.art !== 'gastspieler'" v-model="createForm.mitglied_status"
+                :options="mitgliedStatusOptions" label="Vereinsstatus" outlined dense emit-value map-options />
               <div class="text-caption text-grey-6">
                 <q-icon name="info" size="xs" /> Es wird nur ein Mitglied-Datensatz angelegt – kein Benutzer/Login.
                 Kontaktdaten (E-Mail, Telefon) später über den Tab „Kontakte".
@@ -369,7 +380,7 @@
                   <q-input v-model="createForm.land" label="Land" outlined dense />
                 </div>
               </q-expansion-item>
-              <q-expansion-item label="Zahlung / SEPA" dense>
+              <q-expansion-item v-if="createForm.art !== 'gastspieler'" label="Zahlung / SEPA" dense>
                 <div class="q-gutter-sm q-pt-sm">
                   <q-select v-model="createForm.zahlungsart" :options="zahlungsartOptionen"
                     emit-value map-options label="Zahlungsart" outlined dense />
@@ -651,6 +662,7 @@ const filterOptions = [
   { label: 'Nur Mitglieder', value: 'mitglieder' },
   { label: 'Nur Benutzer', value: 'benutzer' },
   { label: 'Nur Lizenz', value: 'lizenz' },
+  { label: 'Gastspieler', value: 'gastspieler' },
 ]
 
 // Trainerlizenz-Status eines Mitglieds für die Ampel in der "Nur Lizenz"-Ansicht.
@@ -713,7 +725,9 @@ const columns = computed(() => {
     )
   }
   cols.push({ name: 'status', label: 'Status', align: 'center', sortable: true,
-    field: r => (r.mitglied ? r.mitglied.status : (r.active ? 'aktiv' : 'inaktiv')) })
+    field: r => (r.mitglied
+      ? (r.mitglied.art === 'gastspieler' ? 'gastspieler' : r.mitglied.status)
+      : (r.active ? 'aktiv' : 'inaktiv')) })
   if (istBenutzer) {
     cols.push({ name: 'last_seen', label: 'Zuletzt aktiv', field: 'last_seen', align: 'left', sortable: true })
   }
@@ -742,11 +756,12 @@ function istAusgetreten(p) {
 const filteredPersonen = computed(() => {
   let list = personen.value
 
-  // Basis-Filter
-  if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied)
+  // Basis-Filter ("Nur Mitglieder" = echte Vereinsmitglieder, ohne Gastspieler)
+  if (filter.value === 'mitglieder') list = list.filter(p => p.mitglied && p.mitglied.art !== 'gastspieler')
   if (filter.value === 'benutzer')   list = list.filter(p => p.user_id)
   // "Nur Lizenz": Mitglieder mit hinterlegtem Trainerlizenz-Fenster (#70)
   if (filter.value === 'lizenz')     list = list.filter(p => p.mitglied?.trainerlizenz_gueltig_bis)
+  if (filter.value === 'gastspieler') list = list.filter(p => p.mitglied?.art === 'gastspieler')
 
   // Ausgetretene standardmäßig ausblenden (nur per Häkchen sichtbar)
   if (!zeigeAusgetretene.value) list = list.filter(p => !istAusgetreten(p))
@@ -823,6 +838,13 @@ const mitgliedStatusOptions = [
   { label: 'Ausgetreten',     value: 'ausgetreten' },
 ]
 
+// Personenart bei der Neuanlage: Gastspieler (Gastspielgenehmigung) sind keine
+// Vereinsmitglieder – ohne Mitgliedsnummer/Eintritt/Zahlung, ohne Beiträge/Statistik.
+const artOptions = [
+  { label: 'Vereinsmitglied', value: 'mitglied' },
+  { label: 'Gastspieler', value: 'gastspieler' },
+]
+
 const geschlechtOptions = [
   { label: 'männlich', value: 'm' },
   { label: 'weiblich', value: 'w' },
@@ -859,11 +881,19 @@ function rolleColor(role) {
 
 // Vereinsstatus eines Mitglieds (aktiv/passiv/ausgetreten) – getrennt vom
 // Account-Aktiv-Flag (Login). 'aktiv' wird als "Vereinsmitglied" angezeigt.
-function mitgliedStatusLabel(s) {
-  return { aktiv: 'Vereinsmitglied', passiv: 'Passiv', ausgetreten: 'Ausgetreten' }[s] ?? (s || '—')
+// Gastspieler (art='gastspieler') sind keine Vereinsmitglieder und bekommen
+// statt des Vereinsstatus einen eigenen Chip in Vereinsgelb.
+function mitgliedStatusLabel(m) {
+  if (m?.art === 'gastspieler') return 'Gastspieler'
+  return { aktiv: 'Vereinsmitglied', passiv: 'Passiv', ausgetreten: 'Ausgetreten' }[m?.status] ?? (m?.status || '—')
 }
-function mitgliedStatusColor(s) {
-  return { aktiv: 'positive', passiv: 'grey', ausgetreten: 'negative' }[s] ?? 'grey'
+function mitgliedStatusColor(m) {
+  if (m?.art === 'gastspieler') return 'vtb-gelb'
+  return { aktiv: 'positive', passiv: 'grey', ausgetreten: 'negative' }[m?.status] ?? 'grey'
+}
+// Gelb nie mit weißem Text (Vereinsfarben-Konvention) → Gast-Chip in Blau auf Gelb.
+function mitgliedStatusTextColor(m) {
+  return m?.art === 'gastspieler' ? 'primary' : 'white'
 }
 
 // Farbpalette für Abteilungs-IDs (deterministisch pro Abteilung)
@@ -939,7 +969,7 @@ function openCreateDialog() {
   createForm.value = {
     vorname: '', nachname: '', email: '', role: 'mitglied', active: true,
     password: '', username: '',
-    eintrittsdatum: '', geburtsdatum: '', mitglied_status: 'aktiv', geschlecht: null,
+    eintrittsdatum: '', geburtsdatum: '', mitglied_status: 'aktiv', art: 'mitglied', geschlecht: null,
     strasse: '', plz: '', ort: '', land: '',
     zahlungsart: 'lastschrift', iban: '', bic: '', kontoinhaber: '',
   }
@@ -948,11 +978,14 @@ function openCreateDialog() {
 
 async function onCreate() {
   createError.value = ''
+  // Eintrittsdatum ist auch bei Gastspielern Pflicht (Beginn der Gastspielgenehmigung);
+  // nur das Geburtsdatum bleibt für Gastspieler optional.
+  const istGast = createForm.value.art === 'gastspieler'
   if (createTab.value === 'mitglied' && !createForm.value.eintrittsdatum) {
     createError.value = 'Eintrittsdatum ist erforderlich.'
     return
   }
-  if (createTab.value === 'mitglied' && !createForm.value.geburtsdatum) {
+  if (createTab.value === 'mitglied' && !istGast && !createForm.value.geburtsdatum) {
     createError.value = 'Geburtsdatum ist erforderlich.'
     return
   }
@@ -984,8 +1017,11 @@ async function onCreate() {
     // werden können (nur wenn ein Mitglied-Datensatz entstanden ist – nicht beim User-Tab).
     if (data?.mitglied?.id) {
       openMitgliedDialog(data, 'stammdaten')
-      // Ticket #42: passende Vereins-Aufnahmegebühr zum Eintrittsdatum vorschlagen.
-      await proposeAufnahmegebuehr($q, { mitgliedId: data.mitglied.id, abteilungId: null, datum: eintritt })
+      // Ticket #42: passende Vereins-Aufnahmegebühr zum Eintrittsdatum vorschlagen
+      // (Gastspieler treten nicht ein → keine Aufnahmegebühr).
+      if (!istGast) {
+        await proposeAufnahmegebuehr($q, { mitgliedId: data.mitglied.id, abteilungId: null, datum: eintritt })
+      }
     }
   } catch (e) {
     createError.value = e.response?.data?.detail || 'Fehler beim Anlegen'
