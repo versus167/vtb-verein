@@ -39,6 +39,9 @@ _BESTAND = (
     "AND (safe_to_date(m.austrittsdatum) IS NULL "
     "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
 )
+# Gastspieler (art='gastspieler', Schema v72) sind keine Vereinsmitglieder und
+# bleiben aus sämtlichen Mitglieder-Kennzahlen draußen.
+_NUR_MITGLIEDER = "m.art = 'mitglied'"
 
 
 class StatistikRepository(BaseRepository):
@@ -102,7 +105,7 @@ class StatistikRepository(BaseRepository):
                     ))                                                    AS durchschnittsalter
                 FROM mitglied m
                 {join}
-                WHERE m.deleted_at IS NULL
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
                 """,
                 {**params, "jahr": str(jahr)},
             )
@@ -148,7 +151,7 @@ class StatistikRepository(BaseRepository):
                     SELECT LEFT(({datum_expr}), %(laenge)s) AS periode, COUNT(*) AS anzahl
                     FROM mitglied m
                     {join}
-                    WHERE m.deleted_at IS NULL
+                    WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
                       AND LEFT(({datum_expr}), %(laenge)s) ~ %(guard)s
                       AND LEFT(({datum_expr}), %(laenge)s) >= %(von)s
                     GROUP BY LEFT(({datum_expr}), %(laenge)s)
@@ -200,7 +203,7 @@ class StatistikRepository(BaseRepository):
                     SELECT date_part('year', age(safe_to_date(m.geburtsdatum))) AS jahre
                     FROM mitglied m
                     {join}
-                    WHERE m.deleted_at IS NULL
+                    WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
                       AND {_AKTIV}
                       AND safe_to_date(m.geburtsdatum) IS NOT NULL
                 )
@@ -233,7 +236,7 @@ class StatistikRepository(BaseRepository):
                 SELECT COALESCE(NULLIF(m.geschlecht, ''), '?') AS geschlecht, COUNT(*) AS anzahl
                 FROM mitglied m
                 {join}
-                WHERE m.deleted_at IS NULL AND {_AKTIV}
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER} AND {_AKTIV}
                 GROUP BY COALESCE(NULLIF(m.geschlecht, ''), '?')
                 """,
                 params,
@@ -251,7 +254,7 @@ class StatistikRepository(BaseRepository):
         """Anzahl aktiver Mitglieder je Abteilung (aktive Zuordnungen)."""
         with self.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT a.id, a.name, COUNT(DISTINCT m.id) AS anzahl
                 FROM abteilung a
                 LEFT JOIN mitglied_abteilung ma
@@ -262,6 +265,7 @@ class StatistikRepository(BaseRepository):
                        ON m.id = ma.mitglied_id
                       AND m.deleted_at IS NULL
                       AND m.status <> 'ausgetreten'
+                      AND {_NUR_MITGLIEDER}
                 WHERE a.deleted_at IS NULL
                 GROUP BY a.id, a.name
                 ORDER BY anzahl DESC, a.name

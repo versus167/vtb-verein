@@ -28,6 +28,10 @@ class Mitglied:
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     status: str = "aktiv"
+    # Personenart: 'mitglied' (Vereinsmitglied) | 'gastspieler' (Gastspielgenehmigung,
+    # kein Vereinsmitglied: keine Mitgliedsnummer/Beiträge, zählt nicht in die Statistik,
+    # darf aber Abteilungen/Mannschaften zugeordnet und zu Terminen eingeladen werden)
+    art: str = "mitglied"
     
     # Zahlungsdaten
     zahlungsart: str = ""

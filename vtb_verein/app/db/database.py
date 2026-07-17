@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 71
+SCHEMA_VERSION = 72
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ _FN_GEBUEHR_FORDERUNG_AUDIT_UPDATE = """
 
 _MITGLIED_COLS = (
     "id, version, mitgliedsnummer, vorname, nachname, geburtsdatum, "
-    "strasse, plz, ort, land, eintrittsdatum, austrittsdatum, status, "
+    "strasse, plz, ort, land, eintrittsdatum, austrittsdatum, status, art, "
     "zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis, "
     "geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum, "
     "user_id, trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, "
@@ -1689,6 +1689,7 @@ class Database:
             69: self._migrate_v68_to_v69,
             70: self._migrate_v69_to_v70,
             71: self._migrate_v70_to_v71,
+            72: self._migrate_v71_to_v72,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4741,6 +4742,28 @@ class Database:
             )
             cur.execute("UPDATE schema_version SET version = 71 WHERE id = 1")
 
+    def _migrate_v71_to_v72(self) -> None:
+        """Personenart 'gastspieler' (#95 Teil 2): Spalte mitglied.art.
+
+        Gastspieler (Gastspielgenehmigung) sind keine Vereinsmitglieder, dürfen
+        aber trainieren/spielen: eigener Personenstamm-Datensatz mit
+        art='gastspieler' (ohne Mitgliedsnummer), von Beitragsläufen,
+        Aufnahmegebühr-Vorschlägen und der Mitglieder-Statistik ausgeklammert.
+        Bestandsdaten sind durchweg Vereinsmitglieder → DEFAULT 'mitglied'.
+        Freies TEXT-Feld ohne CHECK (analog mitglied_mannschaft.rolle); die
+        gültigen Werte erzwingt die API-Schicht. Der Audit-Trigger wird über die
+        geteilte Spaltenliste (_MITGLIED_COLS) neu erzeugt, damit art in
+        mitglied_history mitgeschrieben wird. Idempotent.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE mitglied ADD COLUMN IF NOT EXISTS "
+                        "art TEXT NOT NULL DEFAULT 'mitglied'")
+            cur.execute("ALTER TABLE mitglied_history ADD COLUMN IF NOT EXISTS art TEXT")
+            cur.execute(_FN_MITGLIED_AUDIT_INSERT)
+            cur.execute(_FN_MITGLIED_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 72 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -4830,6 +4853,7 @@ class Database:
               eintrittsdatum    TEXT,
               austrittsdatum    TEXT,
               status            TEXT NOT NULL DEFAULT 'aktiv',
+              art               TEXT NOT NULL DEFAULT 'mitglied',
               zahlungsart       TEXT NOT NULL,
               iban              TEXT,
               bic               TEXT,
@@ -4870,6 +4894,7 @@ class Database:
               eintrittsdatum    TEXT,
               austrittsdatum    TEXT,
               status            TEXT,
+              art               TEXT,
               zahlungsart       TEXT,
               iban              TEXT,
               bic               TEXT,

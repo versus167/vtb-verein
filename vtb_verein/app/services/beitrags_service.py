@@ -575,7 +575,10 @@ class BeitragsService:
         regex-geschützt gegen ungültige Werte).
         """
         joins: list[str] = []
-        where: list[str] = ["m.deleted_at IS NULL"]
+        # Gastspieler (art='gastspieler') sind keine Vereinsmitglieder und werden
+        # nie beitragspflichtig – auch nicht über Abteilungsregeln, obwohl sie
+        # eine mitglied_abteilung-Zuordnung haben (Gast-Kreis der Termine, #95).
+        where: list[str] = ["m.deleted_at IS NULL", "m.art = 'mitglied'"]
         params: list = []
 
         # Einzel-Vorschau: nur dieses Mitglied (Klausel + Param zusammen, damit die

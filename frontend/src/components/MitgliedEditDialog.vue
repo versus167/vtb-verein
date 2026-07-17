@@ -8,7 +8,8 @@
     <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:680px;max-width:900px'">
       <q-card-section class="row items-center q-pb-none">
         <div class="text-h6 col">
-          <template v-if="isNewLocal">Als Vereinsmitglied erfassen</template>
+          <template v-if="isNewLocal">{{ istGast ? 'Gastspieler erfassen' : 'Als Vereinsmitglied erfassen' }}</template>
+          <template v-else-if="istGast">Gastspieler</template>
           <template v-else>{{ form.mitgliedsnummer != null ? 'Mitglied ' + form.mitgliedsnummer : 'Mitglied' }}</template>
           <span v-if="mitgliedName" class="text-weight-regular">{{ ' – ' + mitgliedName }}</span>
         </div>
@@ -31,13 +32,20 @@
         <q-tab-panels v-model="tab" animated style="max-height:68vh; overflow-y:auto">
           <!-- ── Stammdaten ───────────────────────────────────── -->
           <q-tab-panel name="stammdaten" class="q-gutter-sm">
+            <q-btn-toggle v-model="form.art" :options="artOptions" :disable="!canWrite"
+              unelevated rounded dense no-caps toggle-color="primary" />
+            <div v-if="istGast" class="text-caption text-grey-7">
+              <q-icon name="info" size="xs" /> Gastspieler (Gastspielgenehmigung) sind keine
+              Vereinsmitglieder: keine Mitgliedsnummer, keine Beiträge, zählen nicht in der
+              Statistik – können aber Abteilungen/Mannschaften zugeordnet werden.
+            </div>
             <div class="row q-gutter-sm">
               <q-input v-model="form.vorname" label="Vorname *" outlined dense class="col" :readonly="!canWrite" />
               <q-input v-model="form.nachname" label="Nachname *" outlined dense class="col" :readonly="!canWrite" />
             </div>
             <div class="row q-gutter-sm">
-              <q-input v-if="!personMode" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
-              <q-input v-model="form.geburtsdatum" label="Geburtsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-input v-if="!personMode && !istGast" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.geburtsdatum" :label="istGast ? 'Geburtsdatum' : 'Geburtsdatum *'" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-select
                 v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
                 :options="geschlechtOptions" emit-value map-options clearable
@@ -47,11 +55,13 @@
             <!-- E-Mail nur im Mitglieder-Kontext direkt; im Personen-Kontext über den Kontakte-Tab pflegen -->
             <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
             <q-input v-model="form.telefon" label="Telefon" outlined dense :readonly="!canWrite" />
+            <!-- Auch Gastspieler haben Ein-/Austritt: Zeitraum der Gastspielgenehmigung -->
             <div class="row q-gutter-sm">
               <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-input v-model="form.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
             </div>
             <q-select
+              v-if="!istGast"
               v-model="form.status" label="Vereinsstatus" outlined dense
               :options="statusOptions" :readonly="!canWrite"
             />
@@ -65,7 +75,7 @@
                 <q-input v-model="form.land" label="Land" outlined dense :readonly="!canWrite" />
               </div>
             </q-expansion-item>
-            <q-expansion-item label="Zahlung / SEPA" dense icon="payments">
+            <q-expansion-item v-if="!istGast" label="Zahlung / SEPA" dense icon="payments">
               <div class="q-gutter-sm q-pt-sm">
                 <q-select v-model="form.zahlungsart" :options="zahlungsartOptionen"
                   emit-value map-options label="Zahlungsart" outlined dense :readonly="!canWrite" />
@@ -74,7 +84,7 @@
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
               </div>
             </q-expansion-item>
-            <q-expansion-item label="Übungsleiter" dense icon="sports">
+            <q-expansion-item v-if="!istGast" label="Übungsleiter" dense icon="sports">
               <div class="q-gutter-sm q-pt-sm">
                 <q-input v-model="form.qualifikation" label="Übungsleiterqualifikation"
                   outlined dense :readonly="!canWrite"
@@ -572,6 +582,12 @@ function getMitgliedId() {
 }
 
 // ── Stammdaten ───────────────────────────────────────────────
+// Personenart: Gastspieler (Gastspielgenehmigung) sind keine Vereinsmitglieder –
+// ohne Mitgliedsnummer/Eintritt/Zahlung, ausgeklammert aus Beiträgen & Statistik.
+const artOptions = [
+  { label: 'Vereinsmitglied', value: 'mitglied' },
+  { label: 'Gastspieler', value: 'gastspieler' },
+]
 const statusOptions = ['aktiv', 'passiv', 'ausgetreten']
 const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
 const geschlechtOptions = [
@@ -589,7 +605,8 @@ const zahlungsartOptionen = [
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
-  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', zahlungsart: 'lastschrift',
+  eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', art: 'mitglied',
+  zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
   trainerlizenz_nr: null, qualifikation: null,
   trainerlizenz_gueltig_von: null, trainerlizenz_gueltig_bis: null,
@@ -600,6 +617,7 @@ const form = ref(emptyForm())
 const pristineForm = ref(emptyForm())
 const savingStamm = ref(false)
 const stammError = ref('')
+const istGast = computed(() => form.value.art === 'gastspieler')
 // Steuert den Nachfrage-Dialog beim Schließen mit ungespeicherten Stammdaten.
 const closeConfirmOpen = ref(false)
 
@@ -1010,11 +1028,13 @@ async function reloadTeams() {
 // ── Stammdaten speichern ─────────────────────────────────────
 async function saveStammdaten() {
   stammError.value = ''
+  // Eintrittsdatum ist auch bei Gastspielern Pflicht (Beginn der Gastspielgenehmigung);
+  // nur das Geburtsdatum bleibt für Gastspieler optional.
   if (!form.value.eintrittsdatum) {
     stammError.value = 'Eintrittsdatum ist erforderlich.'
     return false
   }
-  if (!form.value.geburtsdatum) {
+  if (!istGast.value && !form.value.geburtsdatum) {
     stammError.value = 'Geburtsdatum ist erforderlich.'
     return false
   }
@@ -1054,6 +1074,7 @@ async function saveStammdaten() {
         eintrittsdatum: form.value.eintrittsdatum || null,
         austrittsdatum: form.value.austrittsdatum || null,
         status: form.value.status,
+        art: form.value.art || 'mitglied',
         zahlungsart: form.value.zahlungsart || '',
         iban: form.value.iban || null,
         bic: form.value.bic || null,

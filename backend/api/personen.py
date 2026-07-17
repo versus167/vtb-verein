@@ -43,10 +43,18 @@ class PersonCreate(BaseModel):
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     mitglied_status: str = 'aktiv'
+    art: str = 'mitglied'                   # 'mitglied' | 'gastspieler' (#95 Teil 2)
 
     @field_validator('eintrittsdatum', 'austrittsdatum', 'geburtsdatum', 'abgerechnet_bis', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return _none_if_empty(v)
+
+    @field_validator('art')
+    @classmethod
+    def _art_gueltig(cls, v):
+        if v not in ('mitglied', 'gastspieler'):
+            raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
+        return v
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -84,12 +92,20 @@ class PersonMitgliedUpdate(BaseModel):
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
     status: str = 'aktiv'
+    art: str = 'mitglied'                   # 'mitglied' | 'gastspieler' (#95 Teil 2)
 
     @field_validator('eintrittsdatum', 'austrittsdatum', 'geburtsdatum', 'abgerechnet_bis',
                      'trainerlizenz_gueltig_bis', 'trainerlizenz_gueltig_von',
                      'trainerlizenz_nr', mode='before')
     @classmethod
     def empty_str_to_none(cls, v): return _none_if_empty(v)
+
+    @field_validator('art')
+    @classmethod
+    def _art_gueltig(cls, v):
+        if v not in ('mitglied', 'gastspieler'):
+            raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
+        return v
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -152,10 +168,20 @@ def _require_permissions(user):
         raise HTTPException(status_code=403, detail="Nur mit dem Recht, Berechtigungen zu vergeben, dürfen Login-Accounts angelegt werden")
 
 
-def _require_eintrittsdatum(value):
-    """Ein Vereinsmitglied muss immer ein Eintrittsdatum haben (Ticket #29)."""
-    if not (value or '').strip():
+def _require_eintrittsdatum(data):
+    """Jede Person im Personenstamm braucht ein Eintrittsdatum (Ticket #29) –
+    bei Gastspielern ist das der Beginn der Gastspielgenehmigung."""
+    if not (data.eintrittsdatum or '').strip():
         raise HTTPException(status_code=422, detail="Eintrittsdatum ist erforderlich")
+
+
+def _apply_art(db, m, art: str) -> None:
+    """Setzt die Personenart und zieht bei der Umwandlung Gastspieler →
+    Vereinsmitglied die bislang fehlende Mitgliedsnummer nach (Gastspieler
+    verbrauchen keine; ein Rückwechsel behält eine bereits vergebene Nummer)."""
+    m.art = art
+    if art == 'mitglied' and m.mitgliedsnummer is None:
+        m.mitgliedsnummer = db.get_next_mitgliedsnummer()
 
 
 def _mitglied_to_dict(m) -> dict:
@@ -177,6 +203,7 @@ def _mitglied_to_dict(m) -> dict:
         'eintrittsdatum': m.eintrittsdatum,
         'austrittsdatum': m.austrittsdatum,
         'status': m.status,
+        'art': m.art,
         'zahlungsart': m.zahlungsart,
         'iban': m.iban,
         'bic': m.bic,
@@ -309,7 +336,7 @@ def list_personen(user: CurrentUser, db: DB):
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
-                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
+                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status, m.art,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        m.trainerlizenz_gueltig_von, m.trainerlizenz_gueltig_bis,
                        m.trainerlizenz_nr, m.qualifikation,
@@ -329,7 +356,7 @@ def list_personen(user: CurrentUser, db: DB):
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
-                       m.eintrittsdatum, m.austrittsdatum, m.status,
+                       m.eintrittsdatum, m.austrittsdatum, m.status, m.art,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        m.trainerlizenz_gueltig_von, m.trainerlizenz_gueltig_bis,
                        m.trainerlizenz_nr, m.qualifikation,
@@ -366,7 +393,7 @@ def list_personen(user: CurrentUser, db: DB):
                 strasse=r['strasse'], plz=r['plz'], ort=r['ort'], land=r['land'],
                 email=r['m_email'], telefon=r['telefon'],
                 eintrittsdatum=r['eintrittsdatum'], austrittsdatum=r['austrittsdatum'],
-                status=r['m_status'], zahlungsart=r['zahlungsart'],
+                status=r['m_status'], art=r['art'], zahlungsart=r['zahlungsart'],
                 iban=r['iban'], bic=r['bic'], kontoinhaber=r['kontoinhaber'],
                 abgerechnet_bis=r['abgerechnet_bis'], user_id=r['m_user_id'],
                 trainerlizenz_gueltig_von=r['trainerlizenz_gueltig_von'],
@@ -400,7 +427,7 @@ def list_deleted_personen(user: CurrentUser, db: DB):
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
-                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status,
+                       m.eintrittsdatum, m.austrittsdatum, m.status AS m_status, m.art,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        m.user_id AS m_user_id, m.version AS m_version,
                        m.created_at AS m_created_at, m.created_by AS m_created_by,
@@ -415,7 +442,7 @@ def list_deleted_personen(user: CurrentUser, db: DB):
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='telefon' AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
-                       m.eintrittsdatum, m.austrittsdatum, m.status,
+                       m.eintrittsdatum, m.austrittsdatum, m.status, m.art,
                        m.zahlungsart, m.iban, m.bic, m.kontoinhaber, m.abgerechnet_bis,
                        NULL, m.version,
                        m.created_at, m.created_by, m.updated_at, m.updated_by
@@ -444,7 +471,7 @@ def list_deleted_personen(user: CurrentUser, db: DB):
                 strasse=r['strasse'], plz=r['plz'], ort=r['ort'], land=r['land'],
                 email=r['m_email'], telefon=r['telefon'],
                 eintrittsdatum=r['eintrittsdatum'], austrittsdatum=r['austrittsdatum'],
-                status=r['m_status'], zahlungsart=r['zahlungsart'],
+                status=r['m_status'], art=r['art'], zahlungsart=r['zahlungsart'],
                 iban=r['iban'], bic=r['bic'], kontoinhaber=r['kontoinhaber'],
                 abgerechnet_bis=r['abgerechnet_bis'], user_id=r['m_user_id'],
                 version=r['m_version'], created_at=r['m_created_at'],
@@ -468,13 +495,13 @@ def create_person(data: PersonCreate, user: CurrentUser, db: DB):
         if data.vorname and data.nachname:
             # Reine Mitglieds-Anlage (kein Login-Account) – Schreibrecht genügt.
             _require_write(user)
-            _require_eintrittsdatum(data.eintrittsdatum)
+            _require_eintrittsdatum(data)
             mitglied_data = {
                 'geburtsdatum': data.geburtsdatum, 'geschlecht': data.geschlecht,
                 'strasse': data.strasse, 'plz': data.plz, 'ort': data.ort, 'land': data.land,
                 'telefon': data.telefon,
                 'eintrittsdatum': data.eintrittsdatum, 'austrittsdatum': data.austrittsdatum,
-                'status': data.mitglied_status, 'zahlungsart': data.zahlungsart,
+                'status': data.mitglied_status, 'art': data.art, 'zahlungsart': data.zahlungsart,
                 'iban': data.iban, 'bic': data.bic, 'kontoinhaber': data.kontoinhaber,
                 'abgerechnet_bis': data.abgerechnet_bis,
                 'email': data.email,  # Für _create_initial_kontakte in create_mitglied_ohne_user
@@ -535,11 +562,12 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
 @router.put("/{user_id}/mitglied")
 def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     _require_write(user)
-    _require_eintrittsdatum(data.eintrittsdatum)
+    _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     m = db.get_mitglied_by_user_id(user_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Kein Mitglied-Datensatz für diesen User")
+    _apply_art(db, m, data.art)
     m.vorname = data.vorname
     m.nachname = data.nachname
     m.geburtsdatum = data.geburtsdatum
@@ -577,7 +605,7 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
 def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
     _require_write(user)
-    _require_eintrittsdatum(data.eintrittsdatum)
+    _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     u = db.get_user_by_id(user_id)
     if u is None:
@@ -589,7 +617,7 @@ def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: Cu
         geburtsdatum=data.geburtsdatum, geschlecht=data.geschlecht,
         strasse=data.strasse, plz=data.plz, ort=data.ort, land=data.land,
         eintrittsdatum=data.eintrittsdatum, austrittsdatum=data.austrittsdatum,
-        status=data.status, zahlungsart=data.zahlungsart,
+        status=data.status, art=data.art, zahlungsart=data.zahlungsart,
         iban=data.iban, bic=data.bic, kontoinhaber=data.kontoinhaber,
         abgerechnet_bis=data.abgerechnet_bis,
         trainerlizenz_nr=data.trainerlizenz_nr, qualifikation=data.qualifikation,
@@ -618,12 +646,13 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     den user_id-basierten Endpoint /{user_id}/mitglied erreichbar sind.
     """
     _require_write(user)
-    _require_eintrittsdatum(data.eintrittsdatum)
+    _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    _apply_art(db, m, data.art)
     m.vorname = data.vorname
     m.nachname = data.nachname
     m.geburtsdatum = data.geburtsdatum

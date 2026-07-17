@@ -24,7 +24,7 @@ _MITGLIED_COLS = """
         (SELECT k.wert FROM mitglied_kontakt k
            WHERE k.mitglied_id = mitglied.id AND k.typ = 'telefon'
              AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS telefon,
-        eintrittsdatum, austrittsdatum, status,
+        eintrittsdatum, austrittsdatum, status, art,
         zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
         geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
         trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, trainerlizenz_gueltig_von,
@@ -153,8 +153,10 @@ class MitgliedRepository(BaseRepository):
         über das MitgliedKontaktRepository (Schema v24, voll normalisiert).
         """
         with self.cursor() as cur:
-            # Auto-assign mitgliedsnummer if not provided
-            if mitglied.mitgliedsnummer is None:
+            # Auto-assign mitgliedsnummer if not provided.
+            # Gastspieler sind keine Vereinsmitglieder und verbrauchen keine
+            # Mitgliedsnummer (bleibt NULL; UNIQUE erlaubt mehrere NULLs).
+            if mitglied.mitgliedsnummer is None and mitglied.art != 'gastspieler':
                 mitglied.mitgliedsnummer = self.get_next_mitgliedsnummer()
 
             cur.execute(
@@ -162,18 +164,18 @@ class MitgliedRepository(BaseRepository):
                 INSERT INTO mitglied (
                     mitgliedsnummer, vorname, nachname, geburtsdatum,
                     strasse, plz, ort, land,
-                    eintrittsdatum, austrittsdatum, status,
+                    eintrittsdatum, austrittsdatum, status, art,
                     zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                     geschlecht, bemerkungen, sepa_mandatsref, sepa_mandatsdatum,
                     trainerlizenz_nr, qualifikation, trainerlizenz_gueltig_bis, trainerlizenz_gueltig_von,
                     user_id, created_by, updated_at, updated_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
                 (
                     mitglied.mitgliedsnummer, mitglied.vorname, mitglied.nachname, mitglied.geburtsdatum,
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land,
-                    mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
+                    mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status, mitglied.art,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
                     mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.trainerlizenz_nr, mitglied.qualifikation, mitglied.trainerlizenz_gueltig_bis,
@@ -210,7 +212,7 @@ class MitgliedRepository(BaseRepository):
                 UPDATE mitglied
                 SET mitgliedsnummer = %s, vorname = %s, nachname = %s, geburtsdatum = %s,
                     strasse = %s, plz = %s, ort = %s, land = %s,
-                    eintrittsdatum = %s, austrittsdatum = %s, status = %s,
+                    eintrittsdatum = %s, austrittsdatum = %s, status = %s, art = %s,
                     zahlungsart = %s, iban = %s, bic = %s, kontoinhaber = %s, abgerechnet_bis = %s,
                     geschlecht = %s, bemerkungen = %s, sepa_mandatsref = %s, sepa_mandatsdatum = %s,
                     trainerlizenz_nr = %s, qualifikation = %s, trainerlizenz_gueltig_bis = %s,
@@ -224,7 +226,7 @@ class MitgliedRepository(BaseRepository):
                 (
                     mitglied.mitgliedsnummer, mitglied.vorname, mitglied.nachname, mitglied.geburtsdatum,
                     mitglied.strasse, mitglied.plz, mitglied.ort, mitglied.land,
-                    mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status,
+                    mitglied.eintrittsdatum, mitglied.austrittsdatum, mitglied.status, mitglied.art,
                     mitglied.zahlungsart, mitglied.iban, mitglied.bic, mitglied.kontoinhaber, mitglied.abgerechnet_bis,
                     mitglied.geschlecht, mitglied.bemerkungen, mitglied.sepa_mandatsref, mitglied.sepa_mandatsdatum,
                     mitglied.trainerlizenz_nr, mitglied.qualifikation, mitglied.trainerlizenz_gueltig_bis,
@@ -276,7 +278,7 @@ class MitgliedRepository(BaseRepository):
                 """
                 SELECT id, version, mitgliedsnummer, vorname, nachname, geburtsdatum,
                        geschlecht, strasse, plz, ort, land, email, telefon,
-                       eintrittsdatum, austrittsdatum, status,
+                       eintrittsdatum, austrittsdatum, status, art,
                        zahlungsart, iban, bic, kontoinhaber, abgerechnet_bis,
                        user_id, created_at, created_by, updated_at, updated_by,
                        deleted_at, deleted_by
