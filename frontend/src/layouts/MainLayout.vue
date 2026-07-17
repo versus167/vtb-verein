@@ -4,12 +4,13 @@
       <q-toolbar>
         <!-- Kopfzeilen-Buttons am Handy ohne dense (42 statt 34 px) – leichter treffbar. -->
         <q-btn flat :dense="$q.screen.gt.sm" round icon="menu" @click="drawer = !drawer" />
-        <q-toolbar-title>
-          VTB<span v-if="pageTitle"> – {{ pageTitle }}</span>
-        </q-toolbar-title>
+        <q-toolbar-title>{{ toolbarTitle }}</q-toolbar-title>
+        <!-- Seiten-Refresh nur am Desktop: am Handy wirkte er neben „App neu laden"
+             im Konto-Menü wie ein zweiter Reload-Knopf. Auto-Refresh bei App-Fokus
+             bleibt aktiv. -->
         <q-btn
-          v-if="hasHandler"
-          flat :dense="$q.screen.gt.sm" round icon="refresh"
+          v-if="hasHandler && $q.screen.gt.sm"
+          flat dense round icon="refresh"
           :loading="refreshing"
           @click="triggerRefresh"
         >
@@ -292,6 +293,14 @@ watch(
   },
   { immediate: true },
 )
+
+// Kopfzeilen-Titel: am Desktop „VTB – <Seite>". Am Handy ohne „VTB – "-Präfix
+// nur der Seitenname — und auf der Übersicht gar nichts, dort steht bereits die
+// „Willkommen …"-Begrüßung auf der Seite.
+const toolbarTitle = computed(() => {
+  if ($q.screen.gt.sm) return pageTitle.value ? `VTB – ${pageTitle.value}` : 'VTB'
+  return route.name === 'dashboard' ? '' : pageTitle.value
+})
 
 // Zwei gebündelte Bereiche: „Einstellungen" (Funktionen/Abteilungen) und „Sonstiges"
 // (Import/Bereinigung/Fibu-Export/Protokoll). Jeweils sichtbar, sobald der Nutzer
