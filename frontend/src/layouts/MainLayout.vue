@@ -15,8 +15,11 @@
         >
           <q-tooltip>Aktualisieren</q-tooltip>
         </q-btn>
+        <!-- Push- und Theme-Button nur auf der Übersicht — auf Unterseiten nehmen
+             sie am Handy dem Seitentitel zu viel Platz weg. Am Desktop überall. -->
         <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
-        <q-btn flat :dense="$q.screen.gt.sm" round :icon="darkModeIcon" @click="toggleDarkMode">
+        <PushStatusButton v-if="zeigeKopfExtras" />
+        <q-btn v-if="zeigeKopfExtras" flat :dense="$q.screen.gt.sm" round :icon="darkModeIcon" @click="toggleDarkMode">
           <q-tooltip>{{ darkModeLabel }}</q-tooltip>
         </q-btn>
         <q-btn flat :dense="$q.screen.gt.sm" round icon="account_circle">
@@ -260,6 +263,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
+import PushStatusButton from 'src/components/PushStatusButton.vue'
 import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
 
 const router = useRouter()
@@ -274,6 +278,10 @@ const kontoRolle = computed(() => {
   const rollen = { admin: 'Administrator', mitglied: 'Mitglied' }
   return rollen[auth.user?.role] || auth.user?.role || ''
 })
+
+// Push-/Theme-Button: am Handy nur auf der Übersicht (Platz für den Seitentitel),
+// am Desktop auf allen Seiten.
+const zeigeKopfExtras = computed(() => $q.screen.gt.sm || route.name === 'dashboard')
 
 // Seitentitel aus der Route (meta.title) — im Header und im Browser-Tab.
 const pageTitle = computed(() => route.meta?.title || '')
