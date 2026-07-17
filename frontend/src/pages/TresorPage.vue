@@ -2,7 +2,7 @@
   <q-page class="q-pa-md">
     <!-- Kopfzeile im Schließanlage-Stil: Titel + Aktion, darunter Status-Pills -->
     <div class="row items-center q-mb-sm">
-      <div class="text-h5">Passwörter</div>
+      <div class="text-h5">Passwörter/Kontakte</div>
       <q-space />
       <q-btn v-if="darfVerwalten" color="primary" unelevated no-caps icon="add" label="Neuer Tresor"
         class="vtb-neu-btn" @click="openTresorDialog()" />
@@ -159,6 +159,50 @@
           <div v-if="eintraege.length === 0" class="text-grey text-center q-py-lg">
             Noch keine Einträge in diesem Tresor.
           </div>
+
+          <!-- Wichtige Kontakte (#106): Firmen/Notdienste mit direkt anklickbarer Nummer -->
+          <template v-if="kontakte.length > 0 || selectedTresor?.darf_schreiben">
+            <div class="row items-center q-mb-sm q-mt-lg">
+              <div class="text-subtitle1 text-weight-medium">Wichtige Kontakte</div>
+              <q-space />
+              <q-btn v-if="selectedTresor?.darf_schreiben" color="primary" unelevated dense
+                icon="add" label="Neuer Kontakt" @click="openKontaktDialog()" />
+            </div>
+
+            <q-card v-for="k in kontakte" :key="'k' + k.id" class="vtb-karte q-mb-md">
+              <q-card-section class="row items-start no-wrap q-gutter-sm">
+                <div class="vtb-icon vtb-icon--klein"><q-icon name="support_agent" size="20px" /></div>
+                <div class="col" style="min-width: 0">
+                  <div class="text-weight-bold ellipsis">{{ k.name }}</div>
+                  <div v-if="k.ansprechpartner" class="text-caption text-grey">
+                    <q-icon name="person" size="xs" /> {{ k.ansprechpartner }}
+                  </div>
+                  <div v-if="k.telefon || k.email" class="row items-center q-gutter-md q-mt-xs">
+                    <a v-if="k.telefon" :href="'tel:' + telHref(k.telefon)"
+                      class="text-primary text-weight-medium" style="text-decoration: none">
+                      <q-icon name="call" size="xs" /> {{ k.telefon }}
+                    </a>
+                    <a v-if="k.email" :href="'mailto:' + k.email"
+                      class="text-primary" style="text-decoration: none">
+                      <q-icon name="mail" size="xs" /> {{ k.email }}
+                    </a>
+                  </div>
+                  <div v-if="k.notiz" class="text-caption text-grey-8 q-mt-xs">
+                    <q-icon name="sticky_note_2" size="xs" /> {{ k.notiz }}
+                  </div>
+                </div>
+                <div v-if="selectedTresor?.darf_schreiben" class="row items-center no-wrap">
+                  <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'sm'"
+                    icon="edit" color="grey-8" @click="openKontaktDialog(k)" />
+                  <q-btn flat dense round :size="$q.screen.lt.md ? 'md' : 'sm'"
+                    icon="delete" color="negative" @click="deleteKontakt(k)" />
+                </div>
+              </q-card-section>
+            </q-card>
+            <div v-if="kontakte.length === 0" class="text-grey text-center q-py-md">
+              Noch keine Kontakte hinterlegt.
+            </div>
+          </template>
         </div>
         <div v-else class="text-grey text-center q-py-xl">
           Wähle {{ $q.screen.lt.md ? 'oben' : 'links' }} einen Tresor aus.
@@ -212,6 +256,29 @@
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn unelevated color="primary" :label="eintragForm.id ? 'Speichern' : 'Anlegen'"
             :loading="saving" @click="saveEintrag" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- Kontakt anlegen/bearbeiten (#106) -->
+    <q-dialog v-model="kontaktDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:460px'">
+        <q-card-section class="text-h6">{{ kontaktForm.id ? 'Kontakt bearbeiten' : 'Neuer Kontakt' }}</q-card-section>
+        <q-card-section class="q-gutter-sm q-pt-none">
+          <q-input v-model="kontaktForm.name" label="Firma / Bezeichnung *" outlined dense autofocus />
+          <q-input v-model="kontaktForm.ansprechpartner" label="Ansprechpartner" outlined dense />
+          <q-input v-model="kontaktForm.telefon" label="Telefon" outlined dense type="tel" />
+          <q-input v-model="kontaktForm.email" label="E-Mail" outlined dense type="email" />
+          <q-input v-model="kontaktForm.notiz" label="Notiz" outlined dense type="textarea" autogrow />
+          <div class="text-caption text-grey-6">
+            Kontakte sind für alle mit Zugriff auf diesen Tresor sichtbar (unverschlüsselt).
+          </div>
+          <div v-if="kontaktError" class="text-negative text-caption">{{ kontaktError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat label="Abbrechen" v-close-popup />
+          <q-btn unelevated color="primary" :label="kontaktForm.id ? 'Speichern' : 'Anlegen'"
+            :loading="saving" @click="saveKontakt" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -371,6 +438,7 @@ const darfVerwalten = ref(false)
 const tresore = ref([])
 const selectedId = ref(null)
 const eintraege = ref([])
+const kontakte = ref([])
 const revealed = ref({})           // eintrag_id -> { passwort, notiz }
 const revealTimers = {}
 const saving = ref(false)
@@ -393,22 +461,27 @@ async function loadTresore() {
   if (selectedId.value && !data.some(t => t.id === selectedId.value)) {
     selectedId.value = null
     eintraege.value = []
+    kontakte.value = []
   }
 }
 async function loadEintraege(id) {
   const { data } = await api.get(`/api/tresor/${id}/eintraege`)
   eintraege.value = data.eintraege
 }
+async function loadKontakte(id) {
+  const { data } = await api.get(`/api/tresor/${id}/kontakte`)
+  kontakte.value = data.kontakte
+}
 async function select(id) {
   selectedId.value = id
   clearReveals()
-  try { await loadEintraege(id) }
+  try { await Promise.all([loadEintraege(id), loadKontakte(id)]) }
   catch { $q.notify({ type: 'negative', message: 'Einträge konnten nicht geladen werden' }) }
 }
 async function refreshAll() {
   await loadStatus()
   await loadTresore()
-  if (selectedId.value) await loadEintraege(selectedId.value)
+  if (selectedId.value) await Promise.all([loadEintraege(selectedId.value), loadKontakte(selectedId.value)])
 }
 usePageRefresh(refreshAll)
 onMounted(async () => {
@@ -475,7 +548,7 @@ function deleteTresor(t) {
   }).onOk(async () => {
     try {
       await api.delete(`/api/tresor/${t.id}`)
-      if (selectedId.value === t.id) { selectedId.value = null; eintraege.value = [] }
+      if (selectedId.value === t.id) { selectedId.value = null; eintraege.value = []; kontakte.value = [] }
       await loadTresore()
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Löschen fehlgeschlagen' })
@@ -526,6 +599,57 @@ function deleteEintrag(e) {
     try {
       await api.delete(`/api/tresor/eintraege/${e.id}`)
       await Promise.all([loadEintraege(selectedId.value), loadTresore()])
+    } catch (err) {
+      $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Löschen fehlgeschlagen' })
+    }
+  })
+}
+
+// ── Kontakte (#106) ──
+const kontaktDialog = ref(false)
+const kontaktForm = ref({})
+const kontaktError = ref('')
+
+// tel:-Link verträgt keine Leer-/Sonderzeichen — nur Ziffern und führendes + behalten.
+function telHref(telefon) {
+  return (telefon || '').replace(/[^+\d]/g, '')
+}
+function openKontaktDialog(k = null) {
+  kontaktError.value = ''
+  kontaktForm.value = k
+    ? { id: k.id, name: k.name, ansprechpartner: k.ansprechpartner || '', telefon: k.telefon || '',
+        email: k.email || '', notiz: k.notiz || '', version: k.version }
+    : { id: null, name: '', ansprechpartner: '', telefon: '', email: '', notiz: '' }
+  kontaktDialog.value = true
+}
+async function saveKontakt() {
+  if (!kontaktForm.value.name.trim()) { kontaktError.value = 'Name darf nicht leer sein.'; return }
+  saving.value = true; kontaktError.value = ''
+  try {
+    const f = kontaktForm.value
+    const payload = {
+      name: f.name.trim(), ansprechpartner: f.ansprechpartner || null,
+      telefon: f.telefon || null, email: f.email || null, notiz: f.notiz || null,
+    }
+    if (f.id) {
+      await api.put(`/api/tresor/kontakte/${f.id}`, { ...payload, expected_version: f.version })
+    } else {
+      await api.post(`/api/tresor/${selectedId.value}/kontakte`, payload)
+    }
+    kontaktDialog.value = false
+    await loadKontakte(selectedId.value)
+  } catch (e) {
+    kontaktError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
+  } finally { saving.value = false }
+}
+function deleteKontakt(k) {
+  $q.dialog({
+    title: 'Kontakt löschen', message: `Kontakt „${k.name}" löschen?`,
+    cancel: true, ok: { label: 'Löschen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      await api.delete(`/api/tresor/kontakte/${k.id}`)
+      await loadKontakte(selectedId.value)
     } catch (err) {
       $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Löschen fehlgeschlagen' })
     }

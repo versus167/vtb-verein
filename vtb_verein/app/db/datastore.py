@@ -74,6 +74,7 @@ from app.db.tresor_repository import TresorRepository
 from app.db.tresor_freigabe_repository import TresorFreigabeRepository
 from app.db.tresor_eintrag_repository import TresorEintragRepository
 from app.db.tresor_zugriff_log_repository import TresorZugriffLogRepository
+from app.db.tresor_kontakt_repository import TresorKontaktRepository
 from app.db.termin_repository import TerminRepository
 from app.db.termin_zusage_repository import TerminZusageRepository
 from app.db.termin_serie_repository import TerminSerieRepository
@@ -196,6 +197,7 @@ class VereinsDB:
         self._tresor_freigabe_repo = TresorFreigabeRepository(self.conn)
         self._tresor_eintrag_repo = TresorEintragRepository(self.conn)
         self._tresor_zugriff_log_repo = TresorZugriffLogRepository(self.conn)
+        self._tresor_kontakt_repo = TresorKontaktRepository(self.conn)
 
         # Mannschafts-Termine (#95, Spielbetrieb Etappe 1)
         self._termin_repo = TerminRepository(self.conn)
@@ -346,6 +348,10 @@ class VereinsDB:
     @property
     def tresor_zugriff_log(self) -> TresorZugriffLogRepository:
         return self._tresor_zugriff_log_repo
+
+    @property
+    def tresor_kontakte(self) -> TresorKontaktRepository:
+        return self._tresor_kontakt_repo
 
     # --- Mannschafts-Termine (#95, Spielbetrieb Etappe 1) ---
     @property
