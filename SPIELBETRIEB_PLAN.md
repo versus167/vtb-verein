@@ -90,13 +90,21 @@ Import-Service mit **normalisiertem Spiel-Datensatz** bauen, damit die Quelle
 
 ## Offene Fragen
 
-- **Jugend/Eltern:** Reicht stellvertretendes Eintragen durch Trainer, oder
-  Eltern-Zugang über die Kontakt-E-Mail des Mitglieds? (Größte Auswirkung aufs
-  Konzept.)
 - **Antwortfristen/Strafenkatalog** (SpielerPlus-Features): gewünscht oder
   reicht die Erinnerung?
-- **Gastspieler/Probetraining:** nur Kader, oder ad hoc mannschaftsfremde
-  Mitglieder einladbar?
 - **Kritische Masse an Spieler-Logins:** ohne Accounts bleibt Stufe 2
   wirkungslos — ggf. Onboarding-Aktion (Magic-Link-Einladung an den Kader)
   einplanen.
+
+## Entschieden
+
+- **Jugend/Eltern** (2026-07-17): kein eigenes Eltern-/Vormund-Konzept nötig.
+  Der Zugang läuft ohnehin über die E-Mail-Adresse des Mitglieds (Magic-Link);
+  bei Jugendlichen geben die Eltern schlicht ihre eigene Adresse an und
+  antworten über das Konto des Kindes. Stellvertretendes Eintragen durch den
+  Trainer bleibt zusätzlich möglich.
+- **Gastspieler/Probetraining** (umgesetzt Juli 2026): Verwalter laden
+  Abteilungs-Mitglieder als Termin-Gäste ein — Gast = aktive Zusage ohne
+  Kader-Zugehörigkeit (v2026.07.16.110). Spieler mit Gastspielgenehmigung
+  (Nicht-Mitglieder) gibt es als eigene Personenart `art='gastspieler'` im
+  Personenstamm, ohne Mitgliedsnummer/Beiträge/Statistik (v2026.07.17.111).
