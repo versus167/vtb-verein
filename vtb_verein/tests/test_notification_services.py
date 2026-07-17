@@ -157,6 +157,49 @@ class TestNotificationService:
         mock_email.send_text_email.assert_called_once()
 
     @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_additiv_zu_email(self, mock_email):
+        """Push ist additiv (#108): Hauptkanal E-Mail + aktives Push-Gerät → beides."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='email')
+        push = MagicMock()
+        push.send_to_user.return_value = 1
+
+        result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
+
+        assert result is True
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message')
+        mock_email.send_text_email.assert_called_once()
+
+    @patch('app.services.notification_service.MatrixService')
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_additiv_zu_matrix(self, mock_email, mock_matrix):
+        """Push ist additiv (#108): Hauptkanal Matrix + aktives Push-Gerät → beides, keine E-Mail."""
+        mock_matrix.send_notification.return_value = True
+        user = self._create_test_user(preferred_contact='matrix', matrix_id='@user:matrix.org')
+        push = MagicMock()
+        push.send_to_user.return_value = 1
+
+        result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
+
+        assert result is True
+        push.send_to_user.assert_called_once()
+        mock_matrix.send_notification.assert_called_once()
+        mock_email.send_text_email.assert_not_called()
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_push_ok_trotz_email_fehler(self, mock_email):
+        """Hauptkanal E-Mail scheitert, aber Push hat zugestellt → insgesamt Erfolg."""
+        mock_email.send_text_email.return_value = False
+        user = self._create_test_user(preferred_contact='email')
+        push = MagicMock()
+        push.send_to_user.return_value = 1
+
+        result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
+
+        assert result is True
+        mock_email.send_text_email.assert_called_once()
+
+    @patch('app.services.notification_service.EmailService')
     def test_send_notification_push_without_service_uses_email(self, mock_email):
         """preferred_contact='push' ohne push_service → Push wird übersprungen, E-Mail."""
         mock_email.send_text_email.return_value = True

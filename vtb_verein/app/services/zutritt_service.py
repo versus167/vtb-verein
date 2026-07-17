@@ -97,7 +97,7 @@ def notify_alarme(db, alarme: list[dict]) -> int:
     sent = 0
     for u in empfaenger:
         try:
-            if NotificationService.send_notification(u, titel, text):
+            if NotificationService.send_notification(u, titel, text, push_service=db.push):
                 sent += 1
         except Exception:
             logger.exception("Alarm-Benachrichtigung an %s fehlgeschlagen.", u.username)
