@@ -53,6 +53,23 @@ class EintragUpdate(BaseModel):
     expected_version: int
 
 
+class KontaktCreate(BaseModel):
+    name: str
+    ansprechpartner: Optional[str] = None
+    telefon: Optional[str] = None
+    email: Optional[str] = None
+    notiz: Optional[str] = None
+
+
+class KontaktUpdate(BaseModel):
+    name: str
+    ansprechpartner: Optional[str] = None
+    telefon: Optional[str] = None
+    email: Optional[str] = None
+    notiz: Optional[str] = None
+    expected_version: int
+
+
 class FreigabeWrite(BaseModel):
     principal_typ: str   # 'user' | 'abteilung' | 'funktion'
     principal_id: int
@@ -161,9 +178,11 @@ def delete_tresor(tresor_id: int, user: CurrentUser, db: DB):
     _require_verwalten(user)
     if db.tresore.get(tresor_id) is None:
         raise HTTPException(404, "Tresor nicht gefunden")
-    # Einträge und Freigaben mit soft-deleten (Soft-Delete-Prinzip; Prune räumt später auf).
+    # Einträge, Kontakte und Freigaben mit soft-deleten (Soft-Delete-Prinzip; Prune räumt später auf).
     for e in db.tresor_eintraege.list_for_tresor(tresor_id):
         db.tresor_eintraege.mark_deleted(e.id, user.username)
+    for k in db.tresor_kontakte.list_for_tresor(tresor_id):
+        db.tresor_kontakte.mark_deleted(k.id, user.username)
     db.tresor_freigaben.revoke_alle_freigaben_fuer_tresor(tresor_id, user.username)
     db.tresore.mark_deleted(tresor_id, user.username)
 
@@ -255,6 +274,69 @@ def reveal_eintrag(eintrag_id: int, request: Request, user: CurrentUser, db: DB)
         "id": e.id, "titel": e.titel, "benutzername": e.benutzername, "url": e.url,
         "passwort": secret["passwort"], "notiz": secret["notiz"],
     }
+
+
+# ------------------------------------------------------------------- Kontakte
+# Wichtige Ansprechpartner (#106): Firma/Notdienst mit Telefon — unverschlüsselt,
+# damit die Nummer direkt anklickbar ist (tel:). Gleiche Freigaben wie die
+# Einträge des Tresors; der Vault-Key (VTB_VAULT_KEY) wird NICHT benötigt.
+@router.get("/{tresor_id}/kontakte")
+def list_kontakte(tresor_id: int, user: CurrentUser, db: DB):
+    if db.tresore.get(tresor_id) is None:
+        raise HTTPException(404, "Tresor nicht gefunden")
+    zugriff = _require_read(db, user, tresor_id)
+    return {
+        "darf_schreiben": zugriff == 'write',
+        "kontakte": [asdict(k) for k in db.tresor_kontakte.list_for_tresor(tresor_id)],
+    }
+
+
+@router.post("/{tresor_id}/kontakte", status_code=status.HTTP_201_CREATED)
+def create_kontakt(tresor_id: int, data: KontaktCreate, user: CurrentUser, db: DB):
+    if db.tresore.get(tresor_id) is None:
+        raise HTTPException(404, "Tresor nicht gefunden")
+    _require_write(db, user, tresor_id)
+    if not data.name.strip():
+        raise HTTPException(422, "Name darf nicht leer sein")
+    k = db.tresor_kontakte.create(
+        tresor_id, data.name.strip(),
+        (data.ansprechpartner or '').strip() or None,
+        (data.telefon or '').strip() or None,
+        (data.email or '').strip() or None,
+        (data.notiz or '').strip() or None,
+        user.username,
+    )
+    return asdict(k)
+
+
+@router.put("/kontakte/{kontakt_id}")
+def update_kontakt(kontakt_id: int, data: KontaktUpdate, user: CurrentUser, db: DB):
+    k = db.tresor_kontakte.get(kontakt_id)
+    if k is None:
+        raise HTTPException(404, "Kontakt nicht gefunden")
+    _require_write(db, user, k.tresor_id)
+    if not data.name.strip():
+        raise HTTPException(422, "Name darf nicht leer sein")
+    ok = db.tresor_kontakte.update(
+        kontakt_id, data.name.strip(),
+        (data.ansprechpartner or '').strip() or None,
+        (data.telefon or '').strip() or None,
+        (data.email or '').strip() or None,
+        (data.notiz or '').strip() or None,
+        user.username, data.expected_version,
+    )
+    if not ok:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+    return asdict(db.tresor_kontakte.get(kontakt_id))
+
+
+@router.delete("/kontakte/{kontakt_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_kontakt(kontakt_id: int, user: CurrentUser, db: DB):
+    k = db.tresor_kontakte.get(kontakt_id)
+    if k is None:
+        raise HTTPException(404, "Kontakt nicht gefunden")
+    _require_write(db, user, k.tresor_id)
+    db.tresor_kontakte.mark_deleted(kontakt_id, user.username)
 
 
 # ------------------------------------------------------------- Änderungsverlauf

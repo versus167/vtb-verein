@@ -125,7 +125,7 @@
             active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="vpn_key" /></q-item-section>
-            <q-item-section>Passwörter</q-item-section>
+            <q-item-section>Passwörter/Kontakte</q-item-section>
           </q-item>
 
           <q-item

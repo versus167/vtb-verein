@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 72
+SCHEMA_VERSION = 73
 
 
 # ---------------------------------------------------------------------------
@@ -1233,6 +1233,75 @@ _TRESOR_TRIGGERS = (
 )
 
 
+# ----------------------------------------------------------------------------
+# Tresor-Kontakte (Schema v73, #106): wichtige Ansprechpartner (Firma, Telefon)
+# je Tresor — Handwerker, Notdienste u. ä. Bewusst UNverschlüsselt: Telefonnummern
+# sind keine Secrets und sollen in der App direkt anklickbar sein (tel:-Link).
+# Zugriff läuft über die bestehenden tresor_freigaben desselben Tresors.
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v72→v73.
+# ----------------------------------------------------------------------------
+_TRESOR_KONTAKT_COLS = (
+    "id, version, tresor_id, name, ansprechpartner, telefon, email, notiz, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TRESOR_KONTAKT_VALS = ", ".join("NEW." + c.strip() for c in _TRESOR_KONTAKT_COLS.split(","))
+
+_FN_TRESOR_KONTAKT_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_kontakt_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tresor_kontakt_history ({_TRESOR_KONTAKT_COLS}) VALUES ({_TRESOR_KONTAKT_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TRESOR_KONTAKT_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tresor_kontakt_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tresor_kontakt_history ({_TRESOR_KONTAKT_COLS}) VALUES ({_TRESOR_KONTAKT_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TRESOR_KONTAKT = """
+    CREATE TABLE IF NOT EXISTS tresor_kontakt (
+      id              SERIAL PRIMARY KEY,
+      tresor_id       INTEGER NOT NULL REFERENCES tresor(id),
+      name            TEXT NOT NULL,
+      ansprechpartner TEXT,
+      telefon         TEXT,
+      email           TEXT,
+      notiz           TEXT,
+      version         INTEGER NOT NULL DEFAULT 1,
+      created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by      TEXT NOT NULL,
+      deleted_at      TEXT,
+      deleted_by      TEXT
+    );
+    CREATE TABLE IF NOT EXISTS tresor_kontakt_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      tresor_id INTEGER, name TEXT, ansprechpartner TEXT, telefon TEXT,
+      email TEXT, notiz TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TRESOR_KONTAKT_INDEXES = (
+    ("idx_tresor_kontakt_tresor_id",  "tresor_kontakt(tresor_id)"),
+    ("idx_tresor_kontakt_deleted_at", "tresor_kontakt(deleted_at)"),
+    ("idx_tresor_kontakt_history_id", "tresor_kontakt_history(id)"),
+)
+
+_TRESOR_KONTAKT_TRIGGERS = (
+    ('trig_tresor_kontakt_audit_insert', 'INSERT', 'tresor_kontakt', 'fn_tresor_kontakt_audit_insert'),
+    ('trig_tresor_kontakt_audit_update', 'UPDATE', 'tresor_kontakt', 'fn_tresor_kontakt_audit_update'),
+)
+
+
 # ============================================================================
 # Web-Push-Subscriptions (Schema v67, Ticket #96)
 # ----------------------------------------------------------------------------
@@ -1690,6 +1759,7 @@ class Database:
             70: self._migrate_v69_to_v70,
             71: self._migrate_v70_to_v71,
             72: self._migrate_v71_to_v72,
+            73: self._migrate_v72_to_v73,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4764,6 +4834,29 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 72 WHERE id = 1")
 
+    def _migrate_v72_to_v73(self) -> None:
+        """Tresor-Kontakte (#106): wichtige Ansprechpartner (Firma/Telefon) je Tresor.
+
+        Neue Tabelle tresor_kontakt (+_history, Audit-Trigger, Indexe) für unverschlüsselte
+        Kontaktdaten (Handwerker, Notdienste u. ä.) — Telefonnummern sind keine Secrets und
+        sollen direkt anklickbar sein. Zugriff über die bestehenden tresor_freigaben.
+        Idempotent; DDL/Trigger/Index-Konstanten geteilt mit dem Frischaufbau, zum Schluss
+        `_normalize_audit_timestamps` (identische Spaltentypen fresh == migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TRESOR_KONTAKT)
+            cur.execute(_FN_TRESOR_KONTAKT_AUDIT_INSERT)
+            cur.execute(_FN_TRESOR_KONTAKT_AUDIT_UPDATE)
+            for name, event, table, fn in _TRESOR_KONTAKT_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TRESOR_KONTAKT_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 73 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -6008,6 +6101,9 @@ class Database:
         # Passwort-Tresor (Schema v66): Tresore, Freigaben, verschlüsselte Einträge +
         # append-only Zugriffslog. DDL geteilt mit Migration v65→v66.
         cur.execute(_DDL_TRESOR)
+        # Tresor-Kontakte (Schema v73, #106): unverschlüsselte Ansprechpartner je
+        # Tresor. DDL geteilt mit Migration v72→v73.
+        cur.execute(_DDL_TRESOR_KONTAKT)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
@@ -6236,6 +6332,8 @@ class Database:
         cur.execute(_FN_TRESOR_FREIGABE_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_INSERT)
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
+        cur.execute(_FN_TRESOR_KONTAKT_AUDIT_INSERT)
+        cur.execute(_FN_TRESOR_KONTAKT_AUDIT_UPDATE)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
         cur.execute(_FN_TERMINE_AUDIT_INSERT)
@@ -6849,6 +6947,7 @@ class Database:
             *_ZUTRITT_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
+            *_TRESOR_KONTAKT_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
             *_TERMINE_TRIGGERS,
             *_TERMIN_ZUSAGE_TRIGGERS,
@@ -6967,6 +7066,7 @@ class Database:
             *_ZUTRITT_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
+            *_TRESOR_KONTAKT_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,

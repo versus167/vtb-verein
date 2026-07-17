@@ -42,7 +42,8 @@ def clean(db):
     with db.cursor() as cur:
         cur.execute(
             "TRUNCATE tresor, tresor_history, tresor_freigabe, tresor_freigabe_history, "
-            "tresor_eintrag, tresor_eintrag_history, tresor_zugriff_log RESTART IDENTITY CASCADE"
+            "tresor_eintrag, tresor_eintrag_history, tresor_kontakt, tresor_kontakt_history, "
+            "tresor_zugriff_log RESTART IDENTITY CASCADE"
         )
         # Membership-Tabellen samt History leeren – andere Integrationstests machen
         # RESTART IDENTITY auf mitglied_funktion ohne die _history zu räumen, sonst
@@ -200,6 +201,36 @@ def test_restore_old_password_creates_new_version(db):
     assert after.version == 3
     assert json.loads(f.decrypt(bytes(db.tresor_eintraege.get_ciphertext(e.id))))["passwort"] == "orig"
     assert [h["version"] for h in db.tresor_eintraege.list_history(e.id)] == [3, 2, 1]
+
+
+def test_kontakt_crud_and_history_trigger(db):
+    """Tresor-Kontakte (#106): CRUD, Soft-Delete und History-Trigger (v73)."""
+    t = db.tresore.create("T", None, "t")
+    k = db.tresor_kontakte.create(
+        t.id, "Heizung Notdienst", "Herr Meier", "0371 123456",
+        "notdienst@heizung.de", "24h erreichbar", "t")
+    assert k.name == "Heizung Notdienst" and k.telefon == "0371 123456"
+    assert [x.id for x in db.tresor_kontakte.list_for_tresor(t.id)] == [k.id]
+
+    # Update bumpt Version, History-Trigger schreibt mit
+    assert db.tresor_kontakte.update(
+        k.id, "Heizung Notdienst", "Frau Schulze", "0371 654321", None, None, "t2", k.version)
+    after = db.tresor_kontakte.get(k.id)
+    assert after.version == 2 and after.ansprechpartner == "Frau Schulze"
+    with db.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM tresor_kontakt_history WHERE id=%s", (k.id,))
+        assert cur.fetchone()["n"] == 2
+
+    # Optimistic Locking: veraltete Version schreibt nicht
+    assert not db.tresor_kontakte.update(k.id, "X", None, None, None, None, "t", 1)
+
+    # Soft-Delete: verschwindet aus Liste/Get, Zeile bleibt (deleted_at gesetzt)
+    assert db.tresor_kontakte.mark_deleted(k.id, "t")
+    assert db.tresor_kontakte.get(k.id) is None
+    assert db.tresor_kontakte.list_for_tresor(t.id) == []
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at FROM tresor_kontakt WHERE id=%s", (k.id,))
+        assert cur.fetchone()["deleted_at"] is not None
 
 
 def test_zugriff_log_append(db):

@@ -176,7 +176,7 @@ const routes = [
         path: 'tresor',
         name: 'tresor',
         component: () => import('pages/TresorPage.vue'),
-        meta: { title: 'Passwörter' },
+        meta: { title: 'Passwörter/Kontakte' },
       },
       {
         // Kein meta.permission: der Zugriff ist ACL-basiert (Kader-Zugehörigkeit)

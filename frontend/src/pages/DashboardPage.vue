@@ -45,7 +45,7 @@
       </div>
 
       <div v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="tresor" icon="vpn_key" title="Passwörter" caption="Vereins-Tresor" />
+        <SettingsTile to="tresor" icon="vpn_key" title="Passwörter/Kontakte" caption="Vereins-Tresor" />
       </div>
 
       <div class="col-6 col-sm-4 col-md-3">

@@ -166,12 +166,15 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # und daher KEINE Prune-Entität – es taucht auch nicht als Child-Guard auf.
     PruneEntity("tresor_eintrag", "Tresor-Einträge", "tresor_eintrag",
                 history_table="tresor_eintrag_history"),
+    PruneEntity("tresor_kontakt", "Tresor-Kontakte", "tresor_kontakt",
+                history_table="tresor_kontakt_history"),
     PruneEntity("tresor_freigabe", "Tresor-Freigaben", "tresor_freigabe",
                 history_table="tresor_freigabe_history"),
     PruneEntity("tresor", "Passwort-Tresore", "tresor",
                 history_table="tresor_history",
                 children=(
                     ChildRef("tresor_eintrag", "tresor_id"),
+                    ChildRef("tresor_kontakt", "tresor_id"),
                     ChildRef("tresor_freigabe", "tresor_id"),
                 )),
     # --- Spielbetrieb: Mannschafts-Termine (#95, Blatt vor mannschaft) ---

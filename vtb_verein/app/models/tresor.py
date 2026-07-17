@@ -63,6 +63,28 @@ class TresorEintrag:
 
 
 @dataclass
+class TresorKontakt:
+    """Wichtiger Ansprechpartner (#106) — Firma/Notdienst mit Telefon, unverschlüsselt.
+
+    Kein Secret: Telefonnummern sollen in der App direkt anklickbar sein (tel:-Link).
+    Der Zugriff läuft über die tresor_freigaben des zugehörigen Tresors."""
+    id: int
+    tresor_id: int
+    name: str
+    ansprechpartner: Optional[str]
+    telefon: Optional[str]
+    email: Optional[str]
+    notiz: Optional[str]
+    version: int
+    created_at: str
+    created_by: str
+    updated_at: str
+    updated_by: str
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+
+@dataclass
 class TresorZugriffLog:
     id: int
     tresor_id: Optional[int]
