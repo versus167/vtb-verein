@@ -1408,19 +1408,41 @@ body:not(.body--dark) {
   .schl-stat__label {
     color: rgba(255, 255, 255, 0.65);
   }
+  /* Gesamt-Log-Tab liegt direkt auf Gelb: kräftige dunkle Töne wie die Pills.
+     Die hellen Varianten gelten weiter unten nur auf blauen Karten/Dialogen. */
   .schl-log-icon {
+    background: rgba($vtb-blau, 0.1);
+    color: $vtb-blau;
+  }
+  .schl-log-icon--ok {
+    background: rgba(33, 186, 69, 0.22);
+    color: #14652f;
+  }
+  .schl-log-icon--fehler {
+    background: rgba(193, 0, 21, 0.14);
+    color: #a30017;
+  }
+  .schl-dsgvo {
+    background: rgba($vtb-blau, 0.08);
+    color: rgba($vtb-blau, 0.85);
+  }
+  .q-card .schl-log-icon,
+  .q-dialog .schl-log-icon {
     background: rgba(255, 255, 255, 0.1);
     color: #c6d2e8;
   }
-  .schl-log-icon--ok {
+  .q-card .schl-log-icon--ok,
+  .q-dialog .schl-log-icon--ok {
     background: rgba(33, 186, 69, 0.25);
     color: #a5d6a7;
   }
-  .schl-log-icon--fehler {
+  .q-card .schl-log-icon--fehler,
+  .q-dialog .schl-log-icon--fehler {
     background: rgba(229, 57, 53, 0.25);
     color: #ef9a9a;
   }
-  .schl-dsgvo {
+  .q-card .schl-dsgvo,
+  .q-dialog .schl-dsgvo {
     background: rgba(255, 255, 255, 0.08);
     color: #c6d2e8;
   }
