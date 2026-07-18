@@ -75,3 +75,20 @@ Code.
   hochzählen). Anzeige `v.…` über `/api/app-info`.
 - Commit-Messages enden mit dem Trailer `Co-Authored-By: Claude <Modellname> <noreply@anthropic.com>`,
   wobei `<Modellname>` das tatsächlich verwendete Modell ist (z. B. `Claude Fable 5`).
+
+## Ticket-Workflow (Bereich „VTB-App")
+- Bug-/Feature-Tickets leben **in der laufenden App**; Brücke ist `tools/vtb_tickets.py`
+  (nur Stdlib): `pull [--all]` (Abzug → `tickets/vtb-app.md`), `show`/`attach <nr>`,
+  `comment <nr> "…" [--intern]`, `resolve <nr> -m "…"` (Kommentar + Status erledigt).
+- Zugang über `tools/tickets.local.env` (**gitignored**, pro Rechner): `VTB_TICKETS_URL`,
+  `VTB_TICKETS_USER`, `VTB_TICKETS_PASS`. Ohne diese Datei gibt es keinen Ticket-Zugriff —
+  das gilt insbesondere für Cloud-Sessions; dort den Ticket-Text in den Auftrag kopieren.
+- Auch `tickets/` ist gitignored: Der Abzug ist ein **lokaler Schnappschuss** und kann
+  veraltet sein — vor Ticket-Arbeit frisch pullen, nie blind der Datei vertrauen.
+- **Bearbeitete Tickets schließen** (`resolve`), sobald der Fix gemerged/deployed ist —
+  nicht schon beim Öffnen des PRs — und dabei vermerken, mit welchem Commit/PR das
+  Ticket geklärt wurde.
+- Ohne lokales Python das Script im App-Container ausführen: Script + env z. B. nach
+  `/tmp/vtb/tools/` kopieren (`docker cp`), `docker exec vtb-verein python
+  /tmp/vtb/tools/vtb_tickets.py …`, den Pull-Abzug anschließend zurück ins Repo
+  kopieren (`docker cp vtb-verein:/tmp/vtb/tickets/vtb-app.md tickets/`).
