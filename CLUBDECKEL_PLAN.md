@@ -52,16 +52,22 @@ Ziel-Member) — Detail bei Umsetzung festlegen.
 
 ## Rechte-Logik
 
-| Aktion                                   | Wer                                   |
-|------------------------------------------|---------------------------------------|
-| Eigenen Konsum buchen                    | jedes Deckel-Mitglied                 |
-| Transaktion zwischen zwei Membern        | nur ACL-„Deckelwart" des Deckels      |
-| Artikel/Preise (Deckelinhalt) pflegen    | nur ACL-„Deckelwart" des Deckels      |
-| Deckel anlegen/verwalten                 | global `clubdeckel.verwalten`         |
+| Aktion                                    | Wer                                        |
+|-------------------------------------------|--------------------------------------------|
+| Eigenen Konsum buchen                     | jedes Deckel-Mitglied                      |
+| Transaktion zwischen zwei Membern         | Wart (ACL) sowie ÜL/Betreuer implizit      |
+| Artikel/Preise (Deckelinhalt) pflegen     | Wart (ACL) sowie ÜL/Betreuer implizit      |
+| Teamtresor einschalten/Stammdaten pflegen | aktiver Kader-`uebungsleiter`/`betreuer`   |
+| Wart ernennen (ACL vergeben)              | aktiver Kader-`uebungsleiter`/`betreuer`   |
 
-Neue Permission-Keys nur fürs Verwalten global (`clubdeckel.verwalten`); die
-eigentliche Nutzung läuft über Mannschafts-Zugehörigkeit + Deckel-ACL, **nicht**
-über globale Permissions.
+**Kein neuer globaler Permission-Key** — die Verantwortung kommt vollständig aus
+dem Kader (`mitglied_mannschaft`, Rollen `uebungsleiter`/`betreuer`, von/bis
+aktiv), darunter die Wart-ACL, darunter die Kader-Mitgliedschaft. Das ist das
+„Kader = ACL"-Muster aus dem Spielbetrieb-Plan (#95). **Der Vorstand hat keinen
+Einblick** in Teamtresore (bewusst entschieden — kein Übersichts-/Lese-Key).
+Einzige Ausnahme bleibt der app-weite Admin-Durchgriff (`role == 'admin'` hat
+technisch immer alles) als Notfall-Fallback, z. B. wenn ein Team keinen ÜL im
+Kader gepflegt hat; in der UI wird das nicht beworben.
 
 ## Backend (Skizze)
 
@@ -84,16 +90,36 @@ eigentliche Nutzung läuft über Mannschafts-Zugehörigkeit + Deckel-ACL, **nich
 - Sichtbarkeit/Nav über geladene Deckel-Liste (analog `/api/kassen/`), Deckelwart-
   Tabs zusätzlich per ACL. Vereinsfarben (VTB-Blau `primary`, Gelb nur Akzent).
 
-## Offene Fragen (vor Umsetzung klären)
+## Entschieden
 
-- **Ausgleich** („Deckel bezahlt"): rein als Gegenbuchung im Ledger, oder optional
-  doch als *Brücke* in eine Kasse buchbar? (Default: nur Ledger, entkoppelt.)
+- **Ausgleich** („Deckel bezahlt"): **nur innerhalb des Teamdeckels** — reine
+  Gegenbuchung im Ledger, keine Brücke in eine Kasse (Volker, 19.07.2026).
+- **Name** (Volker, 19.07.2026): Im **UI heißt das Feature „Teamtresor"** — das
+  Team kennt den Begriff vom Vorbild Clubtresor. Im **Code/Schema bleibt durchgängig
+  `clubdeckel_*`** (Tabellen, Permission-Keys, Router), damit keine Verwechslung mit
+  dem bestehenden Passwort-/Kontakte-Tresor (`tresor_*`) entsteht. Zur Abgrenzung
+  bekommt der bestehende Tresor-Bereich bei der Umsetzung einen präzisierenden
+  Untertitel (z. B. „Passwörter & wichtige Kontakte"), und dessen Button
+  „Neuer Tresor" wird umbenannt (z. B. „Neuer Container").
+- **Berechtigungen** (Volker, 19.07.2026): Der Teamtresor ist eine **teaminterne
+  Entscheidung** — einschalten und verwalten darf, wer im Kader der Mannschaft
+  aktiv `uebungsleiter`/`betreuer` ist; diese ernennen auch die Warte (ACL, auch
+  Spieler möglich). **Kein globaler Permission-Key, kein Vorstands-Einblick.**
+  Details in „Rechte-Logik".
+- **Genau ein Teamtresor pro Mannschaft** (Volker, 19.07.2026) — 1:1-Beziehung,
+  `mannschaft_id` in `clubdeckel` entsprechend UNIQUE (auf nicht gelöschte
+  Zeilen bezogen).
+
+## Offene Fragen (Entscheidung erst bei Umsetzung)
+
 - **Negativ-/Positiv-Saldo-Konvention** + evtl. Warnschwellen.
 - **Umbuchung** genau ein oder zwei Zeilen (Modellierungsdetail).
 - **Events/Push** (aus dem Vorbild) — später als Erweiterung oder ganz weglassen.
-- Mehrere Deckel je Mannschaft nötig, oder 1:1 Mannschaft↔Deckel?
 
 ## Bezug
+
+Ticket: **#98 „Integration Clubtresor in vtb-app"** (Verweis dort als interne
+Bemerkung hinterlegt).
 
 Vorbild: `okram0815/Clubtresor` (privat) — dortige Konzepte Artikel/Items,
 Transaktions-Ledger, Salden-Tabelle, Events/Push. Für uns auf den mannschafts-
