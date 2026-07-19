@@ -595,8 +595,11 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
-    # Primären Telefon-Kontakt aus dem Einzelfeld pflegen (weitere Kontakte über /kontakte)
-    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
+    # Primären Telefon-Kontakt nur pflegen, wenn das Feld explizit mitgeschickt wurde –
+    # der Stammdaten-Editor sendet keins mehr (Telefonnummern laufen über den Kontakte-Tab);
+    # ein fehlendes Feld darf den Primärkontakt nicht löschen.
+    if 'telefon' in data.model_fields_set:
+        db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     u = db.get_user_by_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id)
     funktionen = db.list_mitglied_funktionen(m.id)
@@ -680,7 +683,9 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
-    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
+    # Wie in update_person_mitglied: Telefon-Sync nur bei explizit gesendetem Feld.
+    if 'telefon' in data.model_fields_set:
+        db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     u = db.get_user_by_id(m.user_id) if m.user_id else None
     abteilungen = db.list_mitglied_abteilungen(m.id)
     funktionen = db.list_mitglied_funktionen(m.id)
