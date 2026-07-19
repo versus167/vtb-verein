@@ -4,12 +4,22 @@ MitgliedKontakt Repository – mehrere Kontaktdaten (E-Mail/Telefon/…) je Mitg
 Voll normalisiert: löst die früheren Einzelspalten mitglied.email/telefon ab.
 Pro Mitglied und Typ kann genau ein Kontakt als primär markiert sein (partieller
 Unique-Index uix_mitglied_kontakt_primaer). History wird per DB-Trigger geschrieben.
+
+Invariante (hier zentral erzwungen, gilt für Admin-Dialog wie Profil-Self-Service):
+Sobald aktive Kontakte eines Typs existieren, ist genau einer davon primär.
+Der erste/einzige Kontakt eines Typs wird automatisch primär; die Primär-Markierung
+lässt sich nur wegnehmen bzw. der primäre Kontakt nur löschen/umtypen, wenn kein
+weiterer aktiver Kontakt des Typs mehr da ist — sonst KontaktPrimaerRegelError.
 """
 from dataclasses import dataclass
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
 VALID_TYPEN = ('email', 'telefon', 'mobil', 'fax')
+
+
+class KontaktPrimaerRegelError(Exception):
+    """Aktion würde einen Typ mit aktiven Kontakten ohne primären zurücklassen."""
 
 
 @dataclass
@@ -72,6 +82,8 @@ class MitgliedKontaktRepository(BaseRepository):
     def create(self, mitglied_id: int, typ: str, wert: str, label: Optional[str],
                ist_primaer: bool, created_by: str) -> MitgliedKontakt:
         with self.cursor() as cur:
+            if self._count_aktive(cur, mitglied_id, typ, exclude_id=None) == 0:
+                ist_primaer = True  # erster Kontakt eines Typs ist immer primär
             if ist_primaer:
                 self._unset_primaer(cur, mitglied_id, typ, exclude_id=None, actor=created_by)
             cur.execute(
@@ -90,16 +102,27 @@ class MitgliedKontaktRepository(BaseRepository):
     def update(self, id: int, typ: str, wert: str, label: Optional[str], ist_primaer: bool,
                updated_by: str, expected_version: int) -> bool:
         with self.cursor() as cur:
-            # Mitglied + Typ des Eintrags für die Primär-Bereinigung ermitteln
+            # Mitglied + bisherigen Zustand des Eintrags für die Primär-Regel ermitteln
             cur.execute(
-                "SELECT mitglied_id FROM mitglied_kontakt WHERE id = %s AND deleted_at IS NULL",
+                "SELECT mitglied_id, typ, ist_primaer FROM mitglied_kontakt"
+                " WHERE id = %s AND deleted_at IS NULL",
                 (id,),
             )
             row = cur.fetchone()
             if row is None:
                 return False
+            mitglied_id = row['mitglied_id']
+            # Primären Kontakt nicht "verwaisen" lassen: Flag wegnehmen oder Typ
+            # wechseln geht nur, wenn kein weiterer aktiver Kontakt des alten Typs da ist.
+            if row['ist_primaer'] and (typ != row['typ'] or not ist_primaer) \
+                    and self._count_aktive(cur, mitglied_id, row['typ'], exclude_id=id) > 0:
+                raise KontaktPrimaerRegelError(
+                    "Pro Typ muss ein Kontakt primär sein – bitte zuerst einen anderen "
+                    f"{row['typ']}-Kontakt als primär markieren.")
+            if self._count_aktive(cur, mitglied_id, typ, exclude_id=id) == 0:
+                ist_primaer = True  # einziger Kontakt eines Typs ist immer primär
             if ist_primaer:
-                self._unset_primaer(cur, row['mitglied_id'], typ, exclude_id=id, actor=updated_by)
+                self._unset_primaer(cur, mitglied_id, typ, exclude_id=id, actor=updated_by)
             cur.execute(
                 """
                 UPDATE mitglied_kontakt
@@ -142,6 +165,21 @@ class MitgliedKontaktRepository(BaseRepository):
                         """,
                         (actor, row['id']),
                     )
+                    # Invariante wahren: gibt es weitere aktive Kontakte des Typs,
+                    # rückt der älteste als neuer Primärkontakt nach.
+                    cur.execute(
+                        """
+                        UPDATE mitglied_kontakt
+                        SET ist_primaer = TRUE, version = version + 1,
+                            updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                        WHERE id = (
+                            SELECT id FROM mitglied_kontakt
+                            WHERE mitglied_id = %s AND typ = %s AND deleted_at IS NULL
+                            ORDER BY id LIMIT 1
+                        )
+                        """,
+                        (actor, mitglied_id, typ),
+                    )
                 return
             if row:
                 cur.execute(
@@ -167,6 +205,20 @@ class MitgliedKontaktRepository(BaseRepository):
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         with self.cursor() as cur:
             cur.execute(
+                "SELECT mitglied_id, typ, ist_primaer FROM mitglied_kontakt"
+                " WHERE id = %s AND deleted_at IS NULL",
+                (id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            if row['ist_primaer'] and self._count_aktive(
+                    cur, row['mitglied_id'], row['typ'], exclude_id=id) > 0:
+                raise KontaktPrimaerRegelError(
+                    "Der primäre Kontakt kann nicht gelöscht werden, solange weitere "
+                    f"{row['typ']}-Kontakte bestehen – bitte zuerst einen anderen als "
+                    "primär markieren.")
+            cur.execute(
                 """
                 UPDATE mitglied_kontakt
                 SET deleted_at = CURRENT_TIMESTAMP,
@@ -177,6 +229,19 @@ class MitgliedKontaktRepository(BaseRepository):
                 (deleted_by, id),
             )
             return cur.rowcount == 1
+
+    def _count_aktive(self, cur, mitglied_id: int, typ: str,
+                      exclude_id: Optional[int]) -> int:
+        """Anzahl aktiver Kontakte eines Typs (optional ohne einen bestimmten Eintrag)."""
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n FROM mitglied_kontakt
+            WHERE mitglied_id = %s AND typ = %s AND deleted_at IS NULL
+              AND (%s::int IS NULL OR id <> %s)
+            """,
+            (mitglied_id, typ, exclude_id, exclude_id),
+        )
+        return cur.fetchone()['n']
 
     def _unset_primaer(self, cur, mitglied_id: int, typ: str,
                        exclude_id: Optional[int], actor: str) -> None:
