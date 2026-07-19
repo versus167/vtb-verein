@@ -139,10 +139,12 @@ class MeinMitgliedUpdate(BaseModel):
     plz: Optional[str] = None
     ort: Optional[str] = None
     land: Optional[str] = None
-    telefon: Optional[str] = None
     iban: Optional[str] = None
     bic: Optional[str] = None
     kontoinhaber: Optional[str] = None
+    # Einzugsermächtigung: True → zahlungsart 'lastschrift' (steuert den SEPA-Einzug
+    # im Fibu-Export), False → 'sonstiges'. None lässt die Zahlungsart unangetastet.
+    einzug_erlaubt: Optional[bool] = None
     expected_version: int
 
 
@@ -933,13 +935,15 @@ def update_mein_mitglied(data: MeinMitgliedUpdate, user: CurrentUser, db: DB):
     m.plz = data.plz
     m.ort = data.ort
     m.land = data.land
-    m.telefon = data.telefon
     m.iban = data.iban
     m.bic = data.bic
     m.kontoinhaber = data.kontoinhaber
+    if data.einzug_erlaubt is not None:
+        m.zahlungsart = 'lastschrift' if data.einzug_erlaubt else 'sonstiges'
+    # Telefon läuft nicht mehr über dieses Einzelfeld, sondern über die
+    # Self-Service-Kontakte (/personen/mein-mitglied/kontakte).
     m.version = data.expected_version
     ok = db.update_mitglied(m, updated_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
-    db.set_mitglied_primaer_kontakt(m.id, 'telefon', data.telefon, user.username)
     return _mitglied_to_dict(db.get_mitglied_by_user_id(user.id))
