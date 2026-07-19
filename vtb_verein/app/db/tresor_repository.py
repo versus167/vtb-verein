@@ -73,16 +73,21 @@ class TresorRepository(BaseRepository):
             return _map(row) if row else None
 
     def list_all(self) -> list[dict]:
-        """Alle aktiven Tresore mit Eintragszähler – für tresor.verwalten/Admin."""
+        """Alle aktiven Tresore mit Eintrags-/Kontaktzähler – für tresor.verwalten/Admin."""
         with self.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT {_COLS}, COALESCE(e.n, 0) AS eintrag_anzahl
+                SELECT {_COLS}, COALESCE(e.n, 0) AS eintrag_anzahl,
+                       COALESCE(k.n, 0) AS kontakt_anzahl
                 FROM tresor t
                 LEFT JOIN (
                     SELECT tresor_id, COUNT(*) AS n FROM tresor_eintrag
                     WHERE deleted_at IS NULL GROUP BY tresor_id
                 ) e ON e.tresor_id = t.id
+                LEFT JOIN (
+                    SELECT tresor_id, COUNT(*) AS n FROM tresor_kontakt
+                    WHERE deleted_at IS NULL GROUP BY tresor_id
+                ) k ON k.tresor_id = t.id
                 WHERE t.deleted_at IS NULL
                 ORDER BY lower(t.name)
                 """
@@ -102,13 +107,18 @@ class TresorRepository(BaseRepository):
                     WHERE {_ACL_MATCH}
                     GROUP BY fr.tresor_id
                 )
-                SELECT {_COLS}, z.darf_schreiben, COALESCE(e.n, 0) AS eintrag_anzahl
+                SELECT {_COLS}, z.darf_schreiben, COALESCE(e.n, 0) AS eintrag_anzahl,
+                       COALESCE(k.n, 0) AS kontakt_anzahl
                 FROM tresor t
                 JOIN zugriff z ON z.tresor_id = t.id
                 LEFT JOIN (
                     SELECT tresor_id, COUNT(*) AS n FROM tresor_eintrag
                     WHERE deleted_at IS NULL GROUP BY tresor_id
                 ) e ON e.tresor_id = t.id
+                LEFT JOIN (
+                    SELECT tresor_id, COUNT(*) AS n FROM tresor_kontakt
+                    WHERE deleted_at IS NULL GROUP BY tresor_id
+                ) k ON k.tresor_id = t.id
                 WHERE t.deleted_at IS NULL
                 ORDER BY lower(t.name)
                 """,
@@ -177,5 +187,6 @@ class TresorRepository(BaseRepository):
             "created_at": t.created_at, "created_by": t.created_by,
             "updated_at": t.updated_at, "updated_by": t.updated_by,
             "eintrag_anzahl": row['eintrag_anzahl'],
+            "kontakt_anzahl": row['kontakt_anzahl'],
             "darf_schreiben": darf_schreiben,
         }

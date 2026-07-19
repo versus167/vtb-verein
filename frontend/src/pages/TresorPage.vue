@@ -12,6 +12,8 @@
         {{ tresore.length }} {{ tresore.length === 1 ? 'Tresor' : 'Tresore' }}</span>
       <span class="vtb-pill"><q-icon name="vpn_key" size="13px" />
         {{ gesamtEintraege }} {{ gesamtEintraege === 1 ? 'Eintrag' : 'Einträge' }}</span>
+      <span class="vtb-pill"><q-icon name="contact_phone" size="13px" />
+        {{ gesamtKontakte }} {{ gesamtKontakte === 1 ? 'Kontakt' : 'Kontakte' }}</span>
     </div>
 
     <q-banner v-if="!konfiguriert" class="vtb-warnung q-mb-md" rounded dense>
@@ -29,8 +31,11 @@
             <div class="vtb-icon"><q-icon name="lock" size="24px" /></div>
             <div class="col" style="min-width: 0">
               <div class="text-weight-bold ellipsis">{{ t.name }}</div>
-              <div class="row items-center q-gutter-xs q-mt-xs no-wrap">
+              <!-- wrap statt no-wrap: mit dem Kontakte-Zähler (#113) passen drei
+                   Pills auf schmalen Karten nicht mehr in eine Zeile -->
+              <div class="row items-center q-gutter-xs q-mt-xs">
                 <span class="vtb-pill">{{ t.eintrag_anzahl }} {{ t.eintrag_anzahl === 1 ? 'Eintrag' : 'Einträge' }}</span>
+                <span class="vtb-pill">{{ t.kontakt_anzahl }} {{ t.kontakt_anzahl === 1 ? 'Kontakt' : 'Kontakte' }}</span>
                 <span v-if="!t.darf_schreiben" class="vtb-pill vtb-pill--achtung">nur lesen</span>
               </div>
             </div>
@@ -446,6 +451,7 @@ const showPw = ref(false)
 
 const selectedTresor = computed(() => tresore.value.find(t => t.id === selectedId.value) || null)
 const gesamtEintraege = computed(() => tresore.value.reduce((sum, t) => sum + (t.eintrag_anzahl || 0), 0))
+const gesamtKontakte = computed(() => tresore.value.reduce((sum, t) => sum + (t.kontakt_anzahl || 0), 0))
 
 // ── Laden ──
 async function loadStatus() {
@@ -543,7 +549,8 @@ async function saveTresor() {
 function deleteTresor(t) {
   $q.dialog({
     title: 'Tresor löschen',
-    message: `Tresor „${t.name}" samt aller ${t.eintrag_anzahl} Einträge löschen?`,
+    message: `Tresor „${t.name}" samt aller ${t.eintrag_anzahl} Einträge`
+      + (t.kontakt_anzahl ? ` und ${t.kontakt_anzahl} Kontakte` : '') + ' löschen?',
     cancel: true, ok: { label: 'Löschen', color: 'negative' },
   }).onOk(async () => {
     try {
@@ -637,7 +644,8 @@ async function saveKontakt() {
       await api.post(`/api/tresor/${selectedId.value}/kontakte`, payload)
     }
     kontaktDialog.value = false
-    await loadKontakte(selectedId.value)
+    // loadTresore hält den Kontakte-Zähler auf den Karten aktuell (#113)
+    await Promise.all([loadKontakte(selectedId.value), loadTresore()])
   } catch (e) {
     kontaktError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
   } finally { saving.value = false }
@@ -649,7 +657,7 @@ function deleteKontakt(k) {
   }).onOk(async () => {
     try {
       await api.delete(`/api/tresor/kontakte/${k.id}`)
-      await loadKontakte(selectedId.value)
+      await Promise.all([loadKontakte(selectedId.value), loadTresore()])
     } catch (err) {
       $q.notify({ type: 'negative', message: err.response?.data?.detail || 'Löschen fehlgeschlagen' })
     }
