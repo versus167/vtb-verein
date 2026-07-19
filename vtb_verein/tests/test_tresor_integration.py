@@ -212,6 +212,10 @@ def test_kontakt_crud_and_history_trigger(db):
     assert k.name == "Heizung Notdienst" and k.telefon == "0371 123456"
     assert [x.id for x in db.tresor_kontakte.list_for_tresor(t.id)] == [k.id]
 
+    # Kontaktzähler in der Tresor-Liste (#113)
+    zeile = next(v for v in db.tresore.list_all() if v['id'] == t.id)
+    assert zeile['kontakt_anzahl'] == 1 and zeile['eintrag_anzahl'] == 0
+
     # Update bumpt Version, History-Trigger schreibt mit
     assert db.tresor_kontakte.update(
         k.id, "Heizung Notdienst", "Frau Schulze", "0371 654321", None, None, "t2", k.version)
@@ -228,6 +232,8 @@ def test_kontakt_crud_and_history_trigger(db):
     assert db.tresor_kontakte.mark_deleted(k.id, "t")
     assert db.tresor_kontakte.get(k.id) is None
     assert db.tresor_kontakte.list_for_tresor(t.id) == []
+    # Soft-gelöschte Kontakte zählen nicht mehr mit (#113)
+    assert next(v for v in db.tresore.list_all() if v['id'] == t.id)['kontakt_anzahl'] == 0
     with db.cursor() as cur:
         cur.execute("SELECT deleted_at FROM tresor_kontakt WHERE id=%s", (k.id,))
         assert cur.fetchone()["deleted_at"] is not None

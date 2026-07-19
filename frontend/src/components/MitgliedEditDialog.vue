@@ -52,9 +52,9 @@
                 :readonly="!canWrite"
               />
             </div>
-            <!-- E-Mail nur im Mitglieder-Kontext direkt; im Personen-Kontext über den Kontakte-Tab pflegen -->
+            <!-- E-Mail nur im Mitglieder-Kontext direkt; im Personen-Kontext werden
+                 E-Mail wie Telefon über den Kontakte-Tab gepflegt -->
             <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
-            <q-input v-model="form.telefon" label="Telefon" outlined dense :readonly="!canWrite" />
             <!-- Auch Gastspieler haben Ein-/Austritt: Zeitraum der Gastspielgenehmigung -->
             <div class="row q-gutter-sm">
               <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
@@ -77,11 +77,16 @@
             </q-expansion-item>
             <q-expansion-item v-if="!istGast" label="Zahlung / SEPA" dense icon="payments">
               <div class="q-gutter-sm q-pt-sm">
-                <q-select v-model="form.zahlungsart" :options="zahlungsartOptionen"
-                  emit-value map-options label="Zahlungsart" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.iban" label="IBAN" outlined dense :readonly="!canWrite" :rules="[ibanRule]" />
                 <q-input v-model="form.bic" label="BIC" outlined dense :readonly="!canWrite" />
                 <q-input v-model="form.kontoinhaber" label="Kontoinhaber" outlined dense :readonly="!canWrite" />
+                <!-- SEPA-Zustimmung = zahlungsart 'lastschrift' (steuert Feld 36 im
+                     Fibu-Export) – gleiche Semantik wie der Haken im Profil-Bank-Panel -->
+                <q-checkbox
+                  v-model="einzugErlaubt"
+                  :disable="!canWrite"
+                  label="Fällige Beiträge und Gebühren dürfen von dieser Bankverbindung eingezogen werden (SEPA-Lastschrift)"
+                />
               </div>
             </q-expansion-item>
             <q-expansion-item v-if="!istGast" label="Übungsleiter" dense icon="sports">
@@ -596,11 +601,12 @@ const geschlechtOptions = [
   { label: 'divers', value: 'd' },
 ]
 
-// Lastschrift steuert den SEPA-Einzug im Fibu-Export (Feld 36); Standard = Lastschrift.
-const zahlungsartOptionen = [
-  { label: 'Lastschrift', value: 'lastschrift' },
-  { label: 'Sonstiges', value: 'sonstiges' },
-]
+// SEPA-Zustimmung als Haken über dem zahlungsart-Feld: 'lastschrift' steuert den
+// Einzug im Fibu-Export (Feld 36); Standard für Neuanlagen = Lastschrift.
+const einzugErlaubt = computed({
+  get: () => form.value.zahlungsart === 'lastschrift',
+  set: (v) => { form.value.zahlungsart = v ? 'lastschrift' : 'sonstiges' },
+})
 
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
@@ -733,7 +739,7 @@ async function loadAll() {
     const res = await Promise.all(reqs)
     const [{ data: m }, { data: ab }, { data: fns }, { data: katalog }, { data: z }] = res
     form.value = { ...emptyForm(), ...m }
-    // Zahlungsart auf das Dropdown normalisieren: ein expliziter Nicht-Lastschrift-Wert
+    // Zahlungsart auf den SEPA-Haken normalisieren: ein expliziter Nicht-Lastschrift-Wert
     // (Altwert 'ueberweisung' o.Ä.) wird zu 'sonstiges'; alles übrige (auch leer) ist
     // 'lastschrift' (Standard).
     form.value.zahlungsart = m.zahlungsart && m.zahlungsart !== 'lastschrift' ? 'sonstiges' : 'lastschrift'
@@ -1059,14 +1065,14 @@ async function saveStammdaten() {
   savingStamm.value = true
   try {
     if (props.personMode) {
-      // E-Mail/Mitgliedsnr. werden im Personen-Kontext nicht hier gepflegt
-      // (E-Mail → Kontakte-Tab). Telefon synchronisiert das Backend mit dem primären Kontakt.
+      // E-Mail/Telefon/Mitgliedsnr. werden im Personen-Kontext nicht hier gepflegt
+      // (Kontaktdaten → Kontakte-Tab; ohne telefon-Feld lässt das Backend den
+      // primären Telefon-Kontakt unangetastet).
       const payload = {
         vorname: form.value.vorname,
         nachname: form.value.nachname,
         geburtsdatum: form.value.geburtsdatum || null,
         geschlecht: form.value.geschlecht || null,
-        telefon: form.value.telefon || null,
         strasse: form.value.strasse || null,
         plz: form.value.plz || null,
         ort: form.value.ort || null,

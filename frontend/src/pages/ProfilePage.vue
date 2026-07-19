@@ -60,10 +60,15 @@
           :info="kontaktdatenInfo"
         >
           <div class="text-caption text-grey-7 q-mb-md">
-            E-Mail kann nur von einem Administrator geändert werden.
+            Die Anmelde-E-Mail kann nur von einem Administrator geändert werden –
+            Kontakt-E-Mails hier dürfen davon abweichen.
           </div>
+
+          <KontakteEditor api-base="/api/personen/mein-mitglied" @changed="onKontakteChanged" />
+
+          <q-separator class="q-my-md" />
+          <div class="text-caption text-weight-medium q-mb-sm">Adresse</div>
           <div class="profil-stapel">
-            <q-input v-model="mitgliedForm.telefon" label="Telefon" outlined dense />
             <q-input v-model="mitgliedForm.strasse" label="Straße" outlined dense />
             <div class="profil-reihe">
               <q-input v-model="mitgliedForm.plz" label="PLZ" outlined dense class="profil-feld-plz" />
@@ -100,6 +105,11 @@
             <q-input v-model="mitgliedForm.iban" label="IBAN" outlined dense :rules="[ibanRule]" />
             <q-input v-model="mitgliedForm.bic" label="BIC" outlined dense />
             <q-input v-model="mitgliedForm.kontoinhaber" label="Kontoinhaber" outlined dense />
+
+            <q-checkbox
+              v-model="einzugErlaubt"
+              label="Fällige Beiträge und Gebühren dürfen von dieser Bankverbindung eingezogen werden"
+            />
 
             <div v-if="bankError || mitgliedError" class="vtb-fehler">
               <q-icon name="error" size="20px" />
@@ -426,6 +436,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { formatDateTime } from 'src/utils/datetime'
 import ProfilPanel from 'components/ProfilPanel.vue'
+import KontakteEditor from 'components/KontakteEditor.vue'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -477,6 +488,11 @@ const permGroups = computed(() => {
 
 const meinMitglied = ref(null)
 const mitgliedForm = ref({})
+// Einzugsermächtigung (Bank-Panel) — mappt im Backend auf zahlungsart 'lastschrift'
+const einzugErlaubt = ref(false)
+// Kontaktliste aus dem KontakteEditor, nur für die Kopfzeile des Panels
+const kontakte = ref([])
+function onKontakteChanged(liste) { kontakte.value = liste }
 
 // Self-Service Schließanlage (eigene Chips/Türen/Zutritte)
 const meinZugang = ref({ verknuepft: false, chips: [], berechtigungen: [], app_berechtigungen: [], zutritte: [] })
@@ -521,14 +537,16 @@ const contactOptions = computed(() => {
 
 const kontaktdatenInfo = computed(() => {
   const f = mitgliedForm.value
-  const teile = [f.strasse, [f.plz, f.ort].filter(Boolean).join(' ')].filter(Boolean)
-  return teile.length ? teile.join(' · ') : 'Adresse und Telefon hinterlegen'
+  const tel = kontakte.value.find(k => (k.typ === 'telefon' || k.typ === 'mobil') && k.ist_primaer)?.wert
+  const teile = [tel, f.strasse, [f.plz, f.ort].filter(Boolean).join(' ')].filter(Boolean)
+  return teile.length ? teile.join(' · ') : 'Adresse und Kontakte hinterlegen'
 })
 
 const bankInfo = computed(() => {
   const iban = normalizeIban(mitgliedForm.value.iban)
   if (!iban) return 'Noch keine Bankverbindung hinterlegt'
-  return iban.length > 8 ? `${iban.slice(0, 4)} •••• ${iban.slice(-4)}` : iban
+  const kurz = iban.length > 8 ? `${iban.slice(0, 4)} •••• ${iban.slice(-4)}` : iban
+  return einzugErlaubt.value ? `${kurz} · Einzug erlaubt` : kurz
 })
 
 const benachrichtigungInfo = computed(() => {
@@ -580,7 +598,6 @@ async function load() {
     meinMitglied.value = m
     if (m) {
       mitgliedForm.value = {
-        telefon: m.telefon ?? '',
         strasse: m.strasse ?? '',
         plz: m.plz ?? '',
         ort: m.ort ?? '',
@@ -589,6 +606,7 @@ async function load() {
         bic: m.bic ?? '',
         kontoinhaber: m.kontoinhaber ?? '',
       }
+      einzugErlaubt.value = m.zahlungsart === 'lastschrift'
     }
   } catch { /* kein Mitglied-Datensatz → ignorieren */ }
 }
@@ -693,6 +711,7 @@ async function onSaveMitglied() {
   try {
     await api.put('/api/personen/mein-mitglied', {
       ...mitgliedForm.value,
+      einzug_erlaubt: einzugErlaubt.value,
       expected_version: meinMitglied.value.version,
     })
     await load()
