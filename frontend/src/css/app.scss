@@ -396,7 +396,7 @@ body.body--dark .vtb-foto-thumb {
 // Rahmen im VTB-Look. Gilt für alle q-dialoge (Feedback, Bestätigungen, Formular-
 // Dialoge) in beiden Modi. Menüs (q-menu) sind keine Dialoge und bleiben außen vor.
 .q-dialog__backdrop {
-  background: rgba(2, 26, 64, 0.6); // dunkles Wappen-Navy statt neutralem Schwarz
+  background: rgba($vtb-blau-tief, 0.6); // dunkles Wappen-Navy statt neutralem Schwarz
   backdrop-filter: blur(3px);
 }
 .q-dialog__inner > .q-card {
