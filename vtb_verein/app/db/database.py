@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 73
+SCHEMA_VERSION = 74
 
 
 # ---------------------------------------------------------------------------
@@ -1760,6 +1760,7 @@ class Database:
             71: self._migrate_v70_to_v71,
             72: self._migrate_v71_to_v72,
             73: self._migrate_v72_to_v73,
+            74: self._migrate_v73_to_v74,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4856,6 +4857,32 @@ class Database:
                 cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 73 WHERE id = 1")
+
+    def _migrate_v73_to_v74(self) -> None:
+        """Einzugsermächtigung im Profil-Bank-Panel: Haken == zahlungsart 'lastschrift'.
+
+        Bestandsdaten: Wer zum Zeitpunkt der Migration eine Bankverbindung (IBAN)
+        hinterlegt hat, gilt als einzugswillig → zahlungsart 'lastschrift' (steuert
+        den SEPA-Einzug im Fibu-Export, Feld 36). Reine Datenmigration ohne DDL,
+        der Frischaufbau hat keine Bestandsdaten und braucht kein Pendant. Der
+        version-Bump schreibt die Umstellung über den Audit-Trigger nach
+        mitglied_history. Idempotent (bereits Umgestellte fallen aus dem WHERE).
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied
+                SET zahlungsart = 'lastschrift',
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'migration_v74'
+                WHERE deleted_at IS NULL
+                  AND COALESCE(TRIM(iban), '') <> ''
+                  AND zahlungsart IS DISTINCT FROM 'lastschrift'
+                """
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 74 WHERE id = 1")
 
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
