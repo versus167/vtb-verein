@@ -49,7 +49,7 @@ def user_id(db):
     with db.cursor() as cur:
         cur.execute(
             "INSERT INTO users (username,email,password_hash,role,active,created_by,updated_by) "
-            "VALUES ('berechttester','berecht@example.com','x','user',true,'test','test') "
+            "VALUES ('berechttester','berecht@example.com','x','mitglied',1,'test','test') "
             "RETURNING id"
         )
         return cur.fetchone()['id']
