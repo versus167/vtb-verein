@@ -78,10 +78,12 @@ class TicketService:
     # Benachrichtigungen (intern)
     # -----------------------------------
 
-    def _notify(self, user_ids: list[int], exclude_user_id: Optional[int], title: str, message: str) -> None:
+    def _notify(self, user_ids: list[int], exclude_user_id: Optional[int], title: str,
+                message: str, url: str = '/') -> None:
         """Lädt User-Objekte (im Request-Thread) und stößt den Versand nicht-blockierend an;
         überspringt den auslösenden User. Der eigentliche SMTP-/Matrix-Versand läuft im
-        Hintergrund, damit ein hängender Mailserver den Request nicht ausbremst."""
+        Hintergrund, damit ein hängender Mailserver den Request nicht ausbremst. `url` ist
+        das Deep-Link-Ziel des Push-Klicks (#117: direkt ins betroffene Ticket)."""
         from app.services.notification_service import NotificationService
         seen: set[int] = set()
         for uid in user_ids:
@@ -91,7 +93,12 @@ class TicketService:
             user = self._user_repo.get_by_id(uid)
             if user and user.active:
                 NotificationService.send_notification_async(
-                    user, title, message, push_service=self._push_service)
+                    user, title, message, push_service=self._push_service, url=url)
+
+    @staticmethod
+    def _ticket_url(ticket_id: int) -> str:
+        """Deep-Link auf ein einzelnes Ticket (öffnet den Detail-Dialog, #117)."""
+        return f"/tickets?ticket={ticket_id}"
 
     def _bereich_user_ids(self, bereich_id: Optional[int]) -> list[int]:
         """User-IDs mit bearbeiten- oder schliessen-Recht im Bereich."""
@@ -152,7 +159,8 @@ class TicketService:
             empfaenger = list({*bereich_ids, *([ created.zugewiesen_an] if created.zugewiesen_an else [])})
             self._notify(empfaenger, self._actor_id(created_by),
                          f"🎫 Neues Ticket #{created.id}",
-                         f"{created.titel or ''}\n\nErstellt von: {created_by}")
+                         f"{created.titel or ''}\n\nErstellt von: {created_by}",
+                         url=self._ticket_url(created.id))
         return created
 
     def update_ticket(self, ticket: Ticket, updated_by: str, notify_as_new: bool = False) -> bool:
@@ -163,11 +171,13 @@ class TicketService:
             empfaenger = list({*bereich_ids, *([ ticket.zugewiesen_an] if ticket.zugewiesen_an else [])})
             self._notify(empfaenger, self._actor_id(updated_by),
                          f"🎫 Neues Ticket #{ticket.id}",
-                         f"{ticket.titel or ''}\n\nErstellt von: {updated_by}")
+                         f"{ticket.titel or ''}\n\nErstellt von: {updated_by}",
+                         url=self._ticket_url(ticket.id))
         if result and old and old.zugewiesen_an != ticket.zugewiesen_an and ticket.zugewiesen_an:
             self._notify([ticket.zugewiesen_an], self._actor_id(updated_by),
                          f"🎫 Ticket #{ticket.id} zugewiesen",
-                         f"Dir wurde Ticket \"{ticket.titel}\" zugewiesen.\n\nZugewiesen von: {updated_by}")
+                         f"Dir wurde Ticket \"{ticket.titel}\" zugewiesen.\n\nZugewiesen von: {updated_by}",
+                         url=self._ticket_url(ticket.id))
         return result
 
     def change_status(self, ticket: Ticket, new_status: str, changed_by: str, version: int) -> bool:
@@ -188,7 +198,8 @@ class TicketService:
         if result:
             self._notify(self._ticket_empfaenger(ticket), self._actor_id(changed_by),
                          f"🎫 Ticket #{ticket.id} → {new_status}",
-                         f"Status von \"{ticket.titel}\" wurde auf \"{new_status}\" geändert.\n\nGeändert von: {changed_by}")
+                         f"Status von \"{ticket.titel}\" wurde auf \"{new_status}\" geändert.\n\nGeändert von: {changed_by}",
+                         url=self._ticket_url(ticket.id))
         return result
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
@@ -216,7 +227,8 @@ class TicketService:
                 empfaenger = self._ticket_empfaenger(ticket)
             self._notify(empfaenger, self._actor_id(created_by),
                          f"🎫 Neuer Kommentar zu Ticket #{ticket.id}",
-                         f"\"{ticket.titel}\"\n\nVon: {created_by}\n\n{kommentar.inhalt[:200]}")
+                         f"\"{ticket.titel}\"\n\nVon: {created_by}\n\n{kommentar.inhalt[:200]}",
+                         url=self._ticket_url(ticket.id))
         return created
 
     def update_kommentar(self, kommentar: TicketKommentar, updated_by: str) -> bool:

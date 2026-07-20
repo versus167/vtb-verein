@@ -26,7 +26,8 @@ class NotificationService:
     """Zentrale Service für Versand von Benachrichtigungen"""
 
     @staticmethod
-    def send_notification(user: User, title: str, message: str, push_service=None) -> bool:
+    def send_notification(user: User, title: str, message: str, push_service=None,
+                          url: str = '/') -> bool:
         """
         Sendet eine Benachrichtigung; Web-Push ist additiver Kanal (#108).
 
@@ -48,7 +49,7 @@ class NotificationService:
         push_ok = False
         if push_service is not None:
             try:
-                push_ok = push_service.send_to_user(user.id, title, message) > 0
+                push_ok = push_service.send_to_user(user.id, title, message, url) > 0
                 if push_ok:
                     logger.info(f"Benachrichtigung an {user.username} via push versendet")
             except Exception as e:
@@ -91,13 +92,16 @@ class NotificationService:
         return True
 
     @staticmethod
-    def send_notification_async(user: User, title: str, message: str, push_service=None) -> None:
+    def send_notification_async(user: User, title: str, message: str, push_service=None,
+                                url: str = '/') -> None:
         """Nicht-blockierender Versand: reiht den Versand in den Hintergrund-Pool
         ein und kehrt sofort zurück. Voraussetzung: `user` ist bereits vollständig
         geladen. Der Hintergrund-Thread nutzt für Push denselben DB-Singleton wie
         die FastAPI-Worker (psycopg-Connection ist thread-safe); Fehler werden
-        innerhalb von send_notification geloggt (best-effort)."""
-        _executor.submit(NotificationService.send_notification, user, title, message, push_service)
+        innerhalb von send_notification geloggt (best-effort). `url` ist das Deep-
+        Link-Ziel des Push-Klicks (#117)."""
+        _executor.submit(NotificationService.send_notification, user, title, message,
+                         push_service, url)
 
     @staticmethod
     def send_member_notification(user: User, subject: str, member_name: str, message: str) -> bool:
