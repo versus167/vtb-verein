@@ -410,9 +410,9 @@ def test_zahlung_mit_methode_und_datum():
         lambda did, von, an, betrag, notiz, by, datum=None: (
             seen.append((von, an, betrag, notiz, datum)), 'ref123')[1]
     data = api.ZahlungCreate(von_mitglied_id=11, an_mitglied_id=12, betrag=5.0,
-                             methode='paypal', datum='2026-07-20T07:34', notiz='Rest')
+                             methode='unbar', datum='2026-07-20T07:34', notiz='Rest')
     api.buche_zahlung(7, data, _USER, db)
-    assert seen == [(11, 12, Decimal('5.00'), 'PayPal · Rest', '2026-07-20T07:34')]
+    assert seen == [(11, 12, Decimal('5.00'), 'unbar · Rest', '2026-07-20T07:34')]
 
 
 def test_gruppe_loeschen_mit_artikeln_422():

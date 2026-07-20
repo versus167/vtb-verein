@@ -598,8 +598,7 @@ const mitgliedSuche = ref('')
 
 const methodeOptionen = [
   { label: 'bar', value: 'bar' },
-  { label: 'PayPal', value: 'paypal' },
-  { label: 'Überweisung', value: 'ueberweisung' },
+  { label: 'unbar', value: 'unbar' },
 ]
 
 const teamOptions = computed(() =>

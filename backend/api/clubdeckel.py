@@ -84,7 +84,7 @@ class ZahlungCreate(BaseModel):
     von_mitglied_id: int                     # Zahler (+betrag, Schuld sinkt)
     an_mitglied_id: int                      # Empfänger (−betrag, hält das Geld)
     betrag: float
-    methode: Optional[str] = None            # 'bar' | 'paypal' | 'ueberweisung'
+    methode: Optional[str] = None            # 'bar' | 'unbar'
     notiz: Optional[str] = None
     datum: Optional[str] = None              # ISO 'YYYY-MM-DDTHH:MM' (sonst jetzt)
 
@@ -104,7 +104,7 @@ class AnVerkaufCreate(BaseModel):
     datum: Optional[str] = None              # ISO 'YYYY-MM-DDTHH:MM' (sonst jetzt)
 
 
-_METHODE_LABEL = {'bar': 'bar', 'paypal': 'PayPal', 'ueberweisung': 'Überweisung'}
+_METHODE_LABEL = {'bar': 'bar', 'unbar': 'unbar'}
 
 
 def _euro(wert: float) -> Decimal:
