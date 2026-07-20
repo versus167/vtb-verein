@@ -70,6 +70,39 @@ def _validate_rolle(rolle: str):
         raise HTTPException(status_code=422, detail=f"Ungültige Rolle. Erlaubt: {VALID_ROLLEN}")
 
 
+# --- Scoped Zugriff für Kader-ÜL/Betreuer (#121) -----------------------------
+# Ohne globales mannschaften.read darf man den Bereich trotzdem sehen, wenn man
+# in einem Team ÜL/Betreuer ist – dann abteilungsweit lesen und den Kader der
+# eigenen Teams pflegen. Team anlegen/bearbeiten/löschen bleibt global.
+
+def _read_scope_abteilungen(user, db):
+    """None = darf alle Mannschaften lesen (globales Recht); sonst die Menge der
+    Abteilungs-IDs, auf die der Kader-ÜL/Betreuer beschränkt ist."""
+    if user.has_permission(Permission.MANNSCHAFTEN_READ):
+        return None
+    return db.mannschaft_scope_abteilungen(user.id)
+
+
+def _kader_write_ids(user, db):
+    """None = darf jeden Kader pflegen (globales Schreibrecht); sonst die Menge der
+    Mannschafts-IDs, in denen der User selbst Kader-ÜL/Betreuer ist."""
+    if user.has_permission(Permission.MANNSCHAFTEN_WRITE):
+        return None
+    return db.mannschaft_kader_verwalten_ids(user.id)
+
+
+def _require_read_team(user, db, m):
+    scope = _read_scope_abteilungen(user, db)
+    if scope is not None and m.abteilung_id not in scope:
+        raise HTTPException(status_code=403, detail="Kein Zugriff auf diese Mannschaft")
+
+
+def _require_kader_write(user, db, mannschaft_id: int):
+    ids = _kader_write_ids(user, db)
+    if ids is not None and mannschaft_id not in ids:
+        raise HTTPException(status_code=403, detail="Keine Berechtigung, diesen Kader zu bearbeiten")
+
+
 def _alter_jahrgang(geburtsdatum):
     """(alter_in_jahren, geburtsjahr) aus 'YYYY-MM-DD'; (None, None) wenn fehlt/ungültig."""
     if not geburtsdatum:
@@ -89,8 +122,18 @@ def _alter_jahrgang(geburtsdatum):
 
 @router.get("/mannschaften")
 def list_mannschaften(user: CurrentUser, db: DB, abteilung_id: Optional[int] = None):
-    _require_read(user)
-    return [asdict(m) for m in db.list_mannschaften(abteilung_id)]
+    scope = _read_scope_abteilungen(user, db)
+    if scope is not None and not scope:
+        raise HTTPException(status_code=403, detail="Keine Leseberechtigung für Mannschaften")
+    kader_ids = _kader_write_ids(user, db)
+    out = []
+    for m in db.list_mannschaften(abteilung_id):
+        if scope is not None and m.abteilung_id not in scope:
+            continue
+        d = asdict(m)
+        d['darf_kader_verwalten'] = kader_ids is None or m.id in kader_ids
+        out.append(d)
+    return out
 
 
 @router.post("/mannschaften", status_code=status.HTTP_201_CREATED)
@@ -135,7 +178,10 @@ def delete_mannschaft(mannschaft_id: int, user: CurrentUser, db: DB):
 
 @router.get("/mannschaften/{mannschaft_id}/mitglieder")
 def list_kader(mannschaft_id: int, user: CurrentUser, db: DB):
-    _require_read(user)
+    m = db.get_mannschaft(mannschaft_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    _require_read_team(user, db, m)
     return [asdict(z) for z in db.list_mannschaft_kader(mannschaft_id)]
 
 
@@ -143,9 +189,9 @@ def list_kader(mannschaft_id: int, user: CurrentUser, db: DB):
 def list_kandidaten(mannschaft_id: int, user: CurrentUser, db: DB):
     """Mitglieder der Team-Abteilung, die noch nicht in diesem Team sind (für Sammel-Hinzufügen).
     Inkl. Alter/Jahrgang und aktueller Mannschaften; sortiert: ohne Team zuerst, dann nach Team/Alter."""
-    _require_read(user)
     if db.get_mannschaft(mannschaft_id) is None:
         raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    _require_kader_write(user, db, mannschaft_id)
     out = []
     for r in db.list_mannschaft_kandidaten(mannschaft_id):
         alter, jahrgang = _alter_jahrgang(r.get('geburtsdatum'))
@@ -166,7 +212,7 @@ def list_kandidaten(mannschaft_id: int, user: CurrentUser, db: DB):
 
 @router.post("/mannschaften/{mannschaft_id}/mitglieder", status_code=status.HTTP_201_CREATED)
 def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
-    _require_write(user)
+    _require_kader_write(user, db, mannschaft_id)
     _validate_rolle(data.rolle)
     if not (data.von or '').strip():
         raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
@@ -183,7 +229,7 @@ def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
 @router.post("/mannschaften/{mannschaft_id}/mitglieder/bulk", status_code=status.HTTP_201_CREATED)
 def add_kader_bulk(mannschaft_id: int, data: BulkKaderCreate, user: CurrentUser, db: DB):
     """Mehrere Mitglieder auf einmal zum Kader hinzufügen (gleiche Rolle + Von)."""
-    _require_write(user)
+    _require_kader_write(user, db, mannschaft_id)
     _validate_rolle(data.rolle)
     if not (data.von or '').strip():
         raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
@@ -206,7 +252,7 @@ def add_kader_bulk(mannschaft_id: int, data: BulkKaderCreate, user: CurrentUser,
 @router.put("/mannschaften/{mannschaft_id}/mitglieder/{zuordnung_id}")
 def update_kader(mannschaft_id: int, zuordnung_id: int, data: KaderUpdate,
                  user: CurrentUser, db: DB):
-    _require_write(user)
+    _require_kader_write(user, db, mannschaft_id)
     _validate_rolle(data.rolle)
     if not (data.von or '').strip():
         raise HTTPException(status_code=422, detail="Zeitraum-Beginn (Von) ist erforderlich")
@@ -225,7 +271,7 @@ def update_kader(mannschaft_id: int, zuordnung_id: int, data: KaderUpdate,
 
 @router.delete("/mannschaften/{mannschaft_id}/mitglieder/{zuordnung_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_kader(mannschaft_id: int, zuordnung_id: int, user: CurrentUser, db: DB):
-    _require_write(user)
+    _require_kader_write(user, db, mannschaft_id)
     z = db.get_mitglied_mannschaft(zuordnung_id)
     if z is None or z.mannschaft_id != mannschaft_id:
         raise HTTPException(status_code=404, detail="Kader-Zuordnung nicht gefunden")

@@ -59,7 +59,7 @@
           <q-card>
             <q-card-section class="q-pt-sm">
               <q-inner-loading :showing="kaderLoadingId === m.id" />
-              <q-btn v-if="auth.hasPermission('mannschaften.write')" flat icon="group_add"
+              <q-btn v-if="m.darf_kader_verwalten" flat icon="group_add"
                 label="Mitglieder hinzufügen" color="primary" size="sm" class="q-mb-sm" @click="openPicker(m)" />
               <div v-if="kaderLoadingId !== m.id && (kaderByTeam[m.id]?.length ?? 0) === 0"
                 class="text-grey text-center q-py-sm">Noch keine Mitglieder im Kader.</div>
@@ -73,7 +73,7 @@
                         <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
                       </q-item-label>
                     </q-item-section>
-                    <q-item-section side v-if="auth.hasPermission('mannschaften.write')">
+                    <q-item-section side v-if="m.darf_kader_verwalten">
                       <div class="row q-gutter-xs">
                         <q-btn flat dense round icon="edit" color="primary" size="sm" @click="openEditKader(m, z)" />
                         <q-btn flat dense round icon="delete" color="negative" size="sm" @click="removeKader(m, z)" />

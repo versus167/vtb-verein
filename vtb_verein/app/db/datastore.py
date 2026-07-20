@@ -560,6 +560,16 @@ class VereinsDB:
     def get_mannschaft(self, id: int) -> Optional[Mannschaft]:
         return self._mannschaft_repo.get(id)
 
+    def mannschaft_scope_abteilungen(self, user_id: int) -> set:
+        """Abteilungen, in denen der User Kader-ÜL/Betreuer ist (abteilungsweite
+        Lesesicht auf Mannschaften, #121)."""
+        return self._mannschaft_repo.scope_abteilungen_kader(user_id)
+
+    def mannschaft_kader_verwalten_ids(self, user_id: int) -> set:
+        """Mannschaften, in denen der User selbst Kader-ÜL/Betreuer ist und daher
+        den Kader pflegen darf (#121)."""
+        return self._mannschaft_repo.kader_verwalten_mannschaften(user_id)
+
     def list_mannschaft_kandidaten(self, mannschaft_id: int) -> list[dict]:
         return self._mannschaft_repo.list_kandidaten(mannschaft_id)
 
