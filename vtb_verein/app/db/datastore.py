@@ -75,6 +75,12 @@ from app.db.tresor_freigabe_repository import TresorFreigabeRepository
 from app.db.tresor_eintrag_repository import TresorEintragRepository
 from app.db.tresor_zugriff_log_repository import TresorZugriffLogRepository
 from app.db.tresor_kontakt_repository import TresorKontaktRepository
+from app.db.clubdeckel_repository import ClubdeckelRepository
+from app.db.clubdeckel_berechtigung_repository import ClubdeckelBerechtigungRepository
+from app.db.clubdeckel_gruppe_repository import ClubdeckelGruppeRepository
+from app.db.clubdeckel_artikel_repository import ClubdeckelArtikelRepository
+from app.db.clubdeckel_befreiung_repository import ClubdeckelBefreiungRepository
+from app.db.clubdeckel_buchung_repository import ClubdeckelBuchungRepository
 from app.db.termin_repository import TerminRepository
 from app.db.termin_zusage_repository import TerminZusageRepository
 from app.db.termin_serie_repository import TerminSerieRepository
@@ -198,6 +204,14 @@ class VereinsDB:
         self._tresor_eintrag_repo = TresorEintragRepository(self.conn)
         self._tresor_zugriff_log_repo = TresorZugriffLogRepository(self.conn)
         self._tresor_kontakt_repo = TresorKontaktRepository(self.conn)
+
+        # Teamtresor/Clubdeckel (#98)
+        self._clubdeckel_repo = ClubdeckelRepository(self.conn)
+        self._clubdeckel_berechtigung_repo = ClubdeckelBerechtigungRepository(self.conn)
+        self._clubdeckel_gruppe_repo = ClubdeckelGruppeRepository(self.conn)
+        self._clubdeckel_artikel_repo = ClubdeckelArtikelRepository(self.conn)
+        self._clubdeckel_befreiung_repo = ClubdeckelBefreiungRepository(self.conn)
+        self._clubdeckel_buchung_repo = ClubdeckelBuchungRepository(self.conn)
 
         # Mannschafts-Termine (#95, Spielbetrieb Etappe 1)
         self._termin_repo = TerminRepository(self.conn)
@@ -352,6 +366,31 @@ class VereinsDB:
     @property
     def tresor_kontakte(self) -> TresorKontaktRepository:
         return self._tresor_kontakt_repo
+
+    # --- Teamtresor/Clubdeckel (#98) ---
+    @property
+    def clubdeckel(self) -> ClubdeckelRepository:
+        return self._clubdeckel_repo
+
+    @property
+    def clubdeckel_berechtigungen(self) -> ClubdeckelBerechtigungRepository:
+        return self._clubdeckel_berechtigung_repo
+
+    @property
+    def clubdeckel_gruppen(self) -> ClubdeckelGruppeRepository:
+        return self._clubdeckel_gruppe_repo
+
+    @property
+    def clubdeckel_artikel(self) -> ClubdeckelArtikelRepository:
+        return self._clubdeckel_artikel_repo
+
+    @property
+    def clubdeckel_befreiungen(self) -> ClubdeckelBefreiungRepository:
+        return self._clubdeckel_befreiung_repo
+
+    @property
+    def clubdeckel_buchungen(self) -> ClubdeckelBuchungRepository:
+        return self._clubdeckel_buchung_repo
 
     # --- Mannschafts-Termine (#95, Spielbetrieb Etappe 1) ---
     @property
