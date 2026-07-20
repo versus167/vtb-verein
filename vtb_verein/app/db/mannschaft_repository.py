@@ -1,7 +1,12 @@
 """Repository für Mannschaften/Teams (gehören zu einer Abteilung)."""
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 from app.db.base_repository import BaseRepository
+
+# Kader-Rollen, die den Mannschaften-Bereich ihres Teams sehen (abteilungsweit)
+# und den Kader ihres Teams pflegen dürfen (#121). 'spieler' bleibt außen vor.
+VERWALTEN_ROLLEN = ('uebungsleiter', 'betreuer')
 
 
 @dataclass
@@ -55,6 +60,49 @@ class MannschaftRepository(BaseRepository):
             cur.execute(_SELECT + " WHERE m.id = %s AND m.deleted_at IS NULL", (id,))
             row = cur.fetchone()
             return _map(row) if row else None
+
+    # ------------------------------------------------------------------ ACL (#121)
+    def scope_abteilungen_kader(self, user_id: int,
+                                stichtag: Optional[str] = None) -> set[int]:
+        """Abteilungs-IDs, in denen der User am Stichtag Kader-ÜL/Betreuer ist
+        (über das verknüpfte Mitglied). Basis der abteilungsweiten Lesesicht:
+        Wer in einem Team einer Abteilung ÜL/Betreuer ist, sieht alle Teams
+        dieser Abteilung."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ma.abteilung_id
+                FROM mitglied m
+                JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL AND mm.rolle = ANY(%(vroll)s)
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                JOIN mannschaft ma ON ma.id = mm.mannschaft_id AND ma.deleted_at IS NULL
+                WHERE m.user_id = %(uid)s AND m.deleted_at IS NULL
+                  AND ma.abteilung_id IS NOT NULL
+                """,
+                {"uid": user_id, "tag": tag, "vroll": list(VERWALTEN_ROLLEN)},
+            )
+            return {r['abteilung_id'] for r in cur.fetchall()}
+
+    def kader_verwalten_mannschaften(self, user_id: int,
+                                     stichtag: Optional[str] = None) -> set[int]:
+        """Mannschafts-IDs, in denen der User am Stichtag selbst Kader-ÜL/Betreuer
+        ist – dort darf er den Kader pflegen (#121, „eigener Kader")."""
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT mm.mannschaft_id
+                FROM mitglied m
+                JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL AND mm.rolle = ANY(%(vroll)s)
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                WHERE m.user_id = %(uid)s AND m.deleted_at IS NULL
+                """,
+                {"uid": user_id, "tag": tag, "vroll": list(VERWALTEN_ROLLEN)},
+            )
+            return {r['mannschaft_id'] for r in cur.fetchall()}
 
     def create(self, m: Mannschaft, created_by: str) -> Mannschaft:
         with self.cursor() as cur:

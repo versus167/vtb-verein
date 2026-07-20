@@ -28,7 +28,7 @@
         <SettingsTile to="personen" icon="people" title="Personen" caption="Personen verwalten" />
       </div>
 
-      <div v-if="auth.hasPermission('mannschaften.read')" class="col-6 col-sm-4 col-md-3">
+      <div v-if="hatMannschaftenZugriff || auth.hasPermission('mannschaften.read')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="mannschaften" icon="sports_soccer" title="Mannschaften" caption="Teams & Kader verwalten" />
       </div>
 
@@ -91,6 +91,7 @@ const router = useRouter()
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
+const hatMannschaftenZugriff = ref(false)
 const naechsteTermine = ref([])
 
 const kassenZiel = computed(() =>
@@ -128,6 +129,11 @@ onMounted(async () => {
   try {
     const { data } = await api.get('/api/termine/mannschaften')
     hatTermineZugriff.value = data.length > 0
+  } catch { /* ignorieren */ }
+  try {
+    // Kader-ÜL/Betreuer ohne globales mannschaften.read sehen den Bereich scoped (#121)
+    const { data } = await api.get('/api/mannschaften')
+    hatMannschaftenZugriff.value = data.length > 0
   } catch { /* ignorieren */ }
   await ladeNaechsteTermine()
 })

@@ -70,7 +70,7 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('mannschaften.read')"
+            v-if="hatMannschaftenZugriff || auth.hasPermission('mannschaften.read')"
             clickable
             :to="{ name: 'mannschaften' }"
             active-class="vtb-nav-active"
@@ -349,6 +349,7 @@ function toggleDarkMode() {
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
+const hatMannschaftenZugriff = ref(false)
 
 const appVersion = ref('')
 
@@ -388,12 +389,24 @@ async function loadTermineZugriff() {
   }
 }
 
+// Kader-ÜL/Betreuer ohne globales mannschaften.read sehen den Bereich scoped
+// (nur ihre Abteilung); die Liste liefert dann >0 Teams bzw. 403 (#121).
+async function loadMannschaftenZugriff() {
+  try {
+    const { data } = await api.get('/api/mannschaften')
+    hatMannschaftenZugriff.value = data.length > 0
+  } catch {
+    hatMannschaftenZugriff.value = false
+  }
+}
+
 // Alle ACL-Proben zusammen – läuft beim Mount UND bei jedem Auto-/Manuell-
 // Refresh (registerGlobalRefresh): ein einmalig fehlgeschlagener Aufruf oder
 // eine erst nach dem Login vergebene Kader-/ACL-Zuordnung ließ die Nav-Punkte
 // sonst dauerhaft verschwinden, während sich die Dashboard-Kacheln erholten.
 function ladeZugriffsProben() {
-  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff()])
+  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
+    loadMannschaftenZugriff()])
 }
 
 async function onLogout() {
@@ -401,6 +414,7 @@ async function onLogout() {
   hatKassenZugriff.value = false
   hatTresorZugriff.value = false
   hatTermineZugriff.value = false
+  hatMannschaftenZugriff.value = false
   router.push({ name: 'login' })
 }
 
