@@ -239,14 +239,20 @@ function rolleColor(r) {
 async function load() {
   loading.value = true
   try {
-    const [{ data: ms }, { data: ab }] = await Promise.all([
+    const [msRes, abRes] = await Promise.allSettled([
       api.get('/api/mannschaften'),
       api.get('/api/abteilungen/'),
     ])
-    mannschaften.value = ms
-    abteilungen.value = ab
-  } catch {
-    $q.notify({ type: 'negative', message: 'Fehler beim Laden' })
+    if (msRes.status === 'fulfilled') {
+      mannschaften.value = msRes.value.data
+    } else {
+      $q.notify({ type: 'negative', message: 'Fehler beim Laden' })
+    }
+    // Abteilungsliste ist optional (nur Filter + Anlege-/Bearbeiten-Dialog):
+    // Kader-ÜL/Betreuer ohne abteilungen.read bekommen hier 403 — die Teams
+    // werden trotzdem aus mannschaften.abteilung_name gruppiert und angezeigt,
+    // statt dass der 403 die ganze Seite leert (#124).
+    abteilungen.value = abRes.status === 'fulfilled' ? abRes.value.data : []
   } finally {
     loading.value = false
   }

@@ -39,7 +39,10 @@ const routes = [
         path: 'mannschaften',
         name: 'mannschaften',
         component: () => import('pages/MannschaftenPage.vue'),
-        meta: { title: 'Mannschaften', permission: 'mannschaften.read' },
+        // ACL-basiert (wie tresor/kassenbuch): kein meta.permission, sonst
+        // wirft der Guard Kader-ÜL/Betreuer ohne globales mannschaften.read
+        // aufs Dashboard zurück (#124). Zugriff regeln Nav-Probe + Backend-Filter.
+        meta: { title: 'Mannschaften' },
       },
       {
         path: 'users',
