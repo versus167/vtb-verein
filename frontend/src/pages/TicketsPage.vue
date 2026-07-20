@@ -440,6 +440,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -448,6 +449,8 @@ import AnhangPanel from 'src/components/AnhangPanel.vue'
 import { formatDate as fmtDate, formatDateTime as fmtDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
+const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.user?.role === 'admin')
 const currentUserId = computed(() => auth.user?.id)
@@ -729,6 +732,27 @@ async function openDetailDialog(ticket) {
   await Promise.all([loadAnhaenge(ticket.id), loadKommentare(ticket.id)])
 }
 
+// Deep-Link aus einer Push-Nachricht: /tickets?ticket=NN öffnet das Ticket direkt
+// (#117). Einzel-Fetch, damit es auch bei aktivem Listenfilter greift; die Query
+// wird danach entfernt, damit ein Reload den Dialog nicht erneut aufzieht.
+async function openTicketFromQuery() {
+  const id = Number(route.query.ticket)
+  if (!id) return
+  try {
+    const { data } = await api.get(`/api/tickets/${id}`)
+    isDraftTicket.value = false
+    await openDetailDialog(data)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || `Ticket #${id} nicht gefunden.` })
+  } finally {
+    const q = { ...route.query }
+    delete q.ticket
+    router.replace({ query: q })
+  }
+}
+
+watch(() => route.query.ticket, (v) => { if (v) openTicketFromQuery() })
+
 async function onWithdraw() {
   $q.dialog({
     title: 'Ticket zurückziehen',
@@ -937,9 +961,10 @@ async function deleteKommentar(k) {
 }
 
 usePageRefresh(loadAll)
-onMounted(() => {
-  loadAll()
+onMounted(async () => {
+  await loadAll()
   window.addEventListener('vtb:ticket-created', loadAll)
+  openTicketFromQuery()   // Push-Deep-Link (#117)
 })
 onUnmounted(() => {
   window.removeEventListener('vtb:ticket-created', loadAll)

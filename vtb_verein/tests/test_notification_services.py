@@ -139,7 +139,7 @@ class TestNotificationService:
         result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
 
         assert result is True
-        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message')
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message', '/')
         mock_email.send_text_email.assert_not_called()
 
     @patch('app.services.notification_service.EmailService')
@@ -167,8 +167,20 @@ class TestNotificationService:
         result = NotificationService.send_notification(user, 'Test', 'message', push_service=push)
 
         assert result is True
-        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message')
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message', '/')
         mock_email.send_text_email.assert_called_once()
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_reicht_url_an_push_durch(self, mock_email):
+        """Deep-Link (#117): die übergebene url wird an den Push-Service durchgereicht."""
+        user = self._create_test_user(preferred_contact='push')
+        push = MagicMock()
+        push.send_to_user.return_value = 1
+
+        NotificationService.send_notification(
+            user, 'Test', 'message', push_service=push, url='/tickets?ticket=42')
+
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message', '/tickets?ticket=42')
 
     @patch('app.services.notification_service.MatrixService')
     @patch('app.services.notification_service.EmailService')
