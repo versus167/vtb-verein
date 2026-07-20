@@ -1,8 +1,8 @@
-# Plan: Clubdeckel — mannschaftsinterne Strichliste
+# Plan: Teamtresor (Clubdeckel) — mannschaftsinterne Strichliste
 
-> Status (2026-07-13): **Konzept, noch keine Umsetzung.** Grober Plan aus einer
-> Diskussionsrunde (Vorbild: privates Repo `okram0815/Clubtresor`, eine
-> PHP-Getränke-Strichliste). Zuschnitt und offene Fragen s. u.
+> Status (2026-07-20): **Umgesetzt auf Branch `feature/teamtresor`** (Schema v75,
+> Fachmodell nach Abgleich mit dem Original korrigiert, s. „Buchungsmodell").
+> Vorbild: privates Repo `okram0815/Clubtresor` (PHP-Getränke-Strichliste).
 
 ## Kernidee
 
@@ -13,9 +13,10 @@ schlankes Ledger.
 
 Rollen-Logik:
 - **Jedes Deckel-Mitglied** bucht seinen **eigenen Konsum** selbst (Tap-to-Buchen).
-- **Nur mit Berechtigung** („Deckelwart") darf man
-  1. **Transaktionen zwischen Membern** buchen (Umbuchen, Korrektur, Ausgleich) und
-  2. den **Deckelinhalt** festlegen (Artikel-Katalog + Preise).
+- **Nur mit Berechtigung** („Wart") darf man
+  1. **Zahlungen und Einkäufe** buchen (Geld wurde real übergeben / Team kauft
+     vom Mitglied) und
+  2. den **Deckelinhalt** festlegen (Gruppen + Artikel + Preise).
 
 Das Recht ist **ressourcen-genau pro Deckel**, kein globales Recht — exakt das
 ACL-Muster von **Kassen** (`kasse_berechtigungen`) und **Tresor**
@@ -37,28 +38,50 @@ ACL-Muster von **Kassen** (`kasse_berechtigungen`) und **Tresor**
 Alle Tabellen mit Soft-Delete (`deleted_at`/`deleted_by`, `version`) + Audit-Trigger
 in `*_history` **und Eintrag ins `PRUNE_REGISTRY`** (Reihenfolge Kinder-vor-Eltern).
 
-- **`clubdeckel`** — ein Deckel: `mannschaft_id` (i. d. R.), `name`, `aktiv`.
-- **`clubdeckel_berechtigung`** — **ACL** (analog `kasse_berechtigungen`): welches
-  Mitglied/welcher User ist „Deckelwart" für diesen Deckel.
-- **`clubdeckel_artikel`** — der Deckelinhalt: `deckel_id`, `name`, `preis`,
-  `aktiv`, ggf. Sortierung/Gruppe. Pflege nur durch Deckelwart.
-- **`clubdeckel_buchung`** — das **Ledger** (ein Vorzeichen-Betrag pro Zeile, keine
-  Doppik): `deckel_id`, `mitglied_id`, `artikel_id?`, `menge`, `betrag`, `typ`
-  (`konsum` | `umbuchung` | `ausgleich`), `gebucht_von`, `gebucht_am`,
-  Freitext/Notiz. **Saldo je Member = `SUM(betrag)`** über nicht gelöschte Zeilen.
+- **`clubdeckel`** — ein Deckel: `mannschaft_id` (UNIQUE auf aktive Zeilen),
+  `name`, `aktiv`; **Stammdaten**: `beitrag` (Monatspauschale) + `beitrag_ab`,
+  `zahlungsempfaenger_mitglied_id` und Zahlwege `zahlweg_iban`/`_wero`/`_paypal`.
+- **`clubdeckel_berechtigung`** — **Wart-ACL** (mitglied-basiert wie der Kader).
+- **`clubdeckel_gruppe`** — Artikel-Gruppe („Getränke"/„Essen") mit **Verkäufer**:
+  Team (`verkaeufer_mitglied_id NULL`) oder ein Mitglied (verkauft z. B. die
+  Roster selbst).
+- **`clubdeckel_artikel`** — der Deckelinhalt: `gruppe_id?`, `name`, `preis`,
+  `aktiv`, `sortierung`. Pflege nur durch Wart.
+- **`clubdeckel_beitrag_befreiung`** — vom Monatsbeitrag befreite Mitglieder.
+- **`clubdeckel_buchung`** — das **Ledger** (ein Vorzeichen-Betrag pro Zeile,
+  keine Doppik). **Saldo je Mitglied = `SUM(betrag)`**, **Team-Saldo = −Σ aller
+  Mitgliedssalden** (keine eigene Team-Buchhaltung).
 
-Umbuchung zwischen zwei Membern = zwei Gegenbuchungen (oder eine Zeile mit
-Ziel-Member) — Detail bei Umsetzung festlegen.
+## Buchungsmodell (korrigiert nach Abgleich mit dem Original, 19./20.07.2026)
+
+| Typ       | Vorgang                                   | Wirkung                                     |
+|-----------|-------------------------------------------|---------------------------------------------|
+| `konsum`  | Mitglied kauft Artikel                    | Käufer −Betrag (Preis-Snapshot). Verkauft die Gruppe über ein **Mitglied**, entsteht die Gegenzeile `verkauf` (+Betrag) beim Verkäufer — Nullsummen-Paar via `paar_ref`, Team unberührt. |
+| `verkauf` | Verkäufer-Gegenzeile (nie allein)         | Verkäufer +Betrag                           |
+| `einkauf` | Team kauft vom Mitglied (Kasten geliefert)| Mitglied +Betrag (Team −)                   |
+| `zahlung` | Mitglied zahlt an Mitglied (bar/PayPal/…) | Zahler +, Empfänger − (Nullsummen-Paar via `paar_ref`); deckt Einzahlung beim Wart wie Direktzahlung ab |
+| `beitrag` | Mannschaftsbeitrag (Monatspauschale)      | Mitglied −Betrag, `beitrag_monat` 'YYYY-MM' |
+
+- **Beitragslauf automatisch** (lazy beim Zugriff, Muster „rollierend
+  materialisieren" wie Terminserien): beitragspflichtig für Monat M ist, wer am
+  Monatsersten aktiv im Kader steht und nicht befreit ist; ein Monat mit
+  vorhandener Beitragszeile — **auch storniert** — gilt als erledigt
+  (Storno = „erlassen").
+- **Storno** einer Paar-Zeile löscht immer das ganze Paar; eigenen Konsum darf
+  das Mitglied selbst stornieren (Fehltipp), alles andere der Wart.
+- **Zahlungsempfänger + Zahlwege** werden am Tresen als „Zahlung an …"-Karte
+  angezeigt (WERO-Link, IBAN kopieren, PayPal.me) — gebucht gilt erst, wenn der
+  Wart die Zahlung erfasst.
 
 ## Rechte-Logik
 
-| Aktion                                    | Wer                                        |
-|-------------------------------------------|--------------------------------------------|
-| Eigenen Konsum buchen                     | jedes Deckel-Mitglied                      |
-| Transaktion zwischen zwei Membern         | Wart (ACL) sowie ÜL/Betreuer implizit      |
-| Artikel/Preise (Deckelinhalt) pflegen     | Wart (ACL) sowie ÜL/Betreuer implizit      |
-| Teamtresor einschalten/Stammdaten pflegen | aktiver Kader-`uebungsleiter`/`betreuer`   |
-| Wart ernennen (ACL vergeben)              | aktiver Kader-`uebungsleiter`/`betreuer`   |
+| Aktion                                     | Wer                                        |
+|--------------------------------------------|--------------------------------------------|
+| Eigenen Konsum buchen/stornieren           | jedes Deckel-Mitglied                      |
+| Zahlungen/Einkäufe buchen, Storno gesamt   | Wart (ACL) sowie ÜL/Betreuer implizit      |
+| Gruppen/Artikel/Preise pflegen             | Wart (ACL) sowie ÜL/Betreuer implizit      |
+| Einschalten/Stammdaten (Beitrag, Zahlwege) | aktiver Kader-`uebungsleiter`/`betreuer`   |
+| Warte ernennen, Beitragsbefreiungen        | aktiver Kader-`uebungsleiter`/`betreuer`   |
 
 **Kein neuer globaler Permission-Key** — die Verantwortung kommt vollständig aus
 dem Kader (`mitglied_mannschaft`, Rollen `uebungsleiter`/`betreuer`, von/bis
@@ -72,23 +95,27 @@ Kader gepflegt hat; in der UI wird das nicht beworben.
 ## Backend (Skizze)
 
 - Router `backend/api/clubdeckel.py`, in `main.py` mit `prefix="/api"` registriert.
-- Repos: `clubdeckel_repository`, `clubdeckel_berechtigung_repository`,
-  `clubdeckel_artikel_repository`, `clubdeckel_buchung_repository` — in
-  `datastore.py` als `@property`.
-- Kleiner Service für Saldo-Berechnung (Member-Salden, Deckel-Übersicht/Tabelle).
-- Schema: `SCHEMA_VERSION` hochzählen, `_migrate_vN_to_vN+1`, DDL als geteilte
-  `_DDL_*`-Konstanten aus Frisch- **und** Migrationspfad, am Ende
-  `_normalize_audit_timestamps`. `PRUNE_REGISTRY` erweitern.
+- Repos: `clubdeckel_repository` (inkl. Kader-Rechteableitung, CTE aus dem
+  Termine-Muster kopiert), `clubdeckel_berechtigung_repository`,
+  `clubdeckel_gruppe_repository`, `clubdeckel_artikel_repository`,
+  `clubdeckel_befreiung_repository`, `clubdeckel_buchung_repository` (inkl.
+  Salden + Beitragslauf) — in `datastore.py` als `@property`.
+- Schema v75: DDL als geteilte `_DDL_*`-Konstanten aus Frisch- **und**
+  Migrationspfad, am Ende `_normalize_audit_timestamps`; `PRUNE_REGISTRY` um die
+  fünf Entities plus ChildRefs bei `mannschaft` und `mitglied` erweitert.
 
 ## Frontend (Skizze)
 
-- Eine Seite mit in-page `q-tabs`:
-  - **Tresen** — Tap-Grid der Artikel, bucht eigenen Konsum.
-  - **Salden / Tabelle** — Saldo je Member (Rangliste), eigener Deckelstand.
-  - **Katalog** (nur Deckelwart) — Artikel/Preise pflegen.
-  - **Umbuchen** (nur Deckelwart) — Transaktion zwischen Membern, Ausgleich.
-- Sichtbarkeit/Nav über geladene Deckel-Liste (analog `/api/kassen/`), Deckelwart-
-  Tabs zusätzlich per ACL. Vereinsfarben (VTB-Blau `primary`, Gelb nur Akzent).
+- Eine Seite (`TeamtresorPage.vue`) mit in-page `q-tabs`:
+  - **Tresen** — Tap-Grid der Artikel nach Gruppen (Tap bucht 1×, Notify mit
+    Rückgängig), eigener Deckelstand + Team-Saldo, „Zahlung an …"-Karte mit den
+    Zahlwegen, eigene letzte Buchungen mit Storno.
+  - **Salden** — Team-Saldo + Rangliste je Mitglied.
+  - **Katalog** (ab Wart) — Gruppen (inkl. Verkäufer) und Artikel pflegen.
+  - **Verwalten** (ab Wart) — Zahlung/Einkauf buchen, alle Buchungen mit Storno;
+    nur ÜL/Betreuer: Warte, Beitragsbefreiungen, Stammdaten, Ausschalten.
+- Sichtbarkeit/Nav über die geladene Team-Liste (`/api/clubdeckel/teams`,
+  analog `/api/kassen/`). Vereinsfarben (VTB-Blau `primary`, Gelb nur Akzent).
 
 ## Entschieden
 
@@ -109,11 +136,24 @@ Kader gepflegt hat; in der UI wird das nicht beworben.
 - **Genau ein Teamtresor pro Mannschaft** (Volker, 19.07.2026) — 1:1-Beziehung,
   `mannschaft_id` in `clubdeckel` entsprechend UNIQUE (auf nicht gelöschte
   Zeilen bezogen).
+- **Fachmodell aus dem Original übernommen** (Volker, 19./20.07.2026): kein
+  frei erfundener „Ausgleich" — die Buchungsarten sind konsum/verkauf/einkauf/
+  zahlung/beitrag (Tabelle oben); Team-Saldo ist immer die Gegensumme der
+  Mitgliedssalden. Saldo-Konvention: negativ = schuldet.
+- **Mannschaftsbeitrag: Automatik + Ausnahmen** (Volker, 19.07.2026) —
+  monatliche Pauschale aus den Stammdaten, automatisch gebucht, Befreiungen je
+  Mitglied durch ÜL/Betreuer.
+- **Zahlungen/Einkäufe bucht nur der Wart** (Volker, 19.07.2026) — wie an der
+  Theke: Geld wird real übergeben, der Wart quittiert per Buchung.
+- **Zahlwege des Zahlungsempfängers** (Volker, 19.07.2026): IBAN (kopieren),
+  WERO-Link, PayPal.me-Link — wie im Original.
+- **Gruppen mit Verkäufer** (Volker, 20.07.2026): Artikel hängen in Gruppen;
+  Verkäufer je Gruppe ist das Team oder ein Mitglied (z. B. Roster) — beim
+  Konsum entsteht dann ein Nullsummen-Paar Käufer/Verkäufer.
 
-## Offene Fragen (Entscheidung erst bei Umsetzung)
+## Offene Fragen (Entscheidung erst bei Bedarf)
 
-- **Negativ-/Positiv-Saldo-Konvention** + evtl. Warnschwellen.
-- **Umbuchung** genau ein oder zwei Zeilen (Modellierungsdetail).
+- **Warnschwellen** bei hohem Negativ-Saldo (Anzeige/Benachrichtigung).
 - **Events/Push** (aus dem Vorbild) — später als Erweiterung oder ganz weglassen.
 
 ## Bezug

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 74
+SCHEMA_VERSION = 75
 
 
 # ---------------------------------------------------------------------------
@@ -1303,6 +1303,404 @@ _TRESOR_KONTAKT_TRIGGERS = (
 
 
 # ============================================================================
+# Teamtresor / Clubdeckel (Schema v75, Ticket #98)
+# ----------------------------------------------------------------------------
+# Mannschaftsinterne Getränke-Strichliste, bewusst getrennt von Kassenbuch/FiBu/
+# Vereinsbeiträgen (eigenes Ledger, kein Geldfluss über die Vereinskasse). Rechte
+# laufen komplett teamintern: Kader-Rolle uebungsleiter/betreuer verwaltet, die
+# Wart-ACL (clubdeckel_berechtigung, mitglied-basiert wie der Kader) pflegt den
+# Katalog und bucht — kein globaler Permission-Key. Genau ein Deckel je Mannschaft
+# (partieller Unique-Index auf aktive Zeilen).
+#
+# Artikel hängen in GRUPPEN (clubdeckel_gruppe, z. B. „Getränke"/„Essen"); jede
+# Gruppe hat einen VERKÄUFER: das Team (verkaeufer_mitglied_id NULL) oder ein
+# Mitglied (z. B. verkauft die „Trompete" die Roster selbst).
+#
+# Buchungsmodell (Saldo je Mitglied = SUM(betrag), Team-Saldo = −Σ Mitglieder):
+#   konsum   Mitglied kauft einen Artikel → betrag negativ (Preis-Snapshot).
+#            Verkauft ein MITGLIED (Gruppen-Verkäufer), entsteht zusätzlich die
+#            Gegenzeile typ 'verkauf' (+betrag) beim Verkäufer, verknüpft über
+#            paar_ref — Nullsumme, das Team bleibt außen vor.
+#   verkauf  Verkäufer-Gegenzeile eines Mitglieds-Verkaufs (nie allein).
+#   kauf     Wart belastet ein Mitglied generisch (Kauf vom Team, ohne Artikel)
+#            → betrag negativ; Gegenstück zu 'einkauf'.
+#   einkauf  Team kauft vom Mitglied (Kasten Bier geliefert) → betrag positiv.
+#   zahlung  Mitglied zahlt an Mitglied (bar/PayPal/…) → Nullsummen-PAAR (+ beim
+#            Zahler, − beim Empfänger) mit gemeinsamer paar_ref; deckt Einzahlung
+#            beim Wart wie Direktzahlung ab.
+#   beitrag  Mannschaftsbeitrag (monatliche Pauschale aus den Stammdaten)
+#            → betrag negativ, beitrag_monat 'YYYY-MM'; wird automatisch beim
+#            Zugriff nachgebucht (einmal je Mitglied+Monat, auch storniert zählt
+#            als erledigt), Befreiungen in clubdeckel_beitrag_befreiung.
+# Zahlungsempfänger + Zahlwege (IBAN/WERO/PayPal) sind Stammdaten des Deckels.
+
+_CLUBDECKEL_COLS = (
+    "id, version, mannschaft_id, name, aktiv, beitrag, beitrag_ab, "
+    "zahlungsempfaenger_mitglied_id, zahlweg_iban, zahlweg_wero, zahlweg_paypal, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_VALS = ", ".join("NEW." + c.strip() for c in _CLUBDECKEL_COLS.split(","))
+
+_CLUBDECKEL_BERECHTIGUNG_COLS = (
+    "id, version, deckel_id, mitglied_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_BERECHTIGUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_BERECHTIGUNG_COLS.split(","))
+
+_CLUBDECKEL_GRUPPE_COLS = (
+    "id, version, deckel_id, name, verkaeufer_mitglied_id, aktiv, sortierung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_GRUPPE_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_GRUPPE_COLS.split(","))
+
+_CLUBDECKEL_ARTIKEL_COLS = (
+    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_ARTIKEL_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_ARTIKEL_COLS.split(","))
+
+_CLUBDECKEL_BEFREIUNG_COLS = (
+    "id, version, deckel_id, mitglied_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_BEFREIUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_BEFREIUNG_COLS.split(","))
+
+_CLUBDECKEL_BUCHUNG_COLS = (
+    "id, version, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
+    "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_BUCHUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_BUCHUNG_COLS.split(","))
+
+_FN_CLUBDECKEL_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_history ({_CLUBDECKEL_COLS}) VALUES ({_CLUBDECKEL_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_history ({_CLUBDECKEL_COLS}) VALUES ({_CLUBDECKEL_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BERECHTIGUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_berechtigung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_berechtigung_history ({_CLUBDECKEL_BERECHTIGUNG_COLS})
+        VALUES ({_CLUBDECKEL_BERECHTIGUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BERECHTIGUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_berechtigung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_berechtigung_history ({_CLUBDECKEL_BERECHTIGUNG_COLS})
+            VALUES ({_CLUBDECKEL_BERECHTIGUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_GRUPPE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_gruppe_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_gruppe_history ({_CLUBDECKEL_GRUPPE_COLS})
+        VALUES ({_CLUBDECKEL_GRUPPE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_GRUPPE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_gruppe_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_gruppe_history ({_CLUBDECKEL_GRUPPE_COLS})
+            VALUES ({_CLUBDECKEL_GRUPPE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BEFREIUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_befreiung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_beitrag_befreiung_history ({_CLUBDECKEL_BEFREIUNG_COLS})
+        VALUES ({_CLUBDECKEL_BEFREIUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BEFREIUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_befreiung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_beitrag_befreiung_history ({_CLUBDECKEL_BEFREIUNG_COLS})
+            VALUES ({_CLUBDECKEL_BEFREIUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_ARTIKEL_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_artikel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_artikel_history ({_CLUBDECKEL_ARTIKEL_COLS})
+        VALUES ({_CLUBDECKEL_ARTIKEL_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_artikel_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_artikel_history ({_CLUBDECKEL_ARTIKEL_COLS})
+            VALUES ({_CLUBDECKEL_ARTIKEL_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_buchung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_buchung_history ({_CLUBDECKEL_BUCHUNG_COLS})
+        VALUES ({_CLUBDECKEL_BUCHUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_BUCHUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_buchung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_buchung_history ({_CLUBDECKEL_BUCHUNG_COLS})
+            VALUES ({_CLUBDECKEL_BUCHUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_CLUBDECKEL = """
+    CREATE TABLE IF NOT EXISTS clubdeckel (
+      id            SERIAL PRIMARY KEY,
+      mannschaft_id INTEGER NOT NULL REFERENCES mannschaft(id),
+      name          TEXT NOT NULL,
+      aktiv         INTEGER NOT NULL DEFAULT 1,
+      beitrag       NUMERIC(10,2),
+      beitrag_ab    TEXT,
+      zahlungsempfaenger_mitglied_id INTEGER REFERENCES mitglied(id),
+      zahlweg_iban  TEXT,
+      zahlweg_wero  TEXT,
+      zahlweg_paypal TEXT,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by    TEXT NOT NULL,
+      deleted_at    TEXT,
+      deleted_by    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      mannschaft_id INTEGER, name TEXT, aktiv INTEGER,
+      beitrag NUMERIC(10,2), beitrag_ab TEXT,
+      zahlungsempfaenger_mitglied_id INTEGER,
+      zahlweg_iban TEXT, zahlweg_wero TEXT, zahlweg_paypal TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_berechtigung (
+      id          SERIAL PRIMARY KEY,
+      deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
+      mitglied_id INTEGER NOT NULL REFERENCES mitglied(id),
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_berechtigung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, mitglied_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_gruppe (
+      id                     SERIAL PRIMARY KEY,
+      deckel_id              INTEGER NOT NULL REFERENCES clubdeckel(id),
+      name                   TEXT NOT NULL,
+      verkaeufer_mitglied_id INTEGER REFERENCES mitglied(id),
+      aktiv                  INTEGER NOT NULL DEFAULT 1,
+      sortierung             INTEGER NOT NULL DEFAULT 0,
+      version                INTEGER NOT NULL DEFAULT 1,
+      created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by             TEXT NOT NULL,
+      updated_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by             TEXT NOT NULL,
+      deleted_at             TEXT,
+      deleted_by             TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_gruppe_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, name TEXT, verkaeufer_mitglied_id INTEGER,
+      aktiv INTEGER, sortierung INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_artikel (
+      id          SERIAL PRIMARY KEY,
+      deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
+      gruppe_id   INTEGER REFERENCES clubdeckel_gruppe(id),
+      name        TEXT NOT NULL,
+      preis       NUMERIC(10,2) NOT NULL,
+      aktiv       INTEGER NOT NULL DEFAULT 1,
+      sortierung  INTEGER NOT NULL DEFAULT 0,
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_artikel_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, gruppe_id INTEGER, name TEXT, preis NUMERIC(10,2),
+      aktiv INTEGER, sortierung INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_beitrag_befreiung (
+      id          SERIAL PRIMARY KEY,
+      deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
+      mitglied_id INTEGER NOT NULL REFERENCES mitglied(id),
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_beitrag_befreiung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, mitglied_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_buchung (
+      id            SERIAL PRIMARY KEY,
+      deckel_id     INTEGER NOT NULL REFERENCES clubdeckel(id),
+      mitglied_id   INTEGER NOT NULL REFERENCES mitglied(id),
+      artikel_id    INTEGER REFERENCES clubdeckel_artikel(id),
+      typ           TEXT NOT NULL,
+      menge         INTEGER,
+      betrag        NUMERIC(10,2) NOT NULL,
+      paar_ref      TEXT,
+      beitrag_monat TEXT,
+      notiz         TEXT,
+      artikel_name  TEXT,
+      gegen_name    TEXT,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by    TEXT NOT NULL,
+      deleted_at    TEXT,
+      deleted_by    TEXT,
+      CHECK (typ IN ('konsum', 'verkauf', 'kauf', 'einkauf', 'zahlung', 'beitrag'))
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_buchung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, mitglied_id INTEGER, artikel_id INTEGER, typ TEXT,
+      menge INTEGER, betrag NUMERIC(10,2), paar_ref TEXT, beitrag_monat TEXT,
+      notiz TEXT, artikel_name TEXT, gegen_name TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_CLUBDECKEL_INDEXES = (
+    ("idx_clubdeckel_mannschaft_id",             "clubdeckel(mannschaft_id)"),
+    ("idx_clubdeckel_deleted_at",                "clubdeckel(deleted_at)"),
+    ("idx_clubdeckel_history_id",                "clubdeckel_history(id)"),
+    ("idx_clubdeckel_berechtigung_deckel_id",    "clubdeckel_berechtigung(deckel_id)"),
+    ("idx_clubdeckel_berechtigung_mitglied_id",  "clubdeckel_berechtigung(mitglied_id)"),
+    ("idx_clubdeckel_berechtigung_deleted_at",   "clubdeckel_berechtigung(deleted_at)"),
+    ("idx_clubdeckel_berechtigung_history_id",   "clubdeckel_berechtigung_history(id)"),
+    ("idx_clubdeckel_gruppe_deckel_id",          "clubdeckel_gruppe(deckel_id)"),
+    ("idx_clubdeckel_gruppe_verkaeufer",         "clubdeckel_gruppe(verkaeufer_mitglied_id)"),
+    ("idx_clubdeckel_gruppe_deleted_at",         "clubdeckel_gruppe(deleted_at)"),
+    ("idx_clubdeckel_gruppe_history_id",         "clubdeckel_gruppe_history(id)"),
+    ("idx_clubdeckel_artikel_deckel_id",         "clubdeckel_artikel(deckel_id)"),
+    ("idx_clubdeckel_artikel_gruppe_id",         "clubdeckel_artikel(gruppe_id)"),
+    ("idx_clubdeckel_artikel_deleted_at",        "clubdeckel_artikel(deleted_at)"),
+    ("idx_clubdeckel_artikel_history_id",        "clubdeckel_artikel_history(id)"),
+    ("idx_clubdeckel_befreiung_deckel_id",       "clubdeckel_beitrag_befreiung(deckel_id)"),
+    ("idx_clubdeckel_befreiung_mitglied_id",     "clubdeckel_beitrag_befreiung(mitglied_id)"),
+    ("idx_clubdeckel_befreiung_deleted_at",      "clubdeckel_beitrag_befreiung(deleted_at)"),
+    ("idx_clubdeckel_befreiung_history_id",      "clubdeckel_beitrag_befreiung_history(id)"),
+    ("idx_clubdeckel_buchung_deckel_id",         "clubdeckel_buchung(deckel_id)"),
+    ("idx_clubdeckel_buchung_mitglied_id",       "clubdeckel_buchung(mitglied_id)"),
+    ("idx_clubdeckel_buchung_artikel_id",        "clubdeckel_buchung(artikel_id)"),
+    ("idx_clubdeckel_buchung_paar_ref",          "clubdeckel_buchung(paar_ref)"),
+    ("idx_clubdeckel_buchung_beitrag_monat",     "clubdeckel_buchung(deckel_id, beitrag_monat)"),
+    ("idx_clubdeckel_buchung_deleted_at",        "clubdeckel_buchung(deleted_at)"),
+    ("idx_clubdeckel_buchung_history_id",        "clubdeckel_buchung_history(id)"),
+)
+
+_CLUBDECKEL_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_mannschaft_active "
+    "ON clubdeckel (mannschaft_id) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_berechtigung_active "
+    "ON clubdeckel_berechtigung (deckel_id, mitglied_id) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_befreiung_active "
+    "ON clubdeckel_beitrag_befreiung (deckel_id, mitglied_id) WHERE deleted_at IS NULL",
+    # Beitrag maximal einmal je Mitglied+Monat (aktive Zeilen; der Nachbucher
+    # überspringt zusätzlich auch stornierte Monate — Storno heißt „erlassen").
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_buchung_beitrag "
+    "ON clubdeckel_buchung (deckel_id, mitglied_id, beitrag_monat) "
+    "WHERE typ = 'beitrag' AND deleted_at IS NULL",
+)
+
+_CLUBDECKEL_TRIGGERS = (
+    ('trig_clubdeckel_audit_insert',              'INSERT', 'clubdeckel',              'fn_clubdeckel_audit_insert'),
+    ('trig_clubdeckel_audit_update',              'UPDATE', 'clubdeckel',              'fn_clubdeckel_audit_update'),
+    ('trig_clubdeckel_berechtigung_audit_insert', 'INSERT', 'clubdeckel_berechtigung', 'fn_clubdeckel_berechtigung_audit_insert'),
+    ('trig_clubdeckel_berechtigung_audit_update', 'UPDATE', 'clubdeckel_berechtigung', 'fn_clubdeckel_berechtigung_audit_update'),
+    ('trig_clubdeckel_gruppe_audit_insert',       'INSERT', 'clubdeckel_gruppe',       'fn_clubdeckel_gruppe_audit_insert'),
+    ('trig_clubdeckel_gruppe_audit_update',       'UPDATE', 'clubdeckel_gruppe',       'fn_clubdeckel_gruppe_audit_update'),
+    ('trig_clubdeckel_artikel_audit_insert',      'INSERT', 'clubdeckel_artikel',      'fn_clubdeckel_artikel_audit_insert'),
+    ('trig_clubdeckel_artikel_audit_update',      'UPDATE', 'clubdeckel_artikel',      'fn_clubdeckel_artikel_audit_update'),
+    ('trig_clubdeckel_befreiung_audit_insert',    'INSERT', 'clubdeckel_beitrag_befreiung', 'fn_clubdeckel_befreiung_audit_insert'),
+    ('trig_clubdeckel_befreiung_audit_update',    'UPDATE', 'clubdeckel_beitrag_befreiung', 'fn_clubdeckel_befreiung_audit_update'),
+    ('trig_clubdeckel_buchung_audit_insert',      'INSERT', 'clubdeckel_buchung',      'fn_clubdeckel_buchung_audit_insert'),
+    ('trig_clubdeckel_buchung_audit_update',      'UPDATE', 'clubdeckel_buchung',      'fn_clubdeckel_buchung_audit_update'),
+)
+
+_CLUBDECKEL_FNS = (
+    _FN_CLUBDECKEL_AUDIT_INSERT, _FN_CLUBDECKEL_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_BERECHTIGUNG_AUDIT_INSERT, _FN_CLUBDECKEL_BERECHTIGUNG_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_GRUPPE_AUDIT_INSERT, _FN_CLUBDECKEL_GRUPPE_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_ARTIKEL_AUDIT_INSERT, _FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_BEFREIUNG_AUDIT_INSERT, _FN_CLUBDECKEL_BEFREIUNG_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT, _FN_CLUBDECKEL_BUCHUNG_AUDIT_UPDATE,
+)
+
+
+# ============================================================================
 # Web-Push-Subscriptions (Schema v67, Ticket #96)
 # ----------------------------------------------------------------------------
 # Pro Gerät/Browser eine Subscription (endpoint + Schlüssel p256dh/auth), die der
@@ -1761,6 +2159,7 @@ class Database:
             72: self._migrate_v71_to_v72,
             73: self._migrate_v72_to_v73,
             74: self._migrate_v73_to_v74,
+            75: self._migrate_v74_to_v75,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4884,6 +5283,32 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 74 WHERE id = 1")
 
+    def _migrate_v74_to_v75(self) -> None:
+        """Teamtresor/Clubdeckel (#98): mannschaftsinterne Strichliste.
+
+        Neue Tabellen clubdeckel, clubdeckel_berechtigung (Wart-ACL),
+        clubdeckel_artikel, clubdeckel_buchung (+_history, Audit-Trigger, Indexe).
+        Kein Permission-Seed: Die Rechte laufen komplett teamintern über die
+        Kader-Rolle (uebungsleiter/betreuer) und die Wart-ACL — bewusst ohne
+        globalen Key und ohne Vorstands-Einblick. DDL/Trigger/Index-Konstanten
+        geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_CLUBDECKEL)
+            for fn_sql in _CLUBDECKEL_FNS:
+                cur.execute(fn_sql)
+            for name, event, table, fn in _CLUBDECKEL_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _CLUBDECKEL_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _CLUBDECKEL_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 75 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -6131,6 +6556,9 @@ class Database:
         # Tresor-Kontakte (Schema v73, #106): unverschlüsselte Ansprechpartner je
         # Tresor. DDL geteilt mit Migration v72→v73.
         cur.execute(_DDL_TRESOR_KONTAKT)
+        # Teamtresor/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
+        # DDL geteilt mit Migration v74→v75.
+        cur.execute(_DDL_CLUBDECKEL)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
@@ -6361,6 +6789,8 @@ class Database:
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_KONTAKT_AUDIT_INSERT)
         cur.execute(_FN_TRESOR_KONTAKT_AUDIT_UPDATE)
+        for fn_sql in _CLUBDECKEL_FNS:
+            cur.execute(fn_sql)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
         cur.execute(_FN_TERMINE_AUDIT_INSERT)
@@ -6975,6 +7405,7 @@ class Database:
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
             *_TRESOR_KONTAKT_TRIGGERS,
+            *_CLUBDECKEL_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
             *_TERMINE_TRIGGERS,
             *_TERMIN_ZUSAGE_TRIGGERS,
@@ -7094,6 +7525,7 @@ class Database:
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
             *_TRESOR_KONTAKT_INDEXES,
+            *_CLUBDECKEL_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,
@@ -7111,6 +7543,8 @@ class Database:
         for sql in _ZUTRITT_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _CLUBDECKEL_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TERMINE_UNIQUE_INDEXES:
             cur.execute(sql)

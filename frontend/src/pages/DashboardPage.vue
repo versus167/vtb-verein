@@ -47,6 +47,9 @@
       <div v-if="hatTresorZugriff || auth.hasPermission('tresor.verwalten')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="tresor" icon="vpn_key" title="Passwörter/Kontakte" caption="Vereins-Tresor" />
       </div>
+      <div v-if="hatTeamtresorZugriff" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="teamtresor" icon="sports_bar" title="Teamtresor" caption="Mannschafts-Strichliste" />
+      </div>
 
       <div class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="tickets" icon="confirmation_number" title="Tickets" caption="Anfragen & Aufgaben" />
@@ -92,6 +95,7 @@ const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
+const hatTeamtresorZugriff = ref(false)
 const naechsteTermine = ref([])
 
 const kassenZiel = computed(() =>
@@ -134,6 +138,10 @@ onMounted(async () => {
     // Kader-ÜL/Betreuer ohne globales mannschaften.read sehen den Bereich scoped (#121)
     const { data } = await api.get('/api/mannschaften')
     hatMannschaftenZugriff.value = data.length > 0
+  } catch { /* ignorieren */ }
+  try {
+    const { data } = await api.get('/api/clubdeckel/teams')
+    hatTeamtresorZugriff.value = data.length > 0
   } catch { /* ignorieren */ }
   await ladeNaechsteTermine()
 })

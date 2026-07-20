@@ -94,3 +94,38 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # Teamtresor-Beitragslauf (#98): bucht den fälligen Mannschaftsbeitrag je aktivem
+  # Kader-Mitglied ohne Befreiung am Monatsersten nach. Idempotent (ein Monat nie
+  # doppelt) → ein täglicher Tick genügt, um den 1. sicher zu erwischen. Gleicher
+  # Sidecar-Ansatz wie zutritt-sync (kein In-Process-Scheduler, dasselbe Image).
+  # Intervall über CLUBDECKEL_BEITRAG_INTERVAL_HOURS (Default 24 = 1×/Tag).
+  clubdeckel-beitrag:
+    image: vtb-verein:latest
+    container_name: vtb-clubdeckel-beitrag
+    healthcheck:
+      disable: true
+    depends_on:
+      vtb-verein:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+    command: >
+      sh -c '
+      H="$${CLUBDECKEL_BEITRAG_INTERVAL_HOURS:-24}";
+      echo "[clubdeckel-beitrag] gestartet – Intervall $${H}h";
+      while true; do
+        python tools/clubdeckel_beitrag_lauf.py || echo "[clubdeckel-beitrag] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
+        sleep "$$(( H * 3600 ))";
+      done'
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
