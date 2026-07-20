@@ -6,6 +6,7 @@ werden immer beliefert. Der Hauptkanal (preferred_contact) bestimmt zusätzlich
 E-Mail bzw. Matrix; 'push' heißt "keine zusätzliche E-Mail, solange Push zustellt".
 """
 from app.models.user import User
+from app.config.email_config import EmailConfig
 from app.services.email_service import EmailService
 from app.services.matrix_service import MatrixService
 from concurrent.futures import ThreadPoolExecutor
@@ -75,7 +76,15 @@ class NotificationService:
             main_ok = push_ok or send_email()
         elif user.preferred_contact == 'matrix' and user.matrix_id:
             try:
-                main_ok = MatrixService.send_notification(user.matrix_id, title, message)
+                # Deep-Link (#123): anders als Push (relative URL, die die SW am
+                # Origin navigiert) braucht die Matrix-Textnachricht die absolute
+                # URL, damit sie im Client klickbar ist. Matrix linkifiziert bloße
+                # URLs automatisch. url='/' (kein spezielles Ziel) bleibt ohne Link.
+                matrix_message = message
+                if url and url != '/':
+                    absolute = EmailConfig.get_base_url().rstrip('/') + url
+                    matrix_message = f"{message}\n\n🔗 {absolute}"
+                main_ok = MatrixService.send_notification(user.matrix_id, title, matrix_message)
                 if main_ok:
                     logger.info(f"Benachrichtigung an {user.username} via matrix versendet")
             except Exception as e:

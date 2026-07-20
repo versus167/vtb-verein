@@ -184,6 +184,37 @@ class TestNotificationService:
 
     @patch('app.services.notification_service.MatrixService')
     @patch('app.services.notification_service.EmailService')
+    def test_send_notification_matrix_enthaelt_deeplink(self, mock_email, mock_matrix):
+        """Deep-Link (#123): bei Matrix wird die absolute URL an den Body
+        angehängt (anders als Push, das die relative URL behält)."""
+        mock_matrix.send_notification.return_value = True
+        user = self._create_test_user(preferred_contact='matrix', matrix_id='@user:matrix.org')
+
+        with patch.dict(os.environ, {'BASE_URL': 'https://app.vtbchemnitz.de'}):
+            result = NotificationService.send_notification(
+                user, 'Test', 'message', url='/tickets?ticket=42')
+
+        assert result is True
+        matrix_id, title, body = mock_matrix.send_notification.call_args.args
+        assert matrix_id == '@user:matrix.org'
+        assert 'https://app.vtbchemnitz.de/tickets?ticket=42' in body
+        mock_email.send_text_email.assert_not_called()
+
+    @patch('app.services.notification_service.MatrixService')
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_matrix_ohne_ziel_kein_link(self, mock_email, mock_matrix):
+        """Ohne spezielles Ziel (url='/') bleibt der Matrix-Body unverändert."""
+        mock_matrix.send_notification.return_value = True
+        user = self._create_test_user(preferred_contact='matrix', matrix_id='@user:matrix.org')
+
+        NotificationService.send_notification(user, 'Test', 'message')
+
+        body = mock_matrix.send_notification.call_args.args[2]
+        assert body == 'message'
+        assert '🔗' not in body
+
+    @patch('app.services.notification_service.MatrixService')
+    @patch('app.services.notification_service.EmailService')
     def test_send_notification_push_additiv_zu_matrix(self, mock_email, mock_matrix):
         """Push ist additiv (#108): Hauptkanal Matrix + aktives Push-Gerät → beides, keine E-Mail."""
         mock_matrix.send_notification.return_value = True
