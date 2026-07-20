@@ -33,7 +33,7 @@
       <div class="row items-center q-mb-xs">
         <q-icon name="account_tree" color="purple" size="20px" class="q-mr-xs" />
         <div class="text-subtitle1 text-weight-medium">{{ g.abteilung }}</div>
-        <q-chip dense size="sm" color="grey-3" class="q-ml-sm">{{ g.teams.length }}</q-chip>
+        <q-chip dense size="sm" color="primary" text-color="white" class="q-ml-sm">{{ g.teams.length }}</q-chip>
       </div>
       <q-list bordered separator class="rounded-borders">
         <q-expansion-item v-for="m in g.teams" :key="m.id" icon="groups" @show="loadKader(m)">

@@ -855,11 +855,17 @@ const latestExportId = computed(() =>
 )
 
 function rowBgStyle(row) {
-  // Dark-Töne = Navy-Basis, identisch zu den bg-*-1-Remaps in app.scss
+  // Die Tabelle ist in BEIDEN Themes dunkel-flächig mit heller Schrift
+  // (Hell-Modus: Wappenblau, Dark-Mode: Navy). Die Zeilentönung muss darum
+  // immer dunkel sein – helle Pastelltöne ergäben helle Schrift auf hellem
+  // Grund (Ticket #122, betraf nur die Desktop-Tabelle: Inline-Styles werden
+  // vom bg-*-1-Remap in app.scss nicht erfasst, die mobilen Cards nutzen die
+  // Klassen und waren korrekt). Werte spiegeln jene Remaps, damit Desktop-
+  // Zeilen und Mobile-Cards gleich wirken.
   const dark = $q.dark.isActive
-  if (row.deleted_at) return { backgroundColor: dark ? '#101d38' : '#fafafa' }
-  if (row.einnahme_cent > 0) return { backgroundColor: dark ? '#0f3123' : '#f1f8e9' }
-  return { backgroundColor: dark ? '#3a1a24' : '#ffebee' }
+  if (row.deleted_at) return { backgroundColor: dark ? '#101d38' : '#0b4099' }
+  if (row.einnahme_cent > 0) return { backgroundColor: '#0f3123' }
+  return { backgroundColor: '#3a1a24' }
 }
 
 function buchungBorderColor(b) {
