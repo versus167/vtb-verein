@@ -90,6 +90,16 @@
           </q-item>
 
           <q-item
+            v-if="hatTeamtresorZugriff"
+            clickable
+            :to="{ name: 'teamtresor' }"
+            active-class="vtb-nav-active"
+          >
+            <q-item-section avatar><q-icon name="sports_bar" /></q-item-section>
+            <q-item-section>Teamtresor</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="auth.hasPermission('personen.read')"
             clickable
             :to="{ name: 'personen' }"
@@ -349,6 +359,7 @@ function toggleDarkMode() {
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
+const hatTeamtresorZugriff = ref(false)
 
 const appVersion = ref('')
 
@@ -388,12 +399,22 @@ async function loadTermineZugriff() {
   }
 }
 
+async function loadTeamtresorZugriff() {
+  try {
+    const { data } = await api.get('/api/clubdeckel/teams')
+    hatTeamtresorZugriff.value = data.length > 0
+  } catch {
+    hatTeamtresorZugriff.value = false
+  }
+}
+
 // Alle ACL-Proben zusammen – läuft beim Mount UND bei jedem Auto-/Manuell-
 // Refresh (registerGlobalRefresh): ein einmalig fehlgeschlagener Aufruf oder
 // eine erst nach dem Login vergebene Kader-/ACL-Zuordnung ließ die Nav-Punkte
 // sonst dauerhaft verschwinden, während sich die Dashboard-Kacheln erholten.
 function ladeZugriffsProben() {
-  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff()])
+  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
+    loadTeamtresorZugriff()])
 }
 
 async function onLogout() {
@@ -401,6 +422,7 @@ async function onLogout() {
   hatKassenZugriff.value = false
   hatTresorZugriff.value = false
   hatTermineZugriff.value = false
+  hatTeamtresorZugriff.value = false
   router.push({ name: 'login' })
 }
 
