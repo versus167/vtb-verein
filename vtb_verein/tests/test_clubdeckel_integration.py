@@ -467,6 +467,36 @@ def test_beitragslauf_monatsfenster_befreiung_und_erlass(db):
     assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, aktiv2) == Decimal('-5.00')
 
 
+def test_sammellauf_nur_aktive_deckel_mit_beitrag(db):
+    """run_beitragslauf (Sidecar): bucht für aktive Deckel mit Beitrag, lässt
+    beitraglose und ausgeschaltete Deckel aus und ist idempotent."""
+    from app.services.clubdeckel_beitrag_service import run_beitragslauf
+
+    erster_aktuell = date.today().replace(day=1)
+    vormonat_erster = (erster_aktuell - timedelta(days=1)).replace(day=1).isoformat()
+
+    man1 = _make_mannschaft(db, name="Mit-Beitrag")
+    _make_kader_user(db, man1, 'spieler', 'Anna', von=vormonat_erster)
+    _make_kader_user(db, man1, 'spieler', 'Bernd', von=vormonat_erster)
+    d1 = db.clubdeckel.create(man1, "T1", 't')
+    assert db.clubdeckel.update(d1.id, d1.name, 1, Decimal('5.00'),
+                                None, None, None, None, 't', d1.version)
+
+    man2 = _make_mannschaft(db, name="Ohne-Beitrag")
+    d2 = db.clubdeckel.create(man2, "T2", 't')                       # aktiv, kein Beitrag
+
+    man3 = _make_mannschaft(db, name="Aus")
+    d3 = db.clubdeckel.create(man3, "T3", 't')
+    assert db.clubdeckel.update(d3.id, d3.name, 0, Decimal('5.00'),  # Beitrag, aber aus
+                                None, None, None, None, 't', d3.version)
+
+    res = run_beitragslauf(db)
+    assert res == {d1.id: 2}                                         # nur d1, 2 Mitglieder
+    assert d2.id not in res and d3.id not in res
+    # Idempotent: zweiter Lauf bucht nichts nach
+    assert run_beitragslauf(db) == {d1.id: 0}
+
+
 def test_gruppe_loeschen_nur_ohne_artikel(db):
     man = _make_mannschaft(db)
     deckel = db.clubdeckel.create(man, "Teamtresor", 't')

@@ -295,6 +295,13 @@
           </div>
         </q-card>
 
+        <div v-if="istVerwalter && deckel.beitrag"
+          class="row items-center q-mb-sm text-caption text-grey-8">
+          <q-icon name="how_to_reg" color="green-6" size="18px" class="q-mr-xs" />
+          Beitrag aktiv: <b class="q-mx-xs">{{ beitragAktivAnzahl }} / {{ kader.length }}</b>
+          · {{ fmtEuro(deckel.beitrag) }}/Monat{{ deckel.beitrag_ab ? ` seit ${deckel.beitrag_ab}` : '' }}
+        </div>
+
         <q-input v-model="mitgliedSuche" dense outlined class="q-mb-sm"
           placeholder="Mitglied suchen…" clearable>
           <template #prepend><q-icon name="search" /></template>
@@ -312,6 +319,14 @@
                 {{ fmtEuro(m.saldo) }}
               </div>
             </div>
+            <q-btn v-if="istVerwalter && deckel.beitrag && m.imKader" round unelevated
+              :color="befreitSet.has(m.mitglied_id) ? 'grey-4' : 'green-5'"
+              :text-color="befreitSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
+              :icon="befreitSet.has(m.mitglied_id) ? 'money_off' : 'how_to_reg'"
+              :disable="saving" @click="toggleBeitrag(m)">
+              <q-tooltip>{{ befreitSet.has(m.mitglied_id)
+                ? 'Beitrag inaktiv — aktivieren' : 'Beitrag aktiv — deaktivieren' }}</q-tooltip>
+            </q-btn>
             <q-btn round unelevated color="deep-purple-5" icon="shopping_bag"
               :disable="!deckel.aktiv || saving" @click="openKaufDialog(m)">
               <q-tooltip>An-/Verkauf buchen</q-tooltip>
@@ -371,35 +386,6 @@
             <q-btn color="primary" unelevated no-caps label="Ernennen"
               :disable="neuerWart == null" @click="addWart" />
           </div>
-
-          <template v-if="deckel.beitrag">
-            <div class="text-subtitle2 q-mb-sm">
-              Beitragsbefreiungen
-              <span class="text-caption text-grey">
-                (Monatsbeitrag {{ fmtEuro(deckel.beitrag) }} seit {{ deckel.beitrag_ab }})</span>
-            </div>
-            <q-list bordered separator class="rounded-borders q-mb-md">
-              <q-item v-for="bf in befreiungen" :key="bf.mitglied_id">
-                <q-item-section>{{ bf.mitglied_name }}</q-item-section>
-                <q-item-section side>
-                  <q-btn flat round dense size="sm" icon="close" color="negative"
-                    @click="removeBefreiung(bf)">
-                    <q-tooltip>Befreiung aufheben</q-tooltip>
-                  </q-btn>
-                </q-item-section>
-              </q-item>
-              <q-item v-if="!befreiungen.length">
-                <q-item-section class="text-caption text-grey">niemand befreit</q-item-section>
-              </q-item>
-            </q-list>
-            <div class="row items-center q-gutter-sm q-mb-lg">
-              <q-select v-model="neueBefreiung" :options="befreiungKandidaten" emit-value
-                map-options dense outlined style="min-width: 220px"
-                label="Mitglied vom Beitrag befreien" />
-              <q-btn color="primary" unelevated no-caps label="Befreien"
-                :disable="neueBefreiung == null" @click="addBefreiung" />
-            </div>
-          </template>
 
           <div class="text-subtitle2 q-mb-sm">Stammdaten</div>
           <div class="row q-gutter-sm">
@@ -593,7 +579,6 @@ const kaufForm = ref({})
 const stammdatenDialog = ref(false)
 const stammdatenForm = ref({})
 const neuerWart = ref(null)
-const neueBefreiung = ref(null)
 const mitgliedSuche = ref('')
 
 const methodeOptionen = [
@@ -680,18 +665,24 @@ const mitgliederListe = computed(() => {
   const list = []
   const seen = new Set()
   for (const k of kader.value) {
-    list.push({ mitglied_id: k.mitglied_id, name: k.name,
+    list.push({ mitglied_id: k.mitglied_id, name: k.name, imKader: true,
       saldo: saldoMap.get(k.mitglied_id) || 0 })
     seen.add(k.mitglied_id)
   }
   for (const s of salden.value) {
     if (!seen.has(s.mitglied_id)) {
       list.push({ mitglied_id: s.mitglied_id, name: `${s.mitglied_name} (Ex)`,
-        saldo: Number(s.saldo) })
+        imKader: false, saldo: Number(s.saldo) })
     }
   }
   return list.sort((a, b) => a.name.localeCompare(b.name))
 })
+
+// Beitrag „aktiv" = Kader-Mitglied ohne Befreiung (Opt-out). Der Sammellauf bucht
+// den Monatsbeitrag am Monatsersten für genau diese Mitglieder.
+const befreitSet = computed(() => new Set(befreiungen.value.map(b => b.mitglied_id)))
+const beitragAktivAnzahl = computed(() =>
+  kader.value.filter(k => !befreitSet.value.has(k.mitglied_id)).length)
 
 const mitgliederGefiltert = computed(() => {
   const q = (mitgliedSuche.value || '').trim().toLowerCase()
@@ -737,11 +728,6 @@ const wartKandidaten = computed(() =>
   kader.value.filter(k => !k.ist_wart)
     .map(k => ({ label: k.name, value: k.mitglied_id })),
 )
-const befreiungKandidaten = computed(() => {
-  const befreit = new Set(befreiungen.value.map(b => b.mitglied_id))
-  return kader.value.filter(k => !befreit.has(k.mitglied_id))
-    .map(k => ({ label: k.name, value: k.mitglied_id }))
-})
 
 function fmtEuro(v) {
   return Number(v ?? 0).toLocaleString('de-DE',
@@ -1286,31 +1272,20 @@ function removeWart(wart) {
   })
 }
 
-async function addBefreiung() {
-  if (neueBefreiung.value == null) return
+// „Beitrag aktiv"-Schalter je Mitglied (Opt-out): aktiv → Befreiung setzen,
+// befreit → Befreiung aufheben. Wirkt ab dem laufenden Monat.
+async function toggleBeitrag(m) {
+  const istAktiv = !befreitSet.value.has(m.mitglied_id)
   try {
-    await api.put(`${BASE}/${deckel.value.id}/befreiungen/${neueBefreiung.value}`)
-    neueBefreiung.value = null
+    if (istAktiv) await api.put(`${BASE}/${deckel.value.id}/befreiungen/${m.mitglied_id}`)
+    else await api.delete(`${BASE}/${deckel.value.id}/befreiungen/${m.mitglied_id}`)
     await loadBefreiungen()
+    $q.notify({ type: 'positive', timeout: 1000,
+      message: istAktiv ? `${m.name}: Beitrag deaktiviert`
+        : `${m.name}: Beitrag aktiv` })
   } catch (e) {
-    fehler(e, 'Befreien fehlgeschlagen')
+    fehler(e, 'Änderung fehlgeschlagen')
   }
-}
-
-function removeBefreiung(befreiung) {
-  $q.dialog({
-    title: 'Befreiung aufheben',
-    message: `${befreiung.mitglied_name} zahlt dann ab dem laufenden Monat wieder Beitrag.`,
-    cancel: true,
-    ok: { label: 'Aufheben', color: 'negative', noCaps: true },
-  }).onOk(async () => {
-    try {
-      await api.delete(`${BASE}/${deckel.value.id}/befreiungen/${befreiung.mitglied_id}`)
-      await loadBefreiungen()
-    } catch (e) {
-      fehler(e, 'Aufheben fehlgeschlagen')
-    }
-  })
 }
 
 function openStammdatenDialog() {

@@ -76,6 +76,19 @@ class ClubdeckelRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
+    def list_aktive_mit_beitrag(self) -> list[Clubdeckel]:
+        """Aktive Teamtresore mit konfiguriertem Monatsbeitrag — Grundlage für
+        den Sammellauf (Sidecar), der den fälligen Beitrag am Monatsersten
+        nachbucht. Gleiche Bedingung wie der Lazy-Lauf in der API."""
+        with self.cursor() as cur:
+            cur.execute(
+                f"SELECT {_COLS} FROM clubdeckel "
+                "WHERE deleted_at IS NULL AND aktiv = 1 "
+                "AND beitrag IS NOT NULL AND beitrag > 0 AND beitrag_ab IS NOT NULL "
+                "ORDER BY id"
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     # ------------------------------------------------------------------ CRUD
     def create(self, mannschaft_id: int, name: str, created_by: str) -> Clubdeckel:
         with self.cursor() as cur:
