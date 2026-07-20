@@ -26,7 +26,7 @@ from app.models.clubdeckel import ClubdeckelBuchung
 from app.db.base_repository import BaseRepository
 
 _COLS = ("id, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-         "paar_ref, beitrag_monat, notiz, version, "
+         "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, version, "
          "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
 _B_COLS = ", ".join("b." + c.strip() for c in _COLS.split(","))
 
@@ -67,11 +67,9 @@ class ClubdeckelBuchungRepository(BaseRepository):
             cur.execute(
                 f"""
                 SELECT {_B_COLS},
-                       m.vorname || ' ' || m.nachname AS mitglied_name,
-                       a.name AS artikel_name
+                       m.vorname || ' ' || m.nachname AS mitglied_name
                 FROM clubdeckel_buchung b
                 JOIN mitglied m ON m.id = b.mitglied_id
-                LEFT JOIN clubdeckel_artikel a ON a.id = b.artikel_id
                 WHERE b.deckel_id = %(did)s AND b.deleted_at IS NULL
                   AND (%(mid)s::int IS NULL OR b.mitglied_id = %(mid)s)
                 ORDER BY b.created_at DESC, b.id DESC
@@ -91,23 +89,29 @@ class ClubdeckelBuchungRepository(BaseRepository):
         betrag = preis * menge
         paar_ref = uuid.uuid4().hex if verkaeufer_mitglied_id else None
         with self.cursor() as cur:
+            # Käufer-Zeile: Bezeichnung + Verkäufer ('Team', sonst Mitglied) einfrieren.
             cur.execute(
                 "INSERT INTO clubdeckel_buchung "
                 "(deckel_id, mitglied_id, artikel_id, typ, menge, betrag, paar_ref, "
-                " notiz, created_by, updated_by) "
-                "VALUES (%s,%s,%s,'konsum',%s,%s,%s,%s,%s,%s) RETURNING id",
+                " artikel_name, gegen_name, created_by, updated_by) "
+                "VALUES (%s,%s,%s,'konsum',%s,%s,%s,%s,"
+                " COALESCE((SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
+                "          'Team'), %s,%s) RETURNING id",
                 (deckel_id, mitglied_id, artikel_id, menge, -betrag, paar_ref,
-                 artikel_name, created_by, created_by),
+                 artikel_name, verkaeufer_mitglied_id, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
             if verkaeufer_mitglied_id:
+                # Verkäufer-Gegenzeile: Gegenkonto = der Käufer.
                 cur.execute(
                     "INSERT INTO clubdeckel_buchung "
                     "(deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-                    " paar_ref, notiz, created_by, updated_by) "
-                    "VALUES (%s,%s,%s,'verkauf',%s,%s,%s,%s,%s,%s)",
+                    " paar_ref, artikel_name, gegen_name, created_by, updated_by) "
+                    "VALUES (%s,%s,%s,'verkauf',%s,%s,%s,%s,"
+                    " (SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
+                    " %s,%s)",
                     (deckel_id, verkaeufer_mitglied_id, artikel_id, menge, betrag,
-                     paar_ref, artikel_name, created_by, created_by),
+                     paar_ref, artikel_name, mitglied_id, created_by, created_by),
                 )
         return self.get(new_id)
 
@@ -117,8 +121,9 @@ class ClubdeckelBuchungRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 "INSERT INTO clubdeckel_buchung "
-                "(deckel_id, mitglied_id, typ, betrag, notiz, created_by, updated_by) "
-                "VALUES (%s,%s,'einkauf',%s,%s,%s,%s) RETURNING id",
+                "(deckel_id, mitglied_id, typ, betrag, notiz, gegen_name, "
+                " created_by, updated_by) "
+                "VALUES (%s,%s,'einkauf',%s,%s,'Team',%s,%s) RETURNING id",
                 (deckel_id, mitglied_id, betrag, notiz, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
@@ -143,10 +148,10 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 typ = 'einkauf' if verkauft else 'kauf'
                 cur.execute(
                     "INSERT INTO clubdeckel_buchung "
-                    "(deckel_id, mitglied_id, typ, betrag, notiz, created_at, "
-                    " created_by, updated_by) "
-                    "VALUES (%s,%s,%s,%s,%s, COALESCE(%s::timestamptz, CURRENT_TIMESTAMP),"
-                    " %s,%s) RETURNING id",
+                    "(deckel_id, mitglied_id, typ, betrag, notiz, gegen_name, "
+                    " created_at, created_by, updated_by) "
+                    "VALUES (%s,%s,%s,%s,%s,'Team',"
+                    " COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s,%s) RETURNING id",
                     (deckel_id, mitglied_id, typ, m_betrag, notiz, wert_datum,
                      created_by, created_by),
                 )
@@ -154,15 +159,17 @@ class ClubdeckelBuchungRepository(BaseRepository):
             ref = uuid.uuid4().hex
             m_typ = 'verkauf' if verkauft else 'kauf'
             g_typ = 'kauf' if verkauft else 'verkauf'
-            for mid, b, typ in ((mitglied_id, m_betrag, m_typ),
-                                (gegen_mitglied_id, -m_betrag, g_typ)):
+            # Gegenkonto je Zeile = die jeweils andere Seite (Snapshot des Namens).
+            for mid, b, typ, gegen in ((mitglied_id, m_betrag, m_typ, gegen_mitglied_id),
+                                       (gegen_mitglied_id, -m_betrag, g_typ, mitglied_id)):
                 cur.execute(
                     "INSERT INTO clubdeckel_buchung "
-                    "(deckel_id, mitglied_id, typ, betrag, paar_ref, notiz, created_at, "
-                    " created_by, updated_by) "
+                    "(deckel_id, mitglied_id, typ, betrag, paar_ref, notiz, gegen_name, "
+                    " created_at, created_by, updated_by) "
                     "VALUES (%s,%s,%s,%s,%s,%s,"
+                    " (SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
                     " COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s,%s)",
-                    (deckel_id, mid, typ, b, ref, notiz, wert_datum,
+                    (deckel_id, mid, typ, b, ref, notiz, gegen, wert_datum,
                      created_by, created_by),
                 )
             return ref
@@ -176,14 +183,18 @@ class ClubdeckelBuchungRepository(BaseRepository):
         wert_datum (ISO) setzt bei Bedarf das Buchungsdatum (sonst jetzt)."""
         ref = uuid.uuid4().hex
         with self.cursor() as cur:
-            for mid, b in ((von_mitglied_id, betrag), (an_mitglied_id, -betrag)):
+            # Zahler-Zeile: Gegenkonto = Empfänger; Empfänger-Zeile: = Zahler.
+            for mid, b, gegen in ((von_mitglied_id, betrag, an_mitglied_id),
+                                  (an_mitglied_id, -betrag, von_mitglied_id)):
                 cur.execute(
                     "INSERT INTO clubdeckel_buchung "
-                    "(deckel_id, mitglied_id, typ, betrag, paar_ref, notiz, created_at, "
-                    " created_by, updated_by) "
+                    "(deckel_id, mitglied_id, typ, betrag, paar_ref, notiz, gegen_name, "
+                    " created_at, created_by, updated_by) "
                     "VALUES (%s,%s,'zahlung',%s,%s,%s,"
+                    " (SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
                     " COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s,%s)",
-                    (deckel_id, mid, b, ref, notiz, wert_datum, created_by, created_by),
+                    (deckel_id, mid, b, ref, notiz, gegen, wert_datum,
+                     created_by, created_by),
                 )
         return ref
 
@@ -205,9 +216,9 @@ class ClubdeckelBuchungRepository(BaseRepository):
                     """
                     INSERT INTO clubdeckel_buchung
                         (deckel_id, mitglied_id, typ, betrag, beitrag_monat, notiz,
-                         created_by, updated_by)
+                         gegen_name, created_by, updated_by)
                     SELECT DISTINCT %(did)s, mm.mitglied_id, 'beitrag', %(betrag)s,
-                           %(monat)s, %(notiz)s, 'beitrag_auto', 'beitrag_auto'
+                           %(monat)s, %(notiz)s, 'Team', 'beitrag_auto', 'beitrag_auto'
                     FROM mitglied_mannschaft mm
                     JOIN mitglied m ON m.id = mm.mitglied_id AND m.deleted_at IS NULL
                     WHERE mm.mannschaft_id = %(man)s AND mm.deleted_at IS NULL

@@ -66,7 +66,7 @@ def _artikel_mv(**kw):
 def _buchung(**kw):
     base = dict(id=100, deckel_id=7, mitglied_id=11, artikel_id=21, typ='konsum',
                 menge=1, betrag=Decimal('-1.50'), paar_ref=None, beitrag_monat=None,
-                notiz='Bier', **_AUDIT)
+                notiz=None, artikel_name='Bier', gegen_name='Team', **_AUDIT)
     base.update(kw)
     return ClubdeckelBuchung(**base)
 

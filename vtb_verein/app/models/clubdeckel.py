@@ -95,6 +95,8 @@ class ClubdeckelBuchung:
     paar_ref: Optional[str]       # verknüpft Nullsummen-Paare (zahlung, Mitglieds-Verkauf)
     beitrag_monat: Optional[str]  # 'YYYY-MM', nur typ='beitrag'
     notiz: Optional[str]
+    artikel_name: Optional[str]   # Snapshot der Bezeichnung zum Buchungszeitpunkt
+    gegen_name: Optional[str]     # Snapshot des Gegenkontos ('Team' | Mitgliedsname)
     version: int
     created_at: str
     created_by: str
@@ -104,4 +106,3 @@ class ClubdeckelBuchung:
     deleted_by: Optional[str] = None
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalten:
     mitglied_name: Optional[str] = None
-    artikel_name: Optional[str] = None

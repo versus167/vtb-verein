@@ -254,6 +254,75 @@ def test_mitglieds_verkaeufer_erzeugt_nullsummen_paar(db):
     assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, trompete) == Decimal('0')
 
 
+def test_bezeichnung_und_gegenkonto_bleiben_eingefroren(db):
+    """Kernzusage: Bezeichnung UND Gegenkonto sind Snapshots auf der Buchungs-
+    zeile — sie überleben Umbenennung und Soft-Delete des Artikels, weil
+    list_for_deckel sie direkt aus der Zeile liest (kein Live-Katalog-JOIN)."""
+    man = _make_mannschaft(db)
+    _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
+                                        Decimal('1.50'), 1, 0, 't')
+    db.clubdeckel_buchungen.create_konsum(deckel.id, mid, bier.id, bier.name, 2,
+                                          bier.preis, None, 't')
+
+    # Artikel umbenennen UND soft-löschen — die Altbuchung darf sich nicht ändern
+    assert db.clubdeckel_artikel.update(bier.id, gruppe.id, "Pils", Decimal('9.99'),
+                                        1, 0, 't', bier.version)
+    assert db.clubdeckel_artikel.mark_deleted(bier.id, 't')
+
+    (b,) = db.clubdeckel_buchungen.list_for_deckel(deckel.id)
+    assert b.artikel_name == "Bier"          # nicht "Pils"
+    assert b.gegen_name == "Team"
+    assert b.betrag == Decimal('-3.00')      # 2 × 1,50, Preis eingefroren
+
+
+def test_gegen_name_snapshot_je_buchungstyp(db):
+    """Für jeden Buchungstyp wird das richtige Gegenkonto (Team bzw. der
+    tatsächliche Mitgliedsname) eingefroren."""
+    man = _make_mannschaft(db)
+    _, a = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, brd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    gr = db.clubdeckel_gruppen.create(deckel.id, "Essen", brd, 1, 0, 't')
+    roster = db.clubdeckel_artikel.create(deckel.id, gr.id, "Roster",
+                                          Decimal('2.00'), 1, 0, 't')
+    # Anna kauft über Verkäufer Bernd; danach Team-Einkauf, An-/Verkauf, Zahlung
+    db.clubdeckel_buchungen.create_konsum(deckel.id, a, roster.id, roster.name, 1,
+                                          roster.preis, brd, 't')
+    db.clubdeckel_buchungen.create_einkauf(deckel.id, a, Decimal('5.00'), 'Kasten', 't')
+    db.clubdeckel_buchungen.create_an_verkauf(deckel.id, a, None, False,
+                                              Decimal('1.00'), None, 't')
+    paar = db.clubdeckel_buchungen.create_an_verkauf(deckel.id, a, brd, False,
+                                                     Decimal('1.00'), None, 't')
+    db.clubdeckel_buchungen.create_zahlung(deckel.id, a, brd, Decimal('1.00'), None, 't')
+
+    rows = db.clubdeckel_buchungen.list_for_deckel(deckel.id)
+
+    def eine(**kw):
+        treffer = [r for r in rows if all(getattr(r, k) == v for k, v in kw.items())]
+        assert len(treffer) == 1, (kw, [(r.typ, r.mitglied_id, r.paar_ref,
+                                         r.artikel_name, r.gegen_name) for r in rows])
+        return treffer[0]
+
+    # Mitglieds-Verkauf: Käufer sieht Verkäufer, Verkäufer sieht Käufer
+    assert eine(typ='konsum', mitglied_id=a).gegen_name == 'Bernd Deckeltest'
+    assert eine(typ='verkauf', artikel_name='Roster').gegen_name == 'Anna Deckeltest'
+    # Team-Geschäfte tragen 'Team'
+    assert eine(typ='einkauf', mitglied_id=a).gegen_name == 'Team'
+    assert eine(typ='kauf', paar_ref=None).gegen_name == 'Team'
+    # An-/Verkauf gegen Mitglied: Paar trägt beidseitig den Namen der Gegenseite
+    assert eine(typ='kauf', paar_ref=paar).gegen_name == 'Bernd Deckeltest'
+    assert eine(typ='verkauf', paar_ref=paar).gegen_name == 'Anna Deckeltest'
+    # Zahlung: Zahler (+Betrag) sieht Empfänger, Empfänger (−Betrag) den Zahler
+    zahl = [r for r in rows if r.typ == 'zahlung']
+    zahler = next(r for r in zahl if r.betrag > 0)
+    empf = next(r for r in zahl if r.betrag < 0)
+    assert zahler.mitglied_id == a and zahler.gegen_name == 'Bernd Deckeltest'
+    assert empf.mitglied_id == brd and empf.gegen_name == 'Anna Deckeltest'
+
+
 def test_beispielkette_aus_dem_fachmodell(db):
     """Die Beispiele a)–d) aus der Modell-Abstimmung: Einkauf, Konsum, zwei
     Zahlungen — Salden A 20, B −10, C −20, Team 10."""

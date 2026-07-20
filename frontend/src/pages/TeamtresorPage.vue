@@ -791,12 +791,23 @@ function tallyBundles(n) {
 }
 
 function buchungText(b) {
-  if (b.typ === 'konsum') return `${b.menge}× ${b.artikel_name || b.notiz || 'Artikel'}`
-  if (b.typ === 'verkauf' && b.artikel_name) return `Verkauf: ${b.menge}× ${b.artikel_name}`
-  if (b.typ === 'verkauf') return `Verkauf${b.notiz ? ` · ${b.notiz}` : ''}`
-  if (b.typ === 'kauf') return `Kauf${b.notiz ? ` · ${b.notiz}` : ''}`
-  if (b.typ === 'einkauf') return `Verkauf ans Team${b.notiz ? ` · ${b.notiz}` : ''}`
-  if (b.typ === 'zahlung') return `Zahlung${b.notiz ? ` · ${b.notiz}` : ''}`
+  // artikel_name/gegen_name sind eingefrorene Snapshots (Zeitpunkt der Buchung).
+  const note = b.notiz ? ` · ${b.notiz}` : ''
+  const von = b.gegen_name ? ` von ${b.gegen_name}` : ''
+  const an = b.gegen_name ? ` an ${b.gegen_name}` : ''
+  if (b.typ === 'konsum') {
+    // Regelfall = Kauf vom Team; nur einen Mitglieds-Verkäufer extra ausweisen.
+    const verk = b.gegen_name && b.gegen_name !== 'Team' ? ` · von ${b.gegen_name}` : ''
+    return `${b.menge}× ${b.artikel_name || 'Artikel'}${verk}`
+  }
+  if (b.typ === 'verkauf' && b.artikel_name) return `Verkauf: ${b.menge}× ${b.artikel_name}${an}`
+  if (b.typ === 'verkauf') return `Verkauf${an}${note}`
+  if (b.typ === 'kauf') return `Kauf${von}${note}`
+  if (b.typ === 'einkauf') return `Verkauf${an}${note}`
+  if (b.typ === 'zahlung') {
+    const dir = Number(b.betrag) >= 0 ? an : von   // +Betrag = Zahler, −Betrag = Empfänger
+    return `Zahlung${dir}${note}`
+  }
   if (b.typ === 'beitrag') return b.notiz || `Mannschaftsbeitrag ${b.beitrag_monat}`
   return b.notiz || b.typ
 }

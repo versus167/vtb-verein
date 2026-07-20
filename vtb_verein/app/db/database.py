@@ -1371,7 +1371,7 @@ _CLUBDECKEL_BEFREIUNG_VALS = ", ".join(
 
 _CLUBDECKEL_BUCHUNG_COLS = (
     "id, version, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-    "paar_ref, beitrag_monat, notiz, "
+    "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_BUCHUNG_VALS = ", ".join(
@@ -1610,6 +1610,8 @@ _DDL_CLUBDECKEL = """
       paar_ref      TEXT,
       beitrag_monat TEXT,
       notiz         TEXT,
+      artikel_name  TEXT,
+      gegen_name    TEXT,
       version       INTEGER NOT NULL DEFAULT 1,
       created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by    TEXT NOT NULL,
@@ -1623,7 +1625,7 @@ _DDL_CLUBDECKEL = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       deckel_id INTEGER, mitglied_id INTEGER, artikel_id INTEGER, typ TEXT,
       menge INTEGER, betrag NUMERIC(10,2), paar_ref TEXT, beitrag_monat TEXT,
-      notiz TEXT,
+      notiz TEXT, artikel_name TEXT, gegen_name TEXT,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
