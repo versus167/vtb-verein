@@ -1,15 +1,13 @@
 <template>
   <q-page class="q-pa-md">
-    <!-- Kopf: Titel + Team-Auswahl -->
-    <div class="row items-center q-mb-sm q-gutter-sm">
-      <div class="text-h5">Teamtresor</div>
-      <q-space />
+    <!-- Team-Auswahl nur bei mehreren Teams; der Titel „Teamtresor" steht schon
+         in der App-Kopfzeile — kein doppelter Seitentitel (#126). -->
+    <div v-if="teams.length > 1" class="q-mb-md">
       <q-select
-        v-if="teams.length > 1"
         v-model="selectedTeamId"
         :options="teamOptions"
         emit-value map-options dense outlined
-        style="min-width: 200px"
+        style="max-width: 320px"
         label="Mannschaft"
       />
     </div>
@@ -72,12 +70,23 @@
         Der Teamtresor ist deaktiviert — Buchen ist gerade nicht möglich.
       </q-banner>
 
-      <q-tabs v-model="tab" align="left" class="q-mb-md vtb-tabs" no-caps inline-label>
-        <q-tab name="tresen" icon="sports_bar" label="Tresen" />
-        <q-tab name="salden" icon="leaderboard" label="Salden" />
-        <q-tab v-if="istWart" name="katalog" icon="menu_book" label="Katalog" />
-        <q-tab v-if="istWart" name="verwalten" icon="settings" label="Verwalten" />
-      </q-tabs>
+      <!-- Tab-Reihe: nur Tresen/Salden/Katalog in der Pille; die Verwaltung liegt
+           hinter dem Zahnrad rechts — spart Platz und passt am Handy (#126). -->
+      <div class="row items-center no-wrap q-mb-md">
+        <q-tabs v-model="tab" align="left" class="vtb-tabs" no-caps
+          :inline-label="$q.screen.gt.xs">
+          <q-tab name="tresen" icon="sports_bar" label="Tresen" />
+          <q-tab name="salden" icon="leaderboard" label="Salden" />
+          <q-tab v-if="istWart" name="katalog" icon="menu_book" label="Katalog" />
+        </q-tabs>
+        <q-space />
+        <q-btn v-if="istWart" round :flat="tab !== 'verwalten'"
+          :unelevated="tab === 'verwalten'"
+          :color="tab === 'verwalten' ? 'primary' : undefined"
+          icon="settings" @click="tab = 'verwalten'">
+          <q-tooltip>Verwaltung</q-tooltip>
+        </q-btn>
+      </div>
 
       <!-- ====================== Tresen ====================== -->
       <div v-if="tab === 'tresen'">
@@ -307,9 +316,13 @@
 
       <!-- ====================== Verwalten (Wart/Verwalter) ====================== -->
       <div v-if="tab === 'verwalten' && istWart">
+        <!-- Überschrift zur Orientierung: man kommt übers Zahnrad hierher (#126) -->
+        <div class="text-subtitle1 text-weight-bold row items-center q-mb-sm">
+          <q-icon name="settings" class="q-mr-xs" /> Verwaltung
+        </div>
         <!-- Unter-Tabs: Verwalten in Mannschaft · History · Stammdaten teilen (#126) -->
-        <q-tabs v-model="verwaltenTab" dense no-caps inline-label align="left"
-          active-color="primary" indicator-color="primary" class="q-mb-md">
+        <q-tabs v-model="verwaltenTab" dense no-caps :inline-label="$q.screen.gt.xs"
+          align="left" active-color="primary" indicator-color="primary" class="q-mb-md">
           <q-tab name="mannschaft" icon="groups" label="Mannschaft" />
           <q-tab name="history" icon="receipt_long" label="History" />
           <q-tab v-if="istVerwalter" name="stammdaten" icon="tune" label="Stammdaten" />
@@ -1518,5 +1531,17 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+// Am Handy stapelt :inline-label die Tabs (Icon über Label). Zusätzlich weniger
+// Polster/kleinere Labels, damit die vtb-tabs-Pille (scrollt nicht) mit allen
+// Reitern nebeneinander passt (#126).
+@media (max-width: 599px) {
+  .vtb-tabs :deep(.q-tab) {
+    padding: 0 10px;
+  }
+  .vtb-tabs :deep(.q-tab__label) {
+    font-size: 11px;
+  }
 }
 </style>
