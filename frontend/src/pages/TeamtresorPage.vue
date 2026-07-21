@@ -155,7 +155,7 @@
         </q-card>
 
         <!-- Zahlung an … (Zahlungsempfänger + Zahlwege aus den Stammdaten) -->
-        <q-card v-if="hatZahlwege" class="vtb-karte q-mt-lg">
+        <q-card v-if="hatZahlwege" class="vtb-karte tt-zahlkarte q-mt-lg">
           <q-card-section>
             <div class="text-overline text-grey">
               Zahlung an {{ deckel.zahlungsempfaenger_name || 'das Team' }}
@@ -307,92 +307,104 @@
 
       <!-- ====================== Verwalten (Wart/Verwalter) ====================== -->
       <div v-if="tab === 'verwalten' && istWart">
-        <!-- Club-Saldo + Mitglieder-Transaktionen (An-/Verkauf, Zahlung) -->
-        <q-card flat class="tt-club-head q-mb-sm">
-          <div class="row items-center no-wrap q-pa-sm">
-            <q-avatar size="34px" color="grey-8" text-color="white" icon="groups" />
-            <div class="text-weight-bold text-white q-ml-sm">Club</div>
-            <q-space />
-            <div class="text-weight-bold"
-              :class="Number(deckel.team_saldo) < 0 ? 'text-red-4' : 'text-green-4'">
-              {{ fmtEuro(deckel.team_saldo) }}
-            </div>
-          </div>
-        </q-card>
+        <!-- Unter-Tabs: Verwalten in Mannschaft · History · Stammdaten teilen (#126) -->
+        <q-tabs v-model="verwaltenTab" dense no-caps inline-label align="left"
+          active-color="primary" indicator-color="primary" class="q-mb-md">
+          <q-tab name="mannschaft" icon="groups" label="Mannschaft" />
+          <q-tab name="history" icon="receipt_long" label="History" />
+          <q-tab v-if="istVerwalter" name="stammdaten" icon="tune" label="Stammdaten" />
+        </q-tabs>
 
-        <div v-if="istVerwalter && deckel.beitrag"
-          class="row items-center q-mb-sm text-caption text-grey-8">
-          <q-icon name="how_to_reg" color="green-6" size="18px" class="q-mr-xs" />
-          Beitrag aktiv: <b class="q-mx-xs">{{ beitragAktivAnzahl }} / {{ kader.length }}</b>
-          · {{ fmtEuro(deckel.beitrag) }}/Monat{{ deckel.beitrag_ab ? ` ab ${deckel.beitrag_ab}` : '' }}
-        </div>
-
-        <q-input v-model="mitgliedSuche" dense outlined class="q-mb-sm"
-          placeholder="Mitglied suchen…" clearable>
-          <template #prepend><q-icon name="search" /></template>
-        </q-input>
-
-        <q-card v-for="m in mitgliederGefiltert" :key="m.mitglied_id" flat bordered
-          class="q-mb-sm">
-          <div class="row items-center no-wrap q-pa-sm q-gutter-sm">
-            <q-avatar size="40px" text-color="white" class="text-weight-bold"
-              :style="{ background: avatarColor(m.name) }">{{ initialen(m.name) }}</q-avatar>
-            <div class="col" style="min-width: 0">
-              <div class="text-weight-medium ellipsis">{{ m.name }}</div>
-              <div class="text-caption text-weight-medium"
-                :class="m.saldo < 0 ? 'text-negative' : 'text-positive'">
-                {{ fmtEuro(m.saldo) }}
+        <!-- ---------- Mannschaftsliste: Club-Saldo + Mitglieder-Transaktionen ---------- -->
+        <div v-if="verwaltenTab === 'mannschaft'">
+          <q-card flat class="tt-club-head q-mb-sm">
+            <div class="row items-center no-wrap q-pa-sm">
+              <q-avatar size="34px" color="grey-8" text-color="white" icon="groups" />
+              <div class="text-weight-bold text-white q-ml-sm">Club</div>
+              <q-space />
+              <div class="text-weight-bold"
+                :class="Number(deckel.team_saldo) < 0 ? 'text-red-4' : 'text-green-4'">
+                {{ fmtEuro(deckel.team_saldo) }}
               </div>
             </div>
-            <q-btn v-if="istVerwalter && deckel.beitrag && m.imKader" round unelevated
-              :color="befreitSet.has(m.mitglied_id) ? 'grey-4' : 'green-5'"
-              :text-color="befreitSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
-              :icon="befreitSet.has(m.mitglied_id) ? 'money_off' : 'how_to_reg'"
-              :disable="saving" @click="toggleBeitrag(m)">
-              <q-tooltip>{{ befreitSet.has(m.mitglied_id)
-                ? 'Beitrag inaktiv — aktivieren' : 'Beitrag aktiv — deaktivieren' }}</q-tooltip>
-            </q-btn>
-            <q-btn round unelevated color="deep-purple-5" icon="shopping_bag"
-              :disable="!deckel.aktiv || saving" @click="openKaufDialog(m)">
-              <q-tooltip>An-/Verkauf buchen</q-tooltip>
-            </q-btn>
-            <q-btn round unelevated color="primary" icon="payments"
-              :disable="!deckel.aktiv || saving" @click="openZahlungDialog(m)">
-              <q-tooltip>Zahlung buchen</q-tooltip>
-            </q-btn>
+          </q-card>
+
+          <div v-if="istVerwalter && deckel.beitrag"
+            class="row items-center q-mb-sm text-caption text-grey-8">
+            <q-icon name="how_to_reg" color="green-6" size="18px" class="q-mr-xs" />
+            Beitrag aktiv: <b class="q-mx-xs">{{ beitragAktivAnzahl }} / {{ kader.length }}</b>
+            · {{ fmtEuro(deckel.beitrag) }}/Monat{{ deckel.beitrag_ab ? ` ab ${deckel.beitrag_ab}` : '' }}
           </div>
-        </q-card>
-        <div v-if="!mitgliederGefiltert.length" class="text-grey q-mb-md">
-          Keine Mitglieder gefunden.
+
+          <q-input v-model="mitgliedSuche" dense outlined class="q-mb-sm"
+            placeholder="Mitglied suchen…" clearable>
+            <template #prepend><q-icon name="search" /></template>
+          </q-input>
+
+          <q-card v-for="m in mitgliederGefiltert" :key="m.mitglied_id" flat bordered
+            class="q-mb-sm">
+            <div class="row items-center no-wrap q-pa-sm q-gutter-sm">
+              <q-avatar size="40px" text-color="white" class="text-weight-bold"
+                :style="{ background: avatarColor(m.name) }">{{ initialen(m.name) }}</q-avatar>
+              <div class="col" style="min-width: 0">
+                <div class="text-weight-medium ellipsis">{{ m.name }}</div>
+                <div class="text-caption text-weight-medium"
+                  :class="m.saldo < 0 ? 'text-negative' : 'text-positive'">
+                  {{ fmtEuro(m.saldo) }}
+                </div>
+              </div>
+              <q-btn v-if="istVerwalter && deckel.beitrag && m.imKader" round unelevated
+                :color="befreitSet.has(m.mitglied_id) ? 'grey-4' : 'green-5'"
+                :text-color="befreitSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
+                :icon="befreitSet.has(m.mitglied_id) ? 'money_off' : 'how_to_reg'"
+                :disable="saving" @click="toggleBeitrag(m)">
+                <q-tooltip>{{ befreitSet.has(m.mitglied_id)
+                  ? 'Beitrag inaktiv — aktivieren' : 'Beitrag aktiv — deaktivieren' }}</q-tooltip>
+              </q-btn>
+              <q-btn round unelevated color="deep-purple-5" icon="shopping_bag"
+                :disable="!deckel.aktiv || saving" @click="openKaufDialog(m)">
+                <q-tooltip>An-/Verkauf buchen</q-tooltip>
+              </q-btn>
+              <q-btn round unelevated color="primary" icon="payments"
+                :disable="!deckel.aktiv || saving" @click="openZahlungDialog(m)">
+                <q-tooltip>Zahlung buchen</q-tooltip>
+              </q-btn>
+            </div>
+          </q-card>
+          <div v-if="!mitgliederGefiltert.length" class="text-grey q-mb-md">
+            Keine Mitglieder gefunden.
+          </div>
         </div>
 
-        <div class="text-subtitle2 q-mt-lg q-mb-sm">Alle Buchungen</div>
-        <q-list bordered separator class="rounded-borders q-mb-lg">
-          <q-item v-for="b in alleBuchungen" :key="b.id">
-            <q-item-section>
-              <q-item-label>{{ b.mitglied_name }} — {{ buchungText(b) }}</q-item-label>
-              <q-item-label caption>
-                {{ fmtDateTime(b.created_at) }} · gebucht von {{ b.created_by }}
-              </q-item-label>
-            </q-item-section>
-            <q-item-section side>
-              <div class="row items-center q-gutter-sm">
-                <span :class="Number(b.betrag) < 0 ? 'text-negative' : 'text-positive'">
-                  {{ fmtEuro(b.betrag) }}
-                </span>
-                <q-btn flat round dense size="sm" icon="delete" color="negative"
-                  :disable="saving" @click="storno(b)">
-                  <q-tooltip>Stornieren{{ b.paar_ref ? ' (ganzes Paar)' : '' }}{{
-                    b.typ === 'beitrag' ? ' — Beitrag wird damit erlassen' : '' }}</q-tooltip>
-                </q-btn>
-              </div>
-            </q-item-section>
-          </q-item>
-        </q-list>
-        <div v-if="!alleBuchungen.length" class="text-grey q-mb-lg">Noch keine Buchungen.</div>
+        <!-- ---------- History: alle Buchungen ---------- -->
+        <div v-if="verwaltenTab === 'history'">
+          <q-list bordered separator class="rounded-borders q-mb-lg">
+            <q-item v-for="b in alleBuchungen" :key="b.id">
+              <q-item-section>
+                <q-item-label>{{ b.mitglied_name }} — {{ buchungText(b) }}</q-item-label>
+                <q-item-label caption>
+                  {{ fmtDateTime(b.created_at) }} · gebucht von {{ b.created_by }}
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row items-center q-gutter-sm">
+                  <span :class="Number(b.betrag) < 0 ? 'text-negative' : 'text-positive'">
+                    {{ fmtEuro(b.betrag) }}
+                  </span>
+                  <q-btn flat round dense size="sm" icon="delete" color="negative"
+                    :disable="saving" @click="storno(b)">
+                    <q-tooltip>Stornieren{{ b.paar_ref ? ' (ganzes Paar)' : '' }}{{
+                      b.typ === 'beitrag' ? ' — Beitrag wird damit erlassen' : '' }}</q-tooltip>
+                  </q-btn>
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="!alleBuchungen.length" class="text-grey q-mb-lg">Noch keine Buchungen.</div>
+        </div>
 
-        <!-- Nur Kader-Verwalter: Warte, Befreiungen, Stammdaten -->
-        <template v-if="istVerwalter">
+        <!-- ---------- Stammdaten (nur Kader-Verwalter): Warte + Stammdaten ---------- -->
+        <div v-if="verwaltenTab === 'stammdaten' && istVerwalter">
           <div class="text-subtitle2 q-mb-sm">Warte</div>
           <q-list bordered separator class="rounded-borders q-mb-md">
             <q-item v-for="w in warte" :key="w.mitglied_id">
@@ -422,7 +434,7 @@
             <q-btn v-if="istAdmin" outline no-caps color="negative" icon="delete_forever"
               label="Teamtresor löschen" @click="loeschen" />
           </div>
-        </template>
+        </div>
       </div>
     </template>
 
@@ -589,6 +601,7 @@ const papierkorb = ref([])
 const selectedTeamId = ref(null)
 const deckel = ref(null)
 const tab = ref('tresen')
+const verwaltenTab = ref('mannschaft')
 
 const meineBuchungen = ref([])
 const salden = ref([])
@@ -967,6 +980,7 @@ async function refreshAll() {
 watch(selectedTeamId, async (id) => {
   if (id != null) localStorage.setItem('vtb_teamtresor_team', String(id))
   tab.value = 'tresen'
+  verwaltenTab.value = 'mannschaft'
   await loadDeckel()
   await loadTabDaten()
 })
@@ -1492,5 +1506,17 @@ function wiederherstellen(eintrag) {
 }
 body.body--dark .tt-artikel-row + .tt-artikel-row {
   border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+// Zahlweg-Karte: lange URLs (WERO/PayPal) bzw. die IBAN dürfen die Karte NICHT
+// sprengen (#126) — sonst wird die ganze q-page überbreit und scrollt am Handy.
+// Captions einzeilig kürzen; die Links bleiben klickbar, die IBAN tap-kopierbar.
+.tt-zahlkarte :deep(.q-item__section--main) {
+  min-width: 0;
+}
+.tt-zahlkarte :deep(.q-item__label--caption) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
