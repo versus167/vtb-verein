@@ -83,7 +83,11 @@ def _db(kader='mitglied', wart=False):
             is_mitglied_in_kader=lambda mid, man: True,
             create=lambda man, name, by: _deckel(name=name),
             update=lambda *a, **k: True,
+            set_aktiv=lambda *a, **k: True,
             mark_deleted=lambda *a, **k: True,
+            loesche_komplett=lambda *a, **k: 'ref-del',
+            restore=lambda *a, **k: 'ok',
+            list_geloescht=lambda: [],
             list_teams_for_user=lambda uid: [],
             list_all_teams=lambda: [],
         ),
@@ -567,4 +571,92 @@ def test_wart_entfernen_ohne_eintrag_404():
     db.clubdeckel_berechtigungen.revoke = lambda *a: False
     with pytest.raises(HTTPException) as exc:
         api.revoke_wart(7, 12, _USER, db)
+    assert exc.value.status_code == 404
+
+
+# ----------------------------------------------------- Deaktivieren / Löschen (#125)
+def test_deaktivieren_durch_verwalter():
+    db = _db(kader='verwalten')
+    seen = []
+    db.clubdeckel.set_aktiv = lambda did, aktiv, by, ev: (seen.append((did, aktiv, ev)), True)[1]
+    api.set_deckel_aktiv(7, api.AktivUpdate(aktiv=False, expected_version=1), _USER, db)
+    assert seen == [(7, 0, 1)]
+
+
+def test_deaktivieren_wart_403():
+    with pytest.raises(HTTPException) as exc:
+        api.set_deckel_aktiv(7, api.AktivUpdate(aktiv=False, expected_version=1),
+                             _USER, _db(wart=True))
+    assert exc.value.status_code == 403
+
+
+def test_deaktivieren_versionskonflikt_409():
+    db = _db(kader='verwalten')
+    db.clubdeckel.set_aktiv = lambda *a, **k: False
+    with pytest.raises(HTTPException) as exc:
+        api.set_deckel_aktiv(7, api.AktivUpdate(aktiv=True, expected_version=1), _USER, db)
+    assert exc.value.status_code == 409
+
+
+def test_loeschen_nur_admin_403():
+    # Auch ein Kader-Verwalter darf nicht mehr löschen — nur der Admin.
+    with pytest.raises(HTTPException) as exc:
+        api.delete_deckel(7, _USER, _db(kader='verwalten'))
+    assert exc.value.status_code == 403
+
+
+def test_loeschen_durch_admin_kaskadiert():
+    db = _db(kader=None)
+    seen = []
+    db.clubdeckel.loesche_komplett = lambda did, by: (seen.append((did, by)), 'ref-del')[1]
+    assert api.delete_deckel(7, _ADMIN, db) == {"status": "geloescht"}
+    assert seen == [(7, 'admin')]
+
+
+def test_loeschen_unbekannt_404():
+    db = _db(kader=None)
+    db.clubdeckel.loesche_komplett = lambda *a: None
+    with pytest.raises(HTTPException) as exc:
+        api.delete_deckel(7, _ADMIN, db)
+    assert exc.value.status_code == 404
+
+
+# ------------------------------------------------------------ Papierkorb / Restore (#125)
+def test_papierkorb_nur_admin_403():
+    with pytest.raises(HTTPException) as exc:
+        api.list_papierkorb(_USER, _db(kader='verwalten'))
+    assert exc.value.status_code == 403
+
+
+def test_papierkorb_admin_liste():
+    db = _db(kader=None)
+    db.clubdeckel.list_geloescht = lambda: [{"id": 7, "mannschaft_name": "Erste"}]
+    assert api.list_papierkorb(_ADMIN, db) == [{"id": 7, "mannschaft_name": "Erste"}]
+
+
+def test_restore_nur_admin_403():
+    with pytest.raises(HTTPException) as exc:
+        api.restore_deckel(7, _USER, _db(kader='verwalten'))
+    assert exc.value.status_code == 403
+
+
+def test_restore_ok():
+    db = _db(kader=None)
+    db.clubdeckel.restore = lambda did, by: 'ok'
+    assert api.restore_deckel(7, _ADMIN, db) == {"status": "wiederhergestellt"}
+
+
+def test_restore_konflikt_409():
+    db = _db(kader=None)
+    db.clubdeckel.restore = lambda did, by: 'conflict'
+    with pytest.raises(HTTPException) as exc:
+        api.restore_deckel(7, _ADMIN, db)
+    assert exc.value.status_code == 409
+
+
+def test_restore_unbekannt_404():
+    db = _db(kader=None)
+    db.clubdeckel.restore = lambda did, by: 'not_found'
+    with pytest.raises(HTTPException) as exc:
+        api.restore_deckel(7, _ADMIN, db)
     assert exc.value.status_code == 404

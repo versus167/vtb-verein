@@ -34,6 +34,31 @@
       </q-card-section>
     </q-card>
 
+    <!-- Admin-Papierkorb: gelöschte Teamtresore wiederherstellen (#125) -->
+    <q-expansion-item v-if="istAdmin && papierkorb.length" class="vtb-karte q-mt-md"
+      icon="restore_from_trash" :label="`Gelöschte Teamtresore (${papierkorb.length})`"
+      header-class="text-weight-medium">
+      <q-list separator>
+        <q-item v-for="e in papierkorb" :key="e.id">
+          <q-item-section>
+            <q-item-label>{{ e.mannschaft_name }}</q-item-label>
+            <q-item-label caption>
+              gelöscht {{ fmtDateTime(e.deleted_at) }} von {{ e.deleted_by }}
+              · {{ e.anzahl_buchungen }} Buchung(en)
+            </q-item-label>
+          </q-item-section>
+          <q-item-section side>
+            <q-btn outline no-caps color="primary" icon="restore" label="Wiederherstellen"
+              :disable="e.mannschaft_hat_aktiven || saving" @click="wiederherstellen(e)">
+              <q-tooltip v-if="e.mannschaft_hat_aktiven">
+                Diese Mannschaft hat bereits wieder einen aktiven Teamtresor
+              </q-tooltip>
+            </q-btn>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-expansion-item>
+
     <template v-if="deckel">
       <!-- Status-Zeile: Rolle / Deaktiviert (Beträge stehen als Kacheln im Tresen) -->
       <div v-if="istWart || !deckel.aktiv" class="row items-center q-gutter-xs q-mb-md">
@@ -391,8 +416,11 @@
           <div class="row q-gutter-sm">
             <q-btn outline no-caps color="primary" icon="edit" label="Stammdaten bearbeiten"
               @click="openStammdatenDialog" />
-            <q-btn outline no-caps color="negative" icon="power_settings_new"
-              label="Teamtresor ausschalten" @click="ausschalten" />
+            <q-btn outline no-caps color="primary" :disable="saving"
+              :icon="deckel.aktiv ? 'pause_circle' : 'play_circle'"
+              :label="deckel.aktiv ? 'Deaktivieren' : 'Aktivieren'" @click="toggleAktiv" />
+            <q-btn v-if="istAdmin" outline no-caps color="negative" icon="delete_forever"
+              label="Teamtresor löschen" @click="loeschen" />
           </div>
         </template>
       </div>
@@ -546,14 +574,18 @@ defineOptions({ name: 'TeamtresorPage' })
 import { ref, computed, watch, onMounted } from 'vue'
 import { useQuasar, copyToClipboard } from 'quasar'
 import { api } from 'src/boot/axios'
+import { useAuthStore } from 'src/stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
 
 const $q = useQuasar()
+const auth = useAuthStore()
+const istAdmin = computed(() => auth.user?.role === 'admin')
 const BASE = '/api/clubdeckel'
 
 const geladen = ref(false)
 const saving = ref(false)
 const teams = ref([])
+const papierkorb = ref([])
 const selectedTeamId = ref(null)
 const deckel = ref(null)
 const tab = ref('tresen')
@@ -917,10 +949,19 @@ async function loadTabDaten() {
   }
 }
 
+async function loadPapierkorb() {
+  if (!istAdmin.value) return
+  try {
+    const { data } = await api.get(`${BASE}/papierkorb`)
+    papierkorb.value = data
+  } catch { papierkorb.value = [] }
+}
+
 async function refreshAll() {
   await loadTeams()
   await loadDeckel()
   await loadTabDaten()
+  await loadPapierkorb()
 }
 
 watch(selectedTeamId, async (id) => {
@@ -1329,21 +1370,61 @@ async function saveStammdaten() {
   }
 }
 
-function ausschalten() {
+async function toggleAktiv() {
+  const d = deckel.value
+  const neuAktiv = !d.aktiv
+  saving.value = true
+  try {
+    await api.put(`${BASE}/${d.id}/aktiv`, { aktiv: neuAktiv, expected_version: d.version })
+    $q.notify({
+      type: 'positive', timeout: 1500,
+      message: neuAktiv ? 'Teamtresor aktiviert' : 'Teamtresor deaktiviert',
+    })
+    await refreshAll()
+  } catch (e) {
+    fehler(e, 'Ändern des Status fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+// Admin: kompletter Soft-Delete (über den Papierkorb wiederherstellbar).
+function loeschen() {
   $q.dialog({
-    title: 'Teamtresor ausschalten',
-    message: `Den Teamtresor „${deckel.value.name}" wirklich ausschalten? ` +
-      'Buchungen und Salden bleiben in der Historie erhalten.',
+    title: 'Teamtresor löschen',
+    message: `Den Teamtresor „${deckel.value.name}" komplett löschen? ` +
+      'Buchungen, Katalog, Warte und Beiträge werden entfernt. ' +
+      'Als Admin kannst du ihn über den Papierkorb wiederherstellen.',
     cancel: true,
-    ok: { label: 'Ausschalten', color: 'negative', noCaps: true },
+    ok: { label: 'Löschen', color: 'negative', noCaps: true },
   }).onOk(async () => {
     try {
       await api.delete(`${BASE}/${deckel.value.id}`)
-      $q.notify({ type: 'positive', message: 'Teamtresor ausgeschaltet', timeout: 1500 })
+      $q.notify({ type: 'positive', message: 'Teamtresor gelöscht', timeout: 1500 })
       deckel.value = null
       await refreshAll()
     } catch (e) {
-      fehler(e, 'Ausschalten fehlgeschlagen')
+      fehler(e, 'Löschen fehlgeschlagen')
+    }
+  })
+}
+
+// Admin: einen gelöschten Teamtresor aus dem Papierkorb wiederherstellen.
+function wiederherstellen(eintrag) {
+  $q.dialog({
+    title: 'Teamtresor wiederherstellen',
+    message: `Den gelöschten Teamtresor von „${eintrag.mannschaft_name}" ` +
+      'komplett wiederherstellen (inkl. Buchungen, Katalog, Warte)?',
+    cancel: true,
+    ok: { label: 'Wiederherstellen', color: 'primary', noCaps: true },
+  }).onOk(async () => {
+    try {
+      await api.post(`${BASE}/papierkorb/${eintrag.id}/restore`)
+      $q.notify({ type: 'positive', message: 'Teamtresor wiederhergestellt', timeout: 1500 })
+      selectedTeamId.value = eintrag.mannschaft_id
+      await refreshAll()
+    } catch (e) {
+      fehler(e, 'Wiederherstellen fehlgeschlagen')
     }
   })
 }

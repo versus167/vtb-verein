@@ -13,6 +13,7 @@ Zahlungsempfänger (Mitglied) und dessen Zahlwege (IBAN/WERO/PayPal).
 Kader-CTE bewusst aus termin_repository übernommen statt importiert
 (Domain-Isolation; Aktiv-Semantik identisch zu mitglied_mannschaft).
 """
+import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -22,6 +23,11 @@ from app.db.base_repository import BaseRepository
 
 # Kader-Rollen, die den Teamtresor ihrer Mannschaft verwalten dürfen.
 VERWALTEN_ROLLEN = ('betreuer', 'uebungsleiter')
+
+# Kind-Tabellen eines Deckels (für das Komplett-Löschen/Wiederherstellen, #125).
+# Reihenfolge egal (alles in einer Transaktion); Deckel selbst wird separat behandelt.
+_CHILD_TABLES = ("clubdeckel_buchung", "clubdeckel_artikel", "clubdeckel_gruppe",
+                 "clubdeckel_berechtigung", "clubdeckel_beitrag_befreiung")
 
 # Gemeinsame CTE: aktive Kader-Zugehörigkeiten des Users am Stichtag.
 # Erwartet die benannten Parameter %(uid)s (user_id) und %(tag)s (ISO-Datum).
@@ -81,6 +87,25 @@ class ClubdeckelRepository(BaseRepository):
                 f"SELECT {_COLS} FROM clubdeckel "
                 "WHERE mannschaft_id = %s AND deleted_at IS NULL",
                 (mannschaft_id,),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
+    def get_geloescht(self, deckel_id: int) -> Optional[Clubdeckel]:
+        """Gelöschten Deckel lesen (Admin-Papierkorb/Restore, #125) — Gegenstück zu
+        get(), das nur aktive Deckel liefert."""
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_C_COLS},
+                       ma.name AS mannschaft_name,
+                       ze.vorname || ' ' || ze.nachname AS zahlungsempfaenger_name
+                FROM clubdeckel c
+                JOIN mannschaft ma ON ma.id = c.mannschaft_id
+                LEFT JOIN mitglied ze ON ze.id = c.zahlungsempfaenger_mitglied_id
+                WHERE c.id = %s AND c.deleted_at IS NOT NULL
+                """,
+                (deckel_id,),
             )
             row = cur.fetchone()
             return _map(row) if row else None
@@ -153,6 +178,83 @@ class ClubdeckelRepository(BaseRepository):
                 (deleted_by, deckel_id),
             )
             return cur.rowcount > 0
+
+    def set_aktiv(self, deckel_id: int, aktiv: int, updated_by: str,
+                  expected_version: int) -> bool:
+        """Nur den Aktiv-Status umschalten (Deaktivieren/Aktivieren durch den
+        Verwalter) — ohne die übrigen Stammdaten anzufassen."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE clubdeckel SET aktiv=%s, updated_at=CURRENT_TIMESTAMP, "
+                "updated_by=%s, version=version+1 "
+                "WHERE id=%s AND deleted_at IS NULL AND version=%s",
+                (aktiv, updated_by, deckel_id, expected_version),
+            )
+            return cur.rowcount > 0
+
+    # ------------------------------------------------ Komplett-Löschen (#125)
+    def loesche_komplett(self, deckel_id: int, deleted_by: str) -> Optional[str]:
+        """Kompletter Soft-Delete des ganzen Teamtresors (Deckel + alle Kinder) als
+        ein Batch mit gemeinsamer loesch_ref — Admin-Aktion, per restore() umkehrbar.
+        Nur aktive Zeilen (deleted_at IS NULL) werden angefasst: vorher einzeln
+        stornierte Buchungen behalten ihren Storno und bleiben beim Restore weg.
+        Gibt die loesch_ref zurück oder None, wenn der Deckel schon gelöscht ist."""
+        ref = uuid.uuid4().hex
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE clubdeckel SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s, "
+                "loesch_ref=%s, version=version+1 WHERE id=%s AND deleted_at IS NULL",
+                (deleted_by, ref, deckel_id),
+            )
+            if cur.rowcount == 0:
+                return None
+            for table in _CHILD_TABLES:
+                cur.execute(
+                    f"UPDATE {table} SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s, "
+                    f"loesch_ref=%s, version=version+1 "
+                    f"WHERE deckel_id=%s AND deleted_at IS NULL",
+                    (deleted_by, ref, deckel_id),
+                )
+        return ref
+
+    def restore(self, deckel_id: int, restored_by: str) -> str:
+        """Wiederherstellung eines gelöschten Teamtresors (Admin-Papierkorb): reaktiviert
+        exakt den Lösch-Batch (loesch_ref) auf Deckel + Kindern. Gibt 'ok',
+        'not_found' (kein gelöschter Deckel) oder 'conflict' (die Mannschaft hat
+        zwischenzeitlich wieder einen aktiven Deckel — uix_clubdeckel_mannschaft_active)
+        zurück. restored_by ist derzeit informativ (der version-Bump reicht als Audit)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT mannschaft_id, loesch_ref FROM clubdeckel "
+                "WHERE id=%s AND deleted_at IS NOT NULL",
+                (deckel_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return 'not_found'
+            cur.execute(
+                "SELECT 1 FROM clubdeckel WHERE mannschaft_id=%s AND deleted_at IS NULL",
+                (row['mannschaft_id'],),
+            )
+            if cur.fetchone() is not None:
+                return 'conflict'
+            ref = row['loesch_ref']
+            if ref is None:
+                # Alt-Löschung vor v76 (nur die Deckel-Zeile war soft-deleted, die Kinder
+                # blieben aktiv) — hier genügt es, die Deckel-Zeile zu reaktivieren.
+                cur.execute(
+                    "UPDATE clubdeckel SET deleted_at=NULL, deleted_by=NULL, "
+                    "version=version+1 WHERE id=%s",
+                    (deckel_id,),
+                )
+            else:
+                for table in ("clubdeckel", *_CHILD_TABLES):
+                    cur.execute(
+                        f"UPDATE {table} SET deleted_at=NULL, deleted_by=NULL, "
+                        f"loesch_ref=NULL, version=version+1 WHERE loesch_ref=%s",
+                        (ref,),
+                    )
+        return 'ok'
 
     # ----------------------------------------------------------------- ACL
     def get_access_for_user(self, user_id: int, mannschaft_id: int,
@@ -257,6 +359,30 @@ class ClubdeckelRepository(BaseRepository):
                 """,
             )
             return [self._team_row(r) for r in cur.fetchall()]
+
+    def list_geloescht(self) -> list[dict]:
+        """Admin-Papierkorb (#125): alle gelöschten Teamtresore mit Mannschaftsname,
+        Lösch-Metadaten und der Zahl der mitgelöschten Buchungen. `mannschaft_hat_aktiven`
+        markiert Deckel, deren Mannschaft bereits wieder einen aktiven Tresor hat —
+        dann ist der Restore gesperrt (genau ein aktiver Deckel je Mannschaft)."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.id, c.mannschaft_id, c.name, c.deleted_at, c.deleted_by,
+                       ma.name AS mannschaft_name,
+                       EXISTS (SELECT 1 FROM clubdeckel a
+                               WHERE a.mannschaft_id = c.mannschaft_id
+                                 AND a.deleted_at IS NULL) AS mannschaft_hat_aktiven,
+                       (SELECT COUNT(*) FROM clubdeckel_buchung b
+                        WHERE b.loesch_ref IS NOT NULL
+                          AND b.loesch_ref = c.loesch_ref) AS anzahl_buchungen
+                FROM clubdeckel c
+                JOIN mannschaft ma ON ma.id = c.mannschaft_id
+                WHERE c.deleted_at IS NOT NULL
+                ORDER BY c.deleted_at DESC, c.id DESC
+                """,
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     @staticmethod
     def _team_row(r) -> dict:
