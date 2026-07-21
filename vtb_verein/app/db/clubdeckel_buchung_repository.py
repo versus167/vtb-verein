@@ -50,19 +50,26 @@ def _monate(ab: str, bis: str) -> list[str]:
 
 class ClubdeckelBuchungRepository(BaseRepository):
 
-    def get(self, buchung_id: int) -> Optional[ClubdeckelBuchung]:
+    def get(self, buchung_id: int,
+            include_deleted: bool = False) -> Optional[ClubdeckelBuchung]:
+        """Eine Buchung lesen. include_deleted=True liefert auch stornierte
+        Zeilen (für das Wiederherstellen, #127)."""
+        filt = "" if include_deleted else " AND deleted_at IS NULL"
         with self.cursor() as cur:
             cur.execute(
-                f"SELECT {_COLS} FROM clubdeckel_buchung "
-                "WHERE id = %s AND deleted_at IS NULL",
+                f"SELECT {_COLS} FROM clubdeckel_buchung WHERE id = %s{filt}",
                 (buchung_id,),
             )
             row = cur.fetchone()
             return _map(row) if row else None
 
     def list_for_deckel(self, deckel_id: int, mitglied_id: Optional[int] = None,
-                        limit: Optional[int] = None) -> list[ClubdeckelBuchung]:
-        """Aktive Buchungen, neueste zuerst — optional nur die eines Mitglieds."""
+                        limit: Optional[int] = None,
+                        mit_storniert: bool = False) -> list[ClubdeckelBuchung]:
+        """Buchungen, neueste zuerst — optional nur die eines Mitglieds.
+        mit_storniert=True nimmt auch soft-gelöschte Zeilen mit (deleted_at
+        gesetzt); die History kann sie dann optional einblenden (#127)."""
+        filt = "" if mit_storniert else " AND b.deleted_at IS NULL"
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -70,7 +77,7 @@ class ClubdeckelBuchungRepository(BaseRepository):
                        m.vorname || ' ' || m.nachname AS mitglied_name
                 FROM clubdeckel_buchung b
                 JOIN mitglied m ON m.id = b.mitglied_id
-                WHERE b.deckel_id = %(did)s AND b.deleted_at IS NULL
+                WHERE b.deckel_id = %(did)s{filt}
                   AND (%(mid)s::int IS NULL OR b.mitglied_id = %(mid)s)
                 ORDER BY b.created_at DESC, b.id DESC
                 LIMIT %(lim)s
@@ -269,10 +276,41 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 )
             return cur.rowcount > 0
 
+    def restore(self, buchung_id: int, restored_by: str) -> bool:
+        """Storno zurücknehmen (#127): un-delete einer soft-gelöschten Buchung;
+        bei Paaren (paar_ref) immer beide Zeilen, damit die Nullsumme erhalten
+        bleibt. Gegenstück zu storno(). version+1 → Audit-History-Eintrag."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT deckel_id, paar_ref FROM clubdeckel_buchung "
+                "WHERE id = %s AND deleted_at IS NOT NULL",
+                (buchung_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            if row['paar_ref']:
+                cur.execute(
+                    "UPDATE clubdeckel_buchung "
+                    "SET deleted_at=NULL, deleted_by=NULL, updated_at=CURRENT_TIMESTAMP, "
+                    "    updated_by=%s, version=version+1 "
+                    "WHERE deckel_id=%s AND paar_ref=%s AND deleted_at IS NOT NULL",
+                    (restored_by, row['deckel_id'], row['paar_ref']),
+                )
+            else:
+                cur.execute(
+                    "UPDATE clubdeckel_buchung "
+                    "SET deleted_at=NULL, deleted_by=NULL, updated_at=CURRENT_TIMESTAMP, "
+                    "    updated_by=%s, version=version+1 "
+                    "WHERE id=%s AND deleted_at IS NOT NULL",
+                    (restored_by, buchung_id),
+                )
+            return cur.rowcount > 0
+
     # ---------------------------------------------------------------- salden
     def salden(self, deckel_id: int) -> list[dict]:
         """Deckelstand je Mitglied (nur Mitglieder mit aktiven Buchungen),
-        größte Schuld zuerst. Team-Saldo = −Summe (rechnet die API)."""
+        höchstes Guthaben zuerst (#127). Team-Saldo = −Summe (rechnet die API)."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -284,7 +322,7 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 JOIN mitglied m ON m.id = b.mitglied_id
                 WHERE b.deckel_id = %s AND b.deleted_at IS NULL
                 GROUP BY b.mitglied_id, m.vorname, m.nachname
-                ORDER BY saldo ASC, lower(m.nachname)
+                ORDER BY saldo DESC, lower(m.nachname)
                 """,
                 (deckel_id,),
             )

@@ -229,13 +229,39 @@
 
       <!-- ====================== Salden ====================== -->
       <div v-if="tab === 'salden'">
-        <div class="row items-center q-mb-md">
-          <span class="vtb-pill">
-            <q-icon name="groups" size="13px" /> Team-Saldo: {{ fmtEuro(teamSaldo) }}
-          </span>
-        </div>
+        <!-- Bestand des Teamtresors prominent — das ist der Kassenstand der
+             mannschaftsinternen Strichliste, NICHT die Vereinskasse (#127). -->
+        <q-card flat bordered class="text-center q-pa-md q-mb-md">
+          <div class="text-overline text-grey">Teamtresor-Bestand</div>
+          <div class="text-h5 text-weight-bold"
+            :class="Number(teamSaldo) < 0 ? 'text-negative' : 'text-positive'">
+            {{ fmtEuro(teamSaldo) }}
+          </div>
+          <div class="text-caption text-grey">Kassenstand der Mannschaft im Teamtresor</div>
+        </q-card>
+
+        <!-- Bank (Zahlungsempfänger) abgesetzt: verwahrt das Bargeld, gehört
+             nicht in die Schulden-Rangliste (#127). -->
+        <q-card v-if="bankEintrag" flat bordered class="tt-bank-card q-mb-md">
+          <q-item>
+            <q-item-section avatar>
+              <q-avatar size="40px" color="vtb-gelb" text-color="primary" icon="account_balance" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label class="text-weight-bold">
+                {{ bankEintrag.mitglied_name }}
+                <q-badge color="vtb-gelb" text-color="primary" label="Bank" class="q-ml-xs" />
+              </q-item-label>
+              <q-item-label caption>verwahrt die Mannschaftskasse (Ausgleich läuft hierher)</q-item-label>
+            </q-item-section>
+            <q-item-section side>
+              <span class="text-weight-bold text-h6">{{ fmtEuro(bankEintrag.saldo) }}</span>
+            </q-item-section>
+          </q-item>
+        </q-card>
+
         <q-list bordered separator class="rounded-borders">
-          <q-item v-for="s in salden" :key="s.mitglied_id">
+          <q-item v-for="s in saldenOhneBank" :key="s.mitglied_id">
             <q-item-section>
               <q-item-label :class="{ 'text-weight-bold': s.mitglied_id === deckel.mein_mitglied_id }">
                 {{ s.mitglied_name }}
@@ -250,7 +276,9 @@
             </q-item-section>
           </q-item>
         </q-list>
-        <div v-if="!salden.length" class="text-grey q-mt-md">Noch keine Buchungen.</div>
+        <div v-if="!saldenOhneBank.length" class="text-grey q-mt-md">
+          Noch keine Buchungen.
+        </div>
       </div>
 
       <!-- ====================== Katalog (Wart) ====================== -->
@@ -391,23 +419,41 @@
 
         <!-- ---------- History: alle Buchungen ---------- -->
         <div v-if="verwaltenTab === 'history'">
+          <!-- Stornierte sind standardmäßig ausgeblendet, optional einblendbar (#127) -->
+          <div class="row items-center q-mb-sm">
+            <q-space />
+            <q-toggle v-model="stornosZeigen" dense size="sm" label="Stornierte anzeigen" />
+          </div>
           <q-list bordered separator class="rounded-borders q-mb-lg">
-            <q-item v-for="b in alleBuchungen" :key="b.id">
+            <q-item v-for="b in alleBuchungen" :key="b.id"
+              :class="{ 'tt-storniert': b.deleted_at }">
               <q-item-section>
-                <q-item-label>{{ b.mitglied_name }} — {{ buchungText(b) }}</q-item-label>
+                <q-item-label>
+                  {{ b.mitglied_name }} — {{ buchungText(b) }}
+                  <q-badge v-if="b.deleted_at" color="grey-6" label="storniert"
+                    class="q-ml-xs" />
+                </q-item-label>
                 <q-item-label caption>
                   {{ fmtDateTime(b.created_at) }} · gebucht von {{ b.created_by }}
+                  <template v-if="b.deleted_at">
+                    · storniert {{ fmtDateTime(b.deleted_at) }} von {{ b.deleted_by }}
+                  </template>
                 </q-item-label>
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-sm">
-                  <span :class="Number(b.betrag) < 0 ? 'text-negative' : 'text-positive'">
+                  <span :class="[Number(b.betrag) < 0 ? 'text-negative' : 'text-positive',
+                    { 'tt-durchgestrichen': b.deleted_at }]">
                     {{ fmtEuro(b.betrag) }}
                   </span>
-                  <q-btn flat round dense size="sm" icon="delete" color="negative"
-                    :disable="saving" @click="storno(b)">
+                  <q-btn v-if="!b.deleted_at" flat round dense size="sm" icon="delete"
+                    color="negative" :disable="saving" @click="storno(b)">
                     <q-tooltip>Stornieren{{ b.paar_ref ? ' (ganzes Paar)' : '' }}{{
                       b.typ === 'beitrag' ? ' — Beitrag wird damit erlassen' : '' }}</q-tooltip>
+                  </q-btn>
+                  <q-btn v-else flat round dense size="sm" icon="restore" color="primary"
+                    :disable="saving" @click="restoreBuchung(b)">
+                    <q-tooltip>Storno rückgängig{{ b.paar_ref ? ' (ganzes Paar)' : '' }}</q-tooltip>
                   </q-btn>
                 </div>
               </q-item-section>
@@ -437,16 +483,34 @@
               :disable="neuerWart == null" @click="addWart" />
           </div>
 
+          <!-- Stammdaten direkt bearbeitbar (man ist ja schon im Stammdaten-Tab),
+               kein Umweg über einen Dialog mehr. -->
           <div class="text-subtitle2 q-mb-sm">Stammdaten</div>
-          <div class="row q-gutter-sm">
-            <q-btn outline no-caps color="primary" icon="edit" label="Stammdaten bearbeiten"
-              @click="openStammdatenDialog" />
-            <q-btn outline no-caps color="primary" :disable="saving"
-              :icon="deckel.aktiv ? 'pause_circle' : 'play_circle'"
-              :label="deckel.aktiv ? 'Deaktivieren' : 'Aktivieren'" @click="toggleAktiv" />
-            <q-btn v-if="istAdmin" outline no-caps color="negative" icon="delete_forever"
-              label="Teamtresor löschen" @click="loeschen" />
-          </div>
+          <q-card flat bordered class="q-pa-md q-mb-md">
+            <div class="q-gutter-sm">
+              <q-input v-model="stammdatenForm.name" label="Name *" dense outlined />
+              <q-toggle v-model="stammdatenForm.aktiv" label="Aktiv (Buchen möglich)" />
+              <q-input v-model.number="stammdatenForm.beitrag" dense outlined type="number"
+                step="0.50" min="0" label="Mannschaftsbeitrag €/Monat (leer = keiner)"
+                hint="Gilt ab dem nächsten Monatsersten — auch eine Betragsänderung wirkt erst im Folgemonat" />
+              <div class="text-overline text-grey q-mt-sm">Zahlungsempfänger (Bank)</div>
+              <q-select v-model="stammdatenForm.zahlungsempfaenger" :options="verkaeuferOptionen"
+                emit-value map-options dense outlined label="Ausgleichszahlungen an" />
+              <q-input v-model="stammdatenForm.zahlweg_iban" label="IBAN" dense outlined />
+              <q-input v-model="stammdatenForm.zahlweg_wero" label="WERO-Link" dense outlined />
+              <q-input v-model="stammdatenForm.zahlweg_paypal" label="PayPal.me-Link" dense outlined />
+              <div v-if="stammdatenError" class="vtb-fehler q-mt-sm">
+                <q-icon name="warning" /> {{ stammdatenError }}
+              </div>
+              <div class="row q-mt-sm">
+                <q-btn color="primary" unelevated no-caps label="Speichern"
+                  :loading="saving" @click="saveStammdaten" />
+              </div>
+            </div>
+          </q-card>
+
+          <q-btn v-if="istAdmin" outline no-caps color="negative" icon="delete_forever"
+            label="Teamtresor löschen" @click="loeschen" />
         </div>
       </div>
     </template>
@@ -566,30 +630,6 @@
       </q-card>
     </q-dialog>
 
-    <q-dialog v-model="stammdatenDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
-      <q-card style="min-width: 340px">
-        <q-card-section class="text-h6">Teamtresor bearbeiten</q-card-section>
-        <q-card-section class="q-gutter-sm">
-          <q-input v-model="stammdatenForm.name" label="Name *" dense outlined autofocus />
-          <q-toggle v-model="stammdatenForm.aktiv" label="Aktiv (Buchen möglich)" />
-          <q-input v-model.number="stammdatenForm.beitrag" dense outlined type="number"
-            step="0.50" min="0" label="Mannschaftsbeitrag €/Monat (leer = keiner)"
-            hint="Gilt ab dem nächsten Monatsersten — auch eine Betragsänderung wirkt erst im Folgemonat" />
-          <div class="text-overline text-grey q-mt-sm">Zahlungsempfänger</div>
-          <q-select v-model="stammdatenForm.zahlungsempfaenger" :options="verkaeuferOptionen"
-            emit-value map-options dense outlined label="Ausgleichszahlungen an" />
-          <q-input v-model="stammdatenForm.zahlweg_iban" label="IBAN" dense outlined />
-          <q-input v-model="stammdatenForm.zahlweg_wero" label="WERO-Link" dense outlined />
-          <q-input v-model="stammdatenForm.zahlweg_paypal" label="PayPal.me-Link" dense outlined />
-          <div v-if="dialogError" class="text-negative text-caption">{{ dialogError }}</div>
-        </q-card-section>
-        <q-card-actions align="right">
-          <q-btn flat no-caps label="Abbrechen" v-close-popup />
-          <q-btn color="primary" unelevated no-caps label="Speichern"
-            :loading="saving" @click="saveStammdaten" />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
   </q-page>
 </template>
 
@@ -622,6 +662,7 @@ const teamSaldo = ref(0)
 const katalog = ref([])
 const gruppen = ref([])
 const alleBuchungen = ref([])
+const stornosZeigen = ref(false)  // History: stornierte Buchungen einblenden (#127)
 const warte = ref([])
 const befreiungen = ref([])
 const kader = ref([])
@@ -635,8 +676,8 @@ const zahlungDialog = ref(false)
 const zahlungForm = ref({})
 const kaufDialog = ref(false)
 const kaufForm = ref({})
-const stammdatenDialog = ref(false)
 const stammdatenForm = ref({})
+const stammdatenError = ref('')  // Inline-Fehler im Stammdaten-Tab (kein Dialog mehr)
 const neuerWart = ref(null)
 const mitgliedSuche = ref('')
 
@@ -736,6 +777,23 @@ const mitgliederListe = computed(() => {
   }
   return list.sort((a, b) => a.name.localeCompare(b.name))
 })
+
+// Salden-Ansicht (#127): Die „Bank" (Zahlungsempfänger) verwahrt das Geld — ihr
+// negativer Saldo ist verwahrtes Bargeld, kein Schulden-Rang. Deshalb aus der
+// Rangliste herausgezogen und separat gezeigt.
+const bankMitgliedId = computed(() => deckel.value?.zahlungsempfaenger_mitglied_id ?? null)
+const bankEintrag = computed(() => {
+  if (bankMitgliedId.value == null) return null
+  const s = salden.value.find(x => x.mitglied_id === bankMitgliedId.value)
+  return s || {
+    mitglied_id: bankMitgliedId.value,
+    mitglied_name: deckel.value?.zahlungsempfaenger_name || 'Bank',
+    saldo: 0, buchungen: 0,
+  }
+})
+const saldenOhneBank = computed(() =>
+  salden.value.filter(s => s.mitglied_id !== bankMitgliedId.value),
+)
 
 // Beitrag „aktiv" = Kader-Mitglied ohne Befreiung (Opt-out). Der Sammellauf bucht
 // den Monatsbeitrag am Monatsersten für genau diese Mitglieder.
@@ -935,7 +993,7 @@ async function loadAlleBuchungen() {
   if (!deckel.value || !istWart.value) return
   try {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/buchungen`,
-      { params: { alle: true, limit: 100 } })
+      { params: { alle: true, limit: 100, mit_storniert: stornosZeigen.value } })
     alleBuchungen.value = data
   } catch { alleBuchungen.value = [] }
 }
@@ -999,6 +1057,11 @@ watch(selectedTeamId, async (id) => {
 })
 
 watch(tab, loadTabDaten)
+watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
+// Stammdaten-Unter-Tab: Inline-Formular mit den aktuellen Deckel-Werten füllen
+watch(verwaltenTab, (v) => {
+  if (v === 'stammdaten') initStammdatenForm()
+})
 
 onMounted(refreshAll)
 usePageRefresh(refreshAll)
@@ -1049,6 +1112,20 @@ async function storno(buchung) {
       tab.value === 'salden' || tab.value === 'verwalten' ? loadSalden() : Promise.resolve()])
   } catch (e) {
     fehler(e, 'Storno fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function restoreBuchung(buchung) {
+  saving.value = true
+  try {
+    await api.post(`${BASE}/${deckel.value.id}/buchungen/${buchung.id}/restore`)
+    $q.notify({ type: 'positive', message: 'Buchung wiederhergestellt', timeout: 1200 })
+    await Promise.all([loadDeckel(), loadMeineBuchungen(), loadAlleBuchungen(),
+      tab.value === 'salden' || tab.value === 'verwalten' ? loadSalden() : Promise.resolve()])
+  } catch (e) {
+    fehler(e, 'Wiederherstellen fehlgeschlagen')
   } finally {
     saving.value = false
   }
@@ -1357,9 +1434,10 @@ async function toggleBeitrag(m) {
   }
 }
 
-function openStammdatenDialog() {
-  dialogError.value = ''
+function initStammdatenForm() {
   const d = deckel.value
+  if (!d) return
+  stammdatenError.value = ''
   stammdatenForm.value = {
     name: d.name, aktiv: !!d.aktiv,
     beitrag: d.beitrag != null ? Number(d.beitrag) : null,
@@ -1367,17 +1445,16 @@ function openStammdatenDialog() {
     zahlweg_iban: d.zahlweg_iban || '', zahlweg_wero: d.zahlweg_wero || '',
     zahlweg_paypal: d.zahlweg_paypal || '',
   }
-  stammdatenDialog.value = true
 }
 
 async function saveStammdaten() {
   const f = stammdatenForm.value
   if (!f.name?.trim()) {
-    dialogError.value = 'Name ist erforderlich.'
+    stammdatenError.value = 'Name ist erforderlich.'
     return
   }
   saving.value = true
-  dialogError.value = ''
+  stammdatenError.value = ''
   try {
     await api.put(`${BASE}/${deckel.value.id}`, {
       name: f.name.trim(), aktiv: f.aktiv,
@@ -1388,28 +1465,11 @@ async function saveStammdaten() {
       zahlweg_paypal: f.zahlweg_paypal || null,
       expected_version: deckel.value.version,
     })
-    stammdatenDialog.value = false
+    $q.notify({ type: 'positive', message: 'Stammdaten gespeichert', timeout: 1200 })
     await refreshAll()
+    initStammdatenForm()  // Formular auf den gespeicherten Stand zurücksetzen
   } catch (e) {
-    dialogError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
-  } finally {
-    saving.value = false
-  }
-}
-
-async function toggleAktiv() {
-  const d = deckel.value
-  const neuAktiv = !d.aktiv
-  saving.value = true
-  try {
-    await api.put(`${BASE}/${d.id}/aktiv`, { aktiv: neuAktiv, expected_version: d.version })
-    $q.notify({
-      type: 'positive', timeout: 1500,
-      message: neuAktiv ? 'Teamtresor aktiviert' : 'Teamtresor deaktiviert',
-    })
-    await refreshAll()
-  } catch (e) {
-    fehler(e, 'Ändern des Status fehlgeschlagen')
+    stammdatenError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
   } finally {
     saving.value = false
   }
@@ -1543,5 +1603,18 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
   .vtb-tabs :deep(.q-tab__label) {
     font-size: 11px;
   }
+}
+
+// Stornierte History-Zeilen gedimmt, Betrag durchgestrichen (#127)
+.tt-storniert {
+  opacity: 0.6;
+}
+.tt-durchgestrichen {
+  text-decoration: line-through;
+}
+
+// Bank-Karte (Zahlungsempfänger) in den Salden mit gelbem Akzent abgesetzt (#127)
+.tt-bank-card {
+  border-left: 4px solid $vtb-gelb;
 }
 </style>

@@ -121,14 +121,16 @@ def _db(kader='mitglied', wart=False):
             revoke=lambda *a: True,
         ),
         clubdeckel_buchungen=SimpleNamespace(
-            get=lambda bid: _buchung(id=bid),
-            list_for_deckel=lambda did, mitglied_id=None, limit=None: [_buchung()],
+            get=lambda bid, include_deleted=False: _buchung(id=bid),
+            list_for_deckel=lambda did, mitglied_id=None, limit=None,
+            mit_storniert=False: [_buchung()],
             create_konsum=lambda *a: _buchung(),
             create_zahlung=lambda *a, **k: 'ref123',
             create_einkauf=lambda *a: _buchung(typ='einkauf', betrag=Decimal('20')),
             create_an_verkauf=lambda *a, **k: 'refAV',
             buche_faellige_beitraege=lambda *a, **k: 0,
             storno=lambda *a: True,
+            restore=lambda *a, **k: True,
             salden=lambda did: [],
             saldo_for_mitglied=lambda did, mid: Decimal('-3.00'),
             konsum_24h=lambda did, mid: {'summe': Decimal('3.00'), 'anzahl': {21: 2}},
@@ -488,6 +490,41 @@ def test_storno_buchung_anderes_deckels_404():
     with pytest.raises(HTTPException) as exc:
         api.storno_buchung(7, 100, _USER, db)
     assert exc.value.status_code == 404
+
+
+# ------------------------------------------------------------------------- Restore
+def test_restore_buchung_als_wart_ok():
+    db = _db(wart=True)
+    seen = []
+    db.clubdeckel_buchungen.get = lambda bid, include_deleted=False: _buchung(
+        deleted_at='2026-07-21', deleted_by='wart')
+    db.clubdeckel_buchungen.restore = lambda bid, by: (seen.append((bid, by)), True)[1]
+    assert api.restore_buchung(7, 100, _USER, db) == {"status": "wiederhergestellt"}
+    assert seen == [(100, 'spieler')]
+
+
+def test_restore_buchung_nicht_storniert_422():
+    db = _db(wart=True)
+    db.clubdeckel_buchungen.get = lambda bid, include_deleted=False: _buchung(deleted_at=None)
+    with pytest.raises(HTTPException) as exc:
+        api.restore_buchung(7, 100, _USER, db)
+    assert exc.value.status_code == 422
+
+
+def test_restore_buchung_anderes_deckels_404():
+    db = _db(wart=True)
+    db.clubdeckel_buchungen.get = lambda bid, include_deleted=False: _buchung(
+        deckel_id=99, deleted_at='2026-07-21')
+    with pytest.raises(HTTPException) as exc:
+        api.restore_buchung(7, 100, _USER, db)
+    assert exc.value.status_code == 404
+
+
+def test_restore_buchung_als_spieler_403():
+    db = _db()  # kein Wart
+    with pytest.raises(HTTPException) as exc:
+        api.restore_buchung(7, 100, _USER, db)
+    assert exc.value.status_code == 403
 
 
 def test_undo_konsum_storniert_letzten_strich():
