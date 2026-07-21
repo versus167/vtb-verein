@@ -570,12 +570,15 @@ def undo_konsum(deckel_id: int, artikel_id: int, user: CurrentUser, db: DB):
 
 @router.get("/{deckel_id}/buchungen")
 def list_buchungen(deckel_id: int, user: CurrentUser, db: DB,
-                   alle: bool = False, limit: int = 50):
-    """Eigene Buchungen; mit ?alle=1 (ab Wart) alle Buchungen des Deckels."""
+                   alle: bool = False, limit: int = 50,
+                   mit_storniert: bool = False):
+    """Eigene Buchungen; mit ?alle=1 (ab Wart) alle Buchungen des Deckels.
+    ?mit_storniert=1 blendet in der Wart-History auch stornierte Zeilen ein (#127)."""
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart' if alle else 'mitglied')
     limit = max(1, min(limit, 500))
     if alle:
-        buchungen = db.clubdeckel_buchungen.list_for_deckel(deckel_id, limit=limit)
+        buchungen = db.clubdeckel_buchungen.list_for_deckel(
+            deckel_id, limit=limit, mit_storniert=mit_storniert)
     else:
         mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
         if mitglied_id is None:
@@ -669,3 +672,18 @@ def storno_buchung(deckel_id: int, buchung_id: int, user: CurrentUser, db: DB):
                                 "Nur eigene Konsum-Buchungen können storniert werden")
     db.clubdeckel_buchungen.storno(buchung_id, user.username)
     return {"status": "storniert"}
+
+
+@router.post("/{deckel_id}/buchungen/{buchung_id}/restore")
+def restore_buchung(deckel_id: int, buchung_id: int, user: CurrentUser, db: DB):
+    """Storno rückgängig machen (ab Wart, #127): stellt eine stornierte Buchung
+    wieder her; Paare (Zahlung, Mitglieds-Verkauf) werden komplett reaktiviert."""
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    buchung = db.clubdeckel_buchungen.get(buchung_id, include_deleted=True)
+    if buchung is None or buchung.deckel_id != deckel_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Buchung nicht gefunden")
+    if buchung.deleted_at is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Buchung ist nicht storniert")
+    db.clubdeckel_buchungen.restore(buchung_id, user.username)
+    return {"status": "wiederhergestellt"}

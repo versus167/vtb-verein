@@ -368,6 +368,67 @@ def test_beispielkette_aus_dem_fachmodell(db):
     assert _team_saldo(db, deckel.id) == Decimal('10.00')
 
 
+def test_storno_und_restore_buchung(db):
+    """#127: Storno = Soft-Delete (raus aus der Standard-Liste, Saldo zurück);
+    mit_storniert zeigt die Zeile weiter, restore reaktiviert sie samt Saldo."""
+    man = _make_mannschaft(db)
+    _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
+                                        Decimal('1.50'), 1, 0, 't')
+    b = db.clubdeckel_buchungen.create_konsum(deckel.id, mid, bier.id, bier.name, 2,
+                                              bier.preis, None, 't')
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == Decimal('-3.00')
+
+    assert db.clubdeckel_buchungen.storno(b.id, 't')
+    assert db.clubdeckel_buchungen.list_for_deckel(deckel.id) == []
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == Decimal('0')
+
+    mit = db.clubdeckel_buchungen.list_for_deckel(deckel.id, mit_storniert=True)
+    assert len(mit) == 1 and mit[0].deleted_at is not None
+
+    assert db.clubdeckel_buchungen.restore(b.id, 't')
+    (wieder,) = db.clubdeckel_buchungen.list_for_deckel(deckel.id)
+    assert wieder.deleted_at is None
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == Decimal('-3.00')
+    # Nicht-stornierte Zeile lässt sich nicht „wiederherstellen"
+    assert db.clubdeckel_buchungen.restore(b.id, 't') is False
+
+
+def test_restore_paar_reaktiviert_beide_zeilen(db):
+    """Restore einer Paar-Zeile stellt beide Zeilen wieder her (Nullsumme)."""
+    man = _make_mannschaft(db)
+    _, a = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    db.clubdeckel_buchungen.create_zahlung(deckel.id, a, bernd, Decimal('5.00'), None, 't')
+    (row,) = [r for r in db.clubdeckel_buchungen.list_for_deckel(deckel.id)
+              if r.mitglied_id == a]
+    assert db.clubdeckel_buchungen.storno(row.id, 't')
+    assert db.clubdeckel_buchungen.list_for_deckel(deckel.id) == []
+    assert db.clubdeckel_buchungen.restore(row.id, 't')
+    assert len(db.clubdeckel_buchungen.list_for_deckel(deckel.id)) == 2
+
+
+def test_salden_sortiert_nach_saldo_desc(db):
+    """#127: höchstes Guthaben zuerst, größte Schuld zuletzt."""
+    man = _make_mannschaft(db)
+    _, a = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    db.clubdeckel_buchungen.create_einkauf(deckel.id, a, Decimal('20.00'), None, 't')  # A +20
+    gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
+                                        Decimal('2.00'), 1, 0, 't')
+    db.clubdeckel_buchungen.create_konsum(deckel.id, bernd, bier.id, bier.name, 5,
+                                          bier.preis, None, 't')                       # B −10
+    salden = db.clubdeckel_buchungen.salden(deckel.id)
+    assert [s['mitglied_id'] for s in salden] == [a, bernd]
+    assert salden[0]['saldo'] == Decimal('20.00')
+    assert salden[1]['saldo'] == Decimal('-10.00')
+
+
 def test_an_verkauf_team_und_mitglied_paar(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
