@@ -37,6 +37,14 @@ def _vormonat(monat: str) -> str:
     return f"{jahr - 1}-12" if m == 1 else f"{jahr:04d}-{m - 1:02d}"
 
 
+def _naechster(monat: str) -> str:
+    jahr, m = int(monat[:4]), int(monat[5:7])
+    return f"{jahr + 1}-01" if m == 12 else f"{jahr:04d}-{m + 1:02d}"
+
+
+NAECHSTER_MONAT = _naechster(MONAT)
+
+
 @pytest.fixture(scope="module")
 def db():
     from app.db.datastore import VereinsDB
@@ -157,12 +165,12 @@ def test_stammdaten_update_fuehrt_beitrag_ab(db):
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
     deckel = db.clubdeckel.create(man, "Teamtresor", 't')
 
-    # Beitrag setzen -> beitrag_ab = laufender Monat
+    # Beitrag setzen -> beitrag_ab = Folgemonat (nie im laufenden Monat)
     assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
                                 mid, 'DE12', None, 'paypal.me/x', 't', deckel.version)
     d2 = db.clubdeckel.get(deckel.id)
     assert d2.beitrag == Decimal('5.00')
-    assert d2.beitrag_ab == MONAT
+    assert d2.beitrag_ab == NAECHSTER_MONAT
     assert d2.zahlungsempfaenger_name == 'Anna Deckeltest'
     # Beitrag entfernen -> beitrag_ab leer
     assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, None, None,
@@ -481,6 +489,9 @@ def test_sammellauf_nur_aktive_deckel_mit_beitrag(db):
     d1 = db.clubdeckel.create(man1, "T1", 't')
     assert db.clubdeckel.update(d1.id, d1.name, 1, Decimal('5.00'),
                                 None, None, None, None, 't', d1.version)
+    # Beitrag greift ab Folgemonat; für diesen Lauf den laufenden Monat fällig stellen
+    with db.cursor() as cur:
+        cur.execute("UPDATE clubdeckel SET beitrag_ab=%s WHERE id=%s", (MONAT, d1.id))
 
     man2 = _make_mannschaft(db, name="Ohne-Beitrag")
     d2 = db.clubdeckel.create(man2, "T2", 't')                       # aktiv, kein Beitrag
@@ -495,6 +506,67 @@ def test_sammellauf_nur_aktive_deckel_mit_beitrag(db):
     assert d2.id not in res and d3.id not in res
     # Idempotent: zweiter Lauf bucht nichts nach
     assert run_beitragslauf(db) == {d1.id: 0}
+
+
+def test_beitrag_startet_erst_naechsten_monat(db):
+    """Neu gesetzter Beitrag startet am Folgemonat; der laufende Monat bleibt
+    unbelastet, bis der Erste des Folgemonats erreicht ist."""
+    man = _make_mannschaft(db)
+    erster_aktuell = date.today().replace(day=1)
+    vormonat_erster = (erster_aktuell - timedelta(days=1)).replace(day=1).isoformat()
+    _, mid = _make_kader_user(db, man, 'spieler', 'Anna', von=vormonat_erster)
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+
+    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
+                                None, None, None, None, 't', deckel.version)
+    d = db.clubdeckel.get(deckel.id)
+    assert d.beitrag_ab == NAECHSTER_MONAT
+    # Lazy-Lauf im laufenden Monat bucht nichts (Startmonat liegt in der Zukunft)
+    assert db.clubdeckel_buchungen.buche_faellige_beitraege(
+        deckel.id, man, d.beitrag, d.beitrag_ab) == 0
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == Decimal('0')
+
+
+def test_beitragsaenderung_schliesst_laufenden_monat_alt_ab(db):
+    """Betragsänderung: der laufende Monat wird noch zum ALTEN Satz gebucht
+    (Flush im API-Update), der neue Satz greift erst ab dem Folgemonat."""
+    from types import SimpleNamespace
+    from backend.api import clubdeckel as api
+
+    erster_aktuell = date.today().replace(day=1)
+    vormonat_erster = (erster_aktuell - timedelta(days=1)).replace(day=1).isoformat()
+    admin = SimpleNamespace(id=1, username='admin', role='admin',
+                            has_permission=lambda p: True)
+
+    man = _make_mannschaft(db)
+    _, mid = _make_kader_user(db, man, 'spieler', 'Anna', von=vormonat_erster)
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
+                                None, None, None, None, 't', deckel.version)
+    # Beitrag läuft bereits: laufenden Monat zum alten Satz fällig stellen
+    with db.cursor() as cur:
+        cur.execute("UPDATE clubdeckel SET beitrag_ab=%s WHERE id=%s", (MONAT, deckel.id))
+    d = db.clubdeckel.get(deckel.id)
+
+    # Betrag über die API ändern (5,00 -> 8,00)
+    api.update_deckel(
+        deckel.id,
+        api.DeckelUpdate(name="Teamtresor", aktiv=True, beitrag=8.0,
+                         expected_version=d.version),
+        admin, db)
+
+    d2 = db.clubdeckel.get(deckel.id)
+    assert d2.beitrag == Decimal('8.00')
+    assert d2.beitrag_ab == NAECHSTER_MONAT
+    # Genau eine Beitragszeile für den laufenden Monat, noch zum alten Satz
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == Decimal('-5.00')
+    with db.cursor() as cur:
+        cur.execute("SELECT count(*) AS n FROM clubdeckel_buchung "
+                    "WHERE deckel_id=%s AND typ='beitrag'", (deckel.id,))
+        assert cur.fetchone()['n'] == 1
+    # Folgemonat-Start: erneuter Lauf bucht im laufenden Monat nichts nach
+    assert db.clubdeckel_buchungen.buche_faellige_beitraege(
+        deckel.id, man, d2.beitrag, d2.beitrag_ab) == 0
 
 
 def test_gruppe_loeschen_nur_ohne_artikel(db):

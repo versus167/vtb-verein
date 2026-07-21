@@ -244,6 +244,9 @@ def update_deckel(deckel_id: int, data: DeckelUpdate, user: CurrentUser, db: DB)
     if ze is not None and not _mitglied_am_deckel(db, deckel, ze):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Zahlungsempfänger gehört nicht zu diesem Teamtresor")
+    # Vor einer Beitragsänderung offene Monate noch zum ALTEN Satz abschließen;
+    # der (evtl. neue) Beitrag greift erst ab dem Folgemonat (siehe update()).
+    _beitragslauf(db, deckel)
     if not db.clubdeckel.update(
             deckel_id, name, 1 if data.aktiv else 0, beitrag, ze,
             (data.zahlweg_iban or '').strip() or None,
