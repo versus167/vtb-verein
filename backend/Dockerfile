@@ -26,9 +26,10 @@ RUN pip install --no-cache-dir -r vtb_verein/requirements.txt -r backend/require
 COPY vtb_verein/ ./vtb_verein/
 COPY backend/ ./backend/
 
-# Nur das Zutritts-Sync-Tool ins Image (für den Sync-Sidecar). Bewusst NICHT das ganze
-# tools/-Verzeichnis: es enthält u. a. tickets.local.env (lokale Secrets).
+# Nur die Sidecar-Tools ins Image (Zutritts-Sync + Teamtresor-Beitragslauf). Bewusst
+# NICHT das ganze tools/-Verzeichnis: es enthält u. a. tickets.local.env (lokale Secrets).
 COPY tools/zutritt_sync.py ./tools/zutritt_sync.py
+COPY tools/clubdeckel_beitrag_lauf.py ./tools/clubdeckel_beitrag_lauf.py
 
 # Versions-Datei – Quelle für get_app_version() bzw. /api/app-info.
 # Muss in /app liegen (= Path(app_info.py).parents[3]), sonst Fallback auf 0.0.1.
