@@ -52,6 +52,11 @@ class DeckelUpdate(BaseModel):
     expected_version: int
 
 
+class AktivUpdate(BaseModel):
+    aktiv: bool
+    expected_version: int
+
+
 class GruppeWrite(BaseModel):
     name: str
     verkaeufer_mitglied_id: Optional[int] = None   # None = das Team verkauft
@@ -158,6 +163,14 @@ def _require_aktiv(deckel) -> None:
                             "Teamtresor ist deaktiviert — Buchen nicht möglich")
 
 
+def _require_admin(user) -> None:
+    """Löschen und Wiederherstellen eines Teamtresors sind app-weit admin-only (#125)."""
+    if user.role != 'admin':
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Nur Administratoren dürfen einen Teamtresor löschen "
+                            "oder wiederherstellen")
+
+
 def _mitglied_am_deckel(db: DB, deckel, mitglied_id: int) -> bool:
     """Ziel-Prüfung für Zahlung/Einkauf: aktives Kader-Mitglied ODER Mitglied
     mit Buchungen auf dem Deckel (Restschuld eines Ausgetretenen bleibt regelbar)."""
@@ -201,6 +214,33 @@ def deckel_einschalten(mannschaft_id: int, data: DeckelCreate,
     name = (data.name or '').strip() or f"Teamtresor {mannschaft.name}"
     deckel = db.clubdeckel.create(mannschaft_id, name, user.username)
     return asdict(deckel)
+
+
+# ------------------------------------------------------------------ Papierkorb
+# WICHTIG: vor der "/{deckel_id}"-Route deklarieren, sonst versucht der
+# int-Pfadparameter, "papierkorb" zu parsen (422). Admin-only (#125).
+@router.get("/papierkorb")
+def list_papierkorb(user: CurrentUser, db: DB):
+    """Gelöschte Teamtresore (Admin-Papierkorb) — Grundlage fürs Wiederherstellen."""
+    _require_admin(user)
+    return db.clubdeckel.list_geloescht()
+
+
+@router.post("/papierkorb/{deckel_id}/restore")
+def restore_deckel(deckel_id: int, user: CurrentUser, db: DB):
+    """Einen gelöschten Teamtresor komplett wiederherstellen (Deckel + Buchungen +
+    Katalog + Warte + Befreiungen). 409, wenn die Mannschaft inzwischen wieder einen
+    aktiven Teamtresor hat."""
+    _require_admin(user)
+    ergebnis = db.clubdeckel.restore(deckel_id, user.username)
+    if ergebnis == 'not_found':
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Kein gelöschter Teamtresor mit dieser ID")
+    if ergebnis == 'conflict':
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Diese Mannschaft hat bereits wieder einen aktiven "
+                            "Teamtresor — Wiederherstellen nicht möglich")
+    return {"status": "wiederhergestellt"}
 
 
 # --------------------------------------------------------------------- Deckel
@@ -258,10 +298,25 @@ def update_deckel(deckel_id: int, data: DeckelUpdate, user: CurrentUser, db: DB)
     return asdict(db.clubdeckel.get(deckel_id))
 
 
+@router.put("/{deckel_id}/aktiv")
+def set_deckel_aktiv(deckel_id: int, data: AktivUpdate, user: CurrentUser, db: DB):
+    """Teamtresor (de)aktivieren durch den Verwalter — nur der Aktiv-Status, ohne die
+    Stammdaten anzufassen. Deaktiviert = Buchen gesperrt, jederzeit reversibel."""
+    _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
+    if not db.clubdeckel.set_aktiv(deckel_id, 1 if data.aktiv else 0,
+                                   user.username, data.expected_version):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Der Teamtresor wurde zwischenzeitlich geändert")
+    return asdict(db.clubdeckel.get(deckel_id))
+
+
 @router.delete("/{deckel_id}")
 def delete_deckel(deckel_id: int, user: CurrentUser, db: DB):
-    _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
-    db.clubdeckel.mark_deleted(deckel_id, user.username)
+    """Kompletter Soft-Delete des Teamtresors (Deckel + Buchungen + Katalog + Warte +
+    Befreiungen) als ein Batch — admin-only (#125), über den Papierkorb wiederherstellbar."""
+    _require_admin(user)
+    if db.clubdeckel.loesche_komplett(deckel_id, user.username) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teamtresor nicht gefunden")
     return {"status": "geloescht"}
 
 

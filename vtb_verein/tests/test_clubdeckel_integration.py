@@ -634,3 +634,116 @@ def test_get_kader_mitglied_id(db):
     uid, mid = _make_kader_user(db, man, 'spieler', 'Anna')
     assert db.clubdeckel.get_kader_mitglied_id(uid, man) == mid
     assert db.clubdeckel.get_kader_mitglied_id(uid, man + 999) is None
+
+
+# ------------------------------------------------ Komplett-Löschen & Restore (#125)
+def _loesch_ref(db, table, deckel_id):
+    """Distinkte (gesetzte) loesch_ref-Werte gelöschter Zeilen einer Kind-/Deckel-
+    Tabelle. NULL (= vorher einzeln storniert, nicht Teil des Batches) bleibt außen vor."""
+    col = "id" if table == "clubdeckel" else "deckel_id"
+    with db.cursor() as cur:
+        cur.execute(f"SELECT DISTINCT loesch_ref FROM {table} "
+                    f"WHERE {col}=%s AND deleted_at IS NOT NULL "
+                    f"AND loesch_ref IS NOT NULL", (deckel_id,))
+        return {r['loesch_ref'] for r in cur.fetchall()}
+
+
+def test_loeschen_komplett_und_wiederherstellen(db):
+    man = _make_mannschaft(db)
+    _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
+                                        Decimal('1.50'), 1, 0, 't')
+    db.clubdeckel_berechtigungen.set_wart(deckel.id, mid, 't')
+    db.clubdeckel_befreiungen.set_befreiung(deckel.id, mid, 't')
+    # Zwei Konsumbuchungen; die zweite wird VOR dem Löschen einzeln storniert.
+    db.clubdeckel_buchungen.create_konsum(deckel.id, mid, bier.id, bier.name, 1,
+                                          bier.preis, None, 't')
+    b2 = db.clubdeckel_buchungen.create_konsum(deckel.id, mid, bier.id, bier.name, 3,
+                                               bier.preis, None, 't')
+    db.clubdeckel_buchungen.storno(b2.id, 't')
+
+    salden_vorher = db.clubdeckel_buchungen.salden(deckel.id)
+    saldo_vorher = db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid)
+    assert saldo_vorher == Decimal('-1.50')                 # nur die 1. Buchung aktiv
+
+    # --- Komplett löschen (Kaskade als ein Batch) -------------------------------
+    ref = db.clubdeckel.loesche_komplett(deckel.id, 'admin')
+    assert ref is not None
+    assert db.clubdeckel.get(deckel.id) is None             # aktiv nicht mehr sichtbar
+    assert db.clubdeckel.get_by_mannschaft(man) is None
+    weg = db.clubdeckel.get_geloescht(deckel.id)
+    assert weg is not None and weg.name == "Teamtresor"
+    # Alle Kinder + Deckel gelöscht und teilen dieselbe loesch_ref …
+    for table in ("clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
+                  "clubdeckel_gruppe", "clubdeckel_berechtigung",
+                  "clubdeckel_beitrag_befreiung"):
+        assert _loesch_ref(db, table, deckel.id) == {ref}
+    assert db.clubdeckel_buchungen.salden(deckel.id) == []
+    assert db.clubdeckel_gruppen.list_for_deckel(deckel.id) == []
+    assert db.clubdeckel_berechtigungen.list_for_deckel(deckel.id) == []
+    # … der Vorab-Storno gehört NICHT zum Batch (keine loesch_ref).
+    with db.cursor() as cur:
+        cur.execute("SELECT loesch_ref FROM clubdeckel_buchung WHERE id=%s", (b2.id,))
+        assert cur.fetchone()['loesch_ref'] is None
+
+    # --- Wiederherstellen -------------------------------------------------------
+    assert db.clubdeckel.restore(deckel.id, 'admin') == 'ok'
+    d = db.clubdeckel.get(deckel.id)
+    assert d is not None and d.aktiv == 1
+    assert db.clubdeckel.get_by_mannschaft(man).id == deckel.id
+    # Salden identisch zum Ausgangsstand; der Vorab-Storno bleibt gelöscht.
+    assert db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mid) == saldo_vorher
+    assert db.clubdeckel_buchungen.salden(deckel.id) == salden_vorher
+    assert len(db.clubdeckel_gruppen.list_for_deckel(deckel.id)) == 1
+    assert len(db.clubdeckel_berechtigungen.list_for_deckel(deckel.id)) == 1
+    assert len(db.clubdeckel_befreiungen.list_for_deckel(deckel.id)) == 1
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at FROM clubdeckel_buchung WHERE id=%s", (b2.id,))
+        assert cur.fetchone()['deleted_at'] is not None      # Storno NICHT wiederbelebt
+        # Nach dem Restore ist keine loesch_ref mehr gesetzt.
+        cur.execute("SELECT count(*) AS n FROM clubdeckel_buchung "
+                    "WHERE deckel_id=%s AND loesch_ref IS NOT NULL", (deckel.id,))
+        assert cur.fetchone()['n'] == 0
+
+
+def test_loeschen_idempotent_und_papierkorb(db):
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    assert db.clubdeckel.loesche_komplett(deckel.id, 'admin') is not None
+    assert db.clubdeckel.loesche_komplett(deckel.id, 'admin') is None   # schon weg
+    eintraege = {e['id']: e for e in db.clubdeckel.list_geloescht()}
+    assert deckel.id in eintraege
+    assert eintraege[deckel.id]['mannschaft_hat_aktiven'] is False
+
+
+def test_restore_konflikt_wenn_neuer_deckel(db):
+    man = _make_mannschaft(db)
+    alt = db.clubdeckel.create(man, "Alt", 't')
+    db.clubdeckel.loesche_komplett(alt.id, 'admin')
+    neu = db.clubdeckel.create(man, "Neu", 't')          # frischer aktiver Deckel
+    assert neu.id != alt.id
+    assert db.clubdeckel.restore(alt.id, 'admin') == 'conflict'
+    # Der Papierkorb markiert den Konflikt für die UI.
+    eintrag = next(e for e in db.clubdeckel.list_geloescht() if e['id'] == alt.id)
+    assert eintrag['mannschaft_hat_aktiven'] is True
+
+
+def test_restore_unbekannt(db):
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    assert db.clubdeckel.restore(deckel.id, 'admin') == 'not_found'   # aktiv, nicht gelöscht
+    assert db.clubdeckel.restore(deckel.id + 999, 'admin') == 'not_found'
+
+
+def test_loesch_ref_spalten_existieren(db):
+    """Fresh-Schema-Pfad: loesch_ref liegt auf allen 6 Live-Tabellen."""
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.columns "
+            "WHERE column_name='loesch_ref' AND table_name LIKE 'clubdeckel%'")
+        tabellen = {r['table_name'] for r in cur.fetchall()}
+    assert tabellen == {"clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
+                        "clubdeckel_gruppe", "clubdeckel_berechtigung",
+                        "clubdeckel_beitrag_befreiung"}

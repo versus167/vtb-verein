@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 75
+SCHEMA_VERSION = 76
 
 
 # ---------------------------------------------------------------------------
@@ -1496,6 +1496,7 @@ _DDL_CLUBDECKEL = """
       zahlweg_iban  TEXT,
       zahlweg_wero  TEXT,
       zahlweg_paypal TEXT,
+      loesch_ref    TEXT,
       version       INTEGER NOT NULL DEFAULT 1,
       created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by    TEXT NOT NULL,
@@ -1518,6 +1519,7 @@ _DDL_CLUBDECKEL = """
       id          SERIAL PRIMARY KEY,
       deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
       mitglied_id INTEGER NOT NULL REFERENCES mitglied(id),
+      loesch_ref  TEXT,
       version     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by  TEXT NOT NULL,
@@ -1540,6 +1542,7 @@ _DDL_CLUBDECKEL = """
       verkaeufer_mitglied_id INTEGER REFERENCES mitglied(id),
       aktiv                  INTEGER NOT NULL DEFAULT 1,
       sortierung             INTEGER NOT NULL DEFAULT 0,
+      loesch_ref             TEXT,
       version                INTEGER NOT NULL DEFAULT 1,
       created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by             TEXT NOT NULL,
@@ -1564,6 +1567,7 @@ _DDL_CLUBDECKEL = """
       preis       NUMERIC(10,2) NOT NULL,
       aktiv       INTEGER NOT NULL DEFAULT 1,
       sortierung  INTEGER NOT NULL DEFAULT 0,
+      loesch_ref  TEXT,
       version     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by  TEXT NOT NULL,
@@ -1584,6 +1588,7 @@ _DDL_CLUBDECKEL = """
       id          SERIAL PRIMARY KEY,
       deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
       mitglied_id INTEGER NOT NULL REFERENCES mitglied(id),
+      loesch_ref  TEXT,
       version     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by  TEXT NOT NULL,
@@ -1612,6 +1617,7 @@ _DDL_CLUBDECKEL = """
       notiz         TEXT,
       artikel_name  TEXT,
       gegen_name    TEXT,
+      loesch_ref    TEXT,
       version       INTEGER NOT NULL DEFAULT 1,
       created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by    TEXT NOT NULL,
@@ -1656,6 +1662,7 @@ _CLUBDECKEL_INDEXES = (
     ("idx_clubdeckel_buchung_mitglied_id",       "clubdeckel_buchung(mitglied_id)"),
     ("idx_clubdeckel_buchung_artikel_id",        "clubdeckel_buchung(artikel_id)"),
     ("idx_clubdeckel_buchung_paar_ref",          "clubdeckel_buchung(paar_ref)"),
+    ("idx_clubdeckel_buchung_loesch_ref",        "clubdeckel_buchung(loesch_ref)"),
     ("idx_clubdeckel_buchung_beitrag_monat",     "clubdeckel_buchung(deckel_id, beitrag_monat)"),
     ("idx_clubdeckel_buchung_deleted_at",        "clubdeckel_buchung(deleted_at)"),
     ("idx_clubdeckel_buchung_history_id",        "clubdeckel_buchung_history(id)"),
@@ -2160,6 +2167,7 @@ class Database:
             73: self._migrate_v72_to_v73,
             74: self._migrate_v73_to_v74,
             75: self._migrate_v74_to_v75,
+            76: self._migrate_v75_to_v76,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -5308,6 +5316,27 @@ class Database:
                 cur.execute(sql)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 75 WHERE id = 1")
+
+    def _migrate_v75_to_v76(self) -> None:
+        """Teamtresor „komplett löschen mit Wiederherstellung" (#125).
+
+        Batch-Marker `loesch_ref` (uuid) auf allen 6 clubdeckel-Live-Tabellen: Ein
+        Admin-Löschvorgang soft-löscht Deckel + alle Kinder in einem Batch mit
+        gemeinsamer loesch_ref; die Wiederherstellung reaktiviert exakt diesen Batch
+        (vorher einzeln stornierte Zeilen bleiben gelöscht). Bewusst NICHT in den
+        *_history-Tabellen / Audit-Spaltenlisten (reine Buchhaltungsspalte); die
+        Audit-Trigger nutzen feste Spaltenlisten und bleiben unverändert gültig.
+        DDL/Index-Konstanten geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            for table in ("clubdeckel", "clubdeckel_berechtigung", "clubdeckel_gruppe",
+                          "clubdeckel_artikel", "clubdeckel_beitrag_befreiung",
+                          "clubdeckel_buchung"):
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS loesch_ref TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_clubdeckel_buchung_loesch_ref "
+                        "ON clubdeckel_buchung(loesch_ref)")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 76 WHERE id = 1")
 
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
