@@ -299,7 +299,7 @@
           class="row items-center q-mb-sm text-caption text-grey-8">
           <q-icon name="how_to_reg" color="green-6" size="18px" class="q-mr-xs" />
           Beitrag aktiv: <b class="q-mx-xs">{{ beitragAktivAnzahl }} / {{ kader.length }}</b>
-          · {{ fmtEuro(deckel.beitrag) }}/Monat{{ deckel.beitrag_ab ? ` seit ${deckel.beitrag_ab}` : '' }}
+          · {{ fmtEuro(deckel.beitrag) }}/Monat{{ deckel.beitrag_ab ? ` ab ${deckel.beitrag_ab}` : '' }}
         </div>
 
         <q-input v-model="mitgliedSuche" dense outlined class="q-mb-sm"
@@ -520,7 +520,8 @@
           <q-input v-model="stammdatenForm.name" label="Name *" dense outlined autofocus />
           <q-toggle v-model="stammdatenForm.aktiv" label="Aktiv (Buchen möglich)" />
           <q-input v-model.number="stammdatenForm.beitrag" dense outlined type="number"
-            step="0.50" min="0" label="Mannschaftsbeitrag €/Monat (leer = keiner)" />
+            step="0.50" min="0" label="Mannschaftsbeitrag €/Monat (leer = keiner)"
+            hint="Gilt ab dem nächsten Monatsersten — auch eine Betragsänderung wirkt erst im Folgemonat" />
           <div class="text-overline text-grey q-mt-sm">Zahlungsempfänger</div>
           <q-select v-model="stammdatenForm.zahlungsempfaenger" :options="verkaeuferOptionen"
             emit-value map-options dense outlined label="Ausgleichszahlungen an" />

@@ -46,6 +46,15 @@ def _map(row) -> Clubdeckel:
     return Clubdeckel(**dict(row))
 
 
+def naechster_beitrag_monat(heute: Optional[date] = None) -> str:
+    """Erster des Folgemonats als 'YYYY-MM' — Startmonat für einen neu gesetzten
+    oder geänderten Monatsbeitrag. Der laufende Monat wird nie (rückwirkend)
+    belastet; der Beitrag greift erst am nächsten Monatsersten."""
+    d = heute or date.today()
+    jahr, monat = (d.year + 1, 1) if d.month == 12 else (d.year, d.month + 1)
+    return f"{jahr:04d}-{monat:02d}"
+
+
 class ClubdeckelRepository(BaseRepository):
 
     # ------------------------------------------------------------------ lesen
@@ -107,13 +116,20 @@ class ClubdeckelRepository(BaseRepository):
                zahlweg_paypal: Optional[str],
                updated_by: str, expected_version: int) -> bool:
         """Stammdaten-Update. beitrag_ab wird automatisch geführt: Wird der
-        Monatsbeitrag neu gesetzt, startet er im laufenden Monat; wird er
-        entfernt, endet der automatische Beitragslauf (beitrag_ab = NULL)."""
+        Monatsbeitrag neu gesetzt ODER sein Betrag geändert, startet er am
+        nächsten Monatsersten (nie rückwirkend, nie im laufenden Monat); bleibt
+        der Betrag gleich, bleibt der Startmonat erhalten; wird der Beitrag
+        entfernt, endet der automatische Beitragslauf (beitrag_ab = NULL).
+        Den laufenden Monat noch zum alten Satz abzuschließen ist Sache des
+        Aufrufers (Lazy-Lauf vor dem Update in backend/api/clubdeckel.py)."""
         alt = self.get(deckel_id)
         if alt is None:
             return False
         if beitrag and beitrag > 0:
-            beitrag_ab = alt.beitrag_ab or date.today().strftime('%Y-%m')
+            if alt.beitrag_ab is None or beitrag != alt.beitrag:
+                beitrag_ab = naechster_beitrag_monat()
+            else:
+                beitrag_ab = alt.beitrag_ab
         else:
             beitrag, beitrag_ab = None, None
         with self.cursor() as cur:
