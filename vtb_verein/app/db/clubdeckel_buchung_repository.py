@@ -65,10 +65,14 @@ class ClubdeckelBuchungRepository(BaseRepository):
 
     def list_for_deckel(self, deckel_id: int, mitglied_id: Optional[int] = None,
                         limit: Optional[int] = None,
-                        mit_storniert: bool = False) -> list[ClubdeckelBuchung]:
+                        mit_storniert: bool = False,
+                        suche: Optional[str] = None) -> list[ClubdeckelBuchung]:
         """Buchungen, neueste zuerst — optional nur die eines Mitglieds.
         mit_storniert=True nimmt auch soft-gelöschte Zeilen mit (deleted_at
-        gesetzt); die History kann sie dann optional einblenden (#127)."""
+        gesetzt); die History kann sie dann optional einblenden (#127).
+        suche filtert volltextig (ILIKE) über Mitgliedsname, Typ, die
+        eingefrorenen Artikel-/Gegenkonto-Bezeichnungen, Notiz und
+        Beitragsmonat (#129)."""
         filt = "" if mit_storniert else " AND b.deleted_at IS NULL"
         with self.cursor() as cur:
             cur.execute(
@@ -79,10 +83,14 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 JOIN mitglied m ON m.id = b.mitglied_id
                 WHERE b.deckel_id = %(did)s{filt}
                   AND (%(mid)s::int IS NULL OR b.mitglied_id = %(mid)s)
+                  AND (%(q)s::text IS NULL OR concat_ws(' ',
+                       m.vorname, m.nachname, b.typ, b.artikel_name,
+                       b.gegen_name, b.notiz, b.beitrag_monat)
+                       ILIKE '%%' || %(q)s || '%%')
                 ORDER BY b.created_at DESC, b.id DESC
                 LIMIT %(lim)s
                 """,
-                {"did": deckel_id, "mid": mitglied_id, "lim": limit},
+                {"did": deckel_id, "mid": mitglied_id, "lim": limit, "q": suche},
             )
             return [_map(r) for r in cur.fetchall()]
 

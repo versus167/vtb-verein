@@ -411,6 +411,38 @@ def test_restore_paar_reaktiviert_beide_zeilen(db):
     assert len(db.clubdeckel_buchungen.list_for_deckel(deckel.id)) == 2
 
 
+def test_list_for_deckel_volltextsuche(db):
+    """#129: suche filtert case-insensitiv über Name, Typ, Artikel-/Gegen-
+    Snapshot, Notiz und Beitragsmonat — kombinierbar mit mitglied_id."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
+                                        Decimal('1.50'), 1, 0, 't')
+    db.clubdeckel_buchungen.create_konsum(deckel.id, anna, bier.id, bier.name, 1,
+                                          bier.preis, None, 't')
+    db.clubdeckel_buchungen.create_einkauf(deckel.id, bernd, Decimal('20.00'),
+                                           'Kasten Bier geliefert', 't')
+    db.clubdeckel_buchungen.create_zahlung(deckel.id, anna, bernd,
+                                           Decimal('5.00'), 'bar', 't')
+
+    B = db.clubdeckel_buchungen
+    # Artikel-Snapshot + Notiz, case-insensitiv
+    assert {b.typ for b in B.list_for_deckel(deckel.id, suche='bIeR')} == \
+        {'konsum', 'einkauf'}
+    # Mitgliedsname trifft eigene Zeilen UND Zeilen mit ihm als Gegenkonto
+    assert len(B.list_for_deckel(deckel.id, suche='Anna')) == 3
+    # Typ + Notiz ('zahlung', 'bar'), kombinierbar mit mitglied_id
+    assert {b.mitglied_id for b in B.list_for_deckel(deckel.id, suche='zahlung')} == \
+        {anna, bernd}
+    assert [b.mitglied_id for b in B.list_for_deckel(
+        deckel.id, mitglied_id=anna, suche='bar')] == [anna]
+    # kein Treffer
+    assert B.list_for_deckel(deckel.id, suche='gibtsnicht') == []
+
+
 def test_salden_sortiert_nach_saldo_desc(db):
     """#127: höchstes Guthaben zuerst, größte Schuld zuletzt."""
     man = _make_mannschaft(db)
