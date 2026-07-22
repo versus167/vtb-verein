@@ -76,7 +76,8 @@
         <q-tabs v-model="tab" align="left" class="vtb-tabs" no-caps
           :inline-label="$q.screen.gt.xs">
           <q-tab name="tresen" icon="sports_bar" label="Tresen" />
-          <q-tab name="salden" icon="leaderboard" label="Salden" />
+          <!-- intern weiter 'salden'; Nutzer-Label „Tabelle" (#128) -->
+          <q-tab name="salden" icon="leaderboard" label="Tabelle" />
           <q-tab v-if="istWart" name="katalog" icon="menu_book" label="Katalog" />
         </q-tabs>
         <q-space />
@@ -153,15 +154,6 @@
             </q-card>
           </div>
         </div>
-
-        <!-- Zur Rangliste (Salden-Tab) -->
-        <q-card flat bordered class="q-mt-sm cursor-pointer" @click="tab = 'salden'">
-          <q-item>
-            <q-item-section avatar><q-icon name="leaderboard" color="primary" /></q-item-section>
-            <q-item-section class="text-weight-medium">Aktuelle Tabelle</q-item-section>
-            <q-item-section side><q-icon name="chevron_right" /></q-item-section>
-          </q-item>
-        </q-card>
 
         <!-- Zahlung an … (Zahlungsempfänger + Zahlwege aus den Stammdaten) -->
         <q-card v-if="hatZahlwege" class="vtb-karte tt-zahlkarte q-mt-lg">
