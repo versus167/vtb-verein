@@ -414,11 +414,17 @@
 
         <!-- ---------- History: alle Buchungen ---------- -->
         <div v-if="verwaltenTab === 'history'">
-          <!-- Filter auf ein Mitglied (#129) + Stornierte einblenden (#127);
-               .row wickelt am Handy um, bewusst ohne q-gutter (Overflow-Falle) -->
+          <!-- Volltextsuche + Filter auf ein Mitglied (#129) + Stornierte
+               einblenden (#127); .row wickelt am Handy um, bewusst ohne
+               q-gutter (Overflow-Falle) -->
           <div class="row items-center q-mb-sm">
+            <q-input v-model="historySuche" dense outlined clearable debounce="400"
+              class="q-mr-sm q-mb-xs" style="min-width: 180px; max-width: 280px"
+              placeholder="Buchungstext suchen…">
+              <template #prepend><q-icon name="search" /></template>
+            </q-input>
             <q-select v-model="historyMitglied" :options="mitgliedOptionen" emit-value
-              map-options dense outlined clearable options-dense
+              map-options dense outlined clearable options-dense class="q-mb-xs"
               style="min-width: 200px; max-width: 280px" label="Mitglied filtern" />
             <q-space />
             <q-toggle v-model="stornosZeigen" dense size="sm" label="Stornierte anzeigen" />
@@ -663,6 +669,7 @@ const gruppen = ref([])
 const alleBuchungen = ref([])
 const stornosZeigen = ref(false)  // History: stornierte Buchungen einblenden (#127)
 const historyMitglied = ref(null)  // History: auf ein Mitglied gefiltert (#129)
+const historySuche = ref('')       // History: Volltextsuche im Buchungstext (#129)
 const warte = ref([])
 const befreiungen = ref([])
 const kader = ref([])
@@ -994,7 +1001,8 @@ async function loadAlleBuchungen() {
   try {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/buchungen`,
       { params: { alle: true, limit: 100, mit_storniert: stornosZeigen.value,
-                  mitglied_id: historyMitglied.value ?? undefined } })
+                  mitglied_id: historyMitglied.value ?? undefined,
+                  suche: historySuche.value?.trim() || undefined } })
     alleBuchungen.value = data
   } catch { alleBuchungen.value = [] }
 }
@@ -1054,6 +1062,7 @@ watch(selectedTeamId, async (id) => {
   tab.value = 'tresen'
   verwaltenTab.value = 'mannschaft'
   historyMitglied.value = null
+  historySuche.value = ''
   await loadDeckel()
   await loadTabDaten()
 })
@@ -1061,6 +1070,7 @@ watch(selectedTeamId, async (id) => {
 watch(tab, loadTabDaten)
 watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
 watch(historyMitglied, loadAlleBuchungen)  // #129: Mitglieder-Filter neu laden
+watch(historySuche, loadAlleBuchungen)     // #129: Volltextsuche (Input debounced)
 
 // #129: Klick auf ein Mitglied in der Mannschaftsliste → gefilterte History
 function openHistoryFuer(m) {

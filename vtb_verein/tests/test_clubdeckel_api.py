@@ -123,7 +123,7 @@ def _db(kader='mitglied', wart=False):
         clubdeckel_buchungen=SimpleNamespace(
             get=lambda bid, include_deleted=False: _buchung(id=bid),
             list_for_deckel=lambda did, mitglied_id=None, limit=None,
-            mit_storniert=False: [_buchung()],
+            mit_storniert=False, suche=None: [_buchung()],
             create_konsum=lambda *a: _buchung(),
             create_zahlung=lambda *a, **k: 'ref123',
             create_einkauf=lambda *a: _buchung(typ='einkauf', betrag=Decimal('20')),
@@ -493,18 +493,24 @@ def test_storno_buchung_anderes_deckels_404():
 
 
 def test_list_buchungen_alle_reicht_filter_durch():
-    """#127/#129: mit_storniert und mitglied_id landen im Repository-Aufruf."""
+    """#127/#129: mit_storniert, mitglied_id und suche landen im Repository-Aufruf
+    (suche getrimmt, leer → None)."""
     db = _db(wart=True)
     seen = {}
 
-    def _list(did, mitglied_id=None, limit=None, mit_storniert=False):
+    def _list(did, mitglied_id=None, limit=None, mit_storniert=False, suche=None):
         seen.update(did=did, mitglied_id=mitglied_id, limit=limit,
-                    mit_storniert=mit_storniert)
+                    mit_storniert=mit_storniert, suche=suche)
         return [_buchung()]
 
     db.clubdeckel_buchungen.list_for_deckel = _list
-    api.list_buchungen(7, _USER, db, alle=True, mit_storniert=True, mitglied_id=11)
-    assert seen == {"did": 7, "mitglied_id": 11, "limit": 50, "mit_storniert": True}
+    api.list_buchungen(7, _USER, db, alle=True, mit_storniert=True, mitglied_id=11,
+                       suche='  Bier ')
+    assert seen == {"did": 7, "mitglied_id": 11, "limit": 50,
+                    "mit_storniert": True, "suche": 'Bier'}
+
+    api.list_buchungen(7, _USER, db, alle=True, suche='   ')
+    assert seen["suche"] is None
 
 
 # ------------------------------------------------------------------------- Restore
