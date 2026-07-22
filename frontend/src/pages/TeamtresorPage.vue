@@ -374,8 +374,11 @@
             <template #prepend><q-icon name="search" /></template>
           </q-input>
 
+          <!-- Zeile klickbar: springt in die auf das Mitglied gefilterte History
+               (#129); die Aktions-Buttons stoppen das Bubbling. -->
           <q-card v-for="m in mitgliederGefiltert" :key="m.mitglied_id" flat bordered
-            class="q-mb-sm">
+            class="q-mb-sm cursor-pointer" @click="openHistoryFuer(m)">
+            <q-tooltip>Buchungen von {{ m.name }} anzeigen</q-tooltip>
             <div class="row items-center no-wrap q-pa-sm q-gutter-sm">
               <q-avatar size="40px" text-color="white" class="text-weight-bold"
                 :style="{ background: avatarColor(m.name) }">{{ initialen(m.name) }}</q-avatar>
@@ -390,16 +393,16 @@
                 :color="befreitSet.has(m.mitglied_id) ? 'grey-4' : 'green-5'"
                 :text-color="befreitSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
                 :icon="befreitSet.has(m.mitglied_id) ? 'money_off' : 'how_to_reg'"
-                :disable="saving" @click="toggleBeitrag(m)">
+                :disable="saving" @click.stop="toggleBeitrag(m)">
                 <q-tooltip>{{ befreitSet.has(m.mitglied_id)
                   ? 'Beitrag inaktiv — aktivieren' : 'Beitrag aktiv — deaktivieren' }}</q-tooltip>
               </q-btn>
               <q-btn round unelevated color="deep-purple-5" icon="shopping_bag"
-                :disable="!deckel.aktiv || saving" @click="openKaufDialog(m)">
+                :disable="!deckel.aktiv || saving" @click.stop="openKaufDialog(m)">
                 <q-tooltip>An-/Verkauf buchen</q-tooltip>
               </q-btn>
               <q-btn round unelevated color="primary" icon="payments"
-                :disable="!deckel.aktiv || saving" @click="openZahlungDialog(m)">
+                :disable="!deckel.aktiv || saving" @click.stop="openZahlungDialog(m)">
                 <q-tooltip>Zahlung buchen</q-tooltip>
               </q-btn>
             </div>
@@ -411,8 +414,12 @@
 
         <!-- ---------- History: alle Buchungen ---------- -->
         <div v-if="verwaltenTab === 'history'">
-          <!-- Stornierte sind standardmäßig ausgeblendet, optional einblendbar (#127) -->
+          <!-- Filter auf ein Mitglied (#129) + Stornierte einblenden (#127);
+               .row wickelt am Handy um, bewusst ohne q-gutter (Overflow-Falle) -->
           <div class="row items-center q-mb-sm">
+            <q-select v-model="historyMitglied" :options="mitgliedOptionen" emit-value
+              map-options dense outlined clearable options-dense
+              style="min-width: 200px; max-width: 280px" label="Mitglied filtern" />
             <q-space />
             <q-toggle v-model="stornosZeigen" dense size="sm" label="Stornierte anzeigen" />
           </div>
@@ -655,6 +662,7 @@ const katalog = ref([])
 const gruppen = ref([])
 const alleBuchungen = ref([])
 const stornosZeigen = ref(false)  // History: stornierte Buchungen einblenden (#127)
+const historyMitglied = ref(null)  // History: auf ein Mitglied gefiltert (#129)
 const warte = ref([])
 const befreiungen = ref([])
 const kader = ref([])
@@ -985,7 +993,8 @@ async function loadAlleBuchungen() {
   if (!deckel.value || !istWart.value) return
   try {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/buchungen`,
-      { params: { alle: true, limit: 100, mit_storniert: stornosZeigen.value } })
+      { params: { alle: true, limit: 100, mit_storniert: stornosZeigen.value,
+                  mitglied_id: historyMitglied.value ?? undefined } })
     alleBuchungen.value = data
   } catch { alleBuchungen.value = [] }
 }
@@ -1044,12 +1053,20 @@ watch(selectedTeamId, async (id) => {
   if (id != null) localStorage.setItem('vtb_teamtresor_team', String(id))
   tab.value = 'tresen'
   verwaltenTab.value = 'mannschaft'
+  historyMitglied.value = null
   await loadDeckel()
   await loadTabDaten()
 })
 
 watch(tab, loadTabDaten)
 watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
+watch(historyMitglied, loadAlleBuchungen)  // #129: Mitglieder-Filter neu laden
+
+// #129: Klick auf ein Mitglied in der Mannschaftsliste → gefilterte History
+function openHistoryFuer(m) {
+  historyMitglied.value = m.mitglied_id
+  verwaltenTab.value = 'history'
+}
 // Stammdaten-Unter-Tab: Inline-Formular mit den aktuellen Deckel-Werten füllen
 watch(verwaltenTab, (v) => {
   if (v === 'stammdaten') initStammdatenForm()
