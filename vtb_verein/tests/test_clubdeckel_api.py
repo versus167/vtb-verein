@@ -492,6 +492,21 @@ def test_storno_buchung_anderes_deckels_404():
     assert exc.value.status_code == 404
 
 
+def test_list_buchungen_alle_reicht_filter_durch():
+    """#127/#129: mit_storniert und mitglied_id landen im Repository-Aufruf."""
+    db = _db(wart=True)
+    seen = {}
+
+    def _list(did, mitglied_id=None, limit=None, mit_storniert=False):
+        seen.update(did=did, mitglied_id=mitglied_id, limit=limit,
+                    mit_storniert=mit_storniert)
+        return [_buchung()]
+
+    db.clubdeckel_buchungen.list_for_deckel = _list
+    api.list_buchungen(7, _USER, db, alle=True, mit_storniert=True, mitglied_id=11)
+    assert seen == {"did": 7, "mitglied_id": 11, "limit": 50, "mit_storniert": True}
+
+
 # ------------------------------------------------------------------------- Restore
 def test_restore_buchung_als_wart_ok():
     db = _db(wart=True)

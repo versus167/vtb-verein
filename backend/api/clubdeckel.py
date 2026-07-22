@@ -571,14 +571,17 @@ def undo_konsum(deckel_id: int, artikel_id: int, user: CurrentUser, db: DB):
 @router.get("/{deckel_id}/buchungen")
 def list_buchungen(deckel_id: int, user: CurrentUser, db: DB,
                    alle: bool = False, limit: int = 50,
-                   mit_storniert: bool = False):
+                   mit_storniert: bool = False,
+                   mitglied_id: Optional[int] = None):
     """Eigene Buchungen; mit ?alle=1 (ab Wart) alle Buchungen des Deckels.
-    ?mit_storniert=1 blendet in der Wart-History auch stornierte Zeilen ein (#127)."""
+    ?mit_storniert=1 blendet in der Wart-History auch stornierte Zeilen ein (#127),
+    ?mitglied_id=N filtert die Wart-History auf ein Mitglied (#129)."""
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart' if alle else 'mitglied')
     limit = max(1, min(limit, 500))
     if alle:
         buchungen = db.clubdeckel_buchungen.list_for_deckel(
-            deckel_id, limit=limit, mit_storniert=mit_storniert)
+            deckel_id, mitglied_id=mitglied_id, limit=limit,
+            mit_storniert=mit_storniert)
     else:
         mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
         if mitglied_id is None:
