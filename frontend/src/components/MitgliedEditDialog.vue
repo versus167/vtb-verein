@@ -501,7 +501,20 @@
         <q-card-section class="q-gutter-sm">
           <q-select v-if="!editingTeamId" v-model="teamForm.mannschaft_id" :options="alleMannschaften"
             option-value="id" :option-label="t => `${t.name} (${t.abteilung_name})`" emit-value map-options
-            use-input input-debounce="0" @filter="filterTeams" label="Mannschaft *" outlined dense />
+            use-input input-debounce="0" @filter="filterTeams" label="Mannschaft *" outlined dense>
+            <template #option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.name }} ({{ scope.opt.abteilung_name }})</q-item-label>
+                  <q-item-label v-if="!mitgliedAbteilungIds.has(scope.opt.abteilung_id)"
+                    caption class="text-orange-9">nicht in einer Abteilung des Mitglieds</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
+          <div v-if="!editingTeamId && gewaehltesTeamFremd" class="text-caption text-orange-9">
+            <q-icon name="warning" size="xs" /> Das Mitglied gehört nicht zur Abteilung dieses Teams.
+          </div>
           <q-select v-model="teamForm.rolle" :options="teamRolleOptionen" option-value="value" option-label="label"
             emit-value map-options label="Rolle *" outlined dense />
           <div class="row q-gutter-sm">
@@ -1368,7 +1381,17 @@ function openTeamForm(t) {
   teamFormOpen.value = true
 }
 
-async function saveTeam() {
+// Abteilungsfremde Teams kenntlich machen (#130-Nachgang): gleiche lockere Regel wie
+// der Kandidaten-Picker der Mannschaften-Seite (jede aktive Zuordnung zählt). Bewusst
+// nur Hinweis + Rückfrage, keine Sperre – Gremien-Teams (z. B. Vorstand) dürfen
+// abteilungsübergreifend besetzt werden.
+const mitgliedAbteilungIds = computed(() => new Set(zuordnungen.value.map(z => z.abteilung_id)))
+const gewaehltesTeamFremd = computed(() => {
+  const t = alleMannschaftenAll.value.find(x => x.id === teamForm.value.mannschaft_id)
+  return !!t && !mitgliedAbteilungIds.value.has(t.abteilung_id)
+})
+
+function saveTeam() {
   if (!editingTeamId.value && !teamForm.value.mannschaft_id) {
     $q.notify({ type: 'negative', message: 'Bitte eine Mannschaft wählen.' })
     return
@@ -1377,6 +1400,18 @@ async function saveTeam() {
     $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben.' })
     return
   }
+  if (!editingTeamId.value && gewaehltesTeamFremd.value) {
+    $q.dialog({
+      title: 'Abteilungsfremdes Team',
+      message: 'Das Mitglied gehört nicht zur Abteilung dieses Teams. Trotzdem zuordnen?',
+      cancel: true, persistent: true,
+    }).onOk(() => doSaveTeam())
+    return
+  }
+  return doSaveTeam()
+}
+
+async function doSaveTeam() {
   teamSaving.value = true
   try {
     if (editingTeamId.value) {
