@@ -45,7 +45,20 @@
                 />
               </div>
               <div class="text-caption text-grey-6 q-ml-lg">
-                <template v-if="inheritChips(perm.key).length">
+                <!-- Deny zuerst: ein aktives „−" hebelt geerbte Rechte aus – das muss
+                     sichtbar gewinnen, sonst liest sich „geerbt: …" wie ein wirksames
+                     Recht (Ticket #130). -->
+                <template v-if="stateOf(perm.key) === 'deny'">
+                  <span class="text-negative">individuell entzogen</span>
+                  <template v-if="inheritChips(perm.key).length">
+                    <span class="text-negative"> – überschreibt geerbt:</span>
+                    <q-badge
+                      v-for="(c, i) in inheritChips(perm.key)" :key="i"
+                      color="grey-3" text-color="grey-7" class="q-ml-xs pm-chip-entzogen"
+                    >{{ c }}</q-badge>
+                  </template>
+                </template>
+                <template v-else-if="inheritChips(perm.key).length">
                   geerbt:
                   <q-badge
                     v-for="(c, i) in inheritChips(perm.key)" :key="i"
@@ -53,7 +66,6 @@
                   >{{ c }}</q-badge>
                 </template>
                 <span v-else-if="stateOf(perm.key) === 'grant'">individuell gewährt</span>
-                <span v-else-if="stateOf(perm.key) === 'deny'" class="text-negative">individuell entzogen</span>
                 <span v-else>nicht geerbt</span>
               </div>
             </div>
@@ -134,3 +146,10 @@ function inheritChips(key) {
     })
 }
 </script>
+
+<style lang="scss" scoped>
+// Vom Deny überschriebene Herkunfts-Chips: ausgegraut + durchgestrichen (Ticket #130)
+.pm-chip-entzogen {
+  text-decoration: line-through;
+}
+</style>
