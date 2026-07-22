@@ -424,8 +424,11 @@ async function loadTeamtresorZugriff() {
 // Refresh (registerGlobalRefresh): ein einmalig fehlgeschlagener Aufruf oder
 // eine erst nach dem Login vergebene Kader-/ACL-Zuordnung ließ die Nav-Punkte
 // sonst dauerhaft verschwinden, während sich die Dashboard-Kacheln erholten.
+// auth.loadMe() läuft mit (#130): Rechte-Änderungen greifen so ohne App-Neustart
+// beim nächsten Refresh (Button bzw. Rückkehr zur App) statt erst beim Neuladen.
 function ladeZugriffsProben() {
-  return Promise.all([loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
+  return Promise.all([auth.loadMe().catch(() => {}),
+    loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
     loadMannschaftenZugriff(), loadTeamtresorZugriff()])
 }
 
