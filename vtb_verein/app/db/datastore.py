@@ -484,6 +484,9 @@ class VereinsDB:
     def has_active_beitragsregel_references(self, abteilung_id: int) -> bool:
         return self._abteilung_repo.has_active_beitragsregel_references(abteilung_id)
 
+    def has_active_mannschaft_references(self, abteilung_id: int) -> bool:
+        return self._abteilung_repo.has_active_mannschaft_references(abteilung_id)
+
     def has_active_mitglied_funktion_references(self, funktion_id: int) -> bool:
         return self._funktion_repo.has_active_mitglied_funktion_references(funktion_id)
 

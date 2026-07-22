@@ -136,11 +136,22 @@ def list_mannschaften(user: CurrentUser, db: DB, abteilung_id: Optional[int] = N
     return out
 
 
+def _require_aktive_abteilung(db, abteilung_id: int):
+    """Gegenstück zum Lösch-Guard der Abteilung: kein Team in einer gelöschten
+    oder fehlenden Abteilung anlegen/dorthin verschieben (get kennt nur aktive
+    und wirft sonst KeyError)."""
+    try:
+        db.get_abteilung(abteilung_id)
+    except KeyError:
+        raise HTTPException(status_code=422, detail="Abteilung nicht gefunden oder gelöscht")
+
+
 @router.post("/mannschaften", status_code=status.HTTP_201_CREATED)
 def create_mannschaft(data: MannschaftCreate, user: CurrentUser, db: DB):
     _require_write(user)
     if not data.name.strip():
         raise HTTPException(status_code=422, detail="Name ist erforderlich")
+    _require_aktive_abteilung(db, data.abteilung_id)
     m = Mannschaft(abteilung_id=data.abteilung_id, name=data.name.strip(),
                    saison=data.saison, beschreibung=data.beschreibung)
     return asdict(db.create_mannschaft(m, created_by=user.username))
@@ -152,6 +163,8 @@ def update_mannschaft(mannschaft_id: int, data: MannschaftUpdate, user: CurrentU
     m = db.get_mannschaft(mannschaft_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    if data.abteilung_id != m.abteilung_id:
+        _require_aktive_abteilung(db, data.abteilung_id)
     m.abteilung_id = data.abteilung_id
     m.name = data.name.strip()
     m.saison = data.saison

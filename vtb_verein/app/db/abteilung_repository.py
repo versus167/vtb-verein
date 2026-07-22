@@ -205,6 +205,15 @@ class AbteilungRepository(BaseRepository):
             )
             return cur.fetchone() is not None
 
+    def has_active_mannschaft_references(self, abteilung_id: int) -> bool:
+        """Check if there are active (non-deleted) mannschaft references (#130-Nachgang)."""
+        with self.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM mannschaft WHERE abteilung_id = %s AND deleted_at IS NULL LIMIT 1',
+                (abteilung_id,),
+            )
+            return cur.fetchone() is not None
+
     def has_mitglied_abteilung_history(self, abteilung_id: int) -> bool:
         """Check if there are any mitglied_abteilung_history entries."""
         with self.cursor() as cur:

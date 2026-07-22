@@ -38,6 +38,7 @@ def _can_delete(db, abteilung_id: int) -> bool:
     return (
         not db.has_active_mitglied_abteilung_references(abteilung_id)
         and not db.has_active_beitragsregel_references(abteilung_id)
+        and not db.has_active_mannschaft_references(abteilung_id)
     )
 
 
