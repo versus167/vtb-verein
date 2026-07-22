@@ -170,3 +170,19 @@ def test_mitglied_ohne_user_kein_scope(db):
     # Kein User → nichts zu prüfen außer: ein beliebiger anderer User hat keinen Scope
     uid_other, _mid_other = _user_mitglied(db, 'mstester_other')
     assert db.mannschaft_scope_abteilungen(uid_other) == set()
+
+
+def test_abteilung_loeschguard_erkennt_aktive_mannschaften(db):
+    """Abteilung mit aktivem Team darf nicht löschbar sein (#130-Nachgang):
+    has_active_mannschaft_references speist den _can_delete-Guard der API."""
+    fussball = _abteilung(db, 'MS-Fussball')
+    assert db.has_active_mannschaft_references(fussball) is False  # noch leer
+
+    team = _mannschaft(db, fussball, 'Erste')
+    assert db.has_active_mannschaft_references(fussball) is True   # aktives Team blockiert
+
+    # Nach Soft-Delete des Teams ist die Abteilung wieder freigegeben
+    with db.cursor() as cur:
+        cur.execute("UPDATE mannschaft SET deleted_at=CURRENT_TIMESTAMP, deleted_by='t', "
+                    "version=version+1 WHERE id=%s", (team,))
+    assert db.has_active_mannschaft_references(fussball) is False
