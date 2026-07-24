@@ -88,10 +88,9 @@
             <span class="text-body2 text-grey-7">{{ t.bereich_name }}</span>
           </div>
           <div v-if="t.zugewiesen_an" class="row items-center q-mb-sm"
-            :class="t.zugewiesen_an === currentUserId ? 'text-primary text-weight-medium' : 'text-grey-7'">
+            :class="t.zugewiesen_an === currentUserId ? 'text-primary text-weight-bold' : 'text-grey-7'">
             <q-icon name="assignment_ind" size="xs" class="q-mr-xs" />
             <span class="text-body2">{{ t.zugewiesen_an_username }}</span>
-            <q-badge v-if="t.zugewiesen_an === currentUserId" color="primary" label="mir zugewiesen" class="q-ml-xs" />
           </div>
           <div class="row items-center text-caption text-grey-6 q-mt-xs">
             <q-icon name="person_outline" size="xs" class="q-mr-xs" />
@@ -143,7 +142,6 @@
             :class="props.row.zugewiesen_an === currentUserId ? 'text-primary text-weight-bold' : ''">
             <q-icon name="assignment_ind" size="xs" />
             <span>{{ props.row.zugewiesen_an_username }}</span>
-            <q-badge v-if="props.row.zugewiesen_an === currentUserId" color="primary" label="mir" />
           </div>
           <span v-else class="text-grey-6">—</span>
         </q-td>
