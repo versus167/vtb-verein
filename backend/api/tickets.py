@@ -371,6 +371,7 @@ def list_tickets(
     for t in tickets:
         d = asdict(t)
         d['gemeldet_von_username'] = user_lookup.get(t.gemeldet_von, f'#{t.gemeldet_von}')
+        d['zugewiesen_an_username'] = user_lookup.get(t.zugewiesen_an) if t.zugewiesen_an else None
         d['bereich_name'] = bereiche_lookup.get(t.bereich_id) if t.bereich_id else None
         result.append(d)
     return result

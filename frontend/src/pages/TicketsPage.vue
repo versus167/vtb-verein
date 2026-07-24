@@ -87,6 +87,12 @@
             <q-icon name="folder_open" size="xs" color="grey-5" class="q-mr-xs" />
             <span class="text-body2 text-grey-7">{{ t.bereich_name }}</span>
           </div>
+          <div v-if="t.zugewiesen_an" class="row items-center q-mb-sm"
+            :class="t.zugewiesen_an === currentUserId ? 'text-primary text-weight-medium' : 'text-grey-7'">
+            <q-icon name="assignment_ind" size="xs" class="q-mr-xs" />
+            <span class="text-body2">{{ t.zugewiesen_an_username }}</span>
+            <q-badge v-if="t.zugewiesen_an === currentUserId" color="primary" label="mir zugewiesen" class="q-ml-xs" />
+          </div>
           <div class="row items-center text-caption text-grey-6 q-mt-xs">
             <q-icon name="person_outline" size="xs" class="q-mr-xs" />
             <span class="col">{{ t.gemeldet_von_username }}</span>
@@ -128,6 +134,18 @@
               {{ prioritaetLabel(props.row.prioritaet) }}
             </span>
           </div>
+        </q-td>
+      </template>
+      <template #body-cell-zugewiesen_an_username="props">
+        <q-td :props="props">
+          <div v-if="props.row.zugewiesen_an"
+            class="row items-center no-wrap q-gutter-xs"
+            :class="props.row.zugewiesen_an === currentUserId ? 'text-primary text-weight-bold' : ''">
+            <q-icon name="assignment_ind" size="xs" />
+            <span>{{ props.row.zugewiesen_an_username }}</span>
+            <q-badge v-if="props.row.zugewiesen_an === currentUserId" color="primary" label="mir" />
+          </div>
+          <span v-else class="text-grey-6">—</span>
         </q-td>
       </template>
       <template #body-cell-counts="props">
@@ -681,6 +699,7 @@ const filteredTickets = computed(() => {
   if (filterStatus.value)  result = result.filter(t => t.status === filterStatus.value)
   if (filterNurMeine.value) result = result.filter(t =>
     t.gemeldet_von === currentUserId.value ||
+    t.zugewiesen_an === currentUserId.value ||
     !!_bereichFlags(t).darf_bearbeiten
   )
   return result
@@ -693,6 +712,7 @@ const columns = [
   { name: 'bereich_name',          label: 'Bereich',     field: 'bereich_name',          align: 'left',   sortable: true },
   { name: 'status',                label: 'Status',      field: 'status',                align: 'left'  },
   { name: 'gemeldet_von_username', label: 'Erstellt von', field: 'gemeldet_von_username', align: 'left',  sortable: true },
+  { name: 'zugewiesen_an_username', label: 'Verantwortlich', field: 'zugewiesen_an_username', align: 'left', sortable: true },
   { name: 'counts',                label: '',            field: 'id',                    align: 'left',   style: 'width:80px' },
   { name: 'created_at',            label: 'Erstellt',    field: 'created_at',            align: 'left',   sortable: true, format: v => formatDate(v) },
 ]
