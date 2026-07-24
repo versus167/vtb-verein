@@ -51,6 +51,11 @@ class StatusChange(BaseModel):
     expected_version: int
 
 
+class Zuweisung(BaseModel):
+    zugewiesen_an: Optional[int] = None  # None = keiner (Bereich verantwortlich)
+    expected_version: int
+
+
 class KommentarWrite(BaseModel):
     inhalt: str
     sichtbarkeit: str = 'oeffentlich'
@@ -140,6 +145,8 @@ def _enrich(ticket_dict: dict, db) -> dict:
     gemeldet_von = ticket_dict.get('gemeldet_von')
     username = db.get_username(gemeldet_von) if gemeldet_von else None
     ticket_dict['gemeldet_von_username'] = username or f'#{gemeldet_von}'
+    zugewiesen_an = ticket_dict.get('zugewiesen_an')
+    ticket_dict['zugewiesen_an_username'] = db.get_username(zugewiesen_an) if zugewiesen_an else None
     bereich_id = ticket_dict.get('bereich_id')
     if bereich_id:
         b = db.tickets.get_bereich(bereich_id)
@@ -426,6 +433,92 @@ def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
     return _enrich(asdict(_get_ticket_or_404(ticket_id, db)), db)
+
+
+@router.get("/{ticket_id}/moegliche-verantwortliche")
+def moegliche_verantwortliche(ticket_id: int, user: CurrentUser, db: DB):
+    """Wählbare Verantwortliche für die Zuweisung (Bereichs-Bearbeiter/Schließer)."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_write(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Schreibzugriff auf dieses Ticket.")
+    return db.tickets.get_moegliche_verantwortliche(ticket)
+
+
+@router.patch("/{ticket_id}/zuweisung")
+def set_zuweisung(ticket_id: int, data: Zuweisung, user: CurrentUser, db: DB):
+    """Weist das Ticket konkret einem Verantwortlichen zu (oder None = Bereich
+    verantwortlich). Ändert NICHT die Rechte: Bereichs-Bearbeiter/Schließer behalten
+    ihre Rechte am Ticket. Nur wählbar sind Bereichs-Verantwortliche."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_write(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket zuzuweisen.")
+    if data.zugewiesen_an is not None:
+        erlaubt = {v['user_id'] for v in db.tickets.get_moegliche_verantwortliche(ticket)}
+        if data.zugewiesen_an not in erlaubt:
+            raise HTTPException(
+                status_code=422,
+                detail="Nur Verantwortliche des Bereichs können zugewiesen werden.")
+    ticket.zugewiesen_an = data.zugewiesen_an
+    ticket.version = data.expected_version
+    ok = db.tickets.update_ticket(ticket, updated_by=user.username)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
+    return _enrich(asdict(_get_ticket_or_404(ticket_id, db)), db)
+
+
+@router.get("/{ticket_id}/history")
+def ticket_history(ticket_id: int, user: CurrentUser, db: DB):
+    """Änderungsverlauf eines Tickets (wer/was/wann), aus den *_history-Tabellen.
+    IDs werden serverseitig zu Namen aufgelöst, damit die Timeline autark ist."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
+
+    _user_cache: dict[int, Optional[str]] = {}
+
+    def _uname(uid):
+        if uid is None:
+            return None
+        if uid not in _user_cache:
+            _user_cache[uid] = db.get_username(uid)
+        return _user_cache[uid]
+
+    _bereich_cache: dict[int, Optional[str]] = {}
+
+    def _bname(bid):
+        if bid is None:
+            return None
+        if bid not in _bereich_cache:
+            b = db.tickets.get_bereich(bid)
+            _bereich_cache[bid] = b.name if b else None
+        return _bereich_cache[bid]
+
+    kategorien = {k.id: k.name for k in db.tickets.get_kategorien()}
+    rows = db.tickets.get_ticket_history(ticket_id)
+    for r in rows:
+        r['zugewiesen_an_username'] = _uname(r.get('zugewiesen_an'))
+        r['geschlossen_von_username'] = _uname(r.get('geschlossen_von'))
+        r['bereich_name'] = _bname(r.get('bereich_id'))
+        r['kategorie_name'] = kategorien.get(r.get('kategorie_id'))
+    return rows
+
+
+@router.get("/{ticket_id}/gesehen")
+def ticket_gesehen(ticket_id: int, user: CurrentUser, db: DB):
+    """Wer hat das Ticket wann gesehen (+ welche Verantwortlichen noch nicht)."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
+    return db.tickets.get_gesehen(ticket)
+
+
+@router.post("/{ticket_id}/gesehen", status_code=204)
+def mark_ticket_gesehen(ticket_id: int, user: CurrentUser, db: DB):
+    """Protokolliert, dass der aktuelle User das Ticket gesehen hat (throttled)."""
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
+    db.tickets.log_gesehen(ticket_id, user.id, user.username)
 
 
 @router.delete("/{ticket_id}", status_code=204)

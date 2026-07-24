@@ -22,6 +22,7 @@ from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
+from app.db.ticket_zugriff_log_repository import TicketZugriffLogRepository
 from app.db.user_repository import UserRepository
 
 if TYPE_CHECKING:
@@ -62,6 +63,7 @@ class TicketService:
         user_repo: UserRepository,
         anhang_service: "AnhangService | None" = None,
         push_service: "PushService | None" = None,
+        zugriff_log_repo: "TicketZugriffLogRepository | None" = None,
     ):
         self._ticket_repo = ticket_repo
         self._kommentar_repo = kommentar_repo
@@ -73,6 +75,7 @@ class TicketService:
         self._user_repo = user_repo
         self._anhang_service = anhang_service
         self._push_service = push_service
+        self._zugriff_log_repo = zugriff_log_repo
 
     # -----------------------------------
     # Benachrichtigungen (intern)
@@ -192,7 +195,7 @@ class TicketService:
             )
         ticket.status = new_status
         ticket.version = version
-        if new_status == TicketStatus.ERLEDIGT:
+        if new_status in TicketStatus.ABGESCHLOSSEN:
             ticket.geschlossen_am = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         result = self._ticket_repo.update(ticket, changed_by)
         if result:
@@ -210,6 +213,67 @@ class TicketService:
 
     def get_ticket_history(self, ticket_id: int) -> list[dict]:
         return self._ticket_repo.get_history(ticket_id)
+
+    # -----------------------------------
+    # Gesehen-Tracking / Verantwortliche
+    # -----------------------------------
+
+    def _verantwortliche_ids(self, ticket: Ticket) -> set[int]:
+        """Verantwortlichen-Kreis eines Tickets: Bereichs-Bearbeiter/Schließer +
+        (falls gesetzt) der konkret Zugewiesene."""
+        ids = set(self._bereich_user_ids(ticket.bereich_id))
+        if ticket.zugewiesen_an:
+            ids.add(ticket.zugewiesen_an)
+        return ids
+
+    def log_gesehen(self, ticket_id: int, user_id: int, username: str) -> bool:
+        """Protokolliert, dass ``user_id`` das Ticket gesehen hat (throttled im Repo)."""
+        if self._zugriff_log_repo is None:
+            return False
+        return self._zugriff_log_repo.log(
+            ticket_id=ticket_id, user_id=user_id, username=username)
+
+    def get_gesehen(self, ticket: Ticket) -> dict:
+        """Wer hat das Ticket wann gesehen. Markiert Verantwortliche und listet
+        jene Verantwortlichen, die es noch nicht gesehen haben."""
+        seen_rows = self._zugriff_log_repo.list_seen(ticket.id) if self._zugriff_log_repo else []
+        verantwortlich = self._verantwortliche_ids(ticket)
+        gesehen_ids = {r['user_id'] for r in seen_rows if r['user_id'] is not None}
+
+        gesehen = [{
+            'user_id': r['user_id'],
+            'username': r['username'],
+            'zuletzt_gesehen_am': r['zuletzt_gesehen_am'],
+            'erstmals_gesehen_am': r['erstmals_gesehen_am'],
+            'anzahl': r['anzahl'],
+            'verantwortlich': r['user_id'] in verantwortlich,
+        } for r in seen_rows]
+
+        ungesehen = []
+        for uid in verantwortlich - gesehen_ids:
+            u = self._user_repo.get_by_id(uid)
+            if u and u.active:
+                ungesehen.append({'user_id': uid, 'username': u.username})
+        ungesehen.sort(key=lambda x: (x['username'] or '').lower())
+
+        return {'gesehen': gesehen, 'verantwortlich_ungesehen': ungesehen}
+
+    def get_moegliche_verantwortliche(self, ticket: Ticket) -> list[dict]:
+        """Wählbare Verantwortliche für die Zuweisung: Bereichs-Bearbeiter/Schließer,
+        plus der aktuell Zugewiesene (falls er kein Bereichsrecht (mehr) hat)."""
+        result: dict[int, str] = {}
+        if ticket.bereich_id:
+            for b in self._berechtigung_repo.list_berechtigungen_fuer_bereich(ticket.bereich_id):
+                if b.get('darf_bearbeiten') or b.get('darf_schliessen'):
+                    result[b['user_id']] = b.get('username')
+        if ticket.zugewiesen_an and ticket.zugewiesen_an not in result:
+            u = self._user_repo.get_by_id(ticket.zugewiesen_an)
+            if u:
+                result[ticket.zugewiesen_an] = u.username
+        return [
+            {'user_id': uid, 'username': name}
+            for uid, name in sorted(result.items(), key=lambda x: (x[1] or '').lower())
+        ]
 
     # -----------------------------------
     # Kommentare

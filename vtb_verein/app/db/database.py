@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 76
+SCHEMA_VERSION = 77
 
 
 # ---------------------------------------------------------------------------
@@ -2046,6 +2046,27 @@ _TERMIN_SERIE_TRIGGERS = (
 )
 
 
+# Append-only „gesehen"-Log für Tickets (#130-Nachgang): jede Sicht-Session eines
+# Users auf ein Ticket. KEIN Soft-Delete/History/Audit-Trigger – das Log IST der
+# Audit-Datensatz (analog access_log / tresor_zugriff_log). Zeitbasierter Prune über
+# prune_service (nicht im PRUNE_REGISTRY, weil kein deleted_at). Geteilte Konstante
+# für Frischaufbau UND Migration v76->v77 (Fresh == Migriert).
+_DDL_TICKET_ZUGRIFF_LOG = """
+    CREATE TABLE IF NOT EXISTS ticket_zugriff_log (
+      id          BIGSERIAL PRIMARY KEY,
+      ticket_id   INTEGER NOT NULL,
+      user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username    TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+"""
+
+_TICKET_ZUGRIFF_LOG_INDEXES = (
+    ("idx_ticket_zugriff_log_ticket",  "ticket_zugriff_log(ticket_id, user_id, created_at DESC)"),
+    ("idx_ticket_zugriff_log_created", "ticket_zugriff_log(created_at)"),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -2168,6 +2189,7 @@ class Database:
             74: self._migrate_v73_to_v74,
             75: self._migrate_v74_to_v75,
             76: self._migrate_v75_to_v76,
+            77: self._migrate_v76_to_v77,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -5338,6 +5360,22 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 76 WHERE id = 1")
 
+    def _migrate_v76_to_v77(self) -> None:
+        """Ticket-„Gesehen"-Log (#130-Nachgang): append-only `ticket_zugriff_log`.
+
+        Protokolliert je Sicht-Session, welcher User wann ein Ticket geöffnet hat
+        („wann haben die Verantwortlichen das Ticket gesehen"). Kein Soft-Delete/History
+        – das Log IST der Audit-Datensatz (analog access_log / tresor_zugriff_log);
+        Bereinigung über den zeitbasierten Prune, nicht über das PRUNE_REGISTRY.
+        DDL/Index-Konstanten geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TICKET_ZUGRIFF_LOG)
+            for name, target in _TICKET_ZUGRIFF_LOG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 77 WHERE id = 1")
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
@@ -6345,6 +6383,7 @@ class Database:
               PRIMARY KEY (id, version)
             )
         """)
+        cur.execute(_DDL_TICKET_ZUGRIFF_LOG)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS kassenbuchung_anhaenge (
               id              SERIAL PRIMARY KEY,
@@ -7524,6 +7563,7 @@ class Database:
             ("idx_ticket_bereich_berechtigungen_user_id",           "ticket_bereich_berechtigungen(user_id)"),
             ("idx_ticket_bereich_berechtigungen_deleted_at",        "ticket_bereich_berechtigungen(deleted_at)"),
             ("idx_ticket_bereich_berechtigungen_history_id",        "ticket_bereich_berechtigungen_history(id)"),
+            *_TICKET_ZUGRIFF_LOG_INDEXES,
             ("idx_kassenbuchung_anhaenge_buchung_id",               "kassenbuchung_anhaenge(buchung_id)"),
             ("idx_kassenbuchung_anhaenge_deleted_at",               "kassenbuchung_anhaenge(deleted_at)"),
             ("idx_mitglied_kontakt_mitglied_id",                    "mitglied_kontakt(mitglied_id)"),

@@ -44,13 +44,23 @@ DEFAULT_HISTORY_RETENTION_DAYS = 365   # History: eigenes, längeres Fenster
 ACCESS_LOG_PAGE = "access_log_page"
 DEFAULT_PAGE_VIEW_RETENTION_DAYS = 90
 
+# Ticket-„Gesehen"-Log (ticket_zugriff_log): append-only, KEIN Soft-Delete/History –
+# Hard-Delete nach created_at-Alter. Als Sonder-Bereich wie die Seitenaufrufe geführt.
+TICKET_ZUGRIFF_LOG = "ticket_zugriff_log"
+DEFAULT_TICKET_VIEW_RETENTION_DAYS = 180
+
 # Alters-Archivierung (generisch, siehe ArchiveRule): datierte Datensätze werden nach
 # Alter auf soft-deleted gesetzt (in den Papierkorb verschoben) – KEIN Hard-Delete.
 # Danach greift der reguläre Prune wie bei jedem anderen Papierkorb-Eintrag. Erste Regel:
 # vergangene Mannschafts-Termine (#104). Dieselbe Mechanik ist später wiederverwendbar
 # (z.B. ausgeschiedene Mitglieder per austrittsdatum + passenden Kind-Kaskaden).
 TERMIN_ALTER = "termin_alter"
-DEFAULT_TERMIN_ALTER_RETENTION_DAYS = 365
+DEFAULT_TERMIN_ALTER_RETENTION_DAYS = 5 * 365   # ~5 Jahre (Standard, per Override änderbar)
+
+# Abgeschlossene Tickets (erledigt/abgelehnt) wandern nach Alter in den Papierkorb
+# (Alters-Archivierung wie Termine); der reguläre Ticket-Prune räumt sie danach ab.
+TICKET_ABGESCHLOSSEN_ALTER = "ticket_abgeschlossen_alter"
+DEFAULT_TICKET_ABGESCHLOSSEN_RETENTION_DAYS = 5 * 365   # ~5 Jahre
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,9 @@ class ChildRef:
     table: str
     fk: str
     parent_col: str = "id"
+    # Manche Blatt-Tabellen (z.B. ticket_anhaenge) haben Soft-Delete OHNE version/History –
+    # dann darf der Archiv-Kind-Soft-Delete kein `version = version + 1` schreiben.
+    has_version: bool = True
 
 
 @dataclass(frozen=True)
@@ -310,6 +323,21 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
         default_days=DEFAULT_TERMIN_ALTER_RETENTION_DAYS,
         children=(ChildRef("termin_zusage", "termin_id"),),
     ),
+    # Abgeschlossene Tickets: nur erledigt/abgelehnt sind fällig (CASE liefert sonst NULL →
+    # nie fällig), datiert über den Abschlusszeitpunkt (geschlossen_am, sonst updated_at).
+    # Kinder werden mit-archiviert, damit der reguläre Prune das Ticket später (kinderlos,
+    # Tor 4) hart löschen kann. ticket_anhaenge hat kein version → has_version=False.
+    ArchiveRule(
+        TICKET_ABGESCHLOSSEN_ALTER, "Abgeschlossene Tickets", "tickets",
+        date_expr="CASE WHEN status IN ('erledigt','abgelehnt') "
+                  "THEN COALESCE(NULLIF(geschlossen_am, ''), updated_at::text) END",
+        default_days=DEFAULT_TICKET_ABGESCHLOSSEN_RETENTION_DAYS,
+        children=(
+            ChildRef("ticket_kommentare", "ticket_id"),
+            ChildRef("ticket_teilnehmer", "ticket_id"),
+            ChildRef("ticket_anhaenge", "ticket_id", has_version=False),
+        ),
+    ),
 )
 
 
@@ -469,10 +497,14 @@ def build_archive_parent_delete_sql(rule: ArchiveRule) -> str:
 
 def build_archive_child_delete_sql(rule: ArchiveRule, child: ChildRef) -> str:
     """Soft-Delete der aktiven Kinder fälliger Datensätze (VOR dem Eltern-Soft-Delete).
-    Params: deleted_by, Stichtag."""
+    Params: deleted_by, Stichtag. Tabellen ohne version/History (``has_version=False``)
+    bekommen kein version-Bump (sonst SQL-Fehler auf der fehlenden Spalte)."""
+    set_clause = "deleted_at = CURRENT_TIMESTAMP, deleted_by = %s"
+    if child.has_version:
+        set_clause += ", version = version + 1"
     return (
-        f"UPDATE {child.table} SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
-        f"version = version + 1 WHERE deleted_at IS NULL AND {child.fk} IN ("
+        f"UPDATE {child.table} SET {set_clause} "
+        f"WHERE deleted_at IS NULL AND {child.fk} IN ("
         f"SELECT {child.parent_col} FROM {rule.table} WHERE {_archive_faellig_where(rule)})"
     )
 
@@ -536,6 +568,33 @@ class PruneService:
             "history_loeschbar": None,
         }
 
+    def ticket_view_retention(self) -> tuple[int, bool]:
+        """Aufbewahrung des Ticket-„Gesehen"-Logs in Tagen + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(TICKET_ZUGRIFF_LOG)
+        if o:
+            return o["retention_days"], True
+        return DEFAULT_TICKET_VIEW_RETENTION_DAYS, False
+
+    def _ticket_zugriff_report_row(self) -> dict:
+        """Sonder-Bereich „Ticket-Sichten (Gesehen)": Hard-Delete nach Alter, kein Soft-Delete."""
+        days, is_override = self.ticket_view_retention()
+        return {
+            "name": TICKET_ZUGRIFF_LOG,
+            "label": "Ticket-Sichten (Gesehen)",
+            "table": "ticket_zugriff_log",
+            "soft_delete": False,
+            "retention_days": days,
+            "keep_min": None,
+            "history_retention_days": None,
+            "is_override": is_override,
+            "eintraege": self._db.ticket_zugriff_log.count(),
+            "im_papierkorb": None,
+            "loeschbar": self._db.ticket_zugriff_log.count_older_than(days),
+            "history_table": None,
+            "history_gesamt": None,
+            "history_loeschbar": None,
+        }
+
     def archive_retention(self, rule: ArchiveRule) -> tuple[int, bool]:
         """Wirksames Alters-Fenster (Tage) einer ArchiveRule + ob ein Override gesetzt ist."""
         o = self._db.prune_einstellungen.get_all().get(rule.name)
@@ -584,6 +643,7 @@ class PruneService:
         ]
         rows.extend(self._archive_report_row(r) for r in ARCHIVE_REGISTRY)
         rows.append(self._access_log_report_row())
+        rows.append(self._ticket_zugriff_report_row())
         return rows
 
     def report(self) -> dict:
@@ -646,6 +706,11 @@ class PruneService:
         protokoll = self._access_log_report_row()
         summe_loeschbar += protokoll["loeschbar"]
         entities.append(protokoll)
+
+        # Sonder-Bereich: Ticket-Sichten (Hard-Delete nach Alter)
+        ticket_sichten = self._ticket_zugriff_report_row()
+        summe_loeschbar += ticket_sichten["loeschbar"]
+        entities.append(ticket_sichten)
 
         return {
             "dry_run": True,
@@ -776,6 +841,18 @@ class PruneService:
             "name": ACCESS_LOG_PAGE,
             "label": "Seitenaufrufe (Protokoll)",
             "geloescht": page_geloescht,
+            "history_geloescht": None,
+            "dateien_geloescht": 0,
+        })
+
+        # 5b) Sonder-Bereich: Ticket-Sichten „Gesehen" (Hard-Delete nach Alter).
+        ticket_view_days, _ = self.ticket_view_retention()
+        ticket_view_geloescht = self._db.ticket_zugriff_log.cleanup_older_than(ticket_view_days)
+        summe_loeschbar += ticket_view_geloescht
+        entities.append({
+            "name": TICKET_ZUGRIFF_LOG,
+            "label": "Ticket-Sichten (Gesehen)",
+            "geloescht": ticket_view_geloescht,
             "history_geloescht": None,
             "dateien_geloescht": 0,
         })
