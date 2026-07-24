@@ -310,6 +310,24 @@
                 </div>
               </div>
 
+              <!-- ── Verantwortlich (Zuweisung) ── -->
+              <div class="q-mb-md">
+                <div class="text-caption text-grey q-mb-xs">Verantwortlich</div>
+                <q-select
+                  v-if="canChangeStatus && !selectedIstGeloescht"
+                  :model-value="selectedTicket.zugewiesen_an ?? null"
+                  :options="zuweisungOptions"
+                  dense outlined options-dense emit-value map-options
+                  style="max-width: 360px"
+                  :loading="zuweisungSaving"
+                  @update:model-value="onZuweisungChange"
+                />
+                <div v-else class="row items-center q-gutter-xs">
+                  <q-icon :name="selectedTicket.zugewiesen_an ? 'person' : 'groups'" size="18px" color="grey-7" />
+                  <span>{{ selectedTicket.zugewiesen_an_username || 'Bereich verantwortlich' }}</span>
+                </div>
+              </div>
+
               <!-- Statuswechsel -->
               <div v-if="!isAbgeschlossen(selectedTicket) && canChangeStatus && !selectedIstGeloescht" class="q-mb-md">
                 <div class="text-subtitle2 q-mb-xs">Status ändern</div>
@@ -429,6 +447,69 @@
                 </div>
               </div>
 
+              <!-- ── Gesehen (nur für Verantwortliche/Bearbeiter) ── -->
+              <template v-if="canChangeStatus && !isDraftTicket">
+                <q-separator class="q-my-md" />
+                <q-expansion-item icon="visibility" label="Gesehen von" dense-toggle>
+                  <div class="q-pa-sm">
+                    <q-list dense v-if="gesehenData">
+                      <!-- Verantwortliche, die noch nicht gesehen haben -->
+                      <q-item v-for="u in gesehenData.verantwortlich_ungesehen" :key="'ung' + u.user_id">
+                        <q-item-section avatar>
+                          <q-icon name="schedule" color="orange" />
+                        </q-item-section>
+                        <q-item-section>
+                          <q-item-label>
+                            {{ u.username }}
+                            <q-badge color="primary" label="verantwortlich" class="q-ml-xs" />
+                          </q-item-label>
+                          <q-item-label caption class="text-orange">noch nicht gesehen</q-item-label>
+                        </q-item-section>
+                      </q-item>
+                      <!-- Wer das Ticket gesehen hat -->
+                      <q-item v-for="g in gesehenData.gesehen" :key="'ges' + g.user_id">
+                        <q-item-section avatar>
+                          <q-icon name="visibility" :color="g.verantwortlich ? 'positive' : 'grey'" />
+                        </q-item-section>
+                        <q-item-section>
+                          <q-item-label>
+                            {{ g.username }}
+                            <q-badge v-if="g.verantwortlich" color="primary" label="verantwortlich" class="q-ml-xs" />
+                          </q-item-label>
+                          <q-item-label caption>zuletzt {{ formatRelative(g.zuletzt_gesehen_am) }} · {{ g.anzahl }}×</q-item-label>
+                        </q-item-section>
+                      </q-item>
+                    </q-list>
+                    <div
+                      v-if="gesehenData && !gesehenData.gesehen.length && !gesehenData.verantwortlich_ungesehen.length"
+                      class="text-caption text-grey"
+                    >
+                      Noch niemand hat dieses Ticket gesehen.
+                    </div>
+                  </div>
+                </q-expansion-item>
+              </template>
+
+              <!-- ── Verlauf (wer/was/wann) ── -->
+              <template v-if="!isDraftTicket">
+                <q-separator class="q-my-md" />
+                <q-expansion-item icon="history" label="Verlauf" dense-toggle @update:model-value="onHistoryExpand">
+                  <div class="q-pa-sm">
+                    <div v-if="historyLoading" class="row justify-center q-py-sm"><q-spinner color="primary" /></div>
+                    <q-timeline v-else-if="historyEvents.length" layout="dense" color="primary">
+                      <q-timeline-entry
+                        v-for="ev in historyEvents"
+                        :key="ev.version"
+                        :subtitle="`${formatDateTime(ev.wann)} · ${ev.wer || '—'}`"
+                      >
+                        <div v-for="(c, ci) in ev.changes" :key="ci" class="text-body2">{{ c }}</div>
+                      </q-timeline-entry>
+                    </q-timeline>
+                    <div v-else-if="historyGeladen" class="text-caption text-grey">Kein Verlauf.</div>
+                  </div>
+                </q-expansion-item>
+              </template>
+
             </template>
 
           </div>
@@ -482,6 +563,14 @@ const detailAnhaenge = ref([])
 // Inline-Edit-Formular im Detail-Dialog
 const detailForm = ref({})
 const detailSaving = ref(false)
+
+// ── Zuweisung / Gesehen / Verlauf ────────────────────────────────────────────
+const moeglicheVerantwortliche = ref([])   // [{user_id, username}] für das Dropdown
+const zuweisungSaving = ref(false)
+const gesehenData = ref(null)               // { gesehen: [...], verantwortlich_ungesehen: [...] }
+const historyRows = ref([])
+const historyLoading = ref(false)
+const historyGeladen = ref(false)
 const detailFormDirty = computed(() => {
   if (!selectedTicket.value) return false
   const t = selectedTicket.value
@@ -638,6 +727,58 @@ function formatDateTime(iso) {
   return fmtDateTime(iso, { placeholder: '—' })
 }
 
+// Kompakte Relativzeit („vor 3 Min.", „gestern", …) für Gesehen/Verlauf.
+function formatRelative(iso) {
+  if (!iso) return '—'
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return '—'
+  const diffSek = Math.round((Date.now() - then) / 1000)
+  if (diffSek < 60) return 'gerade eben'
+  const min = Math.round(diffSek / 60)
+  if (min < 60) return `vor ${min} Min.`
+  const std = Math.round(min / 60)
+  if (std < 24) return `vor ${std} Std.`
+  const tage = Math.round(std / 24)
+  if (tage === 1) return 'gestern'
+  if (tage < 30) return `vor ${tage} Tagen`
+  return formatDate(iso)
+}
+
+// Verlauf: aus den Versions-Snapshots eine Änderungs-Timeline bauen (wer/was/wann).
+const HIST_STATUS = { offen: 'Offen', in_pruefung: 'In Prüfung', eingeplant: 'Eingeplant', rueckfrage: 'Rückfrage', erledigt: 'Erledigt', abgelehnt: 'Abgelehnt' }
+const HIST_PRIO = { niedrig: 'Niedrig', normal: 'Normal', hoch: 'Hoch', sicherheit: 'Sicherheit' }
+
+const historyEvents = computed(() => {
+  const rows = historyRows.value
+  const events = []
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    const prev = i > 0 ? rows[i - 1] : null
+    let changes = []
+    if (!prev) {
+      changes = ['Ticket erstellt']
+    } else if (r.deleted_at && !prev.deleted_at) {
+      changes = ['Ticket verborgen (gelöscht)']
+    } else if (!r.deleted_at && prev.deleted_at) {
+      changes = ['Ticket wiederhergestellt']
+    } else {
+      if (r.status !== prev.status) changes.push(`Status → ${HIST_STATUS[r.status] ?? r.status}`)
+      if (r.prioritaet !== prev.prioritaet) changes.push(`Priorität → ${HIST_PRIO[r.prioritaet] ?? r.prioritaet}`)
+      if (r.zugewiesen_an !== prev.zugewiesen_an) {
+        changes.push(r.zugewiesen_an ? `Verantwortlich → ${r.zugewiesen_an_username ?? '#' + r.zugewiesen_an}` : 'Verantwortlich → keiner')
+      }
+      if (r.bereich_id !== prev.bereich_id) changes.push(`Bereich → ${r.bereich_name ?? '#' + r.bereich_id}`)
+      if (r.kategorie_id !== prev.kategorie_id) changes.push(`Kategorie → ${r.kategorie_name ?? (r.kategorie_id ? '#' + r.kategorie_id : 'keine')}`)
+      if (r.titel !== prev.titel) changes.push('Titel geändert')
+      if ((r.beschreibung ?? '') !== (prev.beschreibung ?? '')) changes.push('Beschreibung bearbeitet')
+      if ((r.faellig_am ?? '') !== (prev.faellig_am ?? '')) changes.push(r.faellig_am ? `Fällig am → ${formatDate(r.faellig_am)}` : 'Fälligkeit entfernt')
+    }
+    if (!changes.length) changes = ['bearbeitet']
+    events.push({ version: r.version, wer: r.updated_by, wann: r.updated_at, changes })
+  }
+  return events.reverse()   // jüngste zuerst
+})
+
 function emptyCreateForm() {
   return { titel: '', beschreibung: '', bereich_id: null, kategorie_id: null, prioritaet: 'normal', faellig_am: '' }
 }
@@ -728,8 +869,81 @@ async function openDetailDialog(ticket) {
   if (isDraftTicket.value) detailForm.value.titel = ''
   detailAnhaenge.value = []
   kommentare.value = []
+  gesehenData.value = null
+  historyRows.value = []
+  historyGeladen.value = false
+  moeglicheVerantwortliche.value = []
   detailDialogOpen.value = true
-  await Promise.all([loadAnhaenge(ticket.id), loadKommentare(ticket.id)])
+  const jobs = [loadAnhaenge(ticket.id), loadKommentare(ticket.id)]
+  if (!isDraftTicket.value) {
+    // „Gesehen" protokollieren (fire-and-forget, throttled im Backend).
+    markGesehen(ticket.id)
+    if (canChangeStatus.value) {
+      jobs.push(loadMoeglicheVerantwortliche(ticket.id), loadGesehen(ticket.id))
+    }
+  }
+  await Promise.all(jobs)
+}
+
+function markGesehen(ticketId) {
+  api.post(`/api/tickets/${ticketId}/gesehen`).catch(() => { /* best-effort */ })
+}
+
+async function loadMoeglicheVerantwortliche(ticketId) {
+  try {
+    const { data } = await api.get(`/api/tickets/${ticketId}/moegliche-verantwortliche`)
+    moeglicheVerantwortliche.value = data
+  } catch { /* ignorieren */ }
+}
+
+async function loadGesehen(ticketId) {
+  try {
+    const { data } = await api.get(`/api/tickets/${ticketId}/gesehen`)
+    gesehenData.value = data
+  } catch { /* ignorieren */ }
+}
+
+async function loadHistory(ticketId) {
+  historyLoading.value = true
+  try {
+    const { data } = await api.get(`/api/tickets/${ticketId}/history`)
+    historyRows.value = data
+    historyGeladen.value = true
+  } catch { /* ignorieren */ } finally {
+    historyLoading.value = false
+  }
+}
+
+function onHistoryExpand(open) {
+  if (open && !historyGeladen.value && selectedTicket.value) loadHistory(selectedTicket.value.id)
+}
+
+const zuweisungOptions = computed(() => [
+  { value: null, label: '— keiner (Bereich verantwortlich)' },
+  ...moeglicheVerantwortliche.value.map(v => ({ value: v.user_id, label: v.username })),
+])
+
+async function onZuweisungChange(userId) {
+  if (!selectedTicket.value) return
+  if (userId === (selectedTicket.value.zugewiesen_an ?? null)) return
+  zuweisungSaving.value = true
+  try {
+    const { data } = await api.patch(`/api/tickets/${selectedTicket.value.id}/zuweisung`, {
+      zugewiesen_an: userId,
+      expected_version: selectedTicket.value.version,
+    })
+    selectedTicket.value = data
+    const idx = tickets.value.findIndex(t => t.id === data.id)
+    if (idx >= 0) tickets.value[idx] = data
+    if (canChangeStatus.value) loadGesehen(data.id)   // Verantwortlichen-Kreis neu bewerten
+    $q.notify({ type: 'positive', message: data.zugewiesen_an_username
+      ? `Verantwortlich: ${data.zugewiesen_an_username}`
+      : 'Zuweisung aufgehoben (Bereich verantwortlich).' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler bei der Zuweisung.' })
+  } finally {
+    zuweisungSaving.value = false
+  }
 }
 
 // Deep-Link aus einer Push-Nachricht: /tickets?ticket=NN öffnet das Ticket direkt

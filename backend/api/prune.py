@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.models.permission import Permission
 from app.services.prune_service import (
     ACCESS_LOG_PAGE, ARCHIVE_REGISTRY, PRUNE_REGISTRY, PruneService,
+    TICKET_ZUGRIFF_LOG,
 )
 from ..core.deps import CurrentUser, DB
 from .auth import _client_ip
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/prune", tags=["prune"])
 _ENTITY_NAMES = (
     {e.name for e in PRUNE_REGISTRY}
     | {r.name for r in ARCHIVE_REGISTRY}
-    | {ACCESS_LOG_PAGE}
+    | {ACCESS_LOG_PAGE, TICKET_ZUGRIFF_LOG}
 )
 
 

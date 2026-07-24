@@ -45,6 +45,7 @@ from app.db.ticket_bereich_repository import TicketBereichRepository
 from app.db.ticket_kategorie_repository import TicketKategorieRepository
 from app.db.ticket_teilnehmer_repository import TicketTeilnehmerRepository
 from app.db.ticket_bereich_berechtigung_repository import TicketBereichBerechtigungRepository
+from app.db.ticket_zugriff_log_repository import TicketZugriffLogRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository, MitgliedAbteilung
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository, MitgliedFunktion
 from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository, MitgliedKontakt
@@ -184,6 +185,7 @@ class VereinsDB:
         self._ticket_kategorie_repo = TicketKategorieRepository(self.conn)
         self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
         self._ticket_bereich_berechtigung_repo = TicketBereichBerechtigungRepository(self.conn)
+        self._ticket_zugriff_log_repo = TicketZugriffLogRepository(self.conn)
 
         self._ticket_service = TicketService(
             ticket_repo=self._ticket_repo,
@@ -196,6 +198,7 @@ class VereinsDB:
             user_repo=self._user_repo,
             anhang_service=self._anhang_service,
             push_service=self._push_service,
+            zugriff_log_repo=self._ticket_zugriff_log_repo,
         )
 
         # Passwort-Tresor (#85)
@@ -336,6 +339,11 @@ class VereinsDB:
     def ticket_bereich_berechtigungen(self) -> TicketBereichBerechtigungRepository:
         """Zugriff auf TicketBereichBerechtigungRepository."""
         return self._ticket_bereich_berechtigung_repo
+
+    @property
+    def ticket_zugriff_log(self) -> TicketZugriffLogRepository:
+        """Append-only „Gesehen"-Log der Tickets (für Prune-Bereinigung)."""
+        return self._ticket_zugriff_log_repo
 
     @property
     def funktionen(self) -> FunktionRepository:

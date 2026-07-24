@@ -132,17 +132,12 @@ class TicketRepository:
 
     def get_history(self, ticket_id: int) -> list[dict]:
         cursor = self.conn.execute(
-            "SELECT id, version, titel, status, prioritaet, bereich_id, kategorie_id, "
+            "SELECT id, version, titel, beschreibung, status, prioritaet, bereich_id, kategorie_id, "
             "zugewiesen_an, faellig_am, geschlossen_am, geschlossen_von, "
-            "deleted_at, deleted_by, created_at, updated_at "
+            "deleted_at, deleted_by, created_at, updated_at, updated_by "
             "FROM tickets_history WHERE id = %s ORDER BY version ASC",
             (ticket_id,)
         )
-        cols = [
-            'id', 'version', 'titel', 'status', 'prioritaet', 'bereich_id', 'kategorie_id',
-            'zugewiesen_an', 'faellig_am', 'geschlossen_am', 'geschlossen_von',
-            'deleted_at', 'deleted_by', 'created_at', 'updated_at'
-        ]
         return [dict(row) for row in cursor.fetchall()]
 
     def list_all_with_counts(self, nur_geloeschte: bool = False) -> list[Ticket]:
