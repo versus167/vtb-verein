@@ -436,6 +436,31 @@
           <q-toggle v-model="editUserForm.active" label="Aktiv" />
           <div v-if="editUserError" class="text-negative text-caption">{{ editUserError }}</div>
         </q-card-section>
+
+        <q-separator />
+        <!-- Passwort direkt setzen: Umweg, wenn Magic-Link/E-Mail nicht klappt -->
+        <q-card-section class="q-gutter-sm">
+          <div class="text-subtitle2">Passwort setzen</div>
+          <div class="text-caption text-grey-7">
+            Umweg, wenn Magic-Link/E-Mail nicht funktioniert – setzt direkt ein Login-Passwort.
+          </div>
+          <q-input v-model="pwForm.pw1" label="Neues Passwort" outlined dense
+            :type="pwShow ? 'text' : 'password'" autocomplete="new-password" hint="mindestens 6 Zeichen">
+            <template #append>
+              <q-icon :name="pwShow ? 'visibility' : 'visibility_off'" class="cursor-pointer"
+                @click="pwShow = !pwShow" />
+            </template>
+          </q-input>
+          <q-input v-model="pwForm.pw2" label="Passwort wiederholen" outlined dense
+            :type="pwShow ? 'text' : 'password'" autocomplete="new-password"
+            @keyup.enter="onSetPassword" />
+          <div v-if="pwError" class="text-negative text-caption">{{ pwError }}</div>
+          <div class="row justify-end">
+            <q-btn label="Passwort setzen" icon="key" color="primary" outline dense size="sm"
+              :loading="pwSaving" :disable="!pwForm.pw1 || !pwForm.pw2" @click="onSetPassword" />
+          </div>
+        </q-card-section>
+
         <q-separator />
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
@@ -1037,6 +1062,12 @@ const editUserError  = ref('')
 const editUserForm   = ref({})
 const editingUserId  = ref(null)
 
+// Passwort direkt setzen (im Account-Dialog)
+const pwForm   = ref({ pw1: '', pw2: '' })
+const pwShow   = ref(false)
+const pwSaving = ref(false)
+const pwError  = ref('')
+
 function openEditUserDialog(row) {
   editingUserId.value = row.user_id
   editUserError.value = ''
@@ -1045,7 +1076,26 @@ function openEditUserDialog(row) {
     role: row.role, active: row.active,
     expected_version: row.user_version,
   }
+  pwForm.value = { pw1: '', pw2: '' }
+  pwShow.value = false
+  pwError.value = ''
   editUserOpen.value = true
+}
+
+async function onSetPassword() {
+  if (pwForm.value.pw1.length < 6) { pwError.value = 'Mindestens 6 Zeichen'; return }
+  if (pwForm.value.pw1 !== pwForm.value.pw2) { pwError.value = 'Passwörter stimmen nicht überein'; return }
+  pwError.value = ''
+  pwSaving.value = true
+  try {
+    await api.post(`/api/users/${editingUserId.value}/password`, { new_password: pwForm.value.pw1 })
+    $q.notify({ type: 'positive', message: `Passwort für „${editUserForm.value.username}" gesetzt` })
+    pwForm.value = { pw1: '', pw2: '' }
+  } catch (e) {
+    pwError.value = e.response?.data?.detail || 'Fehler beim Setzen des Passworts'
+  } finally {
+    pwSaving.value = false
+  }
 }
 
 async function onSaveUser() {
