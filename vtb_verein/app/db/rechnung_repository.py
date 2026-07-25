@@ -21,6 +21,9 @@ _SELECT = """
            u.username AS ersteller_name,
            TRIM(COALESCE(em.vorname, '') || ' ' || COALESCE(em.nachname, ''))
                AS empfaenger_mitglied_name,
+           -- Bei Erstattung an ein Mitglied kommt die Bankverbindung aus dem
+           -- Mitgliedsstamm; an der Rechnung wird sie nicht doppelt gepflegt.
+           em.iban AS empfaenger_mitglied_iban,
            (SELECT COUNT(*) FROM rechnung_anhaenge a
              WHERE a.rechnung_id = r.id AND a.deleted_at IS NULL) AS anhang_count,
            r.version, r.created_at, r.created_by, r.updated_at, r.updated_by,

@@ -176,7 +176,7 @@ class RechnungExportService:
             r.rechnungsdatum or "",
             r.rechnungsnummer or "",
             self._empfaenger(r),
-            r.empfaenger_iban or "",
+            self._iban(r),
             r.beschreibung or "",
             r.created_by or "",
             r.freigegeben_von or "",
@@ -193,6 +193,12 @@ class RechnungExportService:
     @staticmethod
     def _empfaenger(r) -> str:
         return (r.empfaenger_mitglied_name or "").strip() or (r.empfaenger_name or "")
+
+    @staticmethod
+    def _iban(r) -> str:
+        """An der Rechnung gepflegte IBAN hat Vorrang; bei Erstattung an ein
+        Mitglied greift sonst die aus dem Mitgliedsstamm."""
+        return (r.empfaenger_iban or "").strip() or (r.empfaenger_mitglied_iban or "")
 
     @staticmethod
     def _datum(wert) -> str:

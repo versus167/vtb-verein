@@ -150,6 +150,7 @@ def _kategorie_id(db):
 
 
 def _rechnung(db, user, abteilung_id=None, **felder):
+    felder.setdefault("empfaenger_typ", "mitglied")   # Regelfall: Auslage erstatten
     return db.rechnungen.anlegen(
         user, kategorie_id=_kategorie_id(db), abteilung_id=abteilung_id, **felder)
 
@@ -191,6 +192,64 @@ def test_einreichen_ohne_beleg_scheitert(db):
     with pytest.raises(BelegFehltError):
         db.rechnungen.einreichen(r.id, einreicher)
     assert db.rechnungen.get(r.id, einreicher).status == "entwurf"
+
+
+def test_erstattung_setzt_einreicher_als_empfaenger(db):
+    """Der Regelfall „ich habe ausgelegt" braucht keine Empfängereingabe – das
+    Backend löst das Mitglied aus dem Einreicher auf, die IBAN kommt aus dem Stamm."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_erst", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    with db.cursor() as cur:
+        cur.execute("UPDATE mitglied SET iban='DE02120300000000202051' "
+                    "WHERE user_id=%s", (einreicher.id,))
+
+    r = _rechnung(db, einreicher, fussball, empfaenger_typ="mitglied")
+    assert r.empfaenger_mitglied_id is not None
+    geladen = db.rechnungen.get(r.id, einreicher)
+    assert geladen.empfaenger_mitglied_name == "RechTest rtester_erst"
+    assert geladen.empfaenger_mitglied_iban == "DE02120300000000202051"
+
+
+def test_einreichen_ohne_empfaenger_scheitert(db):
+    """Ohne Zahlungsempfänger kann niemand eine Zahlung freigeben."""
+    from app.services.rechnung_service import EmpfaengerFehltError
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_ohne", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball, empfaenger_typ=None)
+    _beleg(db, r.id, einreicher)
+    with pytest.raises(EmpfaengerFehltError):
+        db.rechnungen.einreichen(r.id, einreicher)
+
+
+def test_einreichen_extern_ohne_namen_scheitert(db):
+    """„An den Aussteller" ohne Namen ist für die Buchhaltung wertlos."""
+    from app.services.rechnung_service import EmpfaengerFehltError
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_extl", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball, empfaenger_typ="extern")
+    _beleg(db, r.id, einreicher)
+    with pytest.raises(EmpfaengerFehltError):
+        db.rechnungen.einreichen(r.id, einreicher)
+
+    r = db.rechnungen.aktualisieren(r.id, einreicher, expected_version=r.version,
+                                    empfaenger_name="Sportwelt GmbH")
+    assert db.rechnungen.einreichen(r.id, einreicher).status == "eingereicht"
+
+
+def test_externer_empfaenger_bleibt_ohne_mitglied(db):
+    """Bei „an den Aussteller" darf kein Mitglied als Empfänger einwandern."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_ext2", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball, empfaenger_typ="extern",
+                  empfaenger_name="Getränke Meier", empfaenger_iban="DE89370400440532013000")
+    assert r.empfaenger_mitglied_id is None
+    assert r.empfaenger_name == "Getränke Meier"
 
 
 def test_freigeben_aus_entwurf_scheitert(db):

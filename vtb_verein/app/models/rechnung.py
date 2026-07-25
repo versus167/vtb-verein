@@ -76,6 +76,7 @@ class Rechnung:
     abteilung_kostenstelle: Optional[int] = None
     ersteller_name: Optional[str] = None
     empfaenger_mitglied_name: Optional[str] = None
+    empfaenger_mitglied_iban: Optional[str] = None
     anhang_count: int = 0
     version: int = 1
     created_at: Optional[str] = None

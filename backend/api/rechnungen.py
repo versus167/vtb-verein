@@ -24,6 +24,7 @@ from app.models.rechnung import STATUS_ALLE
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.rechnung_service import (
     BelegFehltError,
+    EmpfaengerFehltError,
     FalscherStatusError,
     KategorieInBenutzungError,
     KeineFreigabeberechtigungError,
@@ -90,7 +91,7 @@ def _fehler_zu_http(exc: Exception) -> HTTPException:
     if isinstance(exc, (FalscherStatusError, RechnungGesperrtError,
                         KategorieInBenutzungError, NichtJuengsterLaufError)):
         return HTTPException(status_code=409, detail=str(exc))
-    if isinstance(exc, (BelegFehltError, ValueError)):
+    if isinstance(exc, (BelegFehltError, EmpfaengerFehltError, ValueError)):
         return HTTPException(status_code=422, detail=str(exc))
     raise exc
 

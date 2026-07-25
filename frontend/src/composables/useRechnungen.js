@@ -26,6 +26,29 @@ export const FREIGABE_FILTER_OPTIONEN = STATUS_FILTER_OPTIONEN.filter(
   (o) => o.value !== 'entwurf',
 )
 
+// Zahlungsempfänger: entweder bekommt der Einreicher seine Auslage erstattet
+// (IBAN aus dem Mitgliedsstamm) oder der Verein zahlt an den Aussteller.
+export const EMPFAENGER_OPTIONEN = [
+  { label: 'Erstattung an mich (ich habe ausgelegt)', value: 'mitglied' },
+  { label: 'An den Rechnungsaussteller', value: 'extern' },
+]
+
+export function empfaengerText(r) {
+  if (r.empfaenger_typ === 'mitglied') {
+    return `Erstattung an ${r.empfaenger_mitglied_name || 'Einreicher'}`
+  }
+  if (r.empfaenger_typ === 'extern') {
+    return `An ${r.empfaenger_name || 'Aussteller (ohne Namen)'}`
+  }
+  return 'Empfänger nicht angegeben'
+}
+
+// An der Rechnung gepflegte IBAN hat Vorrang; bei Erstattung greift sonst die
+// aus dem Mitgliedsstamm (dieselbe Regel wie im Export).
+export function empfaengerIban(r) {
+  return (r.empfaenger_iban || '').trim() || (r.empfaenger_mitglied_iban || '')
+}
+
 // Cent → „12,50 €“; ohne Betrag bleibt die Anzeige leer (Betrag ist optional).
 export function fmtBetrag(cent) {
   if (cent === null || cent === undefined) return ''
@@ -49,4 +72,20 @@ export function fmtDatum(wert) {
 
 export function fehlertext(e, fallback) {
   return e?.response?.data?.detail || fallback
+}
+
+// Beleg-Auswahl: identisch zu AnhangPanel, damit die vorgehaltene Auswahl im
+// Einreich-Dialog dieselben Dateien akzeptiert wie der spätere Upload.
+export const BELEG_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
+export const BELEG_MAX_MB = 10
+export const BELEG_HINWEIS = `max. ${BELEG_MAX_MB} MB · JPEG, PNG, GIF, WebP, PDF`
+
+export function belegFehler(datei) {
+  if (!BELEG_ACCEPT.split(',').includes(datei.type)) {
+    return `„${datei.name}“ hat ein nicht unterstütztes Format.`
+  }
+  if (datei.size > BELEG_MAX_MB * 1024 * 1024) {
+    return `„${datei.name}“ ist größer als ${BELEG_MAX_MB} MB.`
+  }
+  return null
 }

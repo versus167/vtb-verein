@@ -30,6 +30,9 @@
             <span>· von {{ r.ersteller_name }}</span>
             <span v-if="r.beschreibung">· {{ r.beschreibung }}</span>
           </q-item-label>
+          <q-item-label caption>
+            <q-icon name="payments" size="xs" /> {{ empfaengerText(r) }}
+          </q-item-label>
         </q-item-section>
         <q-item-section side>
           <q-badge v-if="r.anhang_count" color="primary">{{ r.anhang_count }}</q-badge>
@@ -68,6 +71,18 @@
           <div v-if="aktuell.beschreibung" class="text-body2 q-mb-sm">
             {{ aktuell.beschreibung }}
           </div>
+
+          <!-- Wer bekommt das Geld – die eigentliche Entscheidungsgrundlage. -->
+          <q-banner dense class="bg-grey-2 q-mb-sm">
+            <template #avatar><q-icon name="payments" color="primary" /></template>
+            <div class="text-body2">{{ empfaengerText(aktuell) }}</div>
+            <div v-if="empfaengerIban(aktuell)" class="text-caption text-grey-7">
+              {{ empfaengerIban(aktuell) }}
+            </div>
+            <div v-else class="text-caption text-orange">
+              Keine IBAN hinterlegt – die Buchhaltung entnimmt sie dem Beleg.
+            </div>
+          </q-banner>
 
           <div class="text-caption text-grey-7 q-mb-xs">Beleg</div>
           <AnhangPanel :anhaenge="anhaenge"
@@ -108,6 +123,7 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
   FREIGABE_FILTER_OPTIONEN, statusChip, fmtBetrag, fmtDatum, fehlertext,
+  empfaengerText, empfaengerIban,
 } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'RechnungenFreigabePage' })

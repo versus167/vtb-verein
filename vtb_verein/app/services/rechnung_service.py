@@ -17,7 +17,8 @@ from typing import Optional
 
 from app.models.permission import Permission
 from app.models.rechnung import (
-    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF, EMPFAENGER_TYPEN,
+    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF,
+    EMPFAENGER_TYPEN, EMPFAENGER_MITGLIED, EMPFAENGER_EXTERN,
 )
 
 
@@ -39,6 +40,11 @@ class FalscherStatusError(RechnungFehler):
 
 class BelegFehltError(RechnungFehler):
     """Einreichen ohne Beleg – die Rechnung ist der Beleg."""
+
+
+class EmpfaengerFehltError(RechnungFehler):
+    """Einreichen ohne Zahlungsempfänger – niemand kann eine Zahlung freigeben,
+    ohne zu wissen, an wen sie geht."""
 
 
 class RechnungGesperrtError(RechnungFehler):
@@ -212,6 +218,8 @@ class RechnungService:
         self._pruefe_kategorie(kategorie_id)
         self._pruefe_empfaenger(empfaenger_typ)
         self._pruefe_abteilung_waehlbar(user, abteilung_id)
+        empfaenger_mitglied_id = self._aufloesen_empfaenger_mitglied(
+            user, empfaenger_typ, empfaenger_mitglied_id)
         return self._rechnung.create(
             Rechnung(
                 abteilung_id=abteilung_id, kategorie_id=kategorie_id,
@@ -249,6 +257,8 @@ class RechnungService:
         )
         self._pruefe_kategorie(neu.kategorie_id)
         self._pruefe_empfaenger(neu.empfaenger_typ)
+        neu.empfaenger_mitglied_id = self._aufloesen_empfaenger_mitglied(
+            user, neu.empfaenger_typ, neu.empfaenger_mitglied_id)
         if neu.abteilung_id != r.abteilung_id:
             self._pruefe_abteilung_waehlbar(user, neu.abteilung_id)
 
@@ -281,6 +291,7 @@ class RechnungService:
             raise KeinZugriffError("Nur der Einreicher kann die Rechnung einreichen.")
         if self._anhang_repo.count_by_rechnung(rechnung_id) == 0:
             raise BelegFehltError("Bitte zuerst den Beleg hochladen.")
+        self._pruefe_empfaenger_vollstaendig(r)
         if not self._rechnung.einreichen(rechnung_id, eingereicht_von=user.username):
             raise FalscherStatusError("Nur Entwürfe können eingereicht werden.")
         aktuell = self._rechnung.get(rechnung_id)
@@ -436,6 +447,36 @@ class RechnungService:
         if empfaenger_typ is not None and empfaenger_typ not in EMPFAENGER_TYPEN:
             raise ValueError(
                 f"Unbekannter Empfängertyp – erlaubt: {', '.join(EMPFAENGER_TYPEN)}.")
+
+    def _aufloesen_empfaenger_mitglied(self, user, empfaenger_typ: Optional[str],
+                                       empfaenger_mitglied_id: Optional[int]):
+        """Bei „Erstattung an ein Mitglied" ohne konkrete Angabe: der Einreicher.
+
+        Das ist der Normalfall (jemand hat ausgelegt und will es zurück) – das
+        Frontend schickt dann nur den Typ. Die Bankverbindung kommt aus dem
+        Mitgliedsstamm und wird an der Rechnung nicht doppelt gepflegt.
+        """
+        if empfaenger_typ != EMPFAENGER_MITGLIED or empfaenger_mitglied_id is not None:
+            return empfaenger_mitglied_id
+        mitglied = self._mitglied_repo.get_by_user_id(user.id)
+        if mitglied is None:
+            raise ValueError(
+                "Zu diesem Benutzer gibt es kein Mitglied – bitte den "
+                "Rechnungsaussteller als Empfänger angeben.")
+        return mitglied.id
+
+    def _pruefe_empfaenger_vollstaendig(self, r: Rechnung) -> None:
+        """Vor dem Einreichen: Wer bekommt das Geld? Ohne Antwort kann niemand
+        die Zahlung freigeben."""
+        if r.empfaenger_typ not in EMPFAENGER_TYPEN:
+            raise EmpfaengerFehltError(
+                "Bitte angeben, an wen gezahlt werden soll.")
+        if r.empfaenger_typ == EMPFAENGER_EXTERN and not (r.empfaenger_name or '').strip():
+            raise EmpfaengerFehltError(
+                "Bitte den Rechnungsaussteller angeben, an den gezahlt werden soll.")
+        if r.empfaenger_typ == EMPFAENGER_MITGLIED and r.empfaenger_mitglied_id is None:
+            raise EmpfaengerFehltError(
+                "Für die Erstattung fehlt das Mitglied, an das gezahlt werden soll.")
 
     def _pruefe_abteilung_waehlbar(self, user, abteilung_id: Optional[int]) -> None:
         """Ein Einreicher darf nur „seine" Abteilungen wählen – sonst könnte er die
