@@ -189,6 +189,16 @@
           </q-item>
 
           <q-item
+            v-if="hatRechnungenZugriff"
+            clickable
+            :to="{ name: 'rechnungen' }"
+            active-class="vtb-nav-active"
+          >
+            <q-item-section avatar><q-icon name="receipt_long" /></q-item-section>
+            <q-item-section>Rechnungen</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="hatEinstellungenZugriff"
             clickable
             :to="{ name: 'einstellungen' }"
@@ -327,6 +337,16 @@ const hatSonstigesZugriff = computed(
     auth.hasPermission('system.config') ||
     auth.hasPermission('fibu.export') ||
     auth.hasPermission('system.protokoll'),
+)
+
+// Rechnungen: rein permission-gesteuert, keine ACL-Ressourcenliste nötig.
+// 'rechnungen.freigeben' kann rein abteilungs-scoped geerbt sein – hasPermission
+// ist lenient und erfasst das (die Abteilungs-Prüfung macht das Backend).
+const hatRechnungenZugriff = computed(
+  () =>
+    auth.hasPermission('rechnungen.einreichen') ||
+    auth.hasPermission('rechnungen.freigeben') ||
+    auth.hasPermission('rechnungen.verwalten'),
 )
 
 // Refresh der aktuell sichtbaren Listen-Seite (Button + Auto bei App-Fokus).

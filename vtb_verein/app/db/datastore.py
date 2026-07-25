@@ -38,6 +38,10 @@ from app.db.kasse_berechtigung_repository import KasseBerechtigungRepository
 from app.db.kassenbuchung_anhang_repository import KassenbuchungAnhangRepository
 from app.db.kassen_kategorie_repository import KassenKategorieRepository
 from app.db.kassen_zaehlung_repository import KassenZaehlungRepository
+from app.db.rechnung_repository import RechnungRepository
+from app.db.rechnung_kategorie_repository import RechnungKategorieRepository
+from app.db.rechnung_anhang_repository import RechnungAnhangRepository
+from app.db.rechnung_export_repository import RechnungExportRepository
 from app.db.ticket_repository import TicketRepository
 from app.db.ticket_kommentar_repository import TicketKommentarRepository
 from app.db.ticket_anhang_repository import TicketAnhangRepository
@@ -91,6 +95,8 @@ from app.models.mitglied import Mitglied
 from app.models.abteilung import Abteilung
 from app.models.user import User
 from app.services.ticket_service import TicketService
+from app.services.rechnung_service import RechnungService
+from app.services.rechnung_export_service import RechnungExportService
 from app.services.anhang_service import AnhangService
 
 
@@ -201,6 +207,32 @@ class VereinsDB:
             zugriff_log_repo=self._ticket_zugriff_log_repo,
         )
 
+        # Rechnungen einreichen & freigeben (v78)
+        self._rechnung_repo = RechnungRepository(self.conn)
+        self._rechnung_kategorie_repo = RechnungKategorieRepository(self.conn)
+        self._rechnung_anhang_repo = RechnungAnhangRepository(self.conn)
+        self._rechnung_export_repo = RechnungExportRepository(self.conn)
+
+        self._rechnung_service = RechnungService(
+            rechnung_repo=self._rechnung_repo,
+            kategorie_repo=self._rechnung_kategorie_repo,
+            anhang_repo=self._rechnung_anhang_repo,
+            user_repo=self._user_repo,
+            mitglied_repo=self._mitglied_repo,
+            permission_repo=self._permission_repo,
+            abteilung_repo=self._abteilung_repo,
+            mitglied_abteilung_repo=self._mitglied_abteilung_repo,
+            mitglied_funktion_repo=self._mitglied_funktion_repo,
+            anhang_service=self._anhang_service,
+            push_service=self._push_service,
+        )
+        self._rechnung_export_service = RechnungExportService(
+            rechnung_repo=self._rechnung_repo,
+            anhang_repo=self._rechnung_anhang_repo,
+            export_repo=self._rechnung_export_repo,
+            anhang_service=self._anhang_service,
+        )
+
         # Passwort-Tresor (#85)
         self._tresor_repo = TresorRepository(self.conn)
         self._tresor_freigabe_repo = TresorFreigabeRepository(self.conn)
@@ -263,6 +295,23 @@ class VereinsDB:
     @property
     def kassenbuch(self) -> "KassenbuchService":
         return self._kassenbuch_service
+
+    @property
+    def rechnungen(self) -> RechnungService:
+        return self._rechnung_service
+
+    @property
+    def rechnung_export(self) -> RechnungExportService:
+        return self._rechnung_export_service
+
+    @property
+    def rechnung_kategorien(self) -> RechnungKategorieRepository:
+        return self._rechnung_kategorie_repo
+
+    @property
+    def rechnung_repository(self) -> RechnungRepository:
+        """Direktzugriff für History-Anzeige und Tests."""
+        return self._rechnung_repo
 
     @property
     def kassen(self) -> KasseRepository:

@@ -107,6 +107,21 @@ const routes = [
         },
       },
       {
+        // ODER-Array: `permissions` ist die lenient Key-Menge, enthält also auch
+        // rein abteilungs-scoped geerbte Rechte (Abteilungsleiter → freigeben).
+        path: 'rechnungen',
+        name: 'rechnungen',
+        component: () => import('pages/RechnungenPage.vue'),
+        meta: {
+          title: 'Rechnungen',
+          permission: [
+            'rechnungen.einreichen',
+            'rechnungen.freigeben',
+            'rechnungen.verwalten',
+          ],
+        },
+      },
+      {
         path: 'fibu-export',
         name: 'fibu-export',
         component: () => import('pages/FibuExportPage.vue'),

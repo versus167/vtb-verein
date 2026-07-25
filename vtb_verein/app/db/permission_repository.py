@@ -94,6 +94,89 @@ class PermissionRepository(BaseRepository):
 
         return compute_effective_permissions(funktion_rows, override_rows)
 
+    def list_user_ids_mit_permission(
+        self,
+        permission: str,
+        abteilung_id: int | None = None,
+        stichtag: str | None = None,
+    ) -> set[int]:
+        """Umkehrung von get_effective_permissions: wer hat dieses Recht?
+
+        Für Benachrichtigungen ("wer muss diese Rechnung freigeben?") – bewusst
+        rechte-getrieben statt auf eine Funktion wie 'abteilungsleiter' verdrahtet,
+        damit eine umgehängte Berechtigungsmatrix nicht stillschweigend die
+        Empfängerliste falsch macht.
+
+        abteilung_id None  → nur vereinsweit wirksame Rechte (globale Funktions-
+                             Zuordnung oder individueller Grant ohne Scope).
+        abteilung_id gesetzt → zusätzlich die Inhaber, die es für genau diese
+                             Abteilung geerbt haben.
+
+        Sockel, Scopes und Denies werden über get_effective_permissions ausgewertet,
+        damit hier keine zweite (womöglich abweichende) Regelimplementierung entsteht.
+
+        Die Rolle 'admin' allein bringt einen User NICHT in die Liste – sonst bekäme
+        jeder Admin jede Freigabe-Mail. Wer den Key explizit als Grant oder über eine
+        Funktion hat, ist enthalten (das trifft auch auf den Seed-Admin zu).
+        """
+        if stichtag is None:
+            stichtag = date.today().isoformat()
+
+        with self.cursor() as cur:
+            # Kandidaten: wer das Recht überhaupt aus einer Funktion oder einem
+            # Grant beziehen könnte. Bewusst großzügig – gefiltert wird gleich
+            # über die echte Rechteberechnung.
+            cur.execute(
+                """
+                SELECT DISTINCT m.user_id
+                FROM mitglied m
+                JOIN mitglied_funktion mf
+                     ON mf.mitglied_id = m.id
+                    AND mf.deleted_at IS NULL
+                    AND mf.von <= %s
+                    AND (mf.bis IS NULL OR mf.bis >= %s)
+                JOIN funktion f
+                     ON f.key = mf.funktion AND f.deleted_at IS NULL
+                JOIN funktion_permission fp
+                     ON fp.funktion_id = f.id AND fp.deleted_at IS NULL
+                    AND fp.permission = %s
+                WHERE m.user_id IS NOT NULL AND m.deleted_at IS NULL
+                """,
+                (stichtag, stichtag, permission),
+            )
+            kandidaten = {row["user_id"] for row in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT DISTINCT user_id FROM user_permissions
+                WHERE permission = %s AND effect = 'grant' AND deleted_at IS NULL
+                """,
+                (permission,),
+            )
+            kandidaten |= {row["user_id"] for row in cur.fetchall()}
+
+            if not kandidaten:
+                return set()
+
+            # Nur aktive, lebende Konten benachrichtigen.
+            cur.execute(
+                "SELECT id FROM users WHERE id = ANY(%s) AND active = 1 AND deleted_at IS NULL",
+                (list(kandidaten),),
+            )
+            kandidaten = {row["id"] for row in cur.fetchall()}
+
+        # Entscheidung über die bestehende Rechteberechnung, damit Sockel, Scopes
+        # und Denies hier nicht ein zweites Mal (und womöglich abweichend)
+        # nachgebaut werden. Die Kandidatenmenge ist klein (Funktionsinhaber).
+        treffer: set[int] = set()
+        for uid in kandidaten:
+            eff = self.get_effective_permissions(uid, stichtag)
+            if permission in eff.global_perms:
+                treffer.add(uid)
+            elif abteilung_id is not None and abteilung_id in eff.scoped.get(permission, set()):
+                treffer.add(uid)
+        return treffer
+
     def get_overrides_for_user(self, user_id: int) -> dict[str, set[str]]:
         """Individuelle Overrides eines Users, getrennt nach grant/deny."""
         with self.cursor() as cur:
