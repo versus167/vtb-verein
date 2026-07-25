@@ -20,6 +20,12 @@ export const STATUS_FILTER_OPTIONEN = [
   { label: 'Abgelehnt', value: 'abgelehnt' },
 ]
 
+// Freigabe-Sicht: fremde Entwürfe liefert das Backend nicht aus, also auch
+// keinen Filter anbieten, der garantiert leer bleibt.
+export const FREIGABE_FILTER_OPTIONEN = STATUS_FILTER_OPTIONEN.filter(
+  (o) => o.value !== 'entwurf',
+)
+
 // Cent → „12,50 €“; ohne Betrag bleibt die Anzeige leer (Betrag ist optional).
 export function fmtBetrag(cent) {
   if (cent === null || cent === undefined) return ''

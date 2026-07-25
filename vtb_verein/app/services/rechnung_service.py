@@ -102,8 +102,16 @@ class RechnungService:
 
     @classmethod
     def darf_sehen(cls, user, r: Rechnung) -> bool:
+        """Sehen darf: der Ersteller, die Geschäftsstelle – und der zuständige
+        Freigeber, sobald eingereicht wurde.
+
+        Ein fremder Entwurf bleibt auch über die Detail-URL verborgen, sonst wäre
+        das Ausblenden in der Freigabe-Liste nur Kosmetik.
+        """
         if cls.darf_verwalten(user) or r.ersteller_user_id == user.id:
             return True
+        if r.status == STATUS_ENTWURF:
+            return False
         return cls.darf_freigeben(user, r.abteilung_id)
 
     def _hole_sichtbar(self, rechnung_id: int, user) -> Rechnung:
@@ -166,14 +174,18 @@ class RechnungService:
         return self._rechnung.list_for_ersteller(user.id, status)
 
     def list_zur_freigabe(self, user, status: Optional[str] = None) -> list[Rechnung]:
-        """Was dieser Benutzer freigeben darf. Default-Status: die offenen."""
+        """Was dieser Benutzer freigeben darf.
+
+        Fremde Entwürfe bleiben außen vor – der Freigeber sieht eine Rechnung erst,
+        wenn sie eingereicht ist. Die eigenen Entwürfe stehen unter „Meine Rechnungen".
+        """
         if self.darf_verwalten(user):
-            return self._rechnung.list_for_abteilungen(None, status)
+            return self._rechnung.list_for_abteilungen(None, status, ohne_entwuerfe=True)
         erlaubt = user.allowed_abteilungen(Permission.RECHNUNGEN_FREIGEBEN)
         # Vereinsrechnungen (ohne Abteilung) sieht hier niemand ohne Verwaltungsrecht.
         return self._rechnung.list_for_abteilungen(
             erlaubt if erlaubt is not None else None, status,
-            include_vereinsrechnungen=False)
+            include_vereinsrechnungen=False, ohne_entwuerfe=True)
 
     def list_alle(self, user, status: Optional[str] = None) -> list[Rechnung]:
         if not self.darf_verwalten(user):

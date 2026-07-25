@@ -60,15 +60,21 @@ class RechnungRepository(BaseRepository):
 
     def list_for_abteilungen(self, abteilung_ids: Optional[set[int]],
                              status: Optional[str] = None,
-                             include_vereinsrechnungen: bool = False) -> list[Rechnung]:
+                             include_vereinsrechnungen: bool = False,
+                             ohne_entwuerfe: bool = False) -> list[Rechnung]:
         """Freigeber-Sicht.
 
         abteilung_ids None = keine Einschränkung (global berechtigt / Verwaltung).
         include_vereinsrechnungen zieht zusätzlich Rechnungen ohne Abteilung
         (abteilung_id IS NULL) heran – die darf nur die Geschäftsstelle freigeben.
+        ohne_entwuerfe blendet fremde Entwürfe aus: bis zum Einreichen ist die
+        Rechnung die Werkbank des Einreichers und für den Freigeber nichts, woran
+        er etwas tun könnte.
         """
         where = " WHERE r.deleted_at IS NULL"
         params: list = []
+        if ohne_entwuerfe:
+            where += " AND r.status <> 'entwurf'"
         if abteilung_ids is not None:
             if not abteilung_ids and not include_vereinsrechnungen:
                 return []

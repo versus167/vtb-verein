@@ -3,7 +3,7 @@
     <div class="row items-center q-mb-md q-gutter-sm">
       <div class="text-subtitle1">Zur Freigabe</div>
       <q-space />
-      <q-select v-model="statusFilter" :options="STATUS_FILTER_OPTIONEN" emit-value
+      <q-select v-model="statusFilter" :options="FREIGABE_FILTER_OPTIONEN" emit-value
         map-options dense outlined label="Status" style="min-width:160px"
         @update:model-value="load" />
     </div>
@@ -107,7 +107,7 @@ import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
-  STATUS_FILTER_OPTIONEN, statusChip, fmtBetrag, fmtDatum, fehlertext,
+  FREIGABE_FILTER_OPTIONEN, statusChip, fmtBetrag, fmtDatum, fehlertext,
 } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'RechnungenFreigabePage' })

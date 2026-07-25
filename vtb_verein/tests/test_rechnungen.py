@@ -194,18 +194,20 @@ def test_einreichen_ohne_beleg_scheitert(db):
 
 
 def test_freigeben_aus_entwurf_scheitert(db):
-    """Der Übergang muss an der WHERE-Klausel scheitern, nicht erst an einer
-    Service-Prüfung – sonst wäre er im Wettlauf zweier Freigeber offen."""
-    from app.services.rechnung_service import FalscherStatusError
+    """Der Übergang scheitert an der WHERE-Klausel, nicht erst an einer
+    Service-Prüfung – sonst wäre er im Wettlauf zweier Freigeber offen.
 
+    Bewusst direkt am Repository: über den Service käme ein Entwurf gar nicht
+    erst bis hierher (fremde Entwürfe sind unsichtbar, siehe
+    test_freigabe_sicht_zeigt_keine_fremden_entwuerfe).
+    """
     fussball = _abteilung(db, "R-Fussball")
     einreicher = _user(db, "rtester_e2", perms=("rechnungen.einreichen",),
                        abteilungen=(fussball,))
-    leiter = _user(db, "rtester_al2",
-                   abteilung_perms=(("rechnungen.freigeben", fussball),))
     r = _rechnung(db, einreicher, fussball)
-    with pytest.raises(FalscherStatusError):
-        db.rechnungen.freigeben(r.id, leiter)
+
+    assert db.rechnung_repository.freigeben(r.id, freigegeben_von="wer_auch_immer") is False
+    assert db.rechnungen.get(r.id, einreicher).status == "entwurf"
 
 
 def test_doppelte_freigabe_scheitert(db):
@@ -306,6 +308,41 @@ def test_fremde_abteilung_sieht_rechnung_nicht(db):
 
     assert [x.id for x in db.rechnungen.list_zur_freigabe(hb_leiter)] == []
     assert [x.id for x in db.rechnungen.list_zur_freigabe(fb_leiter)] == [r.id]
+
+
+def test_freigabe_sicht_zeigt_keine_fremden_entwuerfe(db):
+    """Bis zum Einreichen ist die Rechnung die Werkbank des Einreichers."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_e12", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    leiter = _user(db, "rtester_al8",
+                   abteilung_perms=(("rechnungen.freigeben", fussball),))
+    gs = _user(db, "rtester_gs3", perms=("rechnungen.verwalten",))
+
+    entwurf = _rechnung(db, einreicher, fussball)
+    eingereicht = _rechnung(db, einreicher, fussball)
+    _beleg(db, eingereicht.id, einreicher)
+    db.rechnungen.einreichen(eingereicht.id, einreicher)
+
+    # ohne Statusfilter („Alle") darf der Entwurf nicht auftauchen
+    for user in (leiter, gs):
+        ids = [x.id for x in db.rechnungen.list_zur_freigabe(user)]
+        assert entwurf.id not in ids
+        assert eingereicht.id in ids
+
+    # explizit nach Entwürfen zu filtern liefert nichts
+    assert db.rechnungen.list_zur_freigabe(leiter, "entwurf") == []
+    # der Einreicher sieht seinen Entwurf weiterhin unter „Meine Rechnungen"
+    assert entwurf.id in [x.id for x in db.rechnungen.list_meine(einreicher)]
+
+    # ... und auch der Direktzugriff auf die Detail-URL bleibt zu, sonst wäre
+    # das Ausblenden in der Liste nur Kosmetik
+    from app.services.rechnung_service import KeinZugriffError
+    with pytest.raises(KeinZugriffError):
+        db.rechnungen.get(entwurf.id, leiter)
+    assert db.rechnungen.get(eingereicht.id, leiter).id == eingereicht.id
+    # die Geschäftsstelle behält den vollen Blick (Domänen-Verwaltung)
+    assert db.rechnungen.get(entwurf.id, gs).id == entwurf.id
 
 
 def test_vereinsrechnung_nur_fuer_verwaltung(db):
