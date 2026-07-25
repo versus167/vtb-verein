@@ -73,6 +73,19 @@ PERMISSION_GROUPS = [
         ],
     },
     {
+        'label': 'Rechnungen', 'icon': 'receipt_long',
+        'permissions': [
+            (Permission.RECHNUNGEN_EINREICHEN, 'Einreichen (Beleg + Kategorie)'),
+            # Wirkt abteilungsgebunden, wenn es über eine Funktion mit Abteilung
+            # geerbt wird (Regelfall 'abteilungsleiter'). Hier direkt vergeben gilt
+            # es vereinsweit – dann darf der Inhaber quer über alle Abteilungen
+            # freigeben.
+            (Permission.RECHNUNGEN_FREIGEBEN, 'Freigeben (je Abteilung über Funktion)'),
+            (Permission.RECHNUNGEN_VERWALTEN,
+             'Verwalten (alle sehen, Kategorien, Export)'),
+        ],
+    },
+    {
         'label': 'Verwaltung', 'icon': 'admin_panel_settings',
         'permissions': [
             (Permission.FUNKTIONEN_VERWALTEN, 'Funktionen verwalten'),
