@@ -79,8 +79,8 @@
             <div v-if="empfaengerIban(aktuell)" class="text-caption text-grey-7">
               {{ empfaengerIban(aktuell) }}
             </div>
-            <div v-else class="text-caption text-orange">
-              Keine IBAN hinterlegt – die Buchhaltung entnimmt sie dem Beleg.
+            <div v-else class="text-caption text-grey-7">
+              Bankverbindung entnimmt die Buchhaltung dem Beleg.
             </div>
           </q-banner>
 

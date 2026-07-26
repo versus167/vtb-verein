@@ -78,13 +78,12 @@
           <q-input v-model="form.beschreibung" outlined dense label="Wofür? (optional)"
             :disable="!istEntwurf" class="q-mb-sm" />
 
-          <!-- Kernfrage der Freigabe: an wen fließt das Geld? -->
+          <!-- Kernfrage der Freigabe: fließt das Geld zurück an den Einreicher
+               oder raus an den Aussteller? Name/IBAN des Ausstellers bewusst
+               nicht hier – die stehen auf dem Beleg. -->
           <div class="text-caption text-grey-7">An wen wird gezahlt? *</div>
           <q-option-group v-model="form.empfaenger_typ" :options="EMPFAENGER_OPTIONEN"
-            color="primary" dense :disable="!istEntwurf" class="q-mb-xs" />
-          <q-input v-if="form.empfaenger_typ === 'extern'" v-model="form.empfaenger_name"
-            outlined dense label="Rechnungsaussteller *" :disable="!istEntwurf"
-            class="q-mb-sm" />
+            color="primary" dense :disable="!istEntwurf" class="q-mb-sm" />
 
           <q-expansion-item dense-toggle label="Zusatzangaben (optional)"
             header-class="text-grey-7" class="q-mb-sm">
@@ -95,10 +94,6 @@
                 label="Rechnungsdatum" stack-label :disable="!istEntwurf" />
               <q-input v-model="form.rechnungsnummer" outlined dense
                 label="Rechnungsnummer" :disable="!istEntwurf" />
-              <!-- Bei Erstattung an ein Mitglied kommt die IBAN aus dem
-                   Mitgliedsstamm – hier nur für externe Aussteller nötig. -->
-              <q-input v-if="form.empfaenger_typ === 'extern'" v-model="form.empfaenger_iban"
-                outlined dense label="IBAN des Ausstellers" :disable="!istEntwurf" />
             </div>
           </q-expansion-item>
 
@@ -190,11 +185,11 @@ const dateiInput = ref(null)
 const form = ref(leeresFormular())
 
 const istEntwurf = computed(() => !aktuell.value?.id || aktuell.value.status === 'entwurf')
-// Einreichen braucht Kategorie, Empfänger und mindestens einen Beleg – egal ob
-// der schon hochgeladen ist oder noch im Dialog wartet.
+// Einreichen braucht Kategorie, die Empfänger-Entscheidung und mindestens einen
+// Beleg – egal ob der schon hochgeladen ist oder noch im Dialog wartet.
 const kannEinreichen = computed(() =>
   !!form.value.kategorie_id
-  && (form.value.empfaenger_typ !== 'extern' || !!form.value.empfaenger_name?.trim())
+  && !!form.value.empfaenger_typ
   && (aktuell.value?.id ? anhaenge.value.length > 0 : neueDateien.value.length > 0),
 )
 // „Keine Abteilung" muss wählbar bleiben: Vereinsrechnungen gehen an die Geschäftsstelle.
@@ -278,16 +273,14 @@ async function oeffne(r) {
 }
 
 function nutzlast() {
-  const extern = form.value.empfaenger_typ === 'extern'
   return {
     kategorie_id: form.value.kategorie_id,
     abteilung_id: form.value.abteilung_id,
     beschreibung: form.value.beschreibung || null,
-    // Bei Erstattung setzt das Backend das Mitglied aus dem Einreicher; Name und
-    // IBAN gehören dann nicht an die Rechnung (stehen im Mitgliedsstamm).
+    // Nur die Entscheidung Erstattung/Aussteller. Bei Erstattung setzt das
+    // Backend das Mitglied aus dem Einreicher; Name und IBAN des Ausstellers
+    // bleiben vorerst leer – sie stehen auf dem Beleg.
     empfaenger_typ: form.value.empfaenger_typ,
-    empfaenger_name: extern ? (form.value.empfaenger_name || null) : null,
-    empfaenger_iban: extern ? (form.value.empfaenger_iban || null) : null,
     betrag_cent: parseBetrag(form.value.betrag),
     rechnungsdatum: form.value.rechnungsdatum || null,
     rechnungsnummer: form.value.rechnungsnummer || null,

@@ -167,25 +167,28 @@ def test_zip_enthaelt_belege_und_uebersicht(db):
     assert zeile["Freigegeben von"] == "xtester_gs"
 
 
-def test_empfaenger_und_iban_in_der_uebersicht(db):
-    """Die Buchhaltung muss sehen, an wen gezahlt wird – bei Erstattung kommt die
-    IBAN aus dem Mitgliedsstamm, beim Aussteller von der Rechnung."""
+def test_zahlungsrichtung_in_der_uebersicht(db):
+    """Die Buchhaltung muss sehen, wohin das Geld fließt.
+
+    Erstattung → Einreicher samt IBAN aus dem Mitgliedsstamm; Aussteller →
+    nur die Richtung, die Bankverbindung steht auf dem Beleg.
+    """
     abteilung, einreicher, gs = _setup(db)
     with db.cursor() as cur:
         cur.execute("UPDATE mitglied SET iban='DE02120300000000202051' WHERE user_id=%s",
                     (einreicher.id,))
 
     _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="mitglied")
-    _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="extern",
-                           empfaenger_name="Sportwelt GmbH",
-                           empfaenger_iban="DE89370400440532013000")
+    _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="extern")
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     zeilen = _uebersicht(zip_bytes)
+    assert zeilen[0]["Zahlung an"] == "Erstattung an Einreicher"
     assert zeilen[0]["Empfaenger"] == "ExpTest xtester_ein"
     assert zeilen[0]["IBAN"] == "DE02120300000000202051"     # aus dem Mitgliedsstamm
-    assert zeilen[1]["Empfaenger"] == "Sportwelt GmbH"
-    assert zeilen[1]["IBAN"] == "DE89370400440532013000"     # von der Rechnung
+    assert zeilen[1]["Zahlung an"] == "Rechnungsaussteller"
+    assert zeilen[1]["Empfaenger"] == ""                     # steht auf dem Beleg
+    assert zeilen[1]["IBAN"] == ""
 
 
 def test_mehrere_belege_bekommen_suffix(db):

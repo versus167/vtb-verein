@@ -18,7 +18,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.models.rechnung import (
     Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF,
-    EMPFAENGER_TYPEN, EMPFAENGER_MITGLIED, EMPFAENGER_EXTERN,
+    EMPFAENGER_TYPEN, EMPFAENGER_MITGLIED,
 )
 
 
@@ -466,14 +466,17 @@ class RechnungService:
         return mitglied.id
 
     def _pruefe_empfaenger_vollstaendig(self, r: Rechnung) -> None:
-        """Vor dem Einreichen: Wer bekommt das Geld? Ohne Antwort kann niemand
-        die Zahlung freigeben."""
+        """Vor dem Einreichen: Erstattung oder Zahlung an den Aussteller?
+
+        Verlangt wird nur diese Entscheidung – sie ändert die Richtung des Geldes
+        und muss deshalb vom Einreicher kommen. Name und Bankverbindung eines
+        externen Ausstellers stehen auf dem Beleg; die Felder dafür existieren
+        (empfaenger_name/-iban), werden aber bewusst nicht erzwungen.
+        """
         if r.empfaenger_typ not in EMPFAENGER_TYPEN:
             raise EmpfaengerFehltError(
-                "Bitte angeben, an wen gezahlt werden soll.")
-        if r.empfaenger_typ == EMPFAENGER_EXTERN and not (r.empfaenger_name or '').strip():
-            raise EmpfaengerFehltError(
-                "Bitte den Rechnungsaussteller angeben, an den gezahlt werden soll.")
+                "Bitte angeben, ob erstattet oder an den Rechnungsaussteller "
+                "gezahlt werden soll.")
         if r.empfaenger_typ == EMPFAENGER_MITGLIED and r.empfaenger_mitglied_id is None:
             raise EmpfaengerFehltError(
                 "Für die Erstattung fehlt das Mitglied, an das gezahlt werden soll.")

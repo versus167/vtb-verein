@@ -26,11 +26,12 @@ export const FREIGABE_FILTER_OPTIONEN = STATUS_FILTER_OPTIONEN.filter(
   (o) => o.value !== 'entwurf',
 )
 
-// Zahlungsempfänger: entweder bekommt der Einreicher seine Auslage erstattet
-// (IBAN aus dem Mitgliedsstamm) oder der Verein zahlt an den Aussteller.
+// Die eine Entscheidung, die der Einreicher treffen muss: fließt das Geld
+// zurück an ihn oder raus an den Aussteller? Name/IBAN des Ausstellers stehen
+// auf dem Beleg und werden (noch) nicht erfasst.
 export const EMPFAENGER_OPTIONEN = [
   { label: 'Erstattung an mich (ich habe ausgelegt)', value: 'mitglied' },
-  { label: 'An den Rechnungsaussteller', value: 'extern' },
+  { label: 'Zahlung an den Rechnungsaussteller', value: 'extern' },
 ]
 
 export function empfaengerText(r) {
@@ -38,7 +39,9 @@ export function empfaengerText(r) {
     return `Erstattung an ${r.empfaenger_mitglied_name || 'Einreicher'}`
   }
   if (r.empfaenger_typ === 'extern') {
-    return `An ${r.empfaenger_name || 'Aussteller (ohne Namen)'}`
+    return r.empfaenger_name
+      ? `Zahlung an ${r.empfaenger_name}`
+      : 'Zahlung an den Rechnungsaussteller'
   }
   return 'Empfänger nicht angegeben'
 }

@@ -32,9 +32,17 @@ _UEBERSICHT_DATEINAME = "uebersicht.csv"
 _CSV_KOPF = (
     "Nr", "Belegdateien", "Kategorie", "Sachkonto", "Abteilung", "Kostenstelle",
     "Kostentraeger", "Betrag EUR", "Rechnungsdatum", "Rechnungsnummer",
-    "Empfaenger", "IBAN", "Beschreibung", "Eingereicht von", "Freigegeben von",
-    "Freigegeben am",
+    # „Zahlung an" trägt die Entscheidung des Einreichers (Erstattung vs.
+    # Aussteller) – sie steuert, wohin das Geld fließt. Empfaenger/IBAN sind die
+    # Details dazu und bleiben leer, solange sie nur auf dem Beleg stehen.
+    "Zahlung an", "Empfaenger", "IBAN",
+    "Beschreibung", "Eingereicht von", "Freigegeben von", "Freigegeben am",
 )
+
+_ZAHLUNG_AN = {
+    "mitglied": "Erstattung an Einreicher",
+    "extern": "Rechnungsaussteller",
+}
 
 
 class KeineRechnungenError(Exception):
@@ -175,6 +183,7 @@ class RechnungExportService:
             self._betrag(r),
             r.rechnungsdatum or "",
             r.rechnungsnummer or "",
+            _ZAHLUNG_AN.get(r.empfaenger_typ, ""),
             self._empfaenger(r),
             self._iban(r),
             r.beschreibung or "",

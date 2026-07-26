@@ -224,32 +224,35 @@ def test_einreichen_ohne_empfaenger_scheitert(db):
         db.rechnungen.einreichen(r.id, einreicher)
 
 
-def test_einreichen_extern_ohne_namen_scheitert(db):
-    """„An den Aussteller" ohne Namen ist für die Buchhaltung wertlos."""
-    from app.services.rechnung_service import EmpfaengerFehltError
-
+def test_einreichen_extern_braucht_keinen_namen(db):
+    """Verlangt wird nur die Entscheidung. Name und Bankverbindung des
+    Ausstellers stehen auf dem Beleg und werden (noch) nicht erfasst."""
     fussball = _abteilung(db, "R-Fussball")
     einreicher = _user(db, "rtester_extl", perms=("rechnungen.einreichen",),
                        abteilungen=(fussball,))
     r = _rechnung(db, einreicher, fussball, empfaenger_typ="extern")
     _beleg(db, r.id, einreicher)
-    with pytest.raises(EmpfaengerFehltError):
-        db.rechnungen.einreichen(r.id, einreicher)
 
-    r = db.rechnungen.aktualisieren(r.id, einreicher, expected_version=r.version,
-                                    empfaenger_name="Sportwelt GmbH")
-    assert db.rechnungen.einreichen(r.id, einreicher).status == "eingereicht"
+    eingereicht = db.rechnungen.einreichen(r.id, einreicher)
+    assert eingereicht.status == "eingereicht"
+    assert eingereicht.empfaenger_typ == "extern"
 
 
 def test_externer_empfaenger_bleibt_ohne_mitglied(db):
-    """Bei „an den Aussteller" darf kein Mitglied als Empfänger einwandern."""
+    """Bei „an den Aussteller" darf kein Mitglied als Empfänger einwandern –
+    sonst zeigte die Freigabe eine Erstattung an, die es nicht gibt."""
     fussball = _abteilung(db, "R-Fussball")
     einreicher = _user(db, "rtester_ext2", perms=("rechnungen.einreichen",),
                        abteilungen=(fussball,))
-    r = _rechnung(db, einreicher, fussball, empfaenger_typ="extern",
-                  empfaenger_name="Getränke Meier", empfaenger_iban="DE89370400440532013000")
+    r = _rechnung(db, einreicher, fussball, empfaenger_typ="extern")
     assert r.empfaenger_mitglied_id is None
-    assert r.empfaenger_name == "Getränke Meier"
+
+    # Die Felder bleiben für später erhalten – wer sie über die API mitgibt,
+    # bekommt sie auch gespeichert.
+    mit_namen = _rechnung(db, einreicher, fussball, empfaenger_typ="extern",
+                          empfaenger_name="Getränke Meier",
+                          empfaenger_iban="DE89370400440532013000")
+    assert mit_namen.empfaenger_name == "Getränke Meier"
 
 
 def test_freigeben_aus_entwurf_scheitert(db):
