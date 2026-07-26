@@ -122,6 +122,7 @@ def _user(db, username, perms, abteilung_id):
 
 def _freigegebene_rechnung(db, einreicher, gs, abteilung, *, belege=1, **felder):
     felder.setdefault("empfaenger_typ", "mitglied")   # Regelfall: Auslage erstatten
+    felder.setdefault("betrag_cent", 1000)            # Pflicht beim Einreichen
     r = db.rechnungen.anlegen(
         einreicher, kategorie_id=db.rechnungen.list_kategorien()[0].id,
         abteilung_id=abteilung, **felder)
@@ -223,7 +224,8 @@ def test_nur_freigegebene_werden_exportiert(db):
     abteilung, einreicher, gs = _setup(db)
     # eingereicht, aber noch nicht freigegeben
     r = db.rechnungen.anlegen(einreicher, kategorie_id=db.rechnungen.list_kategorien()[0].id,
-                              abteilung_id=abteilung, empfaenger_typ="mitglied")
+                              abteilung_id=abteilung, empfaenger_typ="mitglied",
+                              betrag_cent=1000)
     db.rechnungen.add_anhang(r.id, einreicher, original_name="b.png",
                              mime_type="image/png", inhalt=_PNG)
     db.rechnungen.einreichen(r.id, einreicher)
@@ -317,9 +319,12 @@ def test_summe_und_anzahl_im_header(db):
 
 
 def test_rechnung_ohne_betrag_stoert_summe_nicht(db):
-    """Betrag ist optional – die Fibu trägt ihn nach."""
+    """Eingereicht wird nur mit Betrag – die Geschäftsstelle darf ihn danach aber
+    wieder leeren (und Altbestände haben keinen). Der Export muss das aushalten."""
     abteilung, einreicher, gs = _setup(db)
-    _freigegebene_rechnung(db, einreicher, gs, abteilung)               # ohne Betrag
+    ohne = _freigegebene_rechnung(db, einreicher, gs, abteilung, betrag_cent=700)
+    db.rechnungen.aktualisieren(ohne.id, gs, expected_version=ohne.version,
+                                betrag_cent=None)
     _freigegebene_rechnung(db, einreicher, gs, abteilung, betrag_cent=500)
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)

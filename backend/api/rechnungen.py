@@ -24,6 +24,7 @@ from app.models.rechnung import STATUS_ALLE
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.rechnung_service import (
     BelegFehltError,
+    BetragFehltError,
     EmpfaengerFehltError,
     FalscherStatusError,
     KategorieInBenutzungError,
@@ -47,7 +48,8 @@ class RechnungWrite(BaseModel):
     kategorie_id: int
     abteilung_id: Optional[int] = None
     beschreibung: Optional[str] = None
-    # Optional – der Einreicher muss nur Beleg + Kategorie liefern.
+    # Am Entwurf optional, beim Einreichen Pflicht (RechnungService prüft das) –
+    # so lässt sich eine Rechnung zwischenspeichern, bevor der Betrag feststeht.
     betrag_cent: Optional[int] = None
     rechnungsdatum: Optional[str] = None
     rechnungsnummer: Optional[str] = None
@@ -91,7 +93,8 @@ def _fehler_zu_http(exc: Exception) -> HTTPException:
     if isinstance(exc, (FalscherStatusError, RechnungGesperrtError,
                         KategorieInBenutzungError, NichtJuengsterLaufError)):
         return HTTPException(status_code=409, detail=str(exc))
-    if isinstance(exc, (BelegFehltError, EmpfaengerFehltError, ValueError)):
+    if isinstance(exc, (BelegFehltError, EmpfaengerFehltError, BetragFehltError,
+                        ValueError)):
         return HTTPException(status_code=422, detail=str(exc))
     raise exc
 

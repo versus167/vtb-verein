@@ -58,10 +58,17 @@
         </q-card-section>
 
         <q-card-section class="q-pt-none">
-          <!-- Pflicht: Kategorie. Alles andere macht die Buchhaltung. -->
+          <!-- Pflicht zum Einreichen: Kategorie, Betrag, Zahlungsrichtung, Beleg. -->
           <q-select v-model="form.kategorie_id" :options="kategorien" option-value="id"
             option-label="name" emit-value map-options outlined dense
             label="Kategorie *" :disable="!istEntwurf" class="q-mb-sm" />
+
+          <!-- Der Freigeber entscheidet über eine Summe – die muss er sehen,
+               ohne jeden Beleg zu öffnen. Darum fest im Dialog, nicht unter
+               „Zusatzangaben". -->
+          <q-input v-model="form.betrag" outlined dense label="Betrag (€) *"
+            inputmode="decimal" suffix="€" :disable="!istEntwurf" class="q-mb-sm"
+            :error="!!betragFehler" :error-message="betragFehler" />
 
           <!-- Abteilung nur zeigen, wenn es überhaupt etwas zu wählen gibt -->
           <q-select v-if="abteilungen.length > 1" v-model="form.abteilung_id"
@@ -88,8 +95,6 @@
           <q-expansion-item dense-toggle label="Zusatzangaben (optional)"
             header-class="text-grey-7" class="q-mb-sm">
             <div class="q-pt-sm q-gutter-sm">
-              <q-input v-model="form.betrag" outlined dense label="Betrag (€)"
-                inputmode="decimal" :disable="!istEntwurf" />
               <q-input v-model="form.rechnungsdatum" outlined dense type="date"
                 label="Rechnungsdatum" stack-label :disable="!istEntwurf" />
               <q-input v-model="form.rechnungsnummer" outlined dense
@@ -185,10 +190,18 @@ const dateiInput = ref(null)
 const form = ref(leeresFormular())
 
 const istEntwurf = computed(() => !aktuell.value?.id || aktuell.value.status === 'entwurf')
-// Einreichen braucht Kategorie, die Empfänger-Entscheidung und mindestens einen
-// Beleg – egal ob der schon hochgeladen ist oder noch im Dialog wartet.
+const betragCent = computed(() => parseBetrag(form.value.betrag))
+// Erst meckern, wenn wirklich etwas Falsches dasteht – ein noch leeres Feld ist
+// beim Öffnen des Dialogs der Normalfall und braucht keine rote Meldung.
+const betragFehler = computed(() => {
+  if (!form.value.betrag.trim()) return ''
+  return betragCent.value && betragCent.value > 0 ? '' : 'Bitte einen Betrag größer 0 angeben.'
+})
+// Einreichen braucht Kategorie, Betrag, die Empfänger-Entscheidung und mindestens
+// einen Beleg – egal ob der schon hochgeladen ist oder noch im Dialog wartet.
 const kannEinreichen = computed(() =>
   !!form.value.kategorie_id
+  && betragCent.value > 0
   && !!form.value.empfaenger_typ
   && (aktuell.value?.id ? anhaenge.value.length > 0 : neueDateien.value.length > 0),
 )
@@ -263,7 +276,7 @@ async function oeffne(r) {
     empfaenger_typ: r.empfaenger_typ || 'mitglied',
     empfaenger_name: r.empfaenger_name || '',
     empfaenger_iban: r.empfaenger_iban || '',
-    betrag: r.betrag_cent != null ? String(r.betrag_cent / 100).replace('.', ',') : '',
+    betrag: r.betrag_cent != null ? (r.betrag_cent / 100).toFixed(2).replace('.', ',') : '',
     rechnungsdatum: r.rechnungsdatum || '',
     rechnungsnummer: r.rechnungsnummer || '',
   }
@@ -281,7 +294,7 @@ function nutzlast() {
     // Backend das Mitglied aus dem Einreicher; Name und IBAN des Ausstellers
     // bleiben vorerst leer – sie stehen auf dem Beleg.
     empfaenger_typ: form.value.empfaenger_typ,
-    betrag_cent: parseBetrag(form.value.betrag),
+    betrag_cent: betragCent.value,
     rechnungsdatum: form.value.rechnungsdatum || null,
     rechnungsnummer: form.value.rechnungsnummer || null,
   }
@@ -320,6 +333,11 @@ async function speichern() {
     error.value = 'Bitte eine Kategorie wählen.'
     return
   }
+  // Ein Entwurf darf ohne Betrag bleiben – aber nicht mit einem unlesbaren.
+  if (betragFehler.value) {
+    error.value = betragFehler.value
+    return
+  }
   busy.value = true
   error.value = ''
   try {
@@ -338,6 +356,10 @@ async function speichern() {
 async function einreichen() {
   if (!form.value.kategorie_id) {
     error.value = 'Bitte eine Kategorie wählen.'
+    return
+  }
+  if (!(betragCent.value > 0)) {
+    error.value = 'Bitte den Rechnungsbetrag angeben.'
     return
   }
   busy.value = true

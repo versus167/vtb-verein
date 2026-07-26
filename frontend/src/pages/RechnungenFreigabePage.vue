@@ -64,7 +64,9 @@
             <span v-if="aktuell.betrag_cent != null" class="text-subtitle2">
               {{ fmtBetrag(aktuell.betrag_cent) }}
             </span>
-            <span v-else class="text-grey-7">Betrag trägt die Buchhaltung nach</span>
+            <!-- Seit der Betrag Pflicht ist, kann das nur noch bei Altbeständen
+                 auftreten oder wenn die Geschäftsstelle ihn wieder geleert hat. -->
+            <span v-else class="text-grey-7">Ohne Betragsangabe</span>
             <span v-if="aktuell.rechnungsdatum"> · vom {{ fmtDatum(aktuell.rechnungsdatum) }}</span>
             <span v-if="aktuell.rechnungsnummer"> · Nr. {{ aktuell.rechnungsnummer }}</span>
           </div>

@@ -5,9 +5,10 @@ abteilungs-scoped (Recht `rechnungen.freigeben`, i.d.R. über die Funktion
 'abteilungsleiter'); Rechnungen ohne Abteilung gibt nur die Geschäftsstelle
 (`rechnungen.verwalten`) frei.
 
-Der Einreicher pflegt bewusst nur Beleg + Kategorie – Betrag, Rechnungsdatum und
-Empfänger sind optional und können von der Geschäftsstelle nachgetragen werden.
-Ohne Beleg ist ein Einreichen nicht möglich: die Rechnung IST der Beleg.
+Zum Einreichen gehören Beleg, Kategorie, Betrag und die Entscheidung, an wen
+gezahlt wird – ohne diese vier kann niemand freigeben. Rechnungsdatum und
+-nummer bleiben optional und trägt die Geschäftsstelle bei Bedarf nach.
+Geprüft wird erst beim Einreichen: ein Entwurf darf unvollständig sein.
 
 Die Statuswechsel selbst erzwingt das Repository über die WHERE-Klausel; hier
 stehen Rechteprüfung, Vorbedingungen und Benachrichtigungen.
@@ -45,6 +46,11 @@ class BelegFehltError(RechnungFehler):
 class EmpfaengerFehltError(RechnungFehler):
     """Einreichen ohne Zahlungsempfänger – niemand kann eine Zahlung freigeben,
     ohne zu wissen, an wen sie geht."""
+
+
+class BetragFehltError(RechnungFehler):
+    """Einreichen ohne Betrag – der Freigeber entscheidet über eine Summe und
+    muss sie sehen, ohne jeden Beleg öffnen zu müssen."""
 
 
 class RechnungGesperrtError(RechnungFehler):
@@ -217,6 +223,7 @@ class RechnungService:
             raise KeinZugriffError("Kein Recht zum Einreichen von Rechnungen.")
         self._pruefe_kategorie(kategorie_id)
         self._pruefe_empfaenger(empfaenger_typ)
+        self._pruefe_betrag(betrag_cent)
         self._pruefe_abteilung_waehlbar(user, abteilung_id)
         empfaenger_mitglied_id = self._aufloesen_empfaenger_mitglied(
             user, empfaenger_typ, empfaenger_mitglied_id)
@@ -257,6 +264,7 @@ class RechnungService:
         )
         self._pruefe_kategorie(neu.kategorie_id)
         self._pruefe_empfaenger(neu.empfaenger_typ)
+        self._pruefe_betrag(neu.betrag_cent)
         neu.empfaenger_mitglied_id = self._aufloesen_empfaenger_mitglied(
             user, neu.empfaenger_typ, neu.empfaenger_mitglied_id)
         if neu.abteilung_id != r.abteilung_id:
@@ -292,6 +300,7 @@ class RechnungService:
         if self._anhang_repo.count_by_rechnung(rechnung_id) == 0:
             raise BelegFehltError("Bitte zuerst den Beleg hochladen.")
         self._pruefe_empfaenger_vollstaendig(r)
+        self._pruefe_betrag_vorhanden(r)
         if not self._rechnung.einreichen(rechnung_id, eingereicht_von=user.username):
             raise FalscherStatusError("Nur Entwürfe können eingereicht werden.")
         aktuell = self._rechnung.get(rechnung_id)
@@ -441,6 +450,24 @@ class RechnungService:
     def _pruefe_kategorie(self, kategorie_id: int) -> None:
         if self._kategorie.get(kategorie_id) is None:
             raise ValueError("Unbekannte oder gelöschte Kategorie.")
+
+    @staticmethod
+    def _pruefe_betrag(betrag_cent: Optional[int]) -> None:
+        """Ein gesetzter Betrag muss positiv sein.
+
+        `None` bleibt erlaubt: ein Entwurf darf noch ohne Betrag existieren, und
+        die Geschäftsstelle kann ihn im Nachgang wieder leeren. Verlangt wird er
+        beim Einreichen (`_pruefe_betrag_vorhanden`) – 0,00 € wäre sonst der
+        naheliegende Weg, die Pflicht zu umgehen.
+        """
+        if betrag_cent is not None and betrag_cent <= 0:
+            raise ValueError("Der Betrag muss größer als 0,00 € sein.")
+
+    @staticmethod
+    def _pruefe_betrag_vorhanden(r: Rechnung) -> None:
+        if r.betrag_cent is None:
+            raise BetragFehltError(
+                "Bitte den Rechnungsbetrag angeben – ohne Summe kann niemand freigeben.")
 
     @staticmethod
     def _pruefe_empfaenger(empfaenger_typ: Optional[str]) -> None:

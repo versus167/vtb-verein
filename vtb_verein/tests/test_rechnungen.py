@@ -151,6 +151,7 @@ def _kategorie_id(db):
 
 def _rechnung(db, user, abteilung_id=None, **felder):
     felder.setdefault("empfaenger_typ", "mitglied")   # Regelfall: Auslage erstatten
+    felder.setdefault("betrag_cent", 1234)            # Pflicht beim Einreichen
     return db.rechnungen.anlegen(
         user, kategorie_id=_kategorie_id(db), abteilung_id=abteilung_id, **felder)
 
@@ -253,6 +254,46 @@ def test_externer_empfaenger_bleibt_ohne_mitglied(db):
                           empfaenger_name="Getränke Meier",
                           empfaenger_iban="DE89370400440532013000")
     assert mit_namen.empfaenger_name == "Getränke Meier"
+
+
+def test_einreichen_ohne_betrag_scheitert(db):
+    """Der Freigeber entscheidet über eine Summe – die muss beim Einreichen dastehen.
+
+    Der Entwurf selbst darf noch ohne Betrag existieren: erst der Statuswechsel
+    verlangt ihn.
+    """
+    from app.services.rechnung_service import BetragFehltError
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_nobtr", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball, betrag_cent=None)
+    assert r.status == "entwurf"                       # Anlegen bleibt erlaubt
+    _beleg(db, r.id, einreicher)
+
+    with pytest.raises(BetragFehltError):
+        db.rechnungen.einreichen(r.id, einreicher)
+    assert db.rechnungen.get(r.id, einreicher).status == "entwurf"
+
+    r = db.rechnungen.aktualisieren(r.id, einreicher, expected_version=r.version,
+                                    betrag_cent=4250)
+    assert db.rechnungen.einreichen(r.id, einreicher).status == "eingereicht"
+
+
+def test_betrag_null_oder_negativ_wird_abgewiesen(db):
+    """0,00 € wäre der naheliegende Weg, die Betragspflicht zu umgehen."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_btr0", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    with pytest.raises(ValueError):
+        _rechnung(db, einreicher, fussball, betrag_cent=0)
+    with pytest.raises(ValueError):
+        _rechnung(db, einreicher, fussball, betrag_cent=-500)
+
+    r = _rechnung(db, einreicher, fussball)
+    with pytest.raises(ValueError):
+        db.rechnungen.aktualisieren(r.id, einreicher, expected_version=r.version,
+                                    betrag_cent=0)
 
 
 def test_freigeben_aus_entwurf_scheitert(db):
