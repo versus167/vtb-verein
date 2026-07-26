@@ -4,10 +4,17 @@ Bewusst NICHT über FBASC: die Buchungszeile entsteht in der Fibu, die App liefe
 den Belegstapel plus eine Übersicht. Das Zip ist flach (alles im Root):
 
     rechnungen-export-7.zip
-    ├─ R42.pdf                 Beleg zu Rechnung 42
-    ├─ R42-2.jpg               weiterer Beleg derselben Rechnung
-    ├─ R43.pdf
+    ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - beleg.pdf
+    ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - lieferschein.jpg
+    ├─ R43 - Erstattung Tim Trainer - Verein - Reisekosten - Fahrt - tanken.pdf
     └─ uebersicht.csv
+
+Der Dateiname trägt die erfassten Angaben mit (`_dateiname`), weil der Import auf
+der Fibu-Seite die `uebersicht.csv` derzeit nicht mitliest: wer nur den Ordner vor
+sich hat, muss trotzdem sehen, an wen gezahlt wird, aus welcher Abteilung und
+wofür. Die Zeichen sind auf ASCII und Windows-taugliche Namen reduziert; führend
+steht die Rechnungsnummer, damit Datei und CSV-Zeile zusammenfinden. Sobald die
+Fibu die Übersicht auswerten kann, darf das wieder schrumpfen.
 
 Delta-Semantik wie beim Fibu-/Kassenexport: exportiert wird, was freigegeben und
 noch in keinem Lauf gestempelt ist. Ein Lauf lässt sich zurücknehmen (Un-Export),
@@ -22,6 +29,7 @@ import io
 import logging
 import os
 import re
+import unicodedata
 import zipfile
 from datetime import date
 
@@ -43,6 +51,17 @@ _ZAHLUNG_AN = {
     "mitglied": "Erstattung an Einreicher",
     "extern": "Rechnungsaussteller",
 }
+
+# Dateinamen: " - " trennt die Bestandteile, deshalb darf es innerhalb eines
+# Bestandteils nicht vorkommen (siehe _teil). Die Grenzen halten den Namen unter
+# dem, was Windows beim Entpacken in tiefen Ordnern noch verkraftet.
+_TRENNER = " - "
+_MAX_TEIL = 40
+_MAX_BASIS = 150
+
+_UMLAUTE = str.maketrans({
+    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
+})
 
 
 class KeineRechnungenError(Exception):
@@ -143,14 +162,12 @@ class RechnungExportService:
         verwendet: set[str] = set()
 
         for r in rechnungen:
-            basis = self._eindeutiger_basis(r, verwendet)
             namen: list[str] = []
-            for i, a in enumerate(self._anhang_repo.list_by_rechnung(r.id)):
+            for a in self._anhang_repo.list_by_rechnung(r.id):
                 inhalt = self._lese(a)
                 if inhalt is None:
                     continue
-                ext = self._ext(a)
-                name = f"{basis}{ext}" if not namen else f"{basis}-{len(namen) + 1}{ext}"
+                name = self._eindeutig(self._dateiname(r, a), self._ext(a), verwendet)
                 dateien[name] = inhalt
                 namen.append(name)
             zeilen.append(self._csv_zeile(r, namen))
@@ -174,7 +191,9 @@ class RechnungExportService:
     def _csv_zeile(self, r, dateinamen: list[str]) -> list:
         return [
             f"R{r.id}",
-            " ".join(dateinamen),
+            # Die Namen enthalten selbst Leerzeichen – als Trenner taugt hier nur
+            # ein Zeichen, das in keinem Dateinamen vorkommen kann.
+            " | ".join(dateinamen),
             r.kategorie_name or "",
             r.kategorie_sachkonto or "",
             r.abteilung_name or "",
@@ -222,18 +241,58 @@ class RechnungExportService:
         return sum(r.betrag_cent or 0 for r in rechnungen)
 
     @staticmethod
-    def _safe_basename(roh: str) -> str:
-        """Zip-tauglicher Basisname (nur [A-Za-z0-9_-])."""
-        s = re.sub(r"[^A-Za-z0-9_-]+", "-", roh).strip("-")
-        return s or "beleg"
+    def _teil(roh, grenze: int = _MAX_TEIL) -> str:
+        """Ein Namensbestandteil: ASCII, ohne Zeichen, die Windows/Zip stören.
 
-    def _eindeutiger_basis(self, r, verwendet: set[str]) -> str:
-        basis = self._safe_basename(f"R{r.id}")
-        kandidat, n = basis, 1
-        while kandidat in verwendet:
+        Umlaute werden umschrieben statt weggeworfen ('Fußball' → 'Fussball'),
+        und Bindestriche verlieren ihre umgebenden Leerzeichen – sonst wäre
+        „Getränke - Meier“ vom Trenner nicht zu unterscheiden.
+        """
+        s = str(roh or "").translate(_UMLAUTE)
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+        s = re.sub(r"[^A-Za-z0-9 _.()+&-]+", " ", s)
+        s = re.sub(r"\s*-\s*", "-", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s[:grenze].strip(" .-")
+
+    @staticmethod
+    def _zahlung_an_kurz(r) -> str:
+        """Wohin das Geld fließt – die wichtigste Angabe, deshalb ganz vorn."""
+        if r.empfaenger_typ == "mitglied":
+            return f"Erstattung {r.empfaenger_mitglied_name or 'Einreicher'}"
+        if r.empfaenger_typ == "extern":
+            return (f"Zahlung {r.empfaenger_name}" if r.empfaenger_name
+                    else "Zahlung Aussteller")
+        return "Empfaenger offen"
+
+    def _dateiname(self, r, anhang) -> str:
+        """Basisname (ohne Endung) aus den erfassten Angaben.
+
+        Die Rechnungsnummer steht vorn: sie ist der einzige Bestandteil, der die
+        Datei wieder ihrer Zeile in `uebersicht.csv` zuordnet, und sie sortiert
+        den Ordner in Einreichungsreihenfolge.
+        """
+        teile = [
+            f"R{r.id}",
+            self._teil(self._zahlung_an_kurz(r)),
+            self._teil(r.abteilung_name or "Verein"),
+            self._teil(r.kategorie_name),
+            self._teil(r.beschreibung),                  # Notiz, oft leer
+            self._teil(os.path.splitext(anhang.original_name or "")[0]),
+        ]
+        basis = _TRENNER.join(t for t in teile if t)[:_MAX_BASIS].strip(" .-")
+        return basis or f"R{r.id}"
+
+    @staticmethod
+    def _eindeutig(basis: str, ext: str, verwendet: set[str]) -> str:
+        """Kollisionen durchzählen – case-insensitiv, weil Windows beim Entpacken
+        sonst zwei Dateien übereinanderschreibt, die sich nur in der Groß-/
+        Kleinschreibung unterscheiden."""
+        kandidat, n = f"{basis}{ext}", 1
+        while kandidat.lower() in verwendet:
             n += 1
-            kandidat = f"{basis}-b{n}"
-        verwendet.add(kandidat)
+            kandidat = f"{basis} ({n}){ext}"
+        verwendet.add(kandidat.lower())
         return kandidat
 
     @staticmethod

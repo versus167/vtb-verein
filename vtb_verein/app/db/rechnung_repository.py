@@ -6,7 +6,7 @@ denselben Übergang doppelt ausführen. Muster wie ul_abrechnung_repository.
 """
 from typing import Optional
 
-from app.models.rechnung import Rechnung
+from app.models.rechnung import Rechnung, STATUS_EXPORTIERT
 from app.db.base_repository import BaseRepository
 
 
@@ -51,12 +51,26 @@ class RechnungRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
+    @staticmethod
+    def _status_bedingung(status: Optional[str], params: list) -> str:
+        """Statusfilter inkl. des abgeleiteten 'exportiert'.
+
+        Exportierte Rechnungen tragen in der Spalte weiter 'freigegeben'; für die
+        Oberfläche sind sie ein eigener Status. Damit beides zusammenpasst, holt
+        der Filter 'freigegeben' nur die noch nicht gestempelten – sonst stünde
+        eine Rechnung unter zwei Filtern und trüge nur ein Chip.
+        """
+        if not status:
+            return ""
+        if status == STATUS_EXPORTIERT:
+            return " AND r.exportiert_in_export_id IS NOT NULL"
+        params.append(status)
+        return " AND r.status = %s AND r.exportiert_in_export_id IS NULL"
+
     def list_for_ersteller(self, user_id: int, status: Optional[str] = None) -> list[Rechnung]:
         where = " WHERE r.ersteller_user_id = %s AND r.deleted_at IS NULL"
         params: list = [user_id]
-        if status:
-            where += " AND r.status = %s"
-            params.append(status)
+        where += self._status_bedingung(status, params)
         with self.cursor() as cur:
             cur.execute(_SELECT + where + _ORDER, params)
             return [_map(r) for r in cur.fetchall()]
@@ -89,9 +103,7 @@ class RechnungRepository(BaseRepository):
                 params.append(list(abteilung_ids))
             else:
                 where += " AND r.abteilung_id IS NULL"
-        if status:
-            where += " AND r.status = %s"
-            params.append(status)
+        where += self._status_bedingung(status, params)
         with self.cursor() as cur:
             cur.execute(_SELECT + where + _ORDER, params)
             return [_map(r) for r in cur.fetchall()]
@@ -196,13 +208,25 @@ class RechnungRepository(BaseRepository):
             return cur.rowcount == 1
 
     def ablehnen(self, id: int, *, grund: Optional[str], abgelehnt_von: str) -> bool:
+        """Ablehnen – auch aus 'freigegeben', solange nicht exportiert.
+
+        Eine versehentliche Freigabe soll sich in einem Schritt korrigieren
+        lassen und nicht erst über den Umweg 'zurücksetzen'. Mit dem Export ist
+        Schluss: ab da liegt der Beleg in der Fibu.
+
+        Die Freigabe-Spuren werden dabei gelöscht – eine abgelehnte Rechnung mit
+        Freigeber im Feld wäre irreführend. Wer sie gegeben hat, steht weiter in
+        der History.
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE rechnung
                 SET status='abgelehnt', abgelehnt_grund=%s,
+                    freigegeben_am=NULL, freigegeben_von=NULL,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
-                WHERE id=%s AND status='eingereicht' AND deleted_at IS NULL
+                WHERE id=%s AND status IN ('eingereicht','freigegeben')
+                  AND exportiert_in_export_id IS NULL AND deleted_at IS NULL
                 """,
                 (grund, abgelehnt_von, id),
             )

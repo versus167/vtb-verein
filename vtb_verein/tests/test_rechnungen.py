@@ -366,6 +366,32 @@ def test_zuruecksetzen_nach_freigabe_geht_auf_eingereicht(db):
     assert r.eingereicht_am is not None      # Einreichung bleibt bestehen
 
 
+def test_ablehnen_nach_versehentlicher_freigabe(db):
+    """Eine versehentliche Freigabe muss sich in einem Schritt korrigieren lassen.
+
+    Die Freigabe-Spuren verschwinden dabei – „abgelehnt, freigegeben von X" wäre
+    ein Widerspruch. In der History steht der Vorgang weiter.
+    """
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_e5b", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    leiter = _user(db, "rtester_al5b",
+                   abteilung_perms=(("rechnungen.freigeben", fussball),))
+    r = _rechnung(db, einreicher, fussball)
+    _beleg(db, r.id, einreicher)
+    db.rechnungen.einreichen(r.id, einreicher)
+    r = db.rechnungen.freigeben(r.id, leiter)
+    assert r.freigegeben_von == "rtester_al5b"
+
+    r = db.rechnungen.ablehnen(r.id, leiter, "doch nicht, falscher Beleg")
+    assert r.status == "abgelehnt"
+    assert r.abgelehnt_grund == "doch nicht, falscher Beleg"
+    assert r.freigegeben_am is None and r.freigegeben_von is None
+
+    verlauf = [h["status"] for h in db.rechnung_repository.get_history(r.id)]
+    assert "freigegeben" in verlauf
+
+
 # ------------------------------------------------------------ Abteilungs-Scope
 
 def test_fremde_abteilung_darf_nicht_freigeben(db):

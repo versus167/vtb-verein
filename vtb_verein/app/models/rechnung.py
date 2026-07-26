@@ -2,12 +2,13 @@
 Datenmodelle für das Einreichen und Freigeben von Rechnungen.
 
 - RechnungKategorie: kurze Auswahlliste (Stammdaten) mit dem Aufwandskonto für die Fibu.
-- Rechnung:          Header mit Status-Workflow entwurf → eingereicht → freigegeben/abgelehnt.
+- Rechnung:          Header mit Status-Workflow entwurf → eingereicht → freigegeben/abgelehnt;
+                     nach dem Export-Stempel zeigt die Oberfläche 'exportiert'.
 - RechnungAnhang:    Beleg-Datei (Blatt ohne version/History, Datei via AnhangService).
 - RechnungExport:    Header eines Export-Laufs (Delta: nur noch nicht exportierte Rechnungen).
 
-Der Einreicher pflegt nur Beleg + Kategorie; Betrag/Rechnungsdatum/Empfänger sind optional
-und können von der Geschäftsstelle nachgetragen werden ("den Rest macht die Fibu").
+Zum Einreichen gehören Beleg, Kategorie, Betrag und die Zahlungsrichtung; Rechnungsdatum
+und -nummer trägt die Geschäftsstelle bei Bedarf nach ("den Rest macht die Fibu").
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -20,6 +21,13 @@ STATUS_FREIGEGEBEN = 'freigegeben'
 STATUS_ABGELEHNT = 'abgelehnt'
 
 STATUS_ALLE = (STATUS_ENTWURF, STATUS_EINGEREICHT, STATUS_FREIGEGEBEN, STATUS_ABGELEHNT)
+
+# 'exportiert' ist KEIN Wert der status-Spalte, sondern ergibt sich aus dem
+# Export-Stempel (exportiert_in_export_id). Für Anzeige und Filter verhält es
+# sich wie ein weiterer Status; in der Spalte doppelt geführt würde es früher
+# oder später auseinanderlaufen (Un-Export müsste den Vorzustand raten).
+STATUS_EXPORTIERT = 'exportiert'
+STATUS_FILTER_WERTE = STATUS_ALLE + (STATUS_EXPORTIERT,)
 
 # Empfängertyp (optional, für die spätere Kreditor-Buchung)
 EMPFAENGER_MITGLIED = 'mitglied'

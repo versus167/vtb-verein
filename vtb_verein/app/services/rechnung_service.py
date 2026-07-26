@@ -322,13 +322,22 @@ class RechnungService:
         return aktuell
 
     def ablehnen(self, rechnung_id: int, user, grund: Optional[str] = None) -> Rechnung:
+        """Ablehnen – auch nach einer Freigabe, solange nicht exportiert.
+
+        Man gibt schnell einmal versehentlich frei; bis zum Export bleibt das
+        korrigierbar, und zwar in einem Schritt statt über 'zurücksetzen'.
+        """
         r = self._hole_sichtbar(rechnung_id, user)
         if not self.darf_freigeben(user, r.abteilung_id):
             raise KeineFreigabeberechtigungError(
                 "Keine Freigabeberechtigung für diese Abteilung.")
+        if r.ist_exportiert:
+            raise RechnungGesperrtError(
+                "Die Rechnung ist exportiert – bitte zuerst den Export zurücknehmen.")
         if not self._rechnung.ablehnen(rechnung_id, grund=grund,
                                        abgelehnt_von=user.username):
-            raise FalscherStatusError("Nur eingereichte Rechnungen können abgelehnt werden.")
+            raise FalscherStatusError(
+                "Abgelehnt werden können eingereichte und freigegebene Rechnungen.")
         aktuell = self._rechnung.get(rechnung_id)
         self._benachrichtige_ersteller(
             aktuell, user, "abgelehnt",

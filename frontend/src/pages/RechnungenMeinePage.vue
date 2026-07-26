@@ -24,8 +24,9 @@
             <span v-if="r.abteilung_name" class="text-grey-7">· {{ r.abteilung_name }}</span>
           </q-item-label>
           <q-item-label caption>
-            <q-chip dense size="sm" :color="statusChip(r.status).color" text-color="white">
-              {{ statusChip(r.status).label }}
+            <q-chip dense size="sm" :color="anzeigeStatus(r).color" :icon="anzeigeStatus(r).icon"
+              text-color="white">
+              {{ anzeigeStatus(r).label }}
             </q-chip>
             <span v-if="r.betrag_cent != null" class="q-mr-xs">{{ fmtBetrag(r.betrag_cent) }}</span>
             <span>· {{ empfaengerText(r) }}</span>
@@ -52,8 +53,9 @@
         <q-card-section class="row items-center">
           <div class="text-h6">{{ aktuell?.id ? `Rechnung #${aktuell.id}` : 'Rechnung einreichen' }}</div>
           <q-space />
-          <q-chip v-if="aktuell?.id" dense :color="statusChip(aktuell.status).color"
-            text-color="white">{{ statusChip(aktuell.status).label }}</q-chip>
+          <q-chip v-if="aktuell?.id" dense :color="anzeigeStatus(aktuell).color"
+            :icon="anzeigeStatus(aktuell).icon"
+            text-color="white">{{ anzeigeStatus(aktuell).label }}</q-chip>
           <q-btn flat dense round icon="close" v-close-popup />
         </q-card-section>
 
@@ -161,7 +163,7 @@ import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
-  STATUS_FILTER_OPTIONEN, statusChip, fmtBetrag, parseBetrag, fehlertext,
+  STATUS_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, parseBetrag, fehlertext,
   BELEG_ACCEPT, BELEG_HINWEIS, belegFehler, EMPFAENGER_OPTIONEN, empfaengerText,
 } from 'src/composables/useRechnungen'
 

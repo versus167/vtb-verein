@@ -23,8 +23,9 @@
             <span v-if="r.abteilung_name" class="text-grey-7">· {{ r.abteilung_name }}</span>
           </q-item-label>
           <q-item-label caption>
-            <q-chip dense size="sm" :color="statusChip(r.status).color" text-color="white">
-              {{ statusChip(r.status).label }}
+            <q-chip dense size="sm" :color="anzeigeStatus(r).color" :icon="anzeigeStatus(r).icon"
+              text-color="white">
+              {{ anzeigeStatus(r).label }}
             </q-chip>
             <span v-if="r.betrag_cent != null" class="q-mr-xs">{{ fmtBetrag(r.betrag_cent) }}</span>
             <span>· von {{ r.ersteller_name }}</span>
@@ -48,8 +49,9 @@
         <q-card-section class="row items-center">
           <div class="text-h6">Rechnung #{{ aktuell?.id }} prüfen</div>
           <q-space />
-          <q-chip v-if="aktuell" dense :color="statusChip(aktuell.status).color"
-            text-color="white">{{ statusChip(aktuell.status).label }}</q-chip>
+          <q-chip v-if="aktuell" dense :color="anzeigeStatus(aktuell).color"
+            :icon="anzeigeStatus(aktuell).icon"
+            text-color="white">{{ anzeigeStatus(aktuell).label }}</q-chip>
           <q-btn flat dense round icon="close" v-close-popup />
         </q-card-section>
 
@@ -104,8 +106,14 @@
             <q-btn unelevated color="positive" label="Freigeben" :loading="busy"
               @click="freigeben" />
           </template>
-          <q-btn v-else-if="!aktuell.ist_exportiert
-            && ['freigegeben', 'abgelehnt'].includes(aktuell.status)"
+          <!-- Versehentlich freigegeben: bis zum Export direkt ablehnbar, ohne
+               den Umweg über „Zurücksetzen“. -->
+          <template v-else-if="aktuell.status === 'freigegeben' && !aktuell.ist_exportiert">
+            <q-btn flat color="negative" label="Ablehnen" :loading="busy" @click="ablehnen" />
+            <q-btn flat color="primary" label="Zurücksetzen" :loading="busy"
+              @click="zuruecksetzen" />
+          </template>
+          <q-btn v-else-if="aktuell.status === 'abgelehnt' && !aktuell.ist_exportiert"
             flat color="primary" label="Zurücksetzen" :loading="busy" @click="zuruecksetzen" />
           <div v-else-if="aktuell.ist_exportiert" class="text-caption text-grey q-pa-sm">
             Bereits exportiert – zum Ändern zuerst den Export zurücknehmen.
@@ -124,7 +132,7 @@ import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
-  FREIGABE_FILTER_OPTIONEN, statusChip, fmtBetrag, fmtDatum, fehlertext,
+  FREIGABE_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, fmtDatum, fehlertext,
   empfaengerText, empfaengerIban,
 } from 'src/composables/useRechnungen'
 
@@ -181,9 +189,12 @@ function zuruecksetzen() {
 }
 
 function ablehnen() {
+  const nachFreigabe = aktuell.value?.status === 'freigegeben'
   $q.dialog({
-    title: 'Rechnung ablehnen',
-    message: 'Grund der Ablehnung (optional):',
+    title: nachFreigabe ? 'Freigabe zurücknehmen und ablehnen' : 'Rechnung ablehnen',
+    message: nachFreigabe
+      ? 'Die Freigabe wird damit aufgehoben. Grund der Ablehnung (optional):'
+      : 'Grund der Ablehnung (optional):',
     prompt: { model: '', type: 'text', isValid: () => true },
     cancel: true,
     ok: { label: 'Ablehnen', color: 'negative' },

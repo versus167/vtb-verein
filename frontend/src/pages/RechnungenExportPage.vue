@@ -13,6 +13,14 @@
       <div v-for="(h, i) in vorschau.hinweise" :key="i" class="text-caption">{{ h }}</div>
     </q-banner>
 
+    <!-- Der Dateiname trägt die Angaben mit, solange die Fibu die Übersicht
+         nicht einliest – hier steht, was im Zip zu erwarten ist. -->
+    <div class="text-caption text-grey-7 q-mb-md">
+      Das Zip enthält je Beleg eine Datei plus <code>uebersicht.csv</code>. Die
+      Dateinamen tragen die Angaben mit:
+      <code>Nr - Zahlung an - Abteilung - Kategorie - Notiz - Originalname</code>
+    </div>
+
     <!-- Was der nächste Lauf mitnimmt -->
     <q-card flat bordered class="q-mb-lg">
       <q-card-section class="q-pb-none">

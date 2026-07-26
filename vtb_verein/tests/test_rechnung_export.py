@@ -156,11 +156,13 @@ def test_zip_enthaelt_belege_und_uebersicht(db):
     assert dateiname == "rechnungen-export-1.zip"
 
     _, namen = _entpacke(zip_bytes)
-    assert sorted(namen) == ["R1.jpg", "uebersicht.csv"]   # PNG wird zu JPEG normalisiert
+    beleg = f"R{r.id} - Erstattung ExpTest xtester_ein - X-Fussball - " \
+            f"Buerobedarf - Baelle - beleg0.jpg"     # PNG wird zu JPEG normalisiert
+    assert sorted(namen) == [beleg, "uebersicht.csv"]
 
     zeile = _uebersicht(zip_bytes)[0]
     assert zeile["Nr"] == f"R{r.id}"
-    assert zeile["Belegdateien"] == "R1.jpg"
+    assert zeile["Belegdateien"] == beleg
     assert zeile["Betrag EUR"] == "12,50"                  # deutsches Dezimalkomma
     assert zeile["Rechnungsnummer"] == "RE-4711"
     assert zeile["Abteilung"] == "X-Fussball"
@@ -192,15 +194,83 @@ def test_zahlungsrichtung_in_der_uebersicht(db):
     assert zeilen[1]["IBAN"] == ""
 
 
-def test_mehrere_belege_bekommen_suffix(db):
+def test_mehrere_belege_behalten_ihren_namen(db):
+    """Belege einer Rechnung unterscheiden sich über ihren Originalnamen."""
     abteilung, einreicher, gs = _setup(db)
-    _freigegebene_rechnung(db, einreicher, gs, abteilung, belege=3)
+    r = _freigegebene_rechnung(db, einreicher, gs, abteilung, belege=3)
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    assert sorted(n for n in namen if n != "uebersicht.csv") == \
-        ["R1-2.jpg", "R1-3.jpg", "R1.jpg"]
-    assert _uebersicht(zip_bytes)[0]["Belegdateien"] == "R1.jpg R1-2.jpg R1-3.jpg"
+    belege = sorted(n for n in namen if n != "uebersicht.csv")
+    assert [n.rsplit(" - ", 1)[-1] for n in belege] == \
+        ["beleg0.jpg", "beleg1.jpg", "beleg2.jpg"]
+    assert all(n.startswith(f"R{r.id} - ") for n in belege)
+    assert _uebersicht(zip_bytes)[0]["Belegdateien"] == " | ".join(belege)
+
+
+def test_gleicher_originalname_wird_durchgezaehlt(db):
+    """Zwei Belege mit identischem Namen dürfen sich im Zip nicht überschreiben."""
+    abteilung, einreicher, gs = _setup(db)
+    r = db.rechnungen.anlegen(einreicher, kategorie_id=db.rechnungen.list_kategorien()[0].id,
+                              abteilung_id=abteilung, empfaenger_typ="mitglied",
+                              betrag_cent=1000)
+    for _ in range(2):
+        db.rechnungen.add_anhang(r.id, einreicher, original_name="scan.png",
+                                 mime_type="image/png", inhalt=_PNG)
+    db.rechnungen.einreichen(r.id, einreicher)
+    db.rechnungen.freigeben(r.id, gs)
+
+    _, zip_bytes = db.rechnung_export.exportieren(gs.username)
+    zf, namen = _entpacke(zip_bytes)
+    belege = [n for n in namen if n != "uebersicht.csv"]
+    assert len(set(belege)) == 2
+    assert sorted(n.rsplit(" - ", 1)[-1] for n in belege) == ["scan (2).jpg", "scan.jpg"]
+
+
+def test_dateiname_traegt_die_erfassten_angaben(db):
+    """Solange die Fibu die uebersicht.csv nicht mitliest, muss der Dateiname
+    allein sagen, an wen gezahlt wird, aus welcher Abteilung und wofür."""
+    abteilung, einreicher, gs = _setup(db)
+    r = _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="extern",
+                               beschreibung="Trikots F-Jugend")
+
+    _, zip_bytes = db.rechnung_export.exportieren(gs.username)
+    _, namen = _entpacke(zip_bytes)
+    beleg = next(n for n in namen if n != "uebersicht.csv")
+    # 'Bürobedarf' ist die erste Kategorie (alphabetisch) – der Umlaut wird
+    # umschrieben, nicht weggeworfen.
+    assert beleg == (f"R{r.id} - Zahlung Aussteller - X-Fussball - "
+                     f"Buerobedarf - Trikots F-Jugend - beleg0.jpg")
+
+
+def test_dateiname_bleibt_windowstauglich(db):
+    """Umlaute werden umschrieben, Sonderzeichen fliegen raus – der Name muss
+    sich unter Windows entpacken lassen."""
+    abteilung, einreicher, gs = _setup(db)
+    _freigegebene_rechnung(db, einreicher, gs, abteilung,
+                           beschreibung='Bälle/Netze: "Sport" & mehr <hier>')
+
+    _, zip_bytes = db.rechnung_export.exportieren(gs.username)
+    _, namen = _entpacke(zip_bytes)
+    beleg = next(n for n in namen if n != "uebersicht.csv")
+    assert beleg.isascii()
+    assert not set(beleg) & set('\\/:*?"<>|')
+    assert "Baelle Netze" in beleg
+    # Der Trenner darf nur zwischen den Bestandteilen stehen.
+    assert len(beleg.split(" - ")) == 6
+
+
+def test_langer_dateiname_wird_gekappt(db):
+    """Windows scheitert beim Entpacken an zu langen Pfaden – der Name bleibt
+    begrenzt und endet nicht auf einem angeschnittenen Trenner."""
+    abteilung, einreicher, gs = _setup(db)
+    _freigegebene_rechnung(db, einreicher, gs, abteilung, beschreibung="Bandenwerbung " * 20)
+
+    _, zip_bytes = db.rechnung_export.exportieren(gs.username)
+    _, namen = _entpacke(zip_bytes)
+    beleg = next(n for n in namen if n != "uebersicht.csv")
+    assert len(beleg) <= 160
+    assert not beleg.rsplit(".", 1)[0].endswith((" ", "-", "."))
 
 
 def test_delta_zweiter_lauf_ohne_bereits_exportierte(db):
@@ -279,6 +349,7 @@ def test_re_download_liefert_denselben_inhalt(db):
 
 
 def test_exportierte_rechnung_ist_gesperrt(db):
+    """Mit dem Export ist Schluss – bis dahin bleibt alles korrigierbar."""
     from app.services.rechnung_service import RechnungGesperrtError
 
     abteilung, einreicher, gs = _setup(db)
@@ -289,6 +360,33 @@ def test_exportierte_rechnung_ist_gesperrt(db):
         db.rechnungen.zuruecksetzen(r.id, gs)
     with pytest.raises(RechnungGesperrtError):
         db.rechnungen.loeschen(r.id, gs)
+    with pytest.raises(RechnungGesperrtError):
+        db.rechnungen.ablehnen(r.id, gs, "zu spät")
+
+    # Nach dem Un-Export greift die Korrektur wieder.
+    db.rechnung_export.zuruecknehmen(db.rechnung_export.list_exporte()[0].id, gs.username)
+    assert db.rechnungen.ablehnen(r.id, gs, "doch falsch").status == "abgelehnt"
+
+
+def test_status_exportiert_ist_ein_eigener_filter(db):
+    """'exportiert' steht nicht in der Spalte, verhält sich für die Oberfläche
+    aber wie ein Status: die Rechnung erscheint danach nur noch dort."""
+    abteilung, einreicher, gs = _setup(db)
+    exportiert = _freigegebene_rechnung(db, einreicher, gs, abteilung)
+    db.rechnung_export.exportieren(gs.username)
+    offen = _freigegebene_rechnung(db, einreicher, gs, abteilung)
+
+    assert [r.id for r in db.rechnungen.list_alle(gs, "exportiert")] == [exportiert.id]
+    assert [r.id for r in db.rechnungen.list_alle(gs, "freigegeben")] == [offen.id]
+    assert [r.id for r in db.rechnungen.list_meine(einreicher, "exportiert")] == [exportiert.id]
+    assert sorted(r.id for r in db.rechnungen.list_zur_freigabe(gs)) == \
+        [exportiert.id, offen.id]                       # ohne Filter weiter beides
+
+    # Un-Export dreht die Zuordnung zurück – kein zweiter Zustand, der driften kann.
+    db.rechnung_export.zuruecknehmen(db.rechnung_export.list_exporte()[0].id, gs.username)
+    assert db.rechnungen.list_alle(gs, "exportiert") == []
+    assert sorted(r.id for r in db.rechnungen.list_alle(gs, "freigegeben")) == \
+        sorted([exportiert.id, offen.id])
 
 
 def test_fehlende_belegdatei_bricht_lauf_nicht_ab(db):

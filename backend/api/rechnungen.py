@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
-from app.models.rechnung import STATUS_ALLE
+from app.models.rechnung import STATUS_FILTER_WERTE
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.rechnung_service import (
     BelegFehltError,
@@ -107,10 +107,12 @@ def _serialisiere(r) -> dict:
 
 
 def _pruefe_status_filter(status: Optional[str]) -> Optional[str]:
-    if status and status not in STATUS_ALLE:
+    """'exportiert' ist als Filterwert erlaubt, obwohl es kein Spaltenwert ist –
+    das Repository übersetzt es auf den Export-Stempel."""
+    if status and status not in STATUS_FILTER_WERTE:
         raise HTTPException(
             status_code=422,
-            detail=f"Unbekannter Status – erlaubt: {', '.join(STATUS_ALLE)}.")
+            detail=f"Unbekannter Status – erlaubt: {', '.join(STATUS_FILTER_WERTE)}.")
     return status or None
 
 

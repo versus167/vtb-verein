@@ -6,10 +6,19 @@ export const STATUS_CHIPS = {
   eingereicht: { label: 'Eingereicht', color: 'orange' },
   freigegeben: { label: 'Freigegeben', color: 'positive' },
   abgelehnt: { label: 'Abgelehnt', color: 'negative' },
+  // Schloss-Symbol, weil dieser Status als einziger sagt „hier geht nichts mehr":
+  // ab dem Export liegt der Beleg in der Fibu.
+  exportiert: { label: 'In Fibu exportiert', color: 'primary', icon: 'lock' },
 }
 
 export function statusChip(status) {
   return STATUS_CHIPS[status] || { label: status, color: 'grey' }
+}
+
+// „Exportiert" steht nicht in der status-Spalte, sondern folgt aus dem
+// Export-Stempel – und schlägt die Freigabe, weil ab da nichts mehr geht.
+export function anzeigeStatus(r) {
+  return statusChip(r.ist_exportiert ? 'exportiert' : r.status)
 }
 
 export const STATUS_FILTER_OPTIONEN = [
@@ -18,6 +27,7 @@ export const STATUS_FILTER_OPTIONEN = [
   { label: 'Eingereicht', value: 'eingereicht' },
   { label: 'Freigegeben', value: 'freigegeben' },
   { label: 'Abgelehnt', value: 'abgelehnt' },
+  { label: 'In Fibu exportiert', value: 'exportiert' },
 ]
 
 // Freigabe-Sicht: fremde Entwürfe liefert das Backend nicht aus, also auch
