@@ -83,6 +83,25 @@ class MitgliedFunktionRepository(BaseRepository):
             )
             return [r['abteilung_id'] for r in cur.fetchall()]
 
+    def abteilung_ids_fuer_mitglied(self, mitglied_id: int) -> list[Optional[int]]:
+        """abteilung_id je aktiver Funktions-Zuordnung, unabhängig von der Funktion.
+
+        Für die Abteilungs-Vorbelegung beim Einreichen von Rechnungen: wer irgendeine
+        Funktion in einer Abteilung hat, arbeitet dort auch. NULL (vereinsweit) bleibt
+        enthalten – der Aufrufer entscheidet, ob er das als „alle" oder „keine" liest.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT abteilung_id FROM mitglied_funktion
+                WHERE mitglied_id = %s AND deleted_at IS NULL
+                  AND (von IS NULL OR von <= CURRENT_DATE::text)
+                  AND (bis IS NULL OR bis >= CURRENT_DATE::text)
+                """,
+                (mitglied_id,),
+            )
+            return [r['abteilung_id'] for r in cur.fetchall()]
+
     def list_for_mitglied(self, mitglied_id: int) -> list[MitgliedFunktion]:
         with self.cursor() as cur:
             cur.execute(

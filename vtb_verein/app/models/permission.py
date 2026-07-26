@@ -59,6 +59,15 @@ class Permission:
     # Admin/Fibu: alle Abrechnungen sehen, Vergütungssätze/Konten pflegen.
     UL_STUNDEN_VERWALTEN   = 'ulstunden.verwalten'
 
+    # --- Rechnungen (einreichen / freigeben) ---
+    # Eigene Rechnungen anlegen, Belege hochladen und einreichen.
+    RECHNUNGEN_EINREICHEN = 'rechnungen.einreichen'
+    # Eingereichte Rechnungen freigeben/ablehnen – abteilungs-scoped (Funktion 'abteilungsleiter').
+    RECHNUNGEN_FREIGEBEN  = 'rechnungen.freigeben'
+    # Geschäftsstelle: alle Rechnungen sehen, Kategorien pflegen, exportieren und
+    # Rechnungen ohne Abteilung (Vereinsrechnungen) freigeben.
+    RECHNUNGEN_VERWALTEN  = 'rechnungen.verwalten'
+
     # --- Berichte / Export ---
     BERICHTE_READ   = 'berichte.read'
     BERICHTE_EXPORT = 'berichte.export'

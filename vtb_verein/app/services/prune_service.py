@@ -126,8 +126,9 @@ class ArchiveRule:
 #
 # Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten,
 # Schließanlage/Zutritt und Übungsleiter-Abrechnung.
-# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren –
-# Aufbewahrungspflicht) und users (Auth-/Audit-verflochten, Last-Admin-Schutz).
+# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren und
+# Rechnungen/Rechnungs-Kategorien/Rechnungs-Exporte – Aufbewahrungspflicht) und
+# users (Auth-/Audit-verflochten, Last-Admin-Schutz).
 # Ebenfalls NICHT drin: geräte-gebundene Tabellen mit revoked_at statt deleted_at
 # (user_sessions, push_subscriptions) – sie haben eigene zeitbasierte Cleanups
 # (cleanup_expired / cleanup_revoked) analog access_log, kein deleted_at-Prune.
@@ -142,6 +143,11 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
                 stored_name_col="stored_name"),
     PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
+                stored_name_col="stored_name"),
+    # Belege gelöschter Rechnungs-Entwürfe. Die Rechnung selbst wird NICHT geprunt
+    # (Finanzdaten, siehe Kopfkommentar) – gelöscht werden kann ein Beleg ohnehin nur
+    # im Entwurf, also bevor irgendetwas freigegeben oder exportiert wurde.
+    PruneEntity("rechnung_anhang", "Rechnungs-Belege", "rechnung_anhaenge",
                 stored_name_col="stored_name"),
     # --- Schließanlage / Zutritt (Blatt → Wurzel) ---
     # Steht VOR mitglied/abteilung: schluessel_chip hängt an mitglied, tuer_schloss an
@@ -253,6 +259,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_funktion", "mitglied_id"),
                     ChildRef("mitglied_kontakt", "mitglied_id"),
                     ChildRef("mitglied_mannschaft", "mitglied_id"),
+                    ChildRef("rechnung", "empfaenger_mitglied_id"),
                     ChildRef("schluessel_chip", "mitglied_id"),
                     ChildRef("termin_zusage", "mitglied_id"),
                     ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
@@ -308,6 +315,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("tuer_schloss", "abteilung_id"),
                     ChildRef("ul_abrechnung", "abteilung_id"),
                     ChildRef("ul_satz", "abteilung_id"),
+                    ChildRef("rechnung", "abteilung_id"),
                 )),
 )
 

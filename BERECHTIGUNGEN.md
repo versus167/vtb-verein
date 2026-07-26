@@ -154,3 +154,25 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
   Grant (`abteilung_id` NULL) → `allowed_abteilungen` = None → sehen weiterhin
   alle. Eingeschränkt wird nur, wessen `personen.read` ausschließlich aus einer
   abteilungsgebundenen Funktion stammt.
+
+## Rechnungen einreichen & freigeben (Schema v78)
+
+Drei Keys, zweiter davon **strict scoped** durchgesetzt:
+
+| Key | Wirkung |
+|---|---|
+| `rechnungen.einreichen` | eigene Rechnungen anlegen, Belege hochladen, einreichen |
+| `rechnungen.freigeben` | eingereichte Rechnungen freigeben/ablehnen – **nur für die Abteilungen, aus denen das Recht stammt** |
+| `rechnungen.verwalten` | Geschäftsstelle: alle Rechnungen sehen, Kategorien pflegen, exportieren, Vereinsrechnungen (ohne Abteilung) freigeben |
+
+- Seed: `rechnungen.einreichen` + `rechnungen.freigeben` hängen an der Funktion
+  `abteilungsleiter` (`_RECHNUNG_FUNKTION_PERMISSIONS` in `database.py`, aus
+  Frischaufbau **und** Migration v77→v78 aufgerufen). Wer sonst einreichen darf,
+  bekommt den Key individuell.
+- Durchsetzung wie bei den ÜL-Stunden über `has_permission_for_abteilung()`:
+  `backend/api/rechnungen.py::_darf_freigeben`. Die Freigabe-Liste filtert über
+  `allowed_abteilungen('rechnungen.freigeben')` (`None` = alle).
+- Eine Rechnung **ohne** Abteilung (`abteilung_id IS NULL`) kann nur mit
+  `rechnungen.verwalten` freigegeben werden – ein Abteilungs-Scope greift dort
+  per Definition nicht.
+- Der Ersteller sieht seine eigenen Rechnungen immer, unabhängig vom Scope.

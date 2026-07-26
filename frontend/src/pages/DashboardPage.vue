@@ -59,6 +59,10 @@
         <SettingsTile to="uebungsleiter" icon="sports" title="Übungsleiter" caption="Stunden & Vergütung" />
       </div>
 
+      <div v-if="hatRechnungenZugriff" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="rechnungen" icon="receipt_long" title="Rechnungen" caption="Einreichen & freigeben" />
+      </div>
+
       <div v-if="auth.hasPermission('berichte.read')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="berichte" icon="insights" title="Berichte" caption="Statistik & Kennzahlen" />
       </div>
@@ -107,6 +111,13 @@ const hatUebungsleiterZugriff = computed(() =>
   auth.hasPermission('ulstunden.erfassen_fremd') ||
   auth.hasPermission('ulstunden.bestaetigen') ||
   auth.hasPermission('ulstunden.verwalten'),
+)
+
+// Rein permission-gesteuert – keine ACL-Probe nötig (vgl. MainLayout).
+const hatRechnungenZugriff = computed(() =>
+  auth.hasPermission('rechnungen.einreichen') ||
+  auth.hasPermission('rechnungen.freigeben') ||
+  auth.hasPermission('rechnungen.verwalten'),
 )
 
 const zeigeEinstellungen = computed(() =>

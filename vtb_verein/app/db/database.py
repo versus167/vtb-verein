@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 77
+SCHEMA_VERSION = 78
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +681,249 @@ _UL_TRIGGERS = (
 _UL_FUNKTION_PERMISSIONS = (
     ('uebungsleiter',    'ulstunden.erfassen'),
     ('abteilungsleiter', 'ulstunden.bestaetigen'),
+)
+
+
+# ============================================================================
+# Rechnungen einreichen & freigeben, Schema v78
+# ----------------------------------------------------------------------------
+# DDL/Trigger/Index-Definitionen, geteilt zwischen Frischaufbau (_create_*) und
+# Migration v77→v78, damit beide Pfade identische Schemata erzeugen.
+#  * rechnung_kategorie – kurze Auswahlliste (Stammdaten) inkl. Aufwandskonto.
+#  * rechnung_exporte   – Header eines Export-Laufs (Zip mit Belegen + Übersicht).
+#  * rechnung           – Header mit Status-Workflow entwurf → eingereicht →
+#                         freigegeben/abgelehnt; Freigabe ist abteilungs-scoped.
+#  * rechnung_anhang    – Beleg-Datei; Blatt OHNE version/History (wie kassenbuchung_anhaenge),
+#                         die Datei selbst liegt im Upload-Pfad (AnhangService).
+# Reihenfolge im DDL: Kategorie + Exporte vor rechnung (FK-Ziele), rechnung vor Anhang.
+# ============================================================================
+_RECHNUNG_COLS = (
+    "id, version, abteilung_id, kategorie_id, ersteller_user_id, beschreibung, status, "
+    "betrag_cent, rechnungsdatum, rechnungsnummer, "
+    "empfaenger_typ, empfaenger_mitglied_id, empfaenger_name, empfaenger_iban, "
+    "eingereicht_am, eingereicht_von, freigegeben_am, freigegeben_von, abgelehnt_grund, "
+    "exportiert_in_export_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_RECHNUNG_VALS = ", ".join("NEW." + c.strip() for c in _RECHNUNG_COLS.split(","))
+
+_FN_RECHNUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO rechnung_history ({_RECHNUNG_COLS}) VALUES ({_RECHNUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_RECHNUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO rechnung_history ({_RECHNUNG_COLS}) VALUES ({_RECHNUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_RECHNUNG_KATEGORIE_COLS = (
+    "id, version, name, beschreibung, sachkonto, kostenstelle, kostentraeger, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_RECHNUNG_KATEGORIE_VALS = ", ".join(
+    "NEW." + c.strip() for c in _RECHNUNG_KATEGORIE_COLS.split(","))
+
+_FN_RECHNUNG_KATEGORIE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_kategorie_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO rechnung_kategorie_history ({_RECHNUNG_KATEGORIE_COLS})
+        VALUES ({_RECHNUNG_KATEGORIE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_RECHNUNG_KATEGORIE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_kategorie_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO rechnung_kategorie_history ({_RECHNUNG_KATEGORIE_COLS})
+            VALUES ({_RECHNUNG_KATEGORIE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_RECHNUNG_EXPORTE_COLS = (
+    "id, version, exportiert_am, exportiert_von, dateiname, format, "
+    "anzahl_rechnungen, summe_cent, created_at, created_by, deleted_at, deleted_by"
+)
+_RECHNUNG_EXPORTE_VALS = ", ".join(
+    "NEW." + c.strip() for c in _RECHNUNG_EXPORTE_COLS.split(","))
+
+_FN_RECHNUNG_EXPORTE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_exporte_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO rechnung_exporte_history ({_RECHNUNG_EXPORTE_COLS})
+        VALUES ({_RECHNUNG_EXPORTE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_RECHNUNG_EXPORTE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_rechnung_exporte_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO rechnung_exporte_history ({_RECHNUNG_EXPORTE_COLS})
+            VALUES ({_RECHNUNG_EXPORTE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_RECHNUNGEN = """
+    CREATE TABLE IF NOT EXISTS rechnung_kategorie (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT NOT NULL,
+      beschreibung  TEXT,
+      sachkonto     TEXT,      -- Aufwandskonto (Andockpunkt für den FBASC-Export)
+      kostenstelle  INTEGER,
+      kostentraeger INTEGER,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT,
+      updated_at    TEXT,
+      updated_by    TEXT,
+      deleted_at    TEXT,
+      deleted_by    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS rechnung_kategorie_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      name TEXT, beschreibung TEXT, sachkonto TEXT, kostenstelle INTEGER, kostentraeger INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS rechnung_exporte (
+      id                SERIAL PRIMARY KEY,
+      exportiert_am     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      exportiert_von    TEXT NOT NULL,
+      dateiname         TEXT NOT NULL,
+      format            TEXT NOT NULL DEFAULT 'zip',
+      anzahl_rechnungen INTEGER NOT NULL DEFAULT 0,
+      summe_cent        INTEGER,
+      version           INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by        TEXT,
+      deleted_at        TEXT,
+      deleted_by        TEXT
+    );
+    CREATE TABLE IF NOT EXISTS rechnung_exporte_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      exportiert_am TEXT, exportiert_von TEXT, dateiname TEXT, format TEXT,
+      anzahl_rechnungen INTEGER, summe_cent INTEGER,
+      created_at TEXT, created_by TEXT, deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS rechnung (
+      id                      SERIAL PRIMARY KEY,
+      abteilung_id            INTEGER REFERENCES abteilung(id),   -- NULL = Vereinsrechnung
+      kategorie_id            INTEGER NOT NULL REFERENCES rechnung_kategorie(id),
+      ersteller_user_id       INTEGER NOT NULL REFERENCES users(id),
+      beschreibung            TEXT,
+      status                  TEXT NOT NULL DEFAULT 'entwurf',
+      betrag_cent             INTEGER,    -- optional, von der Geschäftsstelle nachtragbar
+      rechnungsdatum          TEXT,       -- optional, ISO
+      rechnungsnummer         TEXT,       -- optional, Nummer des Ausstellers
+      empfaenger_typ          TEXT,       -- 'mitglied' | 'extern', optional
+      empfaenger_mitglied_id  INTEGER REFERENCES mitglied(id),
+      empfaenger_name         TEXT,
+      empfaenger_iban         TEXT,
+      eingereicht_am          TEXT,
+      eingereicht_von         TEXT,
+      freigegeben_am          TEXT,
+      freigegeben_von         TEXT,
+      abgelehnt_grund         TEXT,
+      exportiert_in_export_id INTEGER REFERENCES rechnung_exporte(id),
+      version                 INTEGER NOT NULL DEFAULT 1,
+      created_at              TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by              TEXT,
+      updated_at              TEXT,
+      updated_by              TEXT,
+      deleted_at              TEXT,
+      deleted_by              TEXT
+    );
+    CREATE TABLE IF NOT EXISTS rechnung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      abteilung_id INTEGER, kategorie_id INTEGER, ersteller_user_id INTEGER,
+      beschreibung TEXT, status TEXT, betrag_cent INTEGER, rechnungsdatum TEXT,
+      rechnungsnummer TEXT, empfaenger_typ TEXT, empfaenger_mitglied_id INTEGER,
+      empfaenger_name TEXT, empfaenger_iban TEXT,
+      eingereicht_am TEXT, eingereicht_von TEXT, freigegeben_am TEXT, freigegeben_von TEXT,
+      abgelehnt_grund TEXT, exportiert_in_export_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS rechnung_anhaenge (
+      id             SERIAL PRIMARY KEY,
+      rechnung_id    INTEGER NOT NULL REFERENCES rechnung(id),
+      original_name  TEXT NOT NULL,
+      stored_name    TEXT UNIQUE,
+      mime_type      TEXT NOT NULL,
+      dateigroesse   INTEGER NOT NULL DEFAULT 0,
+      hochgeladen_von TEXT,
+      hochgeladen_am TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      deleted_at     TEXT,
+      deleted_by     TEXT
+    );
+"""
+
+# Indizes der Rechnungs-Tabellen, geteilt zwischen Frischaufbau und Migration.
+_RECHNUNG_INDEXES = (
+    ("idx_rechnung_abteilung_id",       "rechnung(abteilung_id)"),
+    ("idx_rechnung_kategorie_id",       "rechnung(kategorie_id)"),
+    ("idx_rechnung_ersteller",          "rechnung(ersteller_user_id)"),
+    ("idx_rechnung_status",             "rechnung(status)"),
+    ("idx_rechnung_export_id",          "rechnung(exportiert_in_export_id)"),
+    ("idx_rechnung_deleted_at",         "rechnung(deleted_at)"),
+    ("idx_rechnung_history_id",         "rechnung_history(id)"),
+    ("idx_rechnung_kategorie_deleted_at", "rechnung_kategorie(deleted_at)"),
+    ("idx_rechnung_kategorie_history_id", "rechnung_kategorie_history(id)"),
+    ("idx_rechnung_exporte_deleted_at", "rechnung_exporte(deleted_at)"),
+    ("idx_rechnung_exporte_history_id", "rechnung_exporte_history(id)"),
+    ("idx_rechnung_anhaenge_rechnung",  "rechnung_anhaenge(rechnung_id)"),
+    ("idx_rechnung_anhaenge_deleted_at", "rechnung_anhaenge(deleted_at)"),
+)
+
+# Rechnungs-Trigger (Tabelle ↔ Funktion), geteilt zwischen Frischaufbau und Migration.
+# rechnung_anhaenge hat bewusst keine Trigger (Blatt ohne version/History).
+_RECHNUNG_TRIGGERS = (
+    ('trig_rechnung_audit_insert',           'INSERT', 'rechnung',           'fn_rechnung_audit_insert'),
+    ('trig_rechnung_audit_update',           'UPDATE', 'rechnung',           'fn_rechnung_audit_update'),
+    ('trig_rechnung_kategorie_audit_insert', 'INSERT', 'rechnung_kategorie', 'fn_rechnung_kategorie_audit_insert'),
+    ('trig_rechnung_kategorie_audit_update', 'UPDATE', 'rechnung_kategorie', 'fn_rechnung_kategorie_audit_update'),
+    ('trig_rechnung_exporte_audit_insert',   'INSERT', 'rechnung_exporte',   'fn_rechnung_exporte_audit_insert'),
+    ('trig_rechnung_exporte_audit_update',   'UPDATE', 'rechnung_exporte',   'fn_rechnung_exporte_audit_update'),
+)
+
+_RECHNUNG_FNS = (
+    _FN_RECHNUNG_AUDIT_INSERT, _FN_RECHNUNG_AUDIT_UPDATE,
+    _FN_RECHNUNG_KATEGORIE_AUDIT_INSERT, _FN_RECHNUNG_KATEGORIE_AUDIT_UPDATE,
+    _FN_RECHNUNG_EXPORTE_AUDIT_INSERT, _FN_RECHNUNG_EXPORTE_AUDIT_UPDATE,
+)
+
+# Standard-Berechtigungen je Funktion für die Rechnungs-Freigabe (Seed/Migration).
+# Wer sonst einreichen darf, bekommt 'rechnungen.einreichen' individuell zugeteilt.
+_RECHNUNG_FUNKTION_PERMISSIONS = (
+    ('abteilungsleiter', 'rechnungen.einreichen'),
+    ('abteilungsleiter', 'rechnungen.freigeben'),
+)
+
+# Start-Kategorien („geringe Auswahl"). Sachkonten bleiben leer, bis die
+# Kontenrahmen-Werte feststehen – die Geschäftsstelle pflegt sie in der App nach.
+_RECHNUNG_KATEGORIEN_SEED = (
+    'Sportmaterial',
+    'Reisekosten',
+    'Verpflegung',
+    'Bürobedarf',
+    'Reparatur/Wartung',
+    'Sonstiges',
 )
 
 
@@ -2190,6 +2433,7 @@ class Database:
             75: self._migrate_v74_to_v75,
             76: self._migrate_v75_to_v76,
             77: self._migrate_v76_to_v77,
+            78: self._migrate_v77_to_v78,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -5376,12 +5620,85 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 77 WHERE id = 1")
 
+    def _migrate_v77_to_v78(self) -> None:
+        """Rechnungen einreichen & freigeben.
+
+        Neue Tabellen rechnung, rechnung_kategorie, rechnung_exporte (+_history,
+        Audit-Trigger, Indexe) sowie rechnung_anhaenge (Blatt ohne History – die
+        Beleg-Datei liegt im Upload-Pfad). Berechtigungen: die drei neuen Keys für
+        Bestands-Admins nachziehen und 'rechnungen.einreichen'/'rechnungen.freigeben'
+        an die Funktion 'abteilungsleiter' hängen (Fresh == Upgrade). Dazu die
+        Start-Kategorien, damit der Bereich nicht mit leerer Auswahl startet.
+        DDL/Trigger/Index-Konstanten geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_RECHNUNGEN)
+            for fn_sql in _RECHNUNG_FNS:
+                cur.execute(fn_sql)
+            for name, event, table, fn in _RECHNUNG_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _RECHNUNG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._seed_rechnung_kategorien(cur)
+            self._seed_rechnung_funktion_permissions(cur)
+            # Bestands-Admins bekommen die neuen Rechte (Rolle 'admin' darf ohnehin
+            # alles – das hier hält die Rechte-Matrix in der UI konsistent).
+            for perm in ('rechnungen.einreichen', 'rechnungen.freigeben',
+                         'rechnungen.verwalten'):
+                cur.execute(
+                    """
+                    INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                    SELECT u.id, %s, 'migration_v78', 'migration_v78' FROM users u
+                    WHERE u.role = 'admin' AND u.deleted_at IS NULL
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (perm,),
+                )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 78 WHERE id = 1")
+
+    @staticmethod
+    def _seed_rechnung_kategorien(cur) -> None:
+        """Start-Kategorien anlegen – idempotent, und nur solange noch keine da sind.
+
+        Ohne die Leerprüfung würden vom Anwender gelöschte Vorgaben bei jedem
+        Schema-Check wieder auftauchen.
+        """
+        cur.execute("SELECT COUNT(*) AS anzahl FROM rechnung_kategorie")
+        if cur.fetchone()["anzahl"]:
+            return
+        for name in _RECHNUNG_KATEGORIEN_SEED:
+            cur.execute(
+                """
+                INSERT INTO rechnung_kategorie (name, created_by, updated_at, updated_by)
+                VALUES (%s, 'SYSTEM', CURRENT_TIMESTAMP, 'SYSTEM')
+                """,
+                (name,),
+            )
+
+    @staticmethod
+    def _seed_rechnung_funktion_permissions(cur) -> None:
+        """Rechnungs-Rechte an die Funktion 'abteilungsleiter' hängen (Seed + Migration)."""
+        for fkey, perm in _RECHNUNG_FUNKTION_PERMISSIONS:
+            cur.execute(
+                """
+                INSERT INTO funktion_permission (funktion_id, permission, created_by, updated_by)
+                SELECT f.id, %s, 'SYSTEM', 'SYSTEM' FROM funktion f
+                WHERE f.key=%s AND f.deleted_at IS NULL
+                ON CONFLICT (funktion_id, permission) DO NOTHING
+                """,
+                (perm, fkey),
+            )
+
     # Audit-/Aktivitäts-Zeitstempel, die als echte Instants (UTC) geführt werden.
     _AUDIT_TS_COLUMNS = (
         "created_at", "updated_at", "deleted_at",
         "exportiert_am", "hochgeladen_am", "hinzugefuegt_am",
         "last_login", "last_seen",
-        "eingereicht_am", "bestaetigt_am",
+        "eingereicht_am", "bestaetigt_am", "freigegeben_am",
     )
 
     def _normalize_audit_timestamps(self, cur) -> None:
@@ -6609,6 +6926,10 @@ class Database:
         # + konfigurierbare Vergütungssätze. DDL geteilt mit Migration v52→v53.
         cur.execute(_DDL_UL_TABLES)
 
+        # Rechnungen einreichen & freigeben (Schema v78): Kategorie-Stammdaten, Export-Läufe,
+        # Rechnung (+History) und Beleg-Anhänge. DDL geteilt mit Migration v77→v78.
+        cur.execute(_DDL_RECHNUNGEN)
+
         # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
         # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
         cur.execute(_DDL_ZUTRITT_TABLES)
@@ -6841,6 +7162,8 @@ class Database:
         cur.execute(_FN_UL_STUNDE_AUDIT_UPDATE)
         cur.execute(_FN_UL_SATZ_AUDIT_INSERT)
         cur.execute(_FN_UL_SATZ_AUDIT_UPDATE)
+        for fn_sql in _RECHNUNG_FNS:
+            cur.execute(fn_sql)
         cur.execute(_FN_TUER_SCHLOSS_AUDIT_INSERT)
         cur.execute(_FN_TUER_SCHLOSS_AUDIT_UPDATE)
         cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_INSERT)
@@ -7469,6 +7792,7 @@ class Database:
             ('trig_funktion_permission_audit_insert',               'INSERT', 'funktion_permission',               'fn_funktion_permission_audit_insert'),
             ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
             *_UL_TRIGGERS,
+            *_RECHNUNG_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
@@ -7519,6 +7843,7 @@ class Database:
             ("idx_funktion_permission_deleted_at",                  "funktion_permission(deleted_at)"),
             ("idx_funktion_permission_history_id",                  "funktion_permission_history(id)"),
             *_UL_INDEXES,
+            *_RECHNUNG_INDEXES,
             ("idx_kassen_deleted_at",                               "kassen(deleted_at)"),
             ("idx_kassen_abteilung_id",                             "kassen(abteilung_id)"),
             ("idx_kassenbuchungen_kasse_id",                        "kassenbuchungen(kasse_id)"),
@@ -7633,6 +7958,7 @@ class Database:
             'gebuehren.read', 'gebuehren.write', 'gebuehren.abrechnen',
             'fibu.export',
             'ulstunden.erfassen', 'ulstunden.erfassen_fremd', 'ulstunden.bestaetigen', 'ulstunden.verwalten',
+            'rechnungen.einreichen', 'rechnungen.freigeben', 'rechnungen.verwalten',
             'berichte.read', 'berichte.export',
             'system.config',
             'tickets.access',
@@ -7714,3 +8040,7 @@ class Database:
                 WHERE f.key=%s AND f.deleted_at IS NULL
                 ON CONFLICT (funktion_id, permission) DO NOTHING
             """, (perm, fkey))
+
+        # Rechnungs-Freigabe an 'abteilungsleiter' + Start-Kategorien (geteilt mit v77→v78).
+        self._seed_rechnung_funktion_permissions(cur)
+        self._seed_rechnung_kategorien(cur)
