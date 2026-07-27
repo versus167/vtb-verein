@@ -166,7 +166,9 @@ class UserService:
             role: Rolle ('admin' | 'mitglied')
             active: Aktiv-Status
             created_by: Username des Erstellers
-            password: Optionales Passwort (Klartext, wird gehasht). Falls None, wird Dummy-Hash gesetzt
+            password: Optionales Passwort (Klartext, wird gehasht). Falls None, wird Dummy-Hash gesetzt.
+                Ein Passwort ist die *zusätzliche* Login-Alternative – die Willkommens-Mail
+                mit Magic-Link geht trotzdem raus.
             send_magic_link: Wenn True, wird automatisch Magic-Link versendet (Standard: True)
             
         Returns:
