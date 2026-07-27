@@ -670,6 +670,18 @@ body:not(.body--dark) {
     background: transparent;
   }
 
+  // Datums-Picker (q-date): Quasar gibt der Kalenderfläche fest Weiß
+  // (.q-date{background:#fff}); der von der blauen Karte geerbte weiße Text
+  // machte Tageszahlen, Wochentage und Monatsnavigation weiß-auf-weiß unsichtbar
+  // (Ticket #135, gleiche Fehlerklasse wie die Tab-Panels bei #102). Auf der
+  // hellen Fläche daher dunkler Text; nur der Inhalt, damit ein farbiger Kopf
+  // (nicht-minimal) sein eigenes Weiß behält. Ausgewählte Tage tragen ihre
+  // eigene Farbe und bleiben unberührt.
+  .q-card:not(.login-card) .q-date__content,
+  .q-menu .q-date__content {
+    color: rgba(0, 0, 0, 0.87);
+  }
+
   // Trennlinien auf blauen Flächen
   .q-card:not(.login-card) .q-separator,
   .q-menu .q-separator {
