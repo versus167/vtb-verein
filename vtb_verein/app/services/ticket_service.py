@@ -39,13 +39,19 @@ class UngueltigerStatusWechselError(Exception):
 
 
 # Erlaubte Statusübergänge
+#
+# Aus einem abgeschlossenen Ticket führt genau ein Weg zurück: 'offen' (#136).
+# Ein Fehlgriff auf „Erledigt" soll keine Sackgasse sein – wer schließen darf,
+# darf auch wieder öffnen. Bewusst nur nach 'offen' statt zurück in den vorigen
+# Status: welcher das war, steht im Verlauf; ein Ticket, das gerade wieder
+# aufgemacht wurde, ist offen und nicht „schon eingeplant".
 STATUS_UEBERGAENGE: dict[str, list[str]] = {
     TicketStatus.OFFEN:       [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
     TicketStatus.IN_PRUEFUNG: [TicketStatus.EINGEPLANT, TicketStatus.RUECKFRAGE, TicketStatus.ERLEDIGT, TicketStatus.ABGELEHNT],
     TicketStatus.EINGEPLANT:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ERLEDIGT],
     TicketStatus.RUECKFRAGE:  [TicketStatus.IN_PRUEFUNG, TicketStatus.ABGELEHNT],
-    TicketStatus.ERLEDIGT:    [],
-    TicketStatus.ABGELEHNT:   [],
+    TicketStatus.ERLEDIGT:    [TicketStatus.OFFEN],
+    TicketStatus.ABGELEHNT:   [TicketStatus.OFFEN],
 }
 
 
@@ -184,29 +190,63 @@ class TicketService:
         return result
 
     def change_status(self, ticket: Ticket, new_status: str, changed_by: str, version: int) -> bool:
-        """Statuswechsel mit Übergangsprüfung. Setzt geschlossen_am/geschlossen_von bei 'erledigt'.
+        """Statuswechsel mit Übergangsprüfung. Setzt den Abschluss-Stempel
+        (geschlossen_am/geschlossen_von) beim Abschließen und räumt ihn beim
+        Wiederöffnen wieder weg – ein wieder geöffnetes Ticket ist nicht
+        geschlossen, auch nicht „zuletzt geschlossen am".
 
         Erwartet das bereits geladene Ticket (der Aufrufer hat es ohnehin für die
         Rechteprüfung geladen) – spart einen zusätzlichen DB-Roundtrip."""
-        erlaubt = STATUS_UEBERGAENGE.get(ticket.status, [])
+        alter_status = ticket.status
+        erlaubt = STATUS_UEBERGAENGE.get(alter_status, [])
         if new_status not in erlaubt:
             raise UngueltigerStatusWechselError(
-                f"Statuswechsel von '{ticket.status}' nach '{new_status}' nicht erlaubt."
+                f"Statuswechsel von '{alter_status}' nach '{new_status}' nicht erlaubt."
             )
+        actor_id = self._actor_id(changed_by)
         ticket.status = new_status
         ticket.version = version
-        if new_status in TicketStatus.ABGESCHLOSSEN:
+        wird_geschlossen = new_status in TicketStatus.ABGESCHLOSSEN
+        wird_geoeffnet = alter_status in TicketStatus.ABGESCHLOSSEN and not wird_geschlossen
+        if wird_geschlossen:
             ticket.geschlossen_am = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            ticket.geschlossen_von = actor_id
+        elif wird_geoeffnet:
+            ticket.geschlossen_am = None
+            ticket.geschlossen_von = None
         result = self._ticket_repo.update(ticket, changed_by)
         if result:
-            self._notify(self._ticket_empfaenger(ticket), self._actor_id(changed_by),
-                         f"🎫 Ticket #{ticket.id} → {new_status}",
-                         f"Status von \"{ticket.titel}\" wurde auf \"{new_status}\" geändert.\n\nGeändert von: {changed_by}",
+            label = TicketStatus.LABELS.get(new_status, new_status)
+            titel = (f"🎫 Ticket #{ticket.id} wieder geöffnet" if wird_geoeffnet
+                     else f"🎫 Ticket #{ticket.id} → {label}")
+            text = (f"\"{ticket.titel}\" wurde wieder geöffnet." if wird_geoeffnet
+                    else f"Status von \"{ticket.titel}\" wurde auf \"{label}\" geändert.")
+            self._notify(self._ticket_empfaenger(ticket), actor_id,
+                         titel,
+                         f"{text}\n\nGeändert von: {changed_by}",
                          url=self._ticket_url(ticket.id))
         return result
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
+        """Verbergen: nur das Ticket. Die Anhänge bleiben absichtlich stehen,
+        damit `restore_ticket` es vollständig zurückbringt."""
         return self._ticket_repo.mark_deleted(ticket_id, deleted_by)
+
+    def verwerfe_entwurf(self, ticket_id: int, verworfen_von: str) -> bool:
+        """Verwirft ein nie gespeichertes Ticket mitsamt seinen Anhängen (#136).
+
+        Ein Entwurf, den niemand gespeichert hat, sollte nichts hinterlassen –
+        auch kein Foto, das beim Anlegen schon hochgeladen wurde. Anders als
+        beim Verbergen gehen die Anhänge darum mit: blieben sie leben, hinge
+        auch der Prune fest (Tor 4 verlangt, dass keine Kind-Zeile mehr auf das
+        Ticket zeigt) und die Datei läge für immer auf der Platte.
+
+        Gehärtet, nicht bloß Kosmetik: Die Reihenfolge ist Kind vor Eltern, wie
+        im Prune. Bricht es dazwischen ab, sind die Anhänge weg und das Ticket
+        noch da – der harmlosere Rest, den ein erneuter Aufruf aufräumt.
+        """
+        self._anhang_repo.mark_deleted_by_ticket(ticket_id, verworfen_von)
+        return self._ticket_repo.mark_deleted(ticket_id, verworfen_von)
 
     def restore_ticket(self, ticket_id: int, restored_by: str) -> bool:
         return self._ticket_repo.restore(ticket_id, restored_by)
@@ -337,6 +377,7 @@ class TicketService:
         mime_type: str,
         inhalt: bytes | io.BytesIO,
         hochgeladen_von: int,
+        notify: bool = True,
     ) -> TicketAnhang:
         """
         Legt Anhang an (DB-Record + Datei auf Disk).
@@ -346,6 +387,10 @@ class TicketService:
           2. DB-Record anlegen → stored_name ergibt sich aus der Auto-Increment-ID
           3. Datei unter stored_name schreiben
           Falls Schritt 3 fehlschlägt: DB-Record soft-löschen + IOError weiterwerfen.
+          4. Benachrichtigung an denselben Kreis wie beim öffentlichen Kommentar –
+             ein nachgereichtes Foto ist ein Beitrag zum Ticket und soll nicht
+             stumm liegenbleiben. `notify=False` für Anhänge am noch
+             ungespeicherten Entwurf.
         """
         from app.services.anhang_service import AnhangService
         if self._anhang_service is None:
@@ -371,6 +416,18 @@ class TicketService:
         except Exception as exc:
             self._anhang_repo.mark_deleted(db_anhang.id, deleted_by='SYSTEM_FEHLER')
             raise IOError(f"Datei konnte nicht gespeichert werden: {exc}") from exc
+
+        # Erst nach dem erfolgreichen Schreiben melden – sonst kündigt die
+        # Nachricht eine Datei an, die es nicht auf die Platte geschafft hat.
+        if notify:
+            ticket = self._ticket_repo.get(ticket_id)
+            if ticket:
+                hochlader = self._user_repo.get_by_id(hochgeladen_von)
+                von = hochlader.username if hochlader else f"#{hochgeladen_von}"
+                self._notify(self._ticket_empfaenger(ticket), hochgeladen_von,
+                             f"🎫 Neuer Anhang zu Ticket #{ticket.id}",
+                             f"\"{ticket.titel}\"\n\nVon: {von}\n\n{original_name}",
+                             url=self._ticket_url(ticket.id))
 
         return db_anhang
 

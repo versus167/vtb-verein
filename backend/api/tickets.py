@@ -427,6 +427,11 @@ def change_status(ticket_id: int, data: StatusChange, user: CurrentUser, db: DB)
         raise HTTPException(status_code=403, detail="Kein Recht zum Ändern des Status.")
     if data.status in TicketStatus.ABGESCHLOSSEN and not _can_close(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Recht zum Abschließen dieses Tickets.")
+    # Wiedereröffnen ist das Gegenstück zum Abschließen (#136) und braucht darum
+    # dasselbe Recht – sonst könnte jeder Bearbeiter eine Abschluss-Entscheidung
+    # des Schließers kassieren.
+    if ticket.status in TicketStatus.ABGESCHLOSSEN and not _can_close(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket wieder zu öffnen.")
     try:
         ok = db.tickets.change_status(ticket, data.status, changed_by=user.username, version=data.expected_version)
     except UngueltigerStatusWechselError as exc:
@@ -532,6 +537,20 @@ def delete_ticket(ticket_id: int, user: CurrentUser, db: DB):
     db.tickets.mark_ticket_deleted(ticket_id, deleted_by=user.username)
 
 
+@router.delete("/{ticket_id}/entwurf", status_code=204)
+def verwerfe_entwurf(ticket_id: int, user: CurrentUser, db: DB):
+    """Verwirft einen nie gespeicherten Entwurf – samt der Anhänge, die beim
+    Anlegen schon hochgeladen wurden (#136). Gegenstück zu DELETE /{id}, das
+    nur verbirgt und die Anhänge für das Wiederherstellen stehen lässt.
+
+    Rechte wie beim Verbergen: Verwalter, oder der Melder für sein eigenes.
+    """
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_verwalten(ticket, user, db) and ticket.gemeldet_von != user.id:
+        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket zu verwerfen.")
+    db.tickets.verwerfe_entwurf(ticket_id, verworfen_von=user.username)
+
+
 @router.post("/{ticket_id}/restore")
 def restore_ticket(ticket_id: int, user: CurrentUser, db: DB):
     """Hebt einen Soft-Delete wieder auf – nur Verwalter (Admin/Bereichs-Bearbeiter)."""
@@ -562,7 +581,12 @@ async def upload_anhang(
     user: CurrentUser,
     db: DB,
     file: UploadFile = File(...),
+    draft: bool = False,
 ):
+    """`draft=true` meldet den Anhang niemandem: Belege, die beim Anlegen an ein
+    noch ungespeichertes Ticket gehängt werden, dürfen nicht vor dem Ticket
+    selbst rausgehen (das trüge noch den Platzhalter-Titel). Die Meldung über
+    das neue Ticket kommt gleich danach beim Speichern."""
     ticket = _get_ticket_or_404(ticket_id, db)
     if not _can_write(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Schreibzugriff auf dieses Ticket.")
@@ -576,6 +600,7 @@ async def upload_anhang(
             mime_type=file.content_type or "application/octet-stream",
             inhalt=inhalt,
             hochgeladen_von=user.id,
+            notify=not draft,
         )
     except DateitypNichtErlaubtError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

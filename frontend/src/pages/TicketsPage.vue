@@ -360,6 +360,21 @@
                 </div>
               </div>
 
+              <!-- Wieder öffnen (nur wer schließen darf) -->
+              <div v-if="isAbgeschlossen(selectedTicket) && canClose && !selectedIstGeloescht" class="q-mb-md">
+                <q-btn
+                  label="Wieder öffnen"
+                  icon="lock_open"
+                  outline
+                  color="primary"
+                  size="sm"
+                  @click="doStatusChange('offen')"
+                />
+                <div class="text-caption text-grey q-mt-xs">
+                  Danach sind Kommentare und Anhänge wieder möglich.
+                </div>
+              </div>
+
               <!-- Zurückziehen (nur Ersteller, solange offen) -->
               <div v-if="canWithdraw && !isDraftTicket && !selectedIstGeloescht" class="q-mb-md">
                 <q-btn
@@ -392,6 +407,7 @@
                 <anhang-panel
                   :anhaenge="detailAnhaenge"
                   :upload-url="`/api/tickets/${selectedTicket.id}/anhaenge`"
+                  :upload-params="isDraftTicket ? { draft: true } : {}"
                   :can-upload="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   :can-delete="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   @uploaded="onAnhangUploaded"
@@ -431,8 +447,10 @@
                   </q-card>
                 </div>
 
-                <!-- Neuer Kommentar -->
-                <div v-if="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht" class="q-mt-md">
+                <!-- Neuer Kommentar (am ungespeicherten Entwurf gibt es noch
+                     nichts zu kommentieren – dafür ist die Beschreibung da, und
+                     eine Meldung mit Platzhalter-Titel will niemand) -->
+                <div v-if="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht && !isDraftTicket" class="q-mt-md">
                   <q-input
                     v-model="neuerKommentar"
                     outlined
@@ -572,6 +590,9 @@ const filterMitAbgeschlossenen = ref(false)
 const zeigeGeloeschte = ref(false)
 
 // ── Erstellen / Detail ─────────────────────────────────────────────────────
+// isDraftTicket = angelegt, aber noch nicht gespeichert. Bleibt bis zum
+// Speichern stehen: daran hängen der Platzhalter-Titel, die unterdrückte
+// „Neues Ticket"-Meldung und die stummen Anhänge (#136).
 const isDraftTicket = ref(false)
 const saving = ref(false)
 
@@ -666,8 +687,10 @@ const STATUS_UEBERGAENGE = {
   in_pruefung: ['eingeplant', 'rueckfrage', 'erledigt', 'abgelehnt'],
   eingeplant:  ['in_pruefung', 'erledigt'],
   rueckfrage:  ['in_pruefung', 'abgelehnt'],
-  erledigt:    [],
-  abgelehnt:   [],
+  // Zurück aus dem Abschluss geht nur nach 'offen' (#136) – und nicht über die
+  // Status-Buttons, sondern über den eigenen „Wieder öffnen"-Knopf.
+  erledigt:    ['offen'],
+  abgelehnt:   ['offen'],
 }
 
 const STATUS_LABELS = {
@@ -1053,12 +1076,36 @@ function onRestore(ticket) {
   })
 }
 
+// Ein Entwurf ist erst ein Ticket, wenn gespeichert wurde – wer nicht speichert,
+// will es nicht. Beim Schließen wird er darum verworfen, samt hochgeladener
+// Anhänge (das Backend nimmt sie mit, sonst bleiben sie ewig liegen).
+// Hängt schon etwas dran, fragen wir vorher: ein Foto ist Arbeit.
+const entwurfHatInhalt = computed(
+  () => detailAnhaenge.value.length > 0 || kommentare.value.length > 0)
+
+function frageVerwerfen() {
+  return new Promise((resolve) => {
+    $q.dialog({
+      title: 'Entwurf verwerfen',
+      message: 'Dieses Ticket wurde noch nicht gespeichert. Beim Schließen wird es '
+        + 'samt der hochgeladenen Anhänge verworfen.',
+      cancel: { label: 'Weiter bearbeiten', flat: true },
+      ok: { label: 'Verwerfen', color: 'negative' },
+      persistent: true,
+    })
+      .onOk(() => resolve(true))
+      .onCancel(() => resolve(false))
+      .onDismiss(() => resolve(false))     // greift nur, falls nichts davor kam
+  })
+}
+
 async function closeDetailDialog() {
   if (isDraftTicket.value && selectedTicket.value) {
+    if (entwurfHatInhalt.value && !(await frageVerwerfen())) return
     try {
-      await api.delete(`/api/tickets/${selectedTicket.value.id}`)
+      await api.delete(`/api/tickets/${selectedTicket.value.id}/entwurf`)
       tickets.value = tickets.value.filter(t => t.id !== selectedTicket.value.id)
-      $q.notify({ type: 'info', message: 'Ticket verworfen.' })
+      $q.notify({ type: 'info', message: 'Entwurf verworfen.' })
     } catch { /* ignorieren */ }
   }
   isDraftTicket.value = false
@@ -1111,8 +1158,27 @@ async function onDetailSave() {
 }
 
 // ── Statuswechsel ──────────────────────────────────────────────────────────
+// Abschließen fragt nach: Der Knopf sitzt zwischen den anderen Status-Buttons,
+// ist aber der folgenreichste – danach sind Kommentare und Anhänge gesperrt und
+// alle Beteiligten bekommen eine Benachrichtigung (#136: einmal danebengegriffen).
+// Rückwärts (Wieder öffnen) fragt nichts, das ist die harmlose Richtung.
 async function doStatusChange(newStatus) {
   if (!selectedTicket.value) return
+  if (newStatus === 'erledigt' || newStatus === 'abgelehnt') {
+    const t = selectedTicket.value
+    $q.dialog({
+      title: newStatus === 'erledigt' ? 'Ticket abschließen' : 'Ticket ablehnen',
+      message: `Ticket #${t.id} „${t.titel}" auf „${statusLabel(newStatus)}" setzen? `
+        + 'Kommentare und Anhänge sind danach gesperrt – wer schließen darf, kann es aber wieder öffnen.',
+      cancel: true,
+      ok: { label: statusLabel(newStatus), color: statusColor(newStatus) },
+    }).onOk(() => sendeStatus(newStatus))
+    return
+  }
+  await sendeStatus(newStatus)
+}
+
+async function sendeStatus(newStatus) {
   try {
     const { data } = await api.patch(`/api/tickets/${selectedTicket.value.id}/status`, {
       status: newStatus,
@@ -1121,7 +1187,7 @@ async function doStatusChange(newStatus) {
     selectedTicket.value = data
     const idx = tickets.value.findIndex(t => t.id === data.id)
     if (idx >= 0) tickets.value[idx] = data
-    aufgaben.laden()          // erledigt/abgelehnt fällt aus der Aufgabenzahl
+    aufgaben.laden()          // erledigt/abgelehnt raus, wieder geöffnet rein
     $q.notify({ type: 'positive', message: `Status auf „${statusLabel(newStatus)}" gesetzt.` })
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Statuswechsel.' })
@@ -1140,7 +1206,6 @@ function setAnhangCount(count) {
 }
 
 function onAnhangUploaded(newAnhang) {
-  isDraftTicket.value = false
   detailAnhaenge.value = [...detailAnhaenge.value, newAnhang]
   setAnhangCount((selectedTicket.value?.anhang_count || 0) + 1)
 }
@@ -1169,7 +1234,6 @@ async function sendKommentar() {
       inhalt: neuerKommentar.value,
       sichtbarkeit: kommentarIntern.value ? 'intern' : 'oeffentlich',
     })
-    isDraftTicket.value = false
     kommentare.value = [...kommentare.value, data]
     neuerKommentar.value = ''
     kommentarIntern.value = false
