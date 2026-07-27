@@ -226,6 +226,24 @@ class TicketService:
             ids.add(ticket.zugewiesen_an)
         return ids
 
+    def anzahl_zustaendig(self, user) -> int:
+        """Offene Tickets, für die dieser Benutzer zuständig ist (#133).
+
+        Zuständig heißt: konkret zugewiesen – und solange niemand zugewiesen
+        ist, Bearbeiter/Schließer im Bereich. Das ist bewusst eine Vorrang-
+        Regel und nicht die Vereinigung aus `_verantwortliche_ids` (die dient
+        der Gesehen-Ansicht): ein zugewiesenes Ticket soll nicht weiter in der
+        Aufgabenzahl aller Bereichs-Bearbeiter stehen.
+
+        Ein Admin darf zwar überall, bekommt aber keine Bereichs-Berechtigung
+        (die wird nur an Nicht-Admins vergeben) und zählt darum nur seine
+        direkten Zuweisungen – die Rolle ist kein Arbeitskonto.
+        """
+        bereiche = [b["bereich_id"]
+                    for b in self._berechtigung_repo.list_berechtigungen_fuer_user(user.id)
+                    if b.get("darf_bearbeiten") or b.get("darf_schliessen")]
+        return self._ticket_repo.count_zustaendig(user.id, bereiche)
+
     def log_gesehen(self, ticket_id: int, user_id: int, username: str) -> bool:
         """Protokolliert, dass ``user_id`` das Ticket gesehen hat (throttled im Repo)."""
         if self._zugriff_log_repo is None:

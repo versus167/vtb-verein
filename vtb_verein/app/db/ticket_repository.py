@@ -8,7 +8,7 @@ Alle Spaltennamen entsprechen der DB-Migration 8->9 (deutsche Namen).
 from typing import Optional
 from app.models.ticket import (
     Ticket, TicketBereich, TicketKategorie,
-    TicketKommentar, TicketAnhang, TicketTeilnehmer
+    TicketKommentar, TicketAnhang, TicketTeilnehmer, TicketStatus
 )
 
 
@@ -66,6 +66,32 @@ class TicketRepository:
             (user_id,)
         )
         return [self._map_ticket(row) for row in cursor.fetchall()]
+
+    def count_zustaendig(self, user_id: int, bereich_ids: list[int]) -> int:
+        """Nicht abgeschlossene Tickets, die bei diesem Benutzer liegen (#133).
+
+        Vorrang-Regel: ein konkret zugewiesenes Ticket zählt nur beim
+        Zugewiesenen. Sonst stünde es weiter in der Zahl aller Bereichs-
+        Bearbeiter, obwohl sich schon jemand darum kümmert. Ohne Zuweisung ist
+        der ganze Bereich dran.
+
+        ``bereich_ids`` sind die Bereiche mit bearbeiten- oder schliessen-Recht;
+        eine leere Liste lässt den Bereichs-Zweig ganz weg (ein ``ANY`` auf ein
+        leeres Array müsste Postgres sonst den Typ raten).
+        """
+        bedingungen = ["zugewiesen_an = %s"]
+        params: list = [user_id]
+        if bereich_ids:
+            bedingungen.append("(zugewiesen_an IS NULL AND bereich_id = ANY(%s))")
+            params.append(list(bereich_ids))
+        params.append(list(TicketStatus.ABGESCHLOSSEN))
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) AS anzahl FROM tickets "
+            "WHERE deleted_at IS NULL AND (" + " OR ".join(bedingungen) + ") "
+            "AND status <> ALL(%s)",
+            params,
+        )
+        return cursor.fetchone()["anzahl"]
 
     def list_by_gemeldet(self, user_id: int) -> list[Ticket]:
         cursor = self.conn.execute(

@@ -156,6 +156,9 @@
           >
             <q-item-section avatar><q-icon name="confirmation_number" /></q-item-section>
             <q-item-section>Tickets</q-item-section>
+            <q-item-section side>
+              <AufgabenBadge :anzahl="aufgaben.anzahl('tickets')" />
+            </q-item-section>
           </q-item>
 
           <q-item

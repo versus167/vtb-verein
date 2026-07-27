@@ -61,6 +61,11 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 - **Kassen**: objektbezogen über `kasse_berechtigungen` (pro Kasse).
 - **Ticket-Bereiche**: objektbezogen über `ticket_bereich_berechtigungen`.
   Beide bleiben bewusst eigenständig.
+  Daraus abgeleitet der Aufgaben-Hinweis (#133,
+  `TicketService.anzahl_zustaendig`): zuständig ist der konkret Zugewiesene –
+  und **nur solange niemand zugewiesen ist** jeder Bereichs-Bearbeiter/
+  -Schließer. Ein Admin darf zwar überall, bekommt aber keine
+  Bereichs-Berechtigung und zählt darum nur seine direkten Zuweisungen.
 
 ### Bekannte, akzeptierte Punkte
 

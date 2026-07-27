@@ -25,6 +25,7 @@ router = APIRouter(prefix="/aufgaben", tags=["aufgaben"])
 _QUELLEN = (
     ("rechnungen", lambda user, db: db.rechnungen.anzahl_zur_freigabe(user)),
     ("uebungsleiter", anzahl_zu_bestaetigen),
+    ("tickets", lambda user, db: db.tickets.anzahl_zustaendig(user)),
 )
 
 
