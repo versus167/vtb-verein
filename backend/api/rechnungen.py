@@ -7,7 +7,8 @@ Berechtigungsmodell (siehe BERECHTIGUNGEN.md):
     (has_permission_for_abteilung); ein Abteilungsleiter sieht und entscheidet nur
     über die Rechnungen seiner Abteilung(en)
   - rechnungen.verwalten:  Geschäftsstelle – alles sehen, Kategorien pflegen,
-    exportieren und Vereinsrechnungen (ohne Abteilung) freigeben
+    exportieren, Vereinsrechnungen (ohne Abteilung) freigeben und für ein
+    anderes Mitglied erfassen (Erstattung an jemanden ohne App-Zugang)
 
 Die Routen /kategorien und /export stehen bewusst VOR /{rechnung_id} – sonst
 würde der Pfadparameter sie schlucken.
@@ -229,6 +230,19 @@ def meine_abteilungen(user: CurrentUser, db: DB):
     Genau eine → das Frontend setzt sie ohne Auswahlfeld; leer → Vereinsrechnung.
     """
     return db.rechnungen.abteilungen_fuer_user(user)
+
+
+@router.get("/empfaenger-mitglieder")
+def empfaenger_mitglieder(user: CurrentUser, db: DB):
+    """Auswahlliste für „Erstattung an ein Mitglied" – nur rechnungen.verwalten.
+
+    Die Geschäftsstelle erfasst Belege auch für Mitglieder ohne App-Zugang;
+    dann geht das Geld an dieses Mitglied und nicht an den Erfasser.
+    """
+    try:
+        return db.rechnungen.empfaenger_mitglieder(user)
+    except Exception as exc:
+        raise _fehler_zu_http(exc)
 
 
 @router.get("")

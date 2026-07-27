@@ -10,6 +10,10 @@ gezahlt wird – ohne diese vier kann niemand freigeben. Rechnungsdatum und
 -nummer bleiben optional und trägt die Geschäftsstelle bei Bedarf nach.
 Geprüft wird erst beim Einreichen: ein Entwurf darf unvollständig sein.
 
+Erstattet wird an den Einreicher – nur die Geschäftsstelle darf ein anderes
+Mitglied als Empfänger eintragen (sie nimmt Belege auch für Leute ohne
+App-Zugang an).
+
 Die Statuswechsel selbst erzwingt das Repository über die WHERE-Klausel; hier
 stehen Rechteprüfung, Vorbedingungen und Benachrichtigungen.
 """
@@ -18,7 +22,7 @@ from typing import Optional
 
 from app.models.permission import Permission
 from app.models.rechnung import (
-    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF,
+    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF, STATUS_EINGEREICHT,
     EMPFAENGER_TYPEN, EMPFAENGER_MITGLIED,
 )
 
@@ -179,6 +183,33 @@ class RechnungService:
                 for a in self._abteilung_repo.list_abteilungen()]
 
     # ------------------------------------------------------------------
+    # Empfänger-Auswahl (Erstattung an ein anderes Mitglied)
+    # ------------------------------------------------------------------
+
+    def empfaenger_mitglieder(self, user) -> list[dict]:
+        """Mitglieder, an die erstattet werden kann – nur für die Verwaltung.
+
+        Die Geschäftsstelle nimmt Belege am Tresen von Leuten an, die selbst
+        keinen Zugang haben; dann muss das Geld an dieses Mitglied gehen und
+        nicht an den Erfasser.
+
+        Bewusst schlank (Name, Nummer, ob eine Bankverbindung hinterlegt ist):
+        die Liste hängt am Recht `rechnungen.verwalten` und soll kein zweiter
+        Weg in den Personenstamm werden. Ausgetretene bleiben drin – auch deren
+        letzte Auslage will noch erstattet werden.
+        """
+        self._require_verwalten(user)
+        return [
+            {
+                "id": m.id,
+                "name": f"{m.vorname} {m.nachname}".strip(),
+                "mitgliedsnummer": m.mitgliedsnummer,
+                "hat_iban": bool((m.iban or "").strip()),
+            }
+            for m in self._mitglied_repo.list_mitglieder()
+        ]
+
+    # ------------------------------------------------------------------
     # Listen
     # ------------------------------------------------------------------
 
@@ -197,6 +228,20 @@ class RechnungService:
         # Vereinsrechnungen (ohne Abteilung) sieht hier niemand ohne Verwaltungsrecht.
         return self._rechnung.list_for_abteilungen(
             erlaubt if erlaubt is not None else None, status,
+            include_vereinsrechnungen=False, ohne_entwuerfe=True)
+
+    def anzahl_zur_freigabe(self, user) -> int:
+        """Wie viele Rechnungen warten auf die Entscheidung dieses Benutzers?
+
+        Für den Aufgaben-Hinweis an Kachel und Nav (#133) – gezählt wird genau
+        das, was `list_zur_freigabe(user, 'eingereicht')` auch zeigen würde.
+        """
+        if self.darf_verwalten(user):
+            return self._rechnung.count_for_abteilungen(
+                None, STATUS_EINGEREICHT, ohne_entwuerfe=True)
+        erlaubt = user.allowed_abteilungen(Permission.RECHNUNGEN_FREIGEBEN)
+        return self._rechnung.count_for_abteilungen(
+            erlaubt, STATUS_EINGEREICHT,
             include_vereinsrechnungen=False, ohne_entwuerfe=True)
 
     def list_alle(self, user, status: Optional[str] = None) -> list[Rechnung]:
@@ -486,20 +531,48 @@ class RechnungService:
 
     def _aufloesen_empfaenger_mitglied(self, user, empfaenger_typ: Optional[str],
                                        empfaenger_mitglied_id: Optional[int]):
-        """Bei „Erstattung an ein Mitglied" ohne konkrete Angabe: der Einreicher.
+        """Bei „Erstattung an ein Mitglied": wer bekommt das Geld?
 
-        Das ist der Normalfall (jemand hat ausgelegt und will es zurück) – das
-        Frontend schickt dann nur den Typ. Die Bankverbindung kommt aus dem
-        Mitgliedsstamm und wird an der Rechnung nicht doppelt gepflegt.
+        Ohne konkrete Angabe ist es der Einreicher – der Normalfall (jemand hat
+        ausgelegt und will es zurück), das Frontend schickt dann nur den Typ.
+        Ein *anderes* Mitglied darf nur die Geschäftsstelle eintragen: sie nimmt
+        Belege auch für Leute ohne App-Zugang an. Für alle anderen wäre es der
+        kurze Weg, eine fremde Bankverbindung an die eigene Rechnung zu hängen.
+
+        Die Bankverbindung kommt aus dem Mitgliedsstamm und wird an der Rechnung
+        nicht doppelt gepflegt.
         """
-        if empfaenger_typ != EMPFAENGER_MITGLIED or empfaenger_mitglied_id is not None:
+        if empfaenger_typ != EMPFAENGER_MITGLIED:
             return empfaenger_mitglied_id
-        mitglied = self._mitglied_repo.get_by_user_id(user.id)
-        if mitglied is None:
+        eigenes = self._mitglied_repo.get_by_user_id(user.id)
+        if empfaenger_mitglied_id is None:
+            if self.darf_verwalten(user):
+                # Wer die Wahl hat, bekommt niemanden untergeschoben – auch sich
+                # selbst nicht. Die Lücke fällt spätestens beim Einreichen auf
+                # (_pruefe_empfaenger_vollstaendig), statt still eine Auszahlung
+                # an den Erfasser vorzubereiten.
+                return None
+            if eigenes is None:
+                raise ValueError(
+                    "Zu diesem Benutzer gibt es kein Mitglied – bitte das Mitglied "
+                    "angeben, an das erstattet werden soll.")
+            return eigenes.id
+        if eigenes is not None and empfaenger_mitglied_id == eigenes.id:
+            return empfaenger_mitglied_id
+        if not self.darf_verwalten(user):
+            raise KeinZugriffError(
+                "Für ein anderes Mitglied kann nur die Geschäftsstelle einreichen.")
+        self._pruefe_mitglied(empfaenger_mitglied_id)
+        return empfaenger_mitglied_id
+
+    def _pruefe_mitglied(self, mitglied_id: int) -> None:
+        """Unbekannter Empfänger ist eine Eingabe-, keine Adressierungsfrage –
+        darum ValueError (422) statt des KeyError-404, das die Rechnung meinte."""
+        try:
+            self._mitglied_repo.get_mitglied(mitglied_id)
+        except KeyError:
             raise ValueError(
-                "Zu diesem Benutzer gibt es kein Mitglied – bitte den "
-                "Rechnungsaussteller als Empfänger angeben.")
-        return mitglied.id
+                "Unbekanntes oder gelöschtes Mitglied als Empfänger.") from None
 
     def _pruefe_empfaenger_vollstaendig(self, r: Rechnung) -> None:
         """Vor dem Einreichen: Erstattung oder Zahlung an den Aussteller?

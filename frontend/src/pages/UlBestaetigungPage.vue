@@ -118,11 +118,13 @@ import { ref, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import StundenKalender from 'src/components/StundenKalender.vue'
 
 defineOptions({ name: 'UlBestaetigungPage' })
 
 const $q = useQuasar()
+const aufgaben = useAufgabenStore()
 
 const abrechnungen = ref([])
 const statusFilter = ref('eingereicht')
@@ -153,6 +155,9 @@ async function load() {
   const params = statusFilter.value ? { status_filter: statusFilter.value } : {}
   const { data } = await api.get('/api/ul-stunden/zu-bestaetigen', { params })
   abrechnungen.value = data
+  // Nach jeder Bestätigung wird neu geladen – der Hinweis an Kachel und Nav
+  // zieht damit sofort mit, statt bis zum nächsten Refresh zu warten (#133).
+  aufgaben.laden()
 }
 usePageRefresh(load)
 onMounted(async () => {

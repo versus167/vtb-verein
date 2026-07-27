@@ -56,11 +56,13 @@
       </div>
 
       <div v-if="hatUebungsleiterZugriff" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="uebungsleiter" icon="sports" title="Übungsleiter" caption="Stunden & Vergütung" />
+        <SettingsTile to="uebungsleiter" icon="sports" title="Übungsleiter" caption="Stunden & Vergütung"
+          :badge="aufgaben.anzahl('uebungsleiter')" />
       </div>
 
       <div v-if="hatRechnungenZugriff" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="rechnungen" icon="receipt_long" title="Rechnungen" caption="Einreichen & freigeben" />
+        <SettingsTile to="rechnungen" icon="receipt_long" title="Rechnungen" caption="Einreichen & freigeben"
+          :badge="aufgaben.anzahl('rechnungen')" />
       </div>
 
       <div v-if="auth.hasPermission('berichte.read')" class="col-6 col-sm-4 col-md-3">
@@ -86,6 +88,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import { api } from 'src/boot/axios'
 import SettingsTile from 'src/components/SettingsTile.vue'
 import TerminCard from 'components/TerminCard.vue'
@@ -94,6 +97,8 @@ import { useTerminAktionen } from 'src/composables/useTermine'
 
 const auth = useAuthStore()
 const router = useRouter()
+// Geladen wird zentral im MainLayout (auch bei jedem Refresh) – hier nur gelesen.
+const aufgaben = useAufgabenStore()
 
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)

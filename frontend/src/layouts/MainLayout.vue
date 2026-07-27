@@ -186,6 +186,9 @@
           >
             <q-item-section avatar><q-icon name="sports" /></q-item-section>
             <q-item-section>Übungsleiter</q-item-section>
+            <q-item-section side>
+              <AufgabenBadge :anzahl="aufgaben.anzahl('uebungsleiter')" />
+            </q-item-section>
           </q-item>
 
           <q-item
@@ -196,6 +199,9 @@
           >
             <q-item-section avatar><q-icon name="receipt_long" /></q-item-section>
             <q-item-section>Rechnungen</q-item-section>
+            <q-item-section side>
+              <AufgabenBadge :anzahl="aufgaben.anzahl('rechnungen')" />
+            </q-item-section>
           </q-item>
 
           <q-item
@@ -281,8 +287,10 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import AufgabenBadge from 'src/components/AufgabenBadge.vue'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
 import PushStatusButton from 'src/components/PushStatusButton.vue'
 import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
@@ -290,6 +298,9 @@ import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'sr
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+// Offene Aufgaben für die Hinweise an Nav-Punkten und Dashboard-Kacheln (#133).
+// Zentral hier geladen, weil das Layout immer steht – die Kacheln lesen mit.
+const aufgaben = useAufgabenStore()
 const $q = useQuasar()
 const drawer = ref($q.screen.gt.sm)
 
@@ -446,10 +457,12 @@ async function loadTeamtresorZugriff() {
 // sonst dauerhaft verschwinden, während sich die Dashboard-Kacheln erholten.
 // auth.loadMe() läuft mit (#130): Rechte-Änderungen greifen so ohne App-Neustart
 // beim nächsten Refresh (Button bzw. Rückkehr zur App) statt erst beim Neuladen.
+// Die offenen Aufgaben (#133) hängen mit dran: sie sollen sich beim selben
+// Anlass aktualisieren wie die Nav-Punkte, an denen sie stehen.
 function ladeZugriffsProben() {
   return Promise.all([auth.loadMe().catch(() => {}),
     loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
-    loadMannschaftenZugriff(), loadTeamtresorZugriff()])
+    loadMannschaftenZugriff(), loadTeamtresorZugriff(), aufgaben.laden()])
 }
 
 async function onLogout() {
@@ -459,6 +472,7 @@ async function onLogout() {
   hatTermineZugriff.value = false
   hatMannschaftenZugriff.value = false
   hatTeamtresorZugriff.value = false
+  aufgaben.zuruecksetzen()
   router.push({ name: 'login' })
 }
 

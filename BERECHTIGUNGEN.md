@@ -163,7 +163,7 @@ Drei Keys, zweiter davon **strict scoped** durchgesetzt:
 |---|---|
 | `rechnungen.einreichen` | eigene Rechnungen anlegen, Belege hochladen, einreichen |
 | `rechnungen.freigeben` | eingereichte Rechnungen freigeben/ablehnen – **nur für die Abteilungen, aus denen das Recht stammt** |
-| `rechnungen.verwalten` | Geschäftsstelle: alle Rechnungen sehen, Kategorien pflegen, exportieren, Vereinsrechnungen (ohne Abteilung) freigeben |
+| `rechnungen.verwalten` | Geschäftsstelle: alle Rechnungen sehen, Kategorien pflegen, exportieren, Vereinsrechnungen (ohne Abteilung) freigeben, **Erstattung an ein anderes Mitglied** erfassen |
 
 - Seed: `rechnungen.einreichen` + `rechnungen.freigeben` hängen an der Funktion
   `abteilungsleiter` (`_RECHNUNG_FUNKTION_PERMISSIONS` in `database.py`, aus
@@ -176,3 +176,10 @@ Drei Keys, zweiter davon **strict scoped** durchgesetzt:
   `rechnungen.verwalten` freigegeben werden – ein Abteilungs-Scope greift dort
   per Definition nicht.
 - Der Ersteller sieht seine eigenen Rechnungen immer, unabhängig vom Scope.
+- Erstattet wird an den Einreicher. Ein **anderes** Mitglied als Empfänger nimmt
+  `RechnungService._aufloesen_empfaenger_mitglied` nur von `rechnungen.verwalten`
+  an – die Geschäftsstelle erfasst Belege auch für Leute ohne App-Zugang; für
+  alle anderen wäre es der kurze Weg zu einer fremden Bankverbindung. Für
+  Verwalter wird der Empfänger **nicht** vorbelegt (sonst zahlte ein übersehener
+  Vorschlag an den Erfasser); die Auswahlliste liefert
+  `GET /api/rechnungen/empfaenger-mitglieder`.

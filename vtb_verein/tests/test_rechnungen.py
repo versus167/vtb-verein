@@ -10,6 +10,7 @@ Deckt ab:
   * Vereinsrechnungen (ohne Abteilung) nur für 'rechnungen.verwalten'.
   * Beleg-Pflicht beim Einreichen und Soft-Delete-Verhalten.
   * Abteilungs-Vorbelegung aus Mitgliedschaft und Funktion.
+  * Erstattung an ein *anderes* Mitglied – nur für 'rechnungen.verwalten' (#134).
 
 Läuft nur mit ``VTB_TEST_DATABASE_URL`` (leere Wegwerf-DB; VereinsDB legt das
 Schema beim Connect an).
@@ -145,6 +146,12 @@ def _user(db, username, *, perms=(), abteilung_perms=(), abteilungen=(), funktio
     return db.get_user_by_id(uid)
 
 
+def _mitglied_id(db, user) -> int:
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM mitglied WHERE user_id = %s", (user.id,))
+        return cur.fetchone()["id"]
+
+
 def _kategorie_id(db):
     return db.rechnungen.list_kategorien()[0].id
 
@@ -254,6 +261,151 @@ def test_externer_empfaenger_bleibt_ohne_mitglied(db):
                           empfaenger_name="Getränke Meier",
                           empfaenger_iban="DE89370400440532013000")
     assert mit_namen.empfaenger_name == "Getränke Meier"
+
+
+def test_anzahl_zur_freigabe_zaehlt_wie_die_liste(db):
+    """Ticket #133: Die Zahl an Kachel und Nav muss zu der Liste passen, die
+    sich dahinter öffnet – gleicher Abteilungs-Scope, gleicher Status."""
+    fussball = _abteilung(db, "R-Fussball")
+    handball = _abteilung(db, "R-Handball")
+    einreicher = _user(db, "rtester_e133", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball, handball))
+    fb_leiter = _user(db, "rtester_fb133",
+                      abteilung_perms=(("rechnungen.freigeben", fussball),))
+    gs = _user(db, "rtester_gs133", perms=("rechnungen.verwalten",))
+    fremder = _user(db, "rtester_x133", perms=("rechnungen.einreichen",))
+
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 0   # nichts zu tun
+
+    def einreichen(abteilung_id):
+        r = _rechnung(db, einreicher, abteilung_id)
+        _beleg(db, r.id, einreicher)
+        return db.rechnungen.einreichen(r.id, einreicher)
+
+    einreichen(fussball)
+    einreichen(fussball)
+    hb = einreichen(handball)
+    _rechnung(db, einreicher, fussball)                        # Entwurf zählt nicht
+
+    # Der Abteilungsleiter zählt nur seine Abteilung, die Geschäftsstelle alles.
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 2
+    assert db.rechnungen.anzahl_zur_freigabe(gs) == 3
+    # Wer nichts freigeben darf, bekommt keinen Hinweis.
+    assert db.rechnungen.anzahl_zur_freigabe(fremder) == 0
+    assert db.rechnungen.anzahl_zur_freigabe(einreicher) == 0
+
+    # Entschieden = erledigt: die Zahl sinkt mit der Liste.
+    db.rechnungen.freigeben(hb.id, gs)
+    assert db.rechnungen.anzahl_zur_freigabe(gs) == 2
+    assert len(db.rechnungen.list_zur_freigabe(gs, "eingereicht")) == 2
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 2
+
+    for user in (fb_leiter, gs):
+        assert (db.rechnungen.anzahl_zur_freigabe(user)
+                == len(db.rechnungen.list_zur_freigabe(user, "eingereicht")))
+
+
+def test_verwaltung_reicht_fuer_anderes_mitglied_ein(db):
+    """Ticket #134: Die Geschäftsstelle nimmt Belege auch für Mitglieder ohne
+    App-Zugang an – dann geht das Geld an dieses Mitglied, nicht an den Erfasser."""
+    fussball = _abteilung(db, "R-Fussball")
+    gs = _user(db, "rtester_gs134", perms=("rechnungen.verwalten",))
+    mitglied = _user(db, "rtester_fuer", perms=("rechnungen.einreichen",),
+                     abteilungen=(fussball,))
+    mid = _mitglied_id(db, mitglied)
+    with db.cursor() as cur:
+        cur.execute("UPDATE mitglied SET iban='DE02120300000000202051' WHERE id=%s", (mid,))
+
+    r = _rechnung(db, gs, fussball, empfaenger_typ="mitglied",
+                  empfaenger_mitglied_id=mid)
+    assert r.empfaenger_mitglied_id == mid
+    assert r.empfaenger_mitglied_name == "RechTest rtester_fuer"
+    # Die Bankverbindung kommt aus dem Mitgliedsstamm des Empfängers,
+    # nicht aus dem des Erfassers.
+    assert r.empfaenger_mitglied_iban == "DE02120300000000202051"
+
+    _beleg(db, r.id, gs)
+    eingereicht = db.rechnungen.einreichen(r.id, gs)
+    assert eingereicht.status == "eingereicht"
+    # Erfasst hat die Geschäftsstelle – die Rechnung bleibt ihr Vorgang.
+    assert eingereicht.ersteller_user_id == gs.id
+
+
+def test_einreicher_darf_kein_fremdes_mitglied_eintragen(db):
+    """Sonst wäre es der kurze Weg, eine fremde Bankverbindung an die eigene
+    Rechnung zu hängen."""
+    from app.services.rechnung_service import KeinZugriffError
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_e134", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    anderer = _user(db, "rtester_a134", perms=("rechnungen.einreichen",))
+    fremd = _mitglied_id(db, anderer)
+
+    with pytest.raises(KeinZugriffError):
+        _rechnung(db, einreicher, fussball, empfaenger_mitglied_id=fremd)
+
+    # ... auch nicht nachträglich an einer bereits angelegten Rechnung
+    r = _rechnung(db, einreicher, fussball)
+    assert r.empfaenger_mitglied_id == _mitglied_id(db, einreicher)
+    with pytest.raises(KeinZugriffError):
+        db.rechnungen.aktualisieren(r.id, einreicher, expected_version=r.version,
+                                    empfaenger_mitglied_id=fremd)
+
+
+def test_verwaltung_bekommt_keinen_empfaenger_untergeschoben(db):
+    """Wer wählen darf, bekommt nichts vorbelegt – auch sich selbst nicht.
+
+    Ein übersehener Vorschlag hieße hier: Auszahlung an den Erfasser. Die Lücke
+    fällt stattdessen beim Einreichen auf.
+    """
+    from app.services.rechnung_service import EmpfaengerFehltError
+
+    fussball = _abteilung(db, "R-Fussball")
+    gs = _user(db, "rtester_gs135", perms=("rechnungen.verwalten",))
+    r = _rechnung(db, gs, fussball, empfaenger_typ="mitglied")
+    assert r.empfaenger_mitglied_id is None          # Entwurf darf lückenhaft sein
+    _beleg(db, r.id, gs)
+
+    with pytest.raises(EmpfaengerFehltError):
+        db.rechnungen.einreichen(r.id, gs)
+
+    # Die eigene Auslage geht weiter – die Geschäftsstelle wählt sich selbst.
+    eigenes = _mitglied_id(db, gs)
+    r = db.rechnungen.aktualisieren(r.id, gs, expected_version=r.version,
+                                    empfaenger_mitglied_id=eigenes)
+    assert db.rechnungen.einreichen(r.id, gs).empfaenger_mitglied_id == eigenes
+
+
+def test_unbekanntes_empfaengermitglied_wird_abgewiesen(db):
+    fussball = _abteilung(db, "R-Fussball")
+    gs = _user(db, "rtester_gs136", perms=("rechnungen.verwalten",))
+    with pytest.raises(ValueError):
+        _rechnung(db, gs, fussball, empfaenger_mitglied_id=99_999_999)
+
+
+def test_empfaengerliste_nur_fuer_die_verwaltung(db):
+    """Die Liste hängt am Verwaltungsrecht und soll kein zweiter Weg in den
+    Personenstamm sein – darum schlank und für Einreicher gesperrt."""
+    from app.services.rechnung_service import KeinZugriffError
+
+    gs = _user(db, "rtester_gs137", perms=("rechnungen.verwalten",))
+    einreicher = _user(db, "rtester_e137", perms=("rechnungen.einreichen",))
+    mid = _mitglied_id(db, einreicher)
+    with db.cursor() as cur:
+        cur.execute("UPDATE mitglied SET iban='DE02120300000000202051' WHERE id=%s", (mid,))
+
+    liste = db.rechnungen.empfaenger_mitglieder(gs)
+    treffer = next(x for x in liste if x["id"] == mid)
+    assert treffer["name"] == "RechTest rtester_e137"
+    assert treffer["hat_iban"] is True
+    # Ohne Bankverbindung kann die Geschäftsstelle nicht erstatten – das muss
+    # sie vor der Auswahl sehen.
+    assert any(x["hat_iban"] is False for x in liste)
+    assert set(treffer) == {"id", "name", "mitgliedsnummer", "hat_iban"}
+
+    with pytest.raises(KeinZugriffError):
+        db.rechnungen.empfaenger_mitglieder(einreicher)
 
 
 def test_einreichen_ohne_betrag_scheitert(db):

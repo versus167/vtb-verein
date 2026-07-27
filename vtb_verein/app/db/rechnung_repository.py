@@ -75,6 +75,30 @@ class RechnungRepository(BaseRepository):
             cur.execute(_SELECT + where + _ORDER, params)
             return [_map(r) for r in cur.fetchall()]
 
+    def _freigabe_where(self, abteilung_ids: Optional[set[int]],
+                        status: Optional[str], include_vereinsrechnungen: bool,
+                        ohne_entwuerfe: bool, params: list) -> Optional[str]:
+        """WHERE der Freigeber-Sicht; ``None`` = die Auswahl ist per Definition leer.
+
+        Bewusst geteilt zwischen Liste und COUNT: die Zahl am Nav-Punkt muss zu
+        der Liste passen, die sich dahinter öffnet (#133).
+        """
+        where = " WHERE r.deleted_at IS NULL"
+        if ohne_entwuerfe:
+            where += " AND r.status <> 'entwurf'"
+        if abteilung_ids is not None:
+            if not abteilung_ids and not include_vereinsrechnungen:
+                return None
+            if abteilung_ids and include_vereinsrechnungen:
+                where += " AND (r.abteilung_id = ANY(%s) OR r.abteilung_id IS NULL)"
+                params.append(list(abteilung_ids))
+            elif abteilung_ids:
+                where += " AND r.abteilung_id = ANY(%s)"
+                params.append(list(abteilung_ids))
+            else:
+                where += " AND r.abteilung_id IS NULL"
+        return where + self._status_bedingung(status, params)
+
     def list_for_abteilungen(self, abteilung_ids: Optional[set[int]],
                              status: Optional[str] = None,
                              include_vereinsrechnungen: bool = False,
@@ -88,25 +112,28 @@ class RechnungRepository(BaseRepository):
         Rechnung die Werkbank des Einreichers und für den Freigeber nichts, woran
         er etwas tun könnte.
         """
-        where = " WHERE r.deleted_at IS NULL"
         params: list = []
-        if ohne_entwuerfe:
-            where += " AND r.status <> 'entwurf'"
-        if abteilung_ids is not None:
-            if not abteilung_ids and not include_vereinsrechnungen:
-                return []
-            if abteilung_ids and include_vereinsrechnungen:
-                where += " AND (r.abteilung_id = ANY(%s) OR r.abteilung_id IS NULL)"
-                params.append(list(abteilung_ids))
-            elif abteilung_ids:
-                where += " AND r.abteilung_id = ANY(%s)"
-                params.append(list(abteilung_ids))
-            else:
-                where += " AND r.abteilung_id IS NULL"
-        where += self._status_bedingung(status, params)
+        where = self._freigabe_where(abteilung_ids, status,
+                                     include_vereinsrechnungen, ohne_entwuerfe, params)
+        if where is None:
+            return []
         with self.cursor() as cur:
             cur.execute(_SELECT + where + _ORDER, params)
             return [_map(r) for r in cur.fetchall()]
+
+    def count_for_abteilungen(self, abteilung_ids: Optional[set[int]],
+                              status: Optional[str] = None,
+                              include_vereinsrechnungen: bool = False,
+                              ohne_entwuerfe: bool = False) -> int:
+        """Nur die Anzahl – für den Aufgaben-Hinweis an Kachel und Nav (#133)."""
+        params: list = []
+        where = self._freigabe_where(abteilung_ids, status,
+                                     include_vereinsrechnungen, ohne_entwuerfe, params)
+        if where is None:
+            return 0
+        with self.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS anzahl FROM rechnung r" + where, params)
+            return cur.fetchone()["anzahl"]
 
     def list_all(self, status: Optional[str] = None) -> list[Rechnung]:
         return self.list_for_abteilungen(None, status)

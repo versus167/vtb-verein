@@ -61,25 +61,49 @@ class ULAbrechnungRepository(BaseRepository):
             cur.execute(_SELECT + where + " ORDER BY a.zeitraum_bis DESC, a.id DESC", params)
             return [_map(r) for r in cur.fetchall()]
 
-    def list_for_abteilungen(self, abteilung_ids: Optional[set[int]],
-                             status: Optional[str] = None) -> list[ULAbrechnung]:
-        """AL-Sicht. abteilung_ids None = alle Abteilungen (global berechtigt)."""
+    @staticmethod
+    def _abteilungs_where(abteilung_ids: Optional[set[int]], status: Optional[str],
+                          params: list) -> Optional[str]:
+        """WHERE der AL-Sicht; ``None`` = die Auswahl ist per Definition leer.
+
+        Geteilt zwischen Liste und COUNT, damit die Zahl am Nav-Punkt zu der
+        Liste passt, die sich dahinter öffnet (#133).
+        """
         where = "WHERE a.deleted_at IS NULL"
-        params: list = []
         if abteilung_ids is not None:
             if not abteilung_ids:
-                return []
+                return None
             where += " AND a.abteilung_id = ANY(%s)"
             params.append(list(abteilung_ids))
         if status:
             where += " AND a.status = %s"
             params.append(status)
+        return where
+
+    def list_for_abteilungen(self, abteilung_ids: Optional[set[int]],
+                             status: Optional[str] = None) -> list[ULAbrechnung]:
+        """AL-Sicht. abteilung_ids None = alle Abteilungen (global berechtigt)."""
+        params: list = []
+        where = self._abteilungs_where(abteilung_ids, status, params)
+        if where is None:
+            return []
         with self.cursor() as cur:
             cur.execute(
                 _SELECT + where + " ORDER BY a.zeitraum_bis DESC, m.nachname, m.vorname",
                 params,
             )
             return [_map(r) for r in cur.fetchall()]
+
+    def count_for_abteilungen(self, abteilung_ids: Optional[set[int]],
+                              status: Optional[str] = None) -> int:
+        """Nur die Anzahl – für den Aufgaben-Hinweis an Kachel und Nav (#133)."""
+        params: list = []
+        where = self._abteilungs_where(abteilung_ids, status, params)
+        if where is None:
+            return 0
+        with self.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS anzahl FROM ul_abrechnung a {where}", params)
+            return cur.fetchone()["anzahl"]
 
     def list_all(self, status: Optional[str] = None) -> list[ULAbrechnung]:
         return self.list_for_abteilungen(None, status)
