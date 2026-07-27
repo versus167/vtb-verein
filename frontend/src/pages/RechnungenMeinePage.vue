@@ -87,12 +87,30 @@
           <q-input v-model="form.beschreibung" outlined dense label="Wofür? (optional)"
             :disable="!istEntwurf" class="q-mb-sm" />
 
-          <!-- Kernfrage der Freigabe: fließt das Geld zurück an den Einreicher
-               oder raus an den Aussteller? Name/IBAN des Ausstellers bewusst
-               nicht hier – die stehen auf dem Beleg. -->
+          <!-- Kernfrage der Freigabe: fließt das Geld zurück an ein Mitglied
+               (Auslage) oder raus an den Aussteller? Name/IBAN des Ausstellers
+               bewusst nicht hier – die stehen auf dem Beleg. -->
           <div class="text-caption text-grey-7">An wen wird gezahlt? *</div>
-          <q-option-group v-model="form.empfaenger_typ" :options="EMPFAENGER_OPTIONEN"
+          <q-option-group v-model="form.empfaenger_typ" :options="empfaengerOptionen"
             color="primary" dense :disable="!istEntwurf" class="q-mb-sm" />
+
+          <!-- Nur die Geschäftsstelle: sie nimmt Belege auch für Mitglieder ohne
+               App-Zugang an. Bewusst NICHT mit dem eigenen Namen vorbelegt – ein
+               übersehener Vorschlag hieße hier, sich selbst auszuzahlen. -->
+          <q-select v-if="darfFuerAndere && form.empfaenger_typ === 'mitglied'"
+            v-model="form.empfaenger_mitglied_id" :options="mitgliedOptionen"
+            option-value="id" :option-label="mitgliedLabel" emit-value map-options
+            use-input input-debounce="0" @filter="filterMitglieder"
+            outlined dense label="Erstattung an *" :disable="!istEntwurf"
+            class="q-mb-sm" hint="Wer hat ausgelegt? Auch du selbst stehst in der Liste.">
+            <template #no-option>
+              <q-item><q-item-section class="text-grey">Kein Treffer</q-item-section></q-item>
+            </template>
+          </q-select>
+          <div v-if="empfaengerOhneIban" class="text-caption text-warning q-mb-sm">
+            <q-icon name="warning" size="xs" /> Für dieses Mitglied ist keine
+            Bankverbindung hinterlegt – die Erstattung braucht eine.
+          </div>
 
           <q-expansion-item dense-toggle label="Zusatzangaben (optional)"
             header-class="text-grey-7" class="q-mb-sm">
@@ -160,21 +178,30 @@ import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { useRoute } from 'vue-router'
 import { api } from 'src/boot/axios'
+import { useAuthStore } from 'stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
   STATUS_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, parseBetrag, fehlertext,
-  BELEG_ACCEPT, BELEG_HINWEIS, belegFehler, EMPFAENGER_OPTIONEN, empfaengerText,
+  BELEG_ACCEPT, BELEG_HINWEIS, belegFehler, baueEmpfaengerOptionen, empfaengerText,
 } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'RechnungenMeinePage' })
 
 const $q = useQuasar()
 const route = useRoute()
+const auth = useAuthStore()
+
+// Nur die Geschäftsstelle darf für ein anderes Mitglied erfassen – Rechte sind
+// während der Session stabil, also einmalig auswerten (wie RechnungenPage).
+const darfFuerAndere = auth.hasPermission('rechnungen.verwalten')
+const empfaengerOptionen = baueEmpfaengerOptionen(darfFuerAndere)
 
 const rechnungen = ref([])
 const kategorien = ref([])
 const abteilungen = ref([])
+const alleMitglieder = ref([])
+const mitgliedOptionen = ref([])
 const statusFilter = ref('')
 const loading = ref(true)
 
@@ -199,12 +226,24 @@ const betragFehler = computed(() => {
   if (!form.value.betrag.trim()) return ''
   return betragCent.value && betragCent.value > 0 ? '' : 'Bitte einen Betrag größer 0 angeben.'
 })
+// Wählt die Geschäftsstelle „Erstattung", muss auch feststehen an wen – ohne
+// Vorbelegung gäbe es sonst gar keinen Empfänger.
+const empfaengerFehlt = computed(() =>
+  darfFuerAndere && form.value.empfaenger_typ === 'mitglied'
+  && !form.value.empfaenger_mitglied_id,
+)
+const empfaengerOhneIban = computed(() => {
+  if (form.value.empfaenger_typ !== 'mitglied') return false
+  const m = alleMitglieder.value.find((x) => x.id === form.value.empfaenger_mitglied_id)
+  return !!m && !m.hat_iban
+})
 // Einreichen braucht Kategorie, Betrag, die Empfänger-Entscheidung und mindestens
 // einen Beleg – egal ob der schon hochgeladen ist oder noch im Dialog wartet.
 const kannEinreichen = computed(() =>
   !!form.value.kategorie_id
   && betragCent.value > 0
   && !!form.value.empfaenger_typ
+  && !empfaengerFehlt.value
   && (aktuell.value?.id ? anhaenge.value.length > 0 : neueDateien.value.length > 0),
 )
 // „Keine Abteilung" muss wählbar bleiben: Vereinsrechnungen gehen an die Geschäftsstelle.
@@ -220,6 +259,9 @@ function leeresFormular() {
     // Häufigster Fall: jemand hat ausgelegt und will es zurück. Bewusst
     // vorbelegt, damit der Regelfall ein Klick weniger ist – umschaltbar.
     empfaenger_typ: 'mitglied',
+    // Leer = an den Einreicher selbst. Nur die Geschäftsstelle sieht das Feld
+    // und muss dort aktiv wählen.
+    empfaenger_mitglied_id: null,
     empfaenger_name: '',
     empfaenger_iban: '',
     betrag: '',
@@ -241,6 +283,23 @@ async function ladeStammdaten() {
   ])
   kategorien.value = k.data
   abteilungen.value = a.data
+  if (!darfFuerAndere) return
+  const { data } = await api.get('/api/rechnungen/empfaenger-mitglieder')
+  alleMitglieder.value = data
+  mitgliedOptionen.value = data
+}
+
+function mitgliedLabel(m) {
+  return m.mitgliedsnummer ? `${m.name} (Nr. ${m.mitgliedsnummer})` : m.name
+}
+
+function filterMitglieder(wert, update) {
+  const suche = wert.toLowerCase()
+  update(() => {
+    mitgliedOptionen.value = !suche ? alleMitglieder.value
+      : alleMitglieder.value.filter((m) => m.name.toLowerCase().includes(suche)
+        || String(m.mitgliedsnummer ?? '').includes(suche))
+  })
 }
 
 function neu() {
@@ -276,6 +335,7 @@ async function oeffne(r) {
     abteilung_id: r.abteilung_id,
     beschreibung: r.beschreibung || '',
     empfaenger_typ: r.empfaenger_typ || 'mitglied',
+    empfaenger_mitglied_id: r.empfaenger_mitglied_id,
     empfaenger_name: r.empfaenger_name || '',
     empfaenger_iban: r.empfaenger_iban || '',
     betrag: r.betrag_cent != null ? (r.betrag_cent / 100).toFixed(2).replace('.', ',') : '',
@@ -292,10 +352,12 @@ function nutzlast() {
     kategorie_id: form.value.kategorie_id,
     abteilung_id: form.value.abteilung_id,
     beschreibung: form.value.beschreibung || null,
-    // Nur die Entscheidung Erstattung/Aussteller. Bei Erstattung setzt das
-    // Backend das Mitglied aus dem Einreicher; Name und IBAN des Ausstellers
-    // bleiben vorerst leer – sie stehen auf dem Beleg.
+    // Die Entscheidung Erstattung/Aussteller – und bei Erstattung, an wen.
+    // Ohne Mitglied setzt das Backend den Einreicher ein; ein fremdes nimmt es
+    // nur von der Geschäftsstelle an. Name und IBAN des Ausstellers bleiben
+    // vorerst leer – sie stehen auf dem Beleg.
     empfaenger_typ: form.value.empfaenger_typ,
+    empfaenger_mitglied_id: form.value.empfaenger_mitglied_id,
     betrag_cent: betragCent.value,
     rechnungsdatum: form.value.rechnungsdatum || null,
     rechnungsnummer: form.value.rechnungsnummer || null,
@@ -362,6 +424,10 @@ async function einreichen() {
   }
   if (!(betragCent.value > 0)) {
     error.value = 'Bitte den Rechnungsbetrag angeben.'
+    return
+  }
+  if (empfaengerFehlt.value) {
+    error.value = 'Bitte das Mitglied wählen, an das erstattet werden soll.'
     return
   }
   busy.value = true

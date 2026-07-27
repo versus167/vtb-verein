@@ -39,10 +39,20 @@ export const FREIGABE_FILTER_OPTIONEN = STATUS_FILTER_OPTIONEN.filter(
 // Die eine Entscheidung, die der Einreicher treffen muss: fließt das Geld
 // zurück an ihn oder raus an den Aussteller? Name/IBAN des Ausstellers stehen
 // auf dem Beleg und werden (noch) nicht erfasst.
-export const EMPFAENGER_OPTIONEN = [
-  { label: 'Erstattung an mich (ich habe ausgelegt)', value: 'mitglied' },
-  { label: 'Zahlung an den Rechnungsaussteller', value: 'extern' },
-]
+//
+// Die Geschäftsstelle erfasst auch für Mitglieder ohne App-Zugang – für sie
+// heißt „Erstattung" darum nicht „an mich", das Mitglied wählt sie darunter.
+export function baueEmpfaengerOptionen(fuerAndereMoeglich = false) {
+  return [
+    {
+      label: fuerAndereMoeglich
+        ? 'Erstattung an ein Mitglied'
+        : 'Erstattung an mich (ich habe ausgelegt)',
+      value: 'mitglied',
+    },
+    { label: 'Zahlung an den Rechnungsaussteller', value: 'extern' },
+  ]
+}
 
 export function empfaengerText(r) {
   if (r.empfaenger_typ === 'mitglied') {
