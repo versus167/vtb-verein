@@ -59,10 +59,19 @@ class _RechnungService:
         return self.anzahl
 
 
+class _TicketService:
+    def __init__(self, anzahl=0):
+        self.anzahl = anzahl
+
+    def anzahl_zustaendig(self, user):
+        return self.anzahl
+
+
 class _DB:
-    def __init__(self, ul=0, rechnungen=0):
+    def __init__(self, ul=0, rechnungen=0, tickets=0):
         self.ul_abrechnungen = _AbrRepo(ul)
         self.rechnungen = _RechnungService(rechnungen)
+        self.tickets = _TicketService(tickets)
 
 
 # ------------------------------------------------------- ÜL-Bestätigungen
@@ -92,11 +101,11 @@ def test_ul_ohne_bestaetigungsrecht_kein_hinweis():
 # ----------------------------------------------------------- Aggregation
 
 def test_offene_aufgaben_summiert_die_quellen():
-    db = _DB(ul=2, rechnungen=3)
+    db = _DB(ul=2, rechnungen=3, tickets=4)
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
-        "gesamt": 5,
-        "offen": {"rechnungen": 3, "uebungsleiter": 2},
+        "gesamt": 9,
+        "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4},
     }
 
 
@@ -104,12 +113,12 @@ def test_ohne_aufgaben_bleibt_alles_null():
     """Jeder Schlüssel wird geliefert – das Frontend blendet bei 0 selbst aus."""
     ergebnis = offene_aufgaben(_User(), _DB())
     assert ergebnis["gesamt"] == 0
-    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter"}
+    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter", "tickets"}
 
 
 def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
     """Ein Hinweis am Nav-Punkt ist kein Grund, das Dashboard zu verlieren."""
-    db = _DB(ul=2)
+    db = _DB(ul=2, tickets=1)
 
     def _explodiert(_user):
         raise RuntimeError("Repository weg")
@@ -117,8 +126,8 @@ def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
     db.rechnungen.anzahl_zur_freigabe = _explodiert
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
-        "gesamt": 2,
-        "offen": {"rechnungen": 0, "uebungsleiter": 2},
+        "gesamt": 3,
+        "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1},
     }
 
 

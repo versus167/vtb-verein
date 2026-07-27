@@ -52,7 +52,8 @@
       </div>
 
       <div class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="tickets" icon="confirmation_number" title="Tickets" caption="Anfragen & Aufgaben" />
+        <SettingsTile to="tickets" icon="confirmation_number" title="Tickets" caption="Anfragen & Aufgaben"
+          :badge="aufgaben.anzahl('tickets')" />
       </div>
 
       <div v-if="hatUebungsleiterZugriff" class="col-6 col-sm-4 col-md-3">

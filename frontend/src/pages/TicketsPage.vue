@@ -542,6 +542,7 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
 import { formatDate as fmtDate, formatDateTime as fmtDateTime } from 'src/utils/datetime'
 
@@ -549,6 +550,9 @@ const $q = useQuasar()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+// Aufgaben-Hinweis an Kachel und Nav (#133): Zuweisung und Statuswechsel
+// ändern die eigene Zuständigkeit, die Zahl muss also direkt mitziehen.
+const aufgaben = useAufgabenStore()
 const isAdmin = computed(() => auth.user?.role === 'admin')
 const currentUserId = computed(() => auth.user?.id)
 
@@ -833,6 +837,7 @@ async function loadAll() {
     kategorien.value = results[2].data
     meineBerechtigungen.value = results[3].data
     if (isAdmin.value) users.value = results[4].data
+    aufgaben.laden()
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden der Tickets.' })
   } finally {
@@ -954,6 +959,7 @@ async function onZuweisungChange(userId) {
     const idx = tickets.value.findIndex(t => t.id === data.id)
     if (idx >= 0) tickets.value[idx] = data
     if (canChangeStatus.value) loadGesehen(data.id)   // Verantwortlichen-Kreis neu bewerten
+    aufgaben.laden()          // Ticket wandert zwischen den Zuständigen
     $q.notify({ type: 'positive', message: data.zugewiesen_an_username
       ? `Verantwortlich: ${data.zugewiesen_an_username}`
       : 'Zuweisung aufgehoben (Bereich verantwortlich).' })
@@ -1115,6 +1121,7 @@ async function doStatusChange(newStatus) {
     selectedTicket.value = data
     const idx = tickets.value.findIndex(t => t.id === data.id)
     if (idx >= 0) tickets.value[idx] = data
+    aufgaben.laden()          // erledigt/abgelehnt fällt aus der Aufgabenzahl
     $q.notify({ type: 'positive', message: `Status auf „${statusLabel(newStatus)}" gesetzt.` })
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Statuswechsel.' })

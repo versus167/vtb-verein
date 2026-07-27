@@ -101,6 +101,57 @@ def test_zuweisung_setzt_verantwortlichen(db, scenario):
     assert db.tickets._verantwortliche_ids(reload) == {scenario["bearb"], scenario["schliesser"]}
 
 
+# ------------------------------------------- Aufgaben-Hinweis an Kachel/Nav (#133)
+
+def _anzahl(db, uid):
+    return db.tickets.anzahl_zustaendig(db.get_user_by_id(uid))
+
+
+def test_aufgabenzahl_ohne_zuweisung_traegt_der_ganze_bereich(db, scenario):
+    """Solange niemand zugewiesen ist, steht das Ticket bei allen, die im
+    Bereich bearbeiten oder schließen dürfen."""
+    assert _anzahl(db, scenario["bearb"]) == 1
+    assert _anzahl(db, scenario["schliesser"]) == 1
+    # Melder und Fremde sind nicht zuständig – Melden ist keine Aufgabe.
+    assert _anzahl(db, scenario["melder"]) == 0
+    assert _anzahl(db, scenario["fremd"]) == 0
+
+
+def test_aufgabenzahl_zuweisung_hat_vorrang_vor_dem_bereich(db, scenario):
+    """Kümmert sich jemand konkret, soll das Ticket nicht weiter in der Zahl
+    aller anderen Bereichs-Bearbeiter stehen."""
+    t = scenario["ticket"]
+    t.zugewiesen_an = scenario["bearb"]
+    assert db.tickets.update_ticket(t, updated_by="gv_bearb") is True
+
+    assert _anzahl(db, scenario["bearb"]) == 1
+    assert _anzahl(db, scenario["schliesser"]) == 0
+
+
+def test_aufgabenzahl_folgt_der_zuweisung_auch_ohne_bereichsrecht(db, scenario):
+    """Direkt zugewiesen zählt immer – unabhängig vom Bereich. Das ist auch der
+    Fall des Admins, der überall darf, aber nirgends Bereichs-Rechte hat."""
+    t = scenario["ticket"]
+    t.zugewiesen_an = scenario["fremd"]
+    assert db.tickets.update_ticket(t, updated_by="gv_bearb") is True
+
+    assert _anzahl(db, scenario["fremd"]) == 1
+    assert _anzahl(db, scenario["bearb"]) == 0
+
+
+@pytest.mark.parametrize("status", ["erledigt", "abgelehnt"])
+def test_aufgabenzahl_ignoriert_abgeschlossene(db, scenario, status):
+    t = scenario["ticket"]
+    assert db.tickets.change_status(t, status, "gv_schliesser", t.version) is True
+    assert _anzahl(db, scenario["bearb"]) == 0
+    assert _anzahl(db, scenario["schliesser"]) == 0
+
+
+def test_aufgabenzahl_ignoriert_geloeschte(db, scenario):
+    assert db.tickets.mark_ticket_deleted(scenario["ticket"].id, "gv_bearb") is True
+    assert _anzahl(db, scenario["bearb"]) == 0
+
+
 def test_gesehen_log_throttle_und_aggregation(db, scenario):
     t = scenario["ticket"]
     assert db.tickets.log_gesehen(t.id, scenario["bearb"], "gv_bearb") is True
