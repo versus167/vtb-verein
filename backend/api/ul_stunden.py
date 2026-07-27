@@ -249,14 +249,32 @@ def list_uebungsleiter(user: CurrentUser, db: DB):
     return db.list_mitglieder_mit_funktion(*UL_FUNKTIONEN)
 
 
+def _bestaetigungs_scope(user):
+    """(darf bestätigen, Abteilungs-Scope) – None als Scope heißt: alle."""
+    if _can_verwalten(user):
+        return True, None
+    if user.has_permission(Permission.UL_STUNDEN_BESTAETIGEN):
+        return True, user.allowed_abteilungen(Permission.UL_STUNDEN_BESTAETIGEN)
+    return False, None
+
+
+def anzahl_zu_bestaetigen(user, db) -> int:
+    """Offene Bestätigungen dieses Benutzers – für den Aufgaben-Hinweis (#133).
+
+    Bewusst hier und nicht im Aufgaben-Router: die Zahl an Kachel und Nav muss
+    zu der Liste passen, die sich dahinter öffnet – also dieselbe Scope-Regel.
+    """
+    darf, abteilungen = _bestaetigungs_scope(user)
+    if not darf:
+        return 0
+    return db.ul_abrechnungen.count_for_abteilungen(abteilungen, 'eingereicht')
+
+
 @router.get("/zu-bestaetigen")
 def list_zu_bestaetigen(user: CurrentUser, db: DB, status_filter: Optional[str] = 'eingereicht'):
     """Abrechnungen zur Bestätigung – auf die Abteilungen des Abteilungsleiters beschränkt."""
-    if _can_verwalten(user):
-        abteilungen = None
-    elif user.has_permission(Permission.UL_STUNDEN_BESTAETIGEN):
-        abteilungen = user.allowed_abteilungen(Permission.UL_STUNDEN_BESTAETIGEN)
-    else:
+    darf, abteilungen = _bestaetigungs_scope(user)
+    if not darf:
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Bestätigung")
     return [_abrechnung_dict(db, a)
             for a in db.ul_abrechnungen.list_for_abteilungen(abteilungen, status_filter)]

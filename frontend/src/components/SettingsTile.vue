@@ -3,6 +3,11 @@
     <q-card-section class="settings-tile__inhalt">
       <div class="settings-tile__icon">
         <q-icon :name="icon" size="26px" color="primary" />
+        <!-- Offene Aufgaben (#133): am Icon statt in der Ecke, damit der Blick
+             erst beim Bereich landet und dann bei der Zahl. -->
+        <q-badge v-if="badge" floating rounded color="negative"
+          :label="badge > 99 ? '99+' : badge"
+          :aria-label="`${badge} offene Aufgaben`" />
       </div>
       <div class="text-subtitle1 text-weight-bold">{{ title }}</div>
       <div v-if="caption" class="text-caption text-grey">{{ caption }}</div>
@@ -19,6 +24,8 @@ const props = defineProps({
   icon: { type: String, required: true },
   title: { type: String, required: true },
   caption: { type: String, default: '' },
+  // Anzahl offener Aufgaben; 0 blendet den Hinweis aus (#133).
+  badge: { type: Number, default: 0 },
 })
 
 const router = useRouter()
@@ -42,6 +49,9 @@ function go() {
   padding-right: 40px;
 }
 .settings-tile__icon {
+  /* Bezugspunkt für das schwebende Aufgaben-Badge – sonst hängt es sich an
+     .settings-tile__inhalt und landet auf dem Pfeil rechts oben. */
+  position: relative;
   width: 48px;
   height: 48px;
   border-radius: 50%;

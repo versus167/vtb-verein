@@ -22,7 +22,7 @@ from typing import Optional
 
 from app.models.permission import Permission
 from app.models.rechnung import (
-    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF,
+    Rechnung, RechnungAnhang, RechnungKategorie, STATUS_ENTWURF, STATUS_EINGEREICHT,
     EMPFAENGER_TYPEN, EMPFAENGER_MITGLIED,
 )
 
@@ -228,6 +228,20 @@ class RechnungService:
         # Vereinsrechnungen (ohne Abteilung) sieht hier niemand ohne Verwaltungsrecht.
         return self._rechnung.list_for_abteilungen(
             erlaubt if erlaubt is not None else None, status,
+            include_vereinsrechnungen=False, ohne_entwuerfe=True)
+
+    def anzahl_zur_freigabe(self, user) -> int:
+        """Wie viele Rechnungen warten auf die Entscheidung dieses Benutzers?
+
+        Für den Aufgaben-Hinweis an Kachel und Nav (#133) – gezählt wird genau
+        das, was `list_zur_freigabe(user, 'eingereicht')` auch zeigen würde.
+        """
+        if self.darf_verwalten(user):
+            return self._rechnung.count_for_abteilungen(
+                None, STATUS_EINGEREICHT, ohne_entwuerfe=True)
+        erlaubt = user.allowed_abteilungen(Permission.RECHNUNGEN_FREIGEBEN)
+        return self._rechnung.count_for_abteilungen(
+            erlaubt, STATUS_EINGEREICHT,
             include_vereinsrechnungen=False, ohne_entwuerfe=True)
 
     def list_alle(self, user, status: Optional[str] = None) -> list[Rechnung]:

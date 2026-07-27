@@ -45,6 +45,7 @@ from backend.api.tresor import router as tresor_router
 from backend.api.push import router as push_router
 from backend.api.termine import router as termine_router
 from backend.api.clubdeckel import router as clubdeckel_router
+from backend.api.aufgaben import router as aufgaben_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -122,6 +123,7 @@ app.include_router(tresor_router, prefix="/api")
 app.include_router(push_router, prefix="/api")
 app.include_router(termine_router, prefix="/api")
 app.include_router(clubdeckel_router, prefix="/api")
+app.include_router(aufgaben_router, prefix="/api")
 
 
 

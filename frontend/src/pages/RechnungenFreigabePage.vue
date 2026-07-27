@@ -129,6 +129,7 @@ import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { useRoute } from 'vue-router'
 import { api } from 'src/boot/axios'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import {
@@ -140,6 +141,7 @@ defineOptions({ name: 'RechnungenFreigabePage' })
 
 const $q = useQuasar()
 const route = useRoute()
+const aufgaben = useAufgabenStore()
 
 const rechnungen = ref([])
 const statusFilter = ref('eingereicht')
@@ -155,6 +157,9 @@ async function load() {
   const params = statusFilter.value ? { status: statusFilter.value } : {}
   const { data } = await api.get('/api/rechnungen', { params: { sicht: 'freigabe', ...params } })
   rechnungen.value = data
+  // Jede Entscheidung lädt diese Liste neu – der Hinweis an Kachel und Nav
+  // zieht damit sofort mit, statt bis zum nächsten Refresh stehenzubleiben (#133).
+  aufgaben.laden()
 }
 
 async function oeffne(r) {

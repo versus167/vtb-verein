@@ -263,6 +263,48 @@ def test_externer_empfaenger_bleibt_ohne_mitglied(db):
     assert mit_namen.empfaenger_name == "Getränke Meier"
 
 
+def test_anzahl_zur_freigabe_zaehlt_wie_die_liste(db):
+    """Ticket #133: Die Zahl an Kachel und Nav muss zu der Liste passen, die
+    sich dahinter öffnet – gleicher Abteilungs-Scope, gleicher Status."""
+    fussball = _abteilung(db, "R-Fussball")
+    handball = _abteilung(db, "R-Handball")
+    einreicher = _user(db, "rtester_e133", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball, handball))
+    fb_leiter = _user(db, "rtester_fb133",
+                      abteilung_perms=(("rechnungen.freigeben", fussball),))
+    gs = _user(db, "rtester_gs133", perms=("rechnungen.verwalten",))
+    fremder = _user(db, "rtester_x133", perms=("rechnungen.einreichen",))
+
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 0   # nichts zu tun
+
+    def einreichen(abteilung_id):
+        r = _rechnung(db, einreicher, abteilung_id)
+        _beleg(db, r.id, einreicher)
+        return db.rechnungen.einreichen(r.id, einreicher)
+
+    einreichen(fussball)
+    einreichen(fussball)
+    hb = einreichen(handball)
+    _rechnung(db, einreicher, fussball)                        # Entwurf zählt nicht
+
+    # Der Abteilungsleiter zählt nur seine Abteilung, die Geschäftsstelle alles.
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 2
+    assert db.rechnungen.anzahl_zur_freigabe(gs) == 3
+    # Wer nichts freigeben darf, bekommt keinen Hinweis.
+    assert db.rechnungen.anzahl_zur_freigabe(fremder) == 0
+    assert db.rechnungen.anzahl_zur_freigabe(einreicher) == 0
+
+    # Entschieden = erledigt: die Zahl sinkt mit der Liste.
+    db.rechnungen.freigeben(hb.id, gs)
+    assert db.rechnungen.anzahl_zur_freigabe(gs) == 2
+    assert len(db.rechnungen.list_zur_freigabe(gs, "eingereicht")) == 2
+    assert db.rechnungen.anzahl_zur_freigabe(fb_leiter) == 2
+
+    for user in (fb_leiter, gs):
+        assert (db.rechnungen.anzahl_zur_freigabe(user)
+                == len(db.rechnungen.list_zur_freigabe(user, "eingereicht")))
+
+
 def test_verwaltung_reicht_fuer_anderes_mitglied_ein(db):
     """Ticket #134: Die Geschäftsstelle nimmt Belege auch für Mitglieder ohne
     App-Zugang an – dann geht das Geld an dieses Mitglied, nicht an den Erfasser."""
