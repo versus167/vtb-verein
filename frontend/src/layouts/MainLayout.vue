@@ -3,7 +3,14 @@
     <q-header>
       <q-toolbar>
         <!-- Kopfzeilen-Buttons am Handy ohne dense (42 statt 34 px) – leichter treffbar. -->
-        <q-btn flat :dense="$q.screen.gt.sm" round icon="menu" @click="drawer = !drawer" />
+        <q-btn flat :dense="$q.screen.gt.sm" round icon="menu" @click="drawer = !drawer">
+          <!-- Summe offener Aufgaben (#133): immer sichtbar (auch am Desktop mit
+               offener Schublade), damit die Gesamtzahl auf einen Blick da ist; beim
+               Öffnen zeigt die Nav zusätzlich die Einzel-Badges pro Bereich. -->
+          <q-badge v-if="aufgaben.gesamt > 0" floating rounded color="negative"
+            :label="aufgaben.gesamt > 99 ? '99+' : aufgaben.gesamt"
+            :aria-label="`${aufgaben.gesamt} offene Aufgaben insgesamt`" />
+        </q-btn>
         <q-toolbar-title>{{ toolbarTitle }}</q-toolbar-title>
         <!-- Seiten-Refresh nur am Desktop: am Handy wirkte er neben „App neu laden"
              im Konto-Menü wie ein zweiter Reload-Knopf. Auto-Refresh bei App-Fokus
