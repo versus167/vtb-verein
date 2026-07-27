@@ -27,6 +27,31 @@ if (process.env.PROD) {
   )
 }
 
+// --- Zahl am App-Symbol (Ticket #133) --------------------------------------
+// Eine geschlossene PWA rechnet nichts – nur der Service Worker kann das Badge
+// setzen, und der läuft nur, wenn ihn eine Push-Nachricht aufweckt.
+//
+// Die Zahl steht bewusst NICHT im Push-Payload, sondern wird hier frisch
+// geholt: so stimmt sie auch dann, wenn mehrere Nachrichten aufgelaufen sind
+// oder jemand anderes die Aufgabe zwischenzeitlich erledigt hat. Ein fetch()
+// aus dem Service Worker heraus löst dessen eigenen fetch-Handler nicht aus,
+// geht also direkt ans Netz.
+//
+// Best effort: Firefox kennt die API nicht, ohne Netz oder mit abgelaufener
+// Session bleibt die alte Zahl stehen. Beim nächsten Öffnen der App korrigiert
+// der Aufgaben-Store sie ohnehin.
+async function aktualisiereAppBadge() {
+  if (!('setAppBadge' in self.navigator)) return
+  try {
+    const antwort = await fetch('/api/aufgaben/offen', { credentials: 'include' })
+    if (!antwort.ok) return
+    const { gesamt } = await antwort.json()
+    await (gesamt > 0 ? self.navigator.setAppBadge(gesamt) : self.navigator.clearAppBadge())
+  } catch (e) {
+    /* offline oder nicht (mehr) angemeldet – Badge unverändert lassen */
+  }
+}
+
 // --- Web-Push (Ticket #96) -------------------------------------------------
 // Eingehende Push-Nachricht anzeigen. Payload: { title, body, url }.
 self.addEventListener('push', (event) => {
@@ -44,7 +69,12 @@ self.addEventListener('push', (event) => {
     data: { url: payload.url || '/' },
     tag: payload.tag || undefined
   }
-  event.waitUntil(self.registration.showNotification(title, options))
+  // Benachrichtigung und Badge zusammen – die Zahl am Symbol soll auch dann
+  // stimmen, wenn die Meldung selbst weggewischt wird.
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    aktualisiereAppBadge(),
+  ]))
 })
 
 // Klick auf die Notification: bestehendes App-Fenster fokussieren oder öffnen.
