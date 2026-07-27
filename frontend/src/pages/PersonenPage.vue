@@ -403,7 +403,18 @@
                 <q-space />
                 <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
               </div>
-              <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense type="password" />
+              <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense
+                :type="showCreatePw ? 'text' : 'password'"
+                :rules="[v => !v || v.length >= 6 || 'Mindestens 6 Zeichen']">
+                <template #append>
+                  <q-icon :name="showCreatePw ? 'visibility_off' : 'visibility'"
+                    class="cursor-pointer" @click="showCreatePw = !showCreatePw" />
+                </template>
+              </q-input>
+              <div class="text-caption text-grey-6">
+                <q-icon name="info" size="xs" /> Zusätzlich zum Magic-Link: Ohne Passwort kann
+                sich der Benutzer nur per Magic-Link anmelden.
+              </div>
             </q-tab-panel>
           </q-tab-panels>
           <div v-if="createError" class="text-negative text-caption">{{ createError }}</div>
@@ -481,12 +492,25 @@
         <q-separator />
         <q-card-section class="q-gutter-sm">
           <q-input v-model="nutzerForm.email" label="E-Mail *" outlined dense type="email"
-            hint="Login per Magic-Link an diese Adresse" />
+            hint="Adresse für Login- und Benachrichtigungs-Mails" />
           <q-toggle v-if="canAssignAdmin"
             :model-value="nutzerForm.role === 'admin'"
             @update:model-value="v => nutzerForm.role = v ? 'admin' : 'mitglied'"
             label="Administrator (uneingeschränkter Zugriff)" />
           <q-toggle v-model="nutzerForm.active" label="Aktiv (Magic-Link versenden)" />
+          <q-input v-model="nutzerForm.password" label="Passwort (optional)" outlined dense
+            :type="showNutzerPw ? 'text' : 'password'"
+            :rules="[v => !v || v.length >= 6 || 'Mindestens 6 Zeichen']">
+            <template #append>
+              <q-icon :name="showNutzerPw ? 'visibility_off' : 'visibility'"
+                class="cursor-pointer" @click="showNutzerPw = !showNutzerPw" />
+            </template>
+          </q-input>
+          <div class="text-caption text-grey-6">
+            <q-icon name="info" size="xs" /> Zusätzlich zum Magic-Link: Mit Passwort kann sich
+            der Nutzer auch direkt mit Benutzername + Passwort anmelden – Zugangsdaten dann
+            selbst weitergeben. Ohne Passwort bleibt der Magic-Link der einzige Weg.
+          </div>
           <div v-if="nutzerError" class="text-negative text-caption">{{ nutzerError }}</div>
         </q-card-section>
         <q-separator />
@@ -986,11 +1010,13 @@ const createOpen   = ref(false)
 const createTab    = ref('mitglied')
 const createSaving = ref(false)
 const createError  = ref('')
+const showCreatePw = ref(false)
 const createForm   = ref({})
 
 function openCreateDialog() {
   createTab.value = 'mitglied'
   createError.value = ''
+  showCreatePw.value = false
   createForm.value = {
     vorname: '', nachname: '', email: '', role: 'mitglied', active: true,
     password: '', username: '',
@@ -1118,15 +1144,18 @@ const nutzerOpen   = ref(false)
 const nutzerSaving = ref(false)
 const nutzerError  = ref('')
 const nutzerPerson = ref(null)
-const nutzerForm   = ref({ email: '', role: 'mitglied', active: true })
+const nutzerForm   = ref({ email: '', role: 'mitglied', active: true, password: '' })
+const showNutzerPw = ref(false)
 
 function openNutzerDialog(row) {
   nutzerPerson.value = row
   nutzerError.value = ''
+  showNutzerPw.value = false
   nutzerForm.value = {
     email: row.mitglied?.email ?? '',   // Primär-E-Mail vorbelegen, falls vorhanden
     role: 'mitglied',
     active: true,
+    password: '',                       // optional – Alternative zum Magic-Link
   }
   nutzerOpen.value = true
 }
@@ -1136,11 +1165,29 @@ async function onSaveNutzer() {
     nutzerError.value = 'E-Mail ist erforderlich.'
     return
   }
+  const pw = nutzerForm.value.password.trim()
+  if (pw && pw.length < 6) {
+    nutzerError.value = 'Passwort muss mindestens 6 Zeichen lang sein.'
+    return
+  }
   nutzerSaving.value = true
   nutzerError.value = ''
   try {
-    await api.post(`/api/personen/mitglied/${nutzerPerson.value.mitglied.id}/nutzer`, nutzerForm.value)
-    $q.notify({ type: 'positive', message: 'Login-Account angelegt' })
+    const { data } = await api.post(
+      `/api/personen/mitglied/${nutzerPerson.value.mitglied.id}/nutzer`,
+      { ...nutzerForm.value, password: pw || null },
+    )
+    // Der Benutzername wird serverseitig aus dem Namen erzeugt – bei Passwort-Login
+    // braucht ihn der Nutzer, also dauerhaft anzeigen statt kurz aufblitzen zu lassen.
+    if (pw) {
+      $q.notify({
+        type: 'positive', message: 'Login-Account angelegt',
+        caption: `Benutzername: ${data.username} – zusammen mit dem Passwort weitergeben`,
+        timeout: 0, actions: [{ label: 'OK', color: 'white' }],
+      })
+    } else {
+      $q.notify({ type: 'positive', message: `Login-Account angelegt: ${data.username}` })
+    }
     nutzerOpen.value = false
     await loadPersonen()
   } catch (e) {
