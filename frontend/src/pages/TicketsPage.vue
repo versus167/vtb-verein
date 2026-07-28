@@ -21,7 +21,7 @@
         :round="$q.screen.lt.md"
         color="primary"
         unelevated
-        @click="openCreateDialog"
+        @click="anlegenOpen = true"
       />
     </div>
 
@@ -167,35 +167,10 @@
     </q-table>
 
 
-    <!-- ── Bereich-Vorauswahl beim Anlegen ── -->
-    <q-dialog v-model="pickBereichOpen" persistent>
-      <q-card style="min-width: 340px">
-        <q-card-section class="text-h6">Neues Ticket</q-card-section>
-        <q-separator />
-        <q-card-section>
-          <q-select
-            v-model="pickBereichId"
-            :options="bereichOptions"
-            label="Bereich *"
-            outlined autofocus
-            option-value="id" option-label="name"
-            emit-value map-options
-          />
-        </q-card-section>
-        <q-separator />
-        <q-card-actions align="right">
-          <q-btn flat label="Abbrechen" v-close-popup />
-          <q-btn
-            label="Weiter"
-            icon="arrow_forward"
-            color="primary" unelevated
-            :disable="!pickBereichId"
-            :loading="saving"
-            @click="onPickBereichConfirm"
-          />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
+    <!-- Anlegen: gemeinsamer Dialog (ohne Screenshot – ein Abbild der
+         Ticketliste ergibt keinen Sinn). Das Ticket entsteht erst beim
+         Speichern; die Liste lädt über das vtb:ticket-created-Event neu. -->
+    <TicketAnlegenDialog v-model="anlegenOpen" />
 
     <!-- ═══════════════════════════════════════════════════════
          Ticket-Dialog  (Anlegen + Detail in einem Fenster)
@@ -232,7 +207,6 @@
                   v-model="detailForm.titel"
                   label="Titel *"
                   outlined
-                  :autofocus="isDraftTicket"
                   class="q-mb-sm"
                 />
                 <q-input
@@ -376,7 +350,7 @@
               </div>
 
               <!-- Zurückziehen (nur Ersteller, solange offen) -->
-              <div v-if="canWithdraw && !isDraftTicket && !selectedIstGeloescht" class="q-mb-md">
+              <div v-if="canWithdraw && !selectedIstGeloescht" class="q-mb-md">
                 <q-btn
                   label="Ticket zurückziehen"
                   icon="undo"
@@ -388,7 +362,7 @@
               </div>
 
               <!-- Verbergen / smart löschen (Verwalter) -->
-              <div v-if="canVerwaltenSelected && !selectedIstGeloescht && !isDraftTicket" class="q-mb-md">
+              <div v-if="canVerwaltenSelected && !selectedIstGeloescht" class="q-mb-md">
                 <q-btn
                   label="Ticket verbergen"
                   icon="visibility_off"
@@ -407,7 +381,6 @@
                 <anhang-panel
                   :anhaenge="detailAnhaenge"
                   :upload-url="`/api/tickets/${selectedTicket.id}/anhaenge`"
-                  :upload-params="isDraftTicket ? { draft: true } : {}"
                   :can-upload="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   :can-delete="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   @uploaded="onAnhangUploaded"
@@ -447,10 +420,8 @@
                   </q-card>
                 </div>
 
-                <!-- Neuer Kommentar (am ungespeicherten Entwurf gibt es noch
-                     nichts zu kommentieren – dafür ist die Beschreibung da, und
-                     eine Meldung mit Platzhalter-Titel will niemand) -->
-                <div v-if="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht && !isDraftTicket" class="q-mt-md">
+                <!-- Neuer Kommentar -->
+                <div v-if="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht" class="q-mt-md">
                   <q-input
                     v-model="neuerKommentar"
                     outlined
@@ -482,7 +453,7 @@
               </div>
 
               <!-- ── Gesehen (nur für Verantwortliche/Bearbeiter) ── -->
-              <template v-if="canChangeStatus && !isDraftTicket">
+              <template v-if="canChangeStatus">
                 <q-separator class="q-my-md" />
                 <q-expansion-item icon="visibility" label="Gesehen von" dense-toggle>
                   <div class="q-pa-sm">
@@ -525,24 +496,22 @@
               </template>
 
               <!-- ── Verlauf (wer/was/wann) ── -->
-              <template v-if="!isDraftTicket">
-                <q-separator class="q-my-md" />
-                <q-expansion-item icon="history" label="Verlauf" dense-toggle @update:model-value="onHistoryExpand">
-                  <div class="q-pa-sm">
-                    <div v-if="historyLoading" class="row justify-center q-py-sm"><q-spinner color="primary" /></div>
-                    <q-timeline v-else-if="historyEvents.length" layout="dense" color="primary">
-                      <q-timeline-entry
-                        v-for="ev in historyEvents"
-                        :key="ev.version"
-                        :subtitle="`${formatDateTime(ev.wann)} · ${ev.wer || '—'}`"
-                      >
-                        <div v-for="(c, ci) in ev.changes" :key="ci" class="text-body2">{{ c }}</div>
-                      </q-timeline-entry>
-                    </q-timeline>
-                    <div v-else-if="historyGeladen" class="text-caption text-grey">Kein Verlauf.</div>
-                  </div>
-                </q-expansion-item>
-              </template>
+              <q-separator class="q-my-md" />
+              <q-expansion-item icon="history" label="Verlauf" dense-toggle @update:model-value="onHistoryExpand">
+                <div class="q-pa-sm">
+                  <div v-if="historyLoading" class="row justify-center q-py-sm"><q-spinner color="primary" /></div>
+                  <q-timeline v-else-if="historyEvents.length" layout="dense" color="primary">
+                    <q-timeline-entry
+                      v-for="ev in historyEvents"
+                      :key="ev.version"
+                      :subtitle="`${formatDateTime(ev.wann)} · ${ev.wer || '—'}`"
+                    >
+                      <div v-for="(c, ci) in ev.changes" :key="ci" class="text-body2">{{ c }}</div>
+                    </q-timeline-entry>
+                  </q-timeline>
+                  <div v-else-if="historyGeladen" class="text-caption text-grey">Kein Verlauf.</div>
+                </div>
+              </q-expansion-item>
 
             </template>
 
@@ -562,6 +531,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { useAufgabenStore } from 'src/stores/aufgaben'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
+import TicketAnlegenDialog from 'src/components/TicketAnlegenDialog.vue'
 import { formatDate as fmtDate, formatDateTime as fmtDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
@@ -589,12 +559,10 @@ const filterMitAbgeschlossenen = ref(false)
 // "Einblenden": gelöschte (verborgene) Tickets anzeigen – nur für Verwalter.
 const zeigeGeloeschte = ref(false)
 
-// ── Erstellen / Detail ─────────────────────────────────────────────────────
-// isDraftTicket = angelegt, aber noch nicht gespeichert. Bleibt bis zum
-// Speichern stehen: daran hängen der Platzhalter-Titel, die unterdrückte
-// „Neues Ticket"-Meldung und die stummen Anhänge (#136).
-const isDraftTicket = ref(false)
-const saving = ref(false)
+// ── Erstellen ──────────────────────────────────────────────────────────────
+// Anlegen läuft über den gemeinsamen TicketAnlegenDialog; das Ticket entsteht
+// erst beim Speichern (kein früh persistierter Entwurf mehr).
+const anlegenOpen = ref(false)
 
 // ── Detail-Dialog ──────────────────────────────────────────────────────────
 const detailDialogOpen = ref(false)
@@ -645,7 +613,6 @@ function _bereichFlags(ticket) {
 const canWrite = computed(() => {
   if (!selectedTicket.value) return false
   if (isAdmin.value) return true
-  if (isDraftTicket.value) return true
   const t = selectedTicket.value
   if (t.gemeldet_von === currentUserId.value) return true
   return !!_bereichFlags(t).darf_bearbeiten
@@ -883,36 +850,10 @@ async function loadTickets() {
 
 watch(zeigeGeloeschte, loadTickets)
 
-// ── Erstellen ──────────────────────────────────────────────────────────────
-const pickBereichOpen = ref(false)
-const pickBereichId = ref(null)
-
-function openCreateDialog() {
-  pickBereichId.value = null
-  pickBereichOpen.value = true
-}
-
-async function onPickBereichConfirm() {
-  if (!pickBereichId.value) return
-  saving.value = true
-  try {
-    const { data } = await api.post('/api/tickets/?draft=true', { titel: 'Neues Ticket', prioritaet: 'normal', bereich_id: pickBereichId.value })
-    pickBereichOpen.value = false
-    tickets.value = [data, ...tickets.value]
-    isDraftTicket.value = true
-    await openDetailDialog(data)
-  } catch (e) {
-    $q.notify({ type: 'negative', message: 'Fehler beim Anlegen des Tickets.' })
-  } finally {
-    saving.value = false
-  }
-}
-
 // ── Detail ─────────────────────────────────────────────────────────────────
 async function openDetailDialog(ticket) {
   selectedTicket.value = ticket
   syncDetailForm(ticket)
-  if (isDraftTicket.value) detailForm.value.titel = ''
   detailAnhaenge.value = []
   kommentare.value = []
   gesehenData.value = null
@@ -921,12 +862,10 @@ async function openDetailDialog(ticket) {
   moeglicheVerantwortliche.value = []
   detailDialogOpen.value = true
   const jobs = [loadAnhaenge(ticket.id), loadKommentare(ticket.id)]
-  if (!isDraftTicket.value) {
-    // „Gesehen" protokollieren (fire-and-forget, throttled im Backend).
-    markGesehen(ticket.id)
-    if (canChangeStatus.value) {
-      jobs.push(loadMoeglicheVerantwortliche(ticket.id), loadGesehen(ticket.id))
-    }
+  // „Gesehen" protokollieren (fire-and-forget, throttled im Backend).
+  markGesehen(ticket.id)
+  if (canChangeStatus.value) {
+    jobs.push(loadMoeglicheVerantwortliche(ticket.id), loadGesehen(ticket.id))
   }
   await Promise.all(jobs)
 }
@@ -1001,7 +940,6 @@ async function openTicketFromQuery() {
   if (!id) return
   try {
     const { data } = await api.get(`/api/tickets/${id}`)
-    isDraftTicket.value = false
     await openDetailDialog(data)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || `Ticket #${id} nicht gefunden.` })
@@ -1024,7 +962,6 @@ async function onWithdraw() {
     try {
       await api.delete(`/api/tickets/${selectedTicket.value.id}`)
       tickets.value = tickets.value.filter(t => t.id !== selectedTicket.value.id)
-      isDraftTicket.value = false
       detailDialogOpen.value = false
       $q.notify({ type: 'info', message: 'Ticket zurückgezogen.' })
     } catch (e) {
@@ -1076,44 +1013,12 @@ function onRestore(ticket) {
   })
 }
 
-// Ein Entwurf ist erst ein Ticket, wenn gespeichert wurde – wer nicht speichert,
-// will es nicht. Beim Schließen wird er darum verworfen, samt hochgeladener
-// Anhänge (das Backend nimmt sie mit, sonst bleiben sie ewig liegen).
-// Hängt schon etwas dran, fragen wir vorher: ein Foto ist Arbeit.
-const entwurfHatInhalt = computed(
-  () => detailAnhaenge.value.length > 0 || kommentare.value.length > 0)
-
-function frageVerwerfen() {
-  return new Promise((resolve) => {
-    $q.dialog({
-      title: 'Entwurf verwerfen',
-      message: 'Dieses Ticket wurde noch nicht gespeichert. Beim Schließen wird es '
-        + 'samt der hochgeladenen Anhänge verworfen.',
-      cancel: { label: 'Weiter bearbeiten', flat: true },
-      ok: { label: 'Verwerfen', color: 'negative' },
-      persistent: true,
-    })
-      .onOk(() => resolve(true))
-      .onCancel(() => resolve(false))
-      .onDismiss(() => resolve(false))     // greift nur, falls nichts davor kam
-  })
-}
-
-async function closeDetailDialog() {
-  if (isDraftTicket.value && selectedTicket.value) {
-    if (entwurfHatInhalt.value && !(await frageVerwerfen())) return
-    try {
-      await api.delete(`/api/tickets/${selectedTicket.value.id}/entwurf`)
-      tickets.value = tickets.value.filter(t => t.id !== selectedTicket.value.id)
-      $q.notify({ type: 'info', message: 'Entwurf verworfen.' })
-    } catch { /* ignorieren */ }
-  }
-  isDraftTicket.value = false
+function closeDetailDialog() {
   detailDialogOpen.value = false
 }
 
 // Wenn selectedTicket von außen aktualisiert wird (Statuswechsel), Form nachziehen
-watch(selectedTicket, (t) => { if (t && !isDraftTicket.value) syncDetailForm(t) }, { deep: false })
+watch(selectedTicket, (t) => { if (t) syncDetailForm(t) }, { deep: false })
 
 async function loadAnhaenge(ticketId) {
   try {
@@ -1137,19 +1042,11 @@ async function onDetailSave() {
     const { data } = await api.put(`/api/tickets/${selectedTicket.value.id}`, {
       ...detailForm.value,
       expected_version: selectedTicket.value.version,
-      notify_as_new: isDraftTicket.value,
     })
-    const wasDraft = isDraftTicket.value
     selectedTicket.value = data
-    isDraftTicket.value = false
     const idx = tickets.value.findIndex(t => t.id === data.id)
     if (idx >= 0) tickets.value[idx] = data
-    if (wasDraft) {
-      detailDialogOpen.value = false
-      $q.notify({ type: 'positive', message: 'Ticket gespeichert.' })
-    } else {
-      $q.notify({ type: 'positive', message: 'Gespeichert.' })
-    }
+    $q.notify({ type: 'positive', message: 'Gespeichert.' })
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
   } finally {
