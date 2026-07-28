@@ -232,22 +232,6 @@ class TicketService:
         damit `restore_ticket` es vollständig zurückbringt."""
         return self._ticket_repo.mark_deleted(ticket_id, deleted_by)
 
-    def verwerfe_entwurf(self, ticket_id: int, verworfen_von: str) -> bool:
-        """Verwirft ein nie gespeichertes Ticket mitsamt seinen Anhängen (#136).
-
-        Ein Entwurf, den niemand gespeichert hat, sollte nichts hinterlassen –
-        auch kein Foto, das beim Anlegen schon hochgeladen wurde. Anders als
-        beim Verbergen gehen die Anhänge darum mit: blieben sie leben, hinge
-        auch der Prune fest (Tor 4 verlangt, dass keine Kind-Zeile mehr auf das
-        Ticket zeigt) und die Datei läge für immer auf der Platte.
-
-        Gehärtet, nicht bloß Kosmetik: Die Reihenfolge ist Kind vor Eltern, wie
-        im Prune. Bricht es dazwischen ab, sind die Anhänge weg und das Ticket
-        noch da – der harmlosere Rest, den ein erneuter Aufruf aufräumt.
-        """
-        self._anhang_repo.mark_deleted_by_ticket(ticket_id, verworfen_von)
-        return self._ticket_repo.mark_deleted(ticket_id, verworfen_von)
-
     def restore_ticket(self, ticket_id: int, restored_by: str) -> bool:
         return self._ticket_repo.restore(ticket_id, restored_by)
 
