@@ -21,6 +21,15 @@ class EmailService:
     _BLAU_TEXT_75 = "#c0cee3"   # entspricht weiß 75 % auf Wappenblau (Hinweise)
     _GELB_TEXT_45 = "#8c8102"   # entspricht schwarz 45 % auf Gelb (Fußzeile)
 
+    # Hinweise unter dem Magic-Link-Button. Als Konstante, weil das FastAPI-Backend
+    # (backend/api/auth.py) dieselbe Mail baut — beide Wege müssen gleich lauten (#140).
+    _MAGIC_LINK_HINTS = [
+        "Der Link ist <strong>7 Tage gültig</strong> und funktioniert "
+        "<strong>nur ein einziges Mal</strong>. Danach forderst du dir in der App "
+        "einfach einen neuen Login-Link an.",
+        "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.",
+    ]
+
     @staticmethod
     def render_vtb_email(
         headline: str,
@@ -49,7 +58,10 @@ class EmailService:
         """
         blau = EmailService._VTB_BLAU
         gelb = EmailService._VTB_GELB
-        wappen_url = f"{EmailConfig.get_base_url()}/icons/vtb-wappen-512.png"
+        base_url = EmailConfig.get_base_url().rstrip('/')
+        # Ohne Schema lesbarer in der Fußzeile (app.vtbchemnitz.de statt https://…)
+        base_url_label = base_url.split('://', 1)[-1]
+        wappen_url = f"{base_url}/icons/vtb-wappen-512.png"
         hints_html = "".join(
             f'<p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5;'
             f' color: {EmailService._BLAU_TEXT_75};">{hint}</p>'
@@ -99,6 +111,12 @@ class EmailService:
                 <p style="margin: 20px 0 0; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: {EmailService._GELB_TEXT_45};">
                     Viele Grüße<br>VTB Vereinsverwaltung
                 </p>
+                <!-- Direkter Weg zur App – wichtig, wenn der Button-Link (z. B. ein
+                     bereits verbrauchter Magic-Link) nicht mehr funktioniert (#140). -->
+                <p style="margin: 12px 0 0; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: {EmailService._GELB_TEXT_45};">
+                    Die App erreichst du jederzeit unter
+                    <a href="{base_url}" style="color: {blau}; font-weight: bold;">{base_url_label}</a>
+                </p>
             </td>
         </tr>
     </table>
@@ -123,11 +141,11 @@ class EmailService:
             print("⚠️  E-Mail-Konfiguration fehlt. Bitte .env-Datei prüfen.")
             return False
         
-        base_url = EmailConfig.get_base_url()
+        base_url = EmailConfig.get_base_url().rstrip('/')
         magic_link = f"{base_url}/auth/magic-link?token={token}"
-        
+
         subject = "Login-Link für VTB Vereinsverwaltung"
-        
+
         # Text-Version
         text_body = f"""
 Hallo {username},
@@ -136,14 +154,18 @@ hier ist dein Login-Link für die Vereinsverwaltung:
 
 {magic_link}
 
-Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.
+Wichtig: Der Link ist 7 Tage gültig und funktioniert nur ein einziges Mal.
+Danach forderst du dir in der App einfach einen neuen Login-Link an.
+
+Die App erreichst du jederzeit unter:
+{base_url}
 
 Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.
 
 Viele Grüße,
 VTB Vereinsverwaltung
 """
-        
+
         # HTML-Version im Design der Login-Seite
         html_body = EmailService.render_vtb_email(
             headline="Dein Login-Link",
@@ -151,11 +173,8 @@ VTB Vereinsverwaltung
             intro_html="hier ist dein Login-Link für die Vereinsverwaltung:",
             button_label="Jetzt einloggen",
             button_url=magic_link,
-            hints=[
-                "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.",
-                "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.",
-            ],
-            preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig.",
+            hints=EmailService._MAGIC_LINK_HINTS,
+            preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig, einmal nutzbar.",
         )
         
         return EmailService._send_email(
@@ -236,7 +255,7 @@ VTB Vereinsverwaltung
             print("⚠️  E-Mail-Konfiguration fehlt. Bitte .env-Datei prüfen.")
             return False
 
-        base_url = EmailConfig.get_base_url()
+        base_url = EmailConfig.get_base_url().rstrip('/')
         magic_link = f"{base_url}/auth/magic-link?token={token}"
 
         subject = "Willkommen in der VTB Vereinsverwaltung"
@@ -252,7 +271,7 @@ Du erreichst die App unter:
 Um dich direkt einzuloggen, klicke auf den folgenden Link – du brauchst kein Passwort:
 {magic_link}
 
-Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.
+Wichtig: Der Link ist 7 Tage gültig und funktioniert nur ein einziges Mal.
 Danach kannst du dir jederzeit einen neuen Login-Link über die App anfordern.
 
 Viele Grüße,
@@ -272,8 +291,9 @@ VTB Vereinsverwaltung
             button_label="Jetzt einloggen",
             button_url=magic_link,
             hints=[
-                "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden. "
-                "Danach kannst du dir jederzeit über die App einen neuen Login-Link anfordern.",
+                "Der Link ist <strong>7 Tage gültig</strong> und funktioniert "
+                "<strong>nur ein einziges Mal</strong>. Danach kannst du dir jederzeit "
+                "über die App einen neuen Login-Link anfordern.",
             ],
             preheader="Dein Zugang zur VTB Vereinsverwaltung ist eingerichtet.",
         )
