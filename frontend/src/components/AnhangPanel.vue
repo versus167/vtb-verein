@@ -122,6 +122,9 @@ const props = defineProps({
   canUpload: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
   maxMb: { type: Number, default: 10 },
+  // Zusätzliche Query-Parameter für den Upload (nicht für Löschen/Download).
+  // Bewusst nicht an uploadUrl angehängt: daraus baut das Löschen seine URL.
+  uploadParams: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['uploaded', 'deleted'])
@@ -208,6 +211,7 @@ async function onFileSelected(event) {
   try {
     const { data } = await api.post(props.uploadUrl, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      params: props.uploadParams,
     })
     $q.notify({ type: 'positive', message: 'Anhang hochgeladen.' })
     emit('uploaded', data)
