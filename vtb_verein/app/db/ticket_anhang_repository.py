@@ -64,21 +64,6 @@ class TicketAnhangRepository:
         self.conn.commit()
         return self.get(new_id)
 
-    def mark_deleted_by_ticket(self, ticket_id: int, deleted_by: str) -> int:
-        """Soft-löscht alle lebenden Anhänge eines Tickets; liefert die Anzahl.
-
-        Für das Verwerfen eines nie gespeicherten Entwurfs – dort soll nichts
-        zurückbleiben. Die Dateien selbst bleiben liegen (Soft-Delete-Prinzip);
-        weggeräumt werden sie vom Prune über die Entität `ticket_anhang`.
-        """
-        cursor = self.conn.execute(
-            "UPDATE ticket_anhaenge SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s "
-            "WHERE ticket_id = %s AND deleted_at IS NULL",
-            (deleted_by, ticket_id)
-        )
-        self.conn.commit()
-        return cursor.rowcount
-
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
         cursor = self.conn.execute(
             "UPDATE ticket_anhaenge SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s "

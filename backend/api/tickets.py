@@ -378,7 +378,7 @@ def list_tickets(
 
 
 @router.post("/", status_code=201)
-def create_ticket(data: TicketWrite, user: CurrentUser, db: DB, draft: bool = False):
+def create_ticket(data: TicketWrite, user: CurrentUser, db: DB):
     if not data.bereich_id:
         raise HTTPException(status_code=422, detail="Bereich ist ein Pflichtfeld.")
     ticket = Ticket(
@@ -390,7 +390,7 @@ def create_ticket(data: TicketWrite, user: CurrentUser, db: DB, draft: bool = Fa
         gemeldet_von=user.id,
         faellig_am=data.faellig_am,
     )
-    created = db.tickets.create_ticket(ticket, created_by=user.username, notify=not draft)
+    created = db.tickets.create_ticket(ticket, created_by=user.username)
     return _enrich(asdict(created), db)
 
 
@@ -535,20 +535,6 @@ def delete_ticket(ticket_id: int, user: CurrentUser, db: DB):
     if not _can_verwalten(ticket, user, db) and ticket.gemeldet_von != user.id:
         raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket zu verbergen.")
     db.tickets.mark_ticket_deleted(ticket_id, deleted_by=user.username)
-
-
-@router.delete("/{ticket_id}/entwurf", status_code=204)
-def verwerfe_entwurf(ticket_id: int, user: CurrentUser, db: DB):
-    """Verwirft einen nie gespeicherten Entwurf – samt der Anhänge, die beim
-    Anlegen schon hochgeladen wurden (#136). Gegenstück zu DELETE /{id}, das
-    nur verbirgt und die Anhänge für das Wiederherstellen stehen lässt.
-
-    Rechte wie beim Verbergen: Verwalter, oder der Melder für sein eigenes.
-    """
-    ticket = _get_ticket_or_404(ticket_id, db)
-    if not _can_verwalten(ticket, user, db) and ticket.gemeldet_von != user.id:
-        raise HTTPException(status_code=403, detail="Kein Recht, dieses Ticket zu verwerfen.")
-    db.tickets.verwerfe_entwurf(ticket_id, verworfen_von=user.username)
 
 
 @router.post("/{ticket_id}/restore")
