@@ -336,7 +336,19 @@ Pagination für große Listen und die Aufbewahrung/Archivierung ausgetretener Mi
 
 ## Lizenz
 
-Privat, nicht für die öffentliche Nutzung bestimmt.
+Copyright (C) 2026 Volker Süß and contributors
+
+Dieses Programm ist freie Software: Du kannst es unter den Bedingungen der
+**GNU Affero General Public License**, Version 3 oder (nach deiner Wahl) einer
+späteren Version, weitergeben und/oder verändern (`AGPL-3.0-or-later`). Der
+vollständige Lizenztext steht in [LICENSE](LICENSE).
+
+Es wird in der Hoffnung bereitgestellt, dass es nützlich ist, jedoch **ohne
+jegliche Gewährleistung** (siehe Lizenz).
+
+Hinweis zur AGPL (§13): Wird eine veränderte Fassung als Netzwerkdienst
+betrieben, muss den Nutzern der Quellcode dieser Fassung zugänglich gemacht
+werden – z. B. über einen „Quellcode"-Link in der App.
 
 ## Credits
 
