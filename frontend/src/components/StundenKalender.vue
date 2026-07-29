@@ -13,7 +13,7 @@
           <template v-if="zelle">
             <!-- Tag mit Einträgen: Datum ist durch die umkreiste Stundenzahl ersetzt -->
             <q-avatar v-if="zelle.termine.length" class="kal-badge cursor-pointer"
-              color="primary" text-color="white" size="32px" font-size="13px">
+              size="32px" font-size="13px">
               {{ fmtStd(zelle.summe) }}
               <q-menu anchor="bottom middle" self="top middle">
                 <q-list dense style="min-width:210px">
@@ -124,11 +124,21 @@ function baueMonat(y, m0) {
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .kal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .kal-zelle { height: 40px; display: flex; align-items: center; justify-content: center; }
 .kal-head .kal-zelle { height: auto; padding: 2px 0; font-size: 11px; font-weight: 600; opacity: 0.7; }
 .kal-tagnr { color: #9e9e9e; font-size: 12px; }
 .kal-ausserhalb .kal-tagnr { opacity: 0.45; }
-.kal-badge { font-weight: 600; }
+
+// Tage mit Erfassung tragen einen hellen Kreis (#141). Der Kalender steht immer
+// auf einer blauen Fläche (Dialog-Karte: Wappenblau im Hellmodus, Navy im
+// Dunkelmodus) — ein Kreis in Wappenblau verschwand dort und die Stundenzahl
+// war von einer normalen Tageszahl kaum zu unterscheiden. Vereinsgelb mit
+// blauer Schrift, wie alle Akzente auf Blau; nie weißer Text auf Gelb.
+.kal-badge {
+  font-weight: 600;
+  background: $vtb-gelb;
+  color: $vtb-blau;
+}
 </style>

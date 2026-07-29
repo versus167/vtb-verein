@@ -345,29 +345,30 @@ def _smtp_configured() -> bool:
 
 
 def _send_magic_link_email(recipient: str, username: str, token: str) -> None:
-    magic_url = f"{settings.BASE_URL}/auth/magic-link?token={token}"
+    base_url = settings.BASE_URL.rstrip("/")
+    magic_url = f"{base_url}/auth/magic-link?token={token}"
     subject = "Login-Link für VTB Vereinsverwaltung"
 
     text = (
         f"Hallo {username},\n\n"
         f"hier ist dein Login-Link:\n\n{magic_url}\n\n"
-        "Der Link ist 7 Tage gültig und kann nur einmal verwendet werden.\n\n"
+        "Wichtig: Der Link ist 7 Tage gültig und funktioniert nur ein einziges Mal.\n"
+        "Danach forderst du dir in der App einfach einen neuen Login-Link an.\n\n"
+        f"Die App erreichst du jederzeit unter:\n{base_url}\n\n"
         "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.\n\n"
         "Viele Grüße,\nVTB Vereinsverwaltung"
     )
     # HTML im VTB-Design — dieselbe Vorlage wie die Willkommens-Mail, damit
     # alle System-Mails einheitlich aussehen (Wappen auf Gelb, blaue Karte).
+    # Die Fußzeile der Vorlage trägt den direkten App-Link (#140).
     html = EmailService.render_vtb_email(
         headline="Dein Login-Link",
         username=username,
         intro_html="hier ist dein Login-Link für die Vereinsverwaltung:",
         button_label="Jetzt einloggen",
         button_url=magic_url,
-        hints=[
-            "Der Link ist <strong>7 Tage gültig</strong> und kann nur einmal verwendet werden.",
-            "Falls du diesen Link nicht angefordert hast, kannst du diese E-Mail ignorieren.",
-        ],
-        preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig.",
+        hints=EmailService._MAGIC_LINK_HINTS,
+        preheader="Dein Login-Link für die VTB Vereinsverwaltung – 7 Tage gültig, einmal nutzbar.",
     )
 
     msg = MIMEMultipart("alternative")
