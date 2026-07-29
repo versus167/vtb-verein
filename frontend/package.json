@@ -4,6 +4,7 @@
   "description": "VTB Vereinsverwaltung - Frontend",
   "productName": "Vereinsverwaltung",
   "author": "Volker Süß",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "private": true,
   "scripts": {
