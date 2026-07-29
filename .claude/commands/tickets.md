@@ -1,6 +1,6 @@
 ---
 description: VTB-App-Tickets aus der laufenden App holen und besprechen
-argument-hint: "[--all]"
+argument-hint: "[--all] [--meine]"
 allowed-tools: Bash(python3 tools/vtb_tickets.py:*)
 ---
 Aktuelle Tickets aus dem Bereich „VTB-App":

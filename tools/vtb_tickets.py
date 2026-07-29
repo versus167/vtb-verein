@@ -13,6 +13,7 @@ Konfiguration (Vorrang: echte Umgebungsvariablen > tools/tickets.local.env):
 Beispiele:
     python3 tools/vtb_tickets.py pull               # offene Tickets -> tickets/vtb-app.md
     python3 tools/vtb_tickets.py pull --all         # inkl. erledigt/abgelehnt
+    python3 tools/vtb_tickets.py pull --meine       # "Nur meine" wie in der App -> tickets/meine.md
     python3 tools/vtb_tickets.py show 42
     python3 tools/vtb_tickets.py comment 42 "Gefixt in $(git rev-parse --short HEAD)" --intern
     python3 tools/vtb_tickets.py status 42 erledigt
@@ -41,6 +42,7 @@ _OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_COOKIE
 ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / "tools" / "tickets.local.env"
 OUT_FILE = ROOT / "tickets" / "vtb-app.md"
+MEINE_FILE = ROOT / "tickets" / "meine.md"
 
 GUELTIGE_STATUS = [
     "offen", "in_pruefung", "eingeplant", "rueckfrage", "erledigt", "abgelehnt",
@@ -158,6 +160,18 @@ class Client:
         return _request("GET", f"{self.base}/uploads/{stored_name}",
                         token=self.token, raw=True)
 
+    def me(self) -> dict:
+        return self.get("/auth/me") or {}
+
+    def meine_bereiche(self) -> tuple[bool, set[int]]:
+        """(ist_admin, Bereichs-IDs mit darf_bearbeiten) des eingeloggten Users."""
+        rechte = self.get("/tickets/meine-berechtigungen") or {}
+        bereiche = {
+            int(bid) for bid, flags in (rechte.get("bereiche") or {}).items()
+            if flags.get("darf_bearbeiten")
+        }
+        return bool(rechte.get("ist_admin")), bereiche
+
     def bereich_id(self, name: str) -> int:
         bereiche = self.get("/tickets/bereiche") or []
         exakt = [b for b in bereiche if b["name"].lower() == name.lower()]
@@ -178,8 +192,9 @@ def _prio_sort(t: dict) -> tuple:
     return (PRIO_RANG.get(t.get("prioritaet"), 9), t.get("id") or 0)
 
 
-def render_markdown(tickets: list[dict], bereich: str, mit_abgeschlossen: bool) -> str:
-    zeilen = [f"# Tickets – Bereich „{bereich}“", ""]
+def render_markdown(tickets: list[dict], ueberschrift: str, mit_abgeschlossen: bool,
+                    mit_bereich: bool = False) -> str:
+    zeilen = [f"# Tickets – {ueberschrift}", ""]
     filterhinweis = "alle (inkl. abgeschlossen)" if mit_abgeschlossen else "nur offene"
     zeilen.append(f"_{len(tickets)} Tickets ({filterhinweis})_")
     zeilen.append("")
@@ -188,6 +203,10 @@ def render_markdown(tickets: list[dict], bereich: str, mit_abgeschlossen: bool) 
                 f"[{t['status']} / {t.get('prioritaet', '?')}]")
         zeilen.append(kopf)
         meta = [f"gemeldet von {t.get('gemeldet_von_username', '?')}"]
+        if mit_bereich:
+            meta.insert(0, f"Bereich {t.get('bereich_name') or '?'}")
+        if t.get("zugewiesen_an_username"):
+            meta.append(f"verantwortlich {t['zugewiesen_an_username']}")
         if t.get("kategorie_id"):
             meta.append(f"Kategorie {t['kategorie_id']}")
         if t.get("faellig_am"):
@@ -208,17 +227,40 @@ def render_markdown(tickets: list[dict], bereich: str, mit_abgeschlossen: bool) 
 # Befehle
 # --------------------------------------------------------------------------- #
 def cmd_pull(client: Client, args) -> None:
-    bid = client.bereich_id(client.cfg["bereich"])
-    tickets = client.get(f"/tickets/?bereich_id={bid}") or []
+    if args.meine:
+        # Gleiche Logik wie der App-Filter "Nur meine" (TicketsPage.vue): selbst
+        # gemeldet ODER mir zugewiesen ODER Bereich, in dem ich bearbeiten darf.
+        # Bereichsübergreifend – wie in der App, wo "Nur meine" unabhängig vom
+        # Bereichs-Dropdown greift. Admins sehen damit alles.
+        me = client.me()
+        uid = me.get("id")
+        ist_admin, bearbeitbar = client.meine_bereiche()
+        tickets = client.get("/tickets/") or []
+        if not ist_admin:
+            tickets = [t for t in tickets
+                       if t.get("gemeldet_von") == uid
+                       or t.get("zugewiesen_an") == uid
+                       or t.get("bereich_id") in bearbeitbar]
+        wer = me.get("username") or f"#{uid}"
+        ueberschrift = f"„meine“ ({wer}, alle Bereiche)"
+        if ist_admin:
+            ueberschrift += " – Admin: sieht alle Tickets"
+        ziel, mit_bereich = MEINE_FILE, True
+    else:
+        bid = client.bereich_id(client.cfg["bereich"])
+        tickets = client.get(f"/tickets/?bereich_id={bid}") or []
+        ueberschrift = f"Bereich „{client.cfg['bereich']}“"
+        ziel, mit_bereich = OUT_FILE, False
+
     if not args.all:
         tickets = [t for t in tickets if t.get("status") not in ABGESCHLOSSEN]
     tickets.sort(key=_prio_sort)
 
-    md = render_markdown(tickets, client.cfg["bereich"], args.all)
-    OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUT_FILE.write_text(md, encoding="utf-8")
+    md = render_markdown(tickets, ueberschrift, args.all, mit_bereich=mit_bereich)
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    ziel.write_text(md, encoding="utf-8")
     print(md)
-    print(f"\n→ {len(tickets)} Tickets geschrieben nach {OUT_FILE.relative_to(ROOT)}",
+    print(f"\n→ {len(tickets)} Tickets geschrieben nach {ziel.relative_to(ROOT)}",
           file=sys.stderr)
 
 
@@ -315,6 +357,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("pull", help="Tickets des Bereichs holen und als Markdown ablegen")
     sp.add_argument("--all", action="store_true", help="inkl. erledigt/abgelehnt")
+    sp.add_argument("--meine", action="store_true",
+                    help="wie der App-Filter 'Nur meine' (selbst gemeldet / zugewiesen / "
+                         "eigener Bereich), bereichsübergreifend -> tickets/meine.md")
     sp.set_defaults(func=cmd_pull)
 
     sp = sub.add_parser("show", help="Einzelnes Ticket mit Kommentaren anzeigen")
@@ -356,12 +401,15 @@ def main() -> None:
     parser = build_parser()
     # 'pull' wird aus dem /tickets-Slash-Command mit einem (ggf. leeren oder
     # vom Harness mit Fremdtext gefüllten) gequoteten Roh-Blob aufgerufen.
-    # Deshalb tolerant parsen: '--all' auch in unbekannten Argumenten erkennen,
-    # restlichen Müll ignorieren. Für alle anderen Befehle bleibt es strikt.
+    # Deshalb tolerant parsen: '--all'/'--meine' auch in unbekannten Argumenten
+    # erkennen, restlichen Müll ignorieren. Für andere Befehle bleibt es strikt.
     args, extra = parser.parse_known_args()
     if getattr(args, "cmd", None) == "pull":
-        if any("--all" in tok.split() for tok in extra):
+        tokens = {tok for blob in extra for tok in blob.split()}
+        if "--all" in tokens:
             args.all = True
+        if "--meine" in tokens:
+            args.meine = True
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     cfg = get_config()
