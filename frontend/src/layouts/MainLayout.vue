@@ -245,7 +245,11 @@
           </q-item>
         </q-list>
       </q-scroll-area>
-      <div v-if="appVersion" class="vtb-drawer-version">{{ appVersion }}</div>
+      <div v-if="appVersion || sourceUrl" class="vtb-drawer-version">
+        <span v-if="appVersion">{{ appVersion }}</span>
+        <template v-if="appVersion && sourceUrl"> · </template>
+        <a v-if="sourceUrl" :href="sourceUrl" target="_blank" rel="noopener">Quellcode</a>
+      </div>
     </q-drawer>
 
     <q-page-container>
@@ -404,13 +408,16 @@ const hatMannschaftenZugriff = ref(false)
 const hatTeamtresorZugriff = ref(false)
 
 const appVersion = ref('')
+const sourceUrl = ref('')   // Quellcode-Link (AGPL §13), aus /api/app-info
 
 async function loadAppVersion() {
   try {
     const { data } = await api.get('/api/app-info')
     appVersion.value = data.version ? `v.${data.version}` : ''
+    sourceUrl.value = data.source_url || ''
   } catch {
     appVersion.value = ''
+    sourceUrl.value = ''
   }
 }
 
