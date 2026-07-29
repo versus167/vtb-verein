@@ -134,8 +134,11 @@ def health():
 
 @app.get("/api/app-info")
 def app_info():
-    """Öffentliche App-Metadaten (Name + Version) für die Anzeige im Frontend."""
-    return {"name": APP_NAME, "version": get_app_version()}
+    """Öffentliche App-Metadaten (Name, Version, Quellcode-Link) fürs Frontend.
+
+    ``source_url`` erfüllt AGPL §13: die App verweist auf den Quellcode dieser
+    Fassung (per ``VTB_SOURCE_URL`` überschreibbar, s. Settings)."""
+    return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL}
 
 
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)

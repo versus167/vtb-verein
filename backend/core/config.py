@@ -16,6 +16,11 @@ class Settings:
         "VTB_FRONTEND_ORIGINS", "http://localhost:9000,http://localhost:8080"
     ).split(",")
 
+    # Quellcode-Link (AGPL §13): Die App zeigt darauf, damit Nutzer den Quellcode
+    # DIESER Fassung erreichen. Wer eine veränderte Version betreibt, MUSS hier
+    # die eigene Quelle eintragen. Default = kanonisches Repo.
+    SOURCE_URL: str = os.getenv("VTB_SOURCE_URL", "https://github.com/versus167/vtb-verein")
+
     # Session-Cookie (Ticket #48, Punkt 4): das JWT wird in einem HttpOnly-Cookie
     # transportiert statt im localStorage. Dev (Quasar-Proxy) wie Prod (SPA-Mount)
     # sind same-origin → SameSite=Strict genügt. Secure muss in Dev (http) auf

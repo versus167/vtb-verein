@@ -69,6 +69,13 @@ body.body--dark .vtb-drawer-home.vtb-nav-active {
 body.body--dark .vtb-drawer-version {
   color: rgba(255, 255, 255, 0.35);
 }
+.vtb-drawer-version a {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: underline;
+}
+.vtb-drawer-version a:hover {
+  color: #fff;
+}
 
 // ── In-Page-Tabs (wiederverwendbar: class="vtb-tabs" ans q-tabs hängen) ──────
 // Segment-Pillen statt Unterstrich-Tabs: abgerundete Leiste, der aktive
