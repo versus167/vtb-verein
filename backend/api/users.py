@@ -273,7 +273,11 @@ def change_password(user_id: int, data: PasswordChange, user: CurrentUser, db: D
     service = UserService(db)
     try:
         service.change_password(user_id, data.new_password, updated_by=user.username)
-        return {"ok": True}
+        # Das Setzen des Passworts erhöht die User-version. Die neue Version mitgeben,
+        # damit offene Bearbeiten-Dialoge ihr expected_version nachziehen können und
+        # das anschließende Speichern nicht im Versionskonflikt endet.
+        aktuell = db.get_user_by_id(user_id)
+        return {"ok": True, "version": aktuell.version if aktuell else None}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

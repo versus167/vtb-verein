@@ -285,11 +285,17 @@ async function onPasswordChange() {
   passwordError.value = ''
   saving.value = true
   try {
-    await api.post(`/api/users/${passwordUser.value.id}/password`, {
+    const { data } = await api.post(`/api/users/${passwordUser.value.id}/password`, {
       new_password: newPassword.value,
     })
+    // Passwort setzen erhöht die User-version: Zeile (und einen offenen Bearbeiten-
+    // Dialog) nachziehen, sonst endet das nächste Speichern im Versionskonflikt.
+    if (data?.version != null && editForm.value.id === passwordUser.value.id) {
+      editForm.value.version = data.version
+    }
     $q.notify({ type: 'positive', message: 'Passwort geändert' })
     passwordOpen.value = false
+    await loadUsers()
   } catch (e) {
     passwordError.value = e.response?.data?.detail || 'Fehler'
   } finally {

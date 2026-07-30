@@ -1114,9 +1114,14 @@ async function onSetPassword() {
   pwError.value = ''
   pwSaving.value = true
   try {
-    await api.post(`/api/users/${editingUserId.value}/password`, { new_password: pwForm.value.pw1 })
+    const { data } = await api.post(`/api/users/${editingUserId.value}/password`,
+      { new_password: pwForm.value.pw1 })
+    // Passwort setzen erhöht die User-version: neue Version übernehmen, sonst läuft
+    // ein anschließendes Speichern im Dialog in den Versionskonflikt.
+    if (data?.version != null) editUserForm.value.expected_version = data.version
     $q.notify({ type: 'positive', message: `Passwort für „${editUserForm.value.username}" gesetzt` })
     pwForm.value = { pw1: '', pw2: '' }
+    await loadPersonen()
   } catch (e) {
     pwError.value = e.response?.data?.detail || 'Fehler beim Setzen des Passworts'
   } finally {
