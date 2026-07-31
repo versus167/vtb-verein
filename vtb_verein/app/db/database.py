@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 78
+SCHEMA_VERSION = 79
 
 
 # ---------------------------------------------------------------------------
@@ -162,39 +162,31 @@ _FN_KASSEN_KATEGORIEN_AUDIT_UPDATE = """
 # Muster wie die Domänentabellen: jede versionsändernde Schreibung landet als
 # Snapshot in *_history. fibu_/beitrag_einstellungen sind Single-Row (id=1, nie
 # gelöscht → kein deleted_*); prune_einstellungen wird per Soft-Delete geführt.
-_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT = """
+_FIBU_EINSTELLUNGEN_COLS = (
+    "id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel, "
+    "verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis, "
+    "kassendifferenz_gegenkonto, "
+    "sepa_glaeubiger_id, sepa_glaeubiger_name, sepa_iban, sepa_bic, sepa_vorlauftage, "
+    "created_at, created_by, updated_at, updated_by"
+)
+_FIBU_EINSTELLUNGEN_VALS = ", ".join(
+    "NEW." + c.strip() for c in _FIBU_EINSTELLUNGEN_COLS.split(","))
+
+_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT = f"""
     CREATE OR REPLACE FUNCTION fn_fibu_einstellungen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
     BEGIN
-        INSERT INTO fibu_einstellungen_history (
-            id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
-            verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
-            kassendifferenz_gegenkonto,
-            created_at, created_by, updated_at, updated_by
-        ) VALUES (
-            NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
-            NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
-            NEW.kassendifferenz_gegenkonto,
-            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
-        );
+        INSERT INTO fibu_einstellungen_history ({_FIBU_EINSTELLUNGEN_COLS})
+        VALUES ({_FIBU_EINSTELLUNGEN_VALS});
         RETURN NEW;
     END; $$;
 """
 
-_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE = """
+_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE = f"""
     CREATE OR REPLACE FUNCTION fn_fibu_einstellungen_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
     BEGIN
         IF NEW.version != OLD.version THEN
-            INSERT INTO fibu_einstellungen_history (
-                id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
-                verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis,
-                kassendifferenz_gegenkonto,
-                created_at, created_by, updated_at, updated_by
-            ) VALUES (
-                NEW.id, NEW.version, NEW.debitor_konto_basis, NEW.default_gegenkonto, NEW.default_steuerschluessel,
-                NEW.verein_kostenstelle, NEW.default_kostentraeger, NEW.ul_aufwand_konto, NEW.ul_kreditor_konto_basis,
-                NEW.kassendifferenz_gegenkonto,
-                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by
-            );
+            INSERT INTO fibu_einstellungen_history ({_FIBU_EINSTELLUNGEN_COLS})
+            VALUES ({_FIBU_EINSTELLUNGEN_VALS});
         END IF;
         RETURN NEW;
     END; $$;
@@ -775,6 +767,163 @@ _FN_RECHNUNG_EXPORTE_AUDIT_UPDATE = f"""
         RETURN NEW;
     END; $$;
 """
+
+# --- SEPA-Lastschrift: eigener Einzug (Ticket #114) ----------------------------
+# Ein `sepa_lauf` ist eine erzeugte pain.008-Datei; seine `sepa_lauf_position`en halten
+# einen SNAPSHOT der Einzugsdaten (IBAN/Mandat/Betrag/Name). Der Snapshot ist Absicht:
+# Zahlungsdaten dürfen sich nicht rückwirkend ändern, wenn ein Mitglied später eine
+# andere Bankverbindung pflegt – ein Re-Download muss dieselbe Datei liefern.
+# Die Quelle bleibt polymorph (quelle_typ/quelle_id auf beitrag_sollstellung bzw.
+# gebuehr_forderung) wie im FBASC-Export, deshalb kein FK auf die Quellzeile. Dass ein
+# Posten nur EINMAL eingezogen wird, sichert der partielle Unique-Index auf
+# (quelle_typ, quelle_id) über die lebenden Positionen: Zurücknehmen soft-deletet Lauf
+# UND Positionen, wodurch die Posten wieder einziehbar werden.
+_SEPA_LAUF_COLS = (
+    "id, version, dateiname, message_id, ausfuehrungsdatum, sequenztyp, "
+    "glaeubiger_id, glaeubiger_name, glaeubiger_iban, glaeubiger_bic, "
+    "anzahl_positionen, summe_cent, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_SEPA_LAUF_VALS = ", ".join("NEW." + c.strip() for c in _SEPA_LAUF_COLS.split(","))
+
+_SEPA_LAUF_POSITION_COLS = (
+    "id, version, sepa_lauf_id, quelle_typ, quelle_id, mitglied_id, betrag_cent, "
+    "end_to_end_id, mandatsref, mandatsdatum, iban, bic, kontoinhaber, verwendungszweck, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_SEPA_LAUF_POSITION_VALS = ", ".join(
+    "NEW." + c.strip() for c in _SEPA_LAUF_POSITION_COLS.split(","))
+
+_FN_SEPA_LAUF_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_sepa_lauf_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO sepa_lauf_history ({_SEPA_LAUF_COLS}) VALUES ({_SEPA_LAUF_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_SEPA_LAUF_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_sepa_lauf_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO sepa_lauf_history ({_SEPA_LAUF_COLS}) VALUES ({_SEPA_LAUF_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+_FN_SEPA_LAUF_POSITION_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_sepa_lauf_position_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO sepa_lauf_position_history ({_SEPA_LAUF_POSITION_COLS})
+        VALUES ({_SEPA_LAUF_POSITION_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_SEPA_LAUF_POSITION_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_sepa_lauf_position_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO sepa_lauf_position_history ({_SEPA_LAUF_POSITION_COLS})
+            VALUES ({_SEPA_LAUF_POSITION_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_SEPA = """
+    CREATE TABLE IF NOT EXISTS sepa_lauf (
+      id                SERIAL PRIMARY KEY,
+      dateiname         TEXT NOT NULL,
+      message_id        TEXT NOT NULL,       -- MsgId der pain.008 (je Lauf eindeutig)
+      ausfuehrungsdatum TEXT NOT NULL,       -- ReqdColltnDt (ISO)
+      sequenztyp        TEXT NOT NULL DEFAULT 'RCUR',
+      glaeubiger_id     TEXT NOT NULL,       -- Snapshot: Gläubiger-ID (CI) des Vereins
+      glaeubiger_name   TEXT NOT NULL,
+      glaeubiger_iban   TEXT NOT NULL,
+      glaeubiger_bic    TEXT,
+      anzahl_positionen INTEGER NOT NULL DEFAULT 0,
+      summe_cent        INTEGER NOT NULL DEFAULT 0,
+      version           INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by        TEXT,
+      updated_at        TEXT,
+      updated_by        TEXT,
+      deleted_at        TEXT,
+      deleted_by        TEXT
+    );
+    CREATE TABLE IF NOT EXISTS sepa_lauf_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      dateiname TEXT, message_id TEXT, ausfuehrungsdatum TEXT, sequenztyp TEXT,
+      glaeubiger_id TEXT, glaeubiger_name TEXT, glaeubiger_iban TEXT, glaeubiger_bic TEXT,
+      anzahl_positionen INTEGER, summe_cent INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS sepa_lauf_position (
+      id               SERIAL PRIMARY KEY,
+      sepa_lauf_id     INTEGER NOT NULL REFERENCES sepa_lauf(id),
+      quelle_typ       TEXT NOT NULL,       -- 'beitrag' | 'gebuehr' (polymorph, kein FK)
+      quelle_id        INTEGER NOT NULL,
+      mitglied_id      INTEGER NOT NULL REFERENCES mitglied(id),
+      betrag_cent      INTEGER NOT NULL,
+      end_to_end_id    TEXT NOT NULL,
+      mandatsref       TEXT NOT NULL,
+      mandatsdatum     TEXT NOT NULL,
+      iban             TEXT NOT NULL,
+      bic              TEXT,
+      kontoinhaber     TEXT NOT NULL,       -- Debtor-Name in der Datei (Snapshot)
+      verwendungszweck TEXT,
+      version          INTEGER NOT NULL DEFAULT 1,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by       TEXT,
+      updated_at       TEXT,
+      updated_by       TEXT,
+      deleted_at       TEXT,
+      deleted_by       TEXT
+    );
+    CREATE TABLE IF NOT EXISTS sepa_lauf_position_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      sepa_lauf_id INTEGER, quelle_typ TEXT, quelle_id INTEGER, mitglied_id INTEGER,
+      betrag_cent INTEGER, end_to_end_id TEXT, mandatsref TEXT, mandatsdatum TEXT,
+      iban TEXT, bic TEXT, kontoinhaber TEXT, verwendungszweck TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_SEPA_INDEXES = (
+    ("idx_sepa_lauf_deleted_at",           "sepa_lauf(deleted_at)"),
+    ("idx_sepa_lauf_history_id",           "sepa_lauf_history(id)"),
+    ("idx_sepa_lauf_position_lauf",        "sepa_lauf_position(sepa_lauf_id)"),
+    ("idx_sepa_lauf_position_mitglied",    "sepa_lauf_position(mitglied_id)"),
+    ("idx_sepa_lauf_position_quelle",      "sepa_lauf_position(quelle_typ, quelle_id)"),
+    ("idx_sepa_lauf_position_deleted_at",  "sepa_lauf_position(deleted_at)"),
+    ("idx_sepa_lauf_position_history_id",  "sepa_lauf_position_history(id)"),
+)
+
+# Ein offener Posten darf nur in EINEM lebenden Lauf stecken (kein Doppel-Einzug).
+_SEPA_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_sepa_lauf_position_quelle_aktiv "
+    "ON sepa_lauf_position (quelle_typ, quelle_id) WHERE deleted_at IS NULL",
+)
+
+_SEPA_TRIGGERS = (
+    ('trig_sepa_lauf_audit_insert',          'INSERT', 'sepa_lauf',
+     'fn_sepa_lauf_audit_insert'),
+    ('trig_sepa_lauf_audit_update',          'UPDATE', 'sepa_lauf',
+     'fn_sepa_lauf_audit_update'),
+    ('trig_sepa_lauf_position_audit_insert', 'INSERT', 'sepa_lauf_position',
+     'fn_sepa_lauf_position_audit_insert'),
+    ('trig_sepa_lauf_position_audit_update', 'UPDATE', 'sepa_lauf_position',
+     'fn_sepa_lauf_position_audit_update'),
+)
+
+_SEPA_FNS = (
+    _FN_SEPA_LAUF_AUDIT_INSERT, _FN_SEPA_LAUF_AUDIT_UPDATE,
+    _FN_SEPA_LAUF_POSITION_AUDIT_INSERT, _FN_SEPA_LAUF_POSITION_AUDIT_UPDATE,
+)
+
 
 _DDL_RECHNUNGEN = """
     CREATE TABLE IF NOT EXISTS rechnung_kategorie (
@@ -2434,6 +2583,7 @@ class Database:
             76: self._migrate_v75_to_v76,
             77: self._migrate_v76_to_v77,
             78: self._migrate_v77_to_v78,
+            79: self._migrate_v78_to_v79,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -4813,6 +4963,11 @@ class Database:
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
               kassendifferenz_gegenkonto TEXT,
+              sepa_glaeubiger_id       TEXT,
+              sepa_glaeubiger_name     TEXT,
+              sepa_iban                TEXT,
+              sepa_bic                 TEXT,
+              sepa_vorlauftage         INTEGER,
               created_at               TEXT,
               created_by               TEXT,
               updated_at               TEXT,
@@ -5659,6 +5814,46 @@ class Database:
                 )
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 78 WHERE id = 1")
+
+    def _migrate_v78_to_v79(self) -> None:
+        """SEPA-Lastschrift: eigener Einzug per pain.008 (Ticket #114).
+
+        Neue Tabellen sepa_lauf + sepa_lauf_position (je mit _history, Audit-Triggern,
+        Indexen) sowie die Gläubiger-Angaben an fibu_einstellungen (+ History-Spalten),
+        aus denen die pain.008 ihren CreditorSchemeId/Creditor-Block füllt. Die
+        Sollstellungen selbst bleiben unangetastet – ob ein Posten schon eingezogen wurde,
+        steht in sepa_lauf_position (partieller Unique-Index über die lebenden Zeilen).
+        DDL/Trigger/Index-Konstanten geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            for spalte, typ in (
+                ('sepa_glaeubiger_id', 'TEXT'),
+                ('sepa_glaeubiger_name', 'TEXT'),
+                ('sepa_iban', 'TEXT'),
+                ('sepa_bic', 'TEXT'),
+            ):
+                cur.execute(f"ALTER TABLE fibu_einstellungen "
+                            f"ADD COLUMN IF NOT EXISTS {spalte} {typ}")
+                cur.execute(f"ALTER TABLE fibu_einstellungen_history "
+                            f"ADD COLUMN IF NOT EXISTS {spalte} {typ}")
+            cur.execute("ALTER TABLE fibu_einstellungen ADD COLUMN IF NOT EXISTS "
+                        "sepa_vorlauftage INTEGER NOT NULL DEFAULT 2")
+            cur.execute("ALTER TABLE fibu_einstellungen_history ADD COLUMN IF NOT EXISTS "
+                        "sepa_vorlauftage INTEGER")
+            cur.execute(_DDL_SEPA)
+            for fn_sql in _SEPA_FNS:
+                cur.execute(fn_sql)
+            for name, event, table, fn in _SEPA_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _SEPA_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _SEPA_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 79 WHERE id = 1")
 
     @staticmethod
     def _seed_rechnung_kategorien(cur) -> None:
@@ -6930,6 +7125,10 @@ class Database:
         # Rechnung (+History) und Beleg-Anhänge. DDL geteilt mit Migration v77→v78.
         cur.execute(_DDL_RECHNUNGEN)
 
+        # SEPA-Lastschrift (Schema v79): Einzugs-Läufe (pain.008) mit Positions-Snapshot.
+        # DDL geteilt mit Migration v78→v79.
+        cur.execute(_DDL_SEPA)
+
         # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
         # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
         cur.execute(_DDL_ZUTRITT_TABLES)
@@ -7009,6 +7208,13 @@ class Database:
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
               kassendifferenz_gegenkonto TEXT,
+              -- SEPA-Lastschrift (eigener Einzug, Ticket #114): Gläubiger-Angaben für
+              -- die pain.008 und die Vorlauffrist bis zum Ausführungsdatum.
+              sepa_glaeubiger_id       TEXT,
+              sepa_glaeubiger_name     TEXT,
+              sepa_iban                TEXT,
+              sepa_bic                 TEXT,
+              sepa_vorlauftage         INTEGER NOT NULL DEFAULT 2,
               version                  INTEGER NOT NULL DEFAULT 1,
               created_at               TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by               TEXT,
@@ -7163,6 +7369,8 @@ class Database:
         cur.execute(_FN_UL_SATZ_AUDIT_INSERT)
         cur.execute(_FN_UL_SATZ_AUDIT_UPDATE)
         for fn_sql in _RECHNUNG_FNS:
+            cur.execute(fn_sql)
+        for fn_sql in _SEPA_FNS:
             cur.execute(fn_sql)
         cur.execute(_FN_TUER_SCHLOSS_AUDIT_INSERT)
         cur.execute(_FN_TUER_SCHLOSS_AUDIT_UPDATE)
@@ -7793,6 +8001,7 @@ class Database:
             ('trig_funktion_permission_audit_update',               'UPDATE', 'funktion_permission',               'fn_funktion_permission_audit_update'),
             *_UL_TRIGGERS,
             *_RECHNUNG_TRIGGERS,
+            *_SEPA_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
@@ -7844,6 +8053,7 @@ class Database:
             ("idx_funktion_permission_history_id",                  "funktion_permission_history(id)"),
             *_UL_INDEXES,
             *_RECHNUNG_INDEXES,
+            *_SEPA_INDEXES,
             ("idx_kassen_deleted_at",                               "kassen(deleted_at)"),
             ("idx_kassen_abteilung_id",                             "kassen(abteilung_id)"),
             ("idx_kassenbuchungen_kasse_id",                        "kassenbuchungen(kasse_id)"),
@@ -7943,6 +8153,8 @@ class Database:
         for sql in _TERMINE_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TERMIN_ZUSAGE_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _SEPA_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------

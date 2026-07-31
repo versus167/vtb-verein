@@ -63,6 +63,7 @@ from app.db.gebuehr_repository import GebuehrRepository
 from app.db.gebuehr_forderung_repository import GebuehrForderungRepository
 from app.db.fibu_export_repository import FibuExportRepository
 from app.db.fibu_einstellungen_repository import FibuEinstellungenRepository
+from app.db.sepa_repository import SepaRepository
 from app.db.beitrag_einstellungen_repository import BeitragEinstellungenRepository
 from app.db.statistik_repository import StatistikRepository
 from app.db.ul_abrechnung_repository import ULAbrechnungRepository
@@ -137,6 +138,7 @@ class VereinsDB:
         self._gebuehr_forderung_repo = GebuehrForderungRepository(self.conn)
         self._fibu_export_repo = FibuExportRepository(self.conn)
         self._fibu_einstellungen_repo = FibuEinstellungenRepository(self.conn)
+        self._sepa_repo = SepaRepository(self.conn)
         self._ul_abrechnung_repo = ULAbrechnungRepository(self.conn)
         self._ul_satz_repo = ULSatzRepository(self.conn)
         self._statistik_repo = StatistikRepository(self.conn)
@@ -782,6 +784,10 @@ class VereinsDB:
     @property
     def fibu_einstellungen(self) -> FibuEinstellungenRepository:
         return self._fibu_einstellungen_repo
+
+    @property
+    def sepa(self) -> SepaRepository:
+        return self._sepa_repo
 
     @property
     def ul_abrechnungen(self) -> ULAbrechnungRepository:

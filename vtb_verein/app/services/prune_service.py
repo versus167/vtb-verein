@@ -126,8 +126,10 @@ class ArchiveRule:
 #
 # Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten,
 # Schließanlage/Zutritt und Übungsleiter-Abrechnung.
-# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren und
-# Rechnungen/Rechnungs-Kategorien/Rechnungs-Exporte – Aufbewahrungspflicht) und
+# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren,
+# Rechnungen/Rechnungs-Kategorien/Rechnungs-Exporte sowie die SEPA-Einzugsläufe
+# sepa_lauf/sepa_lauf_position – Aufbewahrungspflicht; ein Lastschriftlauf ist der Beleg
+# dafür, was wann von wem eingezogen wurde) und
 # users (Auth-/Audit-verflochten, Last-Admin-Schutz).
 # Ebenfalls NICHT drin: geräte-gebundene Tabellen mit revoked_at statt deleted_at
 # (user_sessions, push_subscriptions) – sie haben eigene zeitbasierte Cleanups
@@ -261,6 +263,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_mannschaft", "mitglied_id"),
                     ChildRef("rechnung", "empfaenger_mitglied_id"),
                     ChildRef("schluessel_chip", "mitglied_id"),
+                    ChildRef("sepa_lauf_position", "mitglied_id"),   # Finanzdaten: nie geprunt
                     ChildRef("termin_zusage", "mitglied_id"),
                     ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
                     ChildRef("ul_abrechnung", "mitglied_id"),
