@@ -128,7 +128,8 @@
       </div>
 
       <div v-if="sepaVorschau" class="text-caption text-grey-7 q-mb-sm">
-        {{ sepaVorschau.anzahl }} Lastschrift(en) · Summe
+        {{ sepaVorschau.anzahl_lastschriften }} Lastschrift(en) aus
+        {{ sepaVorschau.anzahl }} Posten · Summe
         {{ fmt(sepaVorschau.summe_cent / 100) }} € · Einzug am
         {{ formatDate(sepaVorschau.ausfuehrungsdatum) }}
       </div>
@@ -145,7 +146,16 @@
           </thead>
           <tbody>
             <tr v-for="k in sepaVorschau.einziehbar" :key="k.quelle_typ + k.quelle_id">
-              <td>{{ k.mitglied_name }}</td>
+              <td>
+                {{ k.mitglied_name }}
+                <q-badge v-if="buendel(k)" color="teal" text-color="white" class="q-ml-xs">
+                  zusammen {{ fmt(buendel(k).summe_cent / 100) }} €
+                  <q-tooltip>
+                    Wird mit {{ buendel(k).anzahl - 1 }} weiteren Posten dieses Mandats zu
+                    EINER Lastschrift zusammengefasst – die Bank rechnet je Lastschrift ab.
+                  </q-tooltip>
+                </q-badge>
+              </td>
               <td>{{ k.bezeichnung }}</td>
               <td>{{ formatDate(k.faelligkeitsdatum) }}</td>
               <td>{{ k.iban }}</td>
@@ -195,7 +205,8 @@
               Lauf #{{ x.id }} · Einzug am {{ formatDate(x.ausfuehrungsdatum) }}
             </q-item-label>
             <q-item-label caption>
-              {{ x.anzahl_positionen }} Lastschrift(en) · {{ fmt(x.summe_cent / 100) }} € ·
+              {{ x.anzahl_lastschriften }} Lastschrift(en) aus {{ x.anzahl_positionen }} Posten ·
+              {{ fmt(x.summe_cent / 100) }} € ·
               erzeugt {{ formatDateTime(x.created_at) }} von {{ x.created_by }}
             </q-item-label>
           </q-item-section>
@@ -337,6 +348,26 @@ const kannEinziehen = computed(() =>
   !!sepaVorschau.value && sepaVorschau.value.anzahl > 0
   && sepaVorschau.value.konfiguration_fehler.length === 0)
 
+// Posten desselben Mandats gehen als EINE Lastschrift in die Datei (Entgelte fallen je
+// Lastschrift an). Hier je Mandat zählen, damit die Tabelle zeigt, was zusammenfällt.
+const sepaBuendel = computed(() => {
+  const je = new Map()
+  for (const k of sepaVorschau.value?.einziehbar ?? []) {
+    const schluessel = `${k.mandatsref}|${k.iban}`
+    const b = je.get(schluessel) ?? { anzahl: 0, summe_cent: 0 }
+    b.anzahl += 1
+    b.summe_cent += k.betrag_cent
+    je.set(schluessel, b)
+  }
+  return je
+})
+
+// Nur für gebündelte Posten ein Ergebnis – Einzelposten brauchen keinen Hinweis.
+function buendel(k) {
+  const b = sepaBuendel.value.get(`${k.mandatsref}|${k.iban}`)
+  return b && b.anzahl > 1 ? b : null
+}
+
 const terminHinweis = computed(() => {
   const frueh = sepaVorschau.value?.fruehestes_ausfuehrungsdatum
   return frueh ? `frühestens ${formatDate(frueh)} (Vorlauffrist)` : 'leer = frühestmöglich'
@@ -464,11 +495,12 @@ async function loadSepaLaeufe() {
 }
 
 async function doSepaLauf() {
-  const anzahl = sepaVorschau.value.anzahl
+  const anzahl = sepaVorschau.value.anzahl_lastschriften
+  const posten = sepaVorschau.value.anzahl
   const summe = fmt(sepaVorschau.value.summe_cent / 100)
   $q.dialog({
     title: 'Lastschriftdatei erzeugen?',
-    message: `${anzahl} Lastschrift(en) über ${summe} € mit Einzug am `
+    message: `${anzahl} Lastschrift(en) aus ${posten} Posten über ${summe} € mit Einzug am `
       + `${formatDate(sepaVorschau.value.ausfuehrungsdatum)}. Die Posten gelten danach als `
       + 'eingezogen und erscheinen nicht mehr in der Vorschau – bis der Lauf zurückgenommen wird.',
     cancel: true, ok: { label: 'Erzeugen', color: 'primary' },

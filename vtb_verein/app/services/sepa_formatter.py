@@ -13,12 +13,16 @@ Zwei Eigenheiten, die das Format erzwingt:
 Sequenztyp: durchgängig RCUR. Seit dem SEPA-Rulebook 2016 ist die Unterscheidung
 FRST/RCUR nicht mehr erforderlich; RCUR für alle Einzüge erspart eine Mandats-Zustands-
 verwaltung („war das schon mal eingezogen?").
+
+Bündelung: Positionen desselben Mandats werden zu EINER Lastschrift zusammengefasst
+(siehe ``gruppiere``). Die Bank berechnet Entgelte je eingereichter Lastschrift, und das
+Mitglied sieht eine Buchung statt mehrerer. Über Mandate hinweg wird nie gebündelt.
 """
 from datetime import date, datetime, timedelta
 from typing import Optional
 from xml.etree import ElementTree as ET
 
-from app.models.sepa import SepaLauf
+from app.models.sepa import SepaLauf, SepaPosition
 
 NAMESPACE = "urn:iso:std:iso:20022:tech:xsd:pain.008.001.08"
 SEQUENZTYP = "RCUR"
@@ -130,14 +134,67 @@ def message_id(erzeugt: datetime, lauf_id: Optional[int] = None) -> str:
     return basis[:MAX_ID]
 
 
-def end_to_end_id(quelle_typ: str, quelle_id: int) -> str:
-    """EndToEndId = Belegnummer des Fibu-Exports (B<id>/G<id>).
+def end_to_end_id(mandatsref: str, ausfuehrungsdatum: str) -> str:
+    """EndToEndId je Mandat und Lauf: ``<Mandatsreferenz>-<JJJJMMTT>``.
 
-    Bewusst identisch zur FBASC-Belegnummer: so lässt sich eine Rückläufer-/Kontobuchung
-    dem offenen Posten in der Fibu ohne Übersetzungstabelle zuordnen.
+    Bis dahin war das die FBASC-Belegnummer (B<id>/G<id>). Das geht nicht mehr, seit
+    mehrere Posten desselben Mandats zu EINER Lastschrift zusammengefasst werden – eine
+    Lastschrift deckt dann mehrere Belege ab. Ein Rückläufer ist trotzdem zuzuordnen:
+    die gespeicherten Positionen mit dieser EndToEndId nennen die betroffenen Posten.
     """
-    prefix = 'B' if quelle_typ == 'beitrag' else 'G'
-    return f"{prefix}{quelle_id}"[:MAX_ID]
+    datum = (ausfuehrungsdatum or "").replace("-", "")[:8]
+    if not datum:
+        return sepa_text(mandatsref, MAX_ID)
+    return f"{sepa_text(mandatsref, MAX_ID - len(datum) - 1)}-{datum}"
+
+
+def _gruppen_schluessel(p: SepaPosition) -> tuple:
+    """Was eine Lastschrift ausmacht: dieselbe EndToEndId UND dasselbe Mandat/Konto.
+
+    Die EndToEndId allein würde reichen (der Service vergibt sie je Mandat), das Konto
+    steht aus Sicherheitsgründen mit im Schlüssel: bei fehlerhaften Stammdaten (zwei
+    Mitglieder mit gleicher Mandatsreferenz) würde sonst von einem falschen Konto
+    eingezogen. Getrennte Gruppen sind harmlos, ein falscher Debitor nicht.
+    """
+    return (p.end_to_end_id, p.mandatsref, p.mandatsdatum, p.iban, p.bic, p.kontoinhaber)
+
+
+def gruppiere(positionen: list[SepaPosition]) -> list[list[SepaPosition]]:
+    """Positionen zu Lastschriften bündeln – gleiches Mandat = eine Lastschrift.
+
+    Entgelte fallen je eingereichter Lastschrift an, nicht je Datei; zwei Beiträge
+    desselben Mitglieds werden deshalb zusammen eingezogen. Ältere Läufe, deren
+    Positionen noch je eine eigene EndToEndId (Belegnummer) tragen, bleiben dabei
+    unverändert einzeln – ein Re-Download liefert weiterhin dieselbe Datei.
+    """
+    gruppen: dict[tuple, list[SepaPosition]] = {}
+    for p in positionen:
+        gruppen.setdefault(_gruppen_schluessel(p), []).append(p)
+    return list(gruppen.values())   # dict behält die Einfügereihenfolge
+
+
+def _verwendungszweck(gruppe: list[SepaPosition]) -> str:
+    """Verwendungszwecke der zusammengefassten Posten zu einem Feld verbinden.
+
+    Passen nicht alle in die 140 Zeichen, werden so viele genannt wie hineinpassen und
+    der Rest mit „u.w." angedeutet – verständlicher als ein mitten im Wort
+    abgeschnittener letzter Posten.
+    """
+    teile = [t for t in (sepa_text(p.verwendungszweck, MAX_VERWENDUNGSZWECK)
+                         for p in gruppe if p.verwendungszweck) if t]
+    if not teile:
+        return ""
+    text = ", ".join(teile)
+    if len(text) <= MAX_VERWENDUNGSZWECK:
+        return text
+
+    rest = " u.w."
+    passend: list[str] = []
+    for t in teile:
+        if len(", ".join(passend + [t])) + len(rest) > MAX_VERWENDUNGSZWECK:
+            break
+        passend.append(t)
+    return ", ".join(passend) + rest if passend else text[:MAX_VERWENDUNGSZWECK]
 
 
 # --------------------------------------------------------------------------- #
@@ -165,7 +222,10 @@ def render(lauf: SepaLauf, erzeugt_am: Optional[datetime] = None) -> bytes:
     if not lauf.positionen:
         raise ValueError("SEPA-Lauf ohne Positionen kann nicht gerendert werden.")
     erzeugt_am = erzeugt_am or datetime.now()
-    anzahl = str(len(lauf.positionen))
+    # NbOfTxs zählt Lastschriften, nicht Posten: mehrere Posten desselben Mandats
+    # sind EINE Lastschrift (siehe gruppiere). CtrlSum bleibt die Gesamtsumme.
+    gruppen = gruppiere(lauf.positionen)
+    anzahl = str(len(gruppen))
     summe = _betrag(sum(p.betrag_cent for p in lauf.positionen))
 
     ET.register_namespace("", NAMESPACE)
@@ -199,20 +259,21 @@ def render(lauf: SepaLauf, erzeugt_am: Optional[datetime] = None) -> bytes:
     _kind(andere, "Id", sepa_text(lauf.glaeubiger_id, MAX_ID))
     _kind(_kind(andere, "SchmeNm"), "Prtry", "SEPA")
 
-    for p in lauf.positionen:
+    for gruppe in gruppen:
+        kopf = gruppe[0]                  # Mandat/Konto sind je Gruppe identisch
         posten = _kind(zahlung, "DrctDbtTxInf")
-        _kind(_kind(posten, "PmtId"), "EndToEndId", sepa_text(p.end_to_end_id, MAX_ID))
-        betrag = _kind(posten, "InstdAmt", _betrag(p.betrag_cent))
+        _kind(_kind(posten, "PmtId"), "EndToEndId", sepa_text(kopf.end_to_end_id, MAX_ID))
+        betrag = _kind(posten, "InstdAmt", _betrag(sum(p.betrag_cent for p in gruppe)))
         betrag.set("Ccy", "EUR")
         mandat = _kind(_kind(posten, "DrctDbtTx"), "MndtRltdInf")
-        _kind(mandat, "MndtId", sepa_text(p.mandatsref, MAX_ID))
-        _kind(mandat, "DtOfSgntr", p.mandatsdatum)
-        _finanzinstitut(posten, "DbtrAgt", p.bic)
-        _kind(_kind(posten, "Dbtr"), "Nm", sepa_text(p.kontoinhaber))
-        _kind(_kind(_kind(posten, "DbtrAcct"), "Id"), "IBAN", sepa_text(p.iban, MAX_ID))
-        if p.verwendungszweck:
-            _kind(_kind(posten, "RmtInf"), "Ustrd",
-                  sepa_text(p.verwendungszweck, MAX_VERWENDUNGSZWECK))
+        _kind(mandat, "MndtId", sepa_text(kopf.mandatsref, MAX_ID))
+        _kind(mandat, "DtOfSgntr", kopf.mandatsdatum)
+        _finanzinstitut(posten, "DbtrAgt", kopf.bic)
+        _kind(_kind(posten, "Dbtr"), "Nm", sepa_text(kopf.kontoinhaber))
+        _kind(_kind(_kind(posten, "DbtrAcct"), "Id"), "IBAN", sepa_text(kopf.iban, MAX_ID))
+        zweck = _verwendungszweck(gruppe)
+        if zweck:
+            _kind(_kind(posten, "RmtInf"), "Ustrd", sepa_text(zweck, MAX_VERWENDUNGSZWECK))
 
     ET.indent(document, space="  ")
     return ET.tostring(document, encoding="utf-8", xml_declaration=True)

@@ -12,6 +12,11 @@ Ablauf:
 3. re_download(id) → einen früheren Lauf erneut rendern (aus dem Snapshot, byte-stabil)
 4. zuruecknehmen(id) → Lauf soft-löschen; die Posten sind wieder einziehbar
 
+Mehrere fällige Posten desselben Mandats werden zu EINER Lastschrift gebündelt (gemeinsame
+EndToEndId, siehe ``_positionen``): die Bank berechnet Entgelte je eingereichter
+Lastschrift. In der DB bleibt trotzdem jeder Posten eine eigene Position – sonst ließe sich
+weder „schon eingezogen?" je Posten beantworten noch ein Rückläufer auflösen.
+
 Einziehbar ist ein offener Posten, wenn das Mitglied den Einzugs-Haken hat
 (zahlungsart='lastschrift'), eine gültige IBAN und Mandatsangaben vorliegen und der
 Betrag > 0 ist. Fällig heißt: Fälligkeitsdatum ≤ Ausführungsdatum (Beiträge ohne
@@ -75,6 +80,9 @@ class SepaService:
             'einziehbar': einziehbar,
             'nicht_einziehbar': [k for k in kandidaten if k.ausschluss is not None],
             'anzahl': len(einziehbar),
+            # Posten desselben Mandats werden zu einer Lastschrift gebündelt – die Bank
+            # rechnet je Lastschrift ab, deshalb ist das die Zahl, die zählt.
+            'anzahl_lastschriften': len({self._mandats_key(k) for k in einziehbar}),
             'summe_cent': sum(k.betrag_cent for k in einziehbar),
             'konfiguration_fehler': self._konfiguration_fehler(einst),
         }
@@ -107,7 +115,7 @@ class SepaService:
             glaeubiger_iban=normalize_iban(einst.sepa_iban),
             glaeubiger_bic=(einst.sepa_bic or None),
         )
-        positionen = [self._position(k) for k in v['einziehbar']]
+        positionen = self._positionen(v['einziehbar'], v['ausfuehrungsdatum'])
         gespeichert = self.db.sepa.create_lauf(lauf, positionen, erstellt_von=erstellt_von)
         return gespeichert, sepa_formatter.render(gespeichert, erzeugt_am=erzeugt_am)
 
@@ -219,13 +227,43 @@ class SepaService:
         return "; ".join(gruende) or None
 
     @staticmethod
-    def _position(k: SepaKandidat) -> SepaPosition:
+    def _mandats_key(k: SepaKandidat) -> tuple:
+        """Was ein Mandat (und damit eine Lastschrift) ausmacht."""
+        return (k.mandatsref, k.mandatsdatum, k.iban, k.bic, k.kontoinhaber)
+
+    def _positionen(self, kandidaten: list[SepaKandidat], ausfuehrung: str) -> list[SepaPosition]:
+        """Kandidaten → Positionen; Posten desselben Mandats teilen sich eine EndToEndId.
+
+        Der Formatter macht daraus eine einzige Lastschrift. Über Mandate hinweg wird nie
+        gebündelt – das Mandat ist die Einzugsermächtigung. Tragen zwei verschiedene
+        Mandate dieselbe Referenz (fehlerhafte Stammdaten), bekommt das zweite eine
+        angehängte Nummer, damit die EndToEndId in der Datei eindeutig bleibt.
+        """
+        vergeben: dict[tuple, str] = {}
+        benutzt: set[str] = set()
+        positionen = []
+        for k in kandidaten:
+            key = self._mandats_key(k)
+            e2e = vergeben.get(key)
+            if e2e is None:
+                basis = sepa_formatter.end_to_end_id(k.mandatsref, ausfuehrung)
+                e2e, n = basis, 1
+                while e2e in benutzt:
+                    n += 1
+                    e2e = f"{basis}-{n}"[:sepa_formatter.MAX_ID]
+                vergeben[key] = e2e
+                benutzt.add(e2e)
+            positionen.append(self._position(k, e2e))
+        return positionen
+
+    @staticmethod
+    def _position(k: SepaKandidat, end_to_end_id: str) -> SepaPosition:
         return SepaPosition(
             quelle_typ=k.quelle_typ,
             quelle_id=k.quelle_id,
             mitglied_id=k.mitglied_id,
             betrag_cent=k.betrag_cent,
-            end_to_end_id=sepa_formatter.end_to_end_id(k.quelle_typ, k.quelle_id),
+            end_to_end_id=end_to_end_id,
             mandatsref=k.mandatsref,
             mandatsdatum=k.mandatsdatum,
             iban=k.iban,

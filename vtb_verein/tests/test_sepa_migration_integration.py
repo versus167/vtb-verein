@@ -143,6 +143,18 @@ def test_lauf_anlegen_schreibt_header_positionen_und_history(db):
         assert cur.fetchone()['n'] == 2
 
 
+def test_lauf_zaehlt_lastschriften_ueber_die_end_to_end_ids(db):
+    """Zwei Posten eines Mandats = zwei Positionen, aber nur EINE Lastschrift."""
+    mid = _mitglied(db)
+    lauf = db.sepa.create_lauf(
+        _lauf(),
+        [_position(mid, end_to_end_id='1001-20260803'),
+         _position(mid, quelle_id=8, end_to_end_id='1001-20260803')],
+        erstellt_von='kasse')
+    assert (lauf.anzahl_positionen, lauf.anzahl_lastschriften) == (2, 1)
+    assert db.sepa.list_laeufe()[0].anzahl_lastschriften == 1
+
+
 def test_derselbe_posten_kann_nicht_zweimal_eingezogen_werden(db):
     mid = _mitglied(db)
     db.sepa.create_lauf(_lauf(), [_position(mid)], erstellt_von='kasse')

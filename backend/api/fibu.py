@@ -261,6 +261,7 @@ def sepa_vorschau(user: CurrentUser, db: DB, ausfuehrungsdatum: Optional[str] = 
         'einziehbar': [asdict(k) for k in v['einziehbar']],
         'nicht_einziehbar': [asdict(k) for k in v['nicht_einziehbar']],
         'anzahl': v['anzahl'],
+        'anzahl_lastschriften': v['anzahl_lastschriften'],
         'summe_cent': v['summe_cent'],
         'konfiguration_fehler': v['konfiguration_fehler'],
     }

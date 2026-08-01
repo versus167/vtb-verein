@@ -164,8 +164,9 @@ def test_erzeugen_legt_lauf_mit_snapshot_an_und_rendert_xml():
     gespeicherte = db.sepa.angelegt[0][1]
     assert len(gespeicherte) == 1
     p = gespeicherte[0]
-    # Snapshot: Betrag, IBAN, Mandat und Belegnummer liegen fest in der Position
-    assert (p.betrag_cent, p.iban, p.end_to_end_id) == (4250, 'DE02120300000000202051', 'B7')
+    # Snapshot: Betrag, IBAN und EndToEndId (Mandat + Lauftermin) liegen fest in der Position
+    assert (p.betrag_cent, p.iban, p.end_to_end_id) == (4250, 'DE02120300000000202051',
+                                                        '1234-20260803')
     assert b'<InstdAmt Ccy="EUR">42.50</InstdAmt>' in xml
     assert b'Mueller' in xml and 'Müller'.encode() not in xml
 
@@ -182,7 +183,42 @@ def test_erzeugen_ohne_einziehbare_posten_ist_ein_fehler():
         SepaService(db).erzeugen(erstellt_von='kasse', heute=_HEUTE)
 
 
-def test_gebuehr_bekommt_g_belegnummer():
+def test_end_to_end_id_kommt_aus_mandat_und_termin():
     db = _db([_row(quelle_typ='gebuehr', quelle_id=99, periode=None)])
     SepaService(db).erzeugen(erstellt_von='kasse', heute=_HEUTE)
-    assert db.sepa.angelegt[0][1][0].end_to_end_id == 'G99'
+    assert db.sepa.angelegt[0][1][0].end_to_end_id == '1234-20260803'
+
+
+# --- Bündelung --------------------------------------------------------------
+
+def test_posten_desselben_mitglieds_teilen_sich_eine_end_to_end_id():
+    db = _db([_row(quelle_id=7, betrag_soll=12), _row(quelle_id=8, betrag_soll=18)])
+    SepaService(db).erzeugen(erstellt_von='kasse', heute=_HEUTE)
+    positionen = db.sepa.angelegt[0][1]
+    # Zwei Positionen (je Posten eine), aber nur EINE Lastschrift in der Datei
+    assert len(positionen) == 2
+    assert {p.end_to_end_id for p in positionen} == {'1234-20260803'}
+
+
+def test_verschiedene_mandate_bekommen_verschiedene_end_to_end_ids():
+    db = _db([_row(quelle_id=7), _row(quelle_id=8, mitgliedsnummer=5678, mitglied_id=4,
+                                      iban='DE02100500000054540402')])
+    SepaService(db).erzeugen(erstellt_von='kasse', heute=_HEUTE)
+    assert [p.end_to_end_id for p in db.sepa.angelegt[0][1]] == ['1234-20260803', '5678-20260803']
+
+
+def test_gleiche_mandatsreferenz_bei_verschiedenen_konten_bleibt_eindeutig():
+    """Fehlerhafte Stammdaten: gleiche Referenz, anderes Konto → keine Sammel-Lastschrift."""
+    db = _db([_row(quelle_id=7), _row(quelle_id=8, mitglied_id=4,
+                                      iban='DE02100500000054540402')])
+    SepaService(db).erzeugen(erstellt_von='kasse', heute=_HEUTE)
+    e2e = [p.end_to_end_id for p in db.sepa.angelegt[0][1]]
+    assert e2e == ['1234-20260803', '1234-20260803-2']
+
+
+def test_vorschau_zaehlt_lastschriften_und_posten_getrennt():
+    db = _db([_row(quelle_id=7, betrag_soll=12), _row(quelle_id=8, betrag_soll=18),
+              _row(quelle_id=9, mitgliedsnummer=5678, mitglied_id=4, betrag_soll=15)])
+    v = SepaService(db).vorschau(heute=_HEUTE)
+    assert (v['anzahl'], v['anzahl_lastschriften']) == (3, 2)
+    assert v['summe_cent'] == 4500

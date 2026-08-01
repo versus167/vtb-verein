@@ -113,8 +113,10 @@ def test_grundstruktur_und_namespace():
     assert baum.find('p:CstmrDrctDbtInitn/p:GrpHdr', NS) is not None
 
 
-def test_gruppenheader_zaehlt_und_summiert():
-    lauf = _lauf([_position(betrag_cent=4250), _position(quelle_id=8, betrag_cent=1750)])
+def test_gruppenheader_zaehlt_lastschriften_und_summiert():
+    lauf = _lauf([_position(betrag_cent=4250),
+                  _position(quelle_id=8, betrag_cent=1750, end_to_end_id='5678-20260805',
+                            mandatsref='5678', iban='DE02100500000054540402')])
     kopf = _baum(lauf).find('p:CstmrDrctDbtInitn/p:GrpHdr', NS)
     assert kopf.findtext('p:NbOfTxs', namespaces=NS) == '2'
     assert kopf.findtext('p:CtrlSum', namespaces=NS) == '60.00'
@@ -180,9 +182,65 @@ def test_lauf_ohne_positionen_ist_ein_fehler():
         f.render(_lauf(positionen=[]))
 
 
-def test_end_to_end_id_entspricht_der_fbasc_belegnummer():
-    assert f.end_to_end_id('beitrag', 42) == 'B42'
-    assert f.end_to_end_id('gebuehr', 42) == 'G42'
+def test_end_to_end_id_je_mandat_und_lauf():
+    assert f.end_to_end_id('303926', '2026-08-05') == '303926-20260805'
+
+
+def test_end_to_end_id_kuerzt_lange_mandatsreferenz_und_behaelt_das_datum():
+    e2e = f.end_to_end_id('M' * 60, '2026-08-05')
+    assert len(e2e) <= f.MAX_ID
+    assert e2e.endswith('-20260805')
+
+
+# --- Bündelung (mehrere Posten eines Mandats = eine Lastschrift) -------------
+
+def _gebuendelt():
+    """Zwei Posten desselben Mandats – wie zwei Beiträge eines Mitglieds."""
+    return _lauf([_position(betrag_cent=1200, verwendungszweck='Abteilungsbeitrag 2026-Q2'),
+                  _position(quelle_id=8, betrag_cent=1800,
+                            verwendungszweck='Vereinsbeitrag 2026-Q2')])
+
+
+def test_gleiches_mandat_wird_zu_einer_lastschrift():
+    zahlung = _baum(_gebuendelt()).find('p:CstmrDrctDbtInitn/p:PmtInf', NS)
+    posten = zahlung.findall('p:DrctDbtTxInf', NS)
+    assert len(posten) == 1
+    assert posten[0].findtext('p:InstdAmt', namespaces=NS) == '30.00'
+    assert zahlung.findtext('p:NbOfTxs', namespaces=NS) == '1'
+    assert zahlung.findtext('p:CtrlSum', namespaces=NS) == '30.00'
+
+
+def test_gebuendelte_lastschrift_nennt_beide_verwendungszwecke():
+    posten = _baum(_gebuendelt()).find('p:CstmrDrctDbtInitn/p:PmtInf/p:DrctDbtTxInf', NS)
+    assert posten.findtext('p:RmtInf/p:Ustrd', namespaces=NS) == \
+        'Abteilungsbeitrag 2026-Q2, Vereinsbeitrag 2026-Q2'
+
+
+@pytest.mark.parametrize("abweichung", [
+    {'mandatsref': '9999', 'end_to_end_id': '9999-20260805'},   # anderes Mandat
+    {'iban': 'DE02100500000054540402'},                          # anderes Konto
+])
+def test_ueber_mandate_und_konten_hinweg_wird_nicht_gebuendelt(abweichung):
+    lauf = _lauf([_position(), _position(quelle_id=8, **abweichung)])
+    posten = _baum(lauf).findall('p:CstmrDrctDbtInitn/p:PmtInf/p:DrctDbtTxInf', NS)
+    assert len(posten) == 2
+
+
+def test_zu_langer_verwendungszweck_wird_angedeutet_statt_abgeschnitten():
+    positionen = [_position(quelle_id=i, verwendungszweck=f'Beitragsposten Nummer {i} ' + 'X' * 30)
+                  for i in range(1, 8)]
+    zweck = _baum(_lauf(positionen)).findtext(
+        'p:CstmrDrctDbtInitn/p:PmtInf/p:DrctDbtTxInf/p:RmtInf/p:Ustrd', namespaces=NS)
+    assert len(zweck) <= f.MAX_VERWENDUNGSZWECK
+    assert zweck.endswith(' u.w.')
+    assert 'Beitragsposten Nummer 1' in zweck
+
+
+def test_alter_lauf_mit_belegnummern_bleibt_einzeln():
+    """Läufe aus Etappe 1 tragen je Posten eine eigene EndToEndId – Re-Download stabil."""
+    lauf = _lauf([_position(end_to_end_id='B7'), _position(quelle_id=8, end_to_end_id='B8')])
+    posten = _baum(lauf).findall('p:CstmrDrctDbtInitn/p:PmtInf/p:DrctDbtTxInf', NS)
+    assert [p.findtext('p:PmtId/p:EndToEndId', namespaces=NS) for p in posten] == ['B7', 'B8']
 
 
 def test_message_id_bleibt_im_laengenlimit():

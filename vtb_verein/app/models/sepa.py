@@ -49,7 +49,8 @@ class SepaLauf:
     glaeubiger_name: str = ""
     glaeubiger_iban: str = ""
     glaeubiger_bic: Optional[str] = None
-    anzahl_positionen: int = 0
+    anzahl_positionen: int = 0         # Posten – Lastschriften sind es weniger (Bündelung)
+    anzahl_lastschriften: int = 0      # nicht gespeichert: gezählt über die EndToEndIds
     summe_cent: int = 0
     version: int = 1
     created_at: Optional[str] = None

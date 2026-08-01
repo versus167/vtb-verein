@@ -64,10 +64,15 @@ _SQL_GEBUEHR = f"""
     ORDER BY m.nachname, m.vorname, f.id
 """
 
+# anzahl_lastschriften wird nicht gespeichert, sondern gezählt: Posten desselben Mandats
+# teilen sich eine EndToEndId und gehen als EINE Lastschrift in die Datei.
 _LAUF_COLS = """id, dateiname, message_id, ausfuehrungsdatum, sequenztyp,
                 glaeubiger_id, glaeubiger_name, glaeubiger_iban, glaeubiger_bic,
                 anzahl_positionen, summe_cent, version,
-                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"""
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by,
+                (SELECT COUNT(DISTINCT p.end_to_end_id) FROM sepa_lauf_position p
+                  WHERE p.sepa_lauf_id = sepa_lauf.id AND p.deleted_at IS NULL)
+                  AS anzahl_lastschriften"""
 
 _POSITION_COLS = """id, sepa_lauf_id, quelle_typ, quelle_id, mitglied_id, betrag_cent,
                     end_to_end_id, mandatsref, mandatsdatum, iban, bic, kontoinhaber,
