@@ -7,6 +7,13 @@
 
     <q-tabs v-model="tab" dense align="left" class="text-primary q-mb-md" narrow-indicator>
       <q-tab name="export" label="Export" icon="account_balance" />
+      <q-tab name="sepa" icon="euro" :disable="!SEPA_AKTIV"
+        :label="SEPA_AKTIV ? 'SEPA-Einzug' : 'SEPA-Einzug (aktuell nicht aktiv)'">
+        <q-tooltip v-if="!SEPA_AKTIV">
+          Der Einzug per Lastschriftdatei ist stillgelegt, solange nicht entschieden ist,
+          ob der Zahlungsverkehr in der App oder in der Fibu geführt wird.
+        </q-tooltip>
+      </q-tab>
       <q-tab name="historie" label="Historie" icon="history" />
       <q-tab name="einstellungen" label="Einstellungen" icon="settings" />
     </q-tabs>
@@ -95,6 +102,137 @@
       </div>
     </div>
 
+    <!-- ════════════ SEPA-Einzug ════════════ -->
+    <div v-show="tab === 'sepa' && SEPA_AKTIV">
+      <q-banner class="bg-grey-2 q-mb-md" rounded>
+        <template #avatar><q-icon name="info" color="primary" /></template>
+        Der Verein zieht selbst ein: aus den fälligen offenen Posten entsteht eine
+        Lastschriftdatei (pain.008), die im Online-Banking eingereicht wird. Eingezogen
+        wird ausschließlich bei Mitgliedern mit Einzugs-Haken im Profil.
+      </q-banner>
+
+      <q-banner v-if="sepaVorschau && sepaVorschau.konfiguration_fehler.length"
+        class="vtb-warnung q-mb-md" rounded>
+        <template #avatar><q-icon name="warning" /></template>
+        <div class="text-weight-medium">Gläubiger-Angaben fehlen – ohne sie ist keine Datei möglich:</div>
+        <ul class="q-my-xs">
+          <li v-for="(f, i) in sepaVorschau.konfiguration_fehler" :key="i">{{ f }}</li>
+        </ul>
+        <template #action>
+          <q-btn flat dense label="Zu den Einstellungen" @click="tab = 'einstellungen'" />
+        </template>
+      </q-banner>
+
+      <div class="row items-center q-mb-sm q-gutter-sm">
+        <q-input v-model="sepaTermin" label="Ausführungsdatum" outlined dense type="date"
+          style="max-width:200px" :hint="terminHinweis" @update:model-value="loadSepaVorschau" />
+        <q-btn color="primary" outline icon="refresh" label="Vorschau"
+          :loading="ladeSepa" @click="loadSepaVorschau" />
+        <q-space />
+        <q-btn color="primary" unelevated icon="download" label="Lastschriftdatei erzeugen"
+          :disable="!kannEinziehen" :loading="erzeugeSepa" @click="doSepaLauf" />
+      </div>
+
+      <div v-if="sepaVorschau" class="text-caption text-grey-7 q-mb-sm">
+        {{ sepaVorschau.anzahl_lastschriften }} Lastschrift(en) aus
+        {{ sepaVorschau.anzahl }} Posten · Summe
+        {{ fmt(sepaVorschau.summe_cent / 100) }} € · Einzug am
+        {{ formatDate(sepaVorschau.ausfuehrungsdatum) }}
+      </div>
+
+      <div v-if="sepaVorschau && sepaVorschau.einziehbar.length" class="q-mb-md">
+        <div class="text-subtitle2 q-mb-xs">Einzuziehen</div>
+        <q-markup-table flat bordered dense>
+          <thead>
+            <tr>
+              <th class="text-left">Mitglied</th><th class="text-left">Posten</th>
+              <th class="text-left">Fällig</th><th class="text-left">IBAN</th>
+              <th class="text-left">Mandat</th><th class="text-right">Betrag</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="k in sepaVorschau.einziehbar" :key="k.quelle_typ + k.quelle_id">
+              <td>
+                {{ k.mitglied_name }}
+                <q-badge v-if="buendel(k)" color="teal" text-color="white" class="q-ml-xs">
+                  zusammen {{ fmt(buendel(k).summe_cent / 100) }} €
+                  <q-tooltip>
+                    Wird mit {{ buendel(k).anzahl - 1 }} weiteren Posten dieses Mandats zu
+                    EINER Lastschrift zusammengefasst – die Bank rechnet je Lastschrift ab.
+                  </q-tooltip>
+                </q-badge>
+              </td>
+              <td>{{ k.bezeichnung }}</td>
+              <td>{{ formatDate(k.faelligkeitsdatum) }}</td>
+              <td>{{ k.iban }}</td>
+              <td>{{ k.mandatsref }} · {{ formatDate(k.mandatsdatum) }}</td>
+              <td class="text-right">{{ fmt(k.betrag_cent / 100) }} €</td>
+            </tr>
+          </tbody>
+        </q-markup-table>
+      </div>
+
+      <div v-if="sepaVorschau && sepaVorschau.nicht_einziehbar.length" class="q-mb-md">
+        <div class="text-subtitle2 q-mb-xs">
+          Nicht einziehbar ({{ sepaVorschau.nicht_einziehbar.length }})
+        </div>
+        <div class="text-caption text-grey-7 q-mb-xs">
+          Diese fälligen Posten bleiben offen – sie müssen überwiesen oder im Profil
+          vervollständigt werden.
+        </div>
+        <q-markup-table flat bordered dense>
+          <thead>
+            <tr>
+              <th class="text-left">Mitglied</th><th class="text-left">Posten</th>
+              <th class="text-right">Betrag</th><th class="text-left">Grund</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="k in sepaVorschau.nicht_einziehbar" :key="k.quelle_typ + k.quelle_id">
+              <td>{{ k.mitglied_name }}</td><td>{{ k.bezeichnung }}</td>
+              <td class="text-right">{{ fmt(k.betrag_cent / 100) }} €</td>
+              <td class="text-grey-8">{{ k.ausschluss }}</td>
+            </tr>
+          </tbody>
+        </q-markup-table>
+      </div>
+
+      <div v-if="sepaVorschau && sepaVorschau.anzahl === 0 && !sepaVorschau.nicht_einziehbar.length"
+        class="text-grey text-center q-py-lg">
+        Keine fälligen Posten zum Einziehen.
+      </div>
+
+      <q-separator class="q-my-md" />
+      <div class="text-subtitle2 q-mb-xs">Einzugsläufe</div>
+      <q-list bordered separator>
+        <q-item v-for="x in sepaLaeufe" :key="x.id">
+          <q-item-section>
+            <q-item-label>
+              Lauf #{{ x.id }} · Einzug am {{ formatDate(x.ausfuehrungsdatum) }}
+            </q-item-label>
+            <q-item-label caption>
+              {{ x.anzahl_lastschriften }} Lastschrift(en) aus {{ x.anzahl_positionen }} Posten ·
+              {{ fmt(x.summe_cent / 100) }} € ·
+              erzeugt {{ formatDateTime(x.created_at) }} von {{ x.created_by }}
+            </q-item-label>
+          </q-item-section>
+          <q-item-section side>
+            <div class="row items-center q-gutter-xs">
+              <q-btn flat dense round icon="download" color="primary" @click="sepaReDownload(x)">
+                <q-tooltip>Datei erneut herunterladen</q-tooltip>
+              </q-btn>
+              <q-btn flat dense round icon="undo" color="orange-9" @click="sepaZuruecknehmen(x)">
+                <q-tooltip>Lauf zurücknehmen (nur falls NICHT bei der Bank eingereicht)</q-tooltip>
+              </q-btn>
+            </div>
+          </q-item-section>
+        </q-item>
+      </q-list>
+      <div v-if="sepaLaeufe.length === 0" class="text-grey text-center q-py-lg">
+        Noch keine Einzugsläufe.
+      </div>
+    </div>
+
     <!-- ════════════ Historie ════════════ -->
     <div v-show="tab === 'historie'">
       <q-list bordered separator>
@@ -154,6 +292,21 @@
           <div class="text-subtitle2">Kassenexport (FBASC)</div>
           <q-input v-model="einst.kassendifferenz_gegenkonto" label="Gegenkonto Kassendifferenz" outlined dense
             clearable hint="Gegenkonto (Feld 01) der System-Kategorie Kassendifferenz beim Kassenexport" />
+          <q-separator class="q-my-sm" />
+          <div class="text-subtitle2">SEPA-Lastschrift (eigener Einzug)</div>
+          <q-input v-model="einst.sepa_glaeubiger_id" label="Gläubiger-ID (Creditor Identifier)" outlined dense
+            clearable hint="von der Bundesbank vergeben, z. B. DE98ZZZ09999999999" />
+          <q-input v-model="einst.sepa_glaeubiger_name" label="Gläubiger-Name" outlined dense
+            clearable hint="Zahlungsempfänger, wie er auf dem Kontoauszug des Mitglieds erscheint" />
+          <div class="row q-gutter-sm">
+            <q-input v-model="einst.sepa_iban" label="IBAN Vereinskonto" outlined dense
+              class="col" clearable hint="Konto, auf das eingezogen wird" />
+            <q-input v-model="einst.sepa_bic" label="BIC (optional)" outlined dense
+              class="col" clearable hint="leer = IBAN-only" />
+          </div>
+          <q-input v-model.number="einst.sepa_vorlauftage" label="Vorlauffrist (Bankarbeitstage)" outlined dense
+            type="number" min="1"
+            hint="Abstand bis zum Ausführungsdatum; die Bank braucht mindestens einen Tag" />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn unelevated color="primary" label="Speichern" :loading="speichere" @click="saveEinstellungen" />
@@ -168,9 +321,15 @@ import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { formatDateTime } from 'src/utils/datetime'
+import { formatDate, formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
+
+// SEPA-Einzug vorerst stillgelegt (Stand 2026-08-01): ob der Zahlungsverkehr in der App
+// oder über die Fibu läuft, ist noch nicht entschieden. Der Reiter bleibt sichtbar, aber
+// gesperrt; Endpunkte, Service und Schema (v79) bleiben unverändert bestehen. Zum
+// Reaktivieren genügt hier true.
+const SEPA_AKTIV = false
 
 const tab = ref('export')
 const vorschau = ref(null)
@@ -182,11 +341,49 @@ const einst = ref({
   verein_kostenstelle: 12, default_kostentraeger: 1,
   ul_aufwand_konto: '', ul_kreditor_konto_basis: null,
   kassendifferenz_gegenkonto: '',
+  sepa_glaeubiger_id: '', sepa_glaeubiger_name: '', sepa_iban: '', sepa_bic: '',
+  sepa_vorlauftage: 2,
 })
 const speichere = ref(false)
 
+// --- SEPA-Einzug ---
+const sepaVorschau = ref(null)
+const sepaLaeufe = ref([])
+const sepaTermin = ref('')          // leer = frühestmöglicher Termin (Server entscheidet)
+const ladeSepa = ref(false)
+const erzeugeSepa = ref(false)
+
 const kannExportieren = computed(() =>
   !!vorschau.value && vorschau.value.anzahl > 0 && vorschau.value.fehler.length === 0)
+
+const kannEinziehen = computed(() =>
+  !!sepaVorschau.value && sepaVorschau.value.anzahl > 0
+  && sepaVorschau.value.konfiguration_fehler.length === 0)
+
+// Posten desselben Mandats gehen als EINE Lastschrift in die Datei (Entgelte fallen je
+// Lastschrift an). Hier je Mandat zählen, damit die Tabelle zeigt, was zusammenfällt.
+const sepaBuendel = computed(() => {
+  const je = new Map()
+  for (const k of sepaVorschau.value?.einziehbar ?? []) {
+    const schluessel = `${k.mandatsref}|${k.iban}`
+    const b = je.get(schluessel) ?? { anzahl: 0, summe_cent: 0 }
+    b.anzahl += 1
+    b.summe_cent += k.betrag_cent
+    je.set(schluessel, b)
+  }
+  return je
+})
+
+// Nur für gebündelte Posten ein Ergebnis – Einzelposten brauchen keinen Hinweis.
+function buendel(k) {
+  const b = sepaBuendel.value.get(`${k.mandatsref}|${k.iban}`)
+  return b && b.anzahl > 1 ? b : null
+}
+
+const terminHinweis = computed(() => {
+  const frueh = sepaVorschau.value?.fruehestes_ausfuehrungsdatum
+  return frueh ? `frühestens ${formatDate(frueh)} (Vorlauffrist)` : 'leer = frühestmöglich'
+})
 
 function fmt(n) { return (Number(n) || 0).toFixed(2) }
 
@@ -200,6 +397,12 @@ function downloadBlob(data, filename) {
   const a = document.createElement('a')
   a.href = url; a.download = filename; a.click()
   URL.revokeObjectURL(url)
+}
+
+// Dateiname aus dem Content-Disposition des Servers (SEPA-Läufe heißen nach Einzugstermin).
+function dateinameAusResponse(res, fallback) {
+  const treffer = /filename="?([^"]+)"?/.exec(res.headers?.['content-disposition'] || '')
+  return treffer ? treffer[1] : fallback
 }
 
 async function loadVorschau() {
@@ -285,9 +488,85 @@ function stornieren(x) {
   })
 }
 
+async function loadSepaVorschau() {
+  ladeSepa.value = true
+  try {
+    const params = sepaTermin.value ? { ausfuehrungsdatum: sepaTermin.value } : {}
+    const { data } = await api.get('/api/fibu/sepa/vorschau', { params })
+    sepaVorschau.value = data
+    // Leeres Feld mit dem Servertermin vorbelegen, damit sichtbar ist, wann eingezogen wird.
+    if (!sepaTermin.value) sepaTermin.value = data.ausfuehrungsdatum
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Laden der SEPA-Vorschau' })
+  } finally { ladeSepa.value = false }
+}
+
+async function loadSepaLaeufe() {
+  const { data } = await api.get('/api/fibu/sepa/laeufe')
+  sepaLaeufe.value = data
+}
+
+async function doSepaLauf() {
+  const anzahl = sepaVorschau.value.anzahl_lastschriften
+  const posten = sepaVorschau.value.anzahl
+  const summe = fmt(sepaVorschau.value.summe_cent / 100)
+  $q.dialog({
+    title: 'Lastschriftdatei erzeugen?',
+    message: `${anzahl} Lastschrift(en) aus ${posten} Posten über ${summe} € mit Einzug am `
+      + `${formatDate(sepaVorschau.value.ausfuehrungsdatum)}. Die Posten gelten danach als `
+      + 'eingezogen und erscheinen nicht mehr in der Vorschau – bis der Lauf zurückgenommen wird.',
+    cancel: true, ok: { label: 'Erzeugen', color: 'primary' },
+  }).onOk(async () => {
+    erzeugeSepa.value = true
+    try {
+      const res = await api.post('/api/fibu/sepa/laeufe',
+        { ausfuehrungsdatum: sepaTermin.value || null }, { responseType: 'blob' })
+      downloadBlob(res.data, dateinameAusResponse(res, 'sepa.xml'))
+      $q.notify({ type: 'positive', message: 'Lastschriftdatei erstellt' })
+      await Promise.all([loadSepaVorschau(), loadSepaLaeufe()])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: await blobFehler(e, 'Erzeugen fehlgeschlagen') })
+    } finally { erzeugeSepa.value = false }
+  })
+}
+
+async function sepaReDownload(x) {
+  try {
+    const res = await api.get(`/api/fibu/sepa/laeufe/${x.id}/download`, { responseType: 'blob' })
+    downloadBlob(res.data, x.dateiname || 'sepa.xml')
+  } catch (e) {
+    $q.notify({ type: 'negative', message: await blobFehler(e, 'Download fehlgeschlagen') })
+  }
+}
+
+function sepaZuruecknehmen(x) {
+  $q.dialog({
+    title: `Einzugslauf #${x.id} zurücknehmen?`,
+    message: 'Nur wählen, wenn die Datei NOCH NICHT bei der Bank eingereicht wurde. '
+      + 'Die Posten werden wieder einziehbar. Ist die Lastschrift schon unterwegs, '
+      + 'läuft die Korrektur über die Bank (Rückgabe), nicht über die App.',
+    cancel: true, ok: { label: 'Zurücknehmen', color: 'orange-9' },
+  }).onOk(async () => {
+    try {
+      const { data } = await api.post(`/api/fibu/sepa/laeufe/${x.id}/zuruecknehmen`)
+      $q.notify({ type: 'positive',
+        message: `Lauf #${x.id} zurückgenommen · ${data.posten_wieder_offen} Posten wieder offen` })
+      await Promise.all([loadSepaVorschau(), loadSepaLaeufe()])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Rücknahme fehlgeschlagen' })
+    }
+  })
+}
+
+// Zuletzt geladener Server-Stand des Formulars (JSON). Weicht das Formular davon ab,
+// hat der Benutzer etwas eingetippt und noch nicht gespeichert.
+let einstStand = ''
+function einstSnapshot(werte) { return JSON.stringify(werte) }
+function einstGeaendert() { return !!einstStand && einstSnapshot(einst.value) !== einstStand }
+
 async function loadEinstellungen() {
   const { data } = await api.get('/api/fibu/einstellungen')
-  einst.value = {
+  const frisch = {
     debitor_konto_basis: data.debitor_konto_basis,
     default_gegenkonto: data.default_gegenkonto ?? '',
     default_steuerschluessel: data.default_steuerschluessel ?? '',
@@ -296,7 +575,17 @@ async function loadEinstellungen() {
     ul_aufwand_konto: data.ul_aufwand_konto ?? '',
     ul_kreditor_konto_basis: data.ul_kreditor_konto_basis,
     kassendifferenz_gegenkonto: data.kassendifferenz_gegenkonto ?? '',
+    sepa_glaeubiger_id: data.sepa_glaeubiger_id ?? '',
+    sepa_glaeubiger_name: data.sepa_glaeubiger_name ?? '',
+    sepa_iban: data.sepa_iban ?? '',
+    sepa_bic: data.sepa_bic ?? '',
+    sepa_vorlauftage: data.sepa_vorlauftage ?? 2,
   }
+  // Der Auto-Refresh (Fensterwechsel) läuft auch mitten in der Eingabe – dann das
+  // Formular stehen lassen, sonst verschwinden angefangene Angaben (z. B. die IBAN).
+  if (einstGeaendert()) return
+  einst.value = frisch
+  einstStand = einstSnapshot(frisch)
 }
 
 async function saveEinstellungen() {
@@ -311,16 +600,31 @@ async function saveEinstellungen() {
       ul_aufwand_konto: einst.value.ul_aufwand_konto || null,
       ul_kreditor_konto_basis: einst.value.ul_kreditor_konto_basis ?? null,
       kassendifferenz_gegenkonto: einst.value.kassendifferenz_gegenkonto || null,
+      sepa_glaeubiger_id: einst.value.sepa_glaeubiger_id || null,
+      sepa_glaeubiger_name: einst.value.sepa_glaeubiger_name || null,
+      sepa_iban: einst.value.sepa_iban || null,
+      sepa_bic: einst.value.sepa_bic || null,
+      sepa_vorlauftage: einst.value.sepa_vorlauftage ?? 2,
     })
+    // Gespeichert = der Formularstand IST jetzt der Server-Stand; ohne das gälte das
+    // Formular dauerhaft als geändert und würde nie wieder nachgeladen.
+    einstStand = einstSnapshot(einst.value)
     $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
-    await loadVorschau()
+    await Promise.all([loadVorschau(), loadSepaVorschau()])
   } catch { $q.notify({ type: 'negative', message: 'Fehler beim Speichern' }) }
   finally { speichere.value = false }
 }
 
-usePageRefresh(() => Promise.all([loadVorschau(), loadExporte(), loadEinstellungen()]))
+function loadAll() {
+  // Die SEPA-Vorschau prüft alle offenen Posten – solange der Reiter gesperrt ist, wird
+  // sie bei jedem Refresh umsonst berechnet.
+  return Promise.all([loadVorschau(), loadExporte(), loadEinstellungen(),
+                      ...(SEPA_AKTIV ? [loadSepaVorschau(), loadSepaLaeufe()] : [])])
+}
+
+usePageRefresh(loadAll)
 onMounted(async () => {
-  try { await Promise.all([loadVorschau(), loadExporte(), loadEinstellungen()]) }
+  try { await loadAll() }
   catch { $q.notify({ type: 'negative', message: 'Fehler beim Laden' }) }
 })
 </script>

@@ -40,6 +40,12 @@ class FibuEinstellungen:
     ul_aufwand_konto: Optional[str] = None          # ÜL-Honorar: Soll-Sachkonto (= Gegenkonto der Kreditor-Buchung)
     ul_kreditor_konto_basis: Optional[int] = None   # ÜL-Honorar: Kreditor-Konto = Basis + Mitgliedsnummer
     kassendifferenz_gegenkonto: Optional[str] = None  # Gegenkonto (FBASC Feld 01) für die System-Kategorie „Kassendifferenz"
+    # SEPA-Lastschrift (eigener Einzug, Ticket #114) – Gläubiger-Angaben der pain.008.
+    sepa_glaeubiger_id: Optional[str] = None      # Creditor Identifier (CI) des Vereins
+    sepa_glaeubiger_name: Optional[str] = None    # Name des Zahlungsempfängers
+    sepa_iban: Optional[str] = None               # Vereinskonto, auf das eingezogen wird
+    sepa_bic: Optional[str] = None                # optional (IBAN-only ist zulässig)
+    sepa_vorlauftage: int = 2                     # Bankarbeitstage bis zum Ausführungsdatum
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
