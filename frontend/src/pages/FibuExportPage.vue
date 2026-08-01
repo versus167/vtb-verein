@@ -514,9 +514,15 @@ function sepaZuruecknehmen(x) {
   })
 }
 
+// Zuletzt geladener Server-Stand des Formulars (JSON). Weicht das Formular davon ab,
+// hat der Benutzer etwas eingetippt und noch nicht gespeichert.
+let einstStand = ''
+function einstSnapshot(werte) { return JSON.stringify(werte) }
+function einstGeaendert() { return !!einstStand && einstSnapshot(einst.value) !== einstStand }
+
 async function loadEinstellungen() {
   const { data } = await api.get('/api/fibu/einstellungen')
-  einst.value = {
+  const frisch = {
     debitor_konto_basis: data.debitor_konto_basis,
     default_gegenkonto: data.default_gegenkonto ?? '',
     default_steuerschluessel: data.default_steuerschluessel ?? '',
@@ -531,6 +537,11 @@ async function loadEinstellungen() {
     sepa_bic: data.sepa_bic ?? '',
     sepa_vorlauftage: data.sepa_vorlauftage ?? 2,
   }
+  // Der Auto-Refresh (Fensterwechsel) läuft auch mitten in der Eingabe – dann das
+  // Formular stehen lassen, sonst verschwinden angefangene Angaben (z. B. die IBAN).
+  if (einstGeaendert()) return
+  einst.value = frisch
+  einstStand = einstSnapshot(frisch)
 }
 
 async function saveEinstellungen() {
@@ -551,6 +562,9 @@ async function saveEinstellungen() {
       sepa_bic: einst.value.sepa_bic || null,
       sepa_vorlauftage: einst.value.sepa_vorlauftage ?? 2,
     })
+    // Gespeichert = der Formularstand IST jetzt der Server-Stand; ohne das gälte das
+    // Formular dauerhaft als geändert und würde nie wieder nachgeladen.
+    einstStand = einstSnapshot(einst.value)
     $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
     await Promise.all([loadVorschau(), loadSepaVorschau()])
   } catch { $q.notify({ type: 'negative', message: 'Fehler beim Speichern' }) }
