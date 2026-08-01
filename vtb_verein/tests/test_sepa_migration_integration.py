@@ -30,6 +30,10 @@ _SEPA_TABELLEN = ('sepa_lauf', 'sepa_lauf_history',
 _SEPA_EINSTELLUNGEN = ('sepa_glaeubiger_id', 'sepa_glaeubiger_name', 'sepa_iban',
                        'sepa_bic', 'sepa_vorlauftage')
 
+# created_by-Stempel aller hier angelegten Zeilen – daran erkennt die clean-Fixture,
+# was ihr gehört (die Wegwerf-DB teilen sich alle Integrationstests).
+_MARKE = 'sepatest'
+
 
 @pytest.fixture(scope="module")
 def db():
@@ -41,13 +45,21 @@ def db():
 
 @pytest.fixture(autouse=True)
 def clean(db):
+    """Nur die eigenen Zeilen wegräumen – Muster der übrigen Integrationstests.
+
+    Ein pauschales ``DELETE FROM mitglied`` scheitert, sobald ein anderes Testmodul in
+    derselben Wegwerf-DB Zeilen hinterlassen hat, die auf Mitglieder zeigen (z. B. ein
+    ``schluessel_chip``), und würde umgekehrt deren Fixtures zerstören. Die sepa_*-
+    Tabellen benutzt nur dieses Modul, die dürfen komplett geleert werden.
+    """
     with db.conn.cursor() as cur:
         cur.execute("DELETE FROM sepa_lauf_position_history")
         cur.execute("DELETE FROM sepa_lauf_position")
         cur.execute("DELETE FROM sepa_lauf_history")
         cur.execute("DELETE FROM sepa_lauf")
-        cur.execute("DELETE FROM mitglied_history")
-        cur.execute("DELETE FROM mitglied")
+        for tabelle in ('beitrag_sollstellung', 'beitragsregel', 'mitglied'):
+            cur.execute(f"DELETE FROM {tabelle}_history WHERE created_by = %s", (_MARKE,))
+            cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (_MARKE,))
     db.conn.commit()
     yield
 
@@ -64,7 +76,7 @@ def _mitglied(db, nummer=1001) -> int:
         # zahlungsart ist NOT NULL ohne Default – ohne Wert scheitert schon das INSERT.
         cur.execute("INSERT INTO mitglied (mitgliedsnummer, vorname, nachname, "
                     "zahlungsart, created_by) "
-                    "VALUES (%s, 'Jürgen', 'Müller', '', 'test') RETURNING id", (nummer,))
+                    "VALUES (%s, 'Jürgen', 'Müller', '', %s) RETURNING id", (nummer, _MARKE))
         return cur.fetchone()['id']
 
 
@@ -208,18 +220,23 @@ def test_kandidaten_ignorieren_bereits_eingezogene_posten(db):
                     "WHERE id = %s", (mid,))
         cur.execute("INSERT INTO beitragsregel (name, betrag_pro_monat, einzug_turnus, "
                     "gueltig_ab, created_by) "
-                    "VALUES ('Beitrag Erwachsene', 14.17, 'quartal', '2026-01-01', 'test') "
-                    "RETURNING id")
+                    "VALUES ('Beitrag Erwachsene', 14.17, 'quartal', '2026-01-01', %s) "
+                    "RETURNING id", (_MARKE,))
         regel_id = cur.fetchone()['id']
         cur.execute("INSERT INTO beitrag_sollstellung "
                     "(mitglied_id, beitragsregel_id, zeitraum, betrag_soll, "
                     " faelligkeitsdatum, created_by) "
-                    "VALUES (%s, %s, '2026-Q3', 42.5, '2026-07-01', 'test') RETURNING id",
-                    (mid, regel_id))
+                    "VALUES (%s, %s, '2026-Q3', 42.5, '2026-07-01', %s) RETURNING id",
+                    (mid, regel_id, _MARKE))
         soll_id = cur.fetchone()['id']
 
-    offen = db.sepa.list_kandidaten('2026-08-03')
-    assert [r['quelle_id'] for r in offen] == [soll_id]
+    # Nur die eigenen Kandidaten prüfen – in der geteilten Wegwerf-DB können offene
+    # Posten anderer Testmodule stehen.
+    def eigene():
+        return [r['quelle_id'] for r in db.sepa.list_kandidaten('2026-08-03')
+                if r['mitglied_id'] == mid]
+
+    assert eigene() == [soll_id]
 
     db.sepa.create_lauf(_lauf(), [_position(mid, quelle_id=soll_id)], erstellt_von='kasse')
-    assert db.sepa.list_kandidaten('2026-08-03') == []
+    assert eigene() == []
