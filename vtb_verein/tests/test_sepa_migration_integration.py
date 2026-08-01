@@ -61,8 +61,10 @@ def _spalten(db, tabelle) -> set:
 
 def _mitglied(db, nummer=1001) -> int:
     with db.conn.cursor() as cur:
-        cur.execute("INSERT INTO mitglied (mitgliedsnummer, vorname, nachname, created_by) "
-                    "VALUES (%s, 'Jürgen', 'Müller', 'test') RETURNING id", (nummer,))
+        # zahlungsart ist NOT NULL ohne Default – ohne Wert scheitert schon das INSERT.
+        cur.execute("INSERT INTO mitglied (mitgliedsnummer, vorname, nachname, "
+                    "zahlungsart, created_by) "
+                    "VALUES (%s, 'Jürgen', 'Müller', '', 'test') RETURNING id", (nummer,))
         return cur.fetchone()['id']
 
 
