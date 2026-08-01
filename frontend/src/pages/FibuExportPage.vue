@@ -7,7 +7,13 @@
 
     <q-tabs v-model="tab" dense align="left" class="text-primary q-mb-md" narrow-indicator>
       <q-tab name="export" label="Export" icon="account_balance" />
-      <q-tab name="sepa" label="SEPA-Einzug" icon="euro" />
+      <q-tab name="sepa" icon="euro" :disable="!SEPA_AKTIV"
+        :label="SEPA_AKTIV ? 'SEPA-Einzug' : 'SEPA-Einzug (aktuell nicht aktiv)'">
+        <q-tooltip v-if="!SEPA_AKTIV">
+          Der Einzug per Lastschriftdatei ist stillgelegt, solange nicht entschieden ist,
+          ob der Zahlungsverkehr in der App oder in der Fibu geführt wird.
+        </q-tooltip>
+      </q-tab>
       <q-tab name="historie" label="Historie" icon="history" />
       <q-tab name="einstellungen" label="Einstellungen" icon="settings" />
     </q-tabs>
@@ -97,7 +103,7 @@
     </div>
 
     <!-- ════════════ SEPA-Einzug ════════════ -->
-    <div v-show="tab === 'sepa'">
+    <div v-show="tab === 'sepa' && SEPA_AKTIV">
       <q-banner class="bg-grey-2 q-mb-md" rounded>
         <template #avatar><q-icon name="info" color="primary" /></template>
         Der Verein zieht selbst ein: aus den fälligen offenen Posten entsteht eine
@@ -318,6 +324,12 @@ import { api } from 'src/boot/axios'
 import { formatDate, formatDateTime } from 'src/utils/datetime'
 
 const $q = useQuasar()
+
+// SEPA-Einzug vorerst stillgelegt (Stand 2026-08-01): ob der Zahlungsverkehr in der App
+// oder über die Fibu läuft, ist noch nicht entschieden. Der Reiter bleibt sichtbar, aber
+// gesperrt; Endpunkte, Service und Schema (v79) bleiben unverändert bestehen. Zum
+// Reaktivieren genügt hier true.
+const SEPA_AKTIV = false
 
 const tab = ref('export')
 const vorschau = ref(null)
@@ -604,8 +616,10 @@ async function saveEinstellungen() {
 }
 
 function loadAll() {
+  // Die SEPA-Vorschau prüft alle offenen Posten – solange der Reiter gesperrt ist, wird
+  // sie bei jedem Refresh umsonst berechnet.
   return Promise.all([loadVorschau(), loadExporte(), loadEinstellungen(),
-                      loadSepaVorschau(), loadSepaLaeufe()])
+                      ...(SEPA_AKTIV ? [loadSepaVorschau(), loadSepaLaeufe()] : [])])
 }
 
 usePageRefresh(loadAll)
