@@ -845,6 +845,27 @@ body:not(.body--dark) {
   .bg-orange-3     { background-color: #4a3312 !important; }
   .bg-purple-1     { background-color: #2a1c3e !important; }
 
+  // Banner mit Tint-Hintergrund: helle Schrift. Anders als Karten/Tabellen sitzen
+  // Banner oft DIREKT auf dem gelben Seitengrund und erben dort die dunkle
+  // Standardschrift — auf dem oben dunkel umgebogenen Tint-Grund ist die unlesbar
+  // (dunkelblau auf blau). Banner mit eigener Textklasse (bg-blue-1 text-blue-10)
+  // trifft es nicht, die Klasse gewinnt per !important; Banner ohne Tint-Klasse
+  // bleiben unverändert. Primärfarbe darin wie auf Karten in Gelb statt Wappenblau.
+  .q-banner {
+    &.bg-white, &.bg-grey-1, &.bg-grey-2, &.bg-grey-3, &.bg-grey-4,
+    &.bg-green-1, &.bg-green-2, &.bg-green-3,
+    &.bg-red-1, &.bg-red-2, &.bg-red-3,
+    &.bg-blue-1, &.bg-blue-grey-1, &.bg-blue-grey-2, &.bg-teal-1,
+    &.bg-amber-1, &.bg-amber-2, &.bg-orange-1, &.bg-orange-3, &.bg-purple-1 {
+      color: #f4f7fc;
+
+      &.text-primary,
+      .text-primary {
+        color: $vtb-gelb !important;
+      }
+    }
+  }
+
   // Ausnahme vom bg-white-Remap: explizit weiße Badges (z. B. „ABGESAGT"
   // auf dem roten Termin-Kopfbalken) bleiben weiß mit eigener Textfarbe
   .q-badge.bg-white {
