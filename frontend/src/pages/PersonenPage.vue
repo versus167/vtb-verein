@@ -27,6 +27,10 @@
         <template #prepend><q-icon name="search" /></template>
       </q-input>
       <q-checkbox v-model="zeigeAusgetretene" label="Ausgetretene anzeigen" dense />
+      <q-checkbox v-model="nurOhneLastschrift" label="Nur ohne Lastschrift" dense>
+        <q-tooltip>Vereinsmitglieder, bei denen der SEPA-Einzug nicht greift –
+          kein Einzugs-Haken oder keine/ungültige IBAN. Gastspieler bleiben außen vor.</q-tooltip>
+      </q-checkbox>
       <q-btn flat dense icon="filter_alt" color="primary" @click="resetAllFilters">
         <q-tooltip>Alle Filter zurücksetzen</q-tooltip>
       </q-btn>
@@ -78,6 +82,15 @@
             <span class="text-grey-7">Lizenz bis {{ formatDate(p.mitglied.trainerlizenz_gueltig_bis) }}</span>
             <q-chip dense size="sm" :color="lizenzInfo(p.mitglied).color" text-color="white" class="q-my-none">
               {{ lizenzInfo(p.mitglied).label }}
+            </q-chip>
+          </div>
+          <div v-if="nurOhneLastschrift && lastschriftMangel(p.mitglied)" class="q-mb-xs">
+            <div v-if="debitorKonto(p.mitglied) != null" class="text-caption text-grey-7">
+              Debitor {{ debitorKonto(p.mitglied) }}
+            </div>
+            <q-chip dense size="sm" icon="warning" color="orange-2" text-color="orange-10"
+              class="q-my-none">
+              Lastschrift fehlt: {{ lastschriftMangel(p.mitglied) }}
             </q-chip>
           </div>
           <div v-if="p.abteilungen?.length" class="row q-gutter-xs q-mb-xs">
@@ -186,6 +199,25 @@
             <q-tooltip>Ausgetreten</q-tooltip>
           </q-badge>
           <span v-else-if="props.row.mitglied?.eintrittsdatum">{{ props.row.mitglied.eintrittsdatum }}</span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
+      <template #body-cell-debitor="props">
+        <q-td :props="props">
+          <span v-if="debitorKonto(props.row.mitglied) != null" class="text-weight-medium">
+            {{ debitorKonto(props.row.mitglied) }}
+          </span>
+          <span v-else class="text-grey">—</span>
+        </q-td>
+      </template>
+
+      <template #body-cell-lastschrift="props">
+        <q-td :props="props">
+          <q-chip v-if="lastschriftMangel(props.row.mitglied)" dense size="sm" icon="warning"
+            color="orange-2" text-color="orange-10" class="q-my-none">
+            {{ lastschriftMangel(props.row.mitglied) }}
+          </q-chip>
           <span v-else class="text-grey">—</span>
         </q-td>
       </template>
@@ -670,6 +702,8 @@ const funktionFilter = ref(null)
 const alleAbteilungen = ref([])
 // Ausgetretene (Austritt in der Vergangenheit) standardmäßig ausblenden – nur per Häkchen sichtbar
 const zeigeAusgetretene = ref(false)
+// Zusatzfilter: nur Mitglieder, für die kein Lastschrifteinzug möglich ist
+const nurOhneLastschrift = ref(false)
 
 // ── Papierkorb (gelöschte Personen) ────────────────────────
 const trashOpen = ref(false)
@@ -736,9 +770,68 @@ function lizenzInfo(m) {
   return { color: 'positive', label: 'gültig' }
 }
 
+// „Lastschrift aktiv" = Einzugs-Haken (zahlungsart 'lastschrift') UND gültige IBAN –
+// dieselben Bedingungen, an denen der SEPA-Einzug einen Posten ausschließt
+// (sepa_service.py::_ausschluss). Mandatsreferenz und -datum leitet der Einzug aus
+// Mitgliedsnummer bzw. Eintrittsdatum ab und fehlen deshalb praktisch nie; sie bleiben
+// hier außen vor. Rückgabe: Grund als Text – null = Lastschrift aktiv.
+function lastschriftMangel(m) {
+  if (!m) return null
+  const gruende = []
+  if (m.zahlungsart !== 'lastschrift') gruende.push('kein Einzugs-Haken')
+  const iban = normalizeIban(m.iban)
+  if (!iban) gruende.push('keine IBAN')
+  else if (!isValidIban(iban)) gruende.push('IBAN ungültig')
+  return gruende.join(' · ') || null
+}
+
+// Debitor-Konto = Fibu-Basis + Mitgliedsnummer, exakt wie im FBASC-Export
+// (fibu_export_service.py::_position). Ohne Basis oder ohne Mitgliedsnummer gibt es
+// auch dort kein Konto → null.
+const debitorBasis = ref(null)
+function debitorKonto(m) {
+  const nummer = m?.mitgliedsnummer
+  if (debitorBasis.value == null || nummer == null) return null
+  return debitorBasis.value + nummer
+}
+
+// Die Basis steht in den Fibu-Einstellungen; der Endpunkt verlangt 'fibu.export',
+// das hat längst nicht jeder mit Personen-Leserecht. Deshalb erst laden, wenn der
+// Lastschrift-Filter sie wirklich braucht – und nur bei passendem Recht.
+let debitorBasisGeladen = false
+async function ladeDebitorBasis() {
+  if (debitorBasisGeladen || !auth.hasPermission('fibu.export')) return
+  debitorBasisGeladen = true
+  try {
+    const { data } = await api.get('/api/fibu/einstellungen')
+    debitorBasis.value = data.debitor_konto_basis ?? null
+  } catch {
+    // Ohne Basis bleibt die Spalte leer; erneut versuchen, wenn der Filter wieder an geht.
+    debitorBasis.value = null
+    debitorBasisGeladen = false
+  }
+}
+watch(nurOhneLastschrift, (an) => { if (an) ladeDebitorBasis() })
+
+// Spalten: Grundgerüst je Tab, bei aktivem Lastschrift-Filter der Fibu-Blick —
+// Debitor und Ausschlussgrund vorne, Geburtstag dafür raus (hier ohne Belang).
+const columns = computed(() => {
+  let cols = spaltenFuerFilter()
+  if (nurOhneLastschrift.value) {
+    cols = cols.filter(c => c.name !== 'geburtsdatum')
+    cols.splice(1, 0,
+      { name: 'debitor', label: 'Debitor', align: 'left', sortable: true,
+        field: r => debitorKonto(r.mitglied) ?? '' },
+      { name: 'lastschrift', label: 'Lastschrift fehlt', align: 'left', sortable: true,
+        field: r => lastschriftMangel(r.mitglied) || '' },
+    )
+  }
+  return cols
+})
+
 // Spalten sind tab-abhängig: Im Tab "Nur Benutzer" interessieren Rolle und
 // letzte Aktivität statt Geburtstag/Eintritt (Ticket #14).
-const columns = computed(() => {
+function spaltenFuerFilter() {
   const istBenutzer = filter.value === 'benutzer'
   const nameCol = { name: 'name', label: 'Name', align: 'left', sortable: true,
     field: r => (r.mitglied ? `${r.mitglied.nachname}, ${r.mitglied.vorname}` : r.username || ''),
@@ -787,7 +880,7 @@ const columns = computed(() => {
     { name: 'actions',     label: '',             field: 'actions',  align: 'right', style: 'width: 200px' },
   )
   return cols
-})
+}
 
 // Lokales Heute als ISO-Datum (YYYY-MM-DD) für den Austritts-Vergleich.
 function heuteIso() {
@@ -814,7 +907,15 @@ const filteredPersonen = computed(() => {
 
   // Ausgetretene standardmäßig ausblenden (nur per Häkchen sichtbar)
   if (!zeigeAusgetretene.value) list = list.filter(p => !istAusgetreten(p))
-  
+
+  // "Nur ohne Lastschrift": echte Vereinsmitglieder, bei denen der SEPA-Einzug nicht
+  // greift. Reine Login-Accounts ohne Mitglied-Datensatz haben keine Zahlungsdaten,
+  // Gastspieler sind keine Vereinsmitglieder → beide raus.
+  if (nurOhneLastschrift.value) {
+    list = list.filter(p => p.mitglied && p.mitglied.art !== 'gastspieler'
+      && lastschriftMangel(p.mitglied))
+  }
+
   // Abteilung-Filter (nur bei "Alle" oder "Mitglieder", da reine Benutzer keine Abteilungen haben)
   if (abteilungFilter.value != null) {
     const abteilungsIds = [abteilungFilter.value]
@@ -856,10 +957,11 @@ const sortierteKarten = computed(() => {
   return list.sort((a, b) => String(b.last_edited || '').localeCompare(String(a.last_edited || '')))
 })
 
-// Filter zurücksetzen (nur Abteilungs- und Funktionsfilter, nicht Basis-Filter)
+// Filter zurücksetzen (nur die Zusatzfilter, nicht den Basis-Filter)
 function resetAllFilters() {
   abteilungFilter.value = null
   funktionFilter.value = null
+  nurOhneLastschrift.value = false
   search.value = ''
 }
 
