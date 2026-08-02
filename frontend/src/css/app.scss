@@ -397,6 +397,20 @@ body.body--dark .vtb-foto-thumb {
   border-radius: 10px;
 }
 
+// Dialog am oberen Rand des Handys (#147): Kopfzeile und Aktionsleiste bleiben
+// stehen, nur das Formular dazwischen scrollt. Die Karte selbst wird per
+// max-height auf die sichtbare Höhe (ohne Tastatur) gedeckelt.
+.vtb-dialog-mobil {
+  display: flex;
+  flex-direction: column;
+  border-radius: 0 0 16px 16px;
+}
+.vtb-dialog-mobil > .vtb-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 // ── Modale generell hervorheben ──────────────────────────────────────────────
 // Der Bereich um das Modal wird abgedunkelt und leicht weichgezeichnet (der
 // „Fokus-Effekt" moderner Oberflächen), das Modal selbst bekommt einen gelben

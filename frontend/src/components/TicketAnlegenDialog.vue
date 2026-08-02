@@ -4,11 +4,10 @@
        Tickets-Seite (ohne Screenshot). Das Ticket entsteht erst beim Speichern
        – vorher gibt es keine DB-Zeile, also auch keinen verwaisten Entwurf. -->
   <q-dialog id="ticket-anlegen-dialog" v-model="dialogOpen"
-    :position="$q.screen.lt.sm ? 'bottom' : 'standard'"
+    :position="$q.screen.lt.sm ? 'top' : 'standard'"
     @hide="onDialogHide">
-    <q-card class="vtb-feedback-dialog" :style="$q.screen.lt.sm
-      ? 'width:100%;border-radius:16px 16px 0 0'
-      : 'min-width:640px;max-width:900px'">
+    <q-card class="vtb-feedback-dialog" :class="{ 'vtb-dialog-mobil': $q.screen.lt.sm }"
+      :style="$q.screen.lt.sm ? mobilStyle : 'min-width:640px;max-width:900px'">
 
       <q-card-section class="row items-center q-pb-none">
         <div class="vtb-feedback-icon">
@@ -20,7 +19,7 @@
       </q-card-section>
       <q-separator class="q-mt-sm" />
 
-      <q-card-section class="q-gutter-sm">
+      <q-card-section class="q-gutter-sm vtb-dialog-body">
         <q-input v-model="form.titel" label="Titel *" outlined dense autofocus />
         <q-select v-model="form.bereich_id" :options="bereiche"
           option-value="id" option-label="name" emit-value map-options
@@ -121,6 +120,18 @@ const dialogOpen = computed({
   get: () => props.modelValue,
   set: (v) => emit('update:modelValue', v),
 })
+
+// Auf dem Handy hängt der Dialog oben (#147). Die Bildschirmtastatur schiebt
+// sich von unten darüber, ohne das Layout zu verkleinern (iOS ändert nur das
+// visualViewport) – ein Sheet am unteren Rand läge komplett darunter. Zusätzlich
+// deckeln wir die Kartenhöhe auf den tatsächlich sichtbaren Bereich, damit die
+// Aktionsleiste nicht hinter der Tastatur verschwindet.
+const sichtbareHoehe = ref(window.innerHeight)
+const mobilStyle = computed(() => `width:100%;max-height:${sichtbareHoehe.value}px`)
+
+function messeViewport() {
+  sichtbareHoehe.value = window.visualViewport?.height ?? window.innerHeight
+}
 
 const capturing = ref(false)
 const saving    = ref(false)
@@ -407,6 +418,15 @@ async function onSave() {
   }
 }
 
-onMounted(loadBereiche)
-onUnmounted(aufraeumen)
+onMounted(() => {
+  loadBereiche()
+  messeViewport()
+  window.visualViewport?.addEventListener('resize', messeViewport)
+  window.addEventListener('resize', messeViewport)
+})
+onUnmounted(() => {
+  aufraeumen()
+  window.visualViewport?.removeEventListener('resize', messeViewport)
+  window.removeEventListener('resize', messeViewport)
+})
 </script>
