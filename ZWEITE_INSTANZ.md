@@ -121,6 +121,92 @@ Code. Hier ist nichts zu tun außer Pflege.
 - **`VTB_COOKIE_SECURE`** muss hinter TLS auf 1 stehen, sonst wandern
   Session-Cookies unverschlüsselt.
 
+## Vereinsneutral machen — Diskussionsstand (2026-08-03)
+
+**Noch nichts entschieden**, festgehalten als Richtung. Reihenfolge und Zuschnitt
+werden später festgelegt.
+
+### Seed-Daten
+
+Die **Bereiche** („Platz 1", „Kabinen", „Aussenanlage") sind auf einen
+Fußballverein mit eigener Anlage zugeschnitten und sollten raus. Die
+**Kategorien** („Schaden", „Sicherheit", „Ausstattung", „Reinigung") sind
+vereinsneutral und bleiben. `bereich_id` ist nullable, ein Ticket ohne Bereich
+ist also möglich — dann greifen aber die Bereichsrechte nicht und der
+Auswahl-Dialog ist leer. Deshalb: **genau einen neutralen Bereich „Allgemein"**
+seeden, alles Weitere legt der Verein über die Ticket-Verwaltung an.
+
+### Env-Namen
+
+Vereinheitlichen ja, ersatzlos streichen nein. Heute ist die Benennung
+inkonsistent (`VTB_DATABASE_URL`, `VTB_PORT`, aber `SMTP_*`, `MAIL_FROM`,
+`BASE_URL`, `VAPID_*`, `TTLOCK_*` ohne Präfix). Ein neutrales `APP_` ist besser
+als gar kein Präfix: `PORT`, `HOST`, `SECRET_KEY`, `DATABASE_URL` sind so
+generisch, dass sie sich im Container mit anderer Software überschneiden.
+
+**Bruchgefahr:** Das Umbenennen trifft die laufende Instanz. Eine Release lang
+beide Namen lesen (neuer zuerst, alter als Fallback), sonst startet die
+Produktivinstanz nach dem Update ohne Datenbank-URL.
+
+### Vereinsname und Kürzel
+
+Zur Hälfte vorhanden: `VEREIN_NAME`, `VEREIN_STRASSE`, `VEREIN_PLZ_ORT`,
+`VEREIN_REGISTRIER_NR` stehen in `backend/core/config.py` — sie werden aber nur
+für PDF-Belege genutzt, nicht für Oberfläche und Mails. Das **Kürzel** fehlt.
+Transportweg ins Frontend existiert ebenfalls schon: `/api/app-info` liefert
+öffentlich Name, Version und Quell-Link. Dort kämen Kürzel (und später Farben)
+dazu; Header, Login-Seite und Mail-Layout ziehen sich die Werte von da. Wenig
+Aufwand, größter Hebel.
+
+### Farben
+
+Die Idee „eine helle und eine dunkle Farbe" trägt, mit drei Präzisierungen:
+
+1. **Nach Rolle benennen, nicht nach Helligkeit.** Eine Farbe trägt *Flächen*
+   (Karten, Header — muss weißen Text tragen können), die andere ist *Akzent*
+   (muss dunklen Text tragen können). Damit ist der Kontrast-Vertrag explizit,
+   und ein Verein mit zwei dunklen Farben (Blau/Schwarz) fällt sofort auf,
+   statt ein unlesbares Ergebnis zu erzeugen.
+2. **Abgeleitete Töne berechnen statt handmischen.** Heute stehen acht
+   handgewählte Navy-Werte in `quasar.variables.scss`; aus zwei Eingangsfarben
+   lassen sie sich per SCSS-Funktionen erzeugen. Ebenso die Textfarbe: statt
+   der Regel „nie weiß auf Gelb" entscheidet ein Helligkeits-Helfer zwischen
+   Schwarz und Weiß. Preis: Beim VTB verschiebt sich die Optik minimal — oder
+   die aktuellen Werte werden als Ausnahme gepinnt.
+3. **Build-Zeit gegen Laufzeit — der eigentliche Knackpunkt.** Name und Kürzel
+   aus der Env wirken zur Laufzeit; SCSS-Farben werden beim Bauen eingebacken,
+   und das Docker-Image enthält die fertige SPA. Zwei Vereine mit eigenen
+   Farben heißen also entweder **zwei Images** oder ein Theme auf
+   CSS-Variablen, das seine Werte aus `/api/app-info` bezieht — dann bleibt es
+   ein Image und die zweite Instanz ist reine Konfiguration.
+
+Vorschlag: Töne aus zwei Eingangsfarben berechnen und als CSS-Variablen auf
+`:root` ausspielen, `app.scss` nur noch `var(--…)` verwenden lassen. Der
+spätere Schritt „Werte kommen aus der Konfiguration" ist damit fast geschenkt.
+
+**Berührungspunkt mit Ticket #131:** Ein neutraler Hintergrund mit
+Vereinsfarben nur als Akzent ist genau die Struktur, die sich generalisieren
+lässt. Der heutige Look mit Vereinsgelb als Seitenfläche überträgt sich am
+schlechtesten auf einen anderen Verein — #131 zuerst zu machen, verbilligt die
+zweite Instanz.
+
+### Logo
+
+Der unangenehmste Teil, weil es keine Konfiguration ist, sondern Dateien:
+vierzehn in `frontend/public/icons/` (PWA 128–512, maskable, Apple 120–180,
+MS-Kachel, dazu ein monochromes `safari-pinned-tab.svg`) plus Favicons und
+`browserconfig.xml`. In die Env passt bestenfalls ein Pfad.
+
+- **Pragmatisch:** Dateinamen neutralisieren (`vtb-wappen-512.png` →
+  `logo-512.png`) und pro Instanz ein Verzeichnis über `/icons` mounten. Die
+  Mail-Grafik zieht automatisch mit, sie ist nur `BASE_URL` + Pfad. Der
+  Icon-Satz wird einmal von Hand erstellt — das maskable braucht
+  Sicherheitsrand, das Safari-SVG ist einfarbig, dabei hilft kein Automatismus.
+- **Komfortabel:** Logo-Upload in der App mit serverseitiger Ableitung aller
+  Größen. Dafür fehlt heute eine Bildbibliothek in den Abhängigkeiten.
+
+Tendenz: der pragmatische Weg.
+
 ## Offene Fragen
 
 - Läuft die zweite Instanz auf **demselben Host** oder getrennt? Auf demselben
