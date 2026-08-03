@@ -19,6 +19,16 @@
         <SettingsTile to="fibu-export" icon="account_balance" title="Fibu-Export" caption="Buchungen exportieren" />
       </div>
 
+      <div v-if="auth.hasPermission('system.config')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="spielstaetten" icon="stadium" title="Spielstätten"
+          caption="Plätze und Hallen" />
+      </div>
+
+      <div v-if="auth.hasPermission('termine.verwalten')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="spielplan-import" icon="sports_soccer" title="Spielplan-Import"
+          caption="Ansetzungen aus dem DFBnet" />
+      </div>
+
       <div v-if="auth.hasPermission('system.protokoll')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="protokoll" icon="fact_check" title="Protokoll" caption="Zugriffsprotokoll" />
       </div>

@@ -31,10 +31,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from app.db.spielstaette_repository import PLATZHALTER_UNBEKANNT
 from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
+from app.db.termin_abweichung_repository import (
+    FELD_ENTFALLEN, STATUS_OFFEN, STATUS_UEBERNOMMEN, VALID_ENTSCHEIDUNGEN,
+)
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from app.db.termin_serie_repository import VALID_SERIE_TYPEN
+from app.services import dfbnet_import_service as dfbnet
 from app.services import termin_notification_service as terminmeldung
 from ..core.deps import CurrentUser, DB
 
@@ -47,6 +52,7 @@ class TerminCreate(BaseModel):
     beginn: str                              # 'YYYY-MM-DDTHH:MM'
     ende: Optional[str] = None
     ort: Optional[str] = None
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     treffpunkt: Optional[str] = None
     treffpunkt_zeit: Optional[str] = None    # 'HH:MM'
     gegner: Optional[str] = None             # nur typ='spiel'
@@ -69,9 +75,23 @@ class ZusageSet(BaseModel):
     kommentar: Optional[str] = None
 
 
+class AbweichungEntscheidung(BaseModel):
+    """Entscheidung über eine offene Abweichung aus dem Spielplan-Import (#95)."""
+    entscheidung: str                        # 'uebernommen' | 'verworfen'
+    expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
+
+
+class DfbnetUebernahme(BaseModel):
+    """Termin auf den zuletzt importierten DFBnet-Stand ziehen (#95)."""
+    expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
+
+
 class SerieCreate(BaseModel):
     typ: str = 'training'                    # 'training' | 'sonstiges' (keine Spiel-Serien)
     beginn_zeit: str                         # 'HH:MM'
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     ende_zeit: Optional[str] = None
     ort: Optional[str] = None
     treffpunkt: Optional[str] = None
@@ -86,6 +106,7 @@ class SerieUpdate(BaseModel):
     """Volle Serien-Bearbeitung – nur start_datum/Wochentag bleibt fix."""
     typ: str = 'training'
     beginn_zeit: str
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     ende_zeit: Optional[str] = None
     ort: Optional[str] = None
     treffpunkt: Optional[str] = None
@@ -162,6 +183,24 @@ def _validate_termin(data: TerminCreate) -> None:
         wert = getattr(data, feld)
         if wert is not None:
             setattr(data, feld, wert.strip() or None)
+
+
+def _require_spielstaette(db: DB, spielstaette_id: int) -> None:
+    """Spielstätte muss existieren und auswählbar sein.
+
+    'unbekannt' („Nicht erfasst") trägt ausschließlich den Altbestand aus der
+    Migration – wer einen Termin speichert, muss sich festlegen (echte Spielstätte
+    oder ausdrücklich „Kein Vereinsgelände"). Sonst wäre der spätere
+    Belegungsplan dauerhaft löchrig.
+    """
+    s = db.spielstaetten.get(spielstaette_id)
+    if s is None:
+        raise HTTPException(422, "Spielstätte nicht gefunden")
+    if s.platzhalter == PLATZHALTER_UNBEKANNT:
+        raise HTTPException(
+            422,
+            'Bitte eine Spielstätte wählen (oder ausdrücklich „Kein Vereinsgelände“)',
+        )
 
 
 def _clean(s: Optional[str]) -> Optional[str]:
@@ -260,7 +299,38 @@ def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
         t['zusagen'] = counts.get(t['id'], {'zu': 0, 'vielleicht': 0, 'ab': 0})
         t['meine_antwort'] = meine.get(t['id'])
         t['kann_zusagen'] = kader_cache[key] or t['id'] in meine
+    _enrich_abweichungen(db, termine)
     return termine
+
+
+def _extern_diff(t: dict) -> list[dict]:
+    """Felder, in denen der Termin heute vom zuletzt importierten DFBnet-Stand
+    abweicht — unabhängig davon, ob je jemand danach gefragt wurde.
+
+    Deckt die stillen Fälle ab, für die es keine offene Frage (mehr) gibt: eine
+    verworfene Abweichung, und die Änderung, die das Team ohne Gegenstück im
+    Export gemacht hat. Der Import lässt beides bewusst stehen — sichtbar bleiben
+    sollte es trotzdem, denn das DFBnet ist die offizielle Ansetzung und hinkt
+    womöglich nur hinterher. Wer das beurteilen kann, ist der Betreuer.
+    """
+    stand = t.get('extern_stand') or {}
+    return [{'feld': f, 'dfbnet': stand.get(f)}
+            for f in dfbnet.VERGLEICHSFELDER
+            if f in stand and t.get(f) != stand.get(f)]
+
+
+def _enrich_abweichungen(db: DB, termine: list[dict]) -> None:
+    """`abweichungen_offen` und `extern_diff` je Termin – Grundlage der Hinweise
+    an der Terminkarte (#95).
+
+    Beides hängt an keiner Berechtigung: Entscheiden darf nur, wer die Termine der
+    Mannschaft verwaltet, aber weder der Zähler noch der Vergleich verraten etwas,
+    was der Kader nicht ohnehin am Termin sähe.
+    """
+    offen = db.termin_abweichungen.counts_offen([t['id'] for t in termine])
+    for t in termine:
+        t['abweichungen_offen'] = offen.get(t['id'], 0)
+        t['extern_diff'] = _extern_diff(t)
 
 
 # ------------------------------------------------------------------ Mannschaften
@@ -295,10 +365,11 @@ def create_termin(mannschaft_id: int, data: TerminCreate, user: CurrentUser, db:
         raise HTTPException(404, "Mannschaft nicht gefunden")
     _require_verwalten(db, user, mannschaft_id)
     _validate_termin(data)
+    _require_spielstaette(db, data.spielstaette_id)
     t = db.termine.create(
         mannschaft_id, data.typ, data.beginn, data.ende, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
-        data.beschreibung, user.username,
+        data.beschreibung, user.username, spielstaette_id=data.spielstaette_id,
     )
     if data.benachrichtigen:
         terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU, user.id)
@@ -325,10 +396,12 @@ def update_termin(termin_id: int, data: TerminUpdate, user: CurrentUser, db: DB)
         raise HTTPException(404, "Termin nicht gefunden")
     _require_verwalten(db, user, t.mannschaft_id)
     _validate_termin(data)
+    _require_spielstaette(db, data.spielstaette_id)
     ok = db.termine.update(
         termin_id, data.typ, data.beginn, data.ende, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
         data.beschreibung, user.username, data.expected_version,
+        spielstaette_id=data.spielstaette_id,
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
@@ -463,6 +536,113 @@ def gast_kandidaten(termin_id: int, user: CurrentUser, db: DB):
     return db.termine.list_gast_kandidaten(t.mannschaft_id, t.beginn[:10])
 
 
+# ------------------------------------------- Abweichungen aus dem Spielplan (#95)
+@router.get("/{termin_id}/abweichungen")
+def list_abweichungen(termin_id: int, user: CurrentUser, db: DB):
+    """Offene und bereits entschiedene Abweichungen eines Termins.
+
+    Verlangt Verwalten-Zugriff: Es ist die Arbeitsliste des Betreuers, nicht eine
+    Information für den Kader – der sieht nur den fertigen Termin.
+    """
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    return [asdict(a) for a in db.termin_abweichungen.list_for_termin(termin_id)]
+
+
+@router.post("/{termin_id}/dfbnet-uebernehmen")
+def uebernimm_dfbnet_stand(termin_id: int, data: DfbnetUebernahme,
+                           user: CurrentUser, db: DB):
+    """Den Termin auf den zuletzt importierten DFBnet-Stand ziehen.
+
+    Für die stillen Abweichungen, zu denen der Import bewusst nicht (mehr) fragt:
+    eine verworfene Frage oder eine Änderung des Teams ohne Gegenstück im Export.
+    Der Weg über die offene Abweichung bleibt davon unberührt — hier gibt es keine
+    Zeile zu entscheiden, nur den Ist-Vergleich aus `extern_stand`.
+
+    Der Ort wandert nur mit, wenn der Schnappschuss die zugehörige Spielstätte
+    kennt: Ein Ort-Text ohne passenden Platz ließe die Belegung falsch aussehen.
+    Ältere Schnappschüsse (vor dieser Änderung) haben sie nicht — dann bleibt der
+    Ort stehen und die Antwort sagt es.
+    """
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    if t.version != data.expected_version:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    stand = t.extern_stand or {}
+    diff = _extern_diff(asdict(t))
+    if not diff:
+        raise HTTPException(422, "Termin entspricht bereits dem DFBnet-Stand")
+
+    platz_id = stand.get('spielstaette_id')
+    werte = {d['feld']: d['dfbnet'] for d in diff
+             if d['feld'] != 'ort' or platz_id is not None}
+    ausgelassen = [d['feld'] for d in diff if d['feld'] not in werte]
+    if not werte:
+        raise HTTPException(
+            422, "Zum Ort fehlt die Spielstätte im letzten Importstand – bitte den "
+                 "Platz im Termin von Hand setzen")
+
+    vorher = t
+    if not db.termine.update_aus_import(
+            termin_id, werte=werte, extern_stand=stand,
+            spielstaette_id=platz_id if 'ort' in werte else None,
+            updated_by=user.username, expected_version=t.version):
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aenderungen = terminmeldung.diff_termin(vorher, neu)
+        if aenderungen:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+    return {"termin": asdict(neu), "uebernommen": sorted(werte),
+            "ausgelassen": ausgelassen}
+
+
+@router.post("/abweichungen/{abweichung_id}/entscheiden")
+def entscheide_abweichung(abweichung_id: int, data: AbweichungEntscheidung,
+                          user: CurrentUser, db: DB):
+    """Eine offene Abweichung übernehmen oder verwerfen.
+
+    Beide Wege schreiben den Import-Schnappschuss fort — die Frage wird dadurch
+    beim nächsten Lauf nicht erneut gestellt. „Übernehmen" bei einem entfallenen
+    Spiel sagt den Termin ab; gelöscht wird nie automatisch.
+    """
+    a = db.termin_abweichungen.get(abweichung_id)
+    if a is None:
+        raise HTTPException(404, "Abweichung nicht gefunden")
+    t = _lade_termin(db, a.termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    if data.entscheidung not in VALID_ENTSCHEIDUNGEN:
+        raise HTTPException(
+            422, f"Ungültige Entscheidung (erlaubt: {', '.join(VALID_ENTSCHEIDUNGEN)})")
+    if a.status != STATUS_OFFEN:
+        raise HTTPException(422, "Abweichung ist bereits entschieden")
+    if a.version != data.expected_version:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    def _melden(neu, vorher):
+        if a.feld == FELD_ENTFALLEN:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_ABGESAGT, user.id)
+            return
+        aenderungen = terminmeldung.diff_termin(vorher, neu)
+        if aenderungen:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+
+    ok = dfbnet.entscheiden(
+        db, a, data.entscheidung, actor=user.username,
+        notify=_melden if data.benachrichtigen else None)
+    if not ok:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+    return {
+        "abweichung": asdict(db.termin_abweichungen.get(abweichung_id)),
+        "termin": asdict(db.termine.get(a.termin_id)),
+        "uebernommen": data.entscheidung == STATUS_UEBERNOMMEN,
+    }
+
+
 # ----------------------------------------------------------------- Terminserien
 @router.get("/mannschaften/{mannschaft_id}/serien")
 def list_serien(mannschaft_id: int, user: CurrentUser, db: DB):
@@ -481,6 +661,7 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         raise HTTPException(404, "Mannschaft nicht gefunden")
     _require_verwalten(db, user, mannschaft_id)
     _validate_serie(data)
+    _require_spielstaette(db, data.spielstaette_id)
     _parse_datum(data.start_datum, "start_datum")
     if data.ende_datum and data.ende_datum < data.start_datum:
         raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
@@ -488,6 +669,7 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         mannschaft_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.beschreibung,
         data.start_datum, data.ende_datum, user.username,
+        spielstaette_id=data.spielstaette_id,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
     if data.benachrichtigen:
@@ -505,12 +687,14 @@ def update_serie(serie_id: int, data: SerieUpdate, user: CurrentUser, db: DB):
         raise HTTPException(404, "Serie nicht gefunden")
     _require_verwalten(db, user, s.mannschaft_id)
     _validate_serie(data)
+    _require_spielstaette(db, data.spielstaette_id)
     if data.ende_datum and data.ende_datum < s.start_datum:
         raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
     ok = db.termin_serien.update(
         serie_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.beschreibung, data.ende_datum,
         user.username, data.expected_version,
+        spielstaette_id=data.spielstaette_id,
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")

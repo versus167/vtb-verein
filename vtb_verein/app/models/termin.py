@@ -23,11 +23,15 @@ class Termin:
     beginn: str                       # 'YYYY-MM-DDTHH:MM' (lokale Wandzeit)
     ende: Optional[str]               # dito, optional
     ort: Optional[str]
+    spielstaette_id: int              # Pflicht ab v80; Platzhalter s. spielstaette
     treffpunkt: Optional[str]
     treffpunkt_zeit: Optional[str]    # 'HH:MM'
     gegner: Optional[str]             # nur typ='spiel'
     heim_auswaerts: Optional[str]     # 'heim' | 'auswaerts', nur typ='spiel'
     extern_ref: Optional[str]         # DFBnet-Spielkennung (Etappe 3)
+    # Zuletzt importierter Stand der Vergleichsfelder – Grundlage des
+    # Drei-Wege-Abgleichs (nur der Import schreibt ihn).
+    extern_stand: Optional[dict]
     status: str                       # 'geplant' | 'abgesagt'
     beschreibung: Optional[str]
     version: int
@@ -39,3 +43,14 @@ class Termin:
     deleted_by: Optional[str] = None
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalte:
     mannschaft_name: Optional[str] = None
+    spielstaette_name: Optional[str] = None
+    # Anschrift der Spielstätte, getrennt vom Namen: Für die Übergabe an eine
+    # Navi-App taugt nur die Adresse — Platzbezeichnungen wie „eins-Stadion –
+    # An der Gellertstraße" oder „Sportpl. Ebersdorf Höhensonne" findet kein
+    # Geocoder zuverlässig.
+    spielstaette_strasse: Optional[str] = None
+    spielstaette_plz: Optional[str] = None
+    spielstaette_ort: Optional[str] = None
+    # Belag (Rasen/Kunstrasen/…): steht am Termin, weil die Spieler danach ihre
+    # Schuhe wählen – die Spielstätte selbst schaut dafür niemand nach.
+    spielstaette_untergrund: Optional[str] = None

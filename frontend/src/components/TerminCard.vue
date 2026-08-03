@@ -9,9 +9,13 @@
         <div class="text-weight-bold" style="line-height:1.2">{{ tagMonat(datumIso) }}</div>
       </div>
       <div class="col termin-card__titel text-white">
-        <div class="text-subtitle1 text-weight-bold ellipsis">{{ terminTitel(termin) }}</div>
-        <!-- Ort/Bemerkung mit in der Kopfzeile, „wenn Platz ist" (Ellipsis) -->
-        <div v-if="untertitel" class="text-caption ellipsis" style="opacity:.85">
+        <div class="text-subtitle1 text-weight-bold termin-card__zeilen">
+          {{ terminTitel(termin) }}
+        </div>
+        <!-- Ort/Bemerkung mit in der Kopfzeile. Umbruch statt einzeilig: Adressen
+             wie „Sportplatz am Jahnhaus, Rußdorfer Straße 10, 09212 Limbach-O."
+             passen auf dem Handy in keine Zeile. -->
+        <div v-if="untertitel" class="text-caption termin-card__zeilen" style="opacity:.85">
           {{ untertitel }}
         </div>
       </div>
@@ -19,6 +23,33 @@
         class="q-mr-xs" style="opacity:.85">
         <q-tooltip>Teil einer Serie</q-tooltip>
       </q-icon>
+      <!-- Offene Frage aus dem Spielplan-Import (#95): nur für Verwalter, führt
+           direkt in die Entscheidung – sonst bliebe sie unbemerkt liegen. -->
+      <q-badge v-if="darfVerwalten && offeneAbweichungen" color="warning"
+        text-color="dark" class="q-mr-sm text-weight-bold termin-card__abweichung"
+        @click.stop="abweichungOffen = true">
+        <q-icon name="sync_problem" size="14px" class="q-mr-xs" />{{ offeneAbweichungen }}
+        <q-tooltip>DFBnet weicht ab – bitte entscheiden</q-tooltip>
+      </q-badge>
+      <!-- Kein Handlungsbedarf, aber wissenswert: Der Termin steht anders da als in
+           der offiziellen Ansetzung (verworfene Frage oder Änderung des Teams).
+           Dezent und in anderer Farbe als die offene Frage – und nur, wenn keine
+           offene Frage denselben Termin ohnehin schon markiert. -->
+      <q-badge v-else-if="darfVerwalten && externDiff.length" color="white"
+        text-color="primary" class="q-mr-sm text-weight-bold termin-card__abweichung"
+        @click.stop="abweichungOffen = true">
+        <q-icon name="sync_alt" size="14px" class="q-mr-xs" />DFBnet
+        <q-tooltip>
+          <div class="text-weight-medium">Weicht von der DFBnet-Ansetzung ab</div>
+          <div v-for="d in externDiff" :key="d.feld">
+            {{ abweichungFeldLabel(d.feld) }} laut DFBnet:
+            {{ abweichungWert(d.feld, d.dfbnet) }}
+          </div>
+          <div class="text-italic q-mt-xs">
+            Kein Handlungsbedarf – prüfen, ob das DFBnet nachzieht.
+          </div>
+        </q-tooltip>
+      </q-badge>
       <!-- „Meine Termine": als Gast eingetragen (Antwort ohne Kader-Zugehörigkeit) -->
       <q-badge v-if="termin.gast" color="vtb-gelb" text-color="primary"
         class="q-mr-sm text-weight-bold">GAST</q-badge>
@@ -69,8 +100,14 @@
       </div>
     </div>
 
-    <div v-if="!kompakt && metaText" class="termin-card__meta text-caption text-grey-7 ellipsis">
-      <q-icon name="place" size="14px" /> {{ metaText }}
+    <div v-if="!kompakt && (metaText || untergrund)"
+      class="termin-card__meta text-caption text-grey-7 ellipsis">
+      <span v-if="metaText"><q-icon name="place" size="14px" /> {{ metaText }}</span>
+      <!-- Belag: entscheidet über die Schuhwahl, gehört deshalb an den Termin
+           und nicht nur in die Stammdaten der Spielstätte. -->
+      <span v-if="untergrund" :class="metaText ? 'q-ml-md' : ''">
+        <q-icon name="grass" size="14px" /> {{ untergrund }}
+      </span>
     </div>
 
     <q-separator />
@@ -86,6 +123,18 @@
         <span class="q-ml-xs text-weight-medium">{{ zaehler(a.key) }}</span>
         <q-tooltip>{{ a.label }}</q-tooltip>
       </q-btn>
+      <!-- Route zum Spielort: als echter Link, damit das Gerät seine Navi-App
+           anbietet. Hier unten statt in einer eigenen Zeile — in der Leiste ist
+           Platz, und die Trefferfläche stimmt fürs Handy. -->
+      <template v-if="kartenZiel">
+        <q-separator vertical />
+        <q-btn class="col-auto q-px-md" flat dense icon="directions" color="grey-8"
+          type="a" :href="kartenZiel"
+          :target="kartenZiel.startsWith('http') ? '_blank' : undefined"
+          rel="noopener" @click.stop>
+          <q-tooltip>Route zum Ort</q-tooltip>
+        </q-btn>
+      </template>
       <q-separator vertical />
       <q-btn class="col-auto q-px-md" flat dense icon="groups" color="grey-8"
         @click="kaderOffen = true">
@@ -96,6 +145,11 @@
     <!-- Abgesagt friert die Antworten ein: Setz-Buttons im Dialog ausblenden -->
     <TerminKaderDialog v-model="kaderOffen" :termin-id="termin.id"
       :darf-verwalten="darfVerwalten && !abgesagt" @geaendert="emit('reload')" />
+
+    <TerminAbweichungDialog v-if="darfVerwalten" v-model="abweichungOffen"
+      :termin-id="termin.id" :darf-verwalten="darfVerwalten"
+      :extern-diff="externDiff" :termin-version="termin.version"
+      @geaendert="emit('reload')" />
   </q-card>
 </template>
 
@@ -104,7 +158,9 @@ import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import TerminKaderDialog from 'components/TerminKaderDialog.vue'
-import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat } from 'src/composables/useTermine'
+import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
+import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat, kartenLink,
+         abweichungFeldLabel, abweichungWert } from 'src/composables/useTermine'
 
 const props = defineProps({
   termin: { type: Object, required: true },
@@ -116,8 +172,13 @@ const emit = defineEmits(['bearbeiten', 'absagen', 'reaktivieren', 'loeschen', '
 const $q = useQuasar()
 const busy = ref(false)
 const kaderOffen = ref(false)
+const abweichungOffen = ref(false)
 
 const abgesagt = computed(() => props.termin.status === 'abgesagt')
+const offeneAbweichungen = computed(() => props.termin.abweichungen_offen ?? 0)
+// Stille Abweichung vom DFBnet-Stand: keine offene Frage, aber der Termin steht
+// anders da als die offizielle Ansetzung (verworfen oder vom Team geändert).
+const externDiff = computed(() => props.termin.extern_diff ?? [])
 const datumIso = computed(() => (props.termin.beginn ?? '').slice(0, 10))
 const treffen = computed(() => props.termin.treffpunkt_zeit || '--:--')
 const beginn = computed(() => uhrzeit(props.termin.beginn) || '--:--')
@@ -131,6 +192,18 @@ const untertitel = computed(() => {
 // Ort steht im Kopf – hier nur noch der Treffpunkt
 const metaText = computed(() =>
   props.termin.treffpunkt ? `Treffpunkt: ${props.termin.treffpunkt}` : '')
+const untergrund = computed(() => props.termin.spielstaette_untergrund || '')
+// Navigation zum Spielort: bevorzugt die Anschrift der Spielstätte OHNE deren
+// Namen – „Sportpl. Ebersdorf Höhensonne" findet kein Geocoder, „Max-Saupe-Str.,
+// 09131 Chemnitz" schon. Nur wenn keine Anschrift hinterlegt ist (Platzhalter
+// wie „Kein Vereinsgelände"), zählt der freie Ortstext des Termins.
+const kartenZiel = computed(() => {
+  const t = props.termin
+  const anschrift = [t.spielstaette_strasse,
+                     [t.spielstaette_plz, t.spielstaette_ort].filter(Boolean).join(' ')]
+    .filter(Boolean).join(', ')
+  return kartenLink(anschrift || t.ort, $q.platform.is)
+})
 
 function zaehler(key) {
   return props.termin.zusagen?.[key] ?? 0
@@ -173,6 +246,11 @@ async function senden(key, kommentar, zuruecknehmen = false) {
 .termin-card {
   border-radius: 12px;
   overflow: hidden;
+  // Die Liste ist ein Flex-Column-Container: Ohne min-width:0 klebt die Karte an
+  // ihrer min-content-Breite und sprengt auf dem Handy den Bildschirm — sichtbar
+  // als seitlich scrollende Terminliste.
+  min-width: 0;
+  max-width: 100%;
 }
 .termin-card--abgesagt .termin-card__titel .text-subtitle1 {
   text-decoration: line-through;
@@ -188,6 +266,22 @@ async function senden(key, kommentar, zuruecknehmen = false) {
   padding: 6px 8px;
   background: rgba(0, 0, 0, 0.12);
 }
+.termin-card__titel {
+  min-width: 0;
+}
+// Titel und Ortszeile dürfen umbrechen (zwei Zeilen, dann gekürzt). Einzeilig mit
+// Ellipsis war die Ursache des Breitenproblems: `white-space: nowrap` macht den
+// ganzen Text zur min-content-Breite, an der die Karte als Flex-Item hängen
+// bleibt. `anywhere` bricht notfalls auch innerhalb langer Straßennamen.
+.termin-card__zeilen {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .termin-card__zeiten {
   padding: 10px 8px;
 }
@@ -196,5 +290,8 @@ async function senden(key, kommentar, zuruecknehmen = false) {
 }
 .termin-card__rsvp {
   min-height: 44px;
+}
+.termin-card__abweichung {
+  cursor: pointer;
 }
 </style>

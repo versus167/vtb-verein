@@ -12,6 +12,8 @@ mitglied_mannschaft (von ist dort NOT NULL, bis optional).
 from datetime import date
 from typing import Optional
 
+from psycopg.types.json import Jsonb
+
 from app.models.termin import Termin
 from app.db.base_repository import BaseRepository
 
@@ -35,23 +37,36 @@ _KADER_CTE = """
     )
 """
 
-_COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, treffpunkt, "
-         "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
-         "version, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
+_COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, treffpunkt, "
+         "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, extern_stand, status, "
+         "beschreibung, version, created_at, created_by, updated_at, updated_by, "
+         "deleted_at, deleted_by")
 
 # Änderbare Fachfelder (create/update) – status/extern_ref/serie_id laufen bewusst
 # über eigene Wege (set_status bzw. späterer Import/Serien-Code).
-_EDIT_FIELDS = ('typ', 'beginn', 'ende', 'ort', 'treffpunkt', 'treffpunkt_zeit',
-                'gegner', 'heim_auswaerts', 'beschreibung')
+# spielstaette_id ist seit v80 Pflicht (Grundlage des Platzbelegungsplans, #95).
+_EDIT_FIELDS = ('typ', 'beginn', 'ende', 'ort', 'spielstaette_id', 'treffpunkt',
+                'treffpunkt_zeit', 'gegner', 'heim_auswaerts', 'beschreibung')
+
+# Felder, die der Spielplan-Import schreiben darf (#95). Absichtlich eine eigene,
+# kurze Liste: Treffpunkt, Beschreibung und Typ gehören dem Team, nicht der Quelle.
+IMPORT_FELDER = ('beginn', 'ort', 'gegner', 'heim_auswaerts')
 
 
 def _map(row) -> Termin:
     return Termin(
         id=row['id'], mannschaft_id=row['mannschaft_id'], serie_id=row['serie_id'],
         typ=row['typ'], beginn=row['beginn'], ende=row['ende'], ort=row['ort'],
+        spielstaette_id=row['spielstaette_id'],
+        spielstaette_name=row.get('spielstaette_name'),
+        spielstaette_strasse=row.get('spielstaette_strasse'),
+        spielstaette_plz=row.get('spielstaette_plz'),
+        spielstaette_ort=row.get('spielstaette_ort'),
+        spielstaette_untergrund=row.get('spielstaette_untergrund'),
         treffpunkt=row['treffpunkt'], treffpunkt_zeit=row['treffpunkt_zeit'],
         gegner=row['gegner'], heim_auswaerts=row['heim_auswaerts'],
-        extern_ref=row['extern_ref'], status=row['status'],
+        extern_ref=row['extern_ref'], extern_stand=row['extern_stand'],
+        status=row['status'],
         beschreibung=row['beschreibung'], version=row['version'],
         created_at=row['created_at'], created_by=row['created_by'],
         updated_at=row['updated_at'], updated_by=row['updated_by'],
@@ -64,10 +79,42 @@ class TerminRepository(BaseRepository):
 
     # ------------------------------------------------------------------ lesen
     def get(self, termin_id: int) -> Optional[Termin]:
+        """Einzelner Termin – mit denselben Anzeigefeldern wie in den Listen.
+
+        Der JOIN auf die Spielstätte kostet nichts (das Feld ist seit v80 NOT
+        NULL) und erspart die Frage, warum Name, Anschrift und Belag mal da sind
+        und mal nicht.
+        """
         with self.cursor() as cur:
             cur.execute(
-                f"SELECT {_COLS} FROM termine WHERE id = %s AND deleted_at IS NULL",
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.id = %s AND t.deleted_at IS NULL
+                """,
                 (termin_id,),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
+    def get_by_extern_ref(self, extern_ref: str,
+                          mannschaft_id: int) -> Optional[Termin]:
+        """Termin einer Mannschaft zu einer DFBnet-Spielkennung (#95).
+
+        Die Spielkennung identifiziert das Spiel, nicht unseren Kalendereintrag:
+        Bei einem vereinsinternen Spiel führen beide Mannschaften einen eigenen
+        Termin mit derselben Kennung. Eindeutig ist erst das Paar — dafür sorgt
+        der partielle Unique-Index (mannschaft_id, extern_ref).
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"SELECT {_COLS} FROM termine "
+                "WHERE extern_ref = %s AND mannschaft_id = %s AND deleted_at IS NULL",
+                (extern_ref, mannschaft_id),
             )
             row = cur.fetchone()
             return _map(row) if row else None
@@ -79,11 +126,16 @@ class TerminRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT {_COLS} FROM termine
-                WHERE mannschaft_id = %(mid)s AND deleted_at IS NULL
-                  AND (%(von)s::text IS NULL OR beginn >= %(von)s)
-                  AND (%(bis)s::text IS NULL OR LEFT(beginn, 10) <= %(bis)s)
-                ORDER BY beginn, id
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz, s.ort AS spielstaette_ort,
+                       s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
+                  AND (%(von)s::text IS NULL OR t.beginn >= %(von)s)
+                  AND (%(bis)s::text IS NULL OR LEFT(t.beginn, 10) <= %(bis)s)
+                ORDER BY t.beginn, t.id
                 """,
                 {"mid": mannschaft_id, "von": von, "bis": bis},
             )
@@ -111,11 +163,15 @@ class TerminRepository(BaseRepository):
                     WHERE gm.user_id = %(uid)s AND z.deleted_at IS NULL
                 )
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
-                       ma.name AS mannschaft_name, z.darf_verwalten,
+                       ma.name AS mannschaft_name, s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz, s.ort AS spielstaette_ort,
+                       s.untergrund AS spielstaette_untergrund,
+                       z.darf_verwalten,
                        (z.mannschaft_id IS NULL) AS ist_gast
                 FROM termine t
                 LEFT JOIN zugriff z ON z.mannschaft_id = t.mannschaft_id
                 JOIN mannschaft ma ON ma.id = t.mannschaft_id AND ma.deleted_at IS NULL
+                JOIN spielstaette s ON s.id = t.spielstaette_id
                 WHERE t.deleted_at IS NULL
                   AND (z.mannschaft_id IS NOT NULL
                        OR t.id IN (SELECT termin_id FROM gast))
@@ -330,7 +386,7 @@ class TerminRepository(BaseRepository):
                ende: Optional[str], ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], gegner: Optional[str],
                heim_auswaerts: Optional[str], beschreibung: Optional[str],
-               created_by: str) -> Termin:
+               created_by: str, *, spielstaette_id: int) -> Termin:
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -339,8 +395,9 @@ class TerminRepository(BaseRepository):
                 VALUES ({', '.join(['%s'] * (len(_EDIT_FIELDS) + 3))})
                 RETURNING id
                 """,
-                (mannschaft_id, typ, beginn, ende, ort, treffpunkt, treffpunkt_zeit,
-                 gegner, heim_auswaerts, beschreibung, created_by, created_by),
+                (mannschaft_id, typ, beginn, ende, ort, spielstaette_id, treffpunkt,
+                 treffpunkt_zeit, gegner, heim_auswaerts, beschreibung,
+                 created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -349,7 +406,7 @@ class TerminRepository(BaseRepository):
                ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], gegner: Optional[str],
                heim_auswaerts: Optional[str], beschreibung: Optional[str],
-               updated_by: str, expected_version: int) -> bool:
+               updated_by: str, expected_version: int, *, spielstaette_id: int) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -357,8 +414,9 @@ class TerminRepository(BaseRepository):
                        updated_at=CURRENT_TIMESTAMP, updated_by=%s, version=version+1
                 WHERE id=%s AND deleted_at IS NULL AND version=%s
                 """,
-                (typ, beginn, ende, ort, treffpunkt, treffpunkt_zeit, gegner,
-                 heim_auswaerts, beschreibung, updated_by, termin_id, expected_version),
+                (typ, beginn, ende, ort, spielstaette_id, treffpunkt, treffpunkt_zeit,
+                 gegner, heim_auswaerts, beschreibung, updated_by, termin_id,
+                 expected_version),
             )
             return cur.rowcount > 0
 
@@ -382,3 +440,106 @@ class TerminRepository(BaseRepository):
                 (deleted_by, termin_id),
             )
             return cur.rowcount > 0
+
+    # ------------------------------------------------- Spielplan-Import (#95)
+    def create_aus_import(self, mannschaft_id: int, *, beginn: str,
+                          ort: Optional[str], spielstaette_id: int,
+                          gegner: Optional[str], heim_auswaerts: Optional[str],
+                          beschreibung: Optional[str], extern_ref: str,
+                          extern_stand: dict, created_by: str) -> Termin:
+        """Spiel aus dem DFBnet anlegen – mit Kennung und Schnappschuss.
+
+        Eigener Weg statt `create`, weil extern_ref/extern_stand bewusst nicht in
+        den änderbaren Fachfeldern stehen: Sie gehören dem Import, nicht dem
+        Formular.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO termine (mannschaft_id, typ, beginn, ort, spielstaette_id,
+                    gegner, heim_auswaerts, beschreibung, extern_ref, extern_stand,
+                    created_by, updated_by)
+                VALUES (%(m)s, 'spiel', %(beginn)s, %(ort)s, %(sst)s, %(gegner)s,
+                        %(ha)s, %(besch)s, %(ref)s, %(stand)s, %(usr)s, %(usr)s)
+                RETURNING id
+                """,
+                {"m": mannschaft_id, "beginn": beginn, "ort": ort,
+                 "sst": spielstaette_id, "gegner": gegner, "ha": heim_auswaerts,
+                 "besch": beschreibung, "ref": extern_ref,
+                 "stand": Jsonb(extern_stand), "usr": created_by},
+            )
+            neu_id = cur.fetchone()['id']
+        return self.get(neu_id)
+
+    def update_aus_import(self, termin_id: int, *, werte: dict, extern_stand: dict,
+                          spielstaette_id: Optional[int] = None,
+                          updated_by: str, expected_version: int) -> bool:
+        """Einzelne Felder auf den DFBnet-Stand heben und den Schnappschuss mitziehen.
+
+        Bewusst feldweise: Ein Lauf kann die Zeitverlegung übernehmen, während die
+        Platzverlegung als offene Abweichung beim Betreuer liegt (#95, Etappe 4).
+        `werte` enthält nur die tatsächlich zu schreibenden Felder aus
+        IMPORT_FELDER; `extern_stand` ist der vollständige neue Schnappschuss.
+
+        Treffpunkt, Treffpunktzeit und Beschreibung bleiben unberührt — die pflegt
+        das Team.
+        """
+        unbekannt = set(werte) - set(IMPORT_FELDER)
+        if unbekannt:
+            raise ValueError(f"Nicht importierbare Felder: {', '.join(sorted(unbekannt))}")
+        sets = [f"{f}=%({f})s" for f in werte]
+        params = dict(werte)
+        if spielstaette_id is not None:
+            sets.append("spielstaette_id=%(sst)s")
+            params['sst'] = spielstaette_id
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE termine SET {', '.join([*sets, 'extern_stand=%(stand)s'])},
+                    updated_at=CURRENT_TIMESTAMP, updated_by=%(usr)s,
+                    version=version+1
+                WHERE id=%(id)s AND deleted_at IS NULL AND version=%(ver)s
+                """,
+                params | {"stand": Jsonb(extern_stand), "usr": updated_by,
+                          "id": termin_id, "ver": expected_version},
+            )
+            return cur.rowcount > 0
+
+    def list_importierte(self, mannschaft_ids: list[int], von: str,
+                         bis: str) -> list[Termin]:
+        """Aktive, geplante Spiele mit DFBnet-Kennung im Zeitraum (ISO-Datum).
+
+        Grundlage für „im Export nicht mehr enthalten": Verglichen wird nur
+        innerhalb des Datumsfensters der Datei und nur für Mannschaften, die darin
+        überhaupt vorkommen — ein Teil-Export darf nicht den halben Kalender als
+        entfallen melden. Abgesagte Termine bleiben außen vor, die Frage ist dort
+        schon beantwortet.
+        """
+        if not mannschaft_ids:
+            return []
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_COLS} FROM termine
+                WHERE mannschaft_id = ANY(%(mids)s) AND extern_ref IS NOT NULL
+                  AND deleted_at IS NULL AND status = 'geplant'
+                  AND LEFT(beginn, 10) BETWEEN %(von)s AND %(bis)s
+                ORDER BY beginn, id
+                """,
+                {"mids": mannschaft_ids, "von": von, "bis": bis},
+            )
+            return [_map(r) for r in cur.fetchall()]
+
+    def set_extern_stand(self, termin_id: int, extern_stand: dict) -> None:
+        """Schnappschuss nachtragen, ohne den Termin fachlich zu ändern.
+
+        Für den Fall „App und DFBnet sagen dasselbe, es fehlt nur der Stand":
+        bewusst OHNE version-Bump und ohne updated_by – fachlich ist nichts
+        passiert, und eine History-Zeile für eine reine Buchhaltungsnotiz wäre
+        irreführend.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE termine SET extern_stand = %s WHERE id = %s AND deleted_at IS NULL",
+                (Jsonb(extern_stand), termin_id),
+            )

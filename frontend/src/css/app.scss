@@ -890,6 +890,13 @@ body:not(.body--dark) {
   .q-badge.bg-white.text-negative {
     color: $negative !important;
   }
+  // Gegenregel wie bei den gelben Flächen weiter oben: Auf weißem Grund bleibt
+  // Primär-Text Wappenblau. Ohne sie greift der Karten-Remap
+  // (.q-card .text-primary -> Gelb) und macht ein weißes Badge mit
+  // text-color="primary" gelb-auf-weiß — praktisch unlesbar.
+  .q-badge.bg-white.text-primary {
+    color: $vtb-blau !important;
+  }
 
   // Termin-Karten (#95): Kopfbalken in tieferem Blau — der bg-primary-Balken
   // würde sonst mit der Wappenblau-Karte verschmelzen

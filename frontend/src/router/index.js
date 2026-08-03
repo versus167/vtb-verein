@@ -162,7 +162,21 @@ const routes = [
         name: 'sonstiges',
         component: () => import('pages/EinstellungenSonstigesPage.vue'),
         // Import ist adminOnly → Admins umgehen den Guard ohnehin
-        meta: { title: 'Sonstiges', permission: ['system.config', 'fibu.export', 'system.protokoll'] },
+        meta: { title: 'Sonstiges',
+                permission: ['system.config', 'fibu.export', 'system.protokoll',
+                             'termine.verwalten'] },
+      },
+      {
+        path: 'spielplan-import',
+        name: 'spielplan-import',
+        component: () => import('pages/SpielplanImportPage.vue'),
+        meta: { title: 'Spielplan-Import', permission: 'termine.verwalten' },
+      },
+      {
+        path: 'spielstaetten',
+        name: 'spielstaetten',
+        component: () => import('pages/SpielstaettenPage.vue'),
+        meta: { title: 'Spielstätten', permission: 'system.config' },
       },
       {
         path: 'funktionen',

@@ -11,6 +11,25 @@
           <q-input v-model="form.endeZeit" label="Ende" outlined dense type="time" class="col" />
         </div>
         <q-input v-model="form.ort" label="Ort" outlined dense />
+        <!-- Pflichtfeld seit v80: ohne Spielstätte zeigt der Belegungsplan den
+             Platz als frei, obwohl dort trainiert wird (#95). -->
+        <q-select v-model="form.spielstaetteId" :options="spielstaetten"
+          option-value="id" option-label="name" emit-value map-options
+          label="Spielstätte *" outlined dense :loading="ladeSpielstaetten"
+          use-input input-debounce="0" fill-input hide-selected
+          @filter="filterSpielstaetten" @update:model-value="ortUebernehmen">
+          <template #option="{ itemProps, opt }">
+            <q-item v-bind="itemProps">
+              <q-item-section>
+                <q-item-label>{{ opt.name }}</q-item-label>
+                <q-item-label v-if="adresse(opt)" caption>{{ adresse(opt) }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </template>
+          <template #no-option>
+            <q-item><q-item-section class="text-grey">Keine Spielstätte gefunden</q-item-section></q-item>
+          </template>
+        </q-select>
         <div class="row q-gutter-sm">
           <q-input v-model="form.treffpunkt" label="Treffpunkt" outlined dense class="col-7 col-grow" />
           <q-input v-model="form.treffpunktZeit" label="Treffpunkt-Zeit" outlined dense type="time" class="col" />
@@ -53,7 +72,7 @@
 import { ref, computed, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { uhrzeit } from 'src/composables/useTermine'
+import { uhrzeit, useSpielstaettenAuswahl } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -79,20 +98,44 @@ const saving = ref(false)
 const formError = ref('')
 const form = ref({})
 
+// Auswahlliste inkl. der Vorgabe „Kein Vereinsgelände"; „Nicht erfasst"
+// blendet die API aus – der Altbestand soll beim Speichern ersetzt werden.
+// `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
+const { optionen: spielstaetten, laedt: ladeSpielstaetten,
+        laden: loadSpielstaetten, filtern: filterSpielstaetten,
+        adresse, ortText } = useSpielstaettenAuswahl()
+
+// Adresse der gewählten Spielstätte in das Ort-Feld übernehmen. Überschrieben
+// wird nur, was leer ist oder noch von einer früheren Auswahl stammt — von Hand
+// Ergänztes („Halle 2, Hintereingang") bleibt stehen.
+const zuletztUebernommen = ref('')
+function ortUebernehmen(id) {
+  const text = ortText(id)
+  if (!text) return
+  const aktuell = (form.value.ort || '').trim()
+  if (aktuell && aktuell !== zuletztUebernommen.value) return
+  form.value.ort = text
+  zuletztUebernommen.value = text
+}
+
 function leeresFormular() {
   return { id: null, version: null, typ: 'training',
            datum: new Date().toISOString().slice(0, 10), zeit: '', endeZeit: '',
-           ort: '', treffpunkt: '', treffpunktZeit: '', gegner: '', heimAuswaerts: 'heim',
+           ort: '', spielstaetteId: null,
+           treffpunkt: '', treffpunktZeit: '', gegner: '', heimAuswaerts: 'heim',
            beschreibung: '', wiederholen: false, serieEnde: '', benachrichtigen: false }
 }
 
 watch(open, (offen) => {
   if (!offen) return
+  loadSpielstaetten()
+  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   const t = props.termin
   form.value = t
     ? { id: t.id, version: t.version, typ: t.typ,
         datum: t.beginn.slice(0, 10), zeit: uhrzeit(t.beginn), endeZeit: uhrzeit(t.ende ?? ''),
-        ort: t.ort ?? '', treffpunkt: t.treffpunkt ?? '', treffpunktZeit: t.treffpunkt_zeit ?? '',
+        ort: t.ort ?? '', spielstaetteId: t.spielstaette_id ?? null,
+        treffpunkt: t.treffpunkt ?? '', treffpunktZeit: t.treffpunkt_zeit ?? '',
         gegner: t.gegner ?? '', heimAuswaerts: t.heim_auswaerts ?? 'heim',
         beschreibung: t.beschreibung ?? '', benachrichtigen: false }
     : leeresFormular()
@@ -105,6 +148,10 @@ async function save() {
     formError.value = 'Datum und Beginn sind erforderlich.'
     return
   }
+  if (!f.spielstaetteId) {
+    formError.value = 'Bitte eine Spielstätte wählen (oder „Kein Vereinsgelände").'
+    return
+  }
   saving.value = true
   formError.value = ''
   try {
@@ -115,6 +162,7 @@ async function save() {
         beginn_zeit: f.zeit,
         ende_zeit: f.endeZeit || null,
         ort: f.ort || null,
+        spielstaette_id: f.spielstaetteId,
         treffpunkt: f.treffpunkt || null,
         treffpunkt_zeit: f.treffpunktZeit || null,
         beschreibung: f.beschreibung || null,
@@ -132,6 +180,7 @@ async function save() {
       beginn: `${f.datum}T${f.zeit}`,
       ende: f.endeZeit ? `${f.datum}T${f.endeZeit}` : null,
       ort: f.ort || null,
+      spielstaette_id: f.spielstaetteId,
       treffpunkt: f.treffpunkt || null,
       treffpunkt_zeit: f.treffpunktZeit || null,
       gegner: f.typ === 'spiel' ? (f.gegner || null) : null,

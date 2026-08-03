@@ -23,6 +23,12 @@ class MannschaftCreate(BaseModel):
     name: str
     saison: Optional[str] = None
     beschreibung: Optional[str] = None
+    # DFBnet-Zuordnung (#95): Name UND Mannschaftsart, denn derselbe Teamname
+    # kommt im Spielplan-Export in mehreren Altersklassen vor. `dfbnet_aliasse`
+    # deckt Spielgemeinschaften ab (Ersetzen-Semantik).
+    dfbnet_name: Optional[str] = None
+    dfbnet_mannschaftsart: Optional[str] = None
+    dfbnet_aliasse: list[str] = []
 
 
 class MannschaftUpdate(MannschaftCreate):
@@ -64,6 +70,12 @@ def _require_write(user):
 def _require_delete(user):
     if not user.has_permission(Permission.MANNSCHAFTEN_DELETE):
         raise HTTPException(status_code=403, detail="Keine Löschberechtigung für Mannschaften")
+
+def _dfbnet_wert(wert):
+    """Leere Eingaben zu NULL – sonst kollidiert der Unique-Index über die
+    DFBnet-Identität beim zweiten Team ohne Zuordnung."""
+    return (wert or '').strip() or None
+
 
 def _validate_rolle(rolle: str):
     if rolle not in VALID_ROLLEN:
@@ -153,8 +165,12 @@ def create_mannschaft(data: MannschaftCreate, user: CurrentUser, db: DB):
         raise HTTPException(status_code=422, detail="Name ist erforderlich")
     _require_aktive_abteilung(db, data.abteilung_id)
     m = Mannschaft(abteilung_id=data.abteilung_id, name=data.name.strip(),
-                   saison=data.saison, beschreibung=data.beschreibung)
-    return asdict(db.create_mannschaft(m, created_by=user.username))
+                   saison=data.saison, beschreibung=data.beschreibung,
+                   dfbnet_name=_dfbnet_wert(data.dfbnet_name),
+                   dfbnet_mannschaftsart=_dfbnet_wert(data.dfbnet_mannschaftsart))
+    neu = db.create_mannschaft(m, created_by=user.username)
+    db.mannschaften.set_aliasse(neu.id, data.dfbnet_aliasse, user.username)
+    return asdict(db.get_mannschaft(neu.id))
 
 
 @router.put("/mannschaften/{mannschaft_id}")
@@ -169,9 +185,12 @@ def update_mannschaft(mannschaft_id: int, data: MannschaftUpdate, user: CurrentU
     m.name = data.name.strip()
     m.saison = data.saison
     m.beschreibung = data.beschreibung
+    m.dfbnet_name = _dfbnet_wert(data.dfbnet_name)
+    m.dfbnet_mannschaftsart = _dfbnet_wert(data.dfbnet_mannschaftsart)
     m.version = data.expected_version
     if not db.update_mannschaft(m, updated_by=user.username):
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    db.mannschaften.set_aliasse(mannschaft_id, data.dfbnet_aliasse, user.username)
     return asdict(db.get_mannschaft(mannschaft_id))
 
 

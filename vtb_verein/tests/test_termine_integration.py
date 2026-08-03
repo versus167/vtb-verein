@@ -91,11 +91,20 @@ def _make_user_im_kader(db, mannschaft_id, rolle, von=LASTWEEK, bis=None,
     return uid
 
 
+def _platz(db):
+    """Platzhalter „Kein Vereinsgelände" – seit v80 ist die Spielstätte Pflicht.
+    Die Zeile legt das Schema selbst an, sie ist in jeder DB vorhanden."""
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM spielstaette WHERE platzhalter = 'auswaerts'")
+        return cur.fetchone()['id']
+
+
 def _create_termin(db, mannschaft_id, beginn, typ='training', **kw):
     return db.termine.create(
         mannschaft_id, typ, beginn,
         kw.get('ende'), kw.get('ort'), kw.get('treffpunkt'), kw.get('treffpunkt_zeit'),
         kw.get('gegner'), kw.get('heim_auswaerts'), kw.get('beschreibung'), 't',
+        spielstaette_id=kw.get('spielstaette_id') or _platz(db),
     )
 
 
@@ -107,45 +116,51 @@ def test_history_trigger_und_version_gating(db):
         cur.execute("SELECT count(*) AS n FROM termine_history WHERE id=%s", (t.id,))
         assert cur.fetchone()["n"] == 1
     assert db.termine.update(t.id, 'training', f"{TOMORROW}T19:30", None, "Halle 2",
-                             None, None, None, None, None, 't', t.version)
+                             None, None, None, None, None, 't', t.version,
+                             spielstaette_id=_platz(db))
     with db.cursor() as cur:
         cur.execute("SELECT count(*) AS n FROM termine_history WHERE id=%s", (t.id,))
         assert cur.fetchone()["n"] == 2
     # Falsche Version: kein Update, keine neue History-Zeile
     assert not db.termine.update(t.id, 'training', f"{TOMORROW}T20:00", None, None,
-                                 None, None, None, None, None, 't', t.version)
+                                 None, None, None, None, None, 't', t.version,
+                                 spielstaette_id=_platz(db))
     assert db.termine.get(t.id).ort == "Halle 2"
 
 
 def test_check_constraints(db):
     mid = _make_mannschaft(db)
+    platz = _platz(db)
     for typ, status, heim_auswaerts in (("party", "geplant", None),
                                         ("training", "vielleicht", None),
                                         ("training", "geplant", "mitte")):
         with pytest.raises(psycopg.errors.CheckViolation):
             with db.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO termine (mannschaft_id, typ, beginn, status, heim_auswaerts, "
-                    "created_by, updated_by) VALUES (%s, %s, %s, %s, %s, 't', 't')",
-                    (mid, typ, f"{TOMORROW}T19:00", status, heim_auswaerts),
+                    "INSERT INTO termine (mannschaft_id, typ, beginn, spielstaette_id, status, heim_auswaerts, "
+                    "created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s, 't', 't')",
+                    (mid, typ, f"{TOMORROW}T19:00", platz, status, heim_auswaerts),
                 )
 
 
 def test_extern_ref_unique_nur_fuer_aktive(db):
     mid = _make_mannschaft(db)
+    platz = _platz(db)
     with db.cursor() as cur:
-        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,extern_ref,created_by,updated_by) "
-                    "VALUES (%s,'spiel',%s,'DFB-123','t','t') RETURNING id",
-                    (mid, f"{TOMORROW}T15:00"))
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,extern_ref,created_by,updated_by) "
+                    "VALUES (%s,'spiel',%s,%s,'DFB-123','t','t') RETURNING id",
+                    (mid, f"{TOMORROW}T15:00", platz))
         erster = cur.fetchone()['id']
     with pytest.raises(psycopg.errors.UniqueViolation):
         with db.cursor() as cur:
-            cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,extern_ref,created_by,updated_by) "
-                        "VALUES (%s,'spiel',%s,'DFB-123','t','t')", (mid, f"{NEXTWEEK}T15:00"))
+            cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,extern_ref,created_by,updated_by) "
+                        "VALUES (%s,'spiel',%s,%s,'DFB-123','t','t')",
+                        (mid, f"{NEXTWEEK}T15:00", platz))
     db.termine.mark_deleted(erster, 't')
     with db.cursor() as cur:  # nach Soft-Delete ist die Kennung wieder frei
-        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,extern_ref,created_by,updated_by) "
-                    "VALUES (%s,'spiel',%s,'DFB-123','t','t')", (mid, f"{NEXTWEEK}T15:00"))
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,extern_ref,created_by,updated_by) "
+                    "VALUES (%s,'spiel',%s,%s,'DFB-123','t','t')",
+                    (mid, f"{NEXTWEEK}T15:00", platz))
 
 
 # ------------------------------------------------------------------- Repo-CRUD
@@ -270,3 +285,35 @@ def test_mannschaften_listen(db):
     alle = db.termine.list_all_mannschaften()
     assert {m['name'] for m in alle} == {"Erste", "Zweite"}
     assert all(m['zugriff'] == 'verwalten' for m in alle)
+
+
+# ------------------------------------------------- Spielstätte am Termin (#95)
+def test_termin_traegt_anschrift_und_belag_der_spielstaette(db):
+    """Die Terminliste reicht Anschrift und Untergrund der Spielstätte mit durch.
+
+    Beides hängt daran: Der Route-Knopf übergibt der Navi-App die Anschrift OHNE
+    den Platznamen (Bezeichnungen wie „eins-Stadion – An der Gellertstraße"
+    findet kein Geocoder), und der Belag steht an der Karte, weil die Spieler
+    danach ihre Schuhe wählen. Fällt der JOIN weg, verschwindet beides
+    stillschweigend.
+    """
+    m = _make_mannschaft(db)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO spielstaette (name, strasse, plz, ort, untergrund, "
+            "created_by, updated_by) VALUES ('Platz am Jahnhaus', "
+            "'Rußdorfer Straße 10', '09212', 'Limbach-Oberfrohna', 'Kunstrasen', "
+            "'t', 't') RETURNING id")
+        platz = cur.fetchone()['id']
+    neu = _create_termin(db, m, '2026-08-15T15:00', spielstaette_id=platz)
+
+    t = db.termine.get(neu.id)
+    assert t.spielstaette_name == 'Platz am Jahnhaus'
+    assert (t.spielstaette_strasse, t.spielstaette_plz, t.spielstaette_ort) == (
+        'Rußdorfer Straße 10', '09212', 'Limbach-Oberfrohna')
+    assert t.spielstaette_untergrund == 'Kunstrasen'
+
+    # und über die Listen, aus denen das Frontend die Karten baut
+    aus_liste = db.termine.list_for_mannschaft(m)[0]
+    assert aus_liste.spielstaette_strasse == 'Rußdorfer Straße 10'
+    assert aus_liste.spielstaette_untergrund == 'Kunstrasen'

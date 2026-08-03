@@ -58,6 +58,24 @@
                   <q-input v-model="edit.endeDatum" label="Serienende" outlined dense type="date" class="col" clearable />
                 </div>
                 <q-input v-model="edit.ort" label="Ort" outlined dense />
+                <!-- Pflichtfeld seit v80 (#95); die Instanzen erben die Spielstätte -->
+                <q-select v-model="edit.spielstaetteId" :options="spielstaetten"
+                  option-value="id" option-label="name" emit-value map-options
+                  label="Spielstätte *" outlined dense
+                  use-input input-debounce="0" fill-input hide-selected
+                  @filter="filterSpielstaetten" @update:model-value="ortUebernehmen">
+                  <template #option="{ itemProps, opt }">
+                    <q-item v-bind="itemProps">
+                      <q-item-section>
+                        <q-item-label>{{ opt.name }}</q-item-label>
+                        <q-item-label v-if="adresse(opt)" caption>{{ adresse(opt) }}</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </template>
+                  <template #no-option>
+                    <q-item><q-item-section class="text-grey">Keine Spielstätte gefunden</q-item-section></q-item>
+                  </template>
+                </q-select>
                 <div class="row q-gutter-sm">
                   <q-input v-model="edit.treffpunkt" label="Treffpunkt" outlined dense class="col-7 col-grow" />
                   <q-input v-model="edit.treffpunktZeit" label="Treffpunkt-Zeit" outlined dense type="time" class="col" />
@@ -82,7 +100,7 @@
 import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { wochentag, datumLabel } from 'src/composables/useTermine'
+import { wochentag, datumLabel, useSpielstaettenAuswahl } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -109,9 +127,27 @@ const editId = ref(null)
 const edit = ref({})
 const editError = ref('')
 
+// Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht
+// mit. `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
+const { optionen: spielstaetten, laden: loadSpielstaetten,
+        filtern: filterSpielstaetten, adresse, ortText } = useSpielstaettenAuswahl()
+
+// Adresse der gewählten Spielstätte übernehmen; von Hand Ergänztes bleibt stehen
+// (wie im Termin-Dialog).
+const zuletztUebernommen = ref('')
+function ortUebernehmen(id) {
+  const text = ortText(id)
+  if (!text) return
+  const aktuell = (edit.value.ort || '').trim()
+  if (aktuell && aktuell !== zuletztUebernommen.value) return
+  edit.value.ort = text
+  zuletztUebernommen.value = text
+}
+
 async function load() {
   loading.value = true
   editId.value = null
+  loadSpielstaetten()
   try {
     const { data } = await api.get(`/api/termine/mannschaften/${props.mannschaftId}/serien`)
     serien.value = data.serien
@@ -126,8 +162,10 @@ async function load() {
 
 function initEdit(s) {
   editError.value = ''
+  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   edit.value = { typ: s.typ, beginnZeit: s.beginn_zeit, endeZeit: s.ende_zeit ?? '',
-                 ort: s.ort ?? '', treffpunkt: s.treffpunkt ?? '',
+                 ort: s.ort ?? '', spielstaetteId: s.spielstaette_id ?? null,
+                 treffpunkt: s.treffpunkt ?? '',
                  treffpunktZeit: s.treffpunkt_zeit ?? '', beschreibung: s.beschreibung ?? '',
                  endeDatum: s.ende_datum ?? '' }
 }
@@ -138,6 +176,10 @@ async function saveEdit(s) {
     editError.value = 'Beginn ist erforderlich.'
     return
   }
+  if (!e.spielstaetteId) {
+    editError.value = 'Bitte eine Spielstätte wählen (oder „Kein Vereinsgelände").'
+    return
+  }
   saving.value = true
   editError.value = ''
   try {
@@ -146,6 +188,7 @@ async function saveEdit(s) {
       beginn_zeit: e.beginnZeit,
       ende_zeit: e.endeZeit || null,
       ort: e.ort || null,
+      spielstaette_id: e.spielstaetteId,
       treffpunkt: e.treffpunkt || null,
       treffpunkt_zeit: e.treffpunktZeit || null,
       beschreibung: e.beschreibung || null,
