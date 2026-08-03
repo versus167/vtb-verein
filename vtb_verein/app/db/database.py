@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 80
+SCHEMA_VERSION = 81
 
 
 # ---------------------------------------------------------------------------
@@ -2573,6 +2573,125 @@ _SPIELSTAETTE_PLATZHALTER = (
 )
 
 
+# ============================================================================
+# DFBnet-Zuordnung der Mannschaft (Schema v81, Ticket #95, Etappe 1)
+#
+# Ein Spiel aus dem Vereinsspielplan trägt nur Namen, keine IDs. Die Zuordnung
+# zur App-Mannschaft läuft deshalb über `dfbnet_name` + `dfbnet_mannschaftsart`
+# — der Name allein reicht NICHT: „VTB Chemnitz 2" ist im selben Export sowohl
+# die 2. Herren als auch eine E-Junioren-Mannschaft.
+#
+# Spielgemeinschaften treten unter einem zusammengesetzten Namen an
+# („VTB Chemnitz / SG Handwerk Rabenstein II"). Dafür die Alias-Tabelle: exakte
+# Zweitnamen statt Teilstring-Vergleich — „VTB Chemnitz" steckt sonst in
+# „VTB Chemnitz 2" und zöge jedes Nachwuchsspiel in die Erste.
+#
+# Beide Felder sind optional: Nicht jede Mannschaft spielt im DFBnet.
+# ============================================================================
+_MANNSCHAFT_COLS = (
+    "id, version, abteilung_id, name, saison, beschreibung, "
+    "dfbnet_name, dfbnet_mannschaftsart, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_MANNSCHAFT_VALS = ", ".join("NEW." + c.strip() for c in _MANNSCHAFT_COLS.split(","))
+
+_FN_MANNSCHAFT_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO mannschaft_history ({_MANNSCHAFT_COLS}) VALUES ({_MANNSCHAFT_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_MANNSCHAFT_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO mannschaft_history ({_MANNSCHAFT_COLS}) VALUES ({_MANNSCHAFT_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# Spalten an mannschaft/_history – wie bei der Spielstätte als geteilte
+# ALTER-Sequenz, weil die Tabelle selbst aus einer viel älteren Migration stammt.
+_MANNSCHAFT_DFBNET_SQL = (
+    "ALTER TABLE mannschaft ADD COLUMN IF NOT EXISTS dfbnet_name TEXT",
+    "ALTER TABLE mannschaft ADD COLUMN IF NOT EXISTS dfbnet_mannschaftsart TEXT",
+    "ALTER TABLE mannschaft_history ADD COLUMN IF NOT EXISTS dfbnet_name TEXT",
+    "ALTER TABLE mannschaft_history ADD COLUMN IF NOT EXISTS dfbnet_mannschaftsart TEXT",
+)
+
+_ALIAS_COLS = (
+    "id, version, mannschaft_id, name, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_ALIAS_VALS = ", ".join("NEW." + c.strip() for c in _ALIAS_COLS.split(","))
+
+_FN_ALIAS_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_mannschaft_dfbnet_alias_audit_insert() RETURNS TRIGGER
+    LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO mannschaft_dfbnet_alias_history ({_ALIAS_COLS}) VALUES ({_ALIAS_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_ALIAS_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_mannschaft_dfbnet_alias_audit_update() RETURNS TRIGGER
+    LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO mannschaft_dfbnet_alias_history ({_ALIAS_COLS}) VALUES ({_ALIAS_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_MANNSCHAFT_DFBNET_ALIAS = """
+    CREATE TABLE IF NOT EXISTS mannschaft_dfbnet_alias (
+      id            SERIAL PRIMARY KEY,
+      mannschaft_id INTEGER NOT NULL REFERENCES mannschaft(id),
+      name          TEXT NOT NULL,
+      version       INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by    TEXT NOT NULL,
+      deleted_at    TEXT,
+      deleted_by    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS mannschaft_dfbnet_alias_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      mannschaft_id INTEGER, name TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_MANNSCHAFT_DFBNET_INDEXES = (
+    ("idx_mannschaft_dfbnet_alias_mannschaft", "mannschaft_dfbnet_alias(mannschaft_id)"),
+    ("idx_mannschaft_dfbnet_alias_deleted_at", "mannschaft_dfbnet_alias(deleted_at)"),
+    ("idx_mannschaft_dfbnet_alias_history_id", "mannschaft_dfbnet_alias_history(id)"),
+)
+
+# Eine DFBnet-Identität darf nur zu EINER Mannschaft führen, sonst ist der Import
+# mehrdeutig. Paar aus Name + Mannschaftsart, Groß-/Kleinschreibung egal.
+_MANNSCHAFT_DFBNET_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_mannschaft_dfbnet_identitaet "
+    "ON mannschaft (lower(dfbnet_name), lower(COALESCE(dfbnet_mannschaftsart, ''))) "
+    "WHERE dfbnet_name IS NOT NULL AND deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_mannschaft_dfbnet_alias_name "
+    "ON mannschaft_dfbnet_alias (lower(name)) WHERE deleted_at IS NULL",
+)
+
+_MANNSCHAFT_DFBNET_TRIGGERS = (
+    ('trig_mannschaft_dfbnet_alias_audit_insert', 'INSERT', 'mannschaft_dfbnet_alias',
+     'fn_mannschaft_dfbnet_alias_audit_insert'),
+    ('trig_mannschaft_dfbnet_alias_audit_update', 'UPDATE', 'mannschaft_dfbnet_alias',
+     'fn_mannschaft_dfbnet_alias_audit_update'),
+)
+
+
 # Append-only „gesehen"-Log für Tickets (#130-Nachgang): jede Sicht-Session eines
 # Users auf ein Ticket. KEIN Soft-Delete/History/Audit-Trigger – das Log IST der
 # Audit-Datensatz (analog access_log / tresor_zugriff_log). Zeitbasierter Prune über
@@ -2720,6 +2839,7 @@ class Database:
             78: self._migrate_v77_to_v78,
             79: self._migrate_v78_to_v79,
             80: self._migrate_v79_to_v80,
+            81: self._migrate_v80_to_v81,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6031,6 +6151,38 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 80 WHERE id = 1")
 
+    def _migrate_v80_to_v81(self) -> None:
+        """DFBnet-Zuordnung an der Mannschaft (Ticket #95, Etappe 1).
+
+        `dfbnet_name` + `dfbnet_mannschaftsart` an mannschaft (+ History) und die
+        Alias-Tabelle für Spielgemeinschaften. Der Name allein taugt nicht als
+        Schlüssel: „VTB Chemnitz 2" ist im selben Spielplan-Export sowohl die
+        2. Herren als auch eine E-Junioren-Mannschaft.
+
+        Die Audit-Funktionen der Mannschaft werden neu erzeugt, damit die neuen
+        Spalten in der History landen. DDL/Sequenz geteilt mit dem Frischaufbau.
+        """
+        with self.cursor() as cur:
+            for sql in _MANNSCHAFT_DFBNET_SQL:
+                cur.execute(sql)
+            cur.execute(_DDL_MANNSCHAFT_DFBNET_ALIAS)
+            cur.execute(_FN_ALIAS_AUDIT_INSERT)
+            cur.execute(_FN_ALIAS_AUDIT_UPDATE)
+            for name, event, table, fn in _MANNSCHAFT_DFBNET_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _MANNSCHAFT_DFBNET_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _MANNSCHAFT_DFBNET_UNIQUE_INDEXES:
+                cur.execute(sql)
+            # Erst mit den Spalten in der History den Spaltensatz anheben
+            cur.execute(_FN_MANNSCHAFT_AUDIT_INSERT)
+            cur.execute(_FN_MANNSCHAFT_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 81 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7366,6 +7518,11 @@ class Database:
         self._seed_spielstaette_platzhalter(cur)
         for sql in _SPIELSTAETTE_TERMIN_SQL:
             cur.execute(sql)
+        # DFBnet-Zuordnung der Mannschaft (Schema v81) – Felder + Alias-Tabelle.
+        # DDL/Sequenz geteilt mit Migration v80→v81.
+        for sql in _MANNSCHAFT_DFBNET_SQL:
+            cur.execute(sql)
+        cur.execute(_DDL_MANNSCHAFT_DFBNET_ALIAS)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -7508,34 +7665,10 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO mannschaft_history (
-                    id, version, abteilung_id, name, saison, beschreibung,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO mannschaft_history (
-                        id, version, abteilung_id, name, saison, beschreibung,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.abteilung_id, NEW.name, NEW.saison, NEW.beschreibung,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        # Seit v81 mit den DFBnet-Feldern – geteilte Konstanten, damit Frischaufbau
+        # und Migration denselben Spaltensatz in die History schreiben.
+        cur.execute(_FN_MANNSCHAFT_AUDIT_INSERT)
+        cur.execute(_FN_MANNSCHAFT_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -7606,6 +7739,8 @@ class Database:
         cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
         cur.execute(_FN_SPIELSTAETTE_AUDIT_INSERT)
         cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
+        cur.execute(_FN_ALIAS_AUDIT_INSERT)
+        cur.execute(_FN_ALIAS_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -8220,6 +8355,7 @@ class Database:
             *_TERMIN_ZUSAGE_TRIGGERS,
             *_TERMIN_SERIE_TRIGGERS,
             *_SPIELSTAETTE_TRIGGERS,
+            *_MANNSCHAFT_DFBNET_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -8344,6 +8480,7 @@ class Database:
             *_TERMIN_ZUSAGE_INDEXES,
             *_TERMIN_SERIE_INDEXES,
             *_SPIELSTAETTE_INDEXES,
+            *_MANNSCHAFT_DFBNET_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -8367,6 +8504,8 @@ class Database:
         for sql in _SEPA_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _SPIELSTAETTE_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _MANNSCHAFT_DFBNET_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------

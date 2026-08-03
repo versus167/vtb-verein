@@ -474,6 +474,11 @@ class VereinsDB:
     def spielstaetten(self) -> SpielstaetteRepository:
         return self._spielstaette_repo
 
+    # --- Mannschaften (Repository-Zugriff für DFBnet-Zuordnung und Import) ---
+    @property
+    def mannschaften(self) -> MannschaftRepository:
+        return self._mannschaft_repo
+
     def cursor(self):
         return self._database.cursor()
 

@@ -113,6 +113,23 @@
           <q-input v-model="form.name" label="Name *" outlined dense />
           <q-input v-model="form.saison" label="Saison (z.B. 2026/27)" outlined dense />
           <q-input v-model="form.beschreibung" label="Beschreibung" outlined dense type="textarea" autogrow />
+
+          <!-- DFBnet-Zuordnung (#95): Grundlage des Spielplan-Imports. Der Name
+               allein reicht nicht – „VTB Chemnitz 2" gibt es bei Herren wie bei
+               den E-Junioren, erst mit der Mannschaftsart wird es eindeutig. -->
+          <q-expansion-item dense-toggle icon="sports_soccer" label="DFBnet-Zuordnung"
+            :caption="form.dfbnet_name || 'nicht zugeordnet'" class="q-mt-sm">
+            <div class="q-gutter-sm q-pt-sm">
+              <q-input v-model="form.dfbnet_name" label="Teamname im DFBnet" outlined dense
+                hint="Exakt wie im Spielplan, z. B. „VTB Chemnitz 2“" />
+              <q-input v-model="form.dfbnet_mannschaftsart" label="Mannschaftsart" outlined dense
+                hint="z. B. Herren, A-Junioren, Herren Ü35" />
+              <q-select v-model="form.dfbnet_aliasse" label="Weitere Namen (Spielgemeinschaften)"
+                outlined dense multiple use-input use-chips new-value-mode="add-unique"
+                hide-dropdown-icon :options="[]"
+                hint="Namen, unter denen das Team sonst noch antritt – Eingabe mit Enter" />
+            </div>
+          </q-expansion-item>
           <div v-if="formError" class="text-negative text-caption">{{ formError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -264,16 +281,21 @@ onMounted(load)
 const formOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
-const form = ref({ id: null, abteilung_id: null, name: '', saison: '', beschreibung: '', version: null })
+const form = ref({ id: null, abteilung_id: null, name: '', saison: '', beschreibung: '',
+                   dfbnet_name: '', dfbnet_mannschaftsart: '', dfbnet_aliasse: [], version: null })
 
 function openCreate() {
-  form.value = { id: null, abteilung_id: null, name: '', saison: '', beschreibung: '', version: null }
+  form.value = { id: null, abteilung_id: null, name: '', saison: '', beschreibung: '',
+                 dfbnet_name: '', dfbnet_mannschaftsart: '', dfbnet_aliasse: [], version: null }
   formError.value = ''
   formOpen.value = true
 }
 function openEdit(m) {
   form.value = { id: m.id, abteilung_id: m.abteilung_id, name: m.name, saison: m.saison ?? '',
-                 beschreibung: m.beschreibung ?? '', version: m.version }
+                 beschreibung: m.beschreibung ?? '',
+                 dfbnet_name: m.dfbnet_name ?? '',
+                 dfbnet_mannschaftsart: m.dfbnet_mannschaftsart ?? '',
+                 dfbnet_aliasse: [...(m.dfbnet_aliasse ?? [])], version: m.version }
   formError.value = ''
   formOpen.value = true
 }
@@ -288,6 +310,9 @@ async function save() {
     const payload = {
       abteilung_id: form.value.abteilung_id, name: form.value.name.trim(),
       saison: form.value.saison || null, beschreibung: form.value.beschreibung || null,
+      dfbnet_name: form.value.dfbnet_name || null,
+      dfbnet_mannschaftsart: form.value.dfbnet_mannschaftsart || null,
+      dfbnet_aliasse: form.value.dfbnet_aliasse ?? [],
     }
     if (form.value.id) {
       await api.put(`/api/mannschaften/${form.value.id}`, { ...payload, expected_version: form.value.version })

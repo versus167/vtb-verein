@@ -1,7 +1,10 @@
 """
-Integrationstest des Spielstätten-Schemas (v80) gegen echtes PostgreSQL – Ticket #95.
+Integrationstest des Spielbetriebs-Schemas gegen echtes PostgreSQL – Ticket #95.
 
-Prüft beide Schema-Pfade: den Frischaufbau (VereinsDB legt beim Connect an) und die
+Deckt die beiden Schema-Schritte der Etappe 1 ab: Spielstätten samt Pflichtfeld am
+Termin (v80) und die DFBnet-Zuordnung der Mannschaft (v81).
+
+Geprüft werden beide Pfade: der Frischaufbau (VereinsDB legt beim Connect an) und die
 Migration v79→v80, die auf einem nachgebauten v79-Stand läuft. Der Migrationsteil ist
 der eigentliche Grund für diesen Test — dort entscheidet sich, ob der Altbestand einen
 Wert bekommt, bevor die Spalte auf NOT NULL gezogen wird.
@@ -76,6 +79,8 @@ def clean(db):
         cur.execute("DELETE FROM termine_history WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM termine WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM mitglied_mannschaft WHERE created_by = %s", (_MARKE,))
+        cur.execute("DELETE FROM mannschaft_dfbnet_alias_history WHERE created_by = %s", (_MARKE,))
+        cur.execute("DELETE FROM mannschaft_dfbnet_alias WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM mannschaft_history WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM mannschaft WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM abteilung WHERE created_by = %s", (_MARKE,))
@@ -303,3 +308,92 @@ def test_termin_ohne_spielstaette_wird_abgelehnt(db):
                 INSERT INTO termine (mannschaft_id, typ, beginn, created_by, updated_by)
                 VALUES (%s, 'training', '2026-09-03T18:00', %s, %s)
             """, (mannschaft_id, _MARKE, _MARKE))
+
+
+# ------------------------------------------- DFBnet-Zuordnung der Mannschaft (v81)
+
+def test_dfbnet_felder_und_alias_tabelle_existieren(db):
+    with _cur(db) as cur:
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'mannschaft'
+              AND column_name IN ('dfbnet_name', 'dfbnet_mannschaftsart')
+        """)
+        assert len(cur.fetchall()) == 2
+        cur.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN ('mannschaft_dfbnet_alias', 'mannschaft_dfbnet_alias_history')
+        """)
+        assert len(cur.fetchall()) == 2
+
+
+def test_dfbnet_identitaet_ist_eindeutig(db):
+    """Zwei Teams duerfen nicht dieselbe DFBnet-Identitaet beanspruchen –
+    sonst waere der Import mehrdeutig."""
+    with _cur(db) as cur:
+        _mannschaft_anlegen(cur)
+        cur.execute("SELECT id FROM abteilung WHERE created_by = %s LIMIT 1", (_MARKE,))
+        abteilung_id = cur.fetchone()['id']
+        cur.execute(
+            "UPDATE mannschaft SET dfbnet_name = 'VTB Chemnitz 2', "
+            "dfbnet_mannschaftsart = 'Herren' WHERE created_by = %s", (_MARKE,))
+        # Gleicher Name, ANDERE Mannschaftsart: erlaubt (E-Junioren heissen genauso)
+        cur.execute(
+            "INSERT INTO mannschaft (abteilung_id, name, dfbnet_name, "
+            "dfbnet_mannschaftsart, created_by, updated_by) "
+            "VALUES (%s, 'Zweites Team', 'VTB Chemnitz 2', 'E-Junioren', %s, %s)",
+            (abteilung_id, _MARKE, _MARKE))
+    # Gleicher Name UND gleiche Art: abgelehnt
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with _cur(db) as cur:
+            cur.execute("SELECT id FROM abteilung WHERE created_by = %s LIMIT 1", (_MARKE,))
+            abteilung_id = cur.fetchone()['id']
+            cur.execute(
+                "INSERT INTO mannschaft (abteilung_id, name, dfbnet_name, "
+                "dfbnet_mannschaftsart, created_by, updated_by) "
+                "VALUES (%s, 'Drittes Team', 'VTB Chemnitz 2', 'Herren', %s, %s)",
+                (abteilung_id, _MARKE, _MARKE))
+
+
+def test_alias_matching_findet_die_spielgemeinschaft(db):
+    """Der Import muss ein Team auch unter dem SpG-Namen finden – und darf sich
+    NICHT per Teilstring vergreifen."""
+    with _cur(db) as cur:
+        mannschaft_id = _mannschaft_anlegen(cur)
+        cur.execute("UPDATE mannschaft SET dfbnet_name = 'VTB Chemnitz', "
+                    "dfbnet_mannschaftsart = 'A-Junioren' WHERE id = %s", (mannschaft_id,))
+    db.mannschaften.set_aliasse(
+        mannschaft_id, ['VTB Chemnitz / SG Handwerk Rabenstein II'], _MARKE)
+
+    treffer = db.mannschaften.find_by_dfbnet('VTB Chemnitz / SG Handwerk Rabenstein II')
+    assert treffer is not None and treffer.id == mannschaft_id
+    assert treffer.dfbnet_aliasse == ['VTB Chemnitz / SG Handwerk Rabenstein II']
+
+    # Direkter Name mit passender Mannschaftsart
+    assert db.mannschaften.find_by_dfbnet('VTB Chemnitz', 'A-Junioren').id == mannschaft_id
+    # Falsche Mannschaftsart -> kein Treffer
+    assert db.mannschaften.find_by_dfbnet('VTB Chemnitz', 'Herren') is None
+    # Kein Teilstring-Treffer: "VTB Chemnitz 2" ist ein anderes Team
+    assert db.mannschaften.find_by_dfbnet('VTB Chemnitz 2', 'A-Junioren') is None
+
+
+def test_alias_ersetzen_soft_loescht_die_alten(db):
+    with _cur(db) as cur:
+        mannschaft_id = _mannschaft_anlegen(cur)
+    db.mannschaften.set_aliasse(mannschaft_id, ['Alter Name'], _MARKE)
+    db.mannschaften.set_aliasse(mannschaft_id, ['Neuer Name'], _MARKE)
+    assert db.mannschaften.get(mannschaft_id).dfbnet_aliasse == ['Neuer Name']
+    with _cur(db) as cur:
+        cur.execute("SELECT deleted_at FROM mannschaft_dfbnet_alias "
+                    "WHERE mannschaft_id = %s AND name = 'Alter Name'", (mannschaft_id,))
+        assert cur.fetchone()['deleted_at'] is not None      # nie hart geloescht
+
+
+def test_alias_steht_im_prune_registry():
+    from app.services.prune_service import PRUNE_REGISTRY
+    eintrag = next((e for e in PRUNE_REGISTRY if e.table == 'mannschaft_dfbnet_alias'), None)
+    assert eintrag is not None
+    mannschaft = next(e for e in PRUNE_REGISTRY if e.table == 'mannschaft')
+    assert ('mannschaft_dfbnet_alias', 'mannschaft_id') in {
+        (c.table, c.fk) for c in mannschaft.children}

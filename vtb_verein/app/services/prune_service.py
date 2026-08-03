@@ -248,6 +248,8 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="mitglied_funktion_history"),
     PruneEntity("mitglied_mannschaft", "Mannschafts-Zuordnungen", "mitglied_mannschaft",
                 history_table="mitglied_mannschaft_history"),
+    PruneEntity("mannschaft_dfbnet_alias", "DFBnet-Aliasse", "mannschaft_dfbnet_alias",
+                history_table="mannschaft_dfbnet_alias_history"),
     PruneEntity("mannschaft", "Mannschaften", "mannschaft",
                 history_table="mannschaft_history",
                 children=(
@@ -255,6 +257,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_mannschaft", "mannschaft_id"),
                     ChildRef("termin_serie", "mannschaft_id"),
                     ChildRef("termine", "mannschaft_id"),
+                    ChildRef("mannschaft_dfbnet_alias", "mannschaft_id"),
                 )),
     PruneEntity("mitglied", "Mitglieder", "mitglied",
                 history_table="mitglied_history",

@@ -1,5 +1,5 @@
 """Repository für Mannschaften/Teams (gehören zu einer Abteilung)."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 from app.db.base_repository import BaseRepository
@@ -17,6 +17,11 @@ class Mannschaft:
     name: str = ''
     saison: Optional[str] = None
     beschreibung: Optional[str] = None
+    # DFBnet-Zuordnung (#95): Name UND Mannschaftsart, denn der Name allein ist
+    # nicht eindeutig („VTB Chemnitz 2" gibt es bei Herren wie E-Junioren).
+    dfbnet_name: Optional[str] = None
+    dfbnet_mannschaftsart: Optional[str] = None
+    dfbnet_aliasse: list = field(default_factory=list)   # per Query befüllt
     mitglieder_count: int = 0                 # per Subquery befüllt (aktiver Kader)
     version: int = 1
     created_at: Optional[str] = None
@@ -30,6 +35,10 @@ class Mannschaft:
 _SELECT = """
     SELECT m.id, m.abteilung_id, a.name AS abteilung_name,
            m.name, m.saison, m.beschreibung,
+           m.dfbnet_name, m.dfbnet_mannschaftsart,
+           (SELECT COALESCE(array_agg(al.name ORDER BY lower(al.name)), '{}')
+              FROM mannschaft_dfbnet_alias al
+             WHERE al.mannschaft_id = m.id AND al.deleted_at IS NULL) AS dfbnet_aliasse,
            (SELECT count(*) FROM mitglied_mannschaft mm
               WHERE mm.mannschaft_id = m.id AND mm.deleted_at IS NULL) AS mitglieder_count,
            m.version, m.created_at, m.created_by, m.updated_at, m.updated_by,
@@ -109,11 +118,13 @@ class MannschaftRepository(BaseRepository):
             cur.execute(
                 """
                 INSERT INTO mannschaft (abteilung_id, name, saison, beschreibung,
+                                        dfbnet_name, dfbnet_mannschaftsart,
                                         created_by, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
-                (m.abteilung_id, m.name, m.saison, m.beschreibung, created_by, created_by),
+                (m.abteilung_id, m.name, m.saison, m.beschreibung,
+                 m.dfbnet_name, m.dfbnet_mannschaftsart, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -124,10 +135,12 @@ class MannschaftRepository(BaseRepository):
                 """
                 UPDATE mannschaft
                 SET abteilung_id=%s, name=%s, saison=%s, beschreibung=%s,
+                    dfbnet_name=%s, dfbnet_mannschaftsart=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND version=%s AND deleted_at IS NULL
                 """,
-                (m.abteilung_id, m.name, m.saison, m.beschreibung, updated_by, m.id, m.version),
+                (m.abteilung_id, m.name, m.saison, m.beschreibung,
+                 m.dfbnet_name, m.dfbnet_mannschaftsart, updated_by, m.id, m.version),
             )
             return cur.rowcount == 1
 
@@ -177,3 +190,64 @@ class MannschaftRepository(BaseRepository):
                 (abteilung_id, mannschaft_id),
             )
             return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------- DFBnet-Aliasse (#95)
+    def set_aliasse(self, mannschaft_id: int, namen: list[str], actor: str) -> None:
+        """Alias-Liste einer Mannschaft auf `namen` setzen (Ersetzen-Semantik).
+
+        Entfernte Aliasse werden soft-gelöscht, nicht hart entfernt; ein wieder
+        eingetragener Alias reaktiviert die alte Zeile nicht, sondern bekommt eine
+        neue — die History bleibt dadurch lesbar.
+        """
+        gewuenscht = {n.strip() for n in namen if n and n.strip()}
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT id, name FROM mannschaft_dfbnet_alias "
+                "WHERE mannschaft_id = %s AND deleted_at IS NULL",
+                (mannschaft_id,),
+            )
+            vorhanden = {r['name']: r['id'] for r in cur.fetchall()}
+            for name, alias_id in vorhanden.items():
+                if name not in gewuenscht:
+                    cur.execute(
+                        "UPDATE mannschaft_dfbnet_alias SET deleted_at = CURRENT_TIMESTAMP, "
+                        "deleted_by = %s, version = version + 1 WHERE id = %s",
+                        (actor, alias_id),
+                    )
+            for name in sorted(gewuenscht - set(vorhanden)):
+                cur.execute(
+                    "INSERT INTO mannschaft_dfbnet_alias (mannschaft_id, name, "
+                    "created_by, updated_by) VALUES (%s, %s, %s, %s)",
+                    (mannschaft_id, name, actor, actor),
+                )
+
+    def find_by_dfbnet(self, name: str,
+                       mannschaftsart: Optional[str] = None) -> Optional[Mannschaft]:
+        """Mannschaft zu einem DFBnet-Teamnamen – Grundlage des Spielplan-Imports.
+
+        Exakter Vergleich (ohne Groß-/Kleinschreibung), nie per Teilstring:
+        „VTB Chemnitz" steckt sonst in „VTB Chemnitz 2". Die Mannschaftsart muss
+        mitpassen, sofern am Team gepflegt — derselbe Name existiert im Export
+        für unterschiedliche Altersklassen. Aliasse decken Spielgemeinschaften ab
+        und gelten unabhängig von der Mannschaftsart.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id FROM mannschaft m
+                WHERE m.deleted_at IS NULL AND m.dfbnet_name IS NOT NULL
+                  AND lower(m.dfbnet_name) = lower(%(name)s)
+                  AND (m.dfbnet_mannschaftsart IS NULL OR %(art)s::text IS NULL
+                       OR lower(m.dfbnet_mannschaftsart) = lower(%(art)s))
+                UNION
+                SELECT al.mannschaft_id FROM mannschaft_dfbnet_alias al
+                JOIN mannschaft m2 ON m2.id = al.mannschaft_id AND m2.deleted_at IS NULL
+                WHERE al.deleted_at IS NULL AND lower(al.name) = lower(%(name)s)
+                LIMIT 2
+                """,
+                {"name": name, "art": mannschaftsart},
+            )
+            treffer = cur.fetchall()
+        if len(treffer) != 1:      # 0 = unbekannt, >1 = mehrdeutig -> Importbericht
+            return None
+        return self.get(treffer[0]['id'])
