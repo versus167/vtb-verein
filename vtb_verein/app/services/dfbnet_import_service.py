@@ -131,6 +131,9 @@ class ImportBericht:
     unbekannte_teams: list = field(default_factory=list)
     # [{name, dfbnet_nr, strasse, plz, ort, untergrund, parallel_moeglich, anzahl}]
     neue_spielstaetten: list = field(default_factory=list)
+    # Bekannte Plätze, deren Stammdaten vom Export abweichen:
+    # [{id, name, dfbnet_nr, version, felder: [{feld, app, dfbnet}]}]
+    abweichende_spielstaetten: list = field(default_factory=list)
     fehler: list = field(default_factory=list)         # Zeilen, die nicht lesbar waren
 
     @property
@@ -202,6 +205,33 @@ def untergrund(platztyp: str) -> Optional[str]:
     if not wert:
         return None
     return _UNTERGRUND_KURZ.get(wert.lower(), wert)
+
+
+# Stammdatenfelder, die der Export mitbringt. Der NAME ist bewusst nicht dabei:
+# Wie der Verein seinen Platz nennt („Käfig"), ist seine Sache — das DFBnet
+# schreibt dort seine eigene Bezeichnung.
+_STAETTE_FELDER = ('strasse', 'plz', 'ort', 'untergrund', 'parallel_moeglich')
+
+
+def _staette_soll(spiel) -> dict:
+    """Stammdaten der Spielstätte, wie sie im Export stehen."""
+    return {'strasse': spiel.strasse or None, 'plz': spiel.plz or None,
+            'ort': spiel.ort or None, 'untergrund': untergrund(spiel.platztyp),
+            'parallel_moeglich': spiel.parallel_moeglich}
+
+
+def _staette_abweichungen(staette, spiel) -> list[dict]:
+    """Felder, in denen der Platz vom Export abweicht.
+
+    Leere Export-Werte zählen nicht: Fehlt im Spielplan die Hausnummer, ist das
+    kein Grund, eine gepflegte Adresse zu löschen. Umgekehrt ist ein leeres Feld
+    in der App der häufigste Fall — Bestandsplätze kennen den Belag noch nicht.
+    """
+    ist = {f: getattr(staette, f) for f in _STAETTE_FELDER}
+    soll = _staette_soll(spiel)
+    return [{'feld': f, 'app': ist[f], 'dfbnet': soll[f]}
+            for f in _STAETTE_FELDER
+            if soll[f] not in (None, '') and ist[f] != soll[f]]
 
 
 def _zahl(wert: str, standard: int = 1) -> int:
@@ -301,6 +331,7 @@ def dry_run(db, daten: bytes) -> ImportBericht:
 
     unbekannt: Counter = Counter()
     neue_staetten: dict = {}
+    andere_staetten: dict = {}
 
     for s in spiele:
         heim_team = db.mannschaften.find_by_dfbnet(s.heim, s.mannschaftsart) if s.heim else None
@@ -317,6 +348,16 @@ def dry_run(db, daten: bytes) -> ImportBericht:
                 'parallel_moeglich': s.parallel_moeglich, 'anzahl': 0,
             })
             eintrag['anzahl'] += 1
+        elif staette is not None and staette.platzhalter is None:
+            # Bekannter Platz: Stammdaten gegen den Export halten. Geschrieben
+            # wird nichts — der Bericht bietet die Übernahme je Platz an.
+            abweichungen = _staette_abweichungen(staette, s)
+            if abweichungen:
+                andere_staetten[staette.id] = {
+                    'id': staette.id, 'name': staette.name,
+                    'dfbnet_nr': staette.dfbnet_nr, 'version': staette.version,
+                    'felder': abweichungen,
+                }
 
         if heim_team is None and gast_team is None:
             # Kein eigenes Team. Eigener Platz? Dann Platzbelegung, sonst irrelevant.
@@ -365,6 +406,8 @@ def dry_run(db, daten: bytes) -> ImportBericht:
     ]
     bericht.neue_spielstaetten = sorted(
         neue_staetten.values(), key=lambda e: (-e['anzahl'], e['name']))
+    bericht.abweichende_spielstaetten = sorted(
+        andere_staetten.values(), key=lambda e: e['name'])
     return bericht
 
 
@@ -381,6 +424,7 @@ class UebernahmeErgebnis:
     entfallen: int = 0                                 # im Export nicht mehr enthalten
     konflikte: list = field(default_factory=list)      # [{termin_id, mannschaft, felder}]
     ohne_spielstaette: list = field(default_factory=list)   # [{spielkennung, name, nr}]
+    spielstaetten_aktualisiert: int = 0
     bericht: Optional[ImportBericht] = None
 
 
@@ -432,6 +476,26 @@ def _stand_mit_platz(stand: dict, staette) -> dict:
     if staette is None:
         return stand
     return {**stand, 'spielstaette_id': staette.id}
+
+
+def _staetten_nachziehen(db, bericht: ImportBericht, *, actor: str) -> int:
+    """Stammdaten bekannter Plätze auf den Export ziehen.
+
+    Anders als beim Termin gibt es hier nichts zu entscheiden: Anschrift, Belag
+    und Kapazität eines Platzes stehen im DFBnet, das ist die offizielle Quelle.
+    Der NAME bleibt außen vor — wie der Verein seinen Platz nennt („Käfig"), ist
+    seine Sache, und für die Zuordnung zählt ohnehin nur die DFBnet-Nummer.
+    """
+    geaendert = 0
+    for eintrag in bericht.abweichende_spielstaetten:
+        staette = db.spielstaetten.get(eintrag['id'])
+        if staette is None:
+            continue
+        for f in eintrag['felder']:
+            setattr(staette, f['feld'], f['dfbnet'])
+        if db.spielstaetten.update(staette.id, staette, actor, staette.version):
+            geaendert += 1
+    return geaendert
 
 
 def _melde_abweichungen(db, termin, entscheiden: dict, staette, *,
@@ -499,6 +563,7 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
     """
     bericht = dry_run(db, daten)
     ergebnis = UebernahmeErgebnis(bericht=bericht)
+    ergebnis.spielstaetten_aktualisiert = _staetten_nachziehen(db, bericht, actor=actor)
 
     for befund in bericht.befunde:
         if befund.einordnung not in (NEU, AENDERUNG, UNVERAENDERT):

@@ -221,6 +221,25 @@ def test_untergrund_landet_auch_in_der_history(db):
         (1, 'Rasen'), (2, 'Kunstrasen')]
 
 
+def test_repository_reicht_alle_felder_durch(db):
+    """create/update setzen die Werte positionsgetreu zu _EDIT_FIELDS ein. Kommt
+    ein Feld dazu, ohne dass das Werte-Tupel mitzieht, scheitert schon das
+    Anlegen — die übrigen Tests merken davon nichts, weil sie per SQL einfügen.
+    """
+    from app.models.spielstaette import Spielstaette
+
+    neu = db.spielstaetten.create(
+        Spielstaette(name='Belag-Test', strasse='Musterweg 1', plz='09111',
+                     ort='Musterstadt', untergrund='Rasen', parallel_moeglich=2),
+        _MARKE)
+    assert (neu.untergrund, neu.parallel_moeglich) == ('Rasen', 2)
+    assert (neu.strasse, neu.plz, neu.ort) == ('Musterweg 1', '09111', 'Musterstadt')
+
+    neu.untergrund = 'Kunstrasen'
+    assert db.spielstaetten.update(neu.id, neu, _MARKE, neu.version) is True
+    assert db.spielstaetten.get(neu.id).untergrund == 'Kunstrasen'
+
+
 def test_untergrund_ist_freiwillig(db):
     """Bestandsplätze haben keinen Belag hinterlegt – NULL muss erlaubt bleiben."""
     with _cur(db) as cur:
