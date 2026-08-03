@@ -9,9 +9,13 @@
         <div class="text-weight-bold" style="line-height:1.2">{{ tagMonat(datumIso) }}</div>
       </div>
       <div class="col termin-card__titel text-white">
-        <div class="text-subtitle1 text-weight-bold ellipsis">{{ terminTitel(termin) }}</div>
-        <!-- Ort/Bemerkung mit in der Kopfzeile, „wenn Platz ist" (Ellipsis) -->
-        <div v-if="untertitel" class="text-caption ellipsis" style="opacity:.85">
+        <div class="text-subtitle1 text-weight-bold termin-card__zeilen">
+          {{ terminTitel(termin) }}
+        </div>
+        <!-- Ort/Bemerkung mit in der Kopfzeile. Umbruch statt einzeilig: Adressen
+             wie „Sportplatz am Jahnhaus, Rußdorfer Straße 10, 09212 Limbach-O."
+             passen auf dem Handy in keine Zeile. -->
+        <div v-if="untertitel" class="text-caption termin-card__zeilen" style="opacity:.85">
           {{ untertitel }}
         </div>
       </div>
@@ -113,6 +117,18 @@
         <span class="q-ml-xs text-weight-medium">{{ zaehler(a.key) }}</span>
         <q-tooltip>{{ a.label }}</q-tooltip>
       </q-btn>
+      <!-- Route zum Spielort: als echter Link, damit das Gerät seine Navi-App
+           anbietet. Hier unten statt in einer eigenen Zeile — in der Leiste ist
+           Platz, und die Trefferfläche stimmt fürs Handy. -->
+      <template v-if="kartenZiel">
+        <q-separator vertical />
+        <q-btn class="col-auto q-px-md" flat dense icon="directions" color="grey-8"
+          type="a" :href="kartenZiel"
+          :target="kartenZiel.startsWith('http') ? '_blank' : undefined"
+          rel="noopener" @click.stop>
+          <q-tooltip>Route zum Ort</q-tooltip>
+        </q-btn>
+      </template>
       <q-separator vertical />
       <q-btn class="col-auto q-px-md" flat dense icon="groups" color="grey-8"
         @click="kaderOffen = true">
@@ -126,7 +142,8 @@
 
     <TerminAbweichungDialog v-if="darfVerwalten" v-model="abweichungOffen"
       :termin-id="termin.id" :darf-verwalten="darfVerwalten"
-      :extern-diff="externDiff" @geaendert="emit('reload')" />
+      :extern-diff="externDiff" :termin-version="termin.version"
+      @geaendert="emit('reload')" />
   </q-card>
 </template>
 
@@ -136,7 +153,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import TerminKaderDialog from 'components/TerminKaderDialog.vue'
 import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
-import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat,
+import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat, kartenLink,
          abweichungFeldLabel, abweichungWert } from 'src/composables/useTermine'
 
 const props = defineProps({
@@ -169,6 +186,8 @@ const untertitel = computed(() => {
 // Ort steht im Kopf – hier nur noch der Treffpunkt
 const metaText = computed(() =>
   props.termin.treffpunkt ? `Treffpunkt: ${props.termin.treffpunkt}` : '')
+// Navigation zum Spielort; leer, solange kein Ort am Termin steht.
+const kartenZiel = computed(() => kartenLink(props.termin.ort, $q.platform.is))
 
 function zaehler(key) {
   return props.termin.zusagen?.[key] ?? 0
@@ -211,6 +230,11 @@ async function senden(key, kommentar, zuruecknehmen = false) {
 .termin-card {
   border-radius: 12px;
   overflow: hidden;
+  // Die Liste ist ein Flex-Column-Container: Ohne min-width:0 klebt die Karte an
+  // ihrer min-content-Breite und sprengt auf dem Handy den Bildschirm — sichtbar
+  // als seitlich scrollende Terminliste.
+  min-width: 0;
+  max-width: 100%;
 }
 .termin-card--abgesagt .termin-card__titel .text-subtitle1 {
   text-decoration: line-through;
@@ -225,6 +249,22 @@ async function senden(key, kommentar, zuruecknehmen = false) {
   align-self: stretch;
   padding: 6px 8px;
   background: rgba(0, 0, 0, 0.12);
+}
+.termin-card__titel {
+  min-width: 0;
+}
+// Titel und Ortszeile dürfen umbrechen (zwei Zeilen, dann gekürzt). Einzeilig mit
+// Ellipsis war die Ursache des Breitenproblems: `white-space: nowrap` macht den
+// ganzen Text zur min-content-Breite, an der die Karte als Flex-Item hängen
+// bleibt. `anywhere` bricht notfalls auch innerhalb langer Straßennamen.
+.termin-card__zeilen {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .termin-card__zeiten {
   padding: 10px 8px;
