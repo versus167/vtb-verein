@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.models.permission import Permission
 from app.services.spg_import_service import run_import
+from app.services.dfbnet_import_service import dry_run as dfbnet_dry_run
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/import", tags=["import"])
@@ -33,3 +34,31 @@ async def import_spg(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
     return asdict(result)
+
+
+@router.post("/dfbnet/vorschau")
+async def dfbnet_vorschau(
+    user: CurrentUser,
+    db: DB,
+    file: UploadFile = File(...),
+):
+    """DFBnet-Vereinsspielplan einlesen und melden, was ein Lauf tun würde.
+
+    Diese Stufe schreibt NICHTS – sie ordnet nur zu (Etappe 2). Zugriff wie beim
+    übergreifenden Terminverwalten; Admins ohnehin.
+    """
+    if not user.has_permission(Permission.TERMINE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, Spielpläne zu importieren")
+    daten = await file.read()
+    if not daten:
+        raise HTTPException(status_code=422, detail="Leere Datei")
+    try:
+        bericht = dfbnet_dry_run(db, daten)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Spielplan nicht lesbar: {e}")
+    ergebnis = asdict(bericht)
+    ergebnis['zusammenfassung'] = bericht.zusammenfassung
+    return ergebnis

@@ -75,6 +75,21 @@ class TerminRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
+    def get_by_extern_ref(self, extern_ref: str) -> Optional[Termin]:
+        """Termin zu einer DFBnet-Spielkennung (#95, Spielplan-Import).
+
+        Der partielle Unique-Index über extern_ref sichert zu, dass es höchstens
+        einen lebenden Treffer gibt.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"SELECT {_COLS} FROM termine "
+                "WHERE extern_ref = %s AND deleted_at IS NULL",
+                (extern_ref,),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
     def list_for_mannschaft(self, mannschaft_id: int, von: Optional[str] = None,
                             bis: Optional[str] = None) -> list[Termin]:
         """Aktive Termine einer Mannschaft, optional gefiltert auf beginn im
