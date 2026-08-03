@@ -166,7 +166,13 @@ class MannschaftRepository(BaseRepository):
 
     def list_kandidaten(self, mannschaft_id: int) -> list[dict]:
         """Mitglieder der Abteilung dieses Teams, die noch NICHT im Team sind, samt ihren
-        aktuellen Teamnamen. Für das Sammel-Hinzufügen zum Kader."""
+        aktuellen Teamnamen. Für das Sammel-Hinzufügen zum Kader.
+
+        Ausgetretene bleiben draußen: Eine Kaderzuordnung gehört zur laufenden
+        Vereinsmitgliedschaft, ihr Beginn darf nicht nach dem Austritt liegen
+        (``mitgliedschaft.pruefe_von_in_mitgliedschaft``). Wer hier auftaucht, ohne
+        hinzufügbar zu sein, produziert nur eine Fehlermeldung. Stichtag ist heute,
+        wie bei der Statistik: Austritt genau heute zählt noch als Mitglied."""
         with self.cursor() as cur:
             cur.execute("SELECT abteilung_id FROM mannschaft WHERE id=%s AND deleted_at IS NULL",
                         (mannschaft_id,))
@@ -182,6 +188,8 @@ class MannschaftRepository(BaseRepository):
                           WHERE mm.mitglied_id = m.id AND mm.deleted_at IS NULL AND t.deleted_at IS NULL) AS teams
                 FROM mitglied m
                 WHERE m.deleted_at IS NULL
+                  AND (safe_to_date(m.austrittsdatum) IS NULL
+                       OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)
                   AND EXISTS (SELECT 1 FROM mitglied_abteilung ma
                                WHERE ma.mitglied_id = m.id AND ma.abteilung_id = %s AND ma.deleted_at IS NULL)
                   AND NOT EXISTS (SELECT 1 FROM mitglied_mannschaft mmx
