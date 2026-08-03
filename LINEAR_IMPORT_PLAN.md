@@ -6,6 +6,9 @@
 >
 > **Keine Echtdaten im Repo:** Der Muster-Export enthält Namen, Adressen und
 > Bankverbindungen realer Mitglieder. Alle Beispiele hier sind erfunden.
+>
+> Falls die Daten aus einem anderen Verein stammen und in einer eigenen
+> Installation enden sollen: `ZWEITE_INSTANZ.md`.
 
 ## Kernidee
 
