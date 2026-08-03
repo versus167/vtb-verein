@@ -161,7 +161,33 @@ Spiele werden also einfach nachgezogen.
   Freitext daneben bestehen, für alles, was keine Stammdaten verdient.
 - Damit ist die Zuordnung auch bei **Trainingsserien** zu führen: eine
   wöchentliche Serie erzeugt beim Materialisieren Belegungen, die im Plan
-  auftauchen müssen.
+  auftauchen müssen. Die Spielstätte gehört also an die Serie, die erzeugten
+  Termine erben sie.
+
+### Pflichtfeld ab sofort, nicht rückwirkend
+
+Die Spielstätte wird bei **jedem Speichern** verlangt — bei neuen Terminen wie
+bei jeder Änderung an einem bestehenden. Bestandstermine werden *nicht*
+nachträglich befüllt; sie ziehen nach, sobald sie das nächste Mal angefasst
+werden.
+
+Zwei Konsequenzen für die Umsetzung:
+
+1. **In der Datenbank bleibt die Spalte nullable**, erzwungen wird sie in der
+   API-/Service-Schicht. Ein `NOT NULL` wäre bei der Migration nicht
+   einlösbar — für die Altbestände gibt es keinen Wert, den man erfinden
+   dürfte, und der Import kann ihn nur für Spiele nachliefern.
+2. **Es braucht eine ausdrückliche Auswahl „kein Vereinsgelände"**, sonst
+   zwingt das Pflichtfeld dazu, für jeden Waldlauf und jede fremde Halle einen
+   Stammdatensatz anzulegen. Als bewusste Antwort statt als stilles Leerfeld:
+   Danach weiß der Belegungsplan, dass dieser Termin *keine* Lücke ist, sondern
+   woanders stattfindet — genau die Unterscheidung, die ihn erst belastbar
+   macht.
+
+Importierte Spiele bringen ihre Spielstätte aus dem DFBnet mit, dort stellt sich
+die Frage nicht. Umgekehrt gehört die Spielstätte damit zu den Feldern, die im
+Drei-Wege-Abgleich verglichen werden — eine Platzverlegung ist eine Änderung wie
+Zeit oder Heimrecht.
 
 ### Teilung oder Doppelbelegung?
 
@@ -223,9 +249,6 @@ dem Freitext ein Katalog wird.
 - **Wie oft läuft der Import** — Datei-Upload von Hand oder regelmäßig? Bei
   regelmäßigem Lauf ist die Abweichungs-Tabelle Pflicht; bei reinem Handbetrieb
   ginge auch eine Vorschau mit Häkchen pro Zeile.
-- **Wer pflegt die Spielstätte am Termin?** Die Zuordnung im Trainings-Dialog
-  ist eine zusätzliche Pflicht für Übungsleiter. Pflichtfeld für eigene Plätze,
-  oder freiwillig mit dem Preis, dass der Belegungsplan Lücken hat?
 - **Platzwarte als Rolle**: eigene Funktion im Funktionskatalog oder
   individuelle Grants? Davon hängt ab, ob der Zugriff abteilungsweit
   eingegrenzt werden kann.
