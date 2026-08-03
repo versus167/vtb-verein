@@ -26,13 +26,9 @@
 **1. Nicht jede Zeile hat eine eigene Mannschaft.** Im Muster sind vier Zeilen
 Spiele *fremder* Vereine auf unserem Platz (Schönau – Platz Windweg,
 Guerickestr. 48) im Rahmen eines E-Junioren-Turniers. Der Vereinsspielplan ist
-eben auch ein **Platzbelegungsplan**.
-
-Daraus folgt eine Regel: Zeilen ohne eigene Mannschaft standardmäßig
-überspringen — optional als „Platzbelegung/Sperrtermin" führen, damit der Platz
-nicht doppelt verplant wird. Erkennung über die **Spielstätten-Nr.** (Liste der
-eigenen Plätze konfigurieren), nicht über die Adresse; die steht in wechselnder
-Schreibweise drin.
+eben auch ein **Platzbelegungsplan** — und die Zeilen werden gebraucht, s. u.
+Erkennung über die **Spielstätten-Nr.**, nicht über die Adresse; die steht in
+wechselnder Schreibweise drin.
 
 **2. Der Teamname ist nicht eindeutig.** „VTB Chemnitz 2" ist im selben Export
 sowohl die 2. Herren (1. Kreisklasse) als auch eine E-Junioren-Mannschaft. Ein
@@ -112,17 +108,64 @@ Der Export ist ein Zeitfenster-Auszug, kein Vollbestand — „fehlt" heißt nic
 vorkommenden Datumsbereichs, und Fehlendes wird als Abweichung „im DFBnet nicht
 mehr enthalten" gemeldet.
 
+## Platzbelegung — fremde Spiele auf unseren Plätzen
+
+Diese Zeilen werden **mitimportiert**, nicht verworfen. Später sollen die
+Platzwarte einen Lesezugriff auf den Belegungsplan bekommen; das ist ein
+eigener Schritt, hier wird nur die Grundlage dafür gelegt.
+
+**Nicht als Termin.** `termine.mannschaft_id` ist `NOT NULL`, und die gesamte
+Logik darum herum — Kader-ACL, Zu-/Absagen, Benachrichtigungen, „Meine
+Termine" — setzt eine Mannschaft voraus. Die Spalte nullable zu machen hieße,
+jede dieser Stellen auf den Sonderfall „Termin ohne Team" zu prüfen. Ein
+fremdes Spiel ist fachlich auch kein Termin des Vereins, sondern eine Belegung.
+Deshalb eine eigene Tabelle:
+
+- **`spielstaette`** (Stammdaten): Name, DFBnet-Spielstätten-Nr., Adresse,
+  Kennzeichen „eigener Platz". Braucht der Import ohnehin, um überhaupt zu
+  erkennen, welche Zeilen uns betreffen — und es ist die Liste, die der
+  Belegungsplan später als Spalten oder Filter nutzt.
+- **`platzbelegung`**: `spielstaette_id`, Beginn, Ende, Heim- und
+  Gastmannschaft, Liga/Staffel, `extern_ref` (Spielkennung), Quelle. Mit
+  Soft-Delete, History und Eintrag im **`PRUNE_REGISTRY`** (Kind der
+  Spielstätte).
+
+Für die Belegungen gilt derselbe Drei-Wege-Abgleich wie für Termine — nur ohne
+Konfliktfall, weil an fremden Spielen niemand in der App etwas ändert. Verlegte
+Spiele werden also einfach nachgezogen.
+
+**Vorbereitung für den Platzwart-Zugriff** (später umzusetzen):
+
+- Permission-Key `platzbelegung.read` — als Konstante in `permission.py`, im
+  Admin-Seed und per Migration für Bestands-Admins nachgezogen (Fresh ==
+  Upgrade, s. `CLAUDE.md`). Platzwarte bekommen ihn über eine Funktion oder
+  einen individuellen Grant, ohne Zugriff auf Mitglieder- oder Kaderdaten.
+- Die Ansicht zeigt **beides**: importierte Fremdspiele und eigene Heimspiele.
+  Letztere stecken in `termine` — die Ansicht ist also eine Vereinigung beider
+  Quellen, keine dritte Datenhaltung.
+
+**Eine Lücke, die dabei sichtbar wird:** Unsere Trainings stehen als Termine mit
+`ort` als freiem Text, ohne Bezug zu einer Spielstätte. Ein Belegungsplan, der
+nur Spiele kennt, zeigt den Platz als frei, obwohl dort trainiert wird. Wenn der
+Plan mehr sein soll als eine Spielübersicht, brauchen Termine später eine
+optionale `spielstaette_id` — das ist der eigentliche Umfang des
+Platzwart-Schritts, nicht die Leseberechtigung.
+
 ## Etappen
 
-1. **Team-Zuordnung**: Felder an der Mannschaft plus Alias-Liste, Pflege in der
-   Mannschaftsverwaltung.
+1. **Stammdaten + Team-Zuordnung**: Spielstätten (inkl. eigener Plätze),
+   `dfbnet_name`/`dfbnet_mannschaftsart` plus Alias-Liste an der Mannschaft,
+   Pflege in der Mannschaftsverwaltung.
 2. **Parser + Dry-Run**: Datei lesen, Zeilen zuordnen, Bericht „würde anlegen /
-   würde ändern / Konflikt / kein Team zugeordnet / fremdes Spiel". Schreibt
+   würde ändern / Konflikt / kein Team zugeordnet / Platzbelegung". Schreibt
    nichts.
 3. **Anlegen und unstrittige Übernahme**: `extern_ref`, Schnappschuss,
-   Benachrichtigung des Kaders bei Änderungen.
+   Benachrichtigung des Kaders bei Änderungen. Fremde Spiele laufen im selben
+   Lauf in die Platzbelegung.
 4. **Abweichungen**: Tabelle, Badge, Entscheidungs-Dialog.
-5. **Optional**: fremde Spiele als Platzbelegung, wiederkehrender Import.
+5. **Platzwart-Zugriff** (späterer Schritt): Permission-Key, Belegungsansicht
+   aus beiden Quellen, optionale `spielstaette_id` an Terminen, damit auch
+   Trainings im Plan stehen.
 
 ## Offene Fragen
 
@@ -138,5 +181,11 @@ mehr enthalten" gemeldet.
 - **Wie oft läuft der Import** — Datei-Upload von Hand oder regelmäßig? Bei
   regelmäßigem Lauf ist die Abweichungs-Tabelle Pflicht; bei reinem Handbetrieb
   ginge auch eine Vorschau mit Häkchen pro Zeile.
-- **Eigene Spielstätten**: Woher kommt die Liste der Spielstätten-Nummern —
-  Konfiguration, oder aus den Heimspielen der eigenen Teams ableiten?
+- **Spielstätten-Stammdaten**: von Hand pflegen, oder beim ersten Import aus
+  den vorkommenden Spielstätten vorschlagen und der Verein hakt die eigenen ab?
+- **Umfang des Belegungsplans**: nur die eigenen Plätze, oder auch fremde
+  Spielstätten, auf denen unsere Teams antreten (dann ist es eher ein
+  Auswärtsplan als eine Belegung)?
+- **Platzwarte als Rolle**: eigene Funktion im Funktionskatalog oder
+  individuelle Grants? Davon hängt ab, ob der Zugriff abteilungsweit
+  eingegrenzt werden kann.
