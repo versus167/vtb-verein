@@ -55,8 +55,11 @@
               </q-item-section>
               <q-item-section v-if="darfVerwalten" side>
                 <div class="row no-wrap q-gutter-xs">
+                  <!-- Gesetzte Antwort farbig, die übrigen gedimmt — so sieht man
+                       in der Liste sofort, was gewählt ist (#151) -->
                   <q-btn v-for="a in ANTWORTEN" :key="a.key" flat dense round :size="btnSize"
-                    :icon="a.icon" :color="p.antwort === a.key ? a.color : 'grey-5'"
+                    :icon="a.icon"
+                    :class="p.antwort === a.key ? `kader-antwort--${a.key}` : 'kader-antwort--aus'"
                     :disable="busy" @click="setFuer(p, a.key)">
                     <q-tooltip>{{ a.label }}</q-tooltip>
                   </q-btn>
@@ -189,6 +192,30 @@ async function setFuer(p, key) {
 </script>
 
 <style lang="scss" scoped>
+// ── Gesetzte Antwort farblich markieren (#151) ────────────────────────────
+// Nicht $positive/$negative direkt: die Flächen sind in beiden Modi dunkelblau
+// (Wappenblau im Hell-Look, Navy im Dark Mode), darauf saufen die satten Töne
+// ab — daher die aufgehellten Varianten aus quasar.variables.scss. Die übrigen
+// Daumen deutlich gedimmt, sonst hebt sich die Auswahl kaum ab.
+//
+// Die Farbe muss ans Icon selbst (:deep + !important): app.scss färbt
+// `.q-item .q-icon` auf blauen Flächen pauschal weiß — gegen diese Regel am
+// Icon kommt eine vom Button geerbte Farbe nicht an. Genau deshalb sahen hier
+// vorher alle drei Daumen gleich aus.
+.kader-antwort {
+  &--zu :deep(.q-icon) {
+    color: $status-gruen-hell !important;
+  }
+  &--vielleicht :deep(.q-icon) {
+    color: $status-gelb-hell !important;
+  }
+  &--ab :deep(.q-icon) {
+    color: $status-rot-hell !important;
+  }
+  &--aus :deep(.q-icon) {
+    color: rgba(255, 255, 255, 0.38) !important;
+  }
+}
 .kader-dialog__name {
   font-size: 15px;
 }

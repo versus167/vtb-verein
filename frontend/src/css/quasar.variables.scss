@@ -34,3 +34,11 @@ $positive: #21ba45;
 $negative: #c10015;
 $info: #31ccec;
 $warning: #f2c037;
+
+// Aufgehellte Status-Töne für farbige Markierungen AUF den Inhaltsflächen —
+// die sind in beiden Modi dunkelblau ($vtb-blau im Hell-Look, $vtb-navy-flaeche
+// im Dark Mode), dort saufen $positive/$negative ab. Gleiche Töne wie die
+// Status-Remaps in app.scss. Genutzt für die Zu-/Absage-Farben (Ticket #151).
+$status-gruen-hell: #7ee2a8;
+$status-gelb-hell: #f2c037;
+$status-rot-hell: #ff8a80;
