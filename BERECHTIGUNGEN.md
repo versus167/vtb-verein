@@ -59,6 +59,12 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 ### Was NICHT über dieses System läuft
 
 - **Kassen**: objektbezogen über `kasse_berechtigungen` (pro Kasse).
+- **Termine**: der Regelfall läuft über den Kader (`mitglied_mannschaft`) –
+  Betreuer/ÜL verwalten die Termine *ihrer* Mannschaft, aktive Kader-Mitglieder
+  lesen sie. Der globale Key `termine.verwalten` ist die vereinsweite Ausnahme
+  (alle Mannschaften, dazu der DFBnet-Spielplan-Import) und steht seit
+  v2026.08.03.159 als eigene Gruppe „Termine" in der Matrix; davor war er nur
+  per SQL vergebbar.
 - **Ticket-Bereiche**: objektbezogen über `ticket_bereich_berechtigungen`.
   Beide bleiben bewusst eigenständig.
   Daraus abgeleitet der Aufgaben-Hinweis (#133,

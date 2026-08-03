@@ -95,6 +95,17 @@ PERMISSION_GROUPS = [
         ],
     },
     {
+        'label': 'Termine', 'icon': 'event',
+        'permissions': [
+            # Der reguläre Zugriff läuft NICHT hierüber, sondern über den Kader:
+            # Betreuer/ÜL verwalten die Termine ihrer Mannschaft, Kader-Mitglieder
+            # lesen sie. Dieses Recht gilt vereinsweit für ALLE Mannschaften und
+            # schaltet zusätzlich den DFBnet-Spielplan-Import frei.
+            (Permission.TERMINE_VERWALTEN,
+             'Alle Termine verwalten (inkl. Spielplan-Import)'),
+        ],
+    },
+    {
         'label': 'Tickets', 'icon': 'confirmation_number',
         'permissions': [
             (Permission.TICKETS_ACCESS,             'Zugang'),
