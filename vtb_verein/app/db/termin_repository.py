@@ -12,6 +12,8 @@ mitglied_mannschaft (von ist dort NOT NULL, bis optional).
 from datetime import date
 from typing import Optional
 
+from psycopg.types.json import Jsonb
+
 from app.models.termin import Termin
 from app.db.base_repository import BaseRepository
 
@@ -36,8 +38,9 @@ _KADER_CTE = """
 """
 
 _COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, treffpunkt, "
-         "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
-         "version, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
+         "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, extern_stand, status, "
+         "beschreibung, version, created_at, created_by, updated_at, updated_by, "
+         "deleted_at, deleted_by")
 
 # Änderbare Fachfelder (create/update) – status/extern_ref/serie_id laufen bewusst
 # über eigene Wege (set_status bzw. späterer Import/Serien-Code).
@@ -54,7 +57,8 @@ def _map(row) -> Termin:
         spielstaette_name=row.get('spielstaette_name'),
         treffpunkt=row['treffpunkt'], treffpunkt_zeit=row['treffpunkt_zeit'],
         gegner=row['gegner'], heim_auswaerts=row['heim_auswaerts'],
-        extern_ref=row['extern_ref'], status=row['status'],
+        extern_ref=row['extern_ref'], extern_stand=row['extern_stand'],
+        status=row['status'],
         beschreibung=row['beschreibung'], version=row['version'],
         created_at=row['created_at'], created_by=row['created_by'],
         updated_at=row['updated_at'], updated_by=row['updated_by'],
@@ -410,3 +414,73 @@ class TerminRepository(BaseRepository):
                 (deleted_by, termin_id),
             )
             return cur.rowcount > 0
+
+    # ------------------------------------------------- Spielplan-Import (#95)
+    def create_aus_import(self, mannschaft_id: int, *, beginn: str,
+                          ort: Optional[str], spielstaette_id: int,
+                          gegner: Optional[str], heim_auswaerts: Optional[str],
+                          beschreibung: Optional[str], extern_ref: str,
+                          extern_stand: dict, created_by: str) -> Termin:
+        """Spiel aus dem DFBnet anlegen – mit Kennung und Schnappschuss.
+
+        Eigener Weg statt `create`, weil extern_ref/extern_stand bewusst nicht in
+        den änderbaren Fachfeldern stehen: Sie gehören dem Import, nicht dem
+        Formular.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO termine (mannschaft_id, typ, beginn, ort, spielstaette_id,
+                    gegner, heim_auswaerts, beschreibung, extern_ref, extern_stand,
+                    created_by, updated_by)
+                VALUES (%(m)s, 'spiel', %(beginn)s, %(ort)s, %(sst)s, %(gegner)s,
+                        %(ha)s, %(besch)s, %(ref)s, %(stand)s, %(usr)s, %(usr)s)
+                RETURNING id
+                """,
+                {"m": mannschaft_id, "beginn": beginn, "ort": ort,
+                 "sst": spielstaette_id, "gegner": gegner, "ha": heim_auswaerts,
+                 "besch": beschreibung, "ref": extern_ref,
+                 "stand": Jsonb(extern_stand), "usr": created_by},
+            )
+            neu_id = cur.fetchone()['id']
+        return self.get(neu_id)
+
+    def update_aus_import(self, termin_id: int, *, beginn: str, ort: Optional[str],
+                          spielstaette_id: int, gegner: Optional[str],
+                          heim_auswaerts: Optional[str], extern_stand: dict,
+                          updated_by: str, expected_version: int) -> bool:
+        """Termin auf den neuen DFBnet-Stand heben und den Schnappschuss mitziehen.
+
+        Treffpunkt, Treffpunktzeit und Beschreibung bleiben unberührt — die pflegt
+        das Team.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE termine SET beginn=%(beginn)s, ort=%(ort)s,
+                    spielstaette_id=%(sst)s, gegner=%(gegner)s,
+                    heim_auswaerts=%(ha)s, extern_stand=%(stand)s,
+                    updated_at=CURRENT_TIMESTAMP, updated_by=%(usr)s,
+                    version=version+1
+                WHERE id=%(id)s AND deleted_at IS NULL AND version=%(ver)s
+                """,
+                {"beginn": beginn, "ort": ort, "sst": spielstaette_id,
+                 "gegner": gegner, "ha": heim_auswaerts,
+                 "stand": Jsonb(extern_stand), "usr": updated_by,
+                 "id": termin_id, "ver": expected_version},
+            )
+            return cur.rowcount > 0
+
+    def set_extern_stand(self, termin_id: int, extern_stand: dict) -> None:
+        """Schnappschuss nachtragen, ohne den Termin fachlich zu ändern.
+
+        Für den Fall „App und DFBnet sagen dasselbe, es fehlt nur der Stand":
+        bewusst OHNE version-Bump und ohne updated_by – fachlich ist nichts
+        passiert, und eine History-Zeile für eine reine Buchhaltungsnotiz wäre
+        irreführend.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE termine SET extern_stand = %s WHERE id = %s AND deleted_at IS NULL",
+                (Jsonb(extern_stand), termin_id),
+            )

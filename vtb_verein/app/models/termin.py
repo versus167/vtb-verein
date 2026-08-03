@@ -29,6 +29,9 @@ class Termin:
     gegner: Optional[str]             # nur typ='spiel'
     heim_auswaerts: Optional[str]     # 'heim' | 'auswaerts', nur typ='spiel'
     extern_ref: Optional[str]         # DFBnet-Spielkennung (Etappe 3)
+    # Zuletzt importierter Stand der Vergleichsfelder – Grundlage des
+    # Drei-Wege-Abgleichs (nur der Import schreibt ihn).
+    extern_stand: Optional[dict]
     status: str                       # 'geplant' | 'abgesagt'
     beschreibung: Optional[str]
     version: int

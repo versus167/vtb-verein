@@ -250,3 +250,120 @@ def test_dry_run_schreibt_nichts(db, stammdaten):
     with _cur(db) as cur:
         cur.execute("SELECT count(*) AS n FROM termine")
         assert cur.fetchone()['n'] == vorher
+
+
+# --------------------------------------------------------- Übernahme (Etappe 3)
+
+def _stand(db, termin_id):
+    with _cur(db) as cur:
+        cur.execute("SELECT extern_stand FROM termine WHERE id = %s", (termin_id,))
+        return cur.fetchone()['extern_stand']
+
+
+def test_uebernahme_legt_das_spiel_an(db, stammdaten):
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    assert (ergebnis.angelegt, ergebnis.aktualisiert) == (1, 0)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    assert termin is not None
+    assert termin.typ == 'spiel'
+    assert termin.beginn == '2026-08-15T15:00'
+    assert termin.heim_auswaerts == 'heim'
+    assert termin.gegner == 'SV Fremd'
+    assert termin.spielstaette_id == stammdaten['platz']
+    # Schnappschuss wird gleich mitgeschrieben – Basis des naechsten Abgleichs
+    assert termin.extern_stand['beginn'] == '2026-08-15T15:00'
+
+
+def test_zweiter_lauf_ohne_aenderung_tut_nichts(db, stammdaten):
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    zweiter = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    assert (zweiter.angelegt, zweiter.aktualisiert, zweiter.uebersprungen) == (0, 0, 0)
+
+
+def test_verlegung_wird_uebernommen_wenn_die_app_unberuehrt_ist(db, stammdaten):
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert ergebnis.aktualisiert == 1
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    assert termin.beginn == '2026-08-15T17:30'
+    assert termin.extern_stand['beginn'] == '2026-08-15T17:30'   # Stand zieht mit
+
+
+def test_vom_team_geaenderter_termin_wird_nicht_ueberschrieben(db, stammdaten):
+    """Der Kern des Drei-Wege-Abgleichs: DFBnet und App haben beide geaendert."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    db.termine.update(termin.id, 'spiel', '2026-08-15T16:00', None, termin.ort,
+                      None, None, termin.gegner, termin.heim_auswaerts, None,
+                      'trainer', termin.version, spielstaette_id=termin.spielstaette_id)
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert ergebnis.aktualisiert == 0
+    assert len(ergebnis.konflikte) == 1
+    assert ergebnis.konflikte[0]['grund'] == 'Termin wurde in der App geändert'
+    # Die Aenderung des Teams bleibt stehen
+    assert db.termine.get(termin.id).beginn == '2026-08-15T16:00'
+
+
+def test_nur_die_app_hat_geaendert_bleibt_unangetastet(db, stammdaten):
+    """DFBnet unveraendert: kein erneutes Nachfragen, kein Ueberschreiben."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    db.termine.update(termin.id, 'spiel', '2026-08-15T16:00', None, termin.ort,
+                      None, None, termin.gegner, termin.heim_auswaerts, None,
+                      'trainer', termin.version, spielstaette_id=termin.spielstaette_id)
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    assert (ergebnis.aktualisiert, ergebnis.konflikte) == (0, [])
+    assert db.termine.get(termin.id).beginn == '2026-08-15T16:00'
+
+
+def test_termin_ohne_schnappschuss_wird_nur_nachgetragen(db, stammdaten):
+    """Von Hand angelegter Termin: ohne Basis wird nichts ueberschrieben."""
+    termin_id = _termin_anlegen(db, stammdaten['erste'], stammdaten['platz'])
+    assert _stand(db, termin_id) is None
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    assert ergebnis.stand_nachgetragen == 1
+    assert _stand(db, termin_id)['beginn'] == '2026-08-15T15:00'
+
+
+def test_ohne_schnappschuss_und_mit_abweichung_wird_gemeldet_statt_geschrieben(db, stammdaten):
+    termin_id = _termin_anlegen(db, stammdaten['erste'], stammdaten['platz'])
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert ergebnis.aktualisiert == 0
+    assert ergebnis.konflikte[0]['grund'] == 'kein Vergleichsstand aus einem früheren Import'
+    assert db.termine.get(termin_id).beginn == '2026-08-15T15:00'
+
+
+def test_fehlende_spielstaette_wird_uebersprungen_und_gemeldet(db, stammdaten):
+    """Stammdaten legt der Import nicht selbst an – die Spielstaette ist Pflichtfeld."""
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{
+        'Spielstätte': 'Unbekannter Platz', 'Spielstätten-Nr.': '4000000004',
+        'Spielkennung': '900000005'})), actor=_MARKE)
+    assert ergebnis.angelegt == 0
+    assert ergebnis.uebersprungen == 1
+    assert ergebnis.ohne_spielstaette[0]['dfbnet_nr'] == '4000000004'
+
+
+def test_vereinsinternes_spiel_legt_zwei_termine_an(db, stammdaten):
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{
+        'Heimmannschaft': 'Testteam DFBnet',
+        'Gastmannschaft': 'Testteam DFBnet 2'})), actor=_MARKE)
+    assert ergebnis.angelegt == 2
+    erste = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    zweite = db.termine.get_by_extern_ref('900000001', stammdaten['zweite'])
+    assert (erste.heim_auswaerts, zweite.heim_auswaerts) == ('heim', 'auswaerts')
+    assert (erste.gegner, zweite.gegner) == ('Testteam DFBnet 2', 'Testteam DFBnet')
+
+
+def test_benachrichtigung_nur_mit_flag(db, stammdaten):
+    gerufen = []
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE,
+                       notify=lambda t, a, v: gerufen.append(a))
+    assert gerufen == []          # ohne benachrichtigen=True schweigt der Lauf
+
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Spielkennung': '900000007'})),
+                       actor=_MARKE, benachrichtigen=True,
+                       notify=lambda t, a, v: gerufen.append(a))
+    assert gerufen == ['neu']

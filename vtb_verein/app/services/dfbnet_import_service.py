@@ -1,8 +1,8 @@
-"""DFBnet-Vereinsspielplan: Parser und Dry-Run-Bericht (#95, Etappe 3 des Plans).
+"""DFBnet-Vereinsspielplan: Zuordnung, Vorschau und Übernahme (#95).
 
-Diese Stufe SCHREIBT NICHTS. Sie liest den Export, ordnet jede Zeile zu und liefert
-einen Bericht, was ein späterer Lauf tun würde. Das Anlegen/Ändern folgt getrennt —
-so lässt sich der Abgleich gefahrlos gegen echte Dateien prüfen.
+`dry_run` schreibt nichts und liefert je Zeile, was ein Lauf täte; `uebernehmen`
+führt genau das aus. Beide teilen sich die Zuordnung, damit „Vorschau = Aktion"
+gilt und nicht zwei Regelwerke auseinanderlaufen.
 
 Eigenheiten des Formats (alle drei kosten sonst Stunden):
 
@@ -307,3 +307,128 @@ def dry_run(db, daten: bytes) -> ImportBericht:
     bericht.neue_spielstaetten = sorted(
         neue_staetten.values(), key=lambda e: (-e['anzahl'], e['name']))
     return bericht
+
+
+# ----------------------------------------------------------------- Übernahme
+
+@dataclass
+class UebernahmeErgebnis:
+    angelegt: int = 0
+    aktualisiert: int = 0
+    stand_nachgetragen: int = 0
+    uebersprungen: int = 0
+    konflikte: list = field(default_factory=list)      # [{termin_id, mannschaft, felder}]
+    ohne_spielstaette: list = field(default_factory=list)   # [{spielkennung, name, nr}]
+    bericht: Optional[ImportBericht] = None
+
+
+def _neue_werte(befund: ZeilenBefund) -> dict:
+    s = befund.spiel
+    return {
+        'beginn': s.beginn,
+        'ort': s.ort_text,
+        'heim_auswaerts': befund.heim_auswaerts,
+        'gegner': s.gast if befund.heim_auswaerts == 'heim' else s.heim,
+    }
+
+
+def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
+                notify=None) -> UebernahmeErgebnis:
+    """Spielplan übernehmen — nach dem Drei-Wege-Abgleich.
+
+    Verglichen wird nicht App gegen Datei, sondern jeweils gegen den zuletzt
+    importierten Stand (`extern_stand`). Daraus die drei Fälle:
+
+    * DFBnet geändert, App unberührt  -> übernehmen (und Kader benachrichtigen)
+    * DFBnet geändert, App auch       -> NICHT anfassen, als Konflikt melden
+    * nur die App geändert            -> nichts tun; das Team weicht bewusst ab
+
+    Fehlt der Schnappschuss (Termin von Hand angelegt oder aus der Zeit vor v83),
+    wird bei Gleichstand nur der Stand nachgetragen und sonst nichts geändert —
+    ohne Basis lässt sich nicht sagen, wer etwas geändert hat, und Raten wäre hier
+    teurer als Nachfragen.
+
+    ``notify`` ist injizierbar, damit der Aufruf ohne Mailversand testbar bleibt.
+    """
+    bericht = dry_run(db, daten)
+    ergebnis = UebernahmeErgebnis(bericht=bericht)
+
+    for befund in bericht.befunde:
+        if befund.einordnung not in (NEU, AENDERUNG, UNVERAENDERT):
+            continue      # Platzbelegung/fremd schreibt diese Etappe noch nicht
+
+        spiel = befund.spiel
+        staette = (db.spielstaetten.get_by_dfbnet_nr(spiel.spielstaetten_nr)
+                   if spiel.spielstaetten_nr else None)
+        if staette is None:
+            # Die Spielstätte ist Pflichtfeld am Termin – und Stammdaten legt der
+            # Import bewusst nicht selbst an (Muster wie beim SPG-Import). Der
+            # Bericht listet die fehlenden Plätze mitsamt Adresse zum Übernehmen.
+            ergebnis.ohne_spielstaette.append({
+                'spielkennung': spiel.spielkennung,
+                'name': spiel.spielstaette,
+                'dfbnet_nr': spiel.spielstaetten_nr,
+            })
+            ergebnis.uebersprungen += 1
+            continue
+
+        werte = _neue_werte(befund)
+
+        if befund.einordnung == NEU:
+            termin = db.termine.create_aus_import(
+                befund.mannschaft_id, beginn=werte['beginn'], ort=werte['ort'],
+                spielstaette_id=staette.id, gegner=werte['gegner'],
+                heim_auswaerts=werte['heim_auswaerts'],
+                beschreibung=_beschreibung(spiel), extern_ref=spiel.spielkennung,
+                extern_stand=werte, created_by=actor)
+            ergebnis.angelegt += 1
+            if benachrichtigen and notify:
+                notify(termin, 'neu', None)
+            continue
+
+        termin = db.termine.get(befund.termin_id)
+        if termin is None:                      # zwischenzeitlich gelöscht
+            ergebnis.uebersprungen += 1
+            continue
+
+        stand = termin.extern_stand
+        if not stand:
+            # Kein Vergleichsstand: nur nachtragen, wenn ohnehin alles gleich ist.
+            if befund.einordnung == UNVERAENDERT:
+                db.termine.set_extern_stand(termin.id, werte)
+                ergebnis.stand_nachgetragen += 1
+            else:
+                ergebnis.konflikte.append({
+                    'termin_id': termin.id, 'mannschaft': befund.mannschaft_name,
+                    'felder': [a['feld'] for a in befund.abweichungen],
+                    'grund': 'kein Vergleichsstand aus einem früheren Import'})
+                ergebnis.uebersprungen += 1
+            continue
+
+        dfbnet_geaendert = [f for f in VERGLEICHSFELDER if stand.get(f) != werte[f]]
+        app_geaendert = [f for f in VERGLEICHSFELDER
+                         if stand.get(f) != getattr(termin, f)]
+
+        if not dfbnet_geaendert:
+            continue                            # Quelle unverändert -> in Ruhe lassen
+        if app_geaendert:
+            ergebnis.konflikte.append({
+                'termin_id': termin.id, 'mannschaft': befund.mannschaft_name,
+                'felder': sorted(set(dfbnet_geaendert) | set(app_geaendert)),
+                'grund': 'Termin wurde in der App geändert'})
+            ergebnis.uebersprungen += 1
+            continue
+
+        vorher = termin
+        if db.termine.update_aus_import(
+                termin.id, beginn=werte['beginn'], ort=werte['ort'],
+                spielstaette_id=staette.id, gegner=werte['gegner'],
+                heim_auswaerts=werte['heim_auswaerts'], extern_stand=werte,
+                updated_by=actor, expected_version=termin.version):
+            ergebnis.aktualisiert += 1
+            if benachrichtigen and notify:
+                notify(db.termine.get(termin.id), 'geaendert', vorher)
+        else:
+            ergebnis.uebersprungen += 1
+
+    return ergebnis

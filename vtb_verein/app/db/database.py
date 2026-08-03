@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 82
+SCHEMA_VERSION = 83
 
 
 # ---------------------------------------------------------------------------
@@ -2197,7 +2197,8 @@ _PUSH_SUBSCRIPTIONS_INDEXES = (
 # ============================================================================
 _TERMINE_COLS = (
     "id, version, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, "
-    "treffpunkt, treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
+    "treffpunkt, treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, extern_stand, "
+    "status, beschreibung, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TERMINE_VALS = ", ".join("NEW." + c.strip() for c in _TERMINE_COLS.split(","))
@@ -2268,6 +2269,17 @@ _TERMINE_INDEXES = (
 # zwei eigene Mannschaften aufeinander, braucht JEDE einen eigenen Termin, sonst
 # kann nur ein Kader zu-/absagen. Eindeutig ist deshalb das Paar aus Mannschaft und
 # Spielkennung (Schema v82; vorher global über extern_ref).
+# Schnappschuss des zuletzt importierten Stands (Schema v83, Ticket #95).
+#
+# Ohne ihn ließe sich „das DFBnet hat sich geändert" nicht von „das Team hat den
+# Termin angepasst" unterscheiden — die App würde bei jedem Lauf erneut nachfragen,
+# obwohl das Team seine Abweichung längst so will. Inhalt: die Vergleichsfelder
+# (beginn, ort, heim_auswaerts, gegner) als JSONB, geschrieben nur vom Import.
+_TERMINE_EXTERN_STAND_SQL = (
+    "ALTER TABLE termine ADD COLUMN IF NOT EXISTS extern_stand JSONB",
+    "ALTER TABLE termine_history ADD COLUMN IF NOT EXISTS extern_stand JSONB",
+)
+
 _TERMINE_UNIQUE_INDEXES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uix_termine_extern_ref_mannschaft "
     "ON termine (mannschaft_id, extern_ref) "
@@ -2846,6 +2858,7 @@ class Database:
             80: self._migrate_v79_to_v80,
             81: self._migrate_v80_to_v81,
             82: self._migrate_v81_to_v82,
+            83: self._migrate_v82_to_v83,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6207,6 +6220,26 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 82 WHERE id = 1")
 
+    def _migrate_v82_to_v83(self) -> None:
+        """Schnappschuss des zuletzt importierten Stands am Termin (Ticket #95).
+
+        `extern_stand` trägt die Werte, die beim letzten Spielplan-Import aus dem
+        DFBnet kamen. Erst damit lässt sich unterscheiden, ob sich die Quelle
+        geändert hat oder das Team den Termin angepasst hat — ohne den
+        Schnappschuss fragte die App bei jedem Lauf erneut nach.
+
+        Bestandstermine bleiben NULL: Für sie ist kein Importstand bekannt, und
+        ein erfundener Wert würde eine Aussage behaupten, die niemand geprüft hat.
+        Der Import setzt ihn beim ersten Lauf, sobald App und DFBnet übereinstimmen.
+        """
+        with self.cursor() as cur:
+            for sql in _TERMINE_EXTERN_STAND_SQL:
+                cur.execute(sql)
+            cur.execute(_FN_TERMINE_AUDIT_INSERT)
+            cur.execute(_FN_TERMINE_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 83 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7547,6 +7580,9 @@ class Database:
         for sql in _MANNSCHAFT_DFBNET_SQL:
             cur.execute(sql)
         cur.execute(_DDL_MANNSCHAFT_DFBNET_ALIAS)
+        # Schnappschuss des Importstands (Schema v83) – geteilt mit v82→v83
+        for sql in _TERMINE_EXTERN_STAND_SQL:
+            cur.execute(sql)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""

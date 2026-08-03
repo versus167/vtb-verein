@@ -1,7 +1,9 @@
 # Plan: Spielplan-Import aus dem DFBnet (Ticket #95, Etappe 3)
 
-> Status (2026-08-03): **Konzept, noch keine Umsetzung.** Grundlage ist ein
-> Muster-Export des Vereinsspielplans für die Saison 26/27.
+> Status (2026-08-03): **Etappen 1–3 umgesetzt** (Schema v80–v83). Offen sind
+> die Abweichungs-Tabelle mit Entscheidungs-Dialog (Etappe 4) und der
+> Platzwart-Zugriff (Etappe 5). Grundlage ist ein Muster-Export des
+> Vereinsspielplans für die Saison 26/27.
 >
 > **Keine Echtdaten im Repo:** Der Export enthält Namen und Ausweisnummern von
 > Schiedsrichtern. Alle Beispiele hier sind gekürzt oder erfunden.
@@ -252,16 +254,18 @@ dem Freitext ein Katalog wird.
 
 ## Etappen
 
-1. **Stammdaten + Team-Zuordnung**: Spielstätten (inkl. eigener Plätze),
+1. ✅ **Stammdaten + Team-Zuordnung**: Spielstätten (inkl. eigener Plätze),
    `dfbnet_name`/`dfbnet_mannschaftsart` plus Alias-Liste an der Mannschaft,
    Pflege in der Mannschaftsverwaltung.
-2. **Parser + Dry-Run**: Datei lesen, Zeilen zuordnen, Bericht „würde anlegen /
+2. ✅ **Parser + Dry-Run**: Datei lesen, Zeilen zuordnen, Bericht „würde anlegen /
    würde ändern / Konflikt / kein Team zugeordnet / Platzbelegung". Schreibt
    nichts.
-3. **Anlegen und unstrittige Übernahme**: `extern_ref`, Schnappschuss,
+3. ✅ **Anlegen und unstrittige Übernahme**: `extern_ref`, Schnappschuss,
    Benachrichtigung des Kaders bei Änderungen. Fremde Spiele laufen im selben
    Lauf in die Platzbelegung.
-4. **Abweichungen**: Tabelle, Badge, Entscheidungs-Dialog.
+4. **Abweichungen**: Tabelle, Badge, Entscheidungs-Dialog. Bis dahin meldet der
+   Lauf Konflikte im Ergebnis, ohne sie zu speichern — der nächste Lauf findet
+   sie erneut, es geht also nichts verloren.
 5. **Platzwart-Zugriff** (späterer Schritt): Permission-Key, Belegungsansicht
    aus beiden Quellen, optionale `spielstaette_id` an Terminen, damit auch
    Trainings im Plan stehen.

@@ -30,7 +30,8 @@ def _termin(**kw):
     basis = dict(id=1, mannschaft_id=5, serie_id=None, typ='training',
                  beginn='2026-07-22T18:30', ende=None, ort='Halle 1',
                  spielstaette_id=_PLATZ_ID, treffpunkt=None, treffpunkt_zeit=None, gegner=None,
-                 heim_auswaerts=None, extern_ref=None, status='geplant',
+                 heim_auswaerts=None, extern_ref=None, extern_stand=None,
+                 status='geplant',
                  beschreibung=None, version=1, created_at='x', created_by='t',
                  updated_at='x', updated_by='t')
     basis.update(kw)
