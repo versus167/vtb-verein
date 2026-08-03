@@ -58,6 +58,10 @@
                   <q-input v-model="edit.endeDatum" label="Serienende" outlined dense type="date" class="col" clearable />
                 </div>
                 <q-input v-model="edit.ort" label="Ort" outlined dense />
+                <!-- Pflichtfeld seit v80 (#95); die Instanzen erben die Spielstätte -->
+                <q-select v-model="edit.spielstaetteId" :options="spielstaetten"
+                  option-value="id" option-label="name" emit-value map-options
+                  label="Spielstätte *" outlined dense />
                 <div class="row q-gutter-sm">
                   <q-input v-model="edit.treffpunkt" label="Treffpunkt" outlined dense class="col-7 col-grow" />
                   <q-input v-model="edit.treffpunktZeit" label="Treffpunkt-Zeit" outlined dense type="time" class="col" />
@@ -109,9 +113,22 @@ const editId = ref(null)
 const edit = ref({})
 const editError = ref('')
 
+// Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht mit.
+const spielstaetten = ref([])
+
+async function loadSpielstaetten() {
+  try {
+    const { data } = await api.get('/api/spielstaetten/')
+    spielstaetten.value = data
+  } catch {
+    spielstaetten.value = []
+  }
+}
+
 async function load() {
   loading.value = true
   editId.value = null
+  loadSpielstaetten()
   try {
     const { data } = await api.get(`/api/termine/mannschaften/${props.mannschaftId}/serien`)
     serien.value = data.serien
@@ -127,7 +144,8 @@ async function load() {
 function initEdit(s) {
   editError.value = ''
   edit.value = { typ: s.typ, beginnZeit: s.beginn_zeit, endeZeit: s.ende_zeit ?? '',
-                 ort: s.ort ?? '', treffpunkt: s.treffpunkt ?? '',
+                 ort: s.ort ?? '', spielstaetteId: s.spielstaette_id ?? null,
+                 treffpunkt: s.treffpunkt ?? '',
                  treffpunktZeit: s.treffpunkt_zeit ?? '', beschreibung: s.beschreibung ?? '',
                  endeDatum: s.ende_datum ?? '' }
 }
@@ -138,6 +156,10 @@ async function saveEdit(s) {
     editError.value = 'Beginn ist erforderlich.'
     return
   }
+  if (!e.spielstaetteId) {
+    editError.value = 'Bitte eine Spielstätte wählen (oder „Kein Vereinsgelände").'
+    return
+  }
   saving.value = true
   editError.value = ''
   try {
@@ -146,6 +168,7 @@ async function saveEdit(s) {
       beginn_zeit: e.beginnZeit,
       ende_zeit: e.endeZeit || null,
       ort: e.ort || null,
+      spielstaette_id: e.spielstaetteId,
       treffpunkt: e.treffpunkt || null,
       treffpunkt_zeit: e.treffpunktZeit || null,
       beschreibung: e.beschreibung || null,

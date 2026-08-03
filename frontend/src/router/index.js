@@ -165,6 +165,12 @@ const routes = [
         meta: { title: 'Sonstiges', permission: ['system.config', 'fibu.export', 'system.protokoll'] },
       },
       {
+        path: 'spielstaetten',
+        name: 'spielstaetten',
+        component: () => import('pages/SpielstaettenPage.vue'),
+        meta: { title: 'Spielstätten', permission: 'system.config' },
+      },
+      {
         path: 'funktionen',
         name: 'funktionen',
         component: () => import('pages/FunktionenPage.vue'),
