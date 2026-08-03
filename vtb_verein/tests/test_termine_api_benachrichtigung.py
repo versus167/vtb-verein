@@ -23,10 +23,13 @@ from app.services import termin_notification_service as tn  # noqa: E402
 from backend.api import termine as api  # noqa: E402
 
 
+_PLATZ_ID = 3
+
+
 def _termin(**kw):
     basis = dict(id=1, mannschaft_id=5, serie_id=None, typ='training',
                  beginn='2026-07-22T18:30', ende=None, ort='Halle 1',
-                 treffpunkt=None, treffpunkt_zeit=None, gegner=None,
+                 spielstaette_id=_PLATZ_ID, treffpunkt=None, treffpunkt_zeit=None, gegner=None,
                  heim_auswaerts=None, extern_ref=None, status='geplant',
                  beschreibung=None, version=1, created_at='x', created_by='t',
                  updated_at='x', updated_by='t')
@@ -42,18 +45,21 @@ class _TermineRepo:
         return self.termin
 
     def create(self, mannschaft_id, typ, beginn, ende, ort, treffpunkt,
-               treffpunkt_zeit, gegner, heim_auswaerts, beschreibung, created_by):
+               treffpunkt_zeit, gegner, heim_auswaerts, beschreibung, created_by,
+               *, spielstaette_id):
         self.termin = _termin(mannschaft_id=mannschaft_id, typ=typ, beginn=beginn,
-                              ende=ende, ort=ort, treffpunkt=treffpunkt,
+                              ende=ende, ort=ort, spielstaette_id=spielstaette_id,
+                              treffpunkt=treffpunkt,
                               treffpunkt_zeit=treffpunkt_zeit, gegner=gegner,
                               heim_auswaerts=heim_auswaerts, beschreibung=beschreibung)
         return self.termin
 
     def update(self, termin_id, typ, beginn, ende, ort, treffpunkt,
                treffpunkt_zeit, gegner, heim_auswaerts, beschreibung,
-               updated_by, expected_version):
+               updated_by, expected_version, *, spielstaette_id):
         self.termin = replace(self.termin, typ=typ, beginn=beginn, ende=ende,
-                              ort=ort, treffpunkt=treffpunkt,
+                              ort=ort, spielstaette_id=spielstaette_id,
+                              treffpunkt=treffpunkt,
                               treffpunkt_zeit=treffpunkt_zeit, gegner=gegner,
                               heim_auswaerts=heim_auswaerts,
                               beschreibung=beschreibung,
@@ -66,9 +72,20 @@ class _TermineRepo:
         return True
 
 
+class _SpielstaettenRepo:
+    """Nur so viel, wie _require_spielstaette braucht: existiert und ist kein
+    Altbestands-Platzhalter."""
+
+    def get(self, spielstaette_id):
+        if spielstaette_id != _PLATZ_ID:
+            return None
+        return SimpleNamespace(id=_PLATZ_ID, platzhalter=None)
+
+
 class _DB:
     def __init__(self, termin):
         self.termine = _TermineRepo(termin)
+        self.spielstaetten = _SpielstaettenRepo()
 
     def get_mannschaft(self, mannschaft_id):
         return SimpleNamespace(id=mannschaft_id, name='Erste')
@@ -90,6 +107,7 @@ def notify_calls(monkeypatch):
 
 def _update_payload(t, benachrichtigen, **kw):
     felder = dict(typ=t.typ, beginn=t.beginn, ende=t.ende, ort=t.ort,
+                  spielstaette_id=t.spielstaette_id,
                   treffpunkt=t.treffpunkt, treffpunkt_zeit=t.treffpunkt_zeit,
                   gegner=t.gegner, heim_auswaerts=t.heim_auswaerts,
                   beschreibung=t.beschreibung)
@@ -100,13 +118,14 @@ def _update_payload(t, benachrichtigen, **kw):
 
 def test_create_mit_flag_benachrichtigt(notify_calls):
     db = _DB(None)
-    data = api.TerminCreate(beginn='2026-07-22T18:30', benachrichtigen=True)
+    data = api.TerminCreate(beginn='2026-07-22T18:30', benachrichtigen=True,
+                                spielstaette_id=_PLATZ_ID)
     api.create_termin(5, data, _ADMIN, db)
     assert notify_calls == [(tn.AKTION_NEU, _ADMIN.id, None)]
 
 
 def test_create_ohne_flag_schweigt(notify_calls):
-    api.create_termin(5, api.TerminCreate(beginn='2026-07-22T18:30'), _ADMIN, _DB(None))
+    api.create_termin(5, api.TerminCreate(beginn='2026-07-22T18:30', spielstaette_id=_PLATZ_ID), _ADMIN, _DB(None))
     assert notify_calls == []
 
 

@@ -23,7 +23,8 @@ from app.models.termin_zusage import TerminZusage  # noqa: E402
 from backend.api import termine as api  # noqa: E402
 
 _TERMIN = Termin(id=1, mannschaft_id=5, serie_id=None, typ='training',
-                 beginn='2026-07-22T18:30', ende=None, ort=None, treffpunkt=None,
+                 beginn='2026-07-22T18:30', ende=None, ort=None,
+                 spielstaette_id=1, treffpunkt=None,
                  treffpunkt_zeit=None, gegner=None, heim_auswaerts=None,
                  extern_ref=None, status='geplant', beschreibung=None, version=1,
                  created_at='x', created_by='t', updated_at='x', updated_by='t')

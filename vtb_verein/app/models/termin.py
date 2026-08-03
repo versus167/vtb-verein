@@ -23,6 +23,7 @@ class Termin:
     beginn: str                       # 'YYYY-MM-DDTHH:MM' (lokale Wandzeit)
     ende: Optional[str]               # dito, optional
     ort: Optional[str]
+    spielstaette_id: int              # Pflicht ab v80; Platzhalter s. spielstaette
     treffpunkt: Optional[str]
     treffpunkt_zeit: Optional[str]    # 'HH:MM'
     gegner: Optional[str]             # nur typ='spiel'
@@ -39,3 +40,4 @@ class Termin:
     deleted_by: Optional[str] = None
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalte:
     mannschaft_name: Optional[str] = None
+    spielstaette_name: Optional[str] = None

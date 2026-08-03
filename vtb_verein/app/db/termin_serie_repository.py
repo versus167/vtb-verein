@@ -26,12 +26,12 @@ HORIZONT_TAGE = 56
 # Serien nur für wiederkehrende Nicht-Spiel-Termine.
 VALID_SERIE_TYPEN = ('training', 'sonstiges')
 
-_COLS = ("id, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, treffpunkt, "
+_COLS = ("id, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id, treffpunkt, "
          "treffpunkt_zeit, beschreibung, start_datum, ende_datum, materialisiert_bis, "
          "version, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
 
 # Änderbare Fachfelder der Serie (start_datum/Wochentag bewusst NICHT dabei).
-_EDIT_FIELDS = ('typ', 'beginn_zeit', 'ende_zeit', 'ort', 'treffpunkt',
+_EDIT_FIELDS = ('typ', 'beginn_zeit', 'ende_zeit', 'ort', 'spielstaette_id', 'treffpunkt',
                 'treffpunkt_zeit', 'beschreibung', 'ende_datum')
 
 # Match „Instanz entspricht noch den Serienwerten %(prefix)s…" — Zeitanteil der
@@ -42,6 +42,7 @@ _UNVERAENDERT = """
       AND ende IS NOT DISTINCT FROM (CASE WHEN %({p}ende_zeit)s::text IS NULL
             THEN NULL ELSE LEFT(beginn, 10) || 'T' || %({p}ende_zeit)s END)
       AND ort IS NOT DISTINCT FROM %({p}ort)s
+      AND spielstaette_id = %({p}spielstaette_id)s
       AND treffpunkt IS NOT DISTINCT FROM %({p}treffpunkt)s
       AND treffpunkt_zeit IS NOT DISTINCT FROM %({p}treffpunkt_zeit)s
       AND beschreibung IS NOT DISTINCT FROM %({p}beschreibung)s
@@ -52,7 +53,8 @@ def _map(row) -> TerminSerie:
     return TerminSerie(
         id=row['id'], mannschaft_id=row['mannschaft_id'], typ=row['typ'],
         beginn_zeit=row['beginn_zeit'], ende_zeit=row['ende_zeit'], ort=row['ort'],
-        treffpunkt=row['treffpunkt'], treffpunkt_zeit=row['treffpunkt_zeit'],
+        spielstaette_id=row['spielstaette_id'], treffpunkt=row['treffpunkt'],
+        treffpunkt_zeit=row['treffpunkt_zeit'],
         beschreibung=row['beschreibung'], start_datum=row['start_datum'],
         ende_datum=row['ende_datum'], materialisiert_bis=row['materialisiert_bis'],
         version=row['version'], created_at=row['created_at'], created_by=row['created_by'],
@@ -105,7 +107,8 @@ class TerminSerieRepository(BaseRepository):
     def create(self, mannschaft_id: int, typ: str, beginn_zeit: str,
                ende_zeit: Optional[str], ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], beschreibung: Optional[str],
-               start_datum: str, ende_datum: Optional[str], created_by: str) -> TerminSerie:
+               start_datum: str, ende_datum: Optional[str], created_by: str,
+               *, spielstaette_id: int) -> TerminSerie:
         """Serie anlegen; Wasserzeichen = gestern (Instanzen frühestens ab heute).
         Materialisiert wird separat (materialize_due) — die API ruft das direkt danach."""
         gestern = (date.today() - timedelta(days=1)).isoformat()
@@ -113,13 +116,13 @@ class TerminSerieRepository(BaseRepository):
             cur.execute(
                 """
                 INSERT INTO termin_serie (mannschaft_id, typ, beginn_zeit, ende_zeit,
-                    ort, treffpunkt, treffpunkt_zeit, beschreibung, start_datum,
-                    ende_datum, materialisiert_bis, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ort, spielstaette_id, treffpunkt, treffpunkt_zeit, beschreibung,
+                    start_datum, ende_datum, materialisiert_bis, created_by, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (mannschaft_id, typ, beginn_zeit, ende_zeit, ort, treffpunkt,
-                 treffpunkt_zeit, beschreibung, start_datum, ende_datum,
+                (mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id,
+                 treffpunkt, treffpunkt_zeit, beschreibung, start_datum, ende_datum,
                  gestern, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
@@ -159,10 +162,10 @@ class TerminSerieRepository(BaseRepository):
                     cur.execute(
                         """
                         INSERT INTO termine (mannschaft_id, serie_id, typ, beginn, ende,
-                            ort, treffpunkt, treffpunkt_zeit, beschreibung,
-                            created_by, updated_by)
+                            ort, spielstaette_id, treffpunkt, treffpunkt_zeit,
+                            beschreibung, created_by, updated_by)
                         SELECT %(mid)s, %(sid)s, %(typ)s, %(beginn)s, %(ende)s,
-                               %(ort)s, %(tp)s, %(tpz)s, %(besch)s, %(usr)s, %(usr)s
+                               %(ort)s, %(sst)s, %(tp)s, %(tpz)s, %(besch)s, %(usr)s, %(usr)s
                         WHERE NOT EXISTS (
                             SELECT 1 FROM termine
                             WHERE serie_id = %(sid)s AND LEFT(beginn, 10) = %(tag)s
@@ -172,7 +175,8 @@ class TerminSerieRepository(BaseRepository):
                         {"mid": s.mannschaft_id, "sid": s.id, "typ": s.typ,
                          "beginn": f"{d}T{s.beginn_zeit}",
                          "ende": f"{d}T{s.ende_zeit}" if s.ende_zeit else None,
-                         "ort": s.ort, "tp": s.treffpunkt, "tpz": s.treffpunkt_zeit,
+                         "ort": s.ort, "sst": s.spielstaette_id,
+                         "tp": s.treffpunkt, "tpz": s.treffpunkt_zeit,
                          "besch": s.beschreibung, "usr": s.created_by, "tag": d},
                     )
                     erzeugt += cur.rowcount
@@ -183,7 +187,8 @@ class TerminSerieRepository(BaseRepository):
                ende_zeit: Optional[str], ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], beschreibung: Optional[str],
                ende_datum: Optional[str], updated_by: str,
-               expected_version: int, heute: Optional[str] = None) -> bool:
+               expected_version: int, heute: Optional[str] = None,
+               *, spielstaette_id: int) -> bool:
         """Serie fortschreiben UND die neuen Werte auf zukünftige, noch unveränderte,
         geplante Instanzen anwenden. Reihenfolge: erst Instanzen jenseits eines
         gekürzten Endes löschen (Match gegen ALTE Werte), dann die verbleibenden
@@ -201,14 +206,15 @@ class TerminSerieRepository(BaseRepository):
                 return False
             alt = _map(row)
             alt_params = {f"alt_{f}": getattr(alt, f) for f in
-                          ('typ', 'beginn_zeit', 'ende_zeit', 'ort', 'treffpunkt',
-                           'treffpunkt_zeit', 'beschreibung')}
+                          ('typ', 'beginn_zeit', 'ende_zeit', 'ort', 'spielstaette_id',
+                           'treffpunkt', 'treffpunkt_zeit', 'beschreibung')}
 
             # 1) Serie selbst (version-Guard erneut im WHERE — Transaktion hält den Stand)
             cur.execute(
                 """
                 UPDATE termin_serie SET typ=%(typ)s, beginn_zeit=%(beginn_zeit)s,
-                    ende_zeit=%(ende_zeit)s, ort=%(ort)s, treffpunkt=%(treffpunkt)s,
+                    ende_zeit=%(ende_zeit)s, ort=%(ort)s,
+                    spielstaette_id=%(spielstaette_id)s, treffpunkt=%(treffpunkt)s,
                     treffpunkt_zeit=%(treffpunkt_zeit)s, beschreibung=%(beschreibung)s,
                     ende_datum=%(ende_datum)s,
                     materialisiert_bis = LEAST(materialisiert_bis,
@@ -218,7 +224,8 @@ class TerminSerieRepository(BaseRepository):
                 WHERE id = %(sid)s AND deleted_at IS NULL AND version = %(ver)s
                 """,
                 {"typ": typ, "beginn_zeit": beginn_zeit, "ende_zeit": ende_zeit,
-                 "ort": ort, "treffpunkt": treffpunkt, "treffpunkt_zeit": treffpunkt_zeit,
+                 "ort": ort, "spielstaette_id": spielstaette_id,
+                 "treffpunkt": treffpunkt, "treffpunkt_zeit": treffpunkt_zeit,
                  "beschreibung": beschreibung, "ende_datum": ende_datum,
                  "usr": updated_by, "sid": serie_id, "ver": expected_version},
             )
@@ -245,7 +252,8 @@ class TerminSerieRepository(BaseRepository):
                     beginn = LEFT(beginn, 10) || 'T' || %(beginn_zeit)s,
                     ende = (CASE WHEN %(ende_zeit)s::text IS NULL
                             THEN NULL ELSE LEFT(beginn, 10) || 'T' || %(ende_zeit)s END),
-                    ort = %(ort)s, treffpunkt = %(treffpunkt)s,
+                    ort = %(ort)s, spielstaette_id = %(spielstaette_id)s,
+                    treffpunkt = %(treffpunkt)s,
                     treffpunkt_zeit = %(treffpunkt_zeit)s, beschreibung = %(beschreibung)s,
                     version = version + 1, updated_at = CURRENT_TIMESTAMP,
                     updated_by = %(usr)s
@@ -254,7 +262,8 @@ class TerminSerieRepository(BaseRepository):
                   {_UNVERAENDERT.format(p='alt_')}
                 """,
                 {"typ": typ, "beginn_zeit": beginn_zeit, "ende_zeit": ende_zeit,
-                 "ort": ort, "treffpunkt": treffpunkt, "treffpunkt_zeit": treffpunkt_zeit,
+                 "ort": ort, "spielstaette_id": spielstaette_id,
+                 "treffpunkt": treffpunkt, "treffpunkt_zeit": treffpunkt_zeit,
                  "beschreibung": beschreibung, "usr": updated_by, "sid": serie_id,
                  "tag": tag, **alt_params},
             )

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 79
+SCHEMA_VERSION = 80
 
 
 # ---------------------------------------------------------------------------
@@ -2196,8 +2196,8 @@ _PUSH_SUBSCRIPTIONS_INDEXES = (
 # DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v67→v68.
 # ============================================================================
 _TERMINE_COLS = (
-    "id, version, mannschaft_id, serie_id, typ, beginn, ende, ort, treffpunkt, "
-    "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
+    "id, version, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, "
+    "treffpunkt, treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TERMINE_VALS = ", ".join("NEW." + c.strip() for c in _TERMINE_COLS.split(","))
@@ -2360,8 +2360,8 @@ _TERMIN_ZUSAGE_TRIGGERS = (
 # DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v69→v70.
 # ============================================================================
 _TERMIN_SERIE_COLS = (
-    "id, version, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, treffpunkt, "
-    "treffpunkt_zeit, beschreibung, start_datum, ende_datum, materialisiert_bis, "
+    "id, version, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id, "
+    "treffpunkt, treffpunkt_zeit, beschreibung, start_datum, ende_datum, materialisiert_bis, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TERMIN_SERIE_VALS = ", ".join("NEW." + c.strip() for c in _TERMIN_SERIE_COLS.split(","))
@@ -2435,6 +2435,141 @@ _TERMIN_SERIE_FK = (
 _TERMIN_SERIE_TRIGGERS = (
     ('trig_termin_serie_audit_insert', 'INSERT', 'termin_serie', 'fn_termin_serie_audit_insert'),
     ('trig_termin_serie_audit_update', 'UPDATE', 'termin_serie', 'fn_termin_serie_audit_update'),
+)
+
+
+# ============================================================================
+# Spielstätten (Schema v80): Stammdaten der Plätze/Hallen – Grundlage für den
+# DFBnet-Spielplan-Import und den späteren Platzbelegungsplan (Ticket #95).
+#
+# Bewusst NICHT fußballspezifisch: Tennisplatz und Turnhalle gehören genauso
+# hinein, auch wenn dort nie ein DFBnet-Spiel stattfindet. `dfbnet_nr` ist
+# deshalb optional – ohne sie gibt es nur keinen Import-Abgleich.
+#
+# `ist_eigen` trennt die eigenen Plätze (zählen in den Belegungsplan) von
+# fremden Spielstätten (Auswärtsspiel/-training: sauberer Ort, aber keine
+# Belegung). `parallel_moeglich` ist die Kapazität aus dem DFBnet-Feld
+# „Max. parallele Spiele": Überschneidungen werden nie blockiert, sondern
+# gegen diese Zahl angezeigt.
+#
+# Zwei `platzhalter`-Zeilen tragen die Fälle, die keine echte Spielstätte sind
+# (s. _seed_spielstaette_platzhalter) – sie machen `termine.spielstaette_id`
+# überhaupt erst NOT NULL-fähig.
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration
+# v79→v80.
+# ============================================================================
+_SPIELSTAETTE_COLS = (
+    "id, version, name, dfbnet_nr, strasse, plz, ort, ist_eigen, "
+    "parallel_moeglich, platzhalter, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_SPIELSTAETTE_VALS = ", ".join("NEW." + c.strip() for c in _SPIELSTAETTE_COLS.split(","))
+
+_FN_SPIELSTAETTE_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_spielstaette_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO spielstaette_history ({_SPIELSTAETTE_COLS}) VALUES ({_SPIELSTAETTE_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_SPIELSTAETTE_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_spielstaette_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO spielstaette_history ({_SPIELSTAETTE_COLS}) VALUES ({_SPIELSTAETTE_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_SPIELSTAETTE = """
+    CREATE TABLE IF NOT EXISTS spielstaette (
+      id                SERIAL PRIMARY KEY,
+      name              TEXT NOT NULL,
+      dfbnet_nr         TEXT,
+      strasse           TEXT,
+      plz               TEXT,
+      ort               TEXT,
+      ist_eigen         BOOLEAN NOT NULL DEFAULT FALSE,
+      parallel_moeglich INTEGER NOT NULL DEFAULT 1,
+      platzhalter       TEXT,
+      version           INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by        TEXT NOT NULL,
+      updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by        TEXT NOT NULL,
+      deleted_at        TEXT,
+      deleted_by        TEXT,
+      CHECK (platzhalter IS NULL OR platzhalter IN ('auswaerts', 'unbekannt')),
+      CHECK (parallel_moeglich >= 1)
+    );
+    CREATE TABLE IF NOT EXISTS spielstaette_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      name TEXT, dfbnet_nr TEXT, strasse TEXT, plz TEXT, ort TEXT,
+      ist_eigen BOOLEAN, parallel_moeglich INTEGER, platzhalter TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_SPIELSTAETTE_INDEXES = (
+    ("idx_spielstaette_deleted_at",  "spielstaette(deleted_at)"),
+    ("idx_spielstaette_history_id",  "spielstaette_history(id)"),
+    ("idx_termine_spielstaette_id",  "termine(spielstaette_id)"),
+)
+
+# Je Platzhalter-Art genau eine lebende Zeile; DFBnet-Nummern eindeutig, damit
+# der Import zweifelsfrei zuordnen kann.
+_SPIELSTAETTE_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_spielstaette_platzhalter "
+    "ON spielstaette (platzhalter) WHERE platzhalter IS NOT NULL AND deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_spielstaette_dfbnet_nr "
+    "ON spielstaette (dfbnet_nr) WHERE dfbnet_nr IS NOT NULL AND deleted_at IS NULL",
+)
+
+_SPIELSTAETTE_TRIGGERS = (
+    ('trig_spielstaette_audit_insert', 'INSERT', 'spielstaette', 'fn_spielstaette_audit_insert'),
+    ('trig_spielstaette_audit_update', 'UPDATE', 'spielstaette', 'fn_spielstaette_audit_update'),
+)
+
+# Spielstätte am Termin und an der Serie: Pflichtfeld ab v80.
+#
+# Bewusst NICHT in _DDL_TERMINE/_DDL_TERMIN_SERIE, denn diese Konstanten laufen
+# auch in den alten Migrationen v67→v68 bzw. v69→v70 – dort gibt es die Tabelle
+# spielstaette noch gar nicht. Als eigene ALTER-Sequenz aus beiden Pfaden
+# gerufen (Muster wie _TERMIN_SERIE_FK), nachdem beide Tabellen stehen und die
+# Platzhalter geseedet sind.
+#
+# Reihenfolge ist Absicht: Spalte anlegen → Altbestand auf den Platzhalter
+# 'unbekannt' setzen → SET NOT NULL. Der Altbestand wird NICHT auf 'auswaerts'
+# gesetzt: Die meisten Bestandstrainings finden sehr wohl auf dem Platz statt,
+# eine falsche Aussage wäre für den Belegungsplan schlechter als ein sichtbares
+# „nicht erfasst".
+_SPIELSTAETTE_TERMIN_SQL = (
+    "ALTER TABLE termine ADD COLUMN IF NOT EXISTS spielstaette_id INTEGER "
+    "REFERENCES spielstaette(id)",
+    "ALTER TABLE termine_history ADD COLUMN IF NOT EXISTS spielstaette_id INTEGER",
+    "ALTER TABLE termin_serie ADD COLUMN IF NOT EXISTS spielstaette_id INTEGER "
+    "REFERENCES spielstaette(id)",
+    "ALTER TABLE termin_serie_history ADD COLUMN IF NOT EXISTS spielstaette_id INTEGER",
+    "UPDATE termine SET spielstaette_id = "
+    "(SELECT id FROM spielstaette WHERE platzhalter = 'unbekannt' AND deleted_at IS NULL) "
+    "WHERE spielstaette_id IS NULL",
+    "UPDATE termin_serie SET spielstaette_id = "
+    "(SELECT id FROM spielstaette WHERE platzhalter = 'unbekannt' AND deleted_at IS NULL) "
+    "WHERE spielstaette_id IS NULL",
+    "ALTER TABLE termine ALTER COLUMN spielstaette_id SET NOT NULL",
+    "ALTER TABLE termin_serie ALTER COLUMN spielstaette_id SET NOT NULL",
+)
+
+# Die beiden Platzhalter sind Teil des Schema-Vertrags, keine Anwender-Stammdaten:
+# ohne sie ließe sich spielstaette_id nicht NOT NULL setzen. 'auswaerts' ist die
+# bewusste Antwort „kein Vereinsgelände" (Waldlauf, fremde Halle), 'unbekannt'
+# trägt ausschließlich den Altbestand und ist in der Oberfläche nicht wählbar.
+_SPIELSTAETTE_PLATZHALTER = (
+    ('auswaerts', 'Kein Vereinsgelände'),
+    ('unbekannt', 'Nicht erfasst'),
 )
 
 
@@ -2584,6 +2719,7 @@ class Database:
             77: self._migrate_v76_to_v77,
             78: self._migrate_v77_to_v78,
             79: self._migrate_v78_to_v79,
+            80: self._migrate_v79_to_v80,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -5855,6 +5991,68 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 79 WHERE id = 1")
 
+    def _migrate_v79_to_v80(self) -> None:
+        """Spielstätten-Stammdaten + Pflichtfeld am Termin (Ticket #95).
+
+        Neue Tabelle spielstaette (+ _history, Audit-Trigger, Indexe) und die
+        Spalte spielstaette_id an termine/termin_serie. Der Altbestand bekommt
+        den Platzhalter 'unbekannt' („Nicht erfasst"), danach wird NOT NULL
+        gesetzt – bewusst nicht 'auswaerts', denn die meisten Bestandstrainings
+        finden sehr wohl auf dem Platz statt; eine falsche Aussage wäre für den
+        späteren Belegungsplan schlechter als ein sichtbares „nicht erfasst".
+
+        Die Audit-Funktionen von termine/termin_serie werden neu erzeugt, damit
+        die neue Spalte in der History landet. DDL/Sequenz/Platzhalter sind mit
+        dem Frischaufbau geteilt (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_SPIELSTAETTE)
+            cur.execute(_FN_SPIELSTAETTE_AUDIT_INSERT)
+            cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
+            for name, event, table, fn in _SPIELSTAETTE_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for sql in _SPIELSTAETTE_UNIQUE_INDEXES:
+                cur.execute(sql)
+            # Platzhalter vor der ALTER-Sequenz: der Altbestand verweist darauf.
+            self._seed_spielstaette_platzhalter(cur)
+            for sql in _SPIELSTAETTE_TERMIN_SQL:
+                cur.execute(sql)
+            for name, target in _SPIELSTAETTE_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            # Erst jetzt, mit der Spalte in den History-Tabellen, die Audit-
+            # Funktionen auf den erweiterten Spaltensatz heben.
+            cur.execute(_FN_TERMINE_AUDIT_INSERT)
+            cur.execute(_FN_TERMINE_AUDIT_UPDATE)
+            cur.execute(_FN_TERMIN_SERIE_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 80 WHERE id = 1")
+
+    @staticmethod
+    def _seed_spielstaette_platzhalter(cur) -> None:
+        """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
+
+        Gehört zum Schema, nicht zu den Anwender-Stammdaten: Ohne diese Zeilen
+        ließe sich `termine.spielstaette_id` nicht NOT NULL setzen. Wird deshalb
+        aus dem Frischaufbau UND aus der Migration gerufen, jeweils bevor die
+        Termine befüllt werden.
+        """
+        for schluessel, name in _SPIELSTAETTE_PLATZHALTER:
+            cur.execute(
+                """
+                INSERT INTO spielstaette (name, platzhalter, created_by, updated_by)
+                SELECT %s, %s, 'SYSTEM', 'SYSTEM'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM spielstaette
+                    WHERE platzhalter = %s AND deleted_at IS NULL
+                )
+                """,
+                (name, schluessel, schluessel),
+            )
+
     @staticmethod
     def _seed_rechnung_kategorien(cur) -> None:
         """Start-Kategorien anlegen – idempotent, und nur solange noch keine da sind.
@@ -7160,6 +7358,14 @@ class Database:
         cur.execute(_DDL_TERMIN_SERIE)
         for sql in _TERMIN_SERIE_FK:
             cur.execute(sql)
+        # Spielstätten (Schema v80) + Pflichtfeld am Termin/an der Serie.
+        # Die Platzhalter müssen VOR der ALTER-Sequenz stehen, die den Altbestand
+        # auf 'unbekannt' setzt und dann NOT NULL zieht. DDL/Sequenz geteilt mit
+        # Migration v79→v80.
+        cur.execute(_DDL_SPIELSTAETTE)
+        self._seed_spielstaette_platzhalter(cur)
+        for sql in _SPIELSTAETTE_TERMIN_SQL:
+            cur.execute(sql)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -7398,6 +7604,8 @@ class Database:
         cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_UPDATE)
         cur.execute(_FN_TERMIN_SERIE_AUDIT_INSERT)
         cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
+        cur.execute(_FN_SPIELSTAETTE_AUDIT_INSERT)
+        cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
@@ -8011,6 +8219,7 @@ class Database:
             *_TERMINE_TRIGGERS,
             *_TERMIN_ZUSAGE_TRIGGERS,
             *_TERMIN_SERIE_TRIGGERS,
+            *_SPIELSTAETTE_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -8134,6 +8343,7 @@ class Database:
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,
             *_TERMIN_SERIE_INDEXES,
+            *_SPIELSTAETTE_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -8155,6 +8365,8 @@ class Database:
         for sql in _TERMIN_ZUSAGE_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _SEPA_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _SPIELSTAETTE_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------

@@ -20,6 +20,7 @@ class TerminSerie:
     beginn_zeit: str                  # 'HH:MM' (lokale Wandzeit)
     ende_zeit: Optional[str]          # dito, optional
     ort: Optional[str]
+    spielstaette_id: int              # Pflicht ab v80; Instanzen erben sie
     treffpunkt: Optional[str]
     treffpunkt_zeit: Optional[str]    # 'HH:MM'
     beschreibung: Optional[str]

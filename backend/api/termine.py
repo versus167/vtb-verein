@@ -31,6 +31,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from app.db.spielstaette_repository import PLATZHALTER_UNBEKANNT
 from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
@@ -47,6 +48,7 @@ class TerminCreate(BaseModel):
     beginn: str                              # 'YYYY-MM-DDTHH:MM'
     ende: Optional[str] = None
     ort: Optional[str] = None
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     treffpunkt: Optional[str] = None
     treffpunkt_zeit: Optional[str] = None    # 'HH:MM'
     gegner: Optional[str] = None             # nur typ='spiel'
@@ -72,6 +74,7 @@ class ZusageSet(BaseModel):
 class SerieCreate(BaseModel):
     typ: str = 'training'                    # 'training' | 'sonstiges' (keine Spiel-Serien)
     beginn_zeit: str                         # 'HH:MM'
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     ende_zeit: Optional[str] = None
     ort: Optional[str] = None
     treffpunkt: Optional[str] = None
@@ -86,6 +89,7 @@ class SerieUpdate(BaseModel):
     """Volle Serien-Bearbeitung – nur start_datum/Wochentag bleibt fix."""
     typ: str = 'training'
     beginn_zeit: str
+    spielstaette_id: int                     # Pflicht seit v80 (#95)
     ende_zeit: Optional[str] = None
     ort: Optional[str] = None
     treffpunkt: Optional[str] = None
@@ -162,6 +166,24 @@ def _validate_termin(data: TerminCreate) -> None:
         wert = getattr(data, feld)
         if wert is not None:
             setattr(data, feld, wert.strip() or None)
+
+
+def _require_spielstaette(db: DB, spielstaette_id: int) -> None:
+    """Spielstätte muss existieren und auswählbar sein.
+
+    'unbekannt' („Nicht erfasst") trägt ausschließlich den Altbestand aus der
+    Migration – wer einen Termin speichert, muss sich festlegen (echte Spielstätte
+    oder ausdrücklich „Kein Vereinsgelände"). Sonst wäre der spätere
+    Belegungsplan dauerhaft löchrig.
+    """
+    s = db.spielstaetten.get(spielstaette_id)
+    if s is None:
+        raise HTTPException(422, "Spielstätte nicht gefunden")
+    if s.platzhalter == PLATZHALTER_UNBEKANNT:
+        raise HTTPException(
+            422,
+            'Bitte eine Spielstätte wählen (oder ausdrücklich „Kein Vereinsgelände“)',
+        )
 
 
 def _clean(s: Optional[str]) -> Optional[str]:
@@ -295,10 +317,11 @@ def create_termin(mannschaft_id: int, data: TerminCreate, user: CurrentUser, db:
         raise HTTPException(404, "Mannschaft nicht gefunden")
     _require_verwalten(db, user, mannschaft_id)
     _validate_termin(data)
+    _require_spielstaette(db, data.spielstaette_id)
     t = db.termine.create(
         mannschaft_id, data.typ, data.beginn, data.ende, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
-        data.beschreibung, user.username,
+        data.beschreibung, user.username, spielstaette_id=data.spielstaette_id,
     )
     if data.benachrichtigen:
         terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU, user.id)
@@ -325,10 +348,12 @@ def update_termin(termin_id: int, data: TerminUpdate, user: CurrentUser, db: DB)
         raise HTTPException(404, "Termin nicht gefunden")
     _require_verwalten(db, user, t.mannschaft_id)
     _validate_termin(data)
+    _require_spielstaette(db, data.spielstaette_id)
     ok = db.termine.update(
         termin_id, data.typ, data.beginn, data.ende, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
         data.beschreibung, user.username, data.expected_version,
+        spielstaette_id=data.spielstaette_id,
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
@@ -481,6 +506,7 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         raise HTTPException(404, "Mannschaft nicht gefunden")
     _require_verwalten(db, user, mannschaft_id)
     _validate_serie(data)
+    _require_spielstaette(db, data.spielstaette_id)
     _parse_datum(data.start_datum, "start_datum")
     if data.ende_datum and data.ende_datum < data.start_datum:
         raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
@@ -488,6 +514,7 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         mannschaft_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.beschreibung,
         data.start_datum, data.ende_datum, user.username,
+        spielstaette_id=data.spielstaette_id,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
     if data.benachrichtigen:
@@ -505,12 +532,14 @@ def update_serie(serie_id: int, data: SerieUpdate, user: CurrentUser, db: DB):
         raise HTTPException(404, "Serie nicht gefunden")
     _require_verwalten(db, user, s.mannschaft_id)
     _validate_serie(data)
+    _require_spielstaette(db, data.spielstaette_id)
     if data.ende_datum and data.ende_datum < s.start_datum:
         raise HTTPException(422, "ende_datum darf nicht vor start_datum liegen")
     ok = db.termin_serien.update(
         serie_id, data.typ, data.beginn_zeit, data.ende_zeit, data.ort,
         data.treffpunkt, data.treffpunkt_zeit, data.beschreibung, data.ende_datum,
         user.username, data.expected_version,
+        spielstaette_id=data.spielstaette_id,
     )
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")

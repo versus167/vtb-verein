@@ -87,9 +87,17 @@ def _make_kader_mitglied(db, mannschaft_id, rolle="spieler", von=LASTWEEK, bis=N
     return uid, mid
 
 
+def _platz(db):
+    """Platzhalter „Kein Vereinsgelände" – seit v80 ist die Spielstätte Pflicht."""
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM spielstaette WHERE platzhalter = 'auswaerts'")
+        return cur.fetchone()['id']
+
+
 def _termin(db, mannschaft_id, beginn=f"{TOMORROW}T19:00"):
     return db.termine.create(mannschaft_id, 'training', beginn, None, None, None,
-                             None, None, None, None, 't')
+                             None, None, None, None, 't',
+                             spielstaette_id=_platz(db))
 
 
 # --------------------------------------------------------------- Schema/Trigger

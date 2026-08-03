@@ -427,15 +427,19 @@ def test_alters_archivierung_vergangene_termine(db):
                     "VALUES (%s,'M','2020/21','t','t') RETURNING id", (aid,))
         mid = cur.fetchone()["id"]
         # alter Termin (vor 90 Tagen) + Zusage, künftiger Termin (in 7 Tagen)
-        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,created_by,updated_by) "
+        cur.execute("SELECT id FROM spielstaette WHERE platzhalter='auswaerts'")
+        platz = cur.fetchone()["id"]      # Spielstätte ist seit v80 Pflicht
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,"
+                    "created_by,updated_by) "
                     "VALUES (%s,'training',"
-                    "(now()-make_interval(days=>90))::date::text||'T19:00','t','t') RETURNING id",
-                    (mid,))
+                    "(now()-make_interval(days=>90))::date::text||'T19:00',%s,'t','t') RETURNING id",
+                    (mid, platz))
         alt = cur.fetchone()["id"]
-        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,created_by,updated_by) "
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,"
+                    "created_by,updated_by) "
                     "VALUES (%s,'training',"
-                    "(now()+make_interval(days=>7))::date::text||'T19:00','t','t') RETURNING id",
-                    (mid,))
+                    "(now()+make_interval(days=>7))::date::text||'T19:00',%s,'t','t') RETURNING id",
+                    (mid, platz))
         neu = cur.fetchone()["id"]
         cur.execute("INSERT INTO mitglied (vorname,nachname,zahlungsart) "
                     "VALUES ('A','B','lastschrift') RETURNING id")

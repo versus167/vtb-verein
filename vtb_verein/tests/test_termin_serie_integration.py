@@ -64,11 +64,19 @@ def _make_mannschaft(db, name="Erste", abteilung="Serie-Abt"):
         return cur.fetchone()['id']
 
 
+def _platz(db):
+    """Platzhalter „Kein Vereinsgelände" – seit v80 ist die Spielstätte Pflicht."""
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM spielstaette WHERE platzhalter = 'auswaerts'")
+        return cur.fetchone()['id']
+
+
 def _make_serie(db, mannschaft_id, start=TOMORROW, ende=None, beginn_zeit="19:00", **kw):
     return db.termin_serien.create(
         mannschaft_id, kw.get('typ', 'training'), beginn_zeit, kw.get('ende_zeit'),
         kw.get('ort'), kw.get('treffpunkt'), kw.get('treffpunkt_zeit'),
         kw.get('beschreibung'), start, ende, 't',
+        spielstaette_id=kw.get('spielstaette_id') or _platz(db),
     )
 
 
@@ -93,8 +101,9 @@ def test_schema_fk_und_check(db):
         with pytest.raises(psycopg.errors.CheckViolation):
             cur.execute(
                 "INSERT INTO termin_serie (mannschaft_id,typ,beginn_zeit,start_datum,"
-                "materialisiert_bis,created_by,updated_by) "
-                "VALUES (%s,'spiel','19:00',%s,%s,'t','t')", (mid, TOMORROW, YESTERDAY))
+                "materialisiert_bis,spielstaette_id,created_by,updated_by) "
+                "VALUES (%s,'spiel','19:00',%s,%s,%s,'t','t')",
+                (mid, TOMORROW, YESTERDAY, _platz(db)))
 
 
 def test_history_trigger(db):
@@ -154,20 +163,22 @@ def test_update_wirkt_nur_auf_unveraenderte_zukuenftige_geplante(db):
     # eine Instanz individuell verschieben, eine absagen
     t_ind = db.termine.get(individuell['id'])
     assert db.termine.update(t_ind.id, t_ind.typ, t_ind.beginn[:11] + "20:30", None,
-                             "Ausweichhalle", None, None, None, None, None, 't', t_ind.version)
+                             "Ausweichhalle", None, None, None, None, None, 't', t_ind.version, spielstaette_id=_platz(db))
     t_abg = db.termine.get(abgesagt['id'])
     assert db.termine.set_status(t_abg.id, 'abgesagt', 't', t_abg.version)
     # eine vergangene unveränderte Instanz simulieren
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO termine (mannschaft_id,serie_id,typ,beginn,ort,created_by,updated_by) "
-            "VALUES (%s,%s,'training',%s,'Halle 1','t','t') RETURNING id",
-            (mid, s.id, f"{YESTERDAY}T19:00"))
+            "INSERT INTO termine (mannschaft_id,serie_id,typ,beginn,ort,spielstaette_id,"
+            "created_by,updated_by) "
+            "VALUES (%s,%s,'training',%s,'Halle 1',%s,'t','t') RETURNING id",
+            (mid, s.id, f"{YESTERDAY}T19:00", _platz(db)))
         vergangen_id = cur.fetchone()['id']
 
     # Serie: 19:00->19:30, Halle 1->Halle 2
     assert db.termin_serien.update(s.id, 'training', "19:30", None, "Halle 2",
-                                   None, None, None, None, 't2', s.version)
+                                   None, None, None, None, 't2', s.version,
+                                   spielstaette_id=_platz(db))
     for r in _instanzen(db, s.id):
         if r['id'] == individuell['id']:
             assert r['beginn'][11:] == "20:30" and r['ort'] == "Ausweichhalle"  # unberührt
@@ -179,7 +190,8 @@ def test_update_wirkt_nur_auf_unveraenderte_zukuenftige_geplante(db):
             assert r['beginn'][11:] == "19:30" and r['ort'] == "Halle 2"        # gewandert
     # Versionskonflikt: alter Stand darf nichts mehr ändern
     assert not db.termin_serien.update(s.id, 'training', "21:00", None, None,
-                                       None, None, None, None, 't2', s.version)
+                                       None, None, None, None, 't2', s.version,
+                                   spielstaette_id=_platz(db))
 
 
 def test_update_zusage_bleibt_erhalten(db):
@@ -194,7 +206,8 @@ def test_update_zusage_bleibt_erhalten(db):
     db.termin_zusagen.set_antwort(erste['id'], mitglied_id, 'zu', None, 't')
 
     assert db.termin_serien.update(s.id, 'training', "19:30", None, None,
-                                   None, None, None, None, 't', s.version)
+                                   None, None, None, None, 't', s.version,
+                                   spielstaette_id=_platz(db))
     neu = db.termine.get(erste['id'])
     assert neu.beginn.endswith("19:30")                                   # gewandert
     assert db.termin_zusagen.answer_for(mitglied_id, [erste['id']]) == {erste['id']: 'zu'}
@@ -209,13 +222,14 @@ def test_update_ende_kuerzen_und_wieder_verlaengern(db):
     # individuelle Abweichung auf der letzten Instanz
     letzte = db.termine.get(inst[-1]['id'])
     db.termine.update(letzte.id, letzte.typ, letzte.beginn, None, "Sonderort",
-                      None, None, None, None, None, 't', letzte.version)
+                      None, None, None, None, None, 't', letzte.version, spielstaette_id=_platz(db))
 
     # Ende auf das Datum der 3. Instanz kürzen
     kurz_ende = inst[2]['beginn'][:10]
     s = db.termin_serien.get(s.id)
     assert db.termin_serien.update(s.id, 'training', "19:00", None, None,
-                                   None, None, None, kurz_ende, 't', s.version)
+                                   None, None, None, kurz_ende, 't', s.version,
+                                   spielstaette_id=_platz(db))
     nach_kuerzung = _instanzen(db, s.id)
     # unveränderte hinter dem Ende weg, individuelle bleibt
     assert {r['id'] for r in nach_kuerzung} == {inst[0]['id'], inst[1]['id'],
@@ -226,7 +240,8 @@ def test_update_ende_kuerzen_und_wieder_verlaengern(db):
     # aber am Sonderort-Datum entsteht KEIN Duplikat
     s = db.termin_serien.get(s.id)
     assert db.termin_serien.update(s.id, 'training', "19:00", None, None,
-                                   None, None, None, None, 't', s.version)
+                                   None, None, None, None, 't', s.version,
+                                   spielstaette_id=_platz(db))
     assert db.termin_serien.materialize_due([mid]) > 0
     daten = [r['beginn'][:10] for r in _instanzen(db, s.id)]
     assert len(daten) == len(set(daten)), "Duplikat am Datum der individuellen Instanz"
@@ -242,14 +257,15 @@ def test_delete_serie_raeumt_zukunft_ab(db):
     # eine Instanz individuell ändern + eine absagen + eine vergangene anlegen
     t0 = db.termine.get(inst[0]['id'])
     db.termine.update(t0.id, t0.typ, t0.beginn, None, "Anders", None, None, None,
-                      None, None, 't', t0.version)
+                      None, None, 't', t0.version, spielstaette_id=_platz(db))
     t1 = db.termine.get(inst[1]['id'])
     db.termine.set_status(t1.id, 'abgesagt', 't', t1.version)
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO termine (mannschaft_id,serie_id,typ,beginn,created_by,updated_by) "
-            "VALUES (%s,%s,'training',%s,'t','t') RETURNING id",
-            (mid, s.id, f"{YESTERDAY}T19:00"))
+            "INSERT INTO termine (mannschaft_id,serie_id,typ,beginn,spielstaette_id,"
+            "created_by,updated_by) "
+            "VALUES (%s,%s,'training',%s,%s,'t','t') RETURNING id",
+            (mid, s.id, f"{YESTERDAY}T19:00", _platz(db)))
         vergangen_id = cur.fetchone()['id']
 
     assert db.termin_serien.mark_deleted(s.id, 't')

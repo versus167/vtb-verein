@@ -230,6 +230,15 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("termin_serie", "Terminserien", "termin_serie",
                 history_table="termin_serie_history",
                 children=(ChildRef("termine", "serie_id"),)),
+    # Spielstätten stehen nach Termin/Serie: Solange ein Termin auf einen Platz
+    # zeigt, hält die Kind-Referenz ihn im Papierkorb fest (Tor 4) – ein
+    # gelöschter Platz reißt also keine Termine mit.
+    PruneEntity("spielstaette", "Spielstätten", "spielstaette",
+                history_table="spielstaette_history",
+                children=(
+                    ChildRef("termine", "spielstaette_id"),
+                    ChildRef("termin_serie", "spielstaette_id"),
+                )),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),

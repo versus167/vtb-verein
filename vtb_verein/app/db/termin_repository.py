@@ -35,20 +35,23 @@ _KADER_CTE = """
     )
 """
 
-_COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, treffpunkt, "
+_COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, treffpunkt, "
          "treffpunkt_zeit, gegner, heim_auswaerts, extern_ref, status, beschreibung, "
          "version, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
 
 # Änderbare Fachfelder (create/update) – status/extern_ref/serie_id laufen bewusst
 # über eigene Wege (set_status bzw. späterer Import/Serien-Code).
-_EDIT_FIELDS = ('typ', 'beginn', 'ende', 'ort', 'treffpunkt', 'treffpunkt_zeit',
-                'gegner', 'heim_auswaerts', 'beschreibung')
+# spielstaette_id ist seit v80 Pflicht (Grundlage des Platzbelegungsplans, #95).
+_EDIT_FIELDS = ('typ', 'beginn', 'ende', 'ort', 'spielstaette_id', 'treffpunkt',
+                'treffpunkt_zeit', 'gegner', 'heim_auswaerts', 'beschreibung')
 
 
 def _map(row) -> Termin:
     return Termin(
         id=row['id'], mannschaft_id=row['mannschaft_id'], serie_id=row['serie_id'],
         typ=row['typ'], beginn=row['beginn'], ende=row['ende'], ort=row['ort'],
+        spielstaette_id=row['spielstaette_id'],
+        spielstaette_name=row.get('spielstaette_name'),
         treffpunkt=row['treffpunkt'], treffpunkt_zeit=row['treffpunkt_zeit'],
         gegner=row['gegner'], heim_auswaerts=row['heim_auswaerts'],
         extern_ref=row['extern_ref'], status=row['status'],
@@ -79,11 +82,14 @@ class TerminRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT {_COLS} FROM termine
-                WHERE mannschaft_id = %(mid)s AND deleted_at IS NULL
-                  AND (%(von)s::text IS NULL OR beginn >= %(von)s)
-                  AND (%(bis)s::text IS NULL OR LEFT(beginn, 10) <= %(bis)s)
-                ORDER BY beginn, id
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       s.name AS spielstaette_name
+                FROM termine t
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
+                  AND (%(von)s::text IS NULL OR t.beginn >= %(von)s)
+                  AND (%(bis)s::text IS NULL OR LEFT(t.beginn, 10) <= %(bis)s)
+                ORDER BY t.beginn, t.id
                 """,
                 {"mid": mannschaft_id, "von": von, "bis": bis},
             )
@@ -111,11 +117,13 @@ class TerminRepository(BaseRepository):
                     WHERE gm.user_id = %(uid)s AND z.deleted_at IS NULL
                 )
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
-                       ma.name AS mannschaft_name, z.darf_verwalten,
+                       ma.name AS mannschaft_name, s.name AS spielstaette_name,
+                       z.darf_verwalten,
                        (z.mannschaft_id IS NULL) AS ist_gast
                 FROM termine t
                 LEFT JOIN zugriff z ON z.mannschaft_id = t.mannschaft_id
                 JOIN mannschaft ma ON ma.id = t.mannschaft_id AND ma.deleted_at IS NULL
+                JOIN spielstaette s ON s.id = t.spielstaette_id
                 WHERE t.deleted_at IS NULL
                   AND (z.mannschaft_id IS NOT NULL
                        OR t.id IN (SELECT termin_id FROM gast))
@@ -330,7 +338,7 @@ class TerminRepository(BaseRepository):
                ende: Optional[str], ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], gegner: Optional[str],
                heim_auswaerts: Optional[str], beschreibung: Optional[str],
-               created_by: str) -> Termin:
+               created_by: str, *, spielstaette_id: int) -> Termin:
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -339,8 +347,9 @@ class TerminRepository(BaseRepository):
                 VALUES ({', '.join(['%s'] * (len(_EDIT_FIELDS) + 3))})
                 RETURNING id
                 """,
-                (mannschaft_id, typ, beginn, ende, ort, treffpunkt, treffpunkt_zeit,
-                 gegner, heim_auswaerts, beschreibung, created_by, created_by),
+                (mannschaft_id, typ, beginn, ende, ort, spielstaette_id, treffpunkt,
+                 treffpunkt_zeit, gegner, heim_auswaerts, beschreibung,
+                 created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -349,7 +358,7 @@ class TerminRepository(BaseRepository):
                ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], gegner: Optional[str],
                heim_auswaerts: Optional[str], beschreibung: Optional[str],
-               updated_by: str, expected_version: int) -> bool:
+               updated_by: str, expected_version: int, *, spielstaette_id: int) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -357,8 +366,9 @@ class TerminRepository(BaseRepository):
                        updated_at=CURRENT_TIMESTAMP, updated_by=%s, version=version+1
                 WHERE id=%s AND deleted_at IS NULL AND version=%s
                 """,
-                (typ, beginn, ende, ort, treffpunkt, treffpunkt_zeit, gegner,
-                 heim_auswaerts, beschreibung, updated_by, termin_id, expected_version),
+                (typ, beginn, ende, ort, spielstaette_id, treffpunkt, treffpunkt_zeit,
+                 gegner, heim_auswaerts, beschreibung, updated_by, termin_id,
+                 expected_version),
             )
             return cur.rowcount > 0
 
