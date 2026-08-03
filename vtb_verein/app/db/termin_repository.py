@@ -59,6 +59,10 @@ def _map(row) -> Termin:
         typ=row['typ'], beginn=row['beginn'], ende=row['ende'], ort=row['ort'],
         spielstaette_id=row['spielstaette_id'],
         spielstaette_name=row.get('spielstaette_name'),
+        spielstaette_strasse=row.get('spielstaette_strasse'),
+        spielstaette_plz=row.get('spielstaette_plz'),
+        spielstaette_ort=row.get('spielstaette_ort'),
+        spielstaette_untergrund=row.get('spielstaette_untergrund'),
         treffpunkt=row['treffpunkt'], treffpunkt_zeit=row['treffpunkt_zeit'],
         gegner=row['gegner'], heim_auswaerts=row['heim_auswaerts'],
         extern_ref=row['extern_ref'], extern_stand=row['extern_stand'],
@@ -75,9 +79,23 @@ class TerminRepository(BaseRepository):
 
     # ------------------------------------------------------------------ lesen
     def get(self, termin_id: int) -> Optional[Termin]:
+        """Einzelner Termin – mit denselben Anzeigefeldern wie in den Listen.
+
+        Der JOIN auf die Spielstätte kostet nichts (das Feld ist seit v80 NOT
+        NULL) und erspart die Frage, warum Name, Anschrift und Belag mal da sind
+        und mal nicht.
+        """
         with self.cursor() as cur:
             cur.execute(
-                f"SELECT {_COLS} FROM termine WHERE id = %s AND deleted_at IS NULL",
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.id = %s AND t.deleted_at IS NULL
+                """,
                 (termin_id,),
             )
             row = cur.fetchone()
@@ -109,7 +127,9 @@ class TerminRepository(BaseRepository):
             cur.execute(
                 f"""
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
-                       s.name AS spielstaette_name
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz, s.ort AS spielstaette_ort,
+                       s.untergrund AS spielstaette_untergrund
                 FROM termine t
                 JOIN spielstaette s ON s.id = t.spielstaette_id
                 WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
@@ -144,6 +164,8 @@ class TerminRepository(BaseRepository):
                 )
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
                        ma.name AS mannschaft_name, s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz, s.ort AS spielstaette_ort,
+                       s.untergrund AS spielstaette_untergrund,
                        z.darf_verwalten,
                        (z.mannschaft_id IS NULL) AS ist_gast
                 FROM termine t

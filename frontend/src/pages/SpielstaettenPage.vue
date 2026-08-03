@@ -35,6 +35,7 @@
               <span v-if="adresse(s)">{{ adresse(s) }}</span>
               <span v-else class="text-grey">keine Adresse</span>
               <span v-if="s.dfbnet_nr"> · DFBnet {{ s.dfbnet_nr }}</span>
+              <span v-if="s.untergrund"> · {{ s.untergrund }}</span>
               <span v-if="s.parallel_moeglich > 1">
                 · {{ s.parallel_moeglich }} parallel möglich
               </span>
@@ -68,6 +69,11 @@
             <q-input v-model="form.plz" outlined dense label="PLZ" class="col-4" />
             <q-input v-model="form.ort" outlined dense label="Ort" class="col" />
           </div>
+          <q-select v-model="form.untergrund" outlined dense label="Untergrund"
+            :options="UNTERGRUND_VORSCHLAEGE" use-input new-value-mode="add-unique"
+            clearable hide-dropdown-icon input-debounce="0"
+            hint="Wird am Termin angezeigt – danach wählen die Spieler ihre Schuhe."
+            @new-value="(wert, done) => done(wert.trim(), 'add-unique')" />
           <q-toggle v-model="form.ist_eigen" label="Eigenes Vereinsgelände" dense />
           <q-input v-model="form.dfbnet_nr" outlined dense
             label="DFBnet-Spielstätten-Nr." hint="Nur nötig für den Spielplan-Import" />
@@ -105,12 +111,15 @@ const loading = ref(false)
 const dialogOpen = ref(false)
 const aktuell = ref(null)
 const busy = ref(false)
+// Vorschläge, keine feste Liste: Der DFBnet-Export bringt eigene Bezeichnungen
+// mit, und Hallenböden lassen sich nicht vorab aufzählen.
+const UNTERGRUND_VORSCHLAEGE = ['Rasen', 'Kunstrasen', 'Hartplatz', 'Halle', 'Asche']
 const error = ref('')
 const form = ref(leer())
 
 function leer() {
   return { name: '', strasse: '', plz: '', ort: '', ist_eigen: false,
-           dfbnet_nr: '', parallel_moeglich: 1 }
+           dfbnet_nr: '', parallel_moeglich: 1, untergrund: null }
 }
 
 function adresse(s) {
@@ -144,6 +153,7 @@ function bearbeite(s) {
     ist_eigen: s.ist_eigen,
     dfbnet_nr: s.dfbnet_nr || '',
     parallel_moeglich: s.parallel_moeglich,
+    untergrund: s.untergrund || null,
   }
   error.value = ''
   dialogOpen.value = true
@@ -164,6 +174,7 @@ async function speichern() {
     ist_eigen: form.value.ist_eigen,
     dfbnet_nr: form.value.dfbnet_nr || null,
     parallel_moeglich: form.value.parallel_moeglich || 1,
+    untergrund: form.value.untergrund || null,
   }
   try {
     if (aktuell.value?.id) {

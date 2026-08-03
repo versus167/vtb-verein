@@ -44,3 +44,13 @@ class Termin:
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalte:
     mannschaft_name: Optional[str] = None
     spielstaette_name: Optional[str] = None
+    # Anschrift der Spielstätte, getrennt vom Namen: Für die Übergabe an eine
+    # Navi-App taugt nur die Adresse — Platzbezeichnungen wie „eins-Stadion –
+    # An der Gellertstraße" oder „Sportpl. Ebersdorf Höhensonne" findet kein
+    # Geocoder zuverlässig.
+    spielstaette_strasse: Optional[str] = None
+    spielstaette_plz: Optional[str] = None
+    spielstaette_ort: Optional[str] = None
+    # Belag (Rasen/Kunstrasen/…): steht am Termin, weil die Spieler danach ihre
+    # Schuhe wählen – die Spielstätte selbst schaut dafür niemand nach.
+    spielstaette_untergrund: Optional[str] = None

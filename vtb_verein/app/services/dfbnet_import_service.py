@@ -42,6 +42,9 @@ SPALTE_STRASSE = 'Straße/Hausnr.'
 SPALTE_PLZ = 'PLZ'
 SPALTE_ORT = 'Ort'
 SPALTE_PARALLEL = 'Max. parallele Spiele'
+# Der erste „Typ" im Export ist der Platzbelag (Rasenplatz/Kunstrasenplatz), der
+# zweite der Spieltyp – daher hier ohne, dort mit „#2" (s. _eindeutige_koepfe).
+SPALTE_PLATZTYP = 'Typ'
 SPALTE_DATUM = 'Spieldatum'
 SPALTE_UHRZEIT = 'Uhrzeit'
 SPALTE_SPIELTAG = 'Sptg.'
@@ -94,6 +97,7 @@ class Spiel:
     strasse: str
     plz: str
     ort: str
+    platztyp: str = ''              # Belag laut Export, s. untergrund()
     parallel_moeglich: int = 1
 
     @property
@@ -125,7 +129,7 @@ class ImportBericht:
     befunde: list = field(default_factory=list)
     # [{name, mannschaftsart, anzahl}] – im Export vorhanden, in der App nicht zugeordnet
     unbekannte_teams: list = field(default_factory=list)
-    # [{name, dfbnet_nr, strasse, plz, ort, parallel_moeglich, anzahl}] – Vorschläge
+    # [{name, dfbnet_nr, strasse, plz, ort, untergrund, parallel_moeglich, anzahl}]
     neue_spielstaetten: list = field(default_factory=list)
     fehler: list = field(default_factory=list)         # Zeilen, die nicht lesbar waren
 
@@ -180,6 +184,24 @@ def _wandzeit(datum: str, uhrzeit: str) -> Optional[str]:
     except ValueError:
         return None
     return f'{tag.isoformat()}T{uhrzeit}'
+
+
+# Der Export hängt an jeden Belag „-platz"; in der App liest sich der kurze
+# Begriff besser. Was nicht in der Liste steht (Hallenböden, Sonderformen), wird
+# unverändert übernommen statt verschluckt.
+_UNTERGRUND_KURZ = {
+    'rasenplatz': 'Rasen',
+    'kunstrasenplatz': 'Kunstrasen',
+    'hartplatz': 'Hartplatz',
+}
+
+
+def untergrund(platztyp: str) -> Optional[str]:
+    """Belag aus der Platztyp-Spalte des Exports, auf Anzeigeform gebracht."""
+    wert = (platztyp or '').strip()
+    if not wert:
+        return None
+    return _UNTERGRUND_KURZ.get(wert.lower(), wert)
 
 
 def _zahl(wert: str, standard: int = 1) -> int:
@@ -239,6 +261,7 @@ def parse_spielplan(daten: bytes) -> tuple[list[Spiel], list[str]]:
             strasse=feld(zeile, SPALTE_STRASSE),
             plz=feld(zeile, SPALTE_PLZ),
             ort=feld(zeile, SPALTE_ORT),
+            platztyp=feld(zeile, SPALTE_PLATZTYP),
             parallel_moeglich=_zahl(feld(zeile, SPALTE_PARALLEL)),
         ))
     return spiele, fehler
@@ -290,6 +313,7 @@ def dry_run(db, daten: bytes) -> ImportBericht:
             eintrag = neue_staetten.setdefault(s.spielstaetten_nr, {
                 'name': s.spielstaette, 'dfbnet_nr': s.spielstaetten_nr,
                 'strasse': s.strasse, 'plz': s.plz, 'ort': s.ort,
+                'untergrund': untergrund(s.platztyp),
                 'parallel_moeglich': s.parallel_moeglich, 'anzahl': 0,
             })
             eintrag['anzahl'] += 1

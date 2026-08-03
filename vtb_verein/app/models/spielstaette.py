@@ -26,6 +26,10 @@ class Spielstaette:
     # werden nie blockiert, sondern gegen diese Zahl angezeigt.
     parallel_moeglich: int = 1
     platzhalter: Optional[str] = None    # 'auswaerts' | 'unbekannt' | None
+    # Belag (Rasen, Kunstrasen, Halle …) – interessiert die Spieler wegen der
+    # Schuhwahl. Freitext: Der DFBnet-Export bringt eigene Bezeichnungen mit,
+    # und Hallenböden lassen sich nicht sinnvoll vorab aufzählen.
+    untergrund: Optional[str] = None
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

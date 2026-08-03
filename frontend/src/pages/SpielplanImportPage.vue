@@ -107,6 +107,7 @@
               <q-item-label>{{ s.name }}</q-item-label>
               <q-item-label caption>
                 DFBnet {{ s.dfbnet_nr }} · {{ s.strasse }}, {{ s.plz }} {{ s.ort }}
+                <span v-if="s.untergrund"> · {{ s.untergrund }}</span>
                 · {{ s.anzahl }}× im Plan
               </q-item-label>
             </q-item-section>
@@ -255,6 +256,8 @@
           <q-input v-model.number="stForm.parallel_moeglich" type="number" min="1" outlined dense
             label="Parallel mögliche Spiele"
             hint="Aus dem Export übernommen – wie viele Partien gleichzeitig laufen können." />
+          <q-input v-model="stForm.untergrund" outlined dense label="Untergrund"
+            hint="Steht als Platztyp im Export; wird am Termin angezeigt." />
           <q-toggle v-model="stForm.ist_eigen" label="Eigenes Vereinsgelände" />
           <div class="text-caption text-grey">
             Nur auf eigenem Gelände zählt ein fremdes Spiel als Platzbelegung; sonst
@@ -384,7 +387,7 @@ const stBusy = ref(false)
 const stFehler = ref('')
 const stAnzahl = ref(0)
 const stForm = ref({ name: '', dfbnet_nr: '', strasse: '', plz: '', ort: '',
-                     parallel_moeglich: 1, ist_eigen: false })
+                     untergrund: '', parallel_moeglich: 1, ist_eigen: false })
 const angelegt = ref({})          // dfbnet_nr -> Name, solange der Bericht steht
 
 const offeneAenderungen = computed(
@@ -394,6 +397,7 @@ function oeffneSpielstaette(s) {
   stForm.value = {
     name: s.name || '', dfbnet_nr: s.dfbnet_nr, strasse: s.strasse || '',
     plz: s.plz || '', ort: s.ort || '',
+    untergrund: s.untergrund || '',
     parallel_moeglich: s.parallel_moeglich || 1, ist_eigen: false,
   }
   stAnzahl.value = s.anzahl
@@ -412,6 +416,7 @@ async function spielstaetteSpeichern() {
       plz: stForm.value.plz || null,
       ort: stForm.value.ort || null,
       ist_eigen: stForm.value.ist_eigen,
+      untergrund: stForm.value.untergrund || null,
       parallel_moeglich: Number(stForm.value.parallel_moeglich) || 1,
     })
     angelegt.value = { ...angelegt.value, [stForm.value.dfbnet_nr]: data.name }

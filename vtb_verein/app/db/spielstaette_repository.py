@@ -23,10 +23,11 @@ PLATZHALTER_AUSWAERTS = 'auswaerts'
 PLATZHALTER_UNBEKANNT = 'unbekannt'
 
 _COLS = ("id, name, dfbnet_nr, strasse, plz, ort, ist_eigen, parallel_moeglich, "
-         "platzhalter, version, created_at, created_by, updated_at, updated_by, "
-         "deleted_at, deleted_by")
+         "platzhalter, untergrund, version, created_at, created_by, updated_at, "
+         "updated_by, deleted_at, deleted_by")
 
 _EDIT_FIELDS = ('name', 'dfbnet_nr', 'strasse', 'plz', 'ort', 'ist_eigen',
+                'untergrund',
                 'parallel_moeglich')
 
 

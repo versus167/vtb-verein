@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 84
+SCHEMA_VERSION = 85
 
 
 # ---------------------------------------------------------------------------
@@ -2477,7 +2477,7 @@ _TERMIN_SERIE_TRIGGERS = (
 # ============================================================================
 _SPIELSTAETTE_COLS = (
     "id, version, name, dfbnet_nr, strasse, plz, ort, ist_eigen, "
-    "parallel_moeglich, platzhalter, "
+    "parallel_moeglich, platzhalter, untergrund, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _SPIELSTAETTE_VALS = ", ".join("NEW." + c.strip() for c in _SPIELSTAETTE_COLS.split(","))
@@ -2510,6 +2510,7 @@ _DDL_SPIELSTAETTE = """
       ist_eigen         BOOLEAN NOT NULL DEFAULT FALSE,
       parallel_moeglich INTEGER NOT NULL DEFAULT 1,
       platzhalter       TEXT,
+      untergrund        TEXT,
       version           INTEGER NOT NULL DEFAULT 1,
       created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by        TEXT NOT NULL,
@@ -2524,6 +2525,7 @@ _DDL_SPIELSTAETTE = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       name TEXT, dfbnet_nr TEXT, strasse TEXT, plz TEXT, ort TEXT,
       ist_eigen BOOLEAN, parallel_moeglich INTEGER, platzhalter TEXT,
+      untergrund TEXT,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -2965,6 +2967,7 @@ class Database:
             82: self._migrate_v81_to_v82,
             83: self._migrate_v82_to_v83,
             84: self._migrate_v83_to_v84,
+            85: self._migrate_v84_to_v85,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6373,6 +6376,26 @@ class Database:
                 cur.execute(sql)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 84 WHERE id = 1")
+
+    def _migrate_v84_to_v85(self) -> None:
+        """Untergrund der Spielstätte (Rasen, Kunstrasen, Halle …) – #95.
+
+        Reine Anzeige-Information, die aber jeder Spieler vor der Anfahrt wissen
+        will (Schuhwahl). Freitext statt CHECK-Liste: Der DFBnet-Export kennt
+        eigene Bezeichnungen, und Hallen-/Sonderböden lassen sich nicht sinnvoll
+        vorab aufzählen. Die Audit-Funktionen werden neu erzeugt, weil ihre
+        Spaltenliste die neue Spalte mitführen muss — sonst fehlte sie in der
+        History. DDL/Trigger sind mit dem Frischaufbau geteilt (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE spielstaette "
+                        "ADD COLUMN IF NOT EXISTS untergrund TEXT")
+            cur.execute("ALTER TABLE spielstaette_history "
+                        "ADD COLUMN IF NOT EXISTS untergrund TEXT")
+            cur.execute(_FN_SPIELSTAETTE_AUDIT_INSERT)
+            cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 85 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

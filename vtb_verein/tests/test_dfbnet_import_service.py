@@ -117,3 +117,27 @@ def test_ort_text_setzt_spielstaette_und_adresse_zusammen():
 def test_leere_datei():
     spiele, fehler = dfbnet.parse_spielplan(''.encode('utf-16'))
     assert spiele == [] and fehler
+
+
+# ---------------------------------------------------------------- Platzbelag
+def test_platztyp_wird_zum_untergrund():
+    """Die erste „Typ"-Spalte ist der Belag; der Export hängt „-platz" an."""
+    assert dfbnet.untergrund('Rasenplatz') == 'Rasen'
+    assert dfbnet.untergrund('Kunstrasenplatz') == 'Kunstrasen'
+    assert dfbnet.untergrund('KUNSTRASENPLATZ') == 'Kunstrasen'
+
+
+def test_unbekannter_belag_bleibt_wie_er_ist():
+    """Hallenböden und Sonderformen lassen sich nicht aufzählen – lieber die
+    Bezeichnung des Exports zeigen als sie zu verschlucken."""
+    assert dfbnet.untergrund('Parkett') == 'Parkett'
+    assert dfbnet.untergrund('') is None
+    assert dfbnet.untergrund(None) is None
+
+
+def test_platztyp_landet_am_gelesenen_spiel():
+    """Der Platztyp steht VOR dem Spieltyp – beide heißen im Export „Typ"."""
+    spiele, fehler = dfbnet.parse_spielplan(
+        _datei(_zeile(platztyp='Kunstrasenplatz', spieltyp='Pokal')))
+    assert fehler == []
+    assert (spiele[0].platztyp, spiele[0].spieltyp) == ('Kunstrasenplatz', 'Pokal')

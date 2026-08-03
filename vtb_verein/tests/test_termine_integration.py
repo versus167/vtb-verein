@@ -285,3 +285,35 @@ def test_mannschaften_listen(db):
     alle = db.termine.list_all_mannschaften()
     assert {m['name'] for m in alle} == {"Erste", "Zweite"}
     assert all(m['zugriff'] == 'verwalten' for m in alle)
+
+
+# ------------------------------------------------- Spielstätte am Termin (#95)
+def test_termin_traegt_anschrift_und_belag_der_spielstaette(db):
+    """Die Terminliste reicht Anschrift und Untergrund der Spielstätte mit durch.
+
+    Beides hängt daran: Der Route-Knopf übergibt der Navi-App die Anschrift OHNE
+    den Platznamen (Bezeichnungen wie „eins-Stadion – An der Gellertstraße"
+    findet kein Geocoder), und der Belag steht an der Karte, weil die Spieler
+    danach ihre Schuhe wählen. Fällt der JOIN weg, verschwindet beides
+    stillschweigend.
+    """
+    m = _make_mannschaft(db)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO spielstaette (name, strasse, plz, ort, untergrund, "
+            "created_by, updated_by) VALUES ('Platz am Jahnhaus', "
+            "'Rußdorfer Straße 10', '09212', 'Limbach-Oberfrohna', 'Kunstrasen', "
+            "'t', 't') RETURNING id")
+        platz = cur.fetchone()['id']
+    neu = _create_termin(db, m, '2026-08-15T15:00', spielstaette_id=platz)
+
+    t = db.termine.get(neu.id)
+    assert t.spielstaette_name == 'Platz am Jahnhaus'
+    assert (t.spielstaette_strasse, t.spielstaette_plz, t.spielstaette_ort) == (
+        'Rußdorfer Straße 10', '09212', 'Limbach-Oberfrohna')
+    assert t.spielstaette_untergrund == 'Kunstrasen'
+
+    # und über die Listen, aus denen das Frontend die Karten baut
+    aus_liste = db.termine.list_for_mannschaft(m)[0]
+    assert aus_liste.spielstaette_strasse == 'Rußdorfer Straße 10'
+    assert aus_liste.spielstaette_untergrund == 'Kunstrasen'

@@ -201,6 +201,35 @@ def test_audit_trigger_schreibt_history(db):
         (1, 'Sportplatz Test'), (2, 'Sportplatz Test 2')]
 
 
+def test_untergrund_landet_auch_in_der_history(db):
+    """v85: Der Belag ist Anzeige-Information am Termin – und muss, wie jedes
+    andere Feld, über den Audit-Trigger in der History nachvollziehbar sein.
+    Genau das geht schief, wenn eine Migration die Spalte anlegt, aber die
+    Spaltenliste der Audit-Funktionen nicht mitzieht."""
+    with _cur(db) as cur:
+        cur.execute("INSERT INTO spielstaette (name, untergrund, created_by, updated_by) "
+                    "VALUES ('Platz mit Belag', 'Rasen', %s, %s) RETURNING id",
+                    (_MARKE, _MARKE))
+        neu_id = cur.fetchone()['id']
+        cur.execute("UPDATE spielstaette SET untergrund = 'Kunstrasen', "
+                    "version = version + 1, updated_by = %s WHERE id = %s",
+                    (_MARKE, neu_id))
+        cur.execute("SELECT version, untergrund FROM spielstaette_history "
+                    "WHERE id = %s ORDER BY version", (neu_id,))
+        rows = cur.fetchall()
+    assert [(r['version'], r['untergrund']) for r in rows] == [
+        (1, 'Rasen'), (2, 'Kunstrasen')]
+
+
+def test_untergrund_ist_freiwillig(db):
+    """Bestandsplätze haben keinen Belag hinterlegt – NULL muss erlaubt bleiben."""
+    with _cur(db) as cur:
+        cur.execute("INSERT INTO spielstaette (name, created_by, updated_by) "
+                    "VALUES ('Platz ohne Belag', %s, %s) RETURNING untergrund",
+                    (_MARKE, _MARKE))
+        assert cur.fetchone()['untergrund'] is None
+
+
 def test_zeitstempel_sind_timestamptz(db):
     with _cur(db) as cur:
         cur.execute("""

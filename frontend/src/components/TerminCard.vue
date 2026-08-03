@@ -100,8 +100,14 @@
       </div>
     </div>
 
-    <div v-if="!kompakt && metaText" class="termin-card__meta text-caption text-grey-7 ellipsis">
-      <q-icon name="place" size="14px" /> {{ metaText }}
+    <div v-if="!kompakt && (metaText || untergrund)"
+      class="termin-card__meta text-caption text-grey-7 ellipsis">
+      <span v-if="metaText"><q-icon name="place" size="14px" /> {{ metaText }}</span>
+      <!-- Belag: entscheidet über die Schuhwahl, gehört deshalb an den Termin
+           und nicht nur in die Stammdaten der Spielstätte. -->
+      <span v-if="untergrund" :class="metaText ? 'q-ml-md' : ''">
+        <q-icon name="grass" size="14px" /> {{ untergrund }}
+      </span>
     </div>
 
     <q-separator />
@@ -186,8 +192,18 @@ const untertitel = computed(() => {
 // Ort steht im Kopf – hier nur noch der Treffpunkt
 const metaText = computed(() =>
   props.termin.treffpunkt ? `Treffpunkt: ${props.termin.treffpunkt}` : '')
-// Navigation zum Spielort; leer, solange kein Ort am Termin steht.
-const kartenZiel = computed(() => kartenLink(props.termin.ort, $q.platform.is))
+const untergrund = computed(() => props.termin.spielstaette_untergrund || '')
+// Navigation zum Spielort: bevorzugt die Anschrift der Spielstätte OHNE deren
+// Namen – „Sportpl. Ebersdorf Höhensonne" findet kein Geocoder, „Max-Saupe-Str.,
+// 09131 Chemnitz" schon. Nur wenn keine Anschrift hinterlegt ist (Platzhalter
+// wie „Kein Vereinsgelände"), zählt der freie Ortstext des Termins.
+const kartenZiel = computed(() => {
+  const t = props.termin
+  const anschrift = [t.spielstaette_strasse,
+                     [t.spielstaette_plz, t.spielstaette_ort].filter(Boolean).join(' ')]
+    .filter(Boolean).join(', ')
+  return kartenLink(anschrift || t.ort, $q.platform.is)
+})
 
 function zaehler(key) {
   return props.termin.zusagen?.[key] ?? 0

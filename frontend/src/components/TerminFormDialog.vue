@@ -17,7 +17,7 @@
           option-value="id" option-label="name" emit-value map-options
           label="Spielstätte *" outlined dense :loading="ladeSpielstaetten"
           use-input input-debounce="0" fill-input hide-selected
-          @filter="filterSpielstaetten">
+          @filter="filterSpielstaetten" @update:model-value="ortUebernehmen">
           <template #option="{ itemProps, opt }">
             <q-item v-bind="itemProps">
               <q-item-section>
@@ -103,7 +103,20 @@ const form = ref({})
 // `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
 const { optionen: spielstaetten, laedt: ladeSpielstaetten,
         laden: loadSpielstaetten, filtern: filterSpielstaetten,
-        adresse } = useSpielstaettenAuswahl()
+        adresse, ortText } = useSpielstaettenAuswahl()
+
+// Adresse der gewählten Spielstätte in das Ort-Feld übernehmen. Überschrieben
+// wird nur, was leer ist oder noch von einer früheren Auswahl stammt — von Hand
+// Ergänztes („Halle 2, Hintereingang") bleibt stehen.
+const zuletztUebernommen = ref('')
+function ortUebernehmen(id) {
+  const text = ortText(id)
+  if (!text) return
+  const aktuell = (form.value.ort || '').trim()
+  if (aktuell && aktuell !== zuletztUebernommen.value) return
+  form.value.ort = text
+  zuletztUebernommen.value = text
+}
 
 function leeresFormular() {
   return { id: null, version: null, typ: 'training',
@@ -116,6 +129,7 @@ function leeresFormular() {
 watch(open, (offen) => {
   if (!offen) return
   loadSpielstaetten()
+  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   const t = props.termin
   form.value = t
     ? { id: t.id, version: t.version, typ: t.typ,

@@ -31,6 +31,7 @@ class SpielstaetteWrite(BaseModel):
     ort: Optional[str] = None
     ist_eigen: bool = False
     parallel_moeglich: int = 1
+    untergrund: Optional[str] = None
 
 
 class SpielstaetteUpdate(SpielstaetteWrite):
@@ -57,6 +58,7 @@ def _clean(w: SpielstaetteWrite) -> Spielstaette:
         ort=(w.ort or '').strip() or None,
         ist_eigen=w.ist_eigen,
         parallel_moeglich=w.parallel_moeglich,
+        untergrund=(w.untergrund or '').strip() or None,
     )
 
 

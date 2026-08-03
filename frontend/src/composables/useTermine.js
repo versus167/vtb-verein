@@ -84,7 +84,16 @@ export function useSpielstaettenAuswahl() {
     return [p.strasse, [p.plz, p.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ')
   }
 
-  return { alle, optionen, laedt, laden, filtern, adresse }
+  // Ortstext zur Spielstätte, in derselben Form wie ihn der Spielplan-Import
+  // schreibt: „Platz, Straße, PLZ Ort". Platzhalter („Kein Vereinsgelände",
+  // „Nicht erfasst") haben keine Anschrift und liefern hier bewusst nichts.
+  function ortText(id) {
+    const p = alle.value.find((x) => x.id === id)
+    if (!p || p.platzhalter) return ''
+    return [p.name, adresse(p)].filter(Boolean).join(', ')
+  }
+
+  return { alle, optionen, laedt, laden, filtern, adresse, ortText }
 }
 
 // Ort an die Karten-/Navi-App des Geräts übergeben.
