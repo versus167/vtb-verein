@@ -171,18 +171,36 @@ bei jeder Änderung an einem bestehenden. Bestandstermine werden *nicht*
 nachträglich befüllt; sie ziehen nach, sobald sie das nächste Mal angefasst
 werden.
 
-Zwei Konsequenzen für die Umsetzung:
+**Umgesetzt wird das mit `NOT NULL`**, nicht nur mit einer Prüfung in der API:
+Die Migration legt die Spalte nullable an, befüllt jede Bestandszeile und zieht
+dann `SET NOT NULL` nach. Die Datenbank garantiert damit, dass es keine Termine
+ohne Angabe gibt — das ist die Voraussetzung dafür, dass der Belegungsplan
+überhaupt vollständig sein *kann*.
 
-1. **In der Datenbank bleibt die Spalte nullable**, erzwungen wird sie in der
-   API-/Service-Schicht. Ein `NOT NULL` wäre bei der Migration nicht
-   einlösbar — für die Altbestände gibt es keinen Wert, den man erfinden
-   dürfte, und der Import kann ihn nur für Spiele nachliefern.
-2. **Es braucht eine ausdrückliche Auswahl „kein Vereinsgelände"**, sonst
-   zwingt das Pflichtfeld dazu, für jeden Waldlauf und jede fremde Halle einen
-   Stammdatensatz anzulegen. Als bewusste Antwort statt als stilles Leerfeld:
-   Danach weiß der Belegungsplan, dass dieser Termin *keine* Lücke ist, sondern
-   woanders stattfindet — genau die Unterscheidung, die ihn erst belastbar
-   macht.
+Dafür braucht es **drei Werte**, nicht zwei:
+
+1. Eine konkrete **Spielstätte**.
+2. **„Kein Vereinsgelände"** als ausdrückliche Auswahl. Ohne die zwingt das
+   Pflichtfeld dazu, für jeden Waldlauf und jede fremde Halle einen
+   Stammdatensatz anzulegen. Als bewusste Antwort weiß der Plan: Dieser Termin
+   ist *keine* Lücke, er findet woanders statt.
+3. **„Nicht erfasst"** als Wert für den Altbestand — und nur dafür.
+
+Der dritte Wert ist der Grund, diese Migration nicht mit „kein Vereinsgelände"
+zu befüllen: Für die meisten Bestandstrainings wäre das schlicht falsch, die
+finden sehr wohl auf dem Platz statt. Der Plan würde dann nicht „unklar"
+anzeigen, sondern „frei" behaupten — und eine falsche Aussage ist für den
+Platzwart schlechter als eine erkennbare Lücke. Mit „nicht erfasst" bleibt die
+Zeile ehrlich, der Plan kann sie als ungeklärt markieren, und beim nächsten
+Speichern verlangt die Oberfläche eine echte Antwort (der Wert ist im Dialog
+nicht auswählbar). Für vergangene Termine bereinigt sich das ohnehin von selbst,
+die interessieren den Belegungsplan nicht.
+
+Technisch am einfachsten sind beide Sonderfälle **feste Zeilen in
+`spielstaette`** mit einem Kennzeichen `ist_platzhalter` — dann trägt
+`spielstaette_id` weiterhin einen echten Fremdschlüssel und `NOT NULL`.
+Wichtig: Diese Zeilen im Frischaufbau *und* in der Migration anlegen (Fresh ==
+Migriert) und im Prune-Lauf niemals abräumen.
 
 Importierte Spiele bringen ihre Spielstätte aus dem DFBnet mit, dort stellt sich
 die Frage nicht. Umgekehrt gehört die Spielstätte damit zu den Feldern, die im
