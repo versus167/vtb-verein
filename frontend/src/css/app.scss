@@ -751,6 +751,13 @@ body:not(.body--dark) {
     .q-field__marginal {
       color: rgba(255, 255, 255, 0.7);
     }
+    // Hinweistexte unter den Feldern (hint/counter): Quasar lässt sie auf
+    // dunklem Grau stehen — auf der blauen Karte schwarz auf blau. Der
+    // Fehlerfall ist ausgenommen, der bleibt rot.
+    .q-field:not(.q-field--error) .q-field__messages,
+    .q-field:not(.q-field--error) .q-field__counter {
+      color: rgba(255, 255, 255, 0.7);
+    }
     .q-field--outlined .q-field__control:before {
       border-color: rgba(255, 255, 255, 0.4);
     }
