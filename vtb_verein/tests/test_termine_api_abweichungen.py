@@ -127,6 +127,112 @@ def test_vergleich_haengt_an_der_terminliste():
     assert [len(t['extern_diff']) for t in termine] == [1, 0]
 
 
+# ------------------------------------------- Termin auf den DFBnet-Stand ziehen
+def _termin(beginn='2026-08-15T16:00', ort='Platz', stand=None, version=3):
+    """Termin, der (per Vorgabe) beim Beginn vom Importstand abweicht."""
+    return Termin(id=1, mannschaft_id=5, serie_id=None, typ='spiel', beginn=beginn,
+                  ende=None, ort=ort, spielstaette_id=1, treffpunkt=None,
+                  treffpunkt_zeit=None, gegner='SV Fremd', heim_auswaerts='heim',
+                  extern_ref='900000001', status='geplant', beschreibung=None,
+                  version=version, extern_stand=stand if stand is not None else {
+                      'beginn': '2026-08-15T15:00', 'ort': 'Platz',
+                      'heim_auswaerts': 'heim', 'gegner': 'SV Fremd',
+                      'spielstaette_id': 7},
+                  created_at='x', created_by='t', updated_at='x', updated_by='t')
+
+
+def _db_uebernahme(termin, *, zugriff='verwalten', erfolg=True):
+    geschrieben = {}
+
+    def _update(tid, *, werte, extern_stand, spielstaette_id, updated_by,
+                expected_version):
+        geschrieben.update(termin_id=tid, werte=werte, extern_stand=extern_stand,
+                           spielstaette_id=spielstaette_id,
+                           expected_version=expected_version)
+        return erfolg
+
+    db = SimpleNamespace(
+        termine=SimpleNamespace(
+            get=lambda tid: termin,
+            get_access_for_user=lambda uid, mid: zugriff,
+            update_aus_import=_update,
+        ),
+        geschrieben=geschrieben,
+    )
+    return db
+
+
+def _uebernahme(version=3, benachrichtigen=False):
+    return api.DfbnetUebernahme(expected_version=version,
+                                benachrichtigen=benachrichtigen)
+
+
+def test_uebernehmen_nur_fuer_verwalter():
+    db = _db_uebernahme(_termin(), zugriff='lesen')
+    with pytest.raises(HTTPException) as e:
+        api.uebernimm_dfbnet_stand(1, _uebernahme(), _SPIELER, db)
+    assert e.value.status_code == 403
+
+
+def test_uebernehmen_schreibt_die_abweichenden_felder():
+    db = _db_uebernahme(_termin())
+    antwort = api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert db.geschrieben['werte'] == {'beginn': '2026-08-15T15:00'}
+    assert db.geschrieben['expected_version'] == 3
+    assert antwort['uebernommen'] == ['beginn']
+    assert antwort['ausgelassen'] == []
+
+
+def test_ort_wandert_mit_der_spielstaette_aus_dem_stand():
+    db = _db_uebernahme(_termin(ort='Anderer Platz'))
+    antwort = api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert db.geschrieben['werte'] == {'beginn': '2026-08-15T15:00', 'ort': 'Platz'}
+    assert db.geschrieben['spielstaette_id'] == 7
+    assert antwort['ausgelassen'] == []
+
+
+def test_ort_bleibt_liegen_wenn_der_stand_die_spielstaette_nicht_kennt():
+    """Alte Schnappschüsse führen keine Spielstätte – ein Ort-Text ohne passenden
+    Platz würde die Belegung falsch aussehen lassen, also bleibt er stehen."""
+    alt = {'beginn': '2026-08-15T15:00', 'ort': 'Platz'}
+    db = _db_uebernahme(_termin(ort='Anderer Platz', stand=alt))
+    antwort = api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert db.geschrieben['werte'] == {'beginn': '2026-08-15T15:00'}
+    assert db.geschrieben['spielstaette_id'] is None
+    assert antwort['ausgelassen'] == ['ort']
+
+
+def test_nur_ort_ohne_spielstaette_meldet_klartext():
+    alt = {'ort': 'Platz'}
+    db = _db_uebernahme(_termin(beginn='2026-08-15T15:00', ort='Anderer', stand=alt))
+    with pytest.raises(HTTPException) as e:
+        api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert e.value.status_code == 422
+    assert 'Spielstätte' in e.value.detail
+
+
+def test_uebernehmen_ohne_abweichung_422():
+    db = _db_uebernahme(_termin(beginn='2026-08-15T15:00'))
+    with pytest.raises(HTTPException) as e:
+        api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert e.value.status_code == 422
+
+
+def test_uebernehmen_mit_veralteter_version_409():
+    db = _db_uebernahme(_termin())
+    with pytest.raises(HTTPException) as e:
+        api.uebernimm_dfbnet_stand(1, _uebernahme(version=2), _BETREUER, db)
+    assert e.value.status_code == 409
+
+
+def test_versionskonflikt_beim_schreiben_409():
+    """Zwischen Laden und Schreiben hat jemand anderes den Termin geändert."""
+    db = _db_uebernahme(_termin(), erfolg=False)
+    with pytest.raises(HTTPException) as e:
+        api.uebernimm_dfbnet_stand(1, _uebernahme(), _BETREUER, db)
+    assert e.value.status_code == 409
+
+
 # --------------------------------------------------------------- Entscheidung
 def _daten(entscheidung='uebernommen', version=1, benachrichtigen=False):
     return api.AbweichungEntscheidung(entscheidung=entscheidung,

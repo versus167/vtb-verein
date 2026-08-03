@@ -23,16 +23,20 @@
            gerade weil der Import bewusst nichts mehr dazu fragt. -->
       <q-card-section v-if="externDiff.length" class="q-pb-none"
         :class="$q.screen.lt.md ? 'col-auto' : ''">
-        <q-banner dense class="bg-grey-2 text-dark rounded-borders">
-          <template #avatar><q-icon name="sync_alt" color="primary" /></template>
+        <q-banner dense class="bg-blue-1 text-blue-10 rounded-borders">
+          <template #avatar><q-icon name="sync_alt" /></template>
           <div class="text-weight-medium">Aktuell abweichend vom DFBnet-Stand</div>
           <div v-for="d in externDiff" :key="d.feld" class="text-caption">
             {{ feldLabel(d.feld) }} laut DFBnet: {{ wertText(d.feld, d.dfbnet) }}
           </div>
-          <div class="text-caption text-grey-8 q-mt-xs">
+          <div class="text-caption q-mt-xs">
             Das DFBnet ist die offizielle Ansetzung – steht dort noch der alte Stand,
             gehört die Verlegung dort gemeldet.
           </div>
+          <template v-if="darfVerwalten" #action>
+            <q-btn flat dense color="primary" icon="download_done" label="Übernehmen"
+              :loading="uebernimmt" @click="dfbnetUebernehmen" />
+          </template>
         </q-banner>
       </q-card-section>
 
@@ -85,7 +89,8 @@
         </q-list>
       </q-card-section>
 
-      <q-card-section v-if="darfVerwalten && hatOffene" class="q-pt-none"
+      <!-- Gilt für beide Wege: Entscheiden und das Ziehen auf den DFBnet-Stand -->
+      <q-card-section v-if="darfVerwalten && (hatOffene || externDiff.length)" class="q-pt-none"
         :class="$q.screen.lt.md ? 'col-auto' : ''">
         <q-toggle v-model="benachrichtigen" dense
           label="Kader über die Änderung informieren" />
@@ -108,6 +113,7 @@ const props = defineProps({
   // [{feld, dfbnet}] – Ist-Vergleich mit dem letzten Importstand, kommt fertig
   // aus der Terminliste (`extern_diff`), damit der Dialog nichts nachladen muss.
   externDiff: { type: Array, default: () => [] },
+  terminVersion: { type: Number, default: null },   // für das Übernehmen (Optimistic Locking)
 })
 const emit = defineEmits(['update:modelValue', 'geaendert'])
 
@@ -120,6 +126,7 @@ const open = computed({
 const abweichungen = ref([])
 const loading = ref(false)
 const busy = ref(false)
+const uebernimmt = ref(false)
 const benachrichtigen = ref(true)
 
 const hatOffene = computed(() => abweichungen.value.some(a => a.status === 'offen'))
@@ -156,6 +163,33 @@ async function load() {
     abweichungen.value = []
   } finally {
     loading.value = false
+  }
+}
+
+// Termin auf den DFBnet-Stand ziehen, ohne dass eine offene Frage dazu existiert
+// (verworfen oder vom Team geändert). Der Kader wird nur mit gesetztem Haken
+// informiert – dieselbe Opt-in-Regel wie beim Entscheiden.
+async function dfbnetUebernehmen() {
+  uebernimmt.value = true
+  try {
+    const { data } = await api.post(`/api/termine/${props.terminId}/dfbnet-uebernehmen`, {
+      expected_version: props.terminVersion,
+      benachrichtigen: benachrichtigen.value,
+    })
+    if (data.ausgelassen?.length) {
+      $q.notify({ type: 'warning', timeout: 8000,
+        message: 'Der Ort wurde nicht übernommen – im letzten Importstand fehlt '
+          + 'die Spielstätte. Bitte den Platz im Termin von Hand setzen.' })
+    } else {
+      $q.notify({ type: 'positive', message: 'Termin steht jetzt auf dem DFBnet-Stand' })
+    }
+    emit('geaendert')
+    open.value = false
+  } catch (e) {
+    $q.notify({ type: 'negative',
+      message: e.response?.data?.detail || 'Übernehmen fehlgeschlagen' })
+  } finally {
+    uebernimmt.value = false
   }
 }
 

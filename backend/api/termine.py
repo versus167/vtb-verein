@@ -82,6 +82,12 @@ class AbweichungEntscheidung(BaseModel):
     benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
+class DfbnetUebernahme(BaseModel):
+    """Termin auf den zuletzt importierten DFBnet-Stand ziehen (#95)."""
+    expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
+
+
 class SerieCreate(BaseModel):
     typ: str = 'training'                    # 'training' | 'sonstiges' (keine Spiel-Serien)
     beginn_zeit: str                         # 'HH:MM'
@@ -541,6 +547,57 @@ def list_abweichungen(termin_id: int, user: CurrentUser, db: DB):
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
     return [asdict(a) for a in db.termin_abweichungen.list_for_termin(termin_id)]
+
+
+@router.post("/{termin_id}/dfbnet-uebernehmen")
+def uebernimm_dfbnet_stand(termin_id: int, data: DfbnetUebernahme,
+                           user: CurrentUser, db: DB):
+    """Den Termin auf den zuletzt importierten DFBnet-Stand ziehen.
+
+    Für die stillen Abweichungen, zu denen der Import bewusst nicht (mehr) fragt:
+    eine verworfene Frage oder eine Änderung des Teams ohne Gegenstück im Export.
+    Der Weg über die offene Abweichung bleibt davon unberührt — hier gibt es keine
+    Zeile zu entscheiden, nur den Ist-Vergleich aus `extern_stand`.
+
+    Der Ort wandert nur mit, wenn der Schnappschuss die zugehörige Spielstätte
+    kennt: Ein Ort-Text ohne passenden Platz ließe die Belegung falsch aussehen.
+    Ältere Schnappschüsse (vor dieser Änderung) haben sie nicht — dann bleibt der
+    Ort stehen und die Antwort sagt es.
+    """
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    if t.version != data.expected_version:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    stand = t.extern_stand or {}
+    diff = _extern_diff(asdict(t))
+    if not diff:
+        raise HTTPException(422, "Termin entspricht bereits dem DFBnet-Stand")
+
+    platz_id = stand.get('spielstaette_id')
+    werte = {d['feld']: d['dfbnet'] for d in diff
+             if d['feld'] != 'ort' or platz_id is not None}
+    ausgelassen = [d['feld'] for d in diff if d['feld'] not in werte]
+    if not werte:
+        raise HTTPException(
+            422, "Zum Ort fehlt die Spielstätte im letzten Importstand – bitte den "
+                 "Platz im Termin von Hand setzen")
+
+    vorher = t
+    if not db.termine.update_aus_import(
+            termin_id, werte=werte, extern_stand=stand,
+            spielstaette_id=platz_id if 'ort' in werte else None,
+            updated_by=user.username, expected_version=t.version):
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    neu = db.termine.get(termin_id)
+    if data.benachrichtigen:
+        aenderungen = terminmeldung.diff_termin(vorher, neu)
+        if aenderungen:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+    return {"termin": asdict(neu), "uebernommen": sorted(werte),
+            "ausgelassen": ausgelassen}
 
 
 @router.post("/abweichungen/{abweichung_id}/entscheiden")

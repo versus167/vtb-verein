@@ -416,6 +416,17 @@ def test_zweiter_lauf_frischt_die_abweichung_auf_statt_zu_doppeln(db, stammdaten
     assert offen[0].version == 2                        # aufgefrischt, nicht neu
 
 
+def test_schnappschuss_fuehrt_die_spielstaette_mit(db, stammdaten):
+    """`ort` ist bloßer Text – ohne die Platz-ID ließe sich der Termin später nicht
+    auf den DFBnet-Stand ziehen, ohne die Belegung zu verfälschen."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+
+    assert _stand(db, termin.id)['spielstaette_id'] == stammdaten['platz']
+    # und der Abgleich läuft weiter nur über die Vergleichsfelder
+    assert dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE).aktualisiert == 0
+
+
 def test_auffrischen_hinterlaesst_die_alte_fassung_in_der_history(db, stammdaten):
     """Der überholte Vorschlag verschwindet aus der offenen Zeile, nicht aus der Welt:
     Wer später prüft, worüber vorige Woche gefragt wurde, findet es in der History."""

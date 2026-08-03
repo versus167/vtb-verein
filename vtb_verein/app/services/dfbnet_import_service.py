@@ -396,6 +396,20 @@ def _plan(termin, werte: dict) -> tuple[dict, dict, dict]:
     return aendern, nachtragen, entscheiden
 
 
+def _stand_mit_platz(stand: dict, staette) -> dict:
+    """Schnappschuss um die Spielstätte hinter dem Ort-Text ergänzen.
+
+    `ort` ist reiner Text; wer den Termin später auf den DFBnet-Stand ziehen will,
+    bräuchte sonst raten, welcher Platz gemeint ist — und ein Ort ohne passende
+    `spielstaette_id` macht die Platzbelegung falsch. Kein Vergleichsfeld, der
+    Abgleich läuft weiter nur über VERGLEICHSFELDER; ältere Stände ohne den
+    Schlüssel bleiben gültig.
+    """
+    if staette is None:
+        return stand
+    return {**stand, 'spielstaette_id': staette.id}
+
+
 def _melde_abweichungen(db, termin, entscheiden: dict, staette, *,
                         actor: str) -> int:
     """Offene Fragen festhalten – eine Zeile je Feld, idempotent je Lauf."""
@@ -493,7 +507,7 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
                 spielstaette_id=staette.id, gegner=werte['gegner'],
                 heim_auswaerts=werte['heim_auswaerts'],
                 beschreibung=_beschreibung(spiel), extern_ref=spiel.spielkennung,
-                extern_stand=werte, created_by=actor)
+                extern_stand=_stand_mit_platz(werte, staette), created_by=actor)
             ergebnis.angelegt += 1
             if benachrichtigen and notify:
                 notify(termin, 'neu', None)
@@ -527,7 +541,8 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
         if not aendern and not nachtragen:
             continue
 
-        stand_neu = {**(termin.extern_stand or {}), **aendern, **nachtragen}
+        stand_neu = _stand_mit_platz(
+            {**(termin.extern_stand or {}), **aendern, **nachtragen}, staette)
         if not aendern:
             # Rein buchhalterisch: kein version-Bump, keine History-Zeile.
             db.termine.set_extern_stand(termin.id, stand_neu)
@@ -582,6 +597,8 @@ def entscheiden(db, abweichung, entscheidung: str, *, actor: str,
     else:
         stand_neu = {**(termin.extern_stand or {}),
                      abweichung.feld: abweichung.wert_extern}
+        if abweichung.feld == 'ort' and abweichung.spielstaette_id:
+            stand_neu['spielstaette_id'] = abweichung.spielstaette_id
         if uebernehmen_:
             db.termine.update_aus_import(
                 termin.id, werte={abweichung.feld: abweichung.wert_extern},
