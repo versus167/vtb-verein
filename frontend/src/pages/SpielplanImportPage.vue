@@ -45,17 +45,29 @@
       <q-banner v-if="ergebnis?.konflikte?.length" class="vtb-warnung q-mb-md">
         <template #avatar><q-icon name="warning" color="warning" /></template>
         <div class="text-weight-medium">
-          {{ ergebnis.konflikte.length }} Termin(e) wurden nicht angefasst
+          {{ ergebnis.konflikte.length }} Termin(e) warten auf eine Entscheidung
         </div>
         <div class="text-caption">
           Hier weichen App und DFBnet beide vom letzten Importstand ab – das
-          entscheidet der Betreuer, nicht der Import.
+          entscheidet der Betreuer, nicht der Import. Die offenen Fragen stehen
+          jetzt am Termin: unter „Termine" trägt die Karte ein Warn-Symbol.
         </div>
         <ul class="q-my-xs">
           <li v-for="(k, i) in ergebnis.konflikte" :key="i" class="text-caption">
             {{ k.mannschaft }} · {{ k.felder.join(', ') }} — {{ k.grund }}
           </li>
         </ul>
+      </q-banner>
+
+      <q-banner v-if="ergebnis?.entfallen" class="vtb-warnung q-mb-md">
+        <template #avatar><q-icon name="event_busy" color="warning" /></template>
+        <div class="text-weight-medium">
+          {{ ergebnis.entfallen }} Spiel(e) stehen nicht mehr im Export
+        </div>
+        <div class="text-caption">
+          Abgesagt wird deswegen nichts: Der Export ist ein Zeitfenster-Auszug, kein
+          Vollbestand. Auch das entscheidet der Betreuer am Termin.
+        </div>
       </q-banner>
 
       <q-banner v-if="ergebnis?.ohne_spielstaette?.length" class="vtb-warnung q-mb-md">
@@ -126,10 +138,10 @@
               {{ datumZeit(b.spiel.beginn) }} · {{ b.spiel.spielstaette }}
               · {{ symbol(b.einordnung).label }}
             </q-item-label>
-            <q-item-label v-if="b.abweichungen?.length" caption class="text-warning">
-              <span v-for="(a, j) in b.abweichungen" :key="j">
-                {{ a.feld }}: „{{ a.app }}" → „{{ a.dfbnet }}"<span v-if="j < b.abweichungen.length - 1">, </span>
-              </span>
+            <!-- Je Feld dazu, was ein Lauf damit täte – „Vorschau = Aktion" -->
+            <q-item-label v-for="(a, j) in b.abweichungen" :key="j" caption
+              :class="a.wirkung === 'entscheidung' ? 'text-warning' : 'text-grey'">
+              {{ a.feld }}: „{{ a.app }}" → „{{ a.dfbnet }}" — {{ WIRKUNG[a.wirkung] }}
             </q-item-label>
             <q-item-label v-if="b.hinweis" caption class="text-italic">{{ b.hinweis }}</q-item-label>
           </q-item-section>
@@ -163,6 +175,13 @@ const EINORDNUNG = {
   unveraendert: { label: 'unverändert', icon: 'check_circle', farbe: 'grey-6' },
   platzbelegung: { label: 'Platzbelegung (fremdes Spiel auf eigenem Platz)', icon: 'stadium', farbe: 'info' },
   fremd: { label: 'betrifft uns nicht', icon: 'remove_circle_outline', farbe: 'grey-5' },
+}
+
+// Was mit einem abweichenden Feld geschieht (Ergebnis des Drei-Wege-Abgleichs).
+const WIRKUNG = {
+  uebernehmen: 'wird übernommen',
+  bleibt: 'bleibt so (Team weicht bewusst ab)',
+  entscheidung: 'Betreuer entscheidet',
 }
 
 function symbol(einordnung) {

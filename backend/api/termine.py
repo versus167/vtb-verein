@@ -34,8 +34,12 @@ from pydantic import BaseModel
 from app.db.spielstaette_repository import PLATZHALTER_UNBEKANNT
 from app.models.permission import Permission
 from app.db.termin_repository import VALID_TYPEN
+from app.db.termin_abweichung_repository import (
+    FELD_ENTFALLEN, STATUS_OFFEN, STATUS_UEBERNOMMEN, VALID_ENTSCHEIDUNGEN,
+)
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from app.db.termin_serie_repository import VALID_SERIE_TYPEN
+from app.services import dfbnet_import_service as dfbnet
 from app.services import termin_notification_service as terminmeldung
 from ..core.deps import CurrentUser, DB
 
@@ -69,6 +73,13 @@ class TerminAktion(BaseModel):
 class ZusageSet(BaseModel):
     antwort: str                             # 'zu' | 'vielleicht' | 'ab'
     kommentar: Optional[str] = None
+
+
+class AbweichungEntscheidung(BaseModel):
+    """Entscheidung über eine offene Abweichung aus dem Spielplan-Import (#95)."""
+    entscheidung: str                        # 'uebernommen' | 'verworfen'
+    expected_version: int
+    benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class SerieCreate(BaseModel):
@@ -282,7 +293,20 @@ def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
         t['zusagen'] = counts.get(t['id'], {'zu': 0, 'vielleicht': 0, 'ab': 0})
         t['meine_antwort'] = meine.get(t['id'])
         t['kann_zusagen'] = kader_cache[key] or t['id'] in meine
+    _enrich_abweichungen(db, termine)
     return termine
+
+
+def _enrich_abweichungen(db: DB, termine: list[dict]) -> None:
+    """`abweichungen_offen` je Termin – Grundlage des Hinweis-Badges (#95).
+
+    Der Zähler hängt an keiner Berechtigung: Entscheiden darf nur, wer die Termine
+    der Mannschaft verwaltet, aber die Zahl allein verrät nichts, was der Kader
+    nicht ohnehin sähe.
+    """
+    offen = db.termin_abweichungen.counts_offen([t['id'] for t in termine])
+    for t in termine:
+        t['abweichungen_offen'] = offen.get(t['id'], 0)
 
 
 # ------------------------------------------------------------------ Mannschaften
@@ -486,6 +510,62 @@ def gast_kandidaten(termin_id: int, user: CurrentUser, db: DB):
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
     return db.termine.list_gast_kandidaten(t.mannschaft_id, t.beginn[:10])
+
+
+# ------------------------------------------- Abweichungen aus dem Spielplan (#95)
+@router.get("/{termin_id}/abweichungen")
+def list_abweichungen(termin_id: int, user: CurrentUser, db: DB):
+    """Offene und bereits entschiedene Abweichungen eines Termins.
+
+    Verlangt Verwalten-Zugriff: Es ist die Arbeitsliste des Betreuers, nicht eine
+    Information für den Kader – der sieht nur den fertigen Termin.
+    """
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    return [asdict(a) for a in db.termin_abweichungen.list_for_termin(termin_id)]
+
+
+@router.post("/abweichungen/{abweichung_id}/entscheiden")
+def entscheide_abweichung(abweichung_id: int, data: AbweichungEntscheidung,
+                          user: CurrentUser, db: DB):
+    """Eine offene Abweichung übernehmen oder verwerfen.
+
+    Beide Wege schreiben den Import-Schnappschuss fort — die Frage wird dadurch
+    beim nächsten Lauf nicht erneut gestellt. „Übernehmen" bei einem entfallenen
+    Spiel sagt den Termin ab; gelöscht wird nie automatisch.
+    """
+    a = db.termin_abweichungen.get(abweichung_id)
+    if a is None:
+        raise HTTPException(404, "Abweichung nicht gefunden")
+    t = _lade_termin(db, a.termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    if data.entscheidung not in VALID_ENTSCHEIDUNGEN:
+        raise HTTPException(
+            422, f"Ungültige Entscheidung (erlaubt: {', '.join(VALID_ENTSCHEIDUNGEN)})")
+    if a.status != STATUS_OFFEN:
+        raise HTTPException(422, "Abweichung ist bereits entschieden")
+    if a.version != data.expected_version:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+
+    def _melden(neu, vorher):
+        if a.feld == FELD_ENTFALLEN:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_ABGESAGT, user.id)
+            return
+        aenderungen = terminmeldung.diff_termin(vorher, neu)
+        if aenderungen:
+            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
+                                        user.id, aenderungen)
+
+    ok = dfbnet.entscheiden(
+        db, a, data.entscheidung, actor=user.username,
+        notify=_melden if data.benachrichtigen else None)
+    if not ok:
+        raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
+    return {
+        "abweichung": asdict(db.termin_abweichungen.get(abweichung_id)),
+        "termin": asdict(db.termine.get(a.termin_id)),
+        "uebernommen": data.entscheidung == STATUS_UEBERNOMMEN,
+    }
 
 
 # ----------------------------------------------------------------- Terminserien

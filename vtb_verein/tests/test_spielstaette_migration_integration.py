@@ -2,8 +2,8 @@
 Integrationstest des Spielbetriebs-Schemas gegen echtes PostgreSQL – Ticket #95.
 
 Deckt die Schema-Schritte zu #95 ab: Spielstätten samt Pflichtfeld am Termin (v80),
-die DFBnet-Zuordnung der Mannschaft (v81) und die je Mannschaft eindeutige
-Spielkennung (v82).
+die DFBnet-Zuordnung der Mannschaft (v81), die je Mannschaft eindeutige
+Spielkennung (v82) und die Abweichungs-Tabelle des Imports (v84).
 
 Geprüft werden beide Pfade: der Frischaufbau (VereinsDB legt beim Connect an) und die
 Migration v79→v80, die auf einem nachgebauten v79-Stand läuft. Der Migrationsteil ist
@@ -77,6 +77,8 @@ def clean(db):
     """Nur die eigenen Zeilen wegräumen (Muster der übrigen Integrationstests)."""
     yield
     with _cur(db) as cur:
+        cur.execute("DELETE FROM termin_abweichung_history WHERE created_by = %s", (_MARKE,))
+        cur.execute("DELETE FROM termin_abweichung WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM termine_history WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM termine WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM mitglied_mannschaft WHERE created_by = %s", (_MARKE,))
@@ -99,7 +101,8 @@ def _platzhalter_id(cur, schluessel):
 # Andere Testmodule setzen per TRUNCATE ... RESTART IDENTITY die Sequenzen zurück,
 # während die *_history-Zeilen stehen bleiben – je nach Testreihenfolge kollidiert
 # der Audit-Trigger sonst im History-PK. Gleiches Vorgehen wie test_rechnung_export.
-_SEQ_TABELLEN = ("abteilung", "mannschaft", "termine", "spielstaette")
+_SEQ_TABELLEN = ("abteilung", "mannschaft", "termine", "spielstaette",
+                 "termin_abweichung")
 
 
 def _resync_sequenzen(cur):
@@ -222,9 +225,10 @@ def test_spielstaette_steht_im_prune_registry():
     eintrag = next((e for e in PRUNE_REGISTRY if e.table == 'spielstaette'), None)
     assert eintrag is not None
     assert eintrag.history_table == 'spielstaette_history'
-    # Kind-Referenzen halten einen Platz im Papierkorb, solange Termine darauf zeigen
+    # Kind-Referenzen halten einen Platz im Papierkorb, solange etwas darauf zeigt
     assert {(c.table, c.fk) for c in eintrag.children} == {
-        ('termine', 'spielstaette_id'), ('termin_serie', 'spielstaette_id')}
+        ('termine', 'spielstaette_id'), ('termin_serie', 'spielstaette_id'),
+        ('termin_abweichung', 'spielstaette_id')}
 
 
 # ------------------------------------------------------------------ Migration
@@ -244,6 +248,11 @@ def test_migration_v79_v80_setzt_altbestand_auf_nicht_erfasst(db):
     with _cur(db) as cur:
         for tabelle in ('termine', 'termine_history', 'termin_serie', 'termin_serie_history'):
             cur.execute(f"ALTER TABLE {tabelle} DROP COLUMN IF EXISTS spielstaette_id")
+        # termin_abweichung (v84) zeigt per FK auf spielstaette – in einem v79-Stand
+        # gibt es beide noch nicht. Am Ende des Tests wird die Tabelle wieder
+        # hergestellt, die übrige Suite teilt sich diese Datenbank.
+        cur.execute("DROP TABLE IF EXISTS termin_abweichung_history")
+        cur.execute("DROP TABLE IF EXISTS termin_abweichung")
         cur.execute("DROP TABLE IF EXISTS spielstaette_history")
         cur.execute("DROP TABLE IF EXISTS spielstaette")
         for fn, cols in (('termine', _V79_TERMINE_COLS), ('termin_serie', _V79_SERIE_COLS)):
@@ -297,6 +306,10 @@ def test_migration_v79_v80_setzt_altbestand_auf_nicht_erfasst(db):
         neu_id = cur.fetchone()['id']
         cur.execute("SELECT spielstaette_id FROM termine_history WHERE id = %s", (neu_id,))
         assert cur.fetchone()['spielstaette_id'] == auswaerts_id
+
+    # Abweichungs-Tabelle wieder aufbauen (s. o.) – zugleich ein Beleg, dass die
+    # Migration v83→v84 auf einem Stand ohne die Tabelle sauber durchläuft.
+    db._database._migrate_v83_to_v84()
 
 
 def test_termin_ohne_spielstaette_wird_abgelehnt(db):
@@ -421,6 +434,112 @@ def test_dieselbe_spielkennung_fuer_zwei_mannschaften_erlaubt(db):
                 (mannschaft_id, platz, _MARKE, _MARKE))
         cur.execute("SELECT count(*) AS n FROM termine WHERE extern_ref = 'SK-4711'")
         assert cur.fetchone()['n'] == 2
+
+
+def _termin_anlegen(cur, mannschaft_id, kennung='SK-9000'):
+    platz = _platzhalter_id(cur, 'auswaerts')
+    cur.execute(
+        "INSERT INTO termine (mannschaft_id, typ, beginn, spielstaette_id, "
+        "extern_ref, created_by, updated_by) "
+        "VALUES (%s, 'spiel', '2026-09-20T15:00', %s, %s, %s, %s) RETURNING id",
+        (mannschaft_id, platz, kennung, _MARKE, _MARKE))
+    return cur.fetchone()['id']
+
+
+def _abweichung_anlegen(cur, termin_id, feld='beginn', status='offen'):
+    cur.execute(
+        "INSERT INTO termin_abweichung (termin_id, feld, wert_app, wert_extern, "
+        "status, created_by, updated_by) "
+        "VALUES (%s, %s, '2026-09-20T15:00', '2026-09-20T17:00', %s, %s, %s) "
+        "RETURNING id",
+        (termin_id, feld, status, _MARKE, _MARKE))
+    return cur.fetchone()['id']
+
+
+# ------------------------------------------- Termin-Abweichungen (v84, Etappe 4)
+
+def test_abweichungs_tabellen_existieren(db):
+    with _cur(db) as cur:
+        cur.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN ('termin_abweichung', 'termin_abweichung_history')
+        """)
+        assert len(cur.fetchall()) == 2
+
+
+def test_nur_eine_offene_frage_je_termin_und_feld(db):
+    """Sonst schüttet ein wöchentlicher Import den Betreuer mit Dubletten zu."""
+    with _cur(db) as cur:
+        termin_id = _termin_anlegen(cur, _mannschaft_anlegen(cur), 'SK-9001')
+        _abweichung_anlegen(cur, termin_id)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with _cur(db) as cur:
+            _abweichung_anlegen(cur, termin_id)
+
+
+def test_entschiedene_frage_blockiert_keine_neue(db):
+    """Der Index greift nur auf offene Zeilen – das Protokoll steht sonst im Weg."""
+    with _cur(db) as cur:
+        termin_id = _termin_anlegen(cur, _mannschaft_anlegen(cur), 'SK-9002')
+        _abweichung_anlegen(cur, termin_id, status='verworfen')
+        _abweichung_anlegen(cur, termin_id, status='offen')
+        cur.execute("SELECT count(*) AS n FROM termin_abweichung WHERE termin_id = %s",
+                    (termin_id,))
+        assert cur.fetchone()['n'] == 2
+
+
+def test_unbekannter_status_wird_abgelehnt(db):
+    with _cur(db) as cur:
+        termin_id = _termin_anlegen(cur, _mannschaft_anlegen(cur), 'SK-9003')
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with _cur(db) as cur:
+            _abweichung_anlegen(cur, termin_id, status='vielleicht')
+
+
+def test_abweichung_schreibt_history(db):
+    with _cur(db) as cur:
+        termin_id = _termin_anlegen(cur, _mannschaft_anlegen(cur), 'SK-9004')
+        abw_id = _abweichung_anlegen(cur, termin_id)
+        cur.execute("UPDATE termin_abweichung SET status = 'uebernommen', "
+                    "version = version + 1, updated_by = %s WHERE id = %s",
+                    (_MARKE, abw_id))
+        cur.execute("SELECT version, status FROM termin_abweichung_history "
+                    "WHERE id = %s ORDER BY version", (abw_id,))
+        rows = cur.fetchall()
+    assert [(r['version'], r['status']) for r in rows] == [
+        (1, 'offen'), (2, 'uebernommen')]
+
+
+def test_abweichungs_zeitstempel_sind_timestamptz(db):
+    """erkannt_am/entschieden_am gehören zu den Audit-Zeitstempeln, nicht zur Wandzeit."""
+    with _cur(db) as cur:
+        cur.execute("""
+            SELECT column_name, data_type FROM information_schema.columns
+            WHERE table_name = 'termin_abweichung'
+              AND column_name IN ('erkannt_am', 'entschieden_am', 'created_at')
+        """)
+        typen = {r['column_name']: r['data_type'] for r in cur.fetchall()}
+    assert set(typen.values()) == {'timestamp with time zone'}
+
+
+def test_abweichung_steht_im_prune_und_archiv_registry():
+    """Ohne Registry-Eintrag wüchsen soft-gelöschte Zeilen unbegrenzt (CLAUDE.md);
+    ohne Archiv-Kind bliebe der Termin selbst für immer im Papierkorb hängen."""
+    from app.services.prune_service import (ARCHIVE_REGISTRY, PRUNE_REGISTRY,
+                                            TERMIN_ALTER)
+    eintrag = next((e for e in PRUNE_REGISTRY if e.table == 'termin_abweichung'), None)
+    assert eintrag is not None
+    assert eintrag.history_table == 'termin_abweichung_history'
+
+    termin = next(e for e in PRUNE_REGISTRY if e.table == 'termine')
+    assert ('termin_abweichung', 'termin_id') in {(c.table, c.fk) for c in termin.children}
+    # Kind vor Eltern: die Abweichung muss VOR dem Termin geprunt werden
+    reihenfolge = [e.table for e in PRUNE_REGISTRY]
+    assert reihenfolge.index('termin_abweichung') < reihenfolge.index('termine')
+
+    regel = next(r for r in ARCHIVE_REGISTRY if r.name == TERMIN_ALTER)
+    assert ('termin_abweichung', 'termin_id') in {(c.table, c.fk) for c in regel.children}
 
 
 def test_dieselbe_spielkennung_zweimal_je_mannschaft_abgelehnt(db):

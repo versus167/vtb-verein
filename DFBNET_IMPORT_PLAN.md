@@ -1,9 +1,8 @@
-# Plan: Spielplan-Import aus dem DFBnet (Ticket #95, Etappe 3)
+# Plan: Spielplan-Import aus dem DFBnet (Ticket #95)
 
-> Status (2026-08-03): **Etappen 1–3 umgesetzt** (Schema v80–v83). Offen sind
-> die Abweichungs-Tabelle mit Entscheidungs-Dialog (Etappe 4) und der
-> Platzwart-Zugriff (Etappe 5). Grundlage ist ein Muster-Export des
-> Vereinsspielplans für die Saison 26/27.
+> Status (2026-08-03): **Etappen 1–4 umgesetzt** (Schema v80–v84). Offen ist nur
+> noch der Platzwart-Zugriff samt echter Platzbelegung (Etappe 5). Grundlage ist
+> ein Muster-Export des Vereinsspielplans für die Saison 26/27.
 >
 > **Keine Echtdaten im Repo:** Der Export enthält Namen und Ausweisnummern von
 > Schiedsrichtern. Alle Beispiele hier sind gekürzt oder erfunden.
@@ -102,26 +101,50 @@ Der dritte Fall ist der Grund für den Schnappschuss: Ohne ihn würde die App be
 *jedem* Lauf erneut nachfragen, obwohl das Team die Abweichung längst so will —
 also genau die Situation „im DFBnet steht es noch falsch".
 
-### Abweichungen sichtbar machen
+### Abweichungen sichtbar machen (umgesetzt, Schema v84)
 
-Neue Tabelle `termin_abweichung`: `termin_id`, Quelle, Feld, Wert in der App,
-Wert laut DFBnet, erkannt am, Status (`offen` / `uebernommen` / `verworfen`),
-entschieden von/am. Mit Soft-Delete, History-Trigger und — wie in `CLAUDE.md`
-gefordert — einem Eintrag im **`PRUNE_REGISTRY`** (Kind vor Eltern, Elternteil
-ist der Termin).
+Tabelle `termin_abweichung`: `termin_id`, Quelle, Feld, Wert in der App, Wert
+laut DFBnet, erkannt am, Status, entschieden von/am. Mit Soft-Delete,
+History-Trigger und — wie in `CLAUDE.md` gefordert — einem Eintrag im
+**`PRUNE_REGISTRY`** (Kind vor Eltern, Elternteil ist der Termin) sowie als
+Kind-Kaskade in der Alters-Archivierung `TERMIN_ALTER`.
 
-In der Oberfläche: ein Hinweis-Badge am Termin für alle mit Kader-Recht
-„verwalten", dahinter ein Dialog im Stil „Laut DFBnet ist der Anstoß 15:00 statt
-14:00 — übernehmen oder verwerfen?". Übernehmen schreibt den Termin und nutzt
-die bestehende Terminmeldung, um den Kader zu informieren.
+Vier Punkte, die beim Bauen dazukamen:
 
-### Verschwundene Spiele
+- **Eine Zeile je Feld, nicht je Termin.** Die Zeitverlegung darf nicht an einer
+  strittigen Platzverlegung hängen — und umgekehrt. Entsprechend läuft auch der
+  Abgleich im Lauf feldweise: Unstrittiges wird übernommen, während das strittige
+  Feld unangetastet in der Warteschlange landet.
+- **Vierter Status `hinfaellig`.** Zieht das Team den Termin selbst auf den
+  DFBnet-Stand, ist die Frage weg, ohne dass jemand entschieden hat. Das als
+  „verworfen" zu buchen, würde eine Entscheidung behaupten, die niemand traf.
+- **Spalte `spielstaette_id`** an der Abweichung (nur bei `feld='ort'`): Ohne sie
+  ließe „Übernehmen" den Termin mit neuem Ort, aber altem Platz zurück — der
+  Belegungsplan zeigte die Verlegung dann nicht.
+- **Auch das Verwerfen schreibt den Schnappschuss fort.** Nur so ist die
+  Entscheidung dauerhaft: Beim nächsten Lauf deckt sich die Quelle mit dem Stand,
+  die Frage kommt nicht wieder, die abweichende Angabe des Teams bleibt stehen.
+  Der partielle Unique-Index greift deshalb nur auf offene Zeilen — entschiedene
+  sind das Protokoll und dürfen einer später erneut auftretenden Abweichung nicht
+  im Weg stehen.
+
+In der Oberfläche: ein Warn-Badge auf der Termin-Karte für alle mit Kader-Recht
+„verwalten", dahinter der Dialog mit „Übernehmen" / „Behalten" je Feld, den
+bereits getroffenen Entscheidungen als Protokoll und einem Opt-in, den Kader über
+die bestehende Terminmeldung zu informieren.
+
+### Verschwundene Spiele (umgesetzt)
 
 Ein Spiel, das nicht mehr im Export steht, wird **nie automatisch gelöscht**.
 Der Export ist ein Zeitfenster-Auszug, kein Vollbestand — „fehlt" heißt nicht
 „abgesagt". Der Abgleich läuft deshalb nur innerhalb des in der Datei
-vorkommenden Datumsbereichs, und Fehlendes wird als Abweichung „im DFBnet nicht
-mehr enthalten" gemeldet.
+vorkommenden Datumsbereichs **und nur für Mannschaften, die in der Datei
+vorkommen** — sonst meldete ein Teil-Export den halben Kalender als entfallen.
+Fehlendes wird als Abweichung mit dem Pseudo-Feld `entfallen` gemeldet;
+„Übernehmen" heißt dort **absagen**, nicht löschen. Taucht das Spiel im nächsten
+Export wieder auf, wird die Meldung hinfällig. Der Schnappschuss-Mechanismus
+greift hier nicht, deshalb blockiert eine bereits entschiedene `entfallen`-Zeile
+weitere Meldungen zu demselben Termin.
 
 ## Platzbelegung — fremde Spiele auf unseren Plätzen
 
@@ -263,9 +286,9 @@ dem Freitext ein Katalog wird.
 3. ✅ **Anlegen und unstrittige Übernahme**: `extern_ref`, Schnappschuss,
    Benachrichtigung des Kaders bei Änderungen. Fremde Spiele laufen im selben
    Lauf in die Platzbelegung.
-4. **Abweichungen**: Tabelle, Badge, Entscheidungs-Dialog. Bis dahin meldet der
-   Lauf Konflikte im Ergebnis, ohne sie zu speichern — der nächste Lauf findet
-   sie erneut, es geht also nichts verloren.
+4. ✅ **Abweichungen**: Tabelle (v84), Badge an der Termin-Karte,
+   Entscheidungs-Dialog je Feld — dazu „im Export nicht mehr enthalten" als
+   eigene Abweichungsart.
 5. **Platzwart-Zugriff** (späterer Schritt): Permission-Key, Belegungsansicht
    aus beiden Quellen, optionale `spielstaette_id` an Terminen, damit auch
    Trainings im Plan stehen.
@@ -287,3 +310,7 @@ dem Freitext ein Katalog wird.
 - **Platzwarte als Rolle**: eigene Funktion im Funktionskatalog oder
   individuelle Grants? Davon hängt ab, ob der Zugriff abteilungsweit
   eingegrenzt werden kann.
+- **Wieder aufgetauchtes, bereits abgesagtes Spiel**: Steht ein Spiel nach einer
+  über „entfallen" ausgelösten Absage wieder im Export, zieht der Lauf zwar die
+  Felder nach, reaktiviert den Termin aber nicht — und fragt auch nicht. Reicht
+  das, oder braucht es dafür eine eigene Abweichungsart?

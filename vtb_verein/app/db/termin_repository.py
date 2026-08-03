@@ -48,6 +48,10 @@ _COLS = ("id, mannschaft_id, serie_id, typ, beginn, ende, ort, spielstaette_id, 
 _EDIT_FIELDS = ('typ', 'beginn', 'ende', 'ort', 'spielstaette_id', 'treffpunkt',
                 'treffpunkt_zeit', 'gegner', 'heim_auswaerts', 'beschreibung')
 
+# Felder, die der Spielplan-Import schreiben darf (#95). Absichtlich eine eigene,
+# kurze Liste: Treffpunkt, Beschreibung und Typ gehören dem Team, nicht der Quelle.
+IMPORT_FELDER = ('beginn', 'ort', 'gegner', 'heim_auswaerts')
+
 
 def _map(row) -> Termin:
     return Termin(
@@ -445,31 +449,64 @@ class TerminRepository(BaseRepository):
             neu_id = cur.fetchone()['id']
         return self.get(neu_id)
 
-    def update_aus_import(self, termin_id: int, *, beginn: str, ort: Optional[str],
-                          spielstaette_id: int, gegner: Optional[str],
-                          heim_auswaerts: Optional[str], extern_stand: dict,
+    def update_aus_import(self, termin_id: int, *, werte: dict, extern_stand: dict,
+                          spielstaette_id: Optional[int] = None,
                           updated_by: str, expected_version: int) -> bool:
-        """Termin auf den neuen DFBnet-Stand heben und den Schnappschuss mitziehen.
+        """Einzelne Felder auf den DFBnet-Stand heben und den Schnappschuss mitziehen.
+
+        Bewusst feldweise: Ein Lauf kann die Zeitverlegung übernehmen, während die
+        Platzverlegung als offene Abweichung beim Betreuer liegt (#95, Etappe 4).
+        `werte` enthält nur die tatsächlich zu schreibenden Felder aus
+        IMPORT_FELDER; `extern_stand` ist der vollständige neue Schnappschuss.
 
         Treffpunkt, Treffpunktzeit und Beschreibung bleiben unberührt — die pflegt
         das Team.
         """
+        unbekannt = set(werte) - set(IMPORT_FELDER)
+        if unbekannt:
+            raise ValueError(f"Nicht importierbare Felder: {', '.join(sorted(unbekannt))}")
+        sets = [f"{f}=%({f})s" for f in werte]
+        params = dict(werte)
+        if spielstaette_id is not None:
+            sets.append("spielstaette_id=%(sst)s")
+            params['sst'] = spielstaette_id
         with self.cursor() as cur:
             cur.execute(
-                """
-                UPDATE termine SET beginn=%(beginn)s, ort=%(ort)s,
-                    spielstaette_id=%(sst)s, gegner=%(gegner)s,
-                    heim_auswaerts=%(ha)s, extern_stand=%(stand)s,
+                f"""
+                UPDATE termine SET {', '.join([*sets, 'extern_stand=%(stand)s'])},
                     updated_at=CURRENT_TIMESTAMP, updated_by=%(usr)s,
                     version=version+1
                 WHERE id=%(id)s AND deleted_at IS NULL AND version=%(ver)s
                 """,
-                {"beginn": beginn, "ort": ort, "sst": spielstaette_id,
-                 "gegner": gegner, "ha": heim_auswaerts,
-                 "stand": Jsonb(extern_stand), "usr": updated_by,
-                 "id": termin_id, "ver": expected_version},
+                params | {"stand": Jsonb(extern_stand), "usr": updated_by,
+                          "id": termin_id, "ver": expected_version},
             )
             return cur.rowcount > 0
+
+    def list_importierte(self, mannschaft_ids: list[int], von: str,
+                         bis: str) -> list[Termin]:
+        """Aktive, geplante Spiele mit DFBnet-Kennung im Zeitraum (ISO-Datum).
+
+        Grundlage für „im Export nicht mehr enthalten": Verglichen wird nur
+        innerhalb des Datumsfensters der Datei und nur für Mannschaften, die darin
+        überhaupt vorkommen — ein Teil-Export darf nicht den halben Kalender als
+        entfallen melden. Abgesagte Termine bleiben außen vor, die Frage ist dort
+        schon beantwortet.
+        """
+        if not mannschaft_ids:
+            return []
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_COLS} FROM termine
+                WHERE mannschaft_id = ANY(%(mids)s) AND extern_ref IS NOT NULL
+                  AND deleted_at IS NULL AND status = 'geplant'
+                  AND LEFT(beginn, 10) BETWEEN %(von)s AND %(bis)s
+                ORDER BY beginn, id
+                """,
+                {"mids": mannschaft_ids, "von": von, "bis": bis},
+            )
+            return [_map(r) for r in cur.fetchall()]
 
     def set_extern_stand(self, termin_id: int, extern_stand: dict) -> None:
         """Schnappschuss nachtragen, ohne den Termin fachlich zu ändern.

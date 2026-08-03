@@ -224,9 +224,14 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # --- Spielbetrieb: Mannschafts-Termine (#95, Blatt vor mannschaft) ---
     PruneEntity("termin_zusage", "Termin-Zusagen", "termin_zusage",
                 history_table="termin_zusage_history"),
+    PruneEntity("termin_abweichung", "Termin-Abweichungen", "termin_abweichung",
+                history_table="termin_abweichung_history"),
     PruneEntity("termin", "Termine", "termine",
                 history_table="termine_history",
-                children=(ChildRef("termin_zusage", "termin_id"),)),
+                children=(
+                    ChildRef("termin_zusage", "termin_id"),
+                    ChildRef("termin_abweichung", "termin_id"),
+                )),
     PruneEntity("termin_serie", "Terminserien", "termin_serie",
                 history_table="termin_serie_history",
                 children=(ChildRef("termine", "serie_id"),)),
@@ -238,6 +243,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 children=(
                     ChildRef("termine", "spielstaette_id"),
                     ChildRef("termin_serie", "spielstaette_id"),
+                    ChildRef("termin_abweichung", "spielstaette_id"),
                 )),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
@@ -344,7 +350,10 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
         TERMIN_ALTER, "Vergangene Termine", "termine",
         date_expr="COALESCE(NULLIF(ende, ''), beginn)",
         default_days=DEFAULT_TERMIN_ALTER_RETENTION_DAYS,
-        children=(ChildRef("termin_zusage", "termin_id"),),
+        children=(
+            ChildRef("termin_zusage", "termin_id"),
+            ChildRef("termin_abweichung", "termin_id"),
+        ),
     ),
     # Abgeschlossene Tickets: nur erledigt/abgelehnt sind fällig (CASE liefert sonst NULL →
     # nie fällig), datiert über den Abschlusszeitpunkt (geschlossen_am, sonst updated_at).

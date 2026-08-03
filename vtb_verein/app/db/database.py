@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 83
+SCHEMA_VERSION = 84
 
 
 # ---------------------------------------------------------------------------
@@ -2709,6 +2709,111 @@ _MANNSCHAFT_DFBNET_TRIGGERS = (
 )
 
 
+# ============================================================================
+# Termin-Abweichungen (Schema v84, Ticket #95, Etappe 4)
+#
+# Offene Fragen des Spielplan-Imports an den Betreuer: Wo sowohl das DFBnet als
+# auch die App seit dem letzten Import etwas geändert haben, entscheidet NICHT
+# der Lauf, sondern ein Mensch. Bis dahin steht hier, worum es geht.
+#
+# Eine Zeile je Feld (beginn/ort/heim_auswaerts/gegner) — nicht je Termin: Die
+# Zeit kann übernommen und die Platzverlegung verworfen werden, ohne dass eine
+# der beiden Entscheidungen die andere mitzieht. `feld` trägt zusätzlich den
+# Pseudo-Wert 'entfallen' für Spiele, die im Export nicht mehr auftauchen.
+#
+# Status: 'offen' | 'uebernommen' | 'verworfen' | 'hinfaellig'. Der vierte Wert
+# ist der ehrliche Ausgang für Fragen, die sich von selbst erledigen (das Team
+# hat den Termin inzwischen auf den DFBnet-Stand gezogen) — ihn als 'verworfen'
+# zu buchen, würde eine Entscheidung behaupten, die niemand getroffen hat.
+# ============================================================================
+_TERMIN_ABWEICHUNG_COLS = (
+    "id, version, termin_id, quelle, feld, wert_app, wert_extern, spielstaette_id, "
+    "erkannt_am, status, entschieden_von, entschieden_am, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TERMIN_ABWEICHUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TERMIN_ABWEICHUNG_COLS.split(","))
+
+_FN_TERMIN_ABWEICHUNG_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_abweichung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO termin_abweichung_history ({_TERMIN_ABWEICHUNG_COLS})
+        VALUES ({_TERMIN_ABWEICHUNG_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TERMIN_ABWEICHUNG_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_abweichung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO termin_abweichung_history ({_TERMIN_ABWEICHUNG_COLS})
+            VALUES ({_TERMIN_ABWEICHUNG_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_DDL_TERMIN_ABWEICHUNG = """
+    CREATE TABLE IF NOT EXISTS termin_abweichung (
+      id              SERIAL PRIMARY KEY,
+      termin_id       INTEGER NOT NULL REFERENCES termine(id),
+      quelle          TEXT NOT NULL DEFAULT 'dfbnet',
+      feld            TEXT NOT NULL,
+      wert_app        TEXT,
+      wert_extern     TEXT,
+      -- Nur bei feld='ort': die Spielstätte hinter dem vorgeschlagenen Ort. Ohne
+      -- sie ließe „Übernehmen" den Termin mit neuem Ort, aber altem Platz zurück
+      -- — der Belegungsplan zeigte die Verlegung dann nicht.
+      spielstaette_id INTEGER REFERENCES spielstaette(id),
+      erkannt_am      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status          TEXT NOT NULL DEFAULT 'offen',
+      entschieden_von TEXT,
+      entschieden_am  TEXT,
+      version         INTEGER NOT NULL DEFAULT 1,
+      created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by      TEXT NOT NULL,
+      deleted_at      TEXT,
+      deleted_by      TEXT,
+      CHECK (status IN ('offen', 'uebernommen', 'verworfen', 'hinfaellig'))
+    );
+    CREATE TABLE IF NOT EXISTS termin_abweichung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      termin_id INTEGER, quelle TEXT, feld TEXT, wert_app TEXT, wert_extern TEXT,
+      spielstaette_id INTEGER,
+      erkannt_am TEXT, status TEXT, entschieden_von TEXT, entschieden_am TEXT,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_TERMIN_ABWEICHUNG_INDEXES = (
+    ("idx_termin_abweichung_termin_id",  "termin_abweichung(termin_id)"),
+    ("idx_termin_abweichung_status",     "termin_abweichung(status)"),
+    ("idx_termin_abweichung_deleted_at", "termin_abweichung(deleted_at)"),
+    ("idx_termin_abweichung_history_id", "termin_abweichung_history(id)"),
+)
+
+# Je Termin und Feld höchstens EINE offene Frage: Ein wiederholter Import-Lauf
+# frischt die bestehende Zeile auf, statt den Betreuer mit Dubletten zuzuschütten.
+# Entschiedene Zeilen bleiben bewusst außen vor – sie sind das Protokoll und
+# dürfen einer später erneut auftretenden Abweichung nicht im Weg stehen.
+_TERMIN_ABWEICHUNG_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_termin_abweichung_offen "
+    "ON termin_abweichung (termin_id, feld) "
+    "WHERE status = 'offen' AND deleted_at IS NULL",
+)
+
+_TERMIN_ABWEICHUNG_TRIGGERS = (
+    ('trig_termin_abweichung_audit_insert', 'INSERT', 'termin_abweichung',
+     'fn_termin_abweichung_audit_insert'),
+    ('trig_termin_abweichung_audit_update', 'UPDATE', 'termin_abweichung',
+     'fn_termin_abweichung_audit_update'),
+)
+
+
 # Append-only „gesehen"-Log für Tickets (#130-Nachgang): jede Sicht-Session eines
 # Users auf ein Ticket. KEIN Soft-Delete/History/Audit-Trigger – das Log IST der
 # Audit-Datensatz (analog access_log / tresor_zugriff_log). Zeitbasierter Prune über
@@ -2859,6 +2964,7 @@ class Database:
             81: self._migrate_v80_to_v81,
             82: self._migrate_v81_to_v82,
             83: self._migrate_v82_to_v83,
+            84: self._migrate_v83_to_v84,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6240,6 +6346,34 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 83 WHERE id = 1")
 
+    def _migrate_v83_to_v84(self) -> None:
+        """Offene Abweichungen des Spielplan-Imports (Ticket #95, Etappe 4).
+
+        Neue Tabelle termin_abweichung (+ _history, Audit-Trigger, Indexe). Sie
+        nimmt auf, was der Import NICHT allein entscheiden darf: Felder, die seit
+        dem letzten Lauf sowohl im DFBnet als auch in der App anders sind.
+
+        Reine Zusatz-Tabelle, kein Bestandsdatum wird angefasst — bisherige
+        Konflikte tauchen beim nächsten Lauf ohnehin wieder auf und werden dann
+        erstmals hier festgehalten. DDL/Trigger/Indexe sind mit dem Frischaufbau
+        geteilt (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TERMIN_ABWEICHUNG)
+            cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_UPDATE)
+            for name, event, table, fn in _TERMIN_ABWEICHUNG_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _TERMIN_ABWEICHUNG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _TERMIN_ABWEICHUNG_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 84 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -6301,6 +6435,7 @@ class Database:
         "exportiert_am", "hochgeladen_am", "hinzugefuegt_am",
         "last_login", "last_seen",
         "eingereicht_am", "bestaetigt_am", "freigegeben_am",
+        "erkannt_am", "entschieden_am",
     )
 
     def _normalize_audit_timestamps(self, cur) -> None:
@@ -7583,6 +7718,9 @@ class Database:
         # Schnappschuss des Importstands (Schema v83) – geteilt mit v82→v83
         for sql in _TERMINE_EXTERN_STAND_SQL:
             cur.execute(sql)
+        # Offene Abweichungen aus dem Spielplan-Import (Schema v84) – geteilt
+        # mit Migration v83→v84. Steht nach termine (FK auf termine.id).
+        cur.execute(_DDL_TERMIN_ABWEICHUNG)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -7799,6 +7937,8 @@ class Database:
         cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
         cur.execute(_FN_SPIELSTAETTE_AUDIT_INSERT)
         cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
+        cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_INSERT)
+        cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_UPDATE)
         cur.execute(_FN_ALIAS_AUDIT_INSERT)
         cur.execute(_FN_ALIAS_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
@@ -8416,6 +8556,7 @@ class Database:
             *_TERMIN_SERIE_TRIGGERS,
             *_SPIELSTAETTE_TRIGGERS,
             *_MANNSCHAFT_DFBNET_TRIGGERS,
+            *_TERMIN_ABWEICHUNG_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -8541,6 +8682,7 @@ class Database:
             *_TERMIN_SERIE_INDEXES,
             *_SPIELSTAETTE_INDEXES,
             *_MANNSCHAFT_DFBNET_INDEXES,
+            *_TERMIN_ABWEICHUNG_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -8566,6 +8708,8 @@ class Database:
         for sql in _SPIELSTAETTE_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _MANNSCHAFT_DFBNET_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _TERMIN_ABWEICHUNG_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------

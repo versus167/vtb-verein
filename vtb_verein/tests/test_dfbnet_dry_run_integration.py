@@ -114,6 +114,10 @@ def stammdaten(db):
         platz = cur.fetchone()['id']
     yield {'abteilung': abteilung_id, 'erste': erste, 'zweite': zweite, 'platz': platz}
     with _cur(db) as cur:
+        # Abweichungen zeigen per FK auf termine – zuerst weg, sonst scheitert das
+        # Aufräumen und der nächste Test läuft in die Unique-Verletzung.
+        cur.execute("DELETE FROM termin_abweichung_history WHERE created_by = %s", (_MARKE,))
+        cur.execute("DELETE FROM termin_abweichung WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM termine_history WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM termine WHERE created_by = %s", (_MARKE,))
         cur.execute("DELETE FROM mannschaft_dfbnet_alias_history WHERE created_by = %s", (_MARKE,))
@@ -367,3 +371,220 @@ def test_benachrichtigung_nur_mit_flag(db, stammdaten):
                        actor=_MARKE, benachrichtigen=True,
                        notify=lambda t, a, v: gerufen.append(a))
     assert gerufen == ['neu']
+
+
+# ------------------------------------------------------- Abweichungen (Etappe 4)
+
+def _verlegen(db, termin, beginn):
+    """Verlegung durch das Team – wie über das Formular, also mit version-Bump."""
+    db.termine.update(termin.id, 'spiel', beginn, None, termin.ort, None, None,
+                      termin.gegner, termin.heim_auswaerts, None, 'trainer',
+                      termin.version, spielstaette_id=termin.spielstaette_id)
+
+
+def _offene(db, termin_id):
+    return db.termin_abweichungen.list_for_termin(termin_id, nur_offen=True)
+
+
+def test_konflikt_wird_als_abweichung_festgehalten(db, stammdaten):
+    """Der Kern von Etappe 4: Der Lauf entscheidet nicht, er fragt."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert ergebnis.abweichungen == 1
+
+    offen = _offene(db, termin.id)
+    assert len(offen) == 1
+    assert (offen[0].feld, offen[0].status) == ('beginn', 'offen')
+    assert offen[0].wert_app == '2026-08-15T16:00'      # was das Team eingetragen hat
+    assert offen[0].wert_extern == '2026-08-15T17:30'   # was das DFBnet sagt
+
+
+def test_zweiter_lauf_frischt_die_abweichung_auf_statt_zu_doppeln(db, stammdaten):
+    """Ein wöchentlicher Import darf den Betreuer nicht mit Dubletten zuschütten."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '18:00'})), actor=_MARKE)
+
+    offen = _offene(db, termin.id)
+    assert len(offen) == 1
+    assert offen[0].wert_extern == '2026-08-15T18:00'   # der neue Vorschlag
+    assert offen[0].version == 2                        # aufgefrischt, nicht neu
+
+
+def test_uebernehmen_schreibt_den_termin_und_beendet_die_frage(db, stammdaten):
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+
+    abw = _offene(db, termin.id)[0]
+    assert dfbnet.entscheiden(db, abw, 'uebernommen', actor='betreuer') is True
+
+    assert db.termine.get(termin.id).beginn == '2026-08-15T17:30'
+    assert _stand(db, termin.id)['beginn'] == '2026-08-15T17:30'
+    assert _offene(db, termin.id) == []
+
+    # Und der nächste Lauf fragt nicht erneut
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert (ergebnis.abweichungen, ergebnis.aktualisiert) == (0, 0)
+
+
+def test_verwerfen_laesst_den_termin_stehen_und_fragt_nie_wieder(db, stammdaten):
+    """Auch das Verwerfen schreibt den Stand fort – sonst käme die Frage zurück."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+
+    abw = _offene(db, termin.id)[0]
+    assert dfbnet.entscheiden(db, abw, 'verworfen', actor='betreuer') is True
+
+    assert db.termine.get(termin.id).beginn == '2026-08-15T16:00'   # Team behält recht
+    assert _stand(db, termin.id)['beginn'] == '2026-08-15T17:30'    # Stand zieht mit
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert (ergebnis.abweichungen, ergebnis.aktualisiert) == (0, 0)
+    assert db.termine.get(termin.id).beginn == '2026-08-15T16:00'
+
+
+def test_entscheidung_ist_nur_einmal_moeglich(db, stammdaten):
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+
+    abw = _offene(db, termin.id)[0]
+    assert dfbnet.entscheiden(db, abw, 'verworfen', actor='betreuer') is True
+    # Dieselbe (veraltete) Fassung erneut: kein zweiter Durchgriff
+    assert dfbnet.entscheiden(db, abw, 'uebernommen', actor='wer-anders') is False
+
+
+def test_unstrittiges_feld_laeuft_trotz_konflikt_durch(db, stammdaten):
+    """Feldweise, nicht je Termin: Die Ortsverlegung darf nicht an der Zeit hängen."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')      # Team ändert NUR die Zeit
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{
+        'Uhrzeit': '17:30', 'Gastmannschaft': 'SV Ersatz'})), actor=_MARKE)
+    assert ergebnis.aktualisiert == 1
+
+    danach = db.termine.get(termin.id)
+    assert danach.gegner == 'SV Ersatz'            # unstrittig -> übernommen
+    assert danach.beginn == '2026-08-15T16:00'     # strittig -> unangetastet
+    assert [a.feld for a in _offene(db, termin.id)] == ['beginn']
+
+
+def test_erledigte_frage_wird_hinfaellig(db, stammdaten):
+    """Zieht das Team den Termin selbst auf den DFBnet-Stand, ist nichts mehr offen."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert len(_offene(db, termin.id)) == 1
+
+    _verlegen(db, db.termine.get(termin.id), '2026-08-15T17:30')   # Team zieht nach
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+
+    assert _offene(db, termin.id) == []
+    alle = db.termin_abweichungen.list_for_termin(termin.id)
+    assert [a.status for a in alle] == ['hinfaellig']
+
+
+def test_zaehler_fuers_badge(db, stammdaten):
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+
+    assert db.termin_abweichungen.counts_offen([termin.id]) == {termin.id: 1}
+    assert db.termin_abweichungen.counts_offen([]) == {}
+
+
+# ------------------------------------------------ im Export nicht mehr enthalten
+
+# Zweites eigenes Spiel eine Woche später – und ein fremdes Spiel am selben Tag,
+# das im „Export ohne" dafür sorgt, dass das Datumsfenster der Datei gleich bleibt.
+_SPAETER = {'Spielkennung': '900000011', 'Spieldatum': '22.08.2026'}
+_SPAETER_FREMD = {'Spielkennung': '900000012', 'Spieldatum': '22.08.2026',
+                  'Heimmannschaft': 'SV Fremd', 'Gastmannschaft': 'FC Anders'}
+
+
+def _export_voll():
+    return _datei(_zeile(), _zeile(**_SPAETER))
+
+
+def _export_ohne():
+    return _datei(_zeile(), _zeile(**_SPAETER_FREMD))
+
+
+def test_fehlendes_spiel_wird_gemeldet_aber_nicht_abgesagt(db, stammdaten):
+    """„Fehlt" heißt nicht „abgesagt" – der Export ist ein Zeitfenster-Auszug."""
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    verschwunden = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+
+    ergebnis = dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+
+    assert ergebnis.entfallen == 1
+    assert db.termine.get(verschwunden.id).status == 'geplant'     # nichts abgesagt
+    assert [a.feld for a in _offene(db, verschwunden.id)] == ['entfallen']
+
+
+def test_spiel_ausserhalb_des_dateifensters_bleibt_unberuehrt(db, stammdaten):
+    """Ein Auszug über eine Woche darf nichts über die nächste behaupten."""
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    spaeter = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)   # nur 15.08.
+    assert ergebnis.entfallen == 0
+    assert _offene(db, spaeter.id) == []
+
+
+def test_fehlendes_spiel_wird_nicht_zweimal_gemeldet(db, stammdaten):
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    verschwunden = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+
+    erst = dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+    nochmal = dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+    assert (erst.entfallen, nochmal.entfallen) == (1, 0)
+    assert len(_offene(db, verschwunden.id)) == 1
+
+
+def test_wieder_aufgetauchtes_spiel_erledigt_die_meldung(db, stammdaten):
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    verschwunden = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+    dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+    assert len(_offene(db, verschwunden.id)) == 1
+
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    assert _offene(db, verschwunden.id) == []
+
+
+def test_teil_export_meldet_fremde_mannschaften_nicht_als_entfallen(db, stammdaten):
+    """Nur Mannschaften, die im Export vorkommen, werden überhaupt verglichen."""
+    dfbnet.uebernehmen(db, _datei(_zeile(**{
+        'Heimmannschaft': 'Testteam DFBnet 2', 'Spielkennung': '900000013'})),
+        actor=_MARKE)
+    fremd = db.termine.get_by_extern_ref('900000013', stammdaten['zweite'])
+
+    # Export nur für die Erste, im selben Zeitfenster
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    assert ergebnis.entfallen == 0
+    assert _offene(db, fremd.id) == []
+
+
+def test_entfallenes_spiel_uebernehmen_sagt_den_termin_ab(db, stammdaten):
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    verschwunden = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+    dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+
+    abw = _offene(db, verschwunden.id)[0]
+    assert dfbnet.entscheiden(db, abw, 'uebernommen', actor='betreuer') is True
+    assert db.termine.get(verschwunden.id).status == 'abgesagt'
+    # Abgesagte Termine stehen nicht mehr zur Debatte
+    assert dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE).entfallen == 0

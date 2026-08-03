@@ -26,6 +26,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from app.db.termin_abweichung_repository import (
+    FELD_ENTFALLEN,
+    STATUS_UEBERNOMMEN,
+    VALID_ENTSCHEIDUNGEN,
+)
+
 # Spaltenköpfe, wie sie im Export stehen. Wiederholte Namen bekommen beim Einlesen
 # ein "#2" angehängt (s. _eindeutige_koepfe) – daher hier „Typ#2" für den Spieltyp.
 SPALTE_MANNSCHAFTSART = 'Mannschaftsart'
@@ -64,6 +70,11 @@ FREMD = 'fremd'                   # weder eigenes Team noch eigener Platz
 # bewusst NICHT dabei – die pflegt das Team, der Import fasst sie nie an.
 VERGLEICHSFELDER = ('beginn', 'ort', 'heim_auswaerts', 'gegner')
 
+# Was ein Lauf mit einer festgestellten Abweichung täte (je Feld):
+WIRKUNG_UEBERNEHMEN = 'uebernehmen'      # nur die Quelle hat sich geändert
+WIRKUNG_BLEIBT = 'bleibt'                # nur die App – bewusste Abweichung des Teams
+WIRKUNG_ENTSCHEIDUNG = 'entscheidung'    # beide -> der Betreuer entscheidet
+
 
 @dataclass
 class Spiel:
@@ -100,8 +111,12 @@ class ZeilenBefund:
     mannschaft_name: Optional[str] = None
     heim_auswaerts: Optional[str] = None
     termin_id: Optional[int] = None
-    abweichungen: list = field(default_factory=list)   # [{feld, app, dfbnet}]
+    abweichungen: list = field(default_factory=list)   # [{feld, app, dfbnet, wirkung}]
     hinweis: Optional[str] = None
+
+    @property
+    def braucht_entscheidung(self) -> bool:
+        return any(a['wirkung'] == WIRKUNG_ENTSCHEIDUNG for a in self.abweichungen)
 
 
 @dataclass
@@ -238,6 +253,24 @@ def _beschreibung(s: Spiel) -> str:
     return ' · '.join(t for t in teile if t)
 
 
+def _wirkung(stand: Optional[dict], feld: str, app_wert, dfbnet_wert) -> str:
+    """Wer hat das Feld verändert – und was folgt daraus? (nur bei app != dfbnet)
+
+    Vergleichsanker ist der zuletzt importierte Stand, nicht der App-Wert: Erst er
+    trennt „das DFBnet hat verlegt" von „das Team hat bewusst etwas anderes
+    eingetragen". Ohne Stand (Termin von Hand angelegt oder älter als Schema v83)
+    lässt sich das nicht entscheiden — dann entscheidet ein Mensch.
+    """
+    if not stand:
+        return WIRKUNG_ENTSCHEIDUNG
+    alt = stand.get(feld)
+    if alt == dfbnet_wert:
+        return WIRKUNG_BLEIBT
+    if alt == app_wert:
+        return WIRKUNG_UEBERNEHMEN
+    return WIRKUNG_ENTSCHEIDUNG
+
+
 def dry_run(db, daten: bytes) -> ImportBericht:
     """Ordnet jede Zeile zu und meldet, was ein Lauf täte. Schreibt nichts."""
     spiele, fehler = parse_spielplan(daten)
@@ -291,7 +324,9 @@ def dry_run(db, daten: bytes) -> ImportBericht:
             neu_werte = {'beginn': s.beginn, 'ort': s.ort_text,
                          'heim_auswaerts': heim_auswaerts, 'gegner': gegner}
             abweichungen = [
-                {'feld': f, 'app': getattr(termin, f), 'dfbnet': neu_werte[f]}
+                {'feld': f, 'app': getattr(termin, f), 'dfbnet': neu_werte[f],
+                 'wirkung': _wirkung(termin.extern_stand, f,
+                                     getattr(termin, f), neu_werte[f])}
                 for f in VERGLEICHSFELDER if getattr(termin, f) != neu_werte[f]
             ]
             bericht.befunde.append(ZeilenBefund(
@@ -317,6 +352,9 @@ class UebernahmeErgebnis:
     aktualisiert: int = 0
     stand_nachgetragen: int = 0
     uebersprungen: int = 0
+    # Offene Fragen an den Betreuer (termin_abweichung), neu oder aufgefrischt
+    abweichungen: int = 0
+    entfallen: int = 0                                 # im Export nicht mehr enthalten
     konflikte: list = field(default_factory=list)      # [{termin_id, mannschaft, felder}]
     ohne_spielstaette: list = field(default_factory=list)   # [{spielkennung, name, nr}]
     bericht: Optional[ImportBericht] = None
@@ -332,21 +370,92 @@ def _neue_werte(befund: ZeilenBefund) -> dict:
     }
 
 
+def _plan(termin, werte: dict) -> tuple[dict, dict, dict]:
+    """Feldweiser Abgleich: (ändern, nur Stand nachtragen, entscheiden lassen).
+
+    Feldweise und nicht je Termin, damit eine strittige Platzverlegung nicht die
+    unstrittige Zeitverlegung blockiert — und umgekehrt.
+    """
+    stand = termin.extern_stand
+    aendern, nachtragen, entscheiden = {}, {}, {}
+    for f in VERGLEICHSFELDER:
+        neu, app = werte[f], getattr(termin, f)
+        if not stand:
+            # Ohne Basis wird nicht geraten: Was übereinstimmt, wird als Stand
+            # festgehalten, alles andere legt der Betreuer fest.
+            (nachtragen if app == neu else entscheiden)[f] = neu
+            continue
+        if stand.get(f) == neu:
+            continue                       # Quelle unverändert -> in Ruhe lassen
+        if app == neu:
+            nachtragen[f] = neu            # App ist schon dort, nur der Stand hinkt
+        elif app == stand.get(f):
+            aendern[f] = neu               # nur die Quelle hat sich geändert
+        else:
+            entscheiden[f] = neu           # beide -> Abweichung
+    return aendern, nachtragen, entscheiden
+
+
+def _melde_abweichungen(db, termin, entscheiden: dict, staette, *,
+                        actor: str) -> int:
+    """Offene Fragen festhalten – eine Zeile je Feld, idempotent je Lauf."""
+    for feld, wert in entscheiden.items():
+        db.termin_abweichungen.melden(
+            termin.id, feld, wert_app=getattr(termin, feld), wert_extern=wert,
+            spielstaette_id=staette.id if (feld == 'ort' and staette) else None,
+            erkannt_von=actor)
+    return len(entscheiden)
+
+
+def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis, *,
+                       actor: str) -> None:
+    """Spiele melden, die im Export nicht mehr auftauchen — ohne sie abzusagen.
+
+    Der Export ist ein Zeitfenster-Auszug, kein Vollbestand: „fehlt" heißt nicht
+    „abgesagt". Verglichen wird deshalb nur innerhalb des Datumsfensters der Datei
+    und nur für Mannschaften, die darin überhaupt vorkommen — sonst meldete ein
+    Teil-Export den halben Kalender als entfallen.
+    """
+    eigene = [b for b in bericht.befunde if b.mannschaft_id]
+    if not eigene:
+        return
+    tage = [b.spiel.beginn[:10] for b in bericht.befunde if b.spiel.beginn]
+    if not tage:
+        return
+    vorhanden = {(b.mannschaft_id, b.spiel.spielkennung) for b in eigene}
+
+    # Wieder aufgetauchte Spiele: die alte Meldung ist damit erledigt.
+    db.termin_abweichungen.entfallen_zuruecknehmen(
+        [b.termin_id for b in eigene if b.termin_id], actor)
+
+    teams = sorted({b.mannschaft_id for b in eigene})
+    for termin in db.termine.list_importierte(teams, min(tage), max(tage)):
+        if (termin.mannschaft_id, termin.extern_ref) in vorhanden:
+            continue
+        if db.termin_abweichungen.hat_unerledigte(termin.id, FELD_ENTFALLEN):
+            continue    # schon gemeldet oder längst entschieden
+        db.termin_abweichungen.melden(
+            termin.id, FELD_ENTFALLEN, wert_app=termin.beginn, wert_extern=None,
+            erkannt_von=actor)
+        ergebnis.entfallen += 1
+        ergebnis.abweichungen += 1
+
+
 def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
                 notify=None) -> UebernahmeErgebnis:
-    """Spielplan übernehmen — nach dem Drei-Wege-Abgleich.
+    """Spielplan übernehmen — nach dem Drei-Wege-Abgleich, Feld für Feld.
 
     Verglichen wird nicht App gegen Datei, sondern jeweils gegen den zuletzt
     importierten Stand (`extern_stand`). Daraus die drei Fälle:
 
     * DFBnet geändert, App unberührt  -> übernehmen (und Kader benachrichtigen)
-    * DFBnet geändert, App auch       -> NICHT anfassen, als Konflikt melden
+    * DFBnet geändert, App auch       -> NICHT anfassen, als Abweichung festhalten
     * nur die App geändert            -> nichts tun; das Team weicht bewusst ab
 
     Fehlt der Schnappschuss (Termin von Hand angelegt oder aus der Zeit vor v83),
-    wird bei Gleichstand nur der Stand nachgetragen und sonst nichts geändert —
-    ohne Basis lässt sich nicht sagen, wer etwas geändert hat, und Raten wäre hier
-    teurer als Nachfragen.
+    wird nur nachgetragen, was ohnehin übereinstimmt; der Rest wird zur Abweichung
+    — ohne Basis lässt sich nicht sagen, wer etwas geändert hat, und Raten wäre
+    hier teurer als Nachfragen.
 
     ``notify`` ist injizierbar, damit der Aufruf ohne Mailversand testbar bleibt.
     """
@@ -369,8 +478,12 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
                 'name': spiel.spielstaette,
                 'dfbnet_nr': spiel.spielstaetten_nr,
             })
-            ergebnis.uebersprungen += 1
-            continue
+            if befund.einordnung == NEU:
+                ergebnis.uebersprungen += 1
+                continue
+            # Bestehende Termine haben ihre Spielstätte längst; eine Zeitverlegung
+            # lässt sich auch ohne die fehlenden Stammdaten nachziehen. Nur der Ort
+            # bleibt liegen, bis der Platz angelegt ist.
 
         werte = _neue_werte(befund)
 
@@ -391,39 +504,40 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
             ergebnis.uebersprungen += 1
             continue
 
-        stand = termin.extern_stand
-        if not stand:
-            # Kein Vergleichsstand: nur nachtragen, wenn ohnehin alles gleich ist.
-            if befund.einordnung == UNVERAENDERT:
-                db.termine.set_extern_stand(termin.id, werte)
-                ergebnis.stand_nachgetragen += 1
-            else:
-                ergebnis.konflikte.append({
-                    'termin_id': termin.id, 'mannschaft': befund.mannschaft_name,
-                    'felder': [a['feld'] for a in befund.abweichungen],
-                    'grund': 'kein Vergleichsstand aus einem früheren Import'})
-                ergebnis.uebersprungen += 1
-            continue
+        aendern, nachtragen, entscheiden = _plan(termin, werte)
+        if staette is None:
+            # Ohne Stammdatum bliebe der Termin mit neuem Ort, aber altem Platz
+            # zurück – der Belegungsplan zeigte die Verlegung dann nicht.
+            aendern.pop('ort', None)
 
-        dfbnet_geaendert = [f for f in VERGLEICHSFELDER if stand.get(f) != werte[f]]
-        app_geaendert = [f for f in VERGLEICHSFELDER
-                         if stand.get(f) != getattr(termin, f)]
-
-        if not dfbnet_geaendert:
-            continue                            # Quelle unverändert -> in Ruhe lassen
-        if app_geaendert:
+        if entscheiden:
+            ergebnis.abweichungen += _melde_abweichungen(
+                db, termin, entscheiden, staette, actor=actor)
             ergebnis.konflikte.append({
                 'termin_id': termin.id, 'mannschaft': befund.mannschaft_name,
-                'felder': sorted(set(dfbnet_geaendert) | set(app_geaendert)),
-                'grund': 'Termin wurde in der App geändert'})
-            ergebnis.uebersprungen += 1
+                'felder': sorted(entscheiden),
+                'grund': ('kein Vergleichsstand aus einem früheren Import'
+                          if not termin.extern_stand
+                          else 'Termin wurde in der App geändert')})
+        # Erledigte Fragen schließen: Was jetzt automatisch läuft oder ohnehin
+        # übereinstimmt, muss niemand mehr entscheiden.
+        db.termin_abweichungen.als_hinfaellig(
+            termin.id, [f for f in VERGLEICHSFELDER if f not in entscheiden], actor)
+
+        if not aendern and not nachtragen:
+            continue
+
+        stand_neu = {**(termin.extern_stand or {}), **aendern, **nachtragen}
+        if not aendern:
+            # Rein buchhalterisch: kein version-Bump, keine History-Zeile.
+            db.termine.set_extern_stand(termin.id, stand_neu)
+            ergebnis.stand_nachgetragen += 1
             continue
 
         vorher = termin
         if db.termine.update_aus_import(
-                termin.id, beginn=werte['beginn'], ort=werte['ort'],
-                spielstaette_id=staette.id, gegner=werte['gegner'],
-                heim_auswaerts=werte['heim_auswaerts'], extern_stand=werte,
+                termin.id, werte=aendern, extern_stand=stand_neu,
+                spielstaette_id=staette.id if 'ort' in aendern else None,
                 updated_by=actor, expected_version=termin.version):
             ergebnis.aktualisiert += 1
             if benachrichtigen and notify:
@@ -431,4 +545,56 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
         else:
             ergebnis.uebersprungen += 1
 
+    _entfallene_melden(db, bericht, ergebnis, actor=actor)
     return ergebnis
+
+
+# ------------------------------------------------------- Abweichung entscheiden
+
+def entscheiden(db, abweichung, entscheidung: str, *, actor: str,
+                notify=None) -> bool:
+    """Eine offene Abweichung entscheiden. False = Versionskonflikt.
+
+    Beide Wege schreiben den Schnappschuss auf den DFBnet-Wert fort — auch das
+    Verwerfen. Genau das macht die Entscheidung dauerhaft: Beim nächsten Lauf
+    stimmt die Quelle mit dem Stand überein, die Frage wird nicht erneut gestellt,
+    und die abweichende Angabe des Teams bleibt stehen.
+
+    Reihenfolge ist Absicht: erst der Termin, dann die Abweichung. Scheitert der
+    zweite Schritt (jemand war schneller), wurde höchstens derselbe Wert zweimal
+    geschrieben; andersherum wäre die Frage als beantwortet markiert, ohne dass
+    etwas passiert ist.
+    """
+    if entscheidung not in VALID_ENTSCHEIDUNGEN:
+        raise ValueError(f"Unbekannte Entscheidung: {entscheidung}")
+    termin = db.termine.get(abweichung.termin_id)
+    if termin is None:
+        return False
+
+    uebernehmen_ = entscheidung == STATUS_UEBERNOMMEN
+    vorher = termin
+
+    if abweichung.feld == FELD_ENTFALLEN:
+        # „Übernehmen" heißt hier: absagen – gelöscht wird ein Termin mit
+        # Zu-/Absagen des Kaders nie automatisch.
+        if uebernehmen_ and termin.status != 'abgesagt':
+            db.termine.set_status(termin.id, 'abgesagt', actor, termin.version)
+    else:
+        stand_neu = {**(termin.extern_stand or {}),
+                     abweichung.feld: abweichung.wert_extern}
+        if uebernehmen_:
+            db.termine.update_aus_import(
+                termin.id, werte={abweichung.feld: abweichung.wert_extern},
+                extern_stand=stand_neu,
+                spielstaette_id=(abweichung.spielstaette_id
+                                 if abweichung.feld == 'ort' else None),
+                updated_by=actor, expected_version=termin.version)
+        else:
+            db.termine.set_extern_stand(termin.id, stand_neu)
+
+    if not db.termin_abweichungen.entscheiden(
+            abweichung.id, entscheidung, actor, abweichung.version):
+        return False
+    if notify and uebernehmen_:
+        notify(db.termine.get(termin.id), vorher)
+    return True

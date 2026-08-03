@@ -19,6 +19,14 @@
         class="q-mr-xs" style="opacity:.85">
         <q-tooltip>Teil einer Serie</q-tooltip>
       </q-icon>
+      <!-- Offene Frage aus dem Spielplan-Import (#95): nur für Verwalter, führt
+           direkt in die Entscheidung – sonst bliebe sie unbemerkt liegen. -->
+      <q-badge v-if="darfVerwalten && offeneAbweichungen" color="warning"
+        text-color="dark" class="q-mr-sm text-weight-bold termin-card__abweichung"
+        @click.stop="abweichungOffen = true">
+        <q-icon name="sync_problem" size="14px" class="q-mr-xs" />{{ offeneAbweichungen }}
+        <q-tooltip>DFBnet weicht ab – bitte entscheiden</q-tooltip>
+      </q-badge>
       <!-- „Meine Termine": als Gast eingetragen (Antwort ohne Kader-Zugehörigkeit) -->
       <q-badge v-if="termin.gast" color="vtb-gelb" text-color="primary"
         class="q-mr-sm text-weight-bold">GAST</q-badge>
@@ -96,6 +104,10 @@
     <!-- Abgesagt friert die Antworten ein: Setz-Buttons im Dialog ausblenden -->
     <TerminKaderDialog v-model="kaderOffen" :termin-id="termin.id"
       :darf-verwalten="darfVerwalten && !abgesagt" @geaendert="emit('reload')" />
+
+    <TerminAbweichungDialog v-if="darfVerwalten" v-model="abweichungOffen"
+      :termin-id="termin.id" :darf-verwalten="darfVerwalten"
+      @geaendert="emit('reload')" />
   </q-card>
 </template>
 
@@ -104,6 +116,7 @@ import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import TerminKaderDialog from 'components/TerminKaderDialog.vue'
+import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
 import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat } from 'src/composables/useTermine'
 
 const props = defineProps({
@@ -116,8 +129,10 @@ const emit = defineEmits(['bearbeiten', 'absagen', 'reaktivieren', 'loeschen', '
 const $q = useQuasar()
 const busy = ref(false)
 const kaderOffen = ref(false)
+const abweichungOffen = ref(false)
 
 const abgesagt = computed(() => props.termin.status === 'abgesagt')
+const offeneAbweichungen = computed(() => props.termin.abweichungen_offen ?? 0)
 const datumIso = computed(() => (props.termin.beginn ?? '').slice(0, 10))
 const treffen = computed(() => props.termin.treffpunkt_zeit || '--:--')
 const beginn = computed(() => uhrzeit(props.termin.beginn) || '--:--')
@@ -196,5 +211,8 @@ async function senden(key, kommentar, zuruecknehmen = false) {
 }
 .termin-card__rsvp {
   min-height: 44px;
+}
+.termin-card__abweichung {
+  cursor: pointer;
 }
 </style>
