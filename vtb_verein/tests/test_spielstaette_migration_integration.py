@@ -1,8 +1,9 @@
 """
 Integrationstest des Spielbetriebs-Schemas gegen echtes PostgreSQL – Ticket #95.
 
-Deckt die beiden Schema-Schritte der Etappe 1 ab: Spielstätten samt Pflichtfeld am
-Termin (v80) und die DFBnet-Zuordnung der Mannschaft (v81).
+Deckt die Schema-Schritte zu #95 ab: Spielstätten samt Pflichtfeld am Termin (v80),
+die DFBnet-Zuordnung der Mannschaft (v81) und die je Mannschaft eindeutige
+Spielkennung (v82).
 
 Geprüft werden beide Pfade: der Frischaufbau (VereinsDB legt beim Connect an) und die
 Migration v79→v80, die auf einem nachgebauten v79-Stand läuft. Der Migrationsteil ist
@@ -397,3 +398,44 @@ def test_alias_steht_im_prune_registry():
     mannschaft = next(e for e in PRUNE_REGISTRY if e.table == 'mannschaft')
     assert ('mannschaft_dfbnet_alias', 'mannschaft_id') in {
         (c.table, c.fk) for c in mannschaft.children}
+
+
+# ------------------------------- Spielkennung je Mannschaft eindeutig (v82)
+
+def test_dieselbe_spielkennung_fuer_zwei_mannschaften_erlaubt(db):
+    """Vereinsinternes Spiel: beide Kader brauchen einen eigenen Termin."""
+    with _cur(db) as cur:
+        erste = _mannschaft_anlegen(cur)
+        cur.execute("SELECT abteilung_id FROM mannschaft WHERE id = %s", (erste,))
+        abteilung_id = cur.fetchone()['abteilung_id']
+        cur.execute("INSERT INTO mannschaft (abteilung_id, name, created_by, updated_by) "
+                    "VALUES (%s, 'Zweites Team', %s, %s) RETURNING id",
+                    (abteilung_id, _MARKE, _MARKE))
+        zweite = cur.fetchone()['id']
+        platz = _platzhalter_id(cur, 'auswaerts')
+        for mannschaft_id in (erste, zweite):
+            cur.execute(
+                "INSERT INTO termine (mannschaft_id, typ, beginn, spielstaette_id, "
+                "extern_ref, created_by, updated_by) "
+                "VALUES (%s, 'spiel', '2026-09-05T15:00', %s, 'SK-4711', %s, %s)",
+                (mannschaft_id, platz, _MARKE, _MARKE))
+        cur.execute("SELECT count(*) AS n FROM termine WHERE extern_ref = 'SK-4711'")
+        assert cur.fetchone()['n'] == 2
+
+
+def test_dieselbe_spielkennung_zweimal_je_mannschaft_abgelehnt(db):
+    with _cur(db) as cur:
+        mannschaft_id = _mannschaft_anlegen(cur)
+        platz = _platzhalter_id(cur, 'auswaerts')
+        cur.execute(
+            "INSERT INTO termine (mannschaft_id, typ, beginn, spielstaette_id, "
+            "extern_ref, created_by, updated_by) "
+            "VALUES (%s, 'spiel', '2026-09-06T15:00', %s, 'SK-4712', %s, %s)",
+            (mannschaft_id, platz, _MARKE, _MARKE))
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with _cur(db) as cur:
+            cur.execute(
+                "INSERT INTO termine (mannschaft_id, typ, beginn, spielstaette_id, "
+                "extern_ref, created_by, updated_by) "
+                "VALUES (%s, 'spiel', '2026-09-07T15:00', %s, 'SK-4712', %s, %s)",
+                (mannschaft_id, platz, _MARKE, _MARKE))

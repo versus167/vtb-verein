@@ -52,10 +52,23 @@ angelegt — dasselbe Muster wie beim SPG-Import.
 ## Abbildung auf den Termin
 
 Anker ist die **Spielkennung → `termine.extern_ref`**. Das Feld existiert
-bereits, mitsamt partiellem Unique-Index (`uix_termine_extern_ref`) und dem
-Kommentar „DFBnet-Spielkennung"; es ist bewusst nicht über die API setzbar. Die
-Spielkennung bleibt bei einer Verlegung stabil — genau deshalb taugt sie als
-Schlüssel.
+bereits, mitsamt partiellem Unique-Index und dem Kommentar „DFBnet-Spielkennung";
+es ist bewusst nicht über die API setzbar. Die Spielkennung bleibt bei einer
+Verlegung stabil — genau deshalb taugt sie als Schlüssel.
+
+**Eindeutig ist das Paar (Mannschaft, Spielkennung), nicht die Kennung allein**
+(Schema v82). Grund: Treffen zwei eigene Mannschaften aufeinander, braucht
+**jede** einen eigenen Termin — sonst kann nur einer der beiden Kader zu- oder
+absagen. Die Kennung identifiziert das *Spiel*, das Paar unseren
+*Kalendereintrag* dazu.
+
+Die naheliegende Alternative wäre, den Schlüssel selbst zu erweitern
+(`<Kennung>H` / `<Kennung>A`). Dagegen spricht ein konkreter Fehlerfall: Wird im
+DFBnet das **Heimrecht getauscht** (Platztausch kommt im Amateurbereich vor),
+ändert sich der abgeleitete Schlüssel — der Import fände den bestehenden Termin
+nicht mehr, legte einen zweiten an und ließe den ersten samt aller Zu-/Absagen
+verwaisen. Mit dem Paar bleibt der Anker stabil, und `extern_ref` trägt weiterhin
+exakt die Kennung, die auch im DFBnet steht.
 
 | DFBnet | Termin |
 |---|---|

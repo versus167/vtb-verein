@@ -1,8 +1,9 @@
 """Dry-Run des DFBnet-Spielplan-Imports gegen echtes PostgreSQL (#95, Etappe 2).
 
 Prüft die Einordnung jeder Zeile — neu, Änderung, unverändert, Platzbelegung,
-fremd, mehrdeutig — sowie die Vorschlagslisten für unbekannte Teams und noch
-fehlende Spielstätten. Es wird nichts geschrieben; der Test kontrolliert das
+fremd — sowie die Vorschlagslisten für unbekannte Teams und noch fehlende
+Spielstätten. Vereinsinterne Spiele ergeben bewusst ZWEI Befunde, einen je
+Mannschaft, damit beide Kader zu-/absagen können. Es wird nichts geschrieben; der Test kontrolliert das
 ausdrücklich.
 
 Läuft nur mit ``VTB_TEST_DATABASE_URL`` auf einer LEEREN Wegwerf-DB. Die
@@ -190,13 +191,28 @@ def test_fremdes_spiel_auf_fremdem_platz_ist_irrelevant(db, stammdaten):
     assert bericht.zusammenfassung[dfbnet.FREMD] == 1
 
 
-def test_zwei_eigene_teams_sind_mehrdeutig(db, stammdaten):
-    """Die Spielkennung ist eindeutig – ein Termin kann aber nur an EINER
-    Mannschaft hängen. Das muss ein Mensch entscheiden."""
+def test_vereinsinternes_spiel_ergibt_zwei_termine(db, stammdaten):
+    """Beide Kader müssen zu-/absagen können – also je Mannschaft ein Termin.
+
+    Möglich seit Schema v82: die Spielkennung ist je Mannschaft eindeutig.
+    """
     bericht = dfbnet.dry_run(db, _datei(_zeile(**{
         'Heimmannschaft': 'Testteam DFBnet', 'Gastmannschaft': 'Testteam DFBnet 2'})))
-    assert bericht.zusammenfassung[dfbnet.MEHRDEUTIG] == 1
-    assert 'nur einer' in bericht.befunde[0].hinweis
+    assert bericht.zusammenfassung[dfbnet.NEU] == 2
+    zuordnung = {(b.mannschaft_id, b.heim_auswaerts) for b in bericht.befunde}
+    assert zuordnung == {(stammdaten['erste'], 'heim'), (stammdaten['zweite'], 'auswaerts')}
+    assert all('Vereinsinternes Spiel' in b.hinweis for b in bericht.befunde)
+
+
+def test_vereinsinternes_spiel_erkennt_den_bestehenden_termin_je_mannschaft(db, stammdaten):
+    """Der Termin der einen Mannschaft darf den der anderen nicht verdecken."""
+    _termin_anlegen(db, stammdaten['erste'], stammdaten['platz'],
+                    gegner='Testteam DFBnet 2')
+    bericht = dfbnet.dry_run(db, _datei(_zeile(**{
+        'Heimmannschaft': 'Testteam DFBnet', 'Gastmannschaft': 'Testteam DFBnet 2'})))
+    nach_team = {b.mannschaft_id: b.einordnung for b in bericht.befunde}
+    assert nach_team[stammdaten['erste']] == dfbnet.UNVERAENDERT
+    assert nach_team[stammdaten['zweite']] == dfbnet.NEU
 
 
 def test_falsche_mannschaftsart_trifft_nicht(db, stammdaten):

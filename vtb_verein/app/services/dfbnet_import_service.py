@@ -55,7 +55,10 @@ FREMD = 'fremd'                   # weder eigenes Team noch eigener Platz
 # ist ein Team von außen nicht von einem fremden Verein zu unterscheiden. Welche
 # Namen im Export vorkamen, trägt stattdessen `unbekannte_teams` im Bericht —
 # das ist die Liste, an der die Zuordnung nachgepflegt wird.
-MEHRDEUTIG = 'mehrdeutig'         # beide Mannschaften sind eigene Teams
+# Ein vereinsinternes Spiel (beide Mannschaften sind eigene Teams) ist NICHT
+# mehrdeutig, sondern ergibt ZWEI Befunde – je Mannschaft einen. Sonst könnte nur
+# einer der beiden Kader zu-/absagen. Möglich seit Schema v82: die Spielkennung ist
+# je Mannschaft eindeutig, nicht mehr vereinsweit.
 
 # Felder, die beim Abgleich verglichen werden. Treffpunkt und Treffpunktzeit stehen
 # bewusst NICHT dabei – die pflegt das Team, der Import fasst sie nie an.
@@ -115,7 +118,7 @@ class ImportBericht:
     def zusammenfassung(self) -> dict:
         z = Counter(b.einordnung for b in self.befunde)
         return {k: z.get(k, 0) for k in
-                (NEU, AENDERUNG, UNVERAENDERT, PLATZBELEGUNG, FREMD, MEHRDEUTIG)}
+                (NEU, AENDERUNG, UNVERAENDERT, PLATZBELEGUNG, FREMD)}
 
 
 # --------------------------------------------------------------------- Parser
@@ -258,19 +261,7 @@ def dry_run(db, daten: bytes) -> ImportBericht:
             })
             eintrag['anzahl'] += 1
 
-        if heim_team and gast_team:
-            # Zwei eigene Teams gegeneinander: die Spielkennung ist eindeutig, ein
-            # Termin kann aber nur an EINER Mannschaft hängen – das muss ein Mensch
-            # entscheiden, nicht der Import.
-            bericht.befunde.append(ZeilenBefund(
-                spiel=s, einordnung=MEHRDEUTIG,
-                hinweis=(f'Beide Mannschaften sind eigene Teams '
-                         f'({heim_team.name} / {gast_team.name}) – '
-                         f'der Termin kann nur einer zugeordnet werden')))
-            continue
-
-        team = heim_team or gast_team
-        if team is None:
+        if heim_team is None and gast_team is None:
             # Kein eigenes Team. Eigener Platz? Dann Platzbelegung, sonst irrelevant.
             if staette is not None and staette.ist_eigen:
                 bericht.befunde.append(ZeilenBefund(spiel=s, einordnung=PLATZBELEGUNG))
@@ -281,26 +272,33 @@ def dry_run(db, daten: bytes) -> ImportBericht:
                     unbekannt[(name, s.mannschaftsart)] += 1
             continue
 
-        heim_auswaerts = 'heim' if heim_team else 'auswaerts'
-        gegner = s.gast if heim_team else s.heim
-        termin = db.termine.get_by_extern_ref(s.spielkennung)
-        if termin is None:
-            bericht.befunde.append(ZeilenBefund(
-                spiel=s, einordnung=NEU, mannschaft_id=team.id,
-                mannschaft_name=team.name, heim_auswaerts=heim_auswaerts))
-            continue
+        # Je eigenem Team ein Befund: Bei einem vereinsinternen Spiel sind das zwei,
+        # damit beide Kader den Termin bekommen und zusagen können.
+        intern = heim_team is not None and gast_team is not None
+        for team, heim_auswaerts in ((heim_team, 'heim'), (gast_team, 'auswaerts')):
+            if team is None:
+                continue
+            gegner = s.gast if heim_auswaerts == 'heim' else s.heim
+            hinweis = 'Vereinsinternes Spiel – Termin für beide Mannschaften' if intern else None
+            termin = db.termine.get_by_extern_ref(s.spielkennung, team.id)
+            if termin is None:
+                bericht.befunde.append(ZeilenBefund(
+                    spiel=s, einordnung=NEU, mannschaft_id=team.id,
+                    mannschaft_name=team.name, heim_auswaerts=heim_auswaerts,
+                    hinweis=hinweis))
+                continue
 
-        neu_werte = {'beginn': s.beginn, 'ort': s.ort_text,
-                     'heim_auswaerts': heim_auswaerts, 'gegner': gegner}
-        abweichungen = [
-            {'feld': f, 'app': getattr(termin, f), 'dfbnet': neu_werte[f]}
-            for f in VERGLEICHSFELDER if getattr(termin, f) != neu_werte[f]
-        ]
-        bericht.befunde.append(ZeilenBefund(
-            spiel=s, einordnung=AENDERUNG if abweichungen else UNVERAENDERT,
-            mannschaft_id=team.id, mannschaft_name=team.name,
-            heim_auswaerts=heim_auswaerts, termin_id=termin.id,
-            abweichungen=abweichungen))
+            neu_werte = {'beginn': s.beginn, 'ort': s.ort_text,
+                         'heim_auswaerts': heim_auswaerts, 'gegner': gegner}
+            abweichungen = [
+                {'feld': f, 'app': getattr(termin, f), 'dfbnet': neu_werte[f]}
+                for f in VERGLEICHSFELDER if getattr(termin, f) != neu_werte[f]
+            ]
+            bericht.befunde.append(ZeilenBefund(
+                spiel=s, einordnung=AENDERUNG if abweichungen else UNVERAENDERT,
+                mannschaft_id=team.id, mannschaft_name=team.name,
+                heim_auswaerts=heim_auswaerts, termin_id=termin.id,
+                abweichungen=abweichungen, hinweis=hinweis))
 
     bericht.unbekannte_teams = [
         {'name': name, 'mannschaftsart': art, 'anzahl': anzahl}

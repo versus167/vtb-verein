@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 81
+SCHEMA_VERSION = 82
 
 
 # ---------------------------------------------------------------------------
@@ -2264,9 +2264,14 @@ _TERMINE_INDEXES = (
     ("idx_termine_history_id",    "termine_history(id)"),
 )
 
+# Die Spielkennung identifiziert das SPIEL, nicht unseren Kalendereintrag: Treffen
+# zwei eigene Mannschaften aufeinander, braucht JEDE einen eigenen Termin, sonst
+# kann nur ein Kader zu-/absagen. Eindeutig ist deshalb das Paar aus Mannschaft und
+# Spielkennung (Schema v82; vorher global über extern_ref).
 _TERMINE_UNIQUE_INDEXES = (
-    "CREATE UNIQUE INDEX IF NOT EXISTS uix_termine_extern_ref "
-    "ON termine (extern_ref) WHERE deleted_at IS NULL AND extern_ref IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_termine_extern_ref_mannschaft "
+    "ON termine (mannschaft_id, extern_ref) "
+    "WHERE deleted_at IS NULL AND extern_ref IS NOT NULL",
 )
 
 _TERMINE_TRIGGERS = (
@@ -2840,6 +2845,7 @@ class Database:
             79: self._migrate_v78_to_v79,
             80: self._migrate_v79_to_v80,
             81: self._migrate_v80_to_v81,
+            82: self._migrate_v81_to_v82,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6182,6 +6188,24 @@ class Database:
             cur.execute(_FN_MANNSCHAFT_AUDIT_UPDATE)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 81 WHERE id = 1")
+
+    def _migrate_v81_to_v82(self) -> None:
+        """Spielkennung je Mannschaft eindeutig statt vereinsweit (Ticket #95).
+
+        Bei einem vereinsinternen Spiel (zwei eigene Teams) muss in BEIDEN
+        Mannschaftskalendern ein Termin stehen — sonst kann nur einer der beiden
+        Kader zu- oder absagen. Der bisherige globale Unique-Index über
+        `extern_ref` hätte den zweiten Termin verhindert.
+
+        Der alte Index wird abgeräumt, der neue über (mannschaft_id, extern_ref)
+        kommt aus der geteilten Konstante (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute("DROP INDEX IF EXISTS uix_termine_extern_ref")
+            for sql in _TERMINE_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 82 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

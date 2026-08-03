@@ -75,17 +75,20 @@ class TerminRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
-    def get_by_extern_ref(self, extern_ref: str) -> Optional[Termin]:
-        """Termin zu einer DFBnet-Spielkennung (#95, Spielplan-Import).
+    def get_by_extern_ref(self, extern_ref: str,
+                          mannschaft_id: int) -> Optional[Termin]:
+        """Termin einer Mannschaft zu einer DFBnet-Spielkennung (#95).
 
-        Der partielle Unique-Index über extern_ref sichert zu, dass es höchstens
-        einen lebenden Treffer gibt.
+        Die Spielkennung identifiziert das Spiel, nicht unseren Kalendereintrag:
+        Bei einem vereinsinternen Spiel führen beide Mannschaften einen eigenen
+        Termin mit derselben Kennung. Eindeutig ist erst das Paar — dafür sorgt
+        der partielle Unique-Index (mannschaft_id, extern_ref).
         """
         with self.cursor() as cur:
             cur.execute(
                 f"SELECT {_COLS} FROM termine "
-                "WHERE extern_ref = %s AND deleted_at IS NULL",
-                (extern_ref,),
+                "WHERE extern_ref = %s AND mannschaft_id = %s AND deleted_at IS NULL",
+                (extern_ref, mannschaft_id),
             )
             row = cur.fetchone()
             return _map(row) if row else None
