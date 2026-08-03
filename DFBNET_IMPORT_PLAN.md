@@ -121,10 +121,12 @@ jede dieser Stellen auf den Sonderfall „Termin ohne Team" zu prüfen. Ein
 fremdes Spiel ist fachlich auch kein Termin des Vereins, sondern eine Belegung.
 Deshalb eine eigene Tabelle:
 
-- **`spielstaette`** (Stammdaten): Name, DFBnet-Spielstätten-Nr., Adresse,
-  Kennzeichen „eigener Platz". Braucht der Import ohnehin, um überhaupt zu
-  erkennen, welche Zeilen uns betreffen — und es ist die Liste, die der
-  Belegungsplan später als Spalten oder Filter nutzt.
+- **`spielstaette`** (Stammdaten): Name, DFBnet-Spielstätten-Nr. (optional!),
+  Adresse, Kennzeichen „eigener Platz", Kapazität (s. u.). Braucht der Import
+  ohnehin, um überhaupt zu erkennen, welche Zeilen uns betreffen — und es ist
+  die Liste, die der Belegungsplan später als Spalten oder Filter nutzt.
+  **Nicht fußballspezifisch**: Tennisplätze und Hallen gehören genauso hinein,
+  auch wenn dort nie ein DFBnet-Spiel stattfindet.
 - **`platzbelegung`**: `spielstaette_id`, Beginn, Ende, Heim- und
   Gastmannschaft, Liga/Staffel, `extern_ref` (Spielkennung), Quelle. Mit
   Soft-Delete, History und Eintrag im **`PRUNE_REGISTRY`** (Kind der
@@ -144,12 +146,52 @@ Spiele werden also einfach nachgezogen.
   Letztere stecken in `termine` — die Ansicht ist also eine Vereinigung beider
   Quellen, keine dritte Datenhaltung.
 
-**Eine Lücke, die dabei sichtbar wird:** Unsere Trainings stehen als Termine mit
-`ort` als freiem Text, ohne Bezug zu einer Spielstätte. Ein Belegungsplan, der
-nur Spiele kennt, zeigt den Platz als frei, obwohl dort trainiert wird. Wenn der
-Plan mehr sein soll als eine Spielübersicht, brauchen Termine später eine
-optionale `spielstaette_id` — das ist der eigentliche Umfang des
-Platzwart-Schritts, nicht die Leseberechtigung.
+## Spielstätten-Stammdaten (entschieden 2026-08-03)
+
+- **Vorgeschlagen, nicht diktiert:** Der Import bietet alle in der Datei
+  vorkommenden Spielstätten mit Nummer und Adresse an, der Verein hakt die
+  eigenen ab. **Ergänzbar von Hand** — Tennisplatz, Halle und alles, was nie in
+  einem Spielplan auftaucht. Die DFBnet-Nummer ist deshalb optional; ohne sie
+  gibt es nur keinen Import-Abgleich.
+- **Auch fremde Spielstätten** sind sinnvoll: Auswärtsspiele und
+  Auswärtstrainings zeigen dann einen sauberen Ort statt Freitext. Sie tragen
+  nur kein „eigener Platz" — und belegen damit nichts im Belegungsplan.
+- **Termine bekommen eine optionale `spielstaette_id`.** Ohne die zeigt ein
+  Belegungsplan den Platz als frei, obwohl dort trainiert wird. `ort` bleibt als
+  Freitext daneben bestehen, für alles, was keine Stammdaten verdient.
+- Damit ist die Zuordnung auch bei **Trainingsserien** zu führen: eine
+  wöchentliche Serie erzeugt beim Materialisieren Belegungen, die im Plan
+  auftauchen müssen.
+
+### Teilung oder Doppelbelegung?
+
+DFBnet führt beides mit: „Größe" (ganzer Platz), „Platznummer" und vor allem
+**„Max. parallele Spiele"** — im Muster zwischen 1 und 8. Das ist eine
+*Kapazität*, keine benannte Teilfläche: Aus der Datei geht hervor, dass vier
+Spiele gleichzeitig laufen dürfen, aber nicht, *welche* Hälfte belegt ist.
+
+Eine echte Teilflächen-Modellierung (Platz → Hälfte A/B → Kleinfelder, Belegung
+zeigt auf eine Teilfläche, Überschneidung nur bei überlappenden Flächen) wäre
+sauber, ließe sich aus dem Import aber **nicht füllen** — die Felder blieben
+leer oder geraten. Und sie erzwingt eine Genauigkeit, die im Alltag niemand
+pflegt.
+
+**Vorschlag: Mehrfachbelegung erlauben, mit Hinweis** — so wie du es
+vorgeschlagen hast, aber mit der DFBnet-Kapazität als Maßstab:
+
+- Die Spielstätte trägt eine Kapazität (`parallel_moeglich`, Standard 1, beim
+  Import aus „Max. parallele Spiele" vorbelegt).
+- Überschneidungen werden **nie blockiert**. Der Plan zeigt sie an: innerhalb
+  der Kapazität als neutralen Vermerk („2 von 4 parallel"), darüber hinaus als
+  Warnung.
+- Optional ein **Freitext „Teilfläche"** an der Belegung („Hälfte Nord",
+  „Kleinfeld 2"). Wer es pflegt, hat es im Plan stehen; wer nicht, verliert
+  nichts.
+
+Damit sieht der Platzwart, was er beurteilen muss, ohne dass die App eine
+Belegung verhindert, die in Wirklichkeit passt — und ohne ein Datenmodell, das
+zu 90 % leer bleibt. Eine echte Teilung lässt sich später ergänzen, indem aus
+dem Freitext ein Katalog wird.
 
 ## Etappen
 
@@ -181,11 +223,9 @@ Platzwart-Schritts, nicht die Leseberechtigung.
 - **Wie oft läuft der Import** — Datei-Upload von Hand oder regelmäßig? Bei
   regelmäßigem Lauf ist die Abweichungs-Tabelle Pflicht; bei reinem Handbetrieb
   ginge auch eine Vorschau mit Häkchen pro Zeile.
-- **Spielstätten-Stammdaten**: von Hand pflegen, oder beim ersten Import aus
-  den vorkommenden Spielstätten vorschlagen und der Verein hakt die eigenen ab?
-- **Umfang des Belegungsplans**: nur die eigenen Plätze, oder auch fremde
-  Spielstätten, auf denen unsere Teams antreten (dann ist es eher ein
-  Auswärtsplan als eine Belegung)?
+- **Wer pflegt die Spielstätte am Termin?** Die Zuordnung im Trainings-Dialog
+  ist eine zusätzliche Pflicht für Übungsleiter. Pflichtfeld für eigene Plätze,
+  oder freiwillig mit dem Preis, dass der Belegungsplan Lücken hat?
 - **Platzwarte als Rolle**: eigene Funktion im Funktionskatalog oder
   individuelle Grants? Davon hängt ab, ob der Zugriff abteilungsweit
   eingegrenzt werden kann.
