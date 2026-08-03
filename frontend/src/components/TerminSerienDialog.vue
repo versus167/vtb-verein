@@ -61,7 +61,21 @@
                 <!-- Pflichtfeld seit v80 (#95); die Instanzen erben die Spielstätte -->
                 <q-select v-model="edit.spielstaetteId" :options="spielstaetten"
                   option-value="id" option-label="name" emit-value map-options
-                  label="Spielstätte *" outlined dense />
+                  label="Spielstätte *" outlined dense
+                  use-input input-debounce="0" fill-input hide-selected
+                  @filter="filterSpielstaetten">
+                  <template #option="{ itemProps, opt }">
+                    <q-item v-bind="itemProps">
+                      <q-item-section>
+                        <q-item-label>{{ opt.name }}</q-item-label>
+                        <q-item-label v-if="adresse(opt)" caption>{{ adresse(opt) }}</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                  </template>
+                  <template #no-option>
+                    <q-item><q-item-section class="text-grey">Keine Spielstätte gefunden</q-item-section></q-item>
+                  </template>
+                </q-select>
                 <div class="row q-gutter-sm">
                   <q-input v-model="edit.treffpunkt" label="Treffpunkt" outlined dense class="col-7 col-grow" />
                   <q-input v-model="edit.treffpunktZeit" label="Treffpunkt-Zeit" outlined dense type="time" class="col" />
@@ -86,7 +100,7 @@
 import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { wochentag, datumLabel } from 'src/composables/useTermine'
+import { wochentag, datumLabel, useSpielstaettenAuswahl } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -113,17 +127,10 @@ const editId = ref(null)
 const edit = ref({})
 const editError = ref('')
 
-// Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht mit.
-const spielstaetten = ref([])
-
-async function loadSpielstaetten() {
-  try {
-    const { data } = await api.get('/api/spielstaetten/')
-    spielstaetten.value = data
-  } catch {
-    spielstaetten.value = []
-  }
-}
+// Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht
+// mit. `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
+const { optionen: spielstaetten, laden: loadSpielstaetten,
+        filtern: filterSpielstaetten, adresse } = useSpielstaettenAuswahl()
 
 async function load() {
   loading.value = true

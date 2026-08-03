@@ -15,8 +15,21 @@
              Platz als frei, obwohl dort trainiert wird (#95). -->
         <q-select v-model="form.spielstaetteId" :options="spielstaetten"
           option-value="id" option-label="name" emit-value map-options
-          label="Spielstätte *" outlined dense
-          :loading="ladeSpielstaetten" />
+          label="Spielstätte *" outlined dense :loading="ladeSpielstaetten"
+          use-input input-debounce="0" fill-input hide-selected
+          @filter="filterSpielstaetten">
+          <template #option="{ itemProps, opt }">
+            <q-item v-bind="itemProps">
+              <q-item-section>
+                <q-item-label>{{ opt.name }}</q-item-label>
+                <q-item-label v-if="adresse(opt)" caption>{{ adresse(opt) }}</q-item-label>
+              </q-item-section>
+            </q-item>
+          </template>
+          <template #no-option>
+            <q-item><q-item-section class="text-grey">Keine Spielstätte gefunden</q-item-section></q-item>
+          </template>
+        </q-select>
         <div class="row q-gutter-sm">
           <q-input v-model="form.treffpunkt" label="Treffpunkt" outlined dense class="col-7 col-grow" />
           <q-input v-model="form.treffpunktZeit" label="Treffpunkt-Zeit" outlined dense type="time" class="col" />
@@ -59,7 +72,7 @@
 import { ref, computed, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { uhrzeit } from 'src/composables/useTermine'
+import { uhrzeit, useSpielstaettenAuswahl } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -87,20 +100,10 @@ const form = ref({})
 
 // Auswahlliste inkl. der Vorgabe „Kein Vereinsgelände"; „Nicht erfasst"
 // blendet die API aus – der Altbestand soll beim Speichern ersetzt werden.
-const spielstaetten = ref([])
-const ladeSpielstaetten = ref(false)
-
-async function loadSpielstaetten() {
-  ladeSpielstaetten.value = true
-  try {
-    const { data } = await api.get('/api/spielstaetten/')
-    spielstaetten.value = data
-  } catch {
-    spielstaetten.value = []
-  } finally {
-    ladeSpielstaetten.value = false
-  }
-}
+// `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
+const { optionen: spielstaetten, laedt: ladeSpielstaetten,
+        laden: loadSpielstaetten, filtern: filterSpielstaetten,
+        adresse } = useSpielstaettenAuswahl()
 
 function leeresFormular() {
   return { id: null, version: null, typ: 'training',
