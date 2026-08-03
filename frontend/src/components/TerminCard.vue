@@ -27,6 +27,25 @@
         <q-icon name="sync_problem" size="14px" class="q-mr-xs" />{{ offeneAbweichungen }}
         <q-tooltip>DFBnet weicht ab – bitte entscheiden</q-tooltip>
       </q-badge>
+      <!-- Kein Handlungsbedarf, aber wissenswert: Der Termin steht anders da als in
+           der offiziellen Ansetzung (verworfene Frage oder Änderung des Teams).
+           Dezent und in anderer Farbe als die offene Frage – und nur, wenn keine
+           offene Frage denselben Termin ohnehin schon markiert. -->
+      <q-badge v-else-if="darfVerwalten && externDiff.length" color="white"
+        text-color="primary" class="q-mr-sm text-weight-bold termin-card__abweichung"
+        @click.stop="abweichungOffen = true">
+        <q-icon name="sync_alt" size="14px" class="q-mr-xs" />DFBnet
+        <q-tooltip>
+          <div class="text-weight-medium">Weicht von der DFBnet-Ansetzung ab</div>
+          <div v-for="d in externDiff" :key="d.feld">
+            {{ abweichungFeldLabel(d.feld) }} laut DFBnet:
+            {{ abweichungWert(d.feld, d.dfbnet) }}
+          </div>
+          <div class="text-italic q-mt-xs">
+            Kein Handlungsbedarf – prüfen, ob das DFBnet nachzieht.
+          </div>
+        </q-tooltip>
+      </q-badge>
       <!-- „Meine Termine": als Gast eingetragen (Antwort ohne Kader-Zugehörigkeit) -->
       <q-badge v-if="termin.gast" color="vtb-gelb" text-color="primary"
         class="q-mr-sm text-weight-bold">GAST</q-badge>
@@ -107,7 +126,7 @@
 
     <TerminAbweichungDialog v-if="darfVerwalten" v-model="abweichungOffen"
       :termin-id="termin.id" :darf-verwalten="darfVerwalten"
-      @geaendert="emit('reload')" />
+      :extern-diff="externDiff" @geaendert="emit('reload')" />
   </q-card>
 </template>
 
@@ -117,7 +136,8 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import TerminKaderDialog from 'components/TerminKaderDialog.vue'
 import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
-import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat } from 'src/composables/useTermine'
+import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat,
+         abweichungFeldLabel, abweichungWert } from 'src/composables/useTermine'
 
 const props = defineProps({
   termin: { type: Object, required: true },
@@ -133,6 +153,9 @@ const abweichungOffen = ref(false)
 
 const abgesagt = computed(() => props.termin.status === 'abgesagt')
 const offeneAbweichungen = computed(() => props.termin.abweichungen_offen ?? 0)
+// Stille Abweichung vom DFBnet-Stand: keine offene Frage, aber der Termin steht
+// anders da als die offizielle Ansetzung (verworfen oder vom Team geändert).
+const externDiff = computed(() => props.termin.extern_diff ?? [])
 const datumIso = computed(() => (props.termin.beginn ?? '').slice(0, 10))
 const treffen = computed(() => props.termin.treffpunkt_zeit || '--:--')
 const beginn = computed(() => uhrzeit(props.termin.beginn) || '--:--')

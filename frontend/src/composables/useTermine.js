@@ -46,6 +46,24 @@ export function datumLabel(iso) {
     { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// Felder des DFBnet-Abgleichs (#95). Hier zentral, weil zwei Stellen dieselbe
+// Sprache sprechen müssen: der Abweichungs-Dialog und der Hinweis an der Karte.
+export const ABWEICHUNG_FELDER = {
+  beginn: 'Anstoß', ort: 'Spielort', heim_auswaerts: 'Heimrecht',
+  gegner: 'Gegner', entfallen: 'Spiel nicht mehr im Spielplan',
+}
+
+export function abweichungFeldLabel(feld) {
+  return ABWEICHUNG_FELDER[feld] ?? feld
+}
+
+export function abweichungWert(feld, wert) {
+  if (!wert) return '–'
+  if (feld === 'beginn') return `${datumLabel(wert.slice(0, 10))} ${uhrzeit(wert)}`
+  if (feld === 'heim_auswaerts') return wert === 'heim' ? 'Heimspiel' : 'Auswärtsspiel'
+  return wert
+}
+
 // Verwalter-Aktionen (Absagen/Reaktivieren/Löschen) – geteilt zwischen
 // TerminePage und Dashboard-Widget. `reload` wird nach jeder Änderung gerufen.
 export function useTerminAktionen(reload) {

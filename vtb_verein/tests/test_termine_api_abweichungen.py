@@ -80,6 +80,53 @@ def test_badge_zaehler_haengt_am_termin():
     assert [t['abweichungen_offen'] for t in termine] == [2, 2]
 
 
+# ------------------------------------------- Ist-Vergleich mit dem DFBnet-Stand
+def _termin_dict(**kw):
+    """Termin-Dict wie es die Liste liefert (asdict), mit Importschnappschuss."""
+    basis = {'id': 1, 'beginn': '2026-08-15T15:00', 'ort': 'Platz',
+             'heim_auswaerts': 'heim', 'gegner': 'SV Fremd',
+             'extern_stand': {'beginn': '2026-08-15T15:00', 'ort': 'Platz',
+                              'heim_auswaerts': 'heim', 'gegner': 'SV Fremd'}}
+    return basis | kw
+
+
+def test_ohne_import_kein_vergleich():
+    """Von Hand gepflegte Termine haben keinen Schnappschuss – nichts zu melden."""
+    assert api._extern_diff(_termin_dict(extern_stand=None)) == []
+    assert api._extern_diff({'id': 1, 'beginn': '2026-08-15T15:00'}) == []
+
+
+def test_termin_auf_dem_importstand_meldet_nichts():
+    assert api._extern_diff(_termin_dict()) == []
+
+
+def test_abweichendes_feld_wird_mit_dfbnet_wert_gemeldet():
+    """Der stille Fall: verworfen oder vom Team geändert – keine offene Frage,
+    aber der Termin steht anders da als die offizielle Ansetzung."""
+    diff = api._extern_diff(_termin_dict(beginn='2026-08-15T16:00'))
+    assert diff == [{'feld': 'beginn', 'dfbnet': '2026-08-15T15:00'}]
+
+
+def test_mehrere_felder_in_fester_reihenfolge():
+    diff = api._extern_diff(_termin_dict(beginn='2026-08-15T16:00',
+                                         gegner='SV Ersatz'))
+    assert [d['feld'] for d in diff] == ['beginn', 'gegner']
+
+
+def test_feld_ohne_eintrag_im_schnappschuss_wird_nicht_erfunden():
+    """Ein Stand aus einem älteren Import kennt womöglich nicht jedes Feld –
+    fehlende Einträge sind keine Abweichung."""
+    t = _termin_dict(extern_stand={'beginn': '2026-08-15T15:00'},
+                     gegner='SV Ersatz')
+    assert api._extern_diff(t) == []
+
+
+def test_vergleich_haengt_an_der_terminliste():
+    termine = [_termin_dict(beginn='2026-08-15T16:00'), _termin_dict(id=2)]
+    api._enrich_abweichungen(_db(), termine)
+    assert [len(t['extern_diff']) for t in termine] == [1, 0]
+
+
 # --------------------------------------------------------------- Entscheidung
 def _daten(entscheidung='uebernommen', version=1, benachrichtigen=False):
     return api.AbweichungEntscheidung(entscheidung=entscheidung,

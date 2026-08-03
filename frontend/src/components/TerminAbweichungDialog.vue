@@ -17,11 +17,30 @@
         </div>
       </q-card-section>
 
+      <!-- Aktueller Ist-Vergleich, unabhängig von offenen Fragen: Nach einem
+           „Behalten" oder einer Änderung des Teams steht der Termin dauerhaft
+           anders da als die offizielle Ansetzung. Das gehört sichtbar hierher –
+           gerade weil der Import bewusst nichts mehr dazu fragt. -->
+      <q-card-section v-if="externDiff.length" class="q-pb-none"
+        :class="$q.screen.lt.md ? 'col-auto' : ''">
+        <q-banner dense class="bg-grey-2 text-dark rounded-borders">
+          <template #avatar><q-icon name="sync_alt" color="primary" /></template>
+          <div class="text-weight-medium">Aktuell abweichend vom DFBnet-Stand</div>
+          <div v-for="d in externDiff" :key="d.feld" class="text-caption">
+            {{ feldLabel(d.feld) }} laut DFBnet: {{ wertText(d.feld, d.dfbnet) }}
+          </div>
+          <div class="text-caption text-grey-8 q-mt-xs">
+            Das DFBnet ist die offizielle Ansetzung – steht dort noch der alte Stand,
+            gehört die Verlegung dort gemeldet.
+          </div>
+        </q-banner>
+      </q-card-section>
+
       <q-card-section style="min-height: 120px" class="relative-position"
         :class="$q.screen.lt.md ? 'col scroll' : 'abweichung-dialog__liste'">
         <q-inner-loading :showing="loading" />
         <div v-if="!loading && abweichungen.length === 0" class="text-grey text-center q-py-md">
-          Keine Abweichungen.
+          Keine offenen oder früheren Fragen zu diesem Termin.
         </div>
 
         <q-list separator>
@@ -79,12 +98,16 @@
 import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { datumLabel, uhrzeit } from 'src/composables/useTermine'
+import { abweichungFeldLabel as feldLabel,
+         abweichungWert as wertText } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   terminId: { type: Number, required: true },
   darfVerwalten: { type: Boolean, default: false },
+  // [{feld, dfbnet}] – Ist-Vergleich mit dem letzten Importstand, kommt fertig
+  // aus der Terminliste (`extern_diff`), damit der Dialog nichts nachladen muss.
+  externDiff: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update:modelValue', 'geaendert'])
 
@@ -101,31 +124,17 @@ const benachrichtigen = ref(true)
 
 const hatOffene = computed(() => abweichungen.value.some(a => a.status === 'offen'))
 
-const FELDER = {
-  beginn: 'Anstoß', ort: 'Spielort', heim_auswaerts: 'Heimrecht',
-  gegner: 'Gegner', entfallen: 'Spiel nicht mehr im Spielplan',
-}
 const STATUS = {
   uebernommen: { label: 'übernommen', farbe: 'positive' },
   verworfen: { label: 'behalten', farbe: 'grey-7' },
   hinfaellig: { label: 'erledigt', farbe: 'grey-6' },
 }
 
-function feldLabel(feld) {
-  return FELDER[feld] ?? feld
-}
 function statusLabel(status) {
   return STATUS[status]?.label ?? status
 }
 function statusFarbe(status) {
   return STATUS[status]?.farbe ?? 'grey'
-}
-
-function wertText(feld, wert) {
-  if (!wert) return '–'
-  if (feld === 'beginn') return `${datumLabel(wert.slice(0, 10))} ${uhrzeit(wert)}`
-  if (feld === 'heim_auswaerts') return wert === 'heim' ? 'Heimspiel' : 'Auswärtsspiel'
-  return wert
 }
 
 // erkannt_am/entschieden_am sind echte Zeitstempel (TIMESTAMPTZ), keine Wandzeit.

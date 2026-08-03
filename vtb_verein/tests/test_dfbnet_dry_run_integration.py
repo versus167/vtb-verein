@@ -416,6 +416,52 @@ def test_zweiter_lauf_frischt_die_abweichung_auf_statt_zu_doppeln(db, stammdaten
     assert offen[0].version == 2                        # aufgefrischt, nicht neu
 
 
+def test_auffrischen_hinterlaesst_die_alte_fassung_in_der_history(db, stammdaten):
+    """Der überholte Vorschlag verschwindet aus der offenen Zeile, nicht aus der Welt:
+    Wer später prüft, worüber vorige Woche gefragt wurde, findet es in der History."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    abw_id = _offene(db, termin.id)[0].id
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '18:00'})), actor=_MARKE)
+
+    with _cur(db) as cur:
+        cur.execute("SELECT version, wert_extern FROM termin_abweichung_history "
+                    "WHERE id = %s ORDER BY version", (abw_id,))
+        historie = [(r['version'], r['wert_extern']) for r in cur.fetchall()]
+    # Die History führt jede Fassung, die aktuelle eingeschlossen: Version 1 hält
+    # den überholten Vorschlag fest, Version 2 den, über den jetzt zu entscheiden ist.
+    assert historie == [(1, '2026-08-15T17:30'), (2, '2026-08-15T18:00')]
+    assert _offene(db, termin.id)[0].wert_extern == '2026-08-15T18:00'
+
+
+def test_neuer_stand_nach_entscheidung_fragt_erneut(db, stammdaten):
+    """Eine getroffene Entscheidung gilt für den Wert, über den entschieden wurde –
+    nicht für alle künftigen. Meldet das DFBnet danach einen dritten Stand, entsteht
+    neben der entschiedenen Zeile eine neue offene (der Unique-Index greift nur für
+    'offen'); die alte Entscheidung bleibt als Beleg stehen."""
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+    dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})), actor=_MARKE)
+    assert dfbnet.entscheiden(db, _offene(db, termin.id)[0], 'verworfen',
+                              actor='betreuer') is True
+
+    # Das DFBnet verlegt erneut – jetzt auf 19:00
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '19:00'})), actor=_MARKE)
+    assert ergebnis.abweichungen == 1
+
+    offen = _offene(db, termin.id)
+    assert len(offen) == 1
+    assert offen[0].wert_extern == '2026-08-15T19:00'
+    assert offen[0].wert_app == '2026-08-15T16:00'      # die Wahl des Teams steht noch
+    # Zwei Zeilen zum Feld: die verworfene von damals und die neue Frage
+    alle = db.termin_abweichungen.list_for_termin(termin.id)
+    assert sorted(a.status for a in alle) == ['offen', 'verworfen']
+    assert db.termine.get(termin.id).beginn == '2026-08-15T16:00'
+
+
 def test_uebernehmen_schreibt_den_termin_und_beendet_die_frage(db, stammdaten):
     dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
     termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])

@@ -297,16 +297,34 @@ def _enrich_zusagen(db: DB, user, termine: list[dict]) -> list[dict]:
     return termine
 
 
-def _enrich_abweichungen(db: DB, termine: list[dict]) -> None:
-    """`abweichungen_offen` je Termin – Grundlage des Hinweis-Badges (#95).
+def _extern_diff(t: dict) -> list[dict]:
+    """Felder, in denen der Termin heute vom zuletzt importierten DFBnet-Stand
+    abweicht — unabhängig davon, ob je jemand danach gefragt wurde.
 
-    Der Zähler hängt an keiner Berechtigung: Entscheiden darf nur, wer die Termine
-    der Mannschaft verwaltet, aber die Zahl allein verrät nichts, was der Kader
-    nicht ohnehin sähe.
+    Deckt die stillen Fälle ab, für die es keine offene Frage (mehr) gibt: eine
+    verworfene Abweichung, und die Änderung, die das Team ohne Gegenstück im
+    Export gemacht hat. Der Import lässt beides bewusst stehen — sichtbar bleiben
+    sollte es trotzdem, denn das DFBnet ist die offizielle Ansetzung und hinkt
+    womöglich nur hinterher. Wer das beurteilen kann, ist der Betreuer.
+    """
+    stand = t.get('extern_stand') or {}
+    return [{'feld': f, 'dfbnet': stand.get(f)}
+            for f in dfbnet.VERGLEICHSFELDER
+            if f in stand and t.get(f) != stand.get(f)]
+
+
+def _enrich_abweichungen(db: DB, termine: list[dict]) -> None:
+    """`abweichungen_offen` und `extern_diff` je Termin – Grundlage der Hinweise
+    an der Terminkarte (#95).
+
+    Beides hängt an keiner Berechtigung: Entscheiden darf nur, wer die Termine der
+    Mannschaft verwaltet, aber weder der Zähler noch der Vergleich verraten etwas,
+    was der Kader nicht ohnehin am Termin sähe.
     """
     offen = db.termin_abweichungen.counts_offen([t['id'] for t in termine])
     for t in termine:
         t['abweichungen_offen'] = offen.get(t['id'], 0)
+        t['extern_diff'] = _extern_diff(t)
 
 
 # ------------------------------------------------------------------ Mannschaften
