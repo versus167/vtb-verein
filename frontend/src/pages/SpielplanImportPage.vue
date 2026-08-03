@@ -40,7 +40,8 @@
 
       <q-banner v-if="ergebnis" class="vtb-warnung q-mb-md" dense>
         {{ ergebnis.angelegt }} angelegt, {{ ergebnis.aktualisiert }} aktualisiert,
-        {{ ergebnis.uebersprungen }} übersprungen.
+        {{ ergebnis.uebersprungen }} übersprungen<span v-if="ergebnis.spielstaetten_aktualisiert">,
+        {{ ergebnis.spielstaetten_aktualisiert }} Spielstätte(n) nachgezogen</span>.
       </q-banner>
 
       <q-banner v-if="ergebnis?.konflikte?.length" class="vtb-warnung q-mb-md">
@@ -117,6 +118,32 @@
               </div>
               <q-btn v-else-if="darfSpielstaetten" dense flat color="primary" icon="add_location_alt"
                 label="Anlegen" @click="oeffneSpielstaette(s)" />
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </q-expansion-item>
+
+      <!-- Bekannte Plätze, deren Stammdaten der Lauf nachzieht. Hier gibt es
+           nichts zu entscheiden: Anschrift, Belag und Kapazität stehen im
+           DFBnet, das ist die offizielle Quelle. -->
+      <q-expansion-item v-if="bericht.abweichende_spielstaetten?.length"
+        icon="edit_location_alt" class="q-mb-sm"
+        :label="`${bericht.abweichende_spielstaetten.length} Spielstätte(n) werden aktualisiert`">
+        <div class="text-caption text-grey q-pa-sm">
+          Anschrift, Untergrund und Kapazität kommen beim Übernehmen aus dem Export.
+          Der Name bleibt, wie ihr ihn nennt – für die Zuordnung zählt ohnehin nur
+          die DFBnet-Nummer.
+        </div>
+        <q-list dense>
+          <q-item v-for="p in bericht.abweichende_spielstaetten" :key="p.id">
+            <q-item-section>
+              <q-item-label>{{ p.name }}</q-item-label>
+              <q-item-label v-for="f in p.felder" :key="f.feld" caption>
+                {{ STAETTE_FELDER[f.feld] ?? f.feld }}:
+                <span v-if="f.app">„{{ f.app }}"</span>
+                <span v-else class="text-italic">leer</span>
+                → „{{ f.dfbnet }}"
+              </q-item-label>
             </q-item-section>
           </q-item>
         </q-list>
@@ -389,6 +416,13 @@ const stAnzahl = ref(0)
 const stForm = ref({ name: '', dfbnet_nr: '', strasse: '', plz: '', ort: '',
                      untergrund: '', parallel_moeglich: 1, ist_eigen: false })
 const angelegt = ref({})          // dfbnet_nr -> Name, solange der Bericht steht
+
+// Anzeige-Namen der Stammdatenfelder, die der Export mitbringt (der Name gehört
+// bewusst nicht dazu – den überschreibt der Lauf nie).
+const STAETTE_FELDER = {
+  strasse: 'Straße', plz: 'PLZ', ort: 'Ort', untergrund: 'Untergrund',
+  parallel_moeglich: 'Parallel mögliche Spiele',
+}
 
 const offeneAenderungen = computed(
   () => zugeordneteAnzahl.value + Object.keys(angelegt.value).length)

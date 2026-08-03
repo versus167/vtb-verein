@@ -26,9 +26,9 @@ _COLS = ("id, name, dfbnet_nr, strasse, plz, ort, ist_eigen, parallel_moeglich, 
          "platzhalter, untergrund, version, created_at, created_by, updated_at, "
          "updated_by, deleted_at, deleted_by")
 
+# Reihenfolge ist bindend: create/update reichen die Werte positionsgetreu durch.
 _EDIT_FIELDS = ('name', 'dfbnet_nr', 'strasse', 'plz', 'ort', 'ist_eigen',
-                'untergrund',
-                'parallel_moeglich')
+                'parallel_moeglich', 'untergrund')
 
 
 def _map(row) -> Spielstaette:
@@ -36,7 +36,8 @@ def _map(row) -> Spielstaette:
         id=row['id'], name=row['name'], dfbnet_nr=row['dfbnet_nr'],
         strasse=row['strasse'], plz=row['plz'], ort=row['ort'],
         ist_eigen=row['ist_eigen'], parallel_moeglich=row['parallel_moeglich'],
-        platzhalter=row['platzhalter'], version=row['version'],
+        platzhalter=row['platzhalter'], untergrund=row['untergrund'],
+        version=row['version'],
         created_at=row['created_at'], created_by=row['created_by'],
         updated_at=row['updated_at'], updated_by=row['updated_by'],
         deleted_at=row['deleted_at'], deleted_by=row['deleted_by'],
@@ -104,7 +105,8 @@ class SpielstaetteRepository(BaseRepository):
                 RETURNING id
                 """,
                 (s.name, s.dfbnet_nr or None, s.strasse, s.plz, s.ort,
-                 s.ist_eigen, s.parallel_moeglich, created_by, created_by),
+                 s.ist_eigen, s.parallel_moeglich, s.untergrund,
+                 created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -120,7 +122,7 @@ class SpielstaetteRepository(BaseRepository):
                   AND platzhalter IS NULL
                 """,
                 (s.name, s.dfbnet_nr or None, s.strasse, s.plz, s.ort,
-                 s.ist_eigen, s.parallel_moeglich, updated_by,
+                 s.ist_eigen, s.parallel_moeglich, s.untergrund, updated_by,
                  spielstaette_id, expected_version),
             )
             return cur.rowcount > 0

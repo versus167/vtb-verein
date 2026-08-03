@@ -246,6 +246,73 @@ def test_unbekannte_teams_und_neue_spielstaetten_werden_vorgeschlagen(db, stammd
     assert vorschlag['parallel_moeglich'] == 2      # aus „Max. parallele Spiele"
 
 
+def test_bekannter_platz_ohne_belag_wird_gemeldet(db, stammdaten):
+    """Der häufigste Fall: Der Platz steht längst in den Stammdaten, kennt aber
+    den Untergrund nicht — er wurde vor dieser Angabe angelegt."""
+    bericht = dfbnet.dry_run(db, _datei(_zeile(platztyp='Kunstrasenplatz')))
+
+    assert [p['name'] for p in bericht.abweichende_spielstaetten] == ['Eigener Platz']
+    felder = {f['feld']: (f['app'], f['dfbnet'])
+              for f in bericht.abweichende_spielstaetten[0]['felder']}
+    assert felder['untergrund'] == (None, 'Kunstrasen')
+    # Die Adresse steht in der Testvorgabe nicht am Platz -> ebenfalls gemeldet
+    assert felder['strasse'] == (None, 'Musterweg 1')
+    assert bericht.neue_spielstaetten == []      # der Platz ist ja bekannt
+
+
+def test_uebereinstimmende_stammdaten_werden_nicht_gemeldet(db, stammdaten):
+    with _cur(db) as cur:
+        cur.execute("UPDATE spielstaette SET strasse='Musterweg 1', plz='09111', "
+                    "ort='Musterstadt', untergrund='Rasen', parallel_moeglich=2 "
+                    "WHERE id=%s", (stammdaten['platz'],))
+
+    bericht = dfbnet.dry_run(db, _datei(_zeile(platztyp='Rasenplatz')))
+    assert bericht.abweichende_spielstaetten == []
+
+
+def test_leeres_exportfeld_loescht_keine_gepflegten_daten(db, stammdaten):
+    """Fehlt im Export die Angabe, ist das kein Grund, die App zu leeren."""
+    with _cur(db) as cur:
+        cur.execute("UPDATE spielstaette SET strasse='Musterweg 1', plz='09111', "
+                    "ort='Musterstadt', untergrund='Rasen', parallel_moeglich=2 "
+                    "WHERE id=%s", (stammdaten['platz'],))
+
+    bericht = dfbnet.dry_run(db, _datei(_zeile(platztyp='')))
+    assert bericht.abweichende_spielstaetten == []
+
+
+def test_platzhalter_werden_nie_gemeldet(db, stammdaten):
+    """„Kein Vereinsgelände" ist kein Ort, sondern eine Antwort auf das
+    Pflichtfeld — Stammdaten hat er keine."""
+    with _cur(db) as cur:
+        cur.execute("UPDATE spielstaette SET dfbnet_nr='1000000001' "
+                    "WHERE id=%s", (stammdaten['platz'],))
+        cur.execute("UPDATE spielstaette SET dfbnet_nr=NULL WHERE platzhalter IS NOT NULL")
+
+    bericht = dfbnet.dry_run(db, _datei(_zeile()))
+    assert all(p['name'] != 'Kein Vereinsgelände'
+               for p in bericht.abweichende_spielstaetten)
+
+
+def test_lauf_zieht_die_stammdaten_nach(db, stammdaten):
+    """Beim Übernehmen wandern Anschrift, Belag und Kapazität in die Stammdaten —
+    das DFBnet ist dafür die offizielle Quelle, da gibt es nichts zu entscheiden."""
+    ergebnis = dfbnet.uebernehmen(
+        db, _datei(_zeile(platztyp='Kunstrasenplatz')), actor=_MARKE)
+    assert ergebnis.spielstaetten_aktualisiert == 1
+
+    platz = db.spielstaetten.get(stammdaten['platz'])
+    assert platz.untergrund == 'Kunstrasen'
+    assert (platz.strasse, platz.plz, platz.ort) == ('Musterweg 1', '09111', 'Musterstadt')
+    assert platz.parallel_moeglich == 2
+    assert platz.name == 'Eigener Platz'          # der Name bleibt unangetastet
+
+    # Zweiter Lauf: nichts mehr nachzuziehen
+    zweiter = dfbnet.uebernehmen(db, _datei(_zeile(platztyp='Kunstrasenplatz')), actor=_MARKE)
+    assert zweiter.spielstaetten_aktualisiert == 0
+    assert zweiter.bericht.abweichende_spielstaetten == []
+
+
 def test_dry_run_schreibt_nichts(db, stammdaten):
     with _cur(db) as cur:
         cur.execute("SELECT count(*) AS n FROM termine")
