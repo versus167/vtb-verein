@@ -32,10 +32,6 @@ NICHT_IN_MATRIX = {
     # Legacy, laut permission.py nur noch für die Migration vorhanden.
     Permission.TICKETS_READ,
     Permission.TICKETS_CREATE,
-    # BEKANNTE LÜCKE (Altbestand, nicht durch diesen Branch entstanden): das Recht
-    # ist real und wird geprüft, lässt sich aber nur per SQL vergeben. Gehört in
-    # eine eigene Gruppe „Termine", sobald jemand sie anlegt.
-    Permission.TERMINE_VERWALTEN,
 }
 
 
@@ -63,6 +59,13 @@ def test_rechnungs_rechte_sind_vergebbar():
     for key in (Permission.RECHNUNGEN_EINREICHEN, Permission.RECHNUNGEN_FREIGEBEN,
                 Permission.RECHNUNGEN_VERWALTEN):
         assert key in keys, f"{key} fehlt in der Berechtigungs-Matrix"
+
+
+def test_termine_recht_ist_vergebbar():
+    """Ohne diesen Key kommt niemand außer Admins an den Spielplan-Import."""
+    assert Permission.TERMINE_VERWALTEN in _keys_in_matrix(), (
+        "termine.verwalten fehlt in der Matrix – das Recht ließe sich nur per SQL "
+        "vergeben")
 
 
 def test_keine_doppelten_keys():
