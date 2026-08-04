@@ -43,8 +43,7 @@ def db():
     d.close()
 
 
-@pytest.fixture(autouse=True)
-def clean(db):
+def _aufraeumen(db):
     """Nur die eigenen Zeilen wegräumen – Muster der übrigen Integrationstests.
 
     Ein pauschales ``DELETE FROM mitglied`` scheitert, sobald ein anderes Testmodul in
@@ -61,7 +60,18 @@ def clean(db):
             cur.execute(f"DELETE FROM {tabelle}_history WHERE created_by = %s", (_MARKE,))
             cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (_MARKE,))
     db.conn.commit()
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test aufräumen: Nur davor zu putzen lässt die Zeilen des
+    # letzten Tests im geteilten Wegwerf-Postgres stehen. Vereinsweite Auswertungen
+    # anderer Module zählen sie dann mit (die Statistik-KPIs in
+    # test_gastspieler_integration fielen genau darüber, sobald die Suite ein
+    # zweites Mal gegen dieselbe DB lief).
+    _aufraeumen(db)
     yield
+    _aufraeumen(db)
 
 
 def _spalten(db, tabelle) -> set:

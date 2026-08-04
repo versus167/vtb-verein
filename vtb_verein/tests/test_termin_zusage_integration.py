@@ -41,8 +41,7 @@ def db():
     d.close()
 
 
-@pytest.fixture(autouse=True)
-def clean(db):
+def _aufraeumen(db):
     with db.cursor() as cur:
         cur.execute(
             "TRUNCATE termin_zusage, termin_zusage_history, termine, termine_history, "
@@ -52,7 +51,18 @@ def clean(db):
         cur.execute("DELETE FROM mitglied WHERE vorname='Zusage'")
         cur.execute("DELETE FROM users WHERE username LIKE 'zusagetester%'")
         cur.execute("DELETE FROM abteilung WHERE name='Zusage-Abt'")
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test aufräumen: Nur davor zu putzen lässt die Zeilen des
+    # letzten Tests im geteilten Wegwerf-Postgres stehen. Vereinsweite Auswertungen
+    # anderer Module zählen sie dann mit (die Statistik-KPIs in
+    # test_gastspieler_integration fielen genau darüber, sobald die Suite ein
+    # zweites Mal gegen dieselbe DB lief).
+    _aufraeumen(db)
     yield
+    _aufraeumen(db)
 
 
 def _make_mannschaft(db, name="Erste", abteilung="Zusage-Abt"):

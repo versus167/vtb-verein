@@ -78,8 +78,7 @@ def _resync_sequenzen(cur):
         )
 
 
-@pytest.fixture(autouse=True)
-def clean(db):
+def _aufraeumen(db):
     with db.cursor() as cur:
         cur.execute(
             "TRUNCATE rechnung_anhaenge, rechnung, rechnung_history, "
@@ -99,7 +98,18 @@ def clean(db):
                         "users_history", "abteilung_history"):
             cur.execute(f"DELETE FROM {tabelle} WHERE created_by='rtest'")
         _resync_sequenzen(cur)
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test aufräumen: Nur davor zu putzen lässt die Zeilen des
+    # letzten Tests im geteilten Wegwerf-Postgres stehen. Vereinsweite Auswertungen
+    # anderer Module zählen sie dann mit (die Statistik-KPIs in
+    # test_gastspieler_integration fielen genau darüber, sobald die Suite ein
+    # zweites Mal gegen dieselbe DB lief).
+    _aufraeumen(db)
     yield
+    _aufraeumen(db)
 
 
 # ---------------------------------------------------------------- Testdaten

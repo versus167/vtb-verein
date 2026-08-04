@@ -36,15 +36,30 @@ def db():
     d.close()
 
 
-@pytest.fixture(autouse=True)
-def clean(db):
+def _aufraeumen(db):
     with db.cursor() as cur:
         cur.execute("DELETE FROM gebuehr_forderung")
         cur.execute("DELETE FROM gebuehr")
+        # History muss mit weg: test_prune_integration truncatet abteilung mit
+        # RESTART IDENTITY CASCADE, und weil gebuehr auf abteilung zeigt, wird
+        # dabei auch die gebuehr-Sequenz zurückgesetzt. Bliebe die History
+        # stehen, kollidierte der Audit-Trigger im nächsten Lauf auf (id, version).
+        cur.execute("DELETE FROM gebuehr_forderung_history")
+        cur.execute("DELETE FROM gebuehr_history")
         cur.execute("DELETE FROM mitglied_abteilung WHERE created_by='gasttest'")
         cur.execute("DELETE FROM mitglied WHERE created_by='gasttest'")
+        cur.execute("DELETE FROM mitglied_history WHERE created_by='gasttest'")
         cur.execute("DELETE FROM abteilung WHERE name LIKE 'GS-Abt%'")
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test: Nur davor zu putzen ließe die Zeilen des letzten
+    # Tests im geteilten Wegwerf-Postgres stehen, wo die vereinsweiten
+    # Statistik-KPIs dieses Moduls sie beim nächsten Lauf mitzählen würden.
+    _aufraeumen(db)
     yield
+    _aufraeumen(db)
 
 
 def _make_abteilung(db, name="GS-Abt-Fussball"):
