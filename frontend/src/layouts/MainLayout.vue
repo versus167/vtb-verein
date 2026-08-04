@@ -360,6 +360,7 @@ const hatSonstigesZugriff = computed(
   () =>
     auth.user?.role === 'admin' ||
     auth.hasPermission('system.config') ||
+    auth.hasPermission('spielstaetten.verwalten') ||
     auth.hasPermission('fibu.export') ||
     auth.hasPermission('system.protokoll'),
 )
