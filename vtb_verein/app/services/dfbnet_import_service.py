@@ -425,6 +425,8 @@ class UebernahmeErgebnis:
     konflikte: list = field(default_factory=list)      # [{termin_id, mannschaft, felder}]
     ohne_spielstaette: list = field(default_factory=list)   # [{spielkennung, name, nr}]
     spielstaetten_aktualisiert: int = 0
+    # Mannschaften, deren Betreuer/ÜL eine Meldung über neue Fragen bekommen haben
+    entscheidungen_gemeldet: int = 0
     bericht: Optional[ImportBericht] = None
 
 
@@ -499,18 +501,24 @@ def _staetten_nachziehen(db, bericht: ImportBericht, *, actor: str) -> int:
 
 
 def _melde_abweichungen(db, termin, entscheiden: dict, staette, *,
-                        actor: str) -> int:
-    """Offene Fragen festhalten – eine Zeile je Feld, idempotent je Lauf."""
+                        actor: str, neue: Optional[list] = None) -> int:
+    """Offene Fragen festhalten – eine Zeile je Feld, idempotent je Lauf.
+
+    Frisch aufgeworfene Fragen landen in `neue`; nur die lösen später eine
+    Benachrichtigung aus (ein aufgefrischter Eintrag ist keine Neuigkeit).
+    """
     for feld, wert in entscheiden.items():
-        db.termin_abweichungen.melden(
+        _, ist_neu = db.termin_abweichungen.melden(
             termin.id, feld, wert_app=getattr(termin, feld), wert_extern=wert,
             spielstaette_id=staette.id if (feld == 'ort' and staette) else None,
             erkannt_von=actor)
+        if ist_neu and neue is not None:
+            neue.append((termin.mannschaft_id, termin.id, feld))
     return len(entscheiden)
 
 
 def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis, *,
-                       actor: str) -> None:
+                       actor: str, neue: Optional[list] = None) -> None:
     """Spiele melden, die im Export nicht mehr auftauchen — ohne sie abzusagen.
 
     Der Export ist ein Zeitfenster-Auszug, kein Vollbestand: „fehlt" heißt nicht
@@ -536,15 +544,17 @@ def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis,
             continue
         if db.termin_abweichungen.hat_unerledigte(termin.id, FELD_ENTFALLEN):
             continue    # schon gemeldet oder längst entschieden
-        db.termin_abweichungen.melden(
+        _, ist_neu = db.termin_abweichungen.melden(
             termin.id, FELD_ENTFALLEN, wert_app=termin.beginn, wert_extern=None,
             erkannt_von=actor)
+        if ist_neu and neue is not None:
+            neue.append((termin.mannschaft_id, termin.id, FELD_ENTFALLEN))
         ergebnis.entfallen += 1
         ergebnis.abweichungen += 1
 
 
 def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
-                notify=None) -> UebernahmeErgebnis:
+                notify=None, notify_entscheidung=None) -> UebernahmeErgebnis:
     """Spielplan übernehmen — nach dem Drei-Wege-Abgleich, Feld für Feld.
 
     Verglichen wird nicht App gegen Datei, sondern jeweils gegen den zuletzt
@@ -560,9 +570,13 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
     hier teurer als Nachfragen.
 
     ``notify`` ist injizierbar, damit der Aufruf ohne Mailversand testbar bleibt.
+    ``notify_entscheidung`` bekommt am Ende die frisch aufgeworfenen Fragen je
+    Mannschaft — gerade der Fall „beide Seiten geändert" ändert am Termin ja
+    nichts und bliebe sonst still, obwohl er als einziger eine Handlung braucht.
     """
     bericht = dry_run(db, daten)
     ergebnis = UebernahmeErgebnis(bericht=bericht)
+    neue_fragen: list = []
     ergebnis.spielstaetten_aktualisiert = _staetten_nachziehen(db, bericht, actor=actor)
 
     for befund in bericht.befunde:
@@ -615,7 +629,7 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
 
         if entscheiden:
             ergebnis.abweichungen += _melde_abweichungen(
-                db, termin, entscheiden, staette, actor=actor)
+                db, termin, entscheiden, staette, actor=actor, neue=neue_fragen)
             ergebnis.konflikte.append({
                 'termin_id': termin.id, 'mannschaft': befund.mannschaft_name,
                 'felder': sorted(entscheiden),
@@ -649,7 +663,18 @@ def uebernehmen(db, daten: bytes, *, actor: str, benachrichtigen: bool = False,
         else:
             ergebnis.uebersprungen += 1
 
-    _entfallene_melden(db, bericht, ergebnis, actor=actor)
+    _entfallene_melden(db, bericht, ergebnis, actor=actor, neue=neue_fragen)
+
+    # Gebündelt je Mannschaft, nicht je Termin: Ein Lauf wirft schnell ein Dutzend
+    # Fragen auf, und zwölf Einzelmeldungen liest niemand mehr.
+    if notify_entscheidung and neue_fragen:
+        je_mannschaft: dict[int, list] = {}
+        for mannschaft_id, termin_id, feld in neue_fragen:
+            je_mannschaft.setdefault(mannschaft_id, []).append((termin_id, feld))
+        for mannschaft_id, fragen in je_mannschaft.items():
+            notify_entscheidung(mannschaft_id, fragen)
+        ergebnis.entscheidungen_gemeldet = len(je_mannschaft)
+
     return ergebnis
 
 

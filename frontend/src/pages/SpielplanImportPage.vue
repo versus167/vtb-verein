@@ -64,11 +64,12 @@
       <q-banner v-if="ergebnis?.entfallen" class="vtb-warnung q-mb-md">
         <template #avatar><q-icon name="event_busy" color="warning" /></template>
         <div class="text-weight-medium">
-          {{ ergebnis.entfallen }} Spiel(e) stehen nicht mehr im Export
+          {{ ergebnis.entfallen }} Spiel(e) stehen nicht mehr in diesem Auszug
         </div>
         <div class="text-caption">
           Abgesagt wird deswegen nichts: Der Export ist ein Zeitfenster-Auszug, kein
-          Vollbestand. Auch das entscheidet der Betreuer am Termin.
+          Vollbestand — meist steckt eine Verlegung über den Zeitraum hinaus
+          dahinter. Auch das entscheidet der Betreuer am Termin.
         </div>
       </q-banner>
 

@@ -712,3 +712,85 @@ def test_entfallenes_spiel_uebernehmen_sagt_den_termin_ab(db, stammdaten):
     assert db.termine.get(verschwunden.id).status == 'abgesagt'
     # Abgesagte Termine stehen nicht mehr zur Debatte
     assert dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE).entfallen == 0
+
+
+# --------------------------------------- Meldung an die Betreuer/ÜL (#95)
+def test_lauf_meldet_nur_frisch_aufgeworfene_fragen(db, stammdaten):
+    """Nur die erste Meldung erreicht die Betreuer, das Auffrischen nicht mehr.
+
+    Der Import läuft womöglich wöchentlich. Ohne die Unterscheidung bekämen
+    Betreuer und ÜL jeden Montag dieselbe Aufforderung erneut – und würden sie
+    nach der zweiten Woche ignorieren.
+    """
+    gemeldet = []
+
+    def _melden(mannschaft_id, fragen):
+        gemeldet.append((mannschaft_id, sorted(fragen)))
+
+    dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    termin = db.termine.get_by_extern_ref('900000001', stammdaten['erste'])
+    _verlegen(db, termin, '2026-08-15T16:00')
+
+    erster = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '17:30'})),
+                                actor=_MARKE, notify_entscheidung=_melden)
+    assert erster.entscheidungen_gemeldet == 1
+    assert gemeldet == [(stammdaten['erste'], [(termin.id, 'beginn')])]
+
+    zweiter = dfbnet.uebernehmen(db, _datei(_zeile(**{'Uhrzeit': '18:00'})),
+                                 actor=_MARKE, notify_entscheidung=_melden)
+    assert zweiter.abweichungen == 1          # die Frage steht weiter offen …
+    assert zweiter.entscheidungen_gemeldet == 0   # … ist aber nicht neu
+    assert len(gemeldet) == 1
+
+
+def test_stille_laeufe_melden_nichts(db, stammdaten):
+    """Ohne Konflikt gibt es nichts zu entscheiden – und keine Meldung."""
+    gemeldet = []
+    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE,
+                                  notify_entscheidung=lambda m, f: gemeldet.append(m))
+    assert ergebnis.angelegt == 1
+    assert gemeldet == []
+
+
+def test_verwalter_liste_laesst_spieler_aussen_vor(db, stammdaten):
+    """Empfängerkreis der Meldung: nur wer die Frage auch entscheiden darf."""
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO mitglied (vorname, nachname, zahlungsart, created_by, "
+            "updated_by) VALUES ('Test', 'Betreuer', 'ueberweisung', %s, %s) "
+            "RETURNING id", (_MARKE, _MARKE))
+        betreuer_mitglied = cur.fetchone()['id']
+        cur.execute(
+            "INSERT INTO mitglied (vorname, nachname, zahlungsart, created_by, "
+            "updated_by) VALUES ('Test', 'Spieler', 'ueberweisung', %s, %s) "
+            "RETURNING id", (_MARKE, _MARKE))
+        spieler_mitglied = cur.fetchone()['id']
+        ids = {}
+        for schluessel, mitglied_id, rolle in (
+                ('betreuer', betreuer_mitglied, 'betreuer'),
+                ('spieler', spieler_mitglied, 'spieler')):
+            cur.execute(
+                "INSERT INTO users (username, email, password_hash, role, active, "
+                "created_by, updated_by) VALUES (%s, %s, 'x', 'mitglied', 1, %s, %s) "
+                "RETURNING id",
+                (f'{_MARKE}-{schluessel}', f'{_MARKE}-{schluessel}@example.invalid',
+                 _MARKE, _MARKE))
+            ids[schluessel] = cur.fetchone()['id']
+            cur.execute("UPDATE mitglied SET user_id = %s WHERE id = %s",
+                        (ids[schluessel], mitglied_id))
+            cur.execute(
+                "INSERT INTO mitglied_mannschaft (mitglied_id, mannschaft_id, rolle, "
+                "von, created_by, updated_by) VALUES (%s, %s, %s, '2026-01-01', %s, %s)",
+                (mitglied_id, stammdaten['erste'], rolle, _MARKE, _MARKE))
+
+    try:
+        assert db.termine.list_verwalter_user_ids(stammdaten['erste']) == [ids['betreuer']]
+        alle = db.termine.list_kader_user_ids(stammdaten['erste'])
+        assert set(alle) == {ids['betreuer'], ids['spieler']}
+    finally:
+        # Kader und Benutzer kennt die stammdaten-Fixture nicht; ohne dieses
+        # Aufräumen scheitert ihr DELETE auf mannschaft am Fremdschlüssel.
+        with db.cursor() as cur:
+            for tabelle in ('mitglied_mannschaft_history', 'mitglied_mannschaft',
+                            'mitglied_history', 'mitglied', 'users'):
+                cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (_MARKE,))

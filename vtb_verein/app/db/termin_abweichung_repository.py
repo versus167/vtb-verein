@@ -29,7 +29,11 @@ VALID_ENTSCHEIDUNGEN = (STATUS_UEBERNOMMEN, STATUS_VERWORFEN)
 
 # Pseudo-Feld für Spiele, die im Export nicht mehr auftauchen. Ein Termin wird
 # deswegen NIE automatisch abgesagt: Der Export ist ein Zeitfenster-Auszug, kein
-# Vollbestand — „fehlt" heißt nicht „abgesagt".
+# Vollbestand — „fehlt" heißt nicht „abgesagt". Praktisch kennt das DFBnet
+# Absagen ohnehin kaum; eine Verlegung behält ihre Spielkennung und wird darum
+# als Datumsänderung erkannt. Verschwindet ein Spiel trotzdem, wurde es meist
+# über das Zeitfenster der Datei hinaus verlegt — seltener wirklich gestrichen
+# (Mannschaftsrückzug, Staffel-Umbau).
 FELD_ENTFALLEN = 'entfallen'
 
 QUELLE_DFBNET = 'dfbnet'
@@ -134,12 +138,16 @@ class TerminAbweichungRepository(BaseRepository):
     def melden(self, termin_id: int, feld: str, *, wert_app: Optional[str],
                wert_extern: Optional[str], erkannt_von: str,
                spielstaette_id: Optional[int] = None,
-               quelle: str = QUELLE_DFBNET) -> int:
+               quelle: str = QUELLE_DFBNET) -> tuple[int, bool]:
         """Abweichung melden – vorhandene offene Zeile wird aufgefrischt.
 
         Der Import läuft womöglich wöchentlich; jeder Lauf würde sonst dieselbe
         Frage erneut stellen. Beim Auffrischen zieht die `version` mit, die alte
         Fassung steht damit in der History.
+
+        Liefert `(id, neu)`. Das Flag trennt die erste Meldung vom Auffrischen –
+        nur bei einer wirklich neuen Frage sollen Betreuer/ÜL benachrichtigt
+        werden, sonst pingt jeder wöchentliche Lauf dieselben Leute erneut an.
         """
         with self.cursor() as cur:
             cur.execute(
@@ -158,7 +166,7 @@ class TerminAbweichungRepository(BaseRepository):
             )
             row = cur.fetchone()
             if row is not None:
-                return row['id']
+                return row['id'], False
             cur.execute(
                 """
                 INSERT INTO termin_abweichung (termin_id, quelle, feld, wert_app,
@@ -170,7 +178,7 @@ class TerminAbweichungRepository(BaseRepository):
                 {"tid": termin_id, "quelle": quelle, "feld": feld, "app": wert_app,
                  "extern": wert_extern, "sst": spielstaette_id, "usr": erkannt_von},
             )
-            return cur.fetchone()['id']
+            return cur.fetchone()['id'], True
 
     def entscheiden(self, abweichung_id: int, status: str, entschieden_von: str,
                     expected_version: int) -> bool:

@@ -142,3 +142,64 @@ def test_notify_serie(gesendet):
     assert 'Training wöchentlich dienstags um 18:30 Uhr (Erste)' in message
     assert 'Ab Di., 21.07.2026 bis Di., 15.12.2026' in message
     assert 'Ort: Halle 1' in message
+
+
+# ------------------------------------------- Offene Fragen aus dem Import (#95)
+class _StubAbwDB(_StubDB):
+    """Ergänzt den Stub um die Verwalter-Liste und den Termin-Zugriff."""
+
+    def __init__(self, verwalter, users, termine):
+        super().__init__(kader_user_ids=[], users=users)
+        self._termine = termine
+        self.termine = SimpleNamespace(
+            list_verwalter_user_ids=lambda mid, tag=None: list(verwalter),
+            get=lambda tid: self._termine.get(tid),
+        )
+
+
+def test_notify_abweichungen_geht_nur_an_betreuer_und_ul(gesendet):
+    """Der Kader kann die Frage nicht beantworten – er bekommt sie auch nicht.
+
+    Verwechselte man hier die Empfängerliste mit `list_kader_user_ids`, bekäme
+    die halbe Mannschaft eine Aufforderung, die sie gar nicht ausführen darf.
+    """
+    users = {2: SimpleNamespace(id=2, active=True),
+             3: SimpleNamespace(id=3, active=True)}
+    db = _StubAbwDB(verwalter=[2, 3], users=users,
+                    termine={7: _termin(id=7, typ='spiel', gegner='SV Gegner',
+                                        heim_auswaerts='heim')})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn')], actor_user_id=1)
+    assert sorted(c[0] for c in gesendet) == [2, 3]
+    _, title, message = gesendet[0]
+    assert title == 'Spielplan: Entscheidung nötig – Erste'
+    assert 'Eine Ansetzung braucht eine Entscheidung' in message
+    assert '- Spiel vs. SV Gegner (H) am Mi., 22.07.2026 18:30: Anstoß' in message
+
+
+def test_notify_abweichungen_buendelt_mehrere_felder_je_termin(gesendet):
+    """Zwei Felder am selben Termin sind eine Zeile, nicht zwei Meldungen."""
+    db = _StubAbwDB(verwalter=[2], users={2: SimpleNamespace(id=2, active=True)},
+                    termine={7: _termin(id=7), 8: _termin(id=8)})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn'), (7, 'ort'), (8, 'entfallen')],
+                           actor_user_id=1)
+    assert len(gesendet) == 1
+    _, _, message = gesendet[0]
+    assert '2 Ansetzungen brauchen eine Entscheidung' in message
+    assert ': Anstoß, Spielort' in message
+    assert ': nicht mehr in diesem Auszug' in message
+
+
+def test_notify_abweichungen_ohne_verwalter_schweigt(gesendet):
+    """Mannschaft ohne Betreuer/ÜL: kein Empfänger, keine Meldung ins Leere."""
+    db = _StubAbwDB(verwalter=[], users={}, termine={7: _termin(id=7)})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn')], actor_user_id=1)
+    assert gesendet == []
+
+
+def test_notify_abweichungen_ueberspringt_verschwundene_termine(gesendet):
+    """Zwischen Import und Versand gelöschter Termin darf nicht alles kippen."""
+    db = _StubAbwDB(verwalter=[2], users={2: SimpleNamespace(id=2, active=True)},
+                    termine={})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn')], actor_user_id=1)
+    assert len(gesendet) == 1
+    assert 'Bitte im Termin entscheiden' in gesendet[0][2]
