@@ -64,7 +64,11 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
   lesen sie. Der globale Key `termine.verwalten` ist die vereinsweite Ausnahme
   (alle Mannschaften, dazu der DFBnet-Spielplan-Import) und steht seit
   v2026.08.03.159 als eigene Gruppe „Termine" in der Matrix; davor war er nur
-  per SQL vergebbar.
+  per SQL vergebbar. In derselben Gruppe liegt `spielstaetten.verwalten`
+  (Schema v86): Die Spielstätten-Pflege hing vorher an `system.config` und kam
+  damit nur zusammen mit Datenbereinigung und Mitglieder-Import — für einen
+  Platzwart deutlich zu viel. `system.config` bleibt als Obermenge zulässig,
+  damit beim Aufteilen niemand Zugriff verliert.
 - **Ticket-Bereiche**: objektbezogen über `ticket_bereich_berechtigungen`.
   Beide bleiben bewusst eigenständig.
   Daraus abgeleitet der Aufgaben-Hinweis (#133,

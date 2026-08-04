@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 85
+SCHEMA_VERSION = 86
 
 
 # ---------------------------------------------------------------------------
@@ -1335,6 +1335,11 @@ _ZUTRITT_TRIGGERS = (
     ('trig_tuer_berechtigung_audit_insert', 'INSERT', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_insert'),
     ('trig_tuer_berechtigung_audit_update', 'UPDATE', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_update'),
 )
+
+# Spielstätten-Pflege als eigenes Recht (Schema v86) – vorher an system.config
+# gekoppelt, das aber zusätzlich Datenbereinigung und Mitglieder-Import öffnet.
+_PERM_SPIELSTAETTEN_VERWALTEN = 'spielstaetten.verwalten'
+_PERM_SYSTEM_CONFIG = 'system.config'
 
 # Neue Permission-Keys (Seed Admin + Migration für Bestands-Admins).
 _ZUTRITT_PERMISSIONS = (
@@ -2968,6 +2973,7 @@ class Database:
             83: self._migrate_v82_to_v83,
             84: self._migrate_v83_to_v84,
             85: self._migrate_v84_to_v85,
+            86: self._migrate_v85_to_v86,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6397,6 +6403,57 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 85 WHERE id = 1")
 
+    def _migrate_v85_to_v86(self) -> None:
+        """Eigenes Recht `spielstaetten.verwalten` (#95).
+
+        Bisher hing die Spielstätten-Pflege an `system.config` — zusammen mit der
+        Datenbereinigung (endgültiges Löschen) und dem Mitglieder-Import. Wer die
+        Plätze pflegen soll, brauchte damit weit mehr Rechte als die Aufgabe
+        hergibt. Der neue Key trennt das; `system.config` bleibt im Endpoint als
+        Obermenge zulässig, deshalb verliert niemand Zugriff.
+
+        Bestandswahrung: Der Key geht an alle Admins (analog Frisch-Seed) und an
+        alle, die `system.config` heute direkt oder über eine Funktion halten —
+        so steht in der UI angehakt, was ohnehin schon gilt. Deny-Einträge werden
+        nicht mitgezogen: Ein Deny auf `system.config` ist eine Aussage über
+        `system.config`, nicht über die Spielstätten.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, %s, 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role = 'admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_SPIELSTAETTEN_VERWALTEN,),
+            )
+            cur.execute(
+                """
+                INSERT INTO user_permissions
+                    (user_id, permission, effect, abteilung_id, created_by, updated_by)
+                SELECT up.user_id, %s, 'grant', up.abteilung_id, 'SYSTEM', 'SYSTEM'
+                FROM user_permissions up
+                WHERE up.permission = %s AND up.effect = 'grant'
+                  AND up.deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_SPIELSTAETTEN_VERWALTEN, _PERM_SYSTEM_CONFIG),
+            )
+            cur.execute(
+                """
+                INSERT INTO funktion_permission
+                    (funktion_id, permission, created_by, updated_by)
+                SELECT fp.funktion_id, %s, 'SYSTEM', 'SYSTEM'
+                FROM funktion_permission fp
+                WHERE fp.permission = %s AND fp.deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_SPIELSTAETTEN_VERWALTEN, _PERM_SYSTEM_CONFIG),
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 86 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8757,6 +8814,7 @@ class Database:
             'schliessanlage.oeffnen',
             'tresor.verwalten',
             'termine.verwalten',
+            'spielstaetten.verwalten',
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

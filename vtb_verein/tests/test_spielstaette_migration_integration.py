@@ -279,7 +279,110 @@ def test_spielstaette_steht_im_prune_registry():
         ('termin_abweichung', 'spielstaette_id')}
 
 
+def test_verwalten_recht_ist_ueber_die_matrix_vergebbar():
+    """Ohne Eintrag in PERMISSION_GROUPS wäre der neue Key nur per SQL vergebbar."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from backend.api.users import PERMISSION_GROUPS
+    from app.models.permission import Permission
+    keys = {key for g in PERMISSION_GROUPS for key, _ in g['permissions']}
+    assert Permission.SPIELSTAETTEN_VERWALTEN in keys
+
+
 # ------------------------------------------------------------------ Migration
+
+def test_migration_v85_v86_zieht_das_neue_recht_nach(db):
+    """`spielstaetten.verwalten` löst die Kopplung an `system.config`.
+
+    Wer die Plätze pflegt, bekam vorher zwangsläufig auch Datenbereinigung und
+    Mitglieder-Import. Beim Aufteilen darf aber niemand Zugriff verlieren: Der
+    neue Key geht an Admins und an alle, die `system.config` direkt oder über
+    eine Funktion halten. Ein Deny bleibt außen vor — er ist eine Aussage über
+    `system.config`, nicht über die Spielstätten.
+    """
+    from app.models.permission import Permission
+    neu, alt = Permission.SPIELSTAETTEN_VERWALTEN, Permission.SYSTEM_CONFIG
+
+    def _halter(cur, permission):
+        cur.execute("SELECT user_id FROM user_permissions "
+                    "WHERE permission = %s AND effect = 'grant' AND deleted_at IS NULL",
+                    (permission,))
+        return {r['user_id'] for r in cur.fetchall()}
+
+    with _cur(db) as cur:
+        vorher = _halter(cur, neu)
+        cur.execute("SELECT funktion_id FROM funktion_permission "
+                    "WHERE permission = %s AND deleted_at IS NULL", (neu,))
+        vorher_funktionen = {r['funktion_id'] for r in cur.fetchall()}
+
+        users = {}
+        for name, effect in (('mitconfig', 'grant'), ('mitdeny', 'deny'), ('ohne', None)):
+            cur.execute(
+                "INSERT INTO users (username, email, password_hash, role, active, "
+                "created_by, updated_by) VALUES (%s, %s, 'x', 'mitglied', 1, %s, %s) "
+                "RETURNING id",
+                (f'{_MARKE}-{name}', f'{_MARKE}-{name}@example.invalid', _MARKE, _MARKE))
+            users[name] = cur.fetchone()['id']
+            if effect:
+                cur.execute(
+                    "INSERT INTO user_permissions (user_id, permission, effect, "
+                    "created_by, updated_by) VALUES (%s, %s, %s, %s, %s)",
+                    (users[name], alt, effect, _MARKE, _MARKE))
+
+        cur.execute("INSERT INTO funktion (key, name, created_by, updated_by) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id",
+                    (f'{_MARKE}_platzwart', f'{_MARKE}-platzwart', _MARKE, _MARKE))
+        funktion_id = cur.fetchone()['id']
+        cur.execute("INSERT INTO funktion_permission (funktion_id, permission, "
+                    "created_by, updated_by) VALUES (%s, %s, %s, %s)",
+                    (funktion_id, alt, _MARKE, _MARKE))
+
+    try:
+        db._database._migrate_v85_to_v86()
+
+        with _cur(db) as cur:
+            halter = _halter(cur, neu)
+            assert users['mitconfig'] in halter, "system.config-Halter verliert Zugriff"
+            assert users['mitdeny'] not in halter, "Deny wurde fälschlich mitgezogen"
+            assert users['ohne'] not in halter, "Recht an jemanden ohne Anlass vergeben"
+
+            cur.execute("SELECT 1 FROM funktion_permission WHERE funktion_id = %s "
+                        "AND permission = %s AND deleted_at IS NULL", (funktion_id, neu))
+            assert cur.fetchone(), "Funktion mit system.config bekam den Key nicht"
+
+            cur.execute("SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL")
+            for row in cur.fetchall():
+                assert row['id'] in halter, "Bestands-Admin ohne den neuen Key"
+
+            cur.execute("SELECT version FROM schema_version WHERE id = 1")
+            assert cur.fetchone()['version'] == 86
+
+        # Zweiter Lauf darf nicht doppeln (ON CONFLICT DO NOTHING).
+        db._database._migrate_v85_to_v86()
+        with _cur(db) as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM user_permissions "
+                        "WHERE user_id = %s AND permission = %s",
+                        (users['mitconfig'], neu))
+            assert cur.fetchone()['n'] == 1
+    finally:
+        # Die Migration greift auf die geteilte Wegwerf-DB durch: alles wegräumen,
+        # was sie hier zusätzlich angelegt hat, sonst tragen fremde Testnutzer
+        # plötzlich ein Recht, das ihr Modul nicht erwartet.
+        with _cur(db) as cur:
+            for tabelle, spalte, bestand in (
+                ('user_permissions', 'user_id', vorher),
+                ('user_permissions_history', 'user_id', vorher),
+                ('funktion_permission', 'funktion_id', vorher_funktionen),
+                ('funktion_permission_history', 'funktion_id', vorher_funktionen),
+            ):
+                cur.execute(f"DELETE FROM {tabelle} WHERE permission = %s "
+                            f"AND NOT ({spalte} = ANY(%s))", (neu, list(bestand)))
+            for tabelle in ('funktion_permission_history', 'funktion_permission',
+                            'funktion_history', 'funktion',
+                            'user_permissions_history', 'user_permissions', 'users'):
+                cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (_MARKE,))
+
 
 def test_migration_v79_v80_setzt_altbestand_auf_nicht_erfasst(db):
     """Nachbau eines v79-Stands: Termin ohne Spielstätte, dann migrieren.

@@ -164,7 +164,7 @@ const routes = [
         // Import ist adminOnly → Admins umgehen den Guard ohnehin
         meta: { title: 'Sonstiges',
                 permission: ['system.config', 'fibu.export', 'system.protokoll',
-                             'termine.verwalten'] },
+                             'termine.verwalten', 'spielstaetten.verwalten'] },
       },
       {
         path: 'spielplan-import',
@@ -176,7 +176,10 @@ const routes = [
         path: 'spielstaetten',
         name: 'spielstaetten',
         component: () => import('pages/SpielstaettenPage.vue'),
-        meta: { title: 'Spielstätten', permission: 'system.config' },
+        // ODER-Array: `system.config` bleibt als Obermenge gültig (siehe
+        // backend/api/spielstaetten.py::_require_verwalten).
+        meta: { title: 'Spielstätten',
+                permission: ['spielstaetten.verwalten', 'system.config'] },
       },
       {
         path: 'funktionen',

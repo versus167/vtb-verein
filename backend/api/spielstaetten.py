@@ -2,8 +2,10 @@
 
 Lesen darf jeder angemeldete Nutzer: Die Liste hängt in jedem Termin-Dialog, und
 wer einen Termin seiner Mannschaft pflegen darf, braucht sie zwingend. Verwalten
-(anlegen/ändern/löschen) hängt am globalen `system.config` — es sind Stammdaten
-für den ganzen Verein, nicht Sache einer einzelnen Mannschaft.
+(anlegen/ändern/löschen) hängt am globalen `spielstaetten.verwalten` — es sind
+Stammdaten für den ganzen Verein, nicht Sache einer einzelnen Mannschaft.
+`system.config` gilt zusätzlich als Obermenge (Altbestand, siehe
+`_require_verwalten`).
 
 Die beiden Platzhalter-Zeilen („Kein Vereinsgelände", „Nicht erfasst") sind
 Schema-Bestandteil: Sie lassen sich weder ändern noch löschen. „Nicht erfasst"
@@ -39,7 +41,10 @@ class SpielstaetteUpdate(SpielstaetteWrite):
 
 
 def _require_verwalten(user) -> None:
-    if not user.has_permission(Permission.SYSTEM_CONFIG):
+    """`spielstaetten.verwalten` ist das gemeinte Recht; `system.config` gilt als
+    Obermenge weiter, damit niemand beim Aufteilen des Rechts Zugriff verliert."""
+    if not (user.has_permission(Permission.SPIELSTAETTEN_VERWALTEN)
+            or user.has_permission(Permission.SYSTEM_CONFIG)):
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Keine Berechtigung, Spielstätten zu verwalten")
 

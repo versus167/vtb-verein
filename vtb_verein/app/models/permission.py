@@ -95,6 +95,12 @@ class Permission:
     # (mitglied_mannschaft): betreuer/uebungsleiter verwalten die Termine
     # ihrer Mannschaft, alle aktiven Kader-Mitglieder lesen sie.
     TERMINE_VERWALTEN    = 'termine.verwalten'
+    # Spielstätten-Stammdaten pflegen (Plätze, Hallen: Anschrift, Belag, Kapazität).
+    # Bewusst getrennt von SYSTEM_CONFIG: Wer die Plätze pflegt (Platzwart), soll
+    # nicht zwangsläufig auch die Datenbereinigung und den Mitglieder-Import
+    # bekommen. SYSTEM_CONFIG bleibt als Obermenge gültig – siehe
+    # backend/api/spielstaetten.py::_require_verwalten.
+    SPIELSTAETTEN_VERWALTEN = 'spielstaetten.verwalten'
 
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben

@@ -408,7 +408,9 @@ const zugeordnet = ref({})
 const zugeordneteAnzahl = computed(() => Object.keys(zugeordnet.value).length)
 
 // ── Spielstätte aus dem Vorschlag anlegen ─────────────────────────────────
-const darfSpielstaetten = computed(() => auth.hasPermission('system.config'))
+const darfSpielstaetten = computed(
+  () => auth.hasPermission('spielstaetten.verwalten') ||
+        auth.hasPermission('system.config'))
 const stOffen = ref(false)
 const stBusy = ref(false)
 const stFehler = ref('')

@@ -19,7 +19,7 @@
         <SettingsTile to="fibu-export" icon="account_balance" title="Fibu-Export" caption="Buchungen exportieren" />
       </div>
 
-      <div v-if="auth.hasPermission('system.config')" class="col-6 col-sm-4 col-md-3">
+      <div v-if="darfSpielstaetten" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="spielstaetten" icon="stadium" title="Spielstätten"
           caption="Plätze und Hallen" />
       </div>
@@ -37,10 +37,17 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { useAuthStore } from 'src/stores/auth'
 import SettingsTile from 'src/components/SettingsTile.vue'
 
 defineOptions({ name: 'EinstellungenSonstigesPage' })
 
 const auth = useAuthStore()
+
+// `system.config` bleibt als Obermenge gültig – siehe
+// backend/api/spielstaetten.py::_require_verwalten.
+const darfSpielstaetten = computed(
+  () => auth.hasPermission('spielstaetten.verwalten') ||
+        auth.hasPermission('system.config'))
 </script>
