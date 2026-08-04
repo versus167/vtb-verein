@@ -70,6 +70,16 @@ async def import_dfbnet(
                 terminmeldung.notify_termin(db, termin, terminmeldung.AKTION_GEAENDERT,
                                             user.id, aenderungen)
 
+    def _entscheidung_melden(mannschaft_id, fragen):
+        """Betreuer/ÜL über neue offene Fragen informieren.
+
+        Hängt bewusst NICHT am `benachrichtigen`-Haken: Der steuert, ob der Kader
+        über neue und verlegte Spiele informiert wird. Hier geht es um eine
+        Handlung, die nur Betreuer/ÜL ausführen können – bliebe sie still, fiele
+        ausgerechnet der Fall unter den Tisch, der als einziger jemanden braucht.
+        """
+        terminmeldung.notify_abweichungen(db, mannschaft_id, fragen, user.id)
+
     try:
         if not commit:
             bericht = dfbnet_dry_run(db, daten)
@@ -77,7 +87,8 @@ async def import_dfbnet(
             ergebnis['zusammenfassung'] = bericht.zusammenfassung
             return {'commit': False, **ergebnis}
         lauf = dfbnet_uebernehmen(db, daten, actor=user.username,
-                                  benachrichtigen=benachrichtigen, notify=_melden)
+                                  benachrichtigen=benachrichtigen, notify=_melden,
+                                  notify_entscheidung=_entscheidung_melden)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:  # noqa: BLE001

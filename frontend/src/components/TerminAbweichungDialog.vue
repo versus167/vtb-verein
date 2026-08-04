@@ -34,7 +34,11 @@
             gehört die Verlegung dort gemeldet.
           </div>
           <template v-if="darfVerwalten" #action>
-            <q-btn flat dense color="primary" icon="download_done" label="Übernehmen"
+            <!-- Ausgeschriebene Beschriftung: Im Dialog stehen mehrere
+                 „Übernehmen"-Knöpfe, dieser hier zieht den kompletten
+                 DFBnet-Stand nach und nicht eine einzelne Frage. -->
+            <q-btn flat dense no-caps color="primary" icon="download_done"
+              label="DFBnet-Daten übernehmen"
               :loading="uebernimmt" @click="dfbnetUebernehmen" />
           </template>
         </q-banner>
@@ -56,9 +60,14 @@
                   class="q-ml-xs">{{ statusLabel(a.status) }}</q-badge>
               </q-item-label>
 
+              <!-- Absagen kennt das DFBnet praktisch nicht; verschwindet ein Spiel
+                   aus dem Auszug, wurde es meist über dessen Zeitraum hinaus
+                   verlegt. Der Text nennt deshalb die wahrscheinliche Ursache
+                   statt einer Absage. -->
               <q-item-label v-if="a.feld === 'entfallen'" caption>
-                Steht im aktuellen Export nicht mehr – das kann eine Absage sein oder
-                schlicht außerhalb des Auszugs liegen.
+                Steht in diesem Auszug nicht mehr – meist eine Verlegung über den
+                Auszugs-Zeitraum hinaus. Im DFBnet nachsehen, ob es einen neuen
+                Termin gibt.
               </q-item-label>
               <q-item-label v-else caption>
                 <span class="text-strike">{{ wertText(a.feld, a.wert_app) }}</span>

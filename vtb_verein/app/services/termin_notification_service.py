@@ -32,6 +32,14 @@ _WOCHENTAGE_WOECHENTLICH = ('montags', 'dienstags', 'mittwochs', 'donnerstags',
 
 _TYP_LABELS = {'training': 'Training', 'spiel': 'Spiel', 'sonstiges': 'Sonstiges'}
 
+# Feld → Klartext in der Abweichungs-Meldung. Gleiche Wortwahl wie im Dialog
+# (ABWEICHUNG_FELDER in frontend/src/composables/useTermine.js), damit die
+# Meldung und das, was der Betreuer dann sieht, dieselbe Sprache sprechen.
+_ABWEICHUNG_FELDER = {
+    'beginn': 'Anstoß', 'ort': 'Spielort', 'heim_auswaerts': 'Heimrecht',
+    'gegner': 'Gegner', 'entfallen': 'nicht mehr in diesem Auszug',
+}
+
 # Feld → Anzeige-Label, Reihenfolge = Reihenfolge im Änderungs-Diff.
 _DIFF_FELDER = (
     ('typ', 'Typ'), ('beginn', 'Beginn'), ('ende', 'Ende'), ('ort', 'Ort'),
@@ -148,6 +156,47 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
     user_ids = db.termine.list_kader_user_ids(termin.mannschaft_id, termin.beginn[:10])
     user_ids += db.termin_zusagen.list_user_ids_mit_zusage(termin.id)   # Gäste
     _send(db, user_ids, actor_user_id, title, "\n".join(zeilen))
+
+
+def notify_abweichungen(db, mannschaft_id: int, fragen: list[tuple],
+                        actor_user_id: Optional[int]) -> None:
+    """Betreuer/ÜL über neue offene Fragen aus dem Spielplan-Import informieren.
+
+    Bewusst ein engerer Kreis und ein eigener Anlass: Der Kader bekommt Meldungen
+    über *geänderte* Termine, hier hat sich aber gerade nichts geändert — der
+    Import hat den Termin nicht angefasst, weil beide Seiten abweichen. Ohne
+    diese Meldung fiele der einzige Fall, der eine Handlung verlangt, still unter
+    den Tisch: Das Badge am Termin sieht nur, wer von sich aus hinschaut.
+    """
+    empfaenger = db.termine.list_verwalter_user_ids(mannschaft_id)
+    if not empfaenger:
+        return
+    m_name = _mannschaft_name(db, mannschaft_id)
+    anzahl = len({t for t, _ in fragen})
+    # Neutral formuliert: Es stecken zwei Anlässe drin – „beide Seiten geändert"
+    # und „Spiel nicht mehr im Export". Eine Begründung im Kopf träfe je nach
+    # Lauf nur die Hälfte der Zeilen.
+    kopf = ("Eine Ansetzung braucht" if anzahl == 1
+            else f"{anzahl} Ansetzungen brauchen")
+    zeilen = [f"{kopf} eine Entscheidung – der Import hat sie nicht "
+              f"angefasst ({m_name}).", ""]
+    for termin_id, felder in _fragen_je_termin(db, fragen):
+        termin = db.termine.get(termin_id)
+        if termin is None:
+            continue
+        zeilen.append(f"- {termin_titel(termin)} am {format_wandzeit(termin.beginn)}"
+                      f": {', '.join(felder)}")
+    zeilen += ["", "Bitte im Termin entscheiden, welcher Stand gilt."]
+    _send(db, empfaenger, actor_user_id,
+          f"Spielplan: Entscheidung nötig – {m_name}", "\n".join(zeilen))
+
+
+def _fragen_je_termin(db, fragen: list[tuple]) -> list[tuple]:
+    """[(termin_id, feld), …] -> [(termin_id, ['Anstoß', …]), …] in Eingabereihenfolge."""
+    gebuendelt: dict[int, list] = {}
+    for termin_id, feld in fragen:
+        gebuendelt.setdefault(termin_id, []).append(_ABWEICHUNG_FELDER.get(feld, feld))
+    return list(gebuendelt.items())
 
 
 def notify_serie(db, serie, actor_user_id: Optional[int]) -> None:

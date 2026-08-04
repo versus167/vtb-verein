@@ -118,7 +118,7 @@ export function kartenLink(ort, platform = {}) {
 // Sprache sprechen müssen: der Abweichungs-Dialog und der Hinweis an der Karte.
 export const ABWEICHUNG_FELDER = {
   beginn: 'Anstoß', ort: 'Spielort', heim_auswaerts: 'Heimrecht',
-  gegner: 'Gegner', entfallen: 'Spiel nicht mehr im Spielplan',
+  gegner: 'Gegner', entfallen: 'Nicht mehr in diesem DFBnet-Auszug',
 }
 
 export function abweichungFeldLabel(feld) {
