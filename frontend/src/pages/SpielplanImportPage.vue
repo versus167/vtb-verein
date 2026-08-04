@@ -230,7 +230,7 @@
 
           <q-select v-model="zuMannschaft" :options="mannschaftOptionen" outlined dense
             label="Eigene Mannschaft" use-input input-debounce="0" fill-input hide-selected
-            @filter="filterMannschaften">
+            :loading="mannschaftenLaden" @filter="filterMannschaften">
             <template #option="{ itemProps, opt }">
               <q-item v-bind="itemProps">
                 <q-item-section>
@@ -309,6 +309,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { usePageRefresh } from 'src/composables/useRefresh'
 import { datumLabel, uhrzeit } from 'src/composables/useTermine'
 
 defineOptions({ name: 'SpielplanImportPage' })
@@ -402,7 +403,8 @@ const zuordnenFehler = ref('')
 const zuTeam = ref(null)          // Eintrag aus bericht.unbekannte_teams
 const zuMannschaft = ref(null)    // gewählte Option (mit .team)
 const zuModus = ref('haupt')
-const mannschaftOptionen = ref([])
+const mannschaftenLaden = ref(false)
+const mannschaftSuche = ref('')   // Eingabe im Auswahlfeld (q-select @filter)
 // Merker je Teamname, solange der Bericht steht – die Vorschau kennt die frische
 // Zuordnung erst nach dem nächsten Lauf.
 const zugeordnet = ref({})
@@ -531,27 +533,33 @@ const modusOptionen = computed(() => {
 })
 
 async function ladeMannschaften() {
+  mannschaftenLaden.value = true
   try {
     const { data } = await api.get('/api/mannschaften')
     mannschaften.value = data
     if (abteilungFilter.value == null) abteilungFilter.value = vorgabeAbteilung()
+    return true
   } catch {
     mannschaften.value = []   // ohne Leserecht bleibt der Dialog leer
+    return false
+  } finally {
+    mannschaftenLaden.value = false
   }
 }
 
+// Bewusst abgeleitet statt als Schnappschuss: sonst zeigte die Auswahl weiter den
+// Stand von vorhin, obwohl gerade frisch nachgeladen wurde.
+const mannschaftOptionen = computed(() => alleOptionen.value.filter(
+  (o) => !mannschaftSuche.value || o.label.toLowerCase().includes(mannschaftSuche.value)
+    || o.caption.toLowerCase().includes(mannschaftSuche.value)))
+
 function abteilungGewechselt() {
   zuMannschaft.value = null            // die bisherige Wahl steht evtl. gar nicht mehr zur Auswahl
-  mannschaftOptionen.value = alleOptionen.value
+  mannschaftSuche.value = ''
 }
 
 function filterMannschaften(val, update) {
-  const suche = (val || '').toLowerCase()
-  update(() => {
-    mannschaftOptionen.value = alleOptionen.value.filter(
-      (o) => !suche || o.label.toLowerCase().includes(suche)
-        || o.caption.toLowerCase().includes(suche))
-  })
+  update(() => { mannschaftSuche.value = (val || '').toLowerCase() })
 }
 
 // Wer schon einen Hauptnamen hat, bekommt den zweiten Namen per Default als
@@ -560,13 +568,19 @@ watch(zuMannschaft, (opt) => {
   zuModus.value = opt?.team?.dfbnet_name ? 'alias' : 'haupt'
 })
 
-function oeffneZuordnung(t) {
+async function oeffneZuordnung(t) {
   zuTeam.value = t
   zuMannschaft.value = null
   zuModus.value = 'haupt'
   zuordnenFehler.value = ''
-  mannschaftOptionen.value = alleOptionen.value
+  mannschaftSuche.value = ''
   zuordnenOffen.value = true
+  // Immer frisch lesen: Mannschaften entstehen typischerweise parallel in einem
+  // zweiten Fenster („anlegen und zuordnen"), die beim Seitenaufruf geladene
+  // Liste kennt sie sonst nie.
+  if (!await ladeMannschaften()) {
+    zuordnenFehler.value = 'Mannschaften konnten nicht geladen werden'
+  }
 }
 
 async function zuordnungSpeichern() {
@@ -606,6 +620,10 @@ async function zuordnungSpeichern() {
 onMounted(() => {
   if (darfZuordnen.value) ladeMannschaften()
 })
+
+// Refresh-Button/Rückkehr zum Fenster zieht die Stammdaten nach – die Vorschau
+// selbst hängt an der hochgeladenen Datei und bleibt bewusst stehen.
+usePageRefresh(() => (darfZuordnen.value ? ladeMannschaften() : undefined))
 
 function uebernehmen() {
   const z = bericht.value?.zusammenfassung ?? {}
