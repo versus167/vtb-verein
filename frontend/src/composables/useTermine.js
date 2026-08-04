@@ -3,6 +3,7 @@
 import { ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { eigenesTeam } from 'src/composables/useAppInfo'
 
 // Zu-/Absage-Kategorien (RSVP) inkl. Icon + semantischer Farbe (Vereinskonvention:
 // positive/warning/negative – kein Fremd-Blau).
@@ -16,12 +17,21 @@ export function typIcon(typ) {
   return { training: 'fitness_center', spiel: 'sports_soccer' }[typ] ?? 'event'
 }
 
+// „Spiel (A) TSV Oberfrohna - VTB AH": Die Paarung steht in Spielrichtung, die
+// Heimmannschaft also zuerst – wie auf jedem Spielplan. Ohne Heimrecht wäre
+// jede Reihenfolge eine Behauptung, dann bleibt es beim neutralen „vs.".
+// Pendant im Backend: termin_notification_service.termin_titel.
 export function terminTitel(t) {
-  if (t.typ === 'spiel') {
-    const ha = t.heim_auswaerts === 'heim' ? ' (H)' : t.heim_auswaerts === 'auswaerts' ? ' (A)' : ''
-    return `Spiel${t.gegner ? ` vs. ${t.gegner}` : ''}${ha}`
-  }
-  return t.typ === 'training' ? 'Training' : 'Sonstiges'
+  if (t.typ !== 'spiel') return t.typ === 'training' ? 'Training' : 'Sonstiges'
+  const kennung = t.heim_auswaerts === 'heim' ? ' (H)' : t.heim_auswaerts === 'auswaerts' ? ' (A)' : ''
+  const eigen = eigenesTeam(t.mannschaft_name)
+  const gegner = (t.gegner || '').trim()
+  let paarung
+  if (!eigen || !gegner) paarung = eigen || gegner
+  else if (t.heim_auswaerts === 'auswaerts') paarung = `${gegner} - ${eigen}`
+  else if (t.heim_auswaerts === 'heim') paarung = `${eigen} - ${gegner}`
+  else paarung = `${eigen} vs. ${gegner}`
+  return `Spiel${kennung}${paarung ? ` ${paarung}` : ''}`
 }
 
 export function uhrzeit(wandzeit) {

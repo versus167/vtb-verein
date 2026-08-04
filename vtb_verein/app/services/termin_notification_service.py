@@ -11,6 +11,7 @@ Kanal des Users: Matrix/Push, Fallback E-Mail). User-Objekte werden im
 Request-Thread geladen — im Hintergrund-Thread sind keine DB-Zugriffe erlaubt
 (nicht-thread-sicheres Singleton, s. notification_service).
 """
+import os
 from datetime import date, datetime
 from typing import Optional
 
@@ -72,13 +73,44 @@ def format_wandzeit(wert: Optional[str]) -> str:
     return f"{_WOCHENTAGE_KURZ[dt.weekday()]}, {dt:%d.%m.%Y %H:%M}"
 
 
-def termin_titel(t) -> str:
-    """Kurztitel analog Frontend: 'Spiel vs. SV X (H)' | 'Training' | 'Sonstiges'."""
-    if t.typ == 'spiel':
-        ha = {'heim': ' (H)', 'auswaerts': ' (A)'}.get(t.heim_auswaerts, '')
-        gegner = f" vs. {t.gegner}" if t.gegner else ''
-        return f"Spiel{gegner}{ha}"
-    return _TYP_LABELS.get(t.typ, t.typ)
+def eigenes_team(mannschaft_name: Optional[str]) -> str:
+    """'AH' → 'VTB AH': Vereinskürzel vor den Mannschaftsnamen.
+
+    Das Kürzel ist Stammdatum (``VTB_VEREIN_KURZ``, im Backend
+    ``settings.VEREIN_KURZ``) – die Domänenschicht kennt die API-Settings nicht
+    und liest die Env darum direkt. Trägt der Mannschaftsname das Kürzel schon,
+    bleibt er unverändert; sonst stünde da „VTB VTB Chemnitz 2".
+    """
+    name = (mannschaft_name or '').strip()
+    kurz = os.getenv('VTB_VEREIN_KURZ', 'VTB').strip()
+    if not name or not kurz or name.lower().startswith(kurz.lower()):
+        return name
+    return f"{kurz} {name}"
+
+
+def termin_titel(t, mannschaft_name: Optional[str] = None) -> str:
+    """Kurztitel analog Frontend: 'Spiel (A) SV X - VTB AH' | 'Training' | 'Sonstiges'.
+
+    Die Paarung steht in Spielrichtung – Heimmannschaft zuerst, wie auf jedem
+    Spielplan. `mannschaft_name` reicht der Aufrufer durch, wenn er ihn ohnehin
+    schon geladen hat; sonst zählt der am Termin mitgelesene Name.
+    """
+    if t.typ != 'spiel':
+        return _TYP_LABELS.get(t.typ, t.typ)
+    eigen = eigenes_team(mannschaft_name if mannschaft_name is not None
+                         else getattr(t, 'mannschaft_name', None))
+    gegner = (t.gegner or '').strip()
+    kennung = {'heim': ' (H)', 'auswaerts': ' (A)'}.get(t.heim_auswaerts, '')
+    if not eigen or not gegner:
+        paarung = eigen or gegner
+    elif t.heim_auswaerts == 'auswaerts':
+        paarung = f"{gegner} - {eigen}"
+    elif t.heim_auswaerts == 'heim':
+        paarung = f"{eigen} - {gegner}"
+    else:
+        # Ohne Heimrecht wäre jede Reihenfolge eine Behauptung – dann neutral.
+        paarung = f"{eigen} vs. {gegner}"
+    return f"Spiel{kennung}{f' {paarung}' if paarung else ''}"
 
 
 def _feld_wert(feld: str, wert) -> str:
@@ -144,7 +176,7 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
     in die Nachricht, sonst die Termin-Details."""
     m_name = _mannschaft_name(db, termin.mannschaft_id)
     title = f"{_TITEL.get(aktion, aktion)} – {m_name}"
-    zeilen = [f"{termin_titel(termin)} am {format_wandzeit(termin.beginn)} ({m_name})"]
+    zeilen = [f"{termin_titel(termin, m_name)} am {format_wandzeit(termin.beginn)} ({m_name})"]
     if aktion == AKTION_GEAENDERT and aenderungen:
         zeilen += ["", "Änderungen:"] + [f"- {z}" for z in aenderungen]
     else:
@@ -184,7 +216,7 @@ def notify_abweichungen(db, mannschaft_id: int, fragen: list[tuple],
         termin = db.termine.get(termin_id)
         if termin is None:
             continue
-        zeilen.append(f"- {termin_titel(termin)} am {format_wandzeit(termin.beginn)}"
+        zeilen.append(f"- {termin_titel(termin, m_name)} am {format_wandzeit(termin.beginn)}"
                       f": {', '.join(felder)}")
     zeilen += ["", "Bitte im Termin entscheiden, welcher Stand gilt."]
     _send(db, empfaenger, actor_user_id,

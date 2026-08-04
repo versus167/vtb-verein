@@ -30,9 +30,41 @@ def test_format_datum_und_wandzeit():
 def test_termin_titel():
     assert tn.termin_titel(_termin()) == 'Training'
     assert tn.termin_titel(_termin(typ='sonstiges')) == 'Sonstiges'
-    spiel = _termin(typ='spiel', gegner='SV Gegner', heim_auswaerts='heim')
-    assert tn.termin_titel(spiel) == 'Spiel vs. SV Gegner (H)'
     assert tn.termin_titel(_termin(typ='spiel')) == 'Spiel'
+
+
+@pytest.fixture(autouse=True)
+def _standard_kuerzel(monkeypatch):
+    """Kürzel-Default (VTB) prüfen, unabhängig von der Env des Entwicklerrechners."""
+    monkeypatch.delenv('VTB_VEREIN_KURZ', raising=False)
+
+
+def test_termin_titel_spiel_paarung_in_spielrichtung():
+    heim = _termin(typ='spiel', gegner='SV Gegner', heim_auswaerts='heim')
+    assert tn.termin_titel(heim, 'AH') == 'Spiel (H) VTB AH - SV Gegner'
+    auswaerts = _termin(typ='spiel', gegner='TSV Oberfrohna', heim_auswaerts='auswaerts')
+    assert tn.termin_titel(auswaerts, 'AH') == 'Spiel (A) TSV Oberfrohna - VTB AH'
+    # Der Name am Termin (JOIN) zählt, wenn der Aufrufer keinen mitgibt.
+    assert tn.termin_titel(_termin(typ='spiel', gegner='SV Gegner',
+                                   heim_auswaerts='heim', mannschaft_name='E1')) \
+        == 'Spiel (H) VTB E1 - SV Gegner'
+    # Ohne Heimrecht behauptet der Titel keine Reihenfolge.
+    assert tn.termin_titel(_termin(typ='spiel', gegner='SV Gegner'), 'AH') \
+        == 'Spiel VTB AH vs. SV Gegner'
+    # Fehlt eine Seite, bleibt nur die bekannte übrig.
+    assert tn.termin_titel(_termin(typ='spiel', heim_auswaerts='heim'), 'AH') == 'Spiel (H) VTB AH'
+    assert tn.termin_titel(auswaerts) == 'Spiel (A) TSV Oberfrohna'
+
+
+def test_eigenes_team_kuerzel_aus_env(monkeypatch):
+    assert tn.eigenes_team('AH') == 'VTB AH'
+    assert tn.eigenes_team(None) == ''
+    # Name mit Kürzel bleibt, wie er ist – kein „VTB VTB Chemnitz 2".
+    assert tn.eigenes_team('VTB Chemnitz 2') == 'VTB Chemnitz 2'
+    monkeypatch.setenv('VTB_VEREIN_KURZ', 'SVW')
+    assert tn.eigenes_team('AH') == 'SVW AH'
+    monkeypatch.setenv('VTB_VEREIN_KURZ', '')
+    assert tn.eigenes_team('AH') == 'AH'
 
 
 # -------------------------------------------------------------------------- Diff
@@ -173,7 +205,7 @@ def test_notify_abweichungen_geht_nur_an_betreuer_und_ul(gesendet):
     _, title, message = gesendet[0]
     assert title == 'Spielplan: Entscheidung nötig – Erste'
     assert 'Eine Ansetzung braucht eine Entscheidung' in message
-    assert '- Spiel vs. SV Gegner (H) am Mi., 22.07.2026 18:30: Anstoß' in message
+    assert '- Spiel (H) VTB Erste - SV Gegner am Mi., 22.07.2026 18:30: Anstoß' in message
 
 
 def test_notify_abweichungen_buendelt_mehrere_felder_je_termin(gesendet):

@@ -83,16 +83,20 @@ class TerminRepository(BaseRepository):
 
         Der JOIN auf die Spielstätte kostet nichts (das Feld ist seit v80 NOT
         NULL) und erspart die Frage, warum Name, Anschrift und Belag mal da sind
-        und mal nicht.
+        und mal nicht. Die Mannschaft hängt per LEFT JOIN dran: Ihr Name gehört
+        in den Spieltitel („VTB AH – SV X"), darf den Termin aber nicht
+        verschwinden lassen, wenn das Team soft-gelöscht ist.
         """
         with self.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
                        s.name AS spielstaette_name,
                        s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
                        s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
                 FROM termine t
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
                 JOIN spielstaette s ON s.id = t.spielstaette_id
                 WHERE t.id = %s AND t.deleted_at IS NULL
                 """,
@@ -127,10 +131,12 @@ class TerminRepository(BaseRepository):
             cur.execute(
                 f"""
                 SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
                        s.name AS spielstaette_name,
                        s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz, s.ort AS spielstaette_ort,
                        s.untergrund AS spielstaette_untergrund
                 FROM termine t
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
                 JOIN spielstaette s ON s.id = t.spielstaette_id
                 WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
                   AND (%(von)s::text IS NULL OR t.beginn >= %(von)s)

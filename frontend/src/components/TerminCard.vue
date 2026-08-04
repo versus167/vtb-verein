@@ -161,6 +161,11 @@ import TerminKaderDialog from 'components/TerminKaderDialog.vue'
 import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
 import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat, kartenLink,
          abweichungFeldLabel, abweichungWert } from 'src/composables/useTermine'
+import { ladeAppInfo } from 'src/composables/useAppInfo'
+
+// Der Spieltitel braucht das Vereinskürzel aus /api/app-info; der Aufruf ist
+// idempotent und geteilt, egal wie viele Karten auf der Seite stehen.
+ladeAppInfo()
 
 const props = defineProps({
   termin: { type: Object, required: true },
@@ -184,10 +189,13 @@ const treffen = computed(() => props.termin.treffpunkt_zeit || '--:--')
 const beginn = computed(() => uhrzeit(props.termin.beginn) || '--:--')
 const ende = computed(() => uhrzeit(props.termin.ende) || '--:--')
 const klickbar = computed(() => props.kompakt)
-// Kopfzeile 2: Mannschaft · Ort · Bemerkung (Ellipsis, wenn der Platz ausgeht)
+// Kopfzeile 2: Mannschaft · Ort · Bemerkung (Ellipsis, wenn der Platz ausgeht).
+// Bei Spielen steht die eigene Mannschaft schon in der Paarung im Titel – dann
+// hier nicht noch einmal.
 const untertitel = computed(() => {
   const t = props.termin
-  return [t.mannschaft_name, t.ort, t.beschreibung].filter(Boolean).join(' · ')
+  const team = t.typ === 'spiel' ? null : t.mannschaft_name
+  return [team, t.ort, t.beschreibung].filter(Boolean).join(' · ')
 })
 // Ort steht im Kopf – hier nur noch der Treffpunkt
 const metaText = computed(() =>

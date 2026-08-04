@@ -317,3 +317,25 @@ def test_termin_traegt_anschrift_und_belag_der_spielstaette(db):
     aus_liste = db.termine.list_for_mannschaft(m)[0]
     assert aus_liste.spielstaette_strasse == 'Rußdorfer Straße 10'
     assert aus_liste.spielstaette_untergrund == 'Kunstrasen'
+
+
+def test_termin_traegt_mannschaftsnamen(db):
+    """Der Mannschaftsname hängt an jedem Termin, nicht nur an „Meine Termine".
+
+    Aus ihm baut das Frontend die Paarung im Spieltitel („VTB AH - SV X") und
+    der Import-Dialog seine Meldungen. Fehlt der JOIN, fällt die eigene
+    Mannschaft still aus dem Titel.
+    """
+    m = _make_mannschaft(db, name="AH")
+    neu = _create_termin(db, m, f"{TOMORROW}T15:00", typ='spiel',
+                         gegner='SV Gegner', heim_auswaerts='auswaerts')
+    assert db.termine.get(neu.id).mannschaft_name == 'AH'
+    assert db.termine.list_for_mannschaft(m)[0].mannschaft_name == 'AH'
+
+    # Soft-gelöschte Mannschaft: Der Termin bleibt lesbar (LEFT JOIN, kein
+    # deleted_at-Filter) – er soll weder verschwinden noch seinen Namen verlieren.
+    with db.cursor() as cur:
+        cur.execute("UPDATE mannschaft SET deleted_at = now(), version = version + 1 "
+                    "WHERE id = %s", (m,))
+    t = db.termine.get(neu.id)
+    assert t is not None and t.mannschaft_name == 'AH'
