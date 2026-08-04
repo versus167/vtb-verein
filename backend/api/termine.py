@@ -337,10 +337,17 @@ def _enrich_abweichungen(db: DB, termine: list[dict]) -> None:
 @router.get("/mannschaften")
 def list_meine_mannschaften(user: CurrentUser, db: DB):
     """Mannschaften, deren Termine der User sehen/verwalten darf – dient dem
-    Frontend auch als ACL-Probe (leere Liste => Nav-Punkt ausblenden)."""
-    if _darf_alle_verwalten(user):
-        return db.termine.list_all_mannschaften()
-    return db.termine.list_mannschaften_for_user(user.id)
+    Frontend auch als ACL-Probe (leere Liste => Nav-Punkt ausblenden).
+
+    `eigen` trennt die eigenen Kader-Mannschaften von denen, die nur über
+    `termine.verwalten`/Admin dazukommen. Das Frontend blendet standardmäßig nur
+    die eigenen ein: Wer alle Termine verwalten darf, will trotzdem nicht bei
+    jedem Aufruf 30 Mannschafts-Tabs sehen.
+    """
+    if not _darf_alle_verwalten(user):
+        return [m | {"eigen": True} for m in db.termine.list_mannschaften_for_user(user.id)]
+    eigene = {m['id'] for m in db.termine.list_mannschaften_for_user(user.id)}
+    return [m | {"eigen": m['id'] in eigene} for m in db.termine.list_all_mannschaften()]
 
 
 @router.get("/mannschaften/{mannschaft_id}")

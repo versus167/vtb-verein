@@ -309,3 +309,42 @@ def test_versionskonflikt_im_service_wird_durchgereicht(monkeypatch):
     with pytest.raises(HTTPException) as e:
         api.entscheide_abweichung(42, _daten(), _BETREUER, db)
     assert e.value.status_code == 409
+
+
+# ---------------------------------------------------- Mannschaftsliste (eigen)
+def _mannschaften_db(eigene, alle):
+    return SimpleNamespace(termine=SimpleNamespace(
+        list_mannschaften_for_user=lambda uid: list(eigene),
+        list_all_mannschaften=lambda: list(alle),
+    ))
+
+
+_VERWALTER = SimpleNamespace(role='mitglied', username='verwalter', id=11,
+                             has_permission=lambda p: p == 'termine.verwalten')
+
+
+def test_mannschaftsliste_markiert_die_eigenen_kader():
+    """Der Verwalter bekommt weiter alle Mannschaften, aber unterscheidbar.
+
+    Ohne die Markierung könnte das Frontend die Tab-Leiste nicht auf die eigenen
+    Teams eindampfen – wer termine.verwalten hält, säße sonst bei jedem Aufruf
+    vor einem Tab je Vereinsmannschaft.
+    """
+    db = _mannschaften_db(
+        eigene=[{'id': 5, 'name': 'Erste', 'zugriff': 'verwalten'}],
+        alle=[{'id': 5, 'name': 'Erste', 'zugriff': 'verwalten'},
+              {'id': 6, 'name': 'Zweite', 'zugriff': 'verwalten'}],
+    )
+    liste = api.list_meine_mannschaften(_VERWALTER, db)
+    assert [(m['id'], m['eigen']) for m in liste] == [(5, True), (6, False)]
+
+
+def test_mannschaftsliste_ohne_verwaltungsrecht_ist_immer_eigen():
+    """Ohne das globale Recht enthält die Liste ohnehin nur eigene Kader –
+    der Haken hätte dann nichts zu filtern und blendet sich aus."""
+    db = _mannschaften_db(
+        eigene=[{'id': 5, 'name': 'Erste', 'zugriff': 'lesen'}],
+        alle=[{'id': 5}, {'id': 6}],
+    )
+    liste = api.list_meine_mannschaften(_SPIELER, db)
+    assert [(m['id'], m['eigen']) for m in liste] == [(5, True)]
