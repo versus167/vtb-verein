@@ -13,12 +13,13 @@
     <q-tabs v-model="tab" dense align="left" active-color="primary"
       indicator-color="primary" class="text-grey-7" :breakpoint="0">
       <q-tab name="meine" label="Meine Termine" />
-      <q-tab v-for="m in teams" :key="m.id" :name="m.id" :label="teamLabel(m)" />
+      <q-tab v-for="m in sichtbareTeams" :key="m.id" :name="m.id" :label="teamLabel(m)" />
     </q-tabs>
     <q-separator class="q-mb-md" />
 
-    <div class="row items-center q-mb-md">
+    <div class="row items-center q-gutter-md q-mb-md">
       <q-toggle v-model="vergangene" label="Vergangene anzeigen" dense />
+      <q-toggle v-if="hatFremdeTeams" v-model="nurMeine" label="Nur meine Teams" dense />
     </div>
 
     <q-inner-loading :showing="loading" />
@@ -64,6 +65,15 @@ const termine = ref([])
 const tab = ref('meine')
 const vergangene = ref(false)
 const loading = ref(false)
+// Standardansicht wie bei den Tickets: erst die eigenen Mannschaften. Bewusst
+// nicht gemerkt – wer fremde Termine prüfen will, schaltet für den Moment um.
+const nurMeine = ref(true)
+
+// Mannschaften, die nur über termine.verwalten/Admin dazukommen. Gibt es keine,
+// bleibt der Haken aus – er hätte dann nichts zu filtern.
+const hatFremdeTeams = computed(() => teams.value.some(m => !m.eigen))
+const sichtbareTeams = computed(
+  () => nurMeine.value ? teams.value.filter(m => m.eigen) : teams.value)
 
 const darfVerwalten = computed(() => {
   if (auth.hasPermission('termine.verwalten')) return true
@@ -111,6 +121,9 @@ async function load() {
   try {
     const { data } = await api.get('/api/termine/mannschaften')
     teams.value = data
+    // Wer gar keinen eigenen Kader hat (reiner Verwalter), säße sonst vor einer
+    // leeren Tab-Leiste – für den ist „alle" die einzig sinnvolle Ansicht.
+    if (!data.some(m => m.eigen)) nurMeine.value = false
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden' })
     teams.value = []
@@ -120,6 +133,13 @@ async function load() {
 usePageRefresh(load)
 onMounted(load)
 watch(tab, loadTermine)
+// Wird der Haken gesetzt, während ein fremdes Team offen ist, verschwindet dessen
+// Tab – ohne Rücksprung bliebe eine Liste stehen, zu der kein Tab mehr gehört.
+watch(nurMeine, () => {
+  if (tab.value !== 'meine' && !sichtbareTeams.value.some(m => m.id === tab.value)) {
+    tab.value = 'meine'
+  }
+})
 watch(vergangene, loadTermine)
 
 // ── Termin anlegen/bearbeiten (Formular in TerminFormDialog) ──
