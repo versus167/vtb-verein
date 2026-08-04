@@ -38,6 +38,9 @@ class Settings:
     # Vereins-Stammdaten für Belege/PDFs (z. B. Übungsleiter-Stundennachweis).
     # Defaults entsprechen dem Muster-Beleg; per Env überschreibbar.
     VEREIN_NAME: str = os.getenv("VTB_VEREIN_NAME", "VTB Chemnitz e.V.")
+    # Kürzel vor dem Mannschaftsnamen („VTB" + „AH" → „VTB AH"). Steht in
+    # Spieltiteln und Termin-Meldungen; deshalb kurz halten, nicht der volle Name.
+    VEREIN_KURZ: str = os.getenv("VTB_VEREIN_KURZ", "VTB")
     VEREIN_STRASSE: str = os.getenv("VTB_VEREIN_STRASSE", "Guerickestraße 48")
     VEREIN_PLZ_ORT: str = os.getenv("VTB_VEREIN_PLZ_ORT", "09116 Chemnitz")
     VEREIN_REGISTRIER_NR: str = os.getenv("VTB_VEREIN_REGISTRIER_NR", "400193")

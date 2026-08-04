@@ -139,8 +139,11 @@ def app_info():
     """Öffentliche App-Metadaten (Name, Version, Quellcode-Link) fürs Frontend.
 
     ``source_url`` erfüllt AGPL §13: die App verweist auf den Quellcode dieser
-    Fassung (per ``VTB_SOURCE_URL`` überschreibbar, s. Settings)."""
-    return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL}
+    Fassung (per ``VTB_SOURCE_URL`` überschreibbar, s. Settings).
+    ``verein_kurz`` ist das Kürzel vor dem Mannschaftsnamen – das Frontend baut
+    daraus den Spieltitel („VTB AH – SV X"), ohne den Verein fest zu verdrahten."""
+    return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL,
+            "verein_kurz": settings.VEREIN_KURZ}
 
 
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)

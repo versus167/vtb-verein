@@ -167,24 +167,16 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
+import { ladeAppInfo, versionLabel } from 'src/composables/useAppInfo'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const tab = ref('magic')
 
-const appVersion = ref('')
+const appVersion = versionLabel
 
-async function loadAppVersion() {
-  try {
-    const { data } = await api.get('/api/app-info')
-    appVersion.value = data.version ? `v.${data.version}` : ''
-  } catch {
-    appVersion.value = ''
-  }
-}
-
-onMounted(loadAppVersion)
+onMounted(ladeAppInfo)
 
 const username = ref('')
 const password = ref('')

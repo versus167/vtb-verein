@@ -308,6 +308,7 @@ import AufgabenBadge from 'src/components/AufgabenBadge.vue'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
 import PushStatusButton from 'src/components/PushStatusButton.vue'
 import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
+import { appInfo, ladeAppInfo, versionLabel } from 'src/composables/useAppInfo'
 
 const router = useRouter()
 const route = useRoute()
@@ -408,19 +409,8 @@ const hatTermineZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
 const hatTeamtresorZugriff = ref(false)
 
-const appVersion = ref('')
-const sourceUrl = ref('')   // Quellcode-Link (AGPL §13), aus /api/app-info
-
-async function loadAppVersion() {
-  try {
-    const { data } = await api.get('/api/app-info')
-    appVersion.value = data.version ? `v.${data.version}` : ''
-    sourceUrl.value = data.source_url || ''
-  } catch {
-    appVersion.value = ''
-    sourceUrl.value = ''
-  }
-}
+const appVersion = versionLabel
+const sourceUrl = computed(() => appInfo.value.source_url || '')   // AGPL §13
 
 async function loadKassenZugriff() {
   try {
@@ -528,7 +518,7 @@ onMounted(() => {
   installAutoRefresh()
   unregisterZugriffsProben = registerGlobalRefresh(ladeZugriffsProben)
   ladeZugriffsProben()
-  loadAppVersion()
+  ladeAppInfo()
   const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true
 
