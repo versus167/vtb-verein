@@ -48,6 +48,7 @@ Konten-Auflösung:
 """
 import dataclasses
 from datetime import date, timedelta
+from typing import Optional
 
 from app.models.fibu import FibuExport, FibuExportPosition, FibuEinstellungen
 from app.services import fibu_formatter
@@ -77,6 +78,15 @@ def _plus_tage(iso, tage):
         return (date.fromisoformat(iso[:10]) + timedelta(days=tage)).isoformat()
     except (ValueError, TypeError):
         return None
+
+
+def personenkonto(basis: Optional[int], mitgliedsnummer: Optional[int]) -> Optional[int]:
+    """Debitor-/Kreditor-Konto = Konto-Basis + Mitgliedsnummer. Fehlt eines von
+    beidem, gibt es kein Konto → None (der Export meldet das als Fehler). Auch
+    außerhalb des Exports genutzt, z. B. für die Debitor-Spalte der Vorschau."""
+    if basis is None or mitgliedsnummer is None:
+        return None
+    return basis + mitgliedsnummer
 
 
 def _summe_cent(positionen) -> int:
@@ -248,8 +258,7 @@ class FibuExportService:
     def _position(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
         """Baut aus einer Buchungs-Rohzeile eine FBASC-Position (Forderung=S / Gegenbuchung=H)."""
         nummer = row.get('mitgliedsnummer')
-        konto = (einst.debitor_konto_basis + nummer) if (einst.debitor_konto_basis is not None
-                                                          and nummer is not None) else None
+        konto = personenkonto(einst.debitor_konto_basis, nummer)
         gegenkonto = row.get('gegenkonto') or einst.default_gegenkonto
         steuerschluessel = row.get('steuerschluessel') or einst.default_steuerschluessel
         kostenstelle = self._kostenstelle(row, einst)
@@ -332,8 +341,7 @@ class FibuExportService:
         Kein Lastschrifteinzug/Mandat (der Verein zahlt den ÜL per Überweisung); die
         Kostenstelle kommt aus der Abteilung."""
         nummer = row.get('mitgliedsnummer')
-        konto = (einst.ul_kreditor_konto_basis + nummer
-                 if einst.ul_kreditor_konto_basis is not None and nummer is not None else None)
+        konto = personenkonto(einst.ul_kreditor_konto_basis, nummer)
 
         abteilung = (row.get('quelle_name') or '').strip()
         periode = row.get('periode')

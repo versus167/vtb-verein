@@ -31,6 +31,8 @@ class VorschauPosition:
     zeitraum: str
     faelligkeitsdatum: str
     bereits_vorhanden: bool           # True = Duplikat, wird übersprungen
+    # Mitgliedsnummer – Basis des Debitor-Kontos im Fibu-Export (Basis + Nummer).
+    mitglied_nummer: Optional[int] = None
     # Alle Abteilungen, denen das Mitglied aktuell angehört (für Frontend-Filter).
     mitglied_abteilung_ids: list[int] = field(default_factory=list)
     # Anteilige Abrechnung: tatsächlich berechnete Monate / Monate im Turnus.
@@ -381,6 +383,7 @@ class BeitragsService:
                 mitglied_vorname=mitglied['vorname'],
                 mitglied_nachname=mitglied['nachname'],
                 mitglied_iban=mitglied.get('iban'),
+                mitglied_nummer=mitglied.get('mitgliedsnummer'),
                 beitragsregel_id=regel.id,
                 beitragsregel_name=regel.name,
                 beitragsregel_abteilung_id=regel.abteilung_id,
@@ -635,7 +638,8 @@ class BeitragsService:
                 params.extend([stichtag_str, regel.bedingung_alter_max])
 
         sql = f"""
-            SELECT DISTINCT m.id, m.vorname, m.nachname, m.iban, m.kontoinhaber,
+            SELECT DISTINCT m.id, m.mitgliedsnummer, m.vorname, m.nachname,
+                   m.iban, m.kontoinhaber,
                    {aktiv_cols}
             FROM mitglied m
             {' '.join(joins)}

@@ -872,7 +872,7 @@ const summenAbtColumns = [
   { name: 'anzahl',   label: 'Positionen', field: 'anzahl', align: 'center' },
 ]
 
-const vorschauColumns = [
+const vorschauGrundspalten = [
   { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
   { name: 'beitragsregel_name',label: 'Regel',        field: 'beitragsregel_name',align: 'left' },
   { name: 'betrag',            label: 'Betrag',       field: r => r.betrag.toFixed(2) + ' €', align: 'right' },
@@ -882,6 +882,19 @@ const vorschauColumns = [
   { name: 'status',            label: 'Status',       field: 'bereits_vorhanden',  align: 'left' },
   { name: 'edit',              label: '',             field: 'edit',               align: 'right' },
 ]
+
+// Debitor-Nummer (Konto-Basis + Mitgliedsnummer, gerechnet im Backend) direkt neben
+// dem Mitglied. Ohne konfigurierte Konto-Basis gibt es nirgends ein Konto – dann bleibt
+// die Spalte weg, statt dauerhaft leer dazustehen.
+const vorschauColumns = computed(() => {
+  if (!vorschau.value.some(p => p.debitor_konto != null)) return vorschauGrundspalten
+  const cols = [...vorschauGrundspalten]
+  cols.splice(1, 0, {
+    name: 'debitor', label: 'Debitor', align: 'left', sortable: true,
+    field: r => r.debitor_konto ?? '',
+  })
+  return cols
+})
 
 // Mitglied direkt aus der Vorschau bearbeiten (Schlüsselung prüfen/korrigieren).
 const kannMitgliedBearbeiten = computed(() => auth.hasPermission('personen.write'))

@@ -176,6 +176,21 @@ class TestVorschauAnteilig:
         assert all(p.monate_im_zeitraum == 3 for p in positionen)
         assert by_id[2].zeitraum == '2026-Q4'
 
+    def test_mitgliedsnummer_wandert_in_die_position(self):
+        # Grundlage der Debitor-Spalte in der Abrechnungs-Vorschau (Fibu-Basis +
+        # Mitgliedsnummer). Ohne Nummer bleibt das Feld None – kein Konto, keine Anzeige.
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0, einzug_turnus='quartal')
+        rows = [
+            {'id': 1, 'mitgliedsnummer': 4711, 'vorname': 'A', 'nachname': 'Mit', 'iban': None,
+             'aktiv_von': '2020-01-01', 'aktiv_bis': None},
+            {'id': 2, 'mitgliedsnummer': None, 'vorname': 'B', 'nachname': 'Ohne', 'iban': None,
+             'aktiv_von': '2020-01-01', 'aktiv_bis': None},
+        ]
+        by_id = {p.mitglied_id: p for p in self._service(regel, rows).vorschau('2026-10-01')}
+        assert by_id[1].mitglied_nummer == 4711
+        assert by_id[2].mitglied_nummer is None
+
     def test_vereinsaustritt_deckelt_abteilungsbeitrag(self):
         # Ticket #18 Nachtrag: Austritt aus dem Verein (30.06.) beendet implizit
         # die Abteilungsmitgliedschaft – auch wenn dort kein bis-Datum steht.
