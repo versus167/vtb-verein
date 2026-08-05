@@ -332,19 +332,29 @@ const zeigeKopfExtras = computed(() => $q.screen.gt.sm || route.name === 'dashbo
 
 // Seitentitel aus der Route (meta.title) — im Header und im Browser-Tab.
 const pageTitle = computed(() => route.meta?.title || '')
+
+// Vereinskürzel als Titel-Präfix; Stammdatum aus /api/app-info (VTB_VEREIN_KURZ).
+// Solange nichts geladen ist, bleibt das Präfix weg — lieber ohne als mit einem
+// fremden Vereinskürzel.
+const vereinKurz = computed(() => (appInfo.value.verein_kurz || '').trim())
+
 watch(
-  pageTitle,
-  (t) => {
-    document.title = t ? `VTB – ${t}` : 'VTB Vereinsverwaltung'
+  [pageTitle, vereinKurz],
+  ([t, kurz]) => {
+    if (t) document.title = kurz ? `${kurz} – ${t}` : t
+    else document.title = kurz ? `${kurz} Vereinsverwaltung` : 'Vereinsverwaltung'
   },
   { immediate: true },
 )
 
-// Kopfzeilen-Titel: am Desktop „VTB – <Seite>". Am Handy ohne „VTB – "-Präfix
-// nur der Seitenname — und auf der Übersicht gar nichts, dort steht bereits die
+// Kopfzeilen-Titel: am Desktop „<Kürzel> – <Seite>". Am Handy ohne Präfix nur der
+// Seitenname — und auf der Übersicht gar nichts, dort steht bereits die
 // „Willkommen …"-Begrüßung auf der Seite.
 const toolbarTitle = computed(() => {
-  if ($q.screen.gt.sm) return pageTitle.value ? `VTB – ${pageTitle.value}` : 'VTB'
+  if ($q.screen.gt.sm) {
+    if (!pageTitle.value) return vereinKurz.value
+    return vereinKurz.value ? `${vereinKurz.value} – ${pageTitle.value}` : pageTitle.value
+  }
   return route.name === 'dashboard' ? '' : pageTitle.value
 })
 
