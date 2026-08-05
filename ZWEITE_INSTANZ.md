@@ -123,18 +123,32 @@ Code. Hier ist nichts zu tun außer Pflege.
 
 ## Vereinsneutral machen — Diskussionsstand (2026-08-03)
 
-**Noch nichts entschieden**, festgehalten als Richtung. Reihenfolge und Zuschnitt
-werden später festgelegt.
+Festgehalten als Richtung; entschieden ist bisher nur der Zuschnitt der
+Seed-Daten (s. u.). Reihenfolge und Umfang des Restes stehen noch offen.
 
 ### Seed-Daten
 
-Die **Bereiche** („Platz 1", „Kabinen", „Aussenanlage") sind auf einen
-Fußballverein mit eigener Anlage zugeschnitten und sollten raus. Die
-**Kategorien** („Schaden", „Sicherheit", „Ausstattung", „Reinigung") sind
-vereinsneutral und bleiben. `bereich_id` ist nullable, ein Ticket ohne Bereich
-ist also möglich — dann greifen aber die Bereichsrechte nicht und der
-Auswahl-Dialog ist leer. Deshalb: **genau einen neutralen Bereich „Allgemein"**
-seeden, alles Weitere legt der Verein über die Ticket-Verwaltung an.
+**Entschieden (2026-08-05): Bereiche und Kategorien werden beim Start jeweils
+auf genau einen Eintrag „Allgemein" eingedampft.** Statt heute sechs Bereichen
+(„Platz 1", „Kabinen", „Aussenanlage" …) und sechs Kategorien („Schaden",
+„Sicherheit", „Reinigung" …) startet eine frische Instanz mit je einem
+neutralen Eintrag; alles Weitere legt der Verein über die Ticket-Verwaltung an.
+
+Die Bereiche unterstellen einen Fußballverein mit eigener Anlage — das war klar.
+Die Kategorien wirken zwar vereinsneutraler, sind aber dieselbe Vorannahme in
+schwächerer Form: „Schaden" und „Reinigung" beschreiben eine Liegenschaft, nicht
+einen Verein. Eine vorgefundene Liste wird außerdem selten aufgeräumt, sondern
+mitgeschleppt.
+
+Warum je *ein* Eintrag statt gar keinem: `bereich_id` und `kategorie_id` sind
+zwar nullable, aber ohne Bereich greifen die Bereichsrechte nicht und der
+Auswahl-Dialog steht leer. Ein einzelner Startwert hält beides funktionsfähig,
+ohne etwas zu behaupten.
+
+Betrifft nur den Frischaufbau: `_seed_data` läuft einmalig beim Anlegen des
+Schemas, bestehende Instanzen behalten ihre gepflegten Bereiche und Kategorien.
+Hier ist „Fresh == Migriert" ausdrücklich **nicht** gemeint — Seed-Daten sind
+Startwerte, keine Struktur.
 
 ### Env-Namen
 
