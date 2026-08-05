@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.models.beitrag import Beitragsregel, BeitragEinstellungen
 from app.models.permission import Permission
 from app.services.beitrags_service import BeitragsService
+from app.services.fibu_export_service import personenkonto
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/beitraege", tags=["beitraege"])
@@ -164,11 +165,17 @@ def vorschau(data: AbrechnungRequest, user: CurrentUser, db: DB):
     _require_read(user)
     rueckschau = db.beitrag_einstellungen.get().quartale_rueckschau
     positionen = BeitragsService(db).vorschau_aufholen(data.stichtag, rueckschau)
+    # Debitor-Konto gleich mitliefern: Es steht nachher so im Fibu-Export und gehört
+    # beim Prüfen der Vorschau neben den Namen. Die Konto-Basis kommt aus den Fibu-
+    # Einstellungen – die Vorschau darf sehen, wer Beiträge lesen darf; ein Kontenrahmen-
+    # Offset ist kein Geheimnis, der Einstellungs-Endpunkt bleibt bei 'fibu.export'.
+    konto_basis = db.fibu_einstellungen.get().debitor_konto_basis
     return [
         {
             'mitglied_id': p.mitglied_id,
             'mitglied_name': f"{p.mitglied_nachname}, {p.mitglied_vorname}",
             'mitglied_iban': p.mitglied_iban,
+            'debitor_konto': personenkonto(konto_basis, p.mitglied_nummer),
             'beitragsregel_id': p.beitragsregel_id,
             'beitragsregel_name': p.beitragsregel_name,
             'abteilung_id': p.beitragsregel_abteilung_id,

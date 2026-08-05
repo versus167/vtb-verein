@@ -9,7 +9,8 @@ import pytest
 
 from app.models.fibu import FibuEinstellungen, FibuExportPosition, FibuExport
 from app.services import fibu_formatter as ff
-from app.services.fibu_export_service import FibuExportService, FibuExportFehler
+from app.services.fibu_export_service import (
+    FibuExportService, FibuExportFehler, personenkonto)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +197,21 @@ def _service(neu=None, gegen=None, einst=None):
 # ---------------------------------------------------------------------------
 # Konten-Auflösung
 # ---------------------------------------------------------------------------
+
+class TestPersonenkonto:
+    """Geteilte Konto-Formel – auch die Debitor-Spalte der Beitragsvorschau rechnet damit."""
+
+    def test_basis_plus_nummer(self):
+        assert personenkonto(70000, 5) == 70005
+
+    def test_ohne_basis_oder_ohne_nummer_kein_konto(self):
+        assert personenkonto(None, 5) is None
+        assert personenkonto(70000, None) is None
+
+    def test_basis_null_ist_eine_echte_basis(self):
+        # 0 ist ein gültiger Offset und darf nicht wie "nicht konfiguriert" wirken.
+        assert personenkonto(0, 5) == 5
+
 
 class TestAufloesung:
     def test_debitor_konto_basis_plus_nummer(self):
