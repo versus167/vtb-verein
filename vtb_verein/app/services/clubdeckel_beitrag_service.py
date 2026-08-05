@@ -1,11 +1,11 @@
-"""Sammellauf für die Monatsbeiträge aller aktiven Teamtresore (#98).
+"""Sammellauf für die Monatsbeiträge aller aktiven Teamkassen (#98).
 
 Der Mannschaftsbeitrag ist pro Mitglied an/aus (Opt-out über eine Befreiung).
 Für jedes aktive Kader-Mitglied ohne Befreiung wird am Monatsersten der fällige
-Beitrag gebucht. Diese Funktion bündelt den Lauf über ALLE aktiven Teamtresore
+Beitrag gebucht. Diese Funktion bündelt den Lauf über ALLE aktiven Teamkassen
 und wird vom Sidecar (tools/clubdeckel_beitrag_lauf.py) periodisch aufgerufen.
 
-Dieselbe idempotente Nachbuchung greift lazily beim Öffnen eines Teamtresors
+Dieselbe idempotente Nachbuchung greift lazily beim Öffnen einer Teamkasse
 (backend/api/clubdeckel.py::_beitragslauf); der Sammellauf sorgt nur dafür, dass
 die Buchungen auch ohne Zugriff kurz nach dem 1. entstehen. Ein Monat wird nie
 doppelt gebucht (buche_faellige_beitraege prüft vorhandene Beitragszeilen).
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 
 def run_beitragslauf(db) -> dict[int, int]:
-    """Bucht für jeden aktiven Teamtresor mit Monatsbeitrag die fälligen Monate.
+    """Bucht für jede aktive Teamkasse mit Monatsbeitrag die fälligen Monate.
 
     Gibt ein Dict ``{deckel_id: neu_gebuchte_zeilen}`` über alle geprüften Deckel
     zurück (auch mit 0), damit der Aufrufer sauber protokollieren kann.

@@ -1700,7 +1700,7 @@ _TRESOR_KONTAKT_TRIGGERS = (
 
 
 # ============================================================================
-# Teamtresor / Clubdeckel (Schema v75, Ticket #98)
+# Teamkasse / Clubdeckel (Schema v75, Ticket #98)
 # ----------------------------------------------------------------------------
 # Mannschaftsinterne Getränke-Strichliste, bewusst getrennt von Kassenbuch/FiBu/
 # Vereinsbeiträgen (eigenes Ledger, kein Geldfluss über die Vereinskasse). Rechte
@@ -6103,7 +6103,7 @@ class Database:
             cur.execute("UPDATE schema_version SET version = 74 WHERE id = 1")
 
     def _migrate_v74_to_v75(self) -> None:
-        """Teamtresor/Clubdeckel (#98): mannschaftsinterne Strichliste.
+        """Teamkasse/Clubdeckel (#98): mannschaftsinterne Strichliste.
 
         Neue Tabellen clubdeckel, clubdeckel_berechtigung (Wart-ACL),
         clubdeckel_artikel, clubdeckel_buchung (+_history, Audit-Trigger, Indexe).
@@ -6129,7 +6129,7 @@ class Database:
             cur.execute("UPDATE schema_version SET version = 75 WHERE id = 1")
 
     def _migrate_v75_to_v76(self) -> None:
-        """Teamtresor „komplett löschen mit Wiederherstellung" (#125).
+        """Teamkasse „komplett löschen mit Wiederherstellung" (#125).
 
         Batch-Marker `loesch_ref` (uuid) auf allen 6 clubdeckel-Live-Tabellen: Ein
         Admin-Löschvorgang soft-löscht Deckel + alle Kinder in einem Batch mit
@@ -7766,7 +7766,7 @@ class Database:
         # Tresor-Kontakte (Schema v73, #106): unverschlüsselte Ansprechpartner je
         # Tresor. DDL geteilt mit Migration v72→v73.
         cur.execute(_DDL_TRESOR_KONTAKT)
-        # Teamtresor/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
+        # Teamkasse/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
         # DDL geteilt mit Migration v74→v75.
         cur.execute(_DDL_CLUBDECKEL)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.

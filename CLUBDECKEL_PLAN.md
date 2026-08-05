@@ -1,4 +1,4 @@
-# Plan: Teamtresor (Clubdeckel) — mannschaftsinterne Strichliste
+# Plan: Teamkasse (Clubdeckel) — mannschaftsinterne Strichliste
 
 > Status (2026-07-20): **Umgesetzt auf Branch `feature/teamtresor`** (Schema v75,
 > Fachmodell nach Abgleich mit dem Original korrigiert, s. „Buchungsmodell").
@@ -87,7 +87,7 @@ in `*_history` **und Eintrag ins `PRUNE_REGISTRY`** (Reihenfolge Kinder-vor-Elte
 dem Kader (`mitglied_mannschaft`, Rollen `uebungsleiter`/`betreuer`, von/bis
 aktiv), darunter die Wart-ACL, darunter die Kader-Mitgliedschaft. Das ist das
 „Kader = ACL"-Muster aus dem Spielbetrieb-Plan (#95). **Der Vorstand hat keinen
-Einblick** in Teamtresore (bewusst entschieden — kein Übersichts-/Lese-Key).
+Einblick** in Teamkassen (bewusst entschieden — kein Übersichts-/Lese-Key).
 Einzige Ausnahme bleibt der app-weite Admin-Durchgriff (`role == 'admin'` hat
 technisch immer alles) als Notfall-Fallback, z. B. wenn ein Team keinen ÜL im
 Kader gepflegt hat; in der UI wird das nicht beworben.
@@ -106,7 +106,7 @@ Kader gepflegt hat; in der UI wird das nicht beworben.
 
 ## Frontend (Skizze)
 
-- Eine Seite (`TeamtresorPage.vue`) mit in-page `q-tabs`:
+- Eine Seite (`TeamkassePage.vue`) mit in-page `q-tabs`:
   - **Tresen** — Tap-Grid der Artikel nach Gruppen (Tap bucht 1×, Notify mit
     Rückgängig), eigener Deckelstand + Team-Saldo, „Zahlung an …"-Karte mit den
     Zahlwegen, eigene letzte Buchungen mit Storno.
@@ -121,19 +121,19 @@ Kader gepflegt hat; in der UI wird das nicht beworben.
 
 - **Ausgleich** („Deckel bezahlt"): **nur innerhalb des Teamdeckels** — reine
   Gegenbuchung im Ledger, keine Brücke in eine Kasse (Volker, 19.07.2026).
-- **Name** (Volker, 19.07.2026): Im **UI heißt das Feature „Teamtresor"** — das
+- **Name** (Volker, 19.07.2026): Im **UI heißt das Feature „Teamkasse"** — das
   Team kennt den Begriff vom Vorbild Clubtresor. Im **Code/Schema bleibt durchgängig
   `clubdeckel_*`** (Tabellen, Permission-Keys, Router), damit keine Verwechslung mit
   dem bestehenden Passwort-/Kontakte-Tresor (`tresor_*`) entsteht. Zur Abgrenzung
   bekommt der bestehende Tresor-Bereich bei der Umsetzung einen präzisierenden
   Untertitel (z. B. „Passwörter & wichtige Kontakte"), und dessen Button
   „Neuer Tresor" wird umbenannt (z. B. „Neuer Container").
-- **Berechtigungen** (Volker, 19.07.2026): Der Teamtresor ist eine **teaminterne
+- **Berechtigungen** (Volker, 19.07.2026): Die Teamkasse ist eine **teaminterne
   Entscheidung** — einschalten und verwalten darf, wer im Kader der Mannschaft
   aktiv `uebungsleiter`/`betreuer` ist; diese ernennen auch die Warte (ACL, auch
   Spieler möglich). **Kein globaler Permission-Key, kein Vorstands-Einblick.**
   Details in „Rechte-Logik".
-- **Genau ein Teamtresor pro Mannschaft** (Volker, 19.07.2026) — 1:1-Beziehung,
+- **Genau eine Teamkasse pro Mannschaft** (Volker, 19.07.2026) — 1:1-Beziehung,
   `mannschaft_id` in `clubdeckel` entsprechend UNIQUE (auf nicht gelöschte
   Zeilen bezogen).
 - **Fachmodell aus dem Original übernommen** (Volker, 19./20.07.2026): kein

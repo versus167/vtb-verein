@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Teamtresor-Beitragslauf (#98) – für Sidecar/Cron (Default „einmal täglich").
+Teamkassen-Beitragslauf (#98) – für Sidecar/Cron (Default „einmal täglich").
 
-Bucht für jeden aktiven Teamtresor mit konfiguriertem Monatsbeitrag den fälligen
+Bucht für jede aktive Teamkasse mit konfiguriertem Monatsbeitrag den fälligen
 Mannschaftsbeitrag nach – je aktivem Kader-Mitglied ohne Befreiung, datiert auf
 den jeweiligen Monat. Idempotent: ein Monat wird nie doppelt gebucht, der Lauf
 ist also gefahrlos beliebig oft wiederholbar (daher reicht ein täglicher Tick,
@@ -32,7 +32,7 @@ from app.services.clubdeckel_beitrag_service import run_beitragslauf
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Teamtresor-Beitragslauf (alle aktiven Deckel)")
+    ap = argparse.ArgumentParser(description="Teamkassen-Beitragslauf (alle aktiven Deckel)")
     ap.add_argument('--database-url', default=os.environ.get('VTB_DATABASE_URL'))
     ap.add_argument('--quiet', action='store_true', help='nur Fehler ausgeben')
     args = ap.parse_args()
@@ -49,7 +49,7 @@ def main() -> int:
 
     gesamt = sum(ergebnis.values())
     if not args.quiet:
-        print(f"✓ Beitragslauf: {len(ergebnis)} aktive(r) Teamtresor(e) geprüft, "
+        print(f"✓ Beitragslauf: {len(ergebnis)} aktive Teamkasse(n) geprüft, "
               f"{gesamt} Beitragsbuchung(en) neu.")
         for deckel_id, n in ergebnis.items():
             if n:

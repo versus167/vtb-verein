@@ -1,4 +1,4 @@
-"""Artikel-Gruppen des Teamtresors (#98): clubdeckel_gruppe.
+"""Artikel-Gruppen der Teamkasse (#98): clubdeckel_gruppe.
 
 Jede Gruppe („Getränke", „Essen", …) hat einen VERKÄUFER: das Team
 (verkaeufer_mitglied_id NULL) oder ein Mitglied — z. B. verkauft ein Mitglied

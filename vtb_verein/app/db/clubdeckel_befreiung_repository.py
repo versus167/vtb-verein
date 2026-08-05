@@ -1,4 +1,4 @@
-"""Beitragsbefreiungen des Teamtresors (#98): clubdeckel_beitrag_befreiung.
+"""Beitragsbefreiungen der Teamkasse (#98): clubdeckel_beitrag_befreiung.
 
 Der Monatsbeitrag wird automatisch für alle aktiven Kader-Mitglieder gebucht —
 befreite Mitglieder (z. B. Langzeitverletzte) stehen hier. Muster wie die

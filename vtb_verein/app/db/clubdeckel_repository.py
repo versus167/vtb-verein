@@ -1,8 +1,8 @@
-"""Repository für den Teamtresor/Clubdeckel (#98) inkl. Kader-Rechteableitung.
+"""Repository für die Teamkasse/Clubdeckel (#98) inkl. Kader-Rechteableitung.
 
 Die Rechte sind komplett teamintern und kommen NICHT aus globalen Permissions:
 Wer am Stichtag aktiv (von/bis) im Kader der Mannschaft steht, nutzt deren
-Teamtresor ('mitglied'); die Kader-Rollen betreuer/uebungsleiter verwalten ihn
+Teamkasse ('mitglied'); die Kader-Rollen betreuer/uebungsleiter verwalten sie
 ('verwalten': einschalten, Stammdaten, Warte ernennen). Die Zwischenstufe „Wart"
 (Katalog, Buchungen) liegt in clubdeckel_berechtigung und wird in der API-Schicht
 mit der Kader-Stufe kombiniert. Admin-Bypass entscheidet die API.
@@ -21,7 +21,7 @@ from typing import Optional
 from app.models.clubdeckel import Clubdeckel
 from app.db.base_repository import BaseRepository
 
-# Kader-Rollen, die den Teamtresor ihrer Mannschaft verwalten dürfen.
+# Kader-Rollen, die die Teamkasse ihrer Mannschaft verwalten dürfen.
 VERWALTEN_ROLLEN = ('betreuer', 'uebungsleiter')
 
 # Kind-Tabellen eines Deckels (für das Komplett-Löschen/Wiederherstellen, #125).
@@ -111,7 +111,7 @@ class ClubdeckelRepository(BaseRepository):
             return _map(row) if row else None
 
     def list_aktive_mit_beitrag(self) -> list[Clubdeckel]:
-        """Aktive Teamtresore mit konfiguriertem Monatsbeitrag — Grundlage für
+        """Aktive Teamkassen mit konfiguriertem Monatsbeitrag — Grundlage für
         den Sammellauf (Sidecar), der den fälligen Beitrag am Monatsersten
         nachbucht. Gleiche Bedingung wie der Lazy-Lauf in der API."""
         with self.cursor() as cur:
@@ -194,7 +194,7 @@ class ClubdeckelRepository(BaseRepository):
 
     # ------------------------------------------------ Komplett-Löschen (#125)
     def loesche_komplett(self, deckel_id: int, deleted_by: str) -> Optional[str]:
-        """Kompletter Soft-Delete des ganzen Teamtresors (Deckel + alle Kinder) als
+        """Kompletter Soft-Delete der ganzen Teamkasse (Deckel + alle Kinder) als
         ein Batch mit gemeinsamer loesch_ref — Admin-Aktion, per restore() umkehrbar.
         Nur aktive Zeilen (deleted_at IS NULL) werden angefasst: vorher einzeln
         stornierte Buchungen behalten ihren Storno und bleiben beim Restore weg.
@@ -218,7 +218,7 @@ class ClubdeckelRepository(BaseRepository):
         return ref
 
     def restore(self, deckel_id: int, restored_by: str) -> str:
-        """Wiederherstellung eines gelöschten Teamtresors (Admin-Papierkorb): reaktiviert
+        """Wiederherstellung einer gelöschten Teamkasse (Admin-Papierkorb): reaktiviert
         exakt den Lösch-Batch (loesch_ref) auf Deckel + Kindern. Gibt 'ok',
         'not_found' (kein gelöschter Deckel) oder 'conflict' (die Mannschaft hat
         zwischenzeitlich wieder einen aktiven Deckel — uix_clubdeckel_mannschaft_active)
@@ -321,7 +321,7 @@ class ClubdeckelRepository(BaseRepository):
     # ----------------------------------------------------------- Team-Listen
     def list_teams_for_user(self, user_id: int,
                             stichtag: Optional[str] = None) -> list[dict]:
-        """„Meine Teamtresore": alle Mannschaften, in deren Kader der User am
+        """„Meine Teamkassen": alle Mannschaften, in deren Kader der User am
         Stichtag aktiv ist — je Team die Kader-Stufe und der Deckel (oder None).
         Die API filtert daraus Teams ohne Deckel für Nicht-Verwalter heraus."""
         tag = stichtag or date.today().isoformat()
@@ -361,7 +361,7 @@ class ClubdeckelRepository(BaseRepository):
             return [self._team_row(r) for r in cur.fetchall()]
 
     def list_geloescht(self) -> list[dict]:
-        """Admin-Papierkorb (#125): alle gelöschten Teamtresore mit Mannschaftsname,
+        """Admin-Papierkorb (#125): alle gelöschten Teamkassen mit Mannschaftsname,
         Lösch-Metadaten und der Zahl der mitgelöschten Buchungen. `mannschaft_hat_aktiven`
         markiert Deckel, deren Mannschaft bereits wieder einen aktiven Tresor hat —
         dann ist der Restore gesperrt (genau ein aktiver Deckel je Mannschaft)."""

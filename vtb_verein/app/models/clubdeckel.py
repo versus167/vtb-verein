@@ -1,4 +1,4 @@
-"""Datenmodelle für den Teamtresor/Clubdeckel (#98, Schema v75).
+"""Datenmodelle für die Teamkasse/Clubdeckel (#98, Schema v75).
 
 - Clubdeckel:        mannschaftsinterne Strichliste, genau eine je Mannschaft.
                      Stammdaten: Monatsbeitrag (Pauschale), Zahlungsempfänger

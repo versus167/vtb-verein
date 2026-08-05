@@ -97,13 +97,13 @@
           </q-item>
 
           <q-item
-            v-if="hatTeamtresorZugriff"
+            v-if="hatTeamkasseZugriff"
             clickable
-            :to="{ name: 'teamtresor' }"
+            :to="{ name: 'teamkasse' }"
             active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="sports_bar" /></q-item-section>
-            <q-item-section>Teamtresor</q-item-section>
+            <q-item-section>Teamkasse</q-item-section>
           </q-item>
 
           <q-item
@@ -407,7 +407,7 @@ const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
-const hatTeamtresorZugriff = ref(false)
+const hatTeamkasseZugriff = ref(false)
 
 const appVersion = versionLabel
 const sourceUrl = computed(() => appInfo.value.source_url || '')   // AGPL §13
@@ -450,12 +450,12 @@ async function loadMannschaftenZugriff() {
   }
 }
 
-async function loadTeamtresorZugriff() {
+async function loadTeamkasseZugriff() {
   try {
     const { data } = await api.get('/api/clubdeckel/teams')
-    hatTeamtresorZugriff.value = data.length > 0
+    hatTeamkasseZugriff.value = data.length > 0
   } catch {
-    hatTeamtresorZugriff.value = false
+    hatTeamkasseZugriff.value = false
   }
 }
 
@@ -470,7 +470,7 @@ async function loadTeamtresorZugriff() {
 function ladeZugriffsProben() {
   return Promise.all([auth.loadMe().catch(() => {}),
     loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
-    loadMannschaftenZugriff(), loadTeamtresorZugriff(), aufgaben.laden()])
+    loadMannschaftenZugriff(), loadTeamkasseZugriff(), aufgaben.laden()])
 }
 
 async function onLogout() {
@@ -479,7 +479,7 @@ async function onLogout() {
   hatTresorZugriff.value = false
   hatTermineZugriff.value = false
   hatMannschaftenZugriff.value = false
-  hatTeamtresorZugriff.value = false
+  hatTeamkasseZugriff.value = false
   aufgaben.zuruecksetzen()
   router.push({ name: 'login' })
 }

@@ -224,10 +224,13 @@ const routes = [
       {
         // Kein meta.permission: der Zugriff ist ACL-basiert (Kader-Zugehörigkeit
         // + Wart-ACL) wie bei den Terminen – die Seite/Backend setzen ihn je Team durch.
-        path: 'teamtresor',
-        name: 'teamtresor',
-        component: () => import('pages/TeamtresorPage.vue'),
-        meta: { title: 'Teamtresor' },
+        path: 'teamkasse',
+        // Alter Pfad aus der Zeit als „Teamtresor" – gesetzte Lesezeichen sollen
+        // nicht ins Leere laufen.
+        alias: 'teamtresor',
+        name: 'teamkasse',
+        component: () => import('pages/TeamkassePage.vue'),
+        meta: { title: 'Teamkasse' },
       },
       {
         path: 'import',

@@ -1,6 +1,6 @@
 <template>
   <q-page class="q-pa-md">
-    <!-- Team-Auswahl nur bei mehreren Teams; der Titel „Teamtresor" steht schon
+    <!-- Team-Auswahl nur bei mehreren Teams; der Titel „Teamkasse" steht schon
          in der App-Kopfzeile — kein doppelter Seitentitel (#126). -->
     <div v-if="teams.length > 1" class="q-mb-md">
       <q-select
@@ -13,28 +13,28 @@
     </div>
 
     <div v-if="!teams.length && geladen" class="text-grey q-mt-lg">
-      Kein Teamtresor verfügbar — du stehst in keinem Kader mit Teamtresor.
+      Keine Teamkasse verfügbar — du stehst in keinem Kader mit Teamkasse.
     </div>
 
     <!-- Einschalt-Karte: Team ohne Deckel, nur für Kader-Verwalter sichtbar -->
     <q-card v-if="aktuellesTeam && !aktuellesTeam.deckel" class="vtb-karte q-mt-md">
       <q-card-section class="column items-start q-gutter-sm">
         <div class="text-subtitle1 text-weight-bold">
-          {{ aktuellesTeam.mannschaft_name }} hat noch keinen Teamtresor
+          {{ aktuellesTeam.mannschaft_name }} hat noch keine Teamkasse
         </div>
         <div class="text-caption text-grey">
           Als Übungsleiter/Betreuer kannst du die mannschaftsinterne Strichliste hier
           einschalten. Gruppen, Artikel und Preise pflegst du danach im Katalog.
         </div>
         <q-btn color="primary" unelevated no-caps icon="sports_bar"
-          :label="`Teamtresor für ${aktuellesTeam.mannschaft_name} aktivieren`"
+          :label="`Teamkasse für ${aktuellesTeam.mannschaft_name} aktivieren`"
           :loading="saving" @click="einschalten" />
       </q-card-section>
     </q-card>
 
-    <!-- Admin-Papierkorb: gelöschte Teamtresore wiederherstellen (#125) -->
+    <!-- Admin-Papierkorb: gelöschte Teamkassen wiederherstellen (#125) -->
     <q-expansion-item v-if="istAdmin && papierkorb.length" class="vtb-karte q-mt-md"
-      icon="restore_from_trash" :label="`Gelöschte Teamtresore (${papierkorb.length})`"
+      icon="restore_from_trash" :label="`Gelöschte Teamkassen (${papierkorb.length})`"
       header-class="text-weight-medium">
       <q-list separator>
         <q-item v-for="e in papierkorb" :key="e.id">
@@ -49,7 +49,7 @@
             <q-btn outline no-caps color="primary" icon="restore" label="Wiederherstellen"
               :disable="e.mannschaft_hat_aktiven || saving" @click="wiederherstellen(e)">
               <q-tooltip v-if="e.mannschaft_hat_aktiven">
-                Diese Mannschaft hat bereits wieder einen aktiven Teamtresor
+                Diese Mannschaft hat bereits wieder eine aktive Teamkasse
               </q-tooltip>
             </q-btn>
           </q-item-section>
@@ -67,7 +67,7 @@
 
       <q-banner v-if="!deckel.aktiv" class="vtb-warnung q-mb-md" rounded dense>
         <template #avatar><q-icon name="pause_circle" size="26px" /></template>
-        Der Teamtresor ist deaktiviert — Buchen ist gerade nicht möglich.
+        Die Teamkasse ist deaktiviert — Buchen ist gerade nicht möglich.
       </q-banner>
 
       <!-- Tab-Reihe: nur Tresen/Salden/Katalog in der Pille; die Verwaltung liegt
@@ -221,15 +221,15 @@
 
       <!-- ====================== Salden ====================== -->
       <div v-if="tab === 'salden'">
-        <!-- Bestand des Teamtresors prominent — das ist der Kassenstand der
+        <!-- Bestand der Teamkasse prominent — das ist der Kassenstand der
              mannschaftsinternen Strichliste, NICHT die Vereinskasse (#127). -->
         <q-card flat bordered class="text-center q-pa-md q-mb-md">
-          <div class="text-overline text-grey">Teamtresor-Bestand</div>
+          <div class="text-overline text-grey">Teamkassen-Bestand</div>
           <div class="text-h5 text-weight-bold"
             :class="Number(teamSaldo) < 0 ? 'text-negative' : 'text-positive'">
             {{ fmtEuro(teamSaldo) }}
           </div>
-          <div class="text-caption text-grey">Kassenstand der Mannschaft im Teamtresor</div>
+          <div class="text-caption text-grey">Kassenstand der Mannschaft in der Teamkasse</div>
         </q-card>
 
         <!-- Bank (Zahlungsempfänger) abgesetzt: verwahrt das Bargeld, gehört
@@ -515,7 +515,7 @@
           </q-card>
 
           <q-btn v-if="istAdmin" outline no-caps color="negative" icon="delete_forever"
-            label="Teamtresor löschen" @click="loeschen" />
+            label="Teamkasse löschen" @click="loeschen" />
         </div>
       </div>
     </template>
@@ -639,7 +639,7 @@
 </template>
 
 <script setup>
-defineOptions({ name: 'TeamtresorPage' })
+defineOptions({ name: 'TeamkassePage' })
 
 import { ref, computed, watch, onMounted } from 'vue'
 import { useQuasar, copyToClipboard } from 'quasar'
@@ -940,7 +940,7 @@ async function loadTeams() {
     const { data } = await api.get(`${BASE}/teams`)
     teams.value = data
     if (!data.find(t => t.mannschaft_id === selectedTeamId.value)) {
-      const gespeichert = Number(localStorage.getItem('vtb_teamtresor_team'))
+      const gespeichert = Number(localStorage.getItem('vtb_teamkasse_team'))
       const bevorzugt = data.find(t => t.mannschaft_id === gespeichert && t.deckel)
         || data.find(t => t.deckel) || data[0]
       selectedTeamId.value = bevorzugt ? bevorzugt.mannschaft_id : null
@@ -963,7 +963,7 @@ async function loadDeckel() {
     deckel.value = data
   } catch (e) {
     deckel.value = null
-    fehler(e, 'Teamtresor konnte nicht geladen werden')
+    fehler(e, 'Teamkasse konnte nicht geladen werden')
   }
 }
 
@@ -1058,7 +1058,7 @@ async function refreshAll() {
 }
 
 watch(selectedTeamId, async (id) => {
-  if (id != null) localStorage.setItem('vtb_teamtresor_team', String(id))
+  if (id != null) localStorage.setItem('vtb_teamkasse_team', String(id))
   tab.value = 'tresen'
   verwaltenTab.value = 'mannschaft'
   historyMitglied.value = null
@@ -1092,7 +1092,7 @@ async function einschalten() {
   saving.value = true
   try {
     await api.post(`${BASE}/teams/${team.mannschaft_id}`, {})
-    $q.notify({ type: 'positive', message: 'Teamtresor eingeschaltet', timeout: 1200 })
+    $q.notify({ type: 'positive', message: 'Teamkasse eingeschaltet', timeout: 1200 })
     await refreshAll()
   } catch (e) {
     fehler(e, 'Einschalten fehlgeschlagen')
@@ -1497,8 +1497,8 @@ async function saveStammdaten() {
 // Admin: kompletter Soft-Delete (über den Papierkorb wiederherstellbar).
 function loeschen() {
   $q.dialog({
-    title: 'Teamtresor löschen',
-    message: `Den Teamtresor „${deckel.value.name}" komplett löschen? ` +
+    title: 'Teamkasse löschen',
+    message: `Die Teamkasse „${deckel.value.name}" komplett löschen? ` +
       'Buchungen, Katalog, Warte und Beiträge werden entfernt. ' +
       'Als Admin kannst du ihn über den Papierkorb wiederherstellen.',
     cancel: true,
@@ -1506,7 +1506,7 @@ function loeschen() {
   }).onOk(async () => {
     try {
       await api.delete(`${BASE}/${deckel.value.id}`)
-      $q.notify({ type: 'positive', message: 'Teamtresor gelöscht', timeout: 1500 })
+      $q.notify({ type: 'positive', message: 'Teamkasse gelöscht', timeout: 1500 })
       deckel.value = null
       await refreshAll()
     } catch (e) {
@@ -1515,18 +1515,18 @@ function loeschen() {
   })
 }
 
-// Admin: einen gelöschten Teamtresor aus dem Papierkorb wiederherstellen.
+// Admin: eine gelöschte Teamkasse aus dem Papierkorb wiederherstellen.
 function wiederherstellen(eintrag) {
   $q.dialog({
-    title: 'Teamtresor wiederherstellen',
-    message: `Den gelöschten Teamtresor von „${eintrag.mannschaft_name}" ` +
+    title: 'Teamkasse wiederherstellen',
+    message: `Die gelöschte Teamkasse von „${eintrag.mannschaft_name}" ` +
       'komplett wiederherstellen (inkl. Buchungen, Katalog, Warte)?',
     cancel: true,
     ok: { label: 'Wiederherstellen', color: 'primary', noCaps: true },
   }).onOk(async () => {
     try {
       await api.post(`${BASE}/papierkorb/${eintrag.id}/restore`)
-      $q.notify({ type: 'positive', message: 'Teamtresor wiederhergestellt', timeout: 1500 })
+      $q.notify({ type: 'positive', message: 'Teamkasse wiederhergestellt', timeout: 1500 })
       selectedTeamId.value = eintrag.mannschaft_id
       await refreshAll()
     } catch (e) {

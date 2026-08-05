@@ -1,4 +1,4 @@
-"""Ledger des Teamtresors (#98): clubdeckel_buchung.
+"""Ledger der Teamkasse (#98): clubdeckel_buchung.
 
 Eine Zeile pro Vorgang und Mitglied; Saldo je Mitglied = SUM(betrag) über aktive
 Zeilen, Team-Saldo = −Σ Mitgliedssalden. Konventionen:

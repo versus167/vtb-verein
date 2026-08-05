@@ -1,4 +1,4 @@
-"""Wart-ACL des Teamtresors (#98): clubdeckel_berechtigung.
+"""Wart-ACL der Teamkasse (#98): clubdeckel_berechtigung.
 
 Ein Wart darf Katalog/Preise pflegen und zwischen Membern umbuchen — ernannt von
 den Kader-Verwaltern (uebungsleiter/betreuer), gerne auch ein Spieler. Die Zeile
