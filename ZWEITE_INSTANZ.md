@@ -221,6 +221,100 @@ MS-Kachel, dazu ein monochromes `safari-pinned-tab.svg`) plus Favicons und
 
 Tendenz: der pragmatische Weg.
 
+### Branding-Ordner für Mail und Icons — entschieden (2026-08-05)
+
+**Der pragmatische Weg wird gebaut**, und zwar für Icons *und* Mail-Layout
+gemeinsam: ein Verzeichnis `branding/`, Pfad aus `VTB_BRANDING_PATH` (Default
+`./branding`), im Docker als Volume gemountet — bewusst **nicht** im Image,
+damit ein Image für alle Instanzen reicht. Ist der Ordner leer, läuft die App
+mit neutralen Standards weiter.
+
+Beim Nachsehen im Code (2026-08-05) zeigte sich, dass der Zuschnitt kleiner ist
+als im Absatz oben angenommen: Die Icon-Referenzen heißen **bereits neutral**
+(`favicon.ico`, `apple-touch-icon.png`, `icon-512x512.png`,
+`mstile-150x150.png`). Der einzige Dateiname mit VTB darin ist
+`vtb-wappen-512.png`, und den benutzt ausschließlich das Mail-Layout. Es muss
+also fast nichts umbenannt werden.
+
+**Icons.** Das Backend mountet `/icons` schon heute (`backend/main.py`, Mount
+auf `frontend_dist/icons`). Daraus wird eine Schicht, die zuerst im
+Branding-Ordner sucht und sonst auf das Ausgelieferte zurückfällt — **Fallback
+je Datei, nicht alles-oder-nichts**. Das ist der wichtigste Punkt am Entwurf:
+Sonst reicht ein vergessenes `apple-icon-180x180.png` und das PWA-Manifest ist
+kaputt. So legt ein Verein nur ab, was er hat.
+
+**Mail.** Hier entscheidet der Ordner über die Bauform:
+
+- Logo im Branding-Ordner vorhanden → heutiges Layout mit Bild und
+  Vereinsfarben.
+- Nichts da → **vereinfachte Mail**: kein Bild, neutrale Typografie,
+  Vereinsname als Text. Besser ein schlichter Brief als ein fremdes Wappen.
+
+Die Texte in `email_service.py` („VTB Chemnitz" im Kopf, Signatur „VTB
+Vereinsverwaltung", Betreff „Login-Link für VTB Vereinsverwaltung") kommen
+künftig aus `VEREIN_NAME`/`VEREIN_KURZ` — die Werte stehen längst in der
+Konfiguration, sie werden dort nur nicht benutzt. Die beiden Mail-Farben
+(`_VTB_BLAU`, `_VTB_GELB`) werden Env-Werte mit neutralen Defaults; in der Mail
+ist das billig, weil sie zur Laufzeit entsteht. Das SPA-Theme bleibt außen vor
+— das ist der SCSS-/Build-Zeit-Brocken aus dem Farben-Abschnitt.
+
+**Bewusst nicht in den Ordner:** Texte oder Templates als Dateien. Das wird
+schnell ein zweites Template-System mit eigenem Wartungsbedarf. Name und Kürzel
+aus der Env genügen, alles andere bleibt Code.
+
+**Zwei Fallstricke:**
+
+- Im Dev-Server kommen die Icons aus `frontend/public/`, nicht vom Backend. Die
+  Überlagerung greift nur im echten Betrieb, wo das Backend die SPA ausliefert —
+  lokal sieht man also weiter die VTB-Icons.
+- Das ausgelieferte Standard-Logo ist heute das VTB-Wappen. Für eine neutrale
+  Auslieferung müsste es ein neutrales Platzhalterbild werden — oder gar keins,
+  dann greift automatisch die vereinfachte Mail.
+
+Aufwandsverhältnis: Der Mail-Umbau ist der größere Teil (Layout plus drei
+Mailtypen, Tests gegen feste Strings), die Icon-Überlagerung ist ein Mount und
+ein Dateiname. Umsetzung gehört auf einen eigenen Branch von `master`.
+
+## Stand der Umsetzung (2026-08-05)
+
+Auf diesem Branch (`feature/linear-import`) liegt bereits:
+
+- **Neutrale Seed-Daten** — je ein Bereich und eine Kategorie „Allgemein", eine
+  Funktion „Vorstand" (`vtb_verein/app/db/database.py::_seed_data`). Folge: Die
+  Blöcke, die Rechte an `uebungsleiter`/`abteilungsleiter` hängen, laufen frisch
+  ins Leere; auf einer neuen Instanz vergibt der Admin die Funktionsrechte über
+  die Oberfläche.
+- **Kopfzeile und Browser-Tab** ziehen das Kürzel aus `/api/app-info`
+  (`frontend/src/layouts/MainLayout.vue`) statt „VTB" fest zu verdrahten.
+  Solange nichts geladen ist, bleibt das Präfix weg.
+- **„Teamtresor" heißt „Teamkasse"** (nur die Bezeichnung; `clubdeckel` und die
+  Rechte-Keys bleiben).
+
+Noch offen und weiterhin VTB-fest: Login-Seite („VTB Chemnitz" + Wappen),
+Mail-Layout (siehe Branding-Ordner), Farben in `quasar.variables.scss` und
+`app.scss`, PWA-Manifest (`src-pwa/manifest.json`: Name und Kurzname).
+
+## Testinstanz lokal starten
+
+Frischer Aufbau gegen eine leere DB — damit lässt sich der Seed-Stand
+anschauen, ohne eine gewachsene Instanz anzufassen:
+
+```bash
+docker start vtb-pg-test                     # postgres:18, Port 5432, User/PW vtb
+docker exec vtb-pg-test psql -U vtb -d postgres -c "CREATE DATABASE frischstart;"
+
+VTB_DATABASE_URL="postgresql://vtb:vtb@localhost:5432/frischstart" \
+VTB_PORT=8000 VTB_COOKIE_SECURE=false \
+VTB_VEREIN_KURZ="BSC" VTB_VEREIN_NAME="BSC Rapid Kappel" \
+  ./venv/bin/python -m backend.main            # Schema + Seeds entstehen beim Start
+
+cd frontend && npx quasar dev                  # Port 9000, Proxy auf 8000 (Node 22)
+```
+
+Login `admin` / `admin123` (der Standard-Admin aus dem Seed). `VTB_VEREIN_NAME`
+wirkt derzeit nur in PDF-Belegen — in der Oberfläche ist bisher allein das
+Kürzel sichtbar.
+
 ## Offene Fragen
 
 - Läuft die zweite Instanz auf **demselben Host** oder getrennt? Auf demselben
