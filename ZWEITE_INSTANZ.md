@@ -395,10 +395,8 @@ ein fremdes Wappen auf der Login-Seite oder ein fehlgeschlagener Import nicht.
 
 **Woche 1 — das Unverzichtbare**
 
-1. **Schema-Diff Frischaufbau gegen Migration.** Leere DB gegen durchmigrierte
-   DB, Strukturvergleich. Klein, unabhängig, und das einzige Risiko auf der
-   Liste, das erst beim Aufsetzen auffällt und dann teuer ist: `_create_tables`
-   & Co. sind bisher nur in Tests gelaufen.
+1. ~~**Schema-Diff Frischaufbau gegen Migration.**~~ **Erledigt am 2026-08-06**
+   (s. u.) — zwei Abweichungen gefunden und mit Schema v87 eingeebnet.
 2. **Neutraler Icon-Satz** als Auslieferungs-Standard (ersetzt den
    Wappen-basierten Satz in `frontend/public/`, Namen bleiben).
 3. **Branding-Ordner** (`VTB_BRANDING_PATH`): Überlagerung mit Fallback je Datei
@@ -431,6 +429,42 @@ Hand liegt. Bisher gibt es nur den Muster-Auszug; die vier offenen Fragen im
 Bestand, einmalig oder wiederholt) lassen sich erst daran beantworten. Der
 Parser entsteht deshalb gegen das Muster — er muss aber **spätestens am
 17.08.** echte Daten gesehen haben, sonst ist der Import am Starttag ungeprüft.
+
+## Schema-Diff: Ergebnis (2026-08-06)
+
+Verglichen wurde eine frisch aufgebaute DB gegen das gewachsene Schema der
+Dev-DB (Katalog-Abzug: Spalten, Constraints, Indexe, Trigger, Funktionsrümpfe
+mit normalisiertem Whitespace). Von ~2.690 Katalogzeilen wichen **zehn** ab —
+davon vier reine Einrückung. Übrig blieben zwei echte Funde, beide mit **v87**
+behoben:
+
+**1. Audit-Trigger ohne SEPA-Spalten (betraf die Produktivinstanz).**
+v78→v79 hat `sepa_glaeubiger_id/-name/-iban/-bic` an `fibu_einstellungen` und
+deren History gehängt, die Audit-Funktionen aber nicht neu erzeugt — dort stand
+noch die Fassung aus v62→v63. Folge: Änderungen an den Gläubiger-Angaben landen
+zwar in `fibu_einstellungen_history`, die fünf SEPA-Spalten bleiben dort aber
+NULL. Kein Fehler, keine Warnung, nur eine still unvollständige Historie. Der
+Frischaufbau war korrekt, weil er dieselbe Konstante nutzt — genau deshalb
+konnte das nur der Vergleich beider Pfade zeigen. Alte History-Zeilen lassen
+sich nicht nachfüllen; ab v87 wird wieder vollständig mitgeschnitten.
+
+**2. Zwei Indexe fehlten im Frischaufbau (hätte Instanz B getroffen).**
+`idx_ticket_teilnehmer_deleted_at` und `idx_ticket_teilnehmer_history_id`
+entstanden nur in v43→v44, nicht in `_create_indexes`. Gewachsene DBs haben sie,
+frisch aufgesetzte nie — also genau der Fall, um den es hier geht. Sie liegen
+jetzt als geteilte Konstante `_TICKET_TEILNEHMER_INDEXES` in beiden Pfaden.
+
+**Dauerhafte Absicherung:**
+`vtb_verein/tests/test_audit_trigger_spalten_integration.py` prüft für jede
+`*_history`-Tabelle, dass die Audit-Funktion jede Spalte mitschreibt, die es
+auch in der Live-Tabelle gibt. Eine künftig vergessene Spalte fällt damit sofort
+auf, egal in welcher Migration sie entsteht. (History-Spalten ohne Gegenstück in
+der Live-Tabelle sind ausgenommen — `mitglied_history.email/telefon` etwa sind
+Altbestand aus der Kontakt-Umstellung in v74 und halten nur alte Zeilen lesbar.)
+
+Nach dem Fix bleibt zwischen beiden Pfaden nur noch eine
+Einrückungs-Variante in `fn_mitglied_mannschaft_audit_*` — identische
+Spaltenliste, semantisch gleich.
 
 ## Offene Fragen
 

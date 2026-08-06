@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 86
+SCHEMA_VERSION = 87
 
 
 # ---------------------------------------------------------------------------
@@ -2841,6 +2841,13 @@ _TICKET_ZUGRIFF_LOG_INDEXES = (
     ("idx_ticket_zugriff_log_created", "ticket_zugriff_log(created_at)"),
 )
 
+# Entstanden in v43→v44, im Frischaufbau aber lange vergessen (s. v86→v87):
+# geteilte Konstante, damit beide Pfade dieselben Indexe anlegen.
+_TICKET_TEILNEHMER_INDEXES = (
+    ("idx_ticket_teilnehmer_deleted_at",  "ticket_teilnehmer(deleted_at)"),
+    ("idx_ticket_teilnehmer_history_id",  "ticket_teilnehmer_history(id)"),
+)
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -2974,6 +2981,7 @@ class Database:
             84: self._migrate_v83_to_v84,
             85: self._migrate_v84_to_v85,
             86: self._migrate_v85_to_v86,
+            87: self._migrate_v86_to_v87,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6454,6 +6462,35 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 86 WHERE id = 1")
 
+    def _migrate_v86_to_v87(self) -> None:
+        """Zwei Abweichungen zwischen Frischaufbau und gewachsenem Schema einebnen.
+
+        Beim Schema-Diff (leere DB gegen durchmigrierte DB) aufgefallen:
+
+        1. `fn_fibu_einstellungen_audit_insert/update` kennen auf migrierten DBs die
+           SEPA-Spalten nicht. v78→v79 hat `sepa_glaeubiger_id/-name/-iban/-bic` an
+           `fibu_einstellungen` und die History gehängt, aber die Audit-Funktionen nicht
+           neu erzeugt — die stammen dort noch aus v62→v63. Folge: Änderungen an den
+           Gläubiger-Angaben landen zwar in `fibu_einstellungen_history`, die fünf
+           SEPA-Spalten bleiben dort aber NULL. Der Frischaufbau ist korrekt, weil er
+           die Konstante nutzt; nur Bestands-DBs tragen die alte Fassung.
+        2. `idx_ticket_teilnehmer_deleted_at` und `idx_ticket_teilnehmer_history_id`
+           entstehen nur in v43→v44, nicht in `_create_indexes`. Umgekehrter Fall:
+           gewachsene DBs haben sie, frisch aufgesetzte nie. `_create_indexes` ist
+           mitgezogen; hier stehen sie für DBs, die irgendwann frisch angelegt wurden.
+
+        Beides idempotent (CREATE OR REPLACE bzw. IF NOT EXISTS). Alte History-Zeilen
+        werden nicht nachgefüllt — was beim Schreiben nicht mitgeschnitten wurde, lässt
+        sich nachträglich nicht rekonstruieren.
+        """
+        with self.cursor() as cur:
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+            for name, ziel in _TICKET_TEILNEHMER_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {ziel}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 87 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8720,6 +8757,7 @@ class Database:
             ("idx_ticket_anhaenge_deleted_at",                      "ticket_anhaenge(deleted_at)"),
             ("idx_ticket_teilnehmer_ticket_id",                     "ticket_teilnehmer(ticket_id)"),
             ("idx_ticket_teilnehmer_user_id",                       "ticket_teilnehmer(user_id)"),
+            *_TICKET_TEILNEHMER_INDEXES,
             ("idx_ticket_bereich_berechtigungen_bereich_id",        "ticket_bereich_berechtigungen(bereich_id)"),
             ("idx_ticket_bereich_berechtigungen_user_id",           "ticket_bereich_berechtigungen(user_id)"),
             ("idx_ticket_bereich_berechtigungen_deleted_at",        "ticket_bereich_berechtigungen(deleted_at)"),
