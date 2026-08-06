@@ -61,6 +61,13 @@ docker compose up -d --build
 **Lokal:** eine erreichbare PostgreSQL-Instanz bereitstellen und
 `VTB_DATABASE_URL` setzen (Details in der [README](README.md#option-2-lokale-entwicklung)).
 
+**Zum Port:** `VTB_PORT` meint im Compose-Stack den Port auf dem *Host* — der
+Container lauscht immer auf 8000, das steht fest im Dockerfile. Beim direkten
+Start (`python -m backend.main`) ist es dagegen der Port der App selbst. Wer den
+Wert ändert und im Container nichts anders vorfindet, sucht sonst länger.
+`BASE_URL` muss in beiden Fällen die Adresse tragen, unter der Nutzer die App
+erreichen — hinter einem Reverse-Proxy also dessen Adresse.
+
 Schema und Startdaten entstehen **beim ersten Verbinden automatisch**; spätere
 Updates migrieren beim Start ebenso automatisch. Im Log steht, was passiert ist:
 
@@ -134,6 +141,48 @@ ihren Rechten, sonst kann niemand ÜL-Stunden erfassen oder Rechnungen freigeben
 Die **Fibu-Einstellungen** (Debitor-Konto-Basis, Kostenstellen, Berater-/Mandanten-
 nummer) und die **SEPA-Gläubigerdaten** stehen ebenfalls in der App, nicht in der
 `.env`.
+
+## Update einer bestehenden Instanz
+
+Diese Anleitung beschreibt den Weg für eine *neue* Instanz. Eine bereits laufende
+braucht beim Update auf diesen Stand zwei Handgriffe, die vorher unnötig waren —
+beide, weil die App vereinsneutral geworden ist und Werte nicht mehr errät, die
+früher fest im Code standen.
+
+**1. Vereins-Stammdaten in die `.env` eintragen.** Die Defaults waren bis hierher
+die Daten des VTB; jetzt sind es erkennbare Platzhalter. Eine `.env` ohne diese
+Zeilen führt nach dem Update dazu, dass die Instanz sich überall „Beispielverein"
+nennt — Login-Seite, Kopfzeile, Mail-Betreff und PDF-Belege inklusive Anschrift.
+Betroffen sind `VTB_VEREIN_NAME`, `VTB_VEREIN_KURZ`, `VTB_VEREIN_STRASSE`,
+`VTB_VEREIN_PLZ_ORT`, `VTB_VEREIN_REGISTRIER_NR` (s. Schritt 5).
+
+**2. Image neu bauen, nicht nur neu starten.** Der Branding-Ordner liegt im Image;
+`docker compose up -d` allein zieht ihn nicht mit:
+
+```bash
+docker compose up -d --build
+```
+
+Ohne `VTB_BRANDING_PATH` zeigt die App die neutrale Wortmarke statt des
+Vereinswappens — die Icons sind dann nicht kaputt, nur unbeschriftet. Der
+Compose-Stack setzt die Variable bereits auf `/app/branding/vtb`.
+
+**Vorher ein Backup.** Migrationen laufen beim Start automatisch, ohne Rückfrage
+und ohne Weg zurück. Gesichert gehören Datenbank **und** `uploads/`.
+
+## Fehler melden
+
+Für Fehler und Wünsche an der **Software** gibt es
+[GitHub Issues](https://github.com/versus167/vtb-verein/issues).
+
+Wichtig zu wissen: Die **Feedback-Funktion in der App** legt ein Ticket in der
+*eigenen* Instanz an. Für Vereinsanliegen ist das richtig — eine Meldung über die
+Software erreicht damit aber niemanden außerhalb des eigenen Vereins. Solche
+Meldungen gehören auf GitHub.
+
+Den Link zum Quellcode dieser Fassung trägt die App selbst (Menü-Fußzeile, aus
+`/api/app-info`); das erfüllt zugleich AGPL §13. Wer eine veränderte Fassung
+betreibt, muss dort über `VTB_SOURCE_URL` die eigene Quelle eintragen.
 
 ## Checkliste
 
