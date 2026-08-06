@@ -22,6 +22,16 @@ $vtb-blau-btn-dark: #1a4fae; // Primär-Buttons im Dark Mode (satter, hebt sich 
 // Töne für den gelben Hell-Modus ("VTB-Look": blaue Flächen auf Vereinsgelb)
 $vtb-blau-tief: #022a68; // Drawer/abgesenkte Flächen (dunkles Ende des Login-Gradients)
 
+// Töne für das neutrale Theme "Hell" (#131): weiße Flächen auf hellem Grau,
+// dunkle Schrift — blau und gelb nur noch als Akzent. Bewusst leicht blau
+// unterlegte Graustufen, damit auch das helle Theme nach Verein aussieht.
+$vtb-hell-page: #eef1f7; // Seitenhintergrund (Karten heben sich als Weiß ab)
+$vtb-hell-flaeche: #fff; // Karten, Dialoge, Tabellen, Menü
+$vtb-hell-hoch: #e3e8f2; // erhöhte/abgesetzte Flächen: Chips, Zebra, Hover
+$vtb-hell-linie: #d5dbe8; // Trennlinien, Rahmen
+$vtb-hell-text: #1b2437; // Fließtext (nicht reines Schwarz)
+$vtb-hell-text-schwach: #5c6880; // Captions, Hinweise, Sekundärtext
+
 // Quasar-Markenfarben
 $primary: $vtb-blau;
 $secondary: #26a69a; // Quasar-Default

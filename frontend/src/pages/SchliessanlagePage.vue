@@ -1388,11 +1388,12 @@ body.body--dark {
   }
 }
 
-/* VTB-Look Hell-Modus: Karten/Dialoge sind Wappenblau (app.scss) — die für
-   weiße Karten gedachten Grau-/Tint-Töne dort aufhellen (wie im Dark Mode).
-   Die Pills im Seitenkopf liegen dagegen direkt auf dem gelben Grund und
-   behalten kräftige dunkle Farben. */
-body:not(.body--dark) {
+/* Theme „VTB": Karten/Dialoge sind Wappenblau (app.scss) — die für weiße
+   Karten gedachten Grau-/Tint-Töne dort aufhellen (wie im Dark Mode). Die
+   Pills im Seitenkopf liegen dagegen direkt auf dem gelben Grund und behalten
+   kräftige dunkle Farben. Das Theme „Hell" braucht nichts davon: die
+   scoped-Grundstile oben sind für weiße Karten gemacht. */
+body.vtb-theme--vtb {
   /* Elemente, die immer auf blauen Flächen sitzen (Karten & Dialoge) */
   .schl-icon {
     background: rgba(255, 255, 255, 0.12);

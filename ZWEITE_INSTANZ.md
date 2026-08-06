@@ -43,8 +43,14 @@ bekommt einen Mischmasch:
 2. **Theme**: `frontend/src/css/app.scss` — der „VTB-Look" (blaue Flächen auf
    Vereinsgelb) und der Dark Mode sind ~500 Zeilen, die auf genau diesen zwei
    Farben aufbauen. Ein Verein mit Rot/Weiß bekommt hier echte Arbeit, kein
-   Variablen-Tausch. (Hängt mit Ticket #131 zusammen: ein neutraleres Theme
-   würde die zweite Instanz billiger machen.)
+   Variablen-Tausch.
+
+   **Entschärft durch Ticket #131:** Es gibt jetzt drei Themes, und das dritte
+   („Hell") ist praktisch vereinsneutral — weiße Karten auf hellem Grau, die
+   Marke nur als Akzent (Kopfzeile, Aktivmarken, Fokusringe). Sein Block in
+   `app.scss` ist kurz und zieht seine Farben ausschließlich aus den zwei
+   Markenvariablen; der VTB-Look bleibt der teure Teil, den eine zweite Instanz
+   aber weglassen kann (Auswahl in `useTheme.js` kürzen).
 3. **Mail-Layout**: `vtb_verein/app/services/email_service.py` — eigene
    Hex-Konstanten (`_VTB_BLAU`, `_VTB_GELB`), Wappen-URL, „VTB Chemnitz" in
    Kopf und Signatur, Betreffzeilen („Login-Link für VTB Vereinsverwaltung").

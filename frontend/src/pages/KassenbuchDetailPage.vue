@@ -682,9 +682,10 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
 import { formatDate, formatDateTime } from 'src/utils/datetime'
+import { aktivesTheme } from 'src/composables/useTheme'
 
-const $q = useQuasar()
 const route = useRoute()
+const $q = useQuasar()
 const auth = useAuthStore()
 
 const kasseId = computed(() => Number(route.params.kasseId))
@@ -855,14 +856,20 @@ const latestExportId = computed(() =>
 )
 
 function rowBgStyle(row) {
-  // Die Tabelle ist in BEIDEN Themes dunkel-flächig mit heller Schrift
-  // (Hell-Modus: Wappenblau, Dark-Mode: Navy). Die Zeilentönung muss darum
-  // immer dunkel sein – helle Pastelltöne ergäben helle Schrift auf hellem
-  // Grund (Ticket #122, betraf nur die Desktop-Tabelle: Inline-Styles werden
-  // vom bg-*-1-Remap in app.scss nicht erfasst, die mobilen Cards nutzen die
-  // Klassen und waren korrekt). Werte spiegeln jene Remaps, damit Desktop-
-  // Zeilen und Mobile-Cards gleich wirken.
-  const dark = $q.dark.isActive
+  // Zeilentönung je Theme (#131). In „VTB" (Wappenblau) und „Dunkel" (Navy) ist
+  // die Tabelle eine dunkle Fläche mit heller Schrift – dort müssen auch die
+  // Zeilen dunkel sein, helle Pastelltöne ergäben helle Schrift auf hellem Grund
+  // (Ticket #122, betraf nur die Desktop-Tabelle: Inline-Styles werden vom
+  // bg-*-1-Remap in app.scss nicht erfasst, die mobilen Cards nutzen die Klassen
+  // und waren korrekt). Im Theme „Hell" ist die Tabelle weiß mit dunkler Schrift
+  // – dort die Original-Pastelltöne. Werte spiegeln jeweils die Klassen der
+  // mobilen Cards (bg-grey-1/green-1/red-1), damit beide Ansichten gleich wirken.
+  if (aktivesTheme.value === 'hell') {
+    if (row.deleted_at) return { backgroundColor: '#fafafa' }
+    if (row.einnahme_cent > 0) return { backgroundColor: '#e8f5e9' }
+    return { backgroundColor: '#ffebee' }
+  }
+  const dark = aktivesTheme.value === 'dunkel'
   if (row.deleted_at) return { backgroundColor: dark ? '#101d38' : '#0b4099' }
   if (row.einnahme_cent > 0) return { backgroundColor: '#0f3123' }
   return { backgroundColor: '#3a1a24' }

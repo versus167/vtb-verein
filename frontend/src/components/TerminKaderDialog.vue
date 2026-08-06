@@ -193,10 +193,12 @@ async function setFuer(p, key) {
 
 <style lang="scss" scoped>
 // ── Gesetzte Antwort farblich markieren (#151) ────────────────────────────
-// Nicht $positive/$negative direkt: die Flächen sind in beiden Modi dunkelblau
-// (Wappenblau im Hell-Look, Navy im Dark Mode), darauf saufen die satten Töne
-// ab — daher die aufgehellten Varianten aus quasar.variables.scss. Die übrigen
+// Nicht $positive/$negative direkt: in den Themes „VTB" und „Dunkel" sind die
+// Flächen dunkelblau (Wappenblau bzw. Navy), darauf saufen die satten Töne ab —
+// daher die aufgehellten Varianten aus quasar.variables.scss. Die übrigen
 // Daumen deutlich gedimmt, sonst hebt sich die Auswahl kaum ab.
+// Im Theme „Hell" ist der Dialog weiß: dort genau umgekehrt kräftige dunkle
+// Töne, die hellen wären auf Weiß kaum zu sehen (Block unten).
 //
 // Die Farbe muss ans Icon selbst (:deep + !important): app.scss färbt
 // `.q-item .q-icon` auf blauen Flächen pauschal weiß — gegen diese Regel am
@@ -216,6 +218,22 @@ async function setFuer(p, key) {
     color: rgba(255, 255, 255, 0.38) !important;
   }
 }
+// Theme „Hell": weißer Dialog — dunkle Statustöne, gedimmte Daumen dunkelgrau
+body.vtb-theme--hell .kader-antwort {
+  &--zu :deep(.q-icon) {
+    color: #1b7c3d !important;
+  }
+  &--vielleicht :deep(.q-icon) {
+    color: #8a6d00 !important;
+  }
+  &--ab :deep(.q-icon) {
+    color: #b3001b !important;
+  }
+  &--aus :deep(.q-icon) {
+    color: rgba(0, 0, 0, 0.38) !important;
+  }
+}
+
 .kader-dialog__name {
   font-size: 15px;
 }

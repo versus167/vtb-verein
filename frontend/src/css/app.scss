@@ -9,10 +9,10 @@
 
 // ── Navigations-Drawer in Vereinsfarben ──────────────────────────────────────
 //
-// Light Mode: weißes Menü mit blauen Icons, aktiver Punkt mit gelbem Balken
-// und zarter Gelb-Tönung (Gelb als Akzent, nicht als Fläche). Dark Mode:
-// Navy-Menü, aktiver Punkt gelb — spiegelbildlich. Der aktive Zustand kommt
-// aus MainLayout.vue über active-class="vtb-nav-active".
+// Je Theme (#131): VTB-Look = blaues Menü auf gelbem Grund, Dark Mode =
+// Navy-Menü, Hell = weißes Menü mit blauen Icons. In allen dreien markiert ein
+// gelber Balken den aktiven Punkt. Der aktive Zustand kommt aus MainLayout.vue
+// über active-class="vtb-nav-active"; die Theme-Klasse setzt useTheme.js.
 
 // Wappen-Home-Feld ganz oben im Menü: führt die blaue Header-Leiste nahtlos
 // im Menü weiter (gleiche Höhe 50px, gleiche Farbe) — wirkt wie EIN durch-
@@ -219,11 +219,11 @@ body.body--dark .vtb-karte--aktiv {
   width: 38px;
   height: 38px;
 }
-body:not(.body--dark) .vtb-icon {
+body.vtb-theme--vtb .vtb-icon {
   background: rgba(255, 255, 255, 0.12);
   color: $vtb-gelb;
 }
-body:not(.body--dark) .vtb-icon--aus {
+body.vtb-theme--vtb .vtb-icon--aus {
   background: rgba(255, 255, 255, 0.08);
   color: #9fb0cc;
 }
@@ -246,7 +246,7 @@ body.body--dark .vtb-icon--aus {
   white-space: nowrap;
 }
 // Hell: auf dem gelben Seitengrund kräftige dunkle Töne …
-body:not(.body--dark) {
+body.vtb-theme--vtb {
   .vtb-pill {
     background: rgba($vtb-blau, 0.1);
     color: $vtb-blau;
@@ -415,7 +415,8 @@ body.body--dark .vtb-foto-thumb {
 // Der Bereich um das Modal wird abgedunkelt und leicht weichgezeichnet (der
 // „Fokus-Effekt" moderner Oberflächen), das Modal selbst bekommt einen gelben
 // Rahmen im VTB-Look. Gilt für alle q-dialoge (Feedback, Bestätigungen, Formular-
-// Dialoge) in beiden Modi. Menüs (q-menu) sind keine Dialoge und bleiben außen vor.
+// Dialoge) in allen drei Themes. Menüs (q-menu) sind keine Dialoge und bleiben
+// außen vor.
 .q-dialog__backdrop {
   background: rgba($vtb-blau-tief, 0.6); // dunkles Wappen-Navy statt neutralem Schwarz
   backdrop-filter: blur(3px);
@@ -507,7 +508,7 @@ body.body--dark {
 // Inhaltsfläche im Hellmodus in Vereinsgelb — der "VTB-Look" wie auf der
 // Login-Seite und in den System-E-Mails: gelber Grund, blaue Flächen.
 // Text, der direkt auf dem Gelb liegt, ist Wappenblau.
-body:not(.body--dark) .q-page-container {
+body.vtb-theme--vtb .q-page-container {
   background: $vtb-gelb;
   color: $vtb-blau;
 }
@@ -520,7 +521,7 @@ body:not(.body--dark) .q-page-container {
 }
 
 // Im Hellmodus liegt die Begrüßung auf Gelb → Unterstrich in Blau
-body:not(.body--dark) .dashboard-gruss {
+body.vtb-theme--vtb .dashboard-gruss {
   border-bottom-color: $vtb-blau;
 }
 
@@ -535,7 +536,7 @@ body:not(.body--dark) .settings-tile:hover {
 
 // Hover-/Fokus-Effekt im Menü (der Overlay nutzt die Farbe des
 // .q-focus-helper, die Deckkraft steuert Quasar selbst)
-body:not(.body--dark) .q-drawer .q-item .q-focus-helper {
+body.vtb-theme--vtb .q-drawer .q-item .q-focus-helper {
   background: #fff;
 }
 body.body--dark .q-drawer .q-item .q-focus-helper {
@@ -545,7 +546,7 @@ body.body--dark .q-drawer .q-item .q-focus-helper {
 // Blaues Menü auf gelbem Grund — Gegenstück zum Navy-Menü im Dark Mode.
 // Das Wappen-Home-Feld behält das hellere Wappenblau des Headers und hebt
 // sich dadurch vom tieferen Menü-Blau ab.
-body:not(.body--dark) .q-drawer {
+body.vtb-theme--vtb .q-drawer {
   background: $vtb-blau-tief;
   color: #fff;
 
@@ -577,13 +578,13 @@ body.body--dark .vtb-nav-active {
   }
 }
 
-// ── VTB-Look Hell-Modus ──────────────────────────────────────────────────────
+// ── Theme „VTB" ──────────────────────────────────────────────────────────────
 //
-// Der Hell-Modus trägt die Vereinsfarben als Fläche — wie Login-Seite und
+// Der VTB-Look trägt die Vereinsfarben als Fläche — wie Login-Seite und
 // System-E-Mails: Vereinsgelb als Seitengrund, Wappenblau für Inhaltsflächen
 // (Karten, Tabellen, Dialoge, Menüs), Gelb als Akzent auf Blau. Struktur
 // analog zum Dark-Mode-Block unten. Die Login-/Magic-Link-Karte hat ihr
-// eigenes, modus-unabhängiges Design und bleibt außen vor.
+// eigenes, theme-unabhängiges Design und bleibt außen vor.
 //
 // Farbschema:
 //   Seitenhintergrund  $vtb-gelb           (#feeb03)
@@ -594,7 +595,7 @@ body.body--dark .vtb-nav-active {
 //   Text auf Gelb      $vtb-blau
 //   Akzente auf Blau   $vtb-gelb
 
-body:not(.body--dark) {
+body.vtb-theme--vtb {
   // Inhaltsflächen: Wappenblau mit weißem Text
   .q-card:not(.login-card),
   .q-menu,
@@ -784,6 +785,12 @@ body:not(.body--dark) {
     .q-item__label--caption {
       color: rgba(255, 255, 255, 0.65);
     }
+    // Überschriften in Listen/Menüs (q-item-label header) bringen ihr eigenes
+    // Dunkelgrau mit — auf Wappenblau kaum lesbar (z. B. „Erscheinungsbild" im
+    // Theme-Menü).
+    .q-item__label--header {
+      color: rgba(255, 255, 255, 0.7);
+    }
 
     // Status-/Betragsfarben, die auf Wappenblau absaufen würden
     .text-negative {
@@ -920,6 +927,156 @@ body:not(.body--dark) {
   }
 }
 
+// ── Theme „Hell" ─────────────────────────────────────────────────────────────
+//
+// Neutrale Arbeitsfläche (#131): weiße Karten auf hellem Grau, dunkle Schrift.
+// Die Vereinsfarben bleiben als Akzent — blaue Kopfzeile mit gelbem Querstreifen,
+// gelber Balken am aktiven Menüpunkt, gelber Ring an Kacheln und Dialogen.
+//
+// Kurz, und das mit Absicht: Quasars Standard-Hellmodus IST dieses Theme. Die
+// Umbiege-Regeln der beiden anderen Themes (helle Tints auf dunkle Töne, dunkle
+// Farbtexte aufhellen) entfallen hier komplett — `bg-blue-1 text-blue-10` sieht
+// von Haus aus richtig aus. Was hier steht, ist entweder Marke oder eine
+// Korrektur an Bausteinen, die eine dunkle Fläche unter sich annehmen.
+//
+// Farbschema:
+//   Seitenhintergrund  $vtb-hell-page     (#eef1f7)
+//   Oberflächen        $vtb-hell-flaeche  (#fff — Karten, Dialoge, Tabellen, Menü)
+//   Kopfzeile          $vtb-blau          (Quasar-Default: Primärfarbe)
+//   Erhöhte Flächen    $vtb-hell-hoch     (#e3e8f2 — Zebra, Hover, Chips)
+//   Trennlinie/Rahmen  $vtb-hell-linie    (#d5dbe8)
+//   Text primär        $vtb-hell-text     (#1b2437)
+//   Akzente            $vtb-blau / $vtb-gelb
+
+body.vtb-theme--hell {
+  color: $vtb-hell-text;
+
+  .q-page-container {
+    background: $vtb-hell-page;
+  }
+
+  // Menü weiß mit blauen Icons; der aktive Punkt trägt den gelben Balken und
+  // eine zarte Gelb-Tönung, die Schrift bleibt Wappenblau (nie Text auf Gelb).
+  // Das blaue Wappen-Feld ganz oben bleibt — es führt die Kopfzeile fort.
+  .q-drawer {
+    background: $vtb-hell-flaeche;
+    color: $vtb-hell-text;
+
+    .q-item .q-icon {
+      color: $vtb-blau;
+    }
+
+    .vtb-nav-active {
+      background: rgba($vtb-gelb, 0.22);
+      color: $vtb-blau;
+      font-weight: 600;
+      box-shadow: inset 4px 0 0 0 $vtb-gelb;
+
+      .q-icon {
+        color: $vtb-blau;
+      }
+    }
+  }
+  .q-drawer--bordered {
+    border-right: 1px solid $vtb-hell-linie;
+  }
+  // Versionszeile sitzt hier auf Weiß statt auf Blau
+  .vtb-drawer-version {
+    color: rgba(0, 0, 0, 0.45);
+
+    a {
+      color: rgba(0, 0, 0, 0.6);
+    }
+    a:hover {
+      color: $vtb-blau;
+    }
+  }
+
+  // Karten flach mit feiner Kante statt Schlagschatten — dieselbe ruhige
+  // Flächenwirkung wie im Dark Mode, nur hell.
+  .q-card:not(.login-card) {
+    background: $vtb-hell-flaeche;
+    box-shadow: none;
+    border: 1px solid $vtb-hell-linie;
+  }
+  // Dialoge behalten ihren gelben Rahmen (Regel weiter oben) — die Karten-Kante
+  // eben würde ihn sonst überschreiben.
+  .q-dialog__inner > .q-card {
+    border: 2px solid $vtb-gelb;
+  }
+
+  // Tabellen: Hover in zartem Blau, Auswahl in zartem Gelb
+  .q-table tbody tr:hover td {
+    background: rgba($vtb-blau, 0.05) !important;
+  }
+  .q-table tbody tr.selected td {
+    background: rgba($vtb-gelb, 0.22) !important;
+  }
+
+  // Icon-Scheiben: blaues Icon auf zarter blauer Scheibe (in den dunklen Themes
+  // gelb bzw. hellblau auf dunklem Grund)
+  .vtb-icon {
+    background: rgba($vtb-blau, 0.1);
+    color: $vtb-blau;
+  }
+  .vtb-icon--aus {
+    background: rgba(0, 0, 0, 0.06);
+    color: #8a93a6;
+  }
+
+  // Status-Pills auf heller Fläche: kräftige dunkle Schrift auf zarter Tönung
+  .vtb-pill {
+    background: rgba($vtb-blau, 0.1);
+    color: $vtb-blau;
+  }
+  .vtb-pill--ok {
+    background: rgba(33, 186, 69, 0.18);
+    color: #14652f;
+  }
+  .vtb-pill--achtung {
+    background: rgba(242, 192, 55, 0.35);
+    color: #6d5600;
+  }
+  .vtb-pill--warn {
+    background: rgba(193, 0, 21, 0.12);
+    color: #a30017;
+  }
+
+  // Konto-Menü: weiße Fläche statt blauer — Schrift und Icons dunkel, der
+  // gelbe Kopf wird kräftiger (0.08 auf Weiß wäre nicht zu sehen), und der
+  // aktive Eintrag darf nicht gelb bleiben (gelb auf weiß ist unlesbar).
+  .vtb-konto-kopf {
+    background: rgba($vtb-gelb, 0.3);
+  }
+  .vtb-konto-rolle {
+    color: $vtb-hell-text-schwach;
+  }
+  .vtb-konto-version {
+    color: rgba(0, 0, 0, 0.45);
+  }
+  .vtb-konto-menu .q-item .q-icon {
+    color: $vtb-blau;
+  }
+  .vtb-konto-menu .q-item.q-router-link--active,
+  .vtb-konto-menu .q-item.q-router-link--active .q-icon {
+    color: $vtb-blau;
+    font-weight: 600;
+  }
+  .vtb-konto-abmelden,
+  .vtb-konto-abmelden .q-icon {
+    color: $negative !important;
+  }
+
+  // Feedback-Dialog und Foto-Miniaturen: heller Grund statt blauer
+  .vtb-feedback-icon {
+    background: rgba($vtb-blau, 0.1);
+  }
+  .vtb-feedback-shot,
+  .vtb-foto-thumb {
+    border-color: $vtb-hell-linie;
+  }
+}
+
 // ── Dark Mode Theme ──────────────────────────────────────────────────────────
 //
 // Bläuliches Navy statt Schwarz — alle Töne aus dem Wappenblau abgeleitet
@@ -1002,6 +1159,11 @@ body.body--dark {
   .q-menu {
     box-shadow: none;
     border: 1px solid $vtb-navy-linie;
+  }
+  // Dialoge behalten den gelben Rahmen (Regel weiter oben) — die Navy-Kante
+  // eben ist für Karten in der Seite gedacht und überschrieb ihn bisher.
+  .q-dialog__inner > .q-card {
+    border: 2px solid $vtb-gelb;
   }
   .settings-tile:hover {
     box-shadow: none !important;
