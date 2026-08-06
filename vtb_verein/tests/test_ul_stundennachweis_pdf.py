@@ -10,6 +10,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 
 from app.services.ul_stundennachweis_pdf_service import (
     erstelle_stundennachweis_pdf, _fmt_datum, _fmt_datum_kurz_wt, _kuerzen,
+    _verein_zeile,
 )
 
 
@@ -67,6 +68,14 @@ def test_beleg_mit_erfasser_und_bestaetiger_nachweis():
         bestaetigt_am=datetime(2026, 7, 3, 9, 15, tzinfo=timezone.utc),
     )
     assert pdf[:4] == b'%PDF' and len(pdf) > 1000
+
+
+def test_verein_zeile_ohne_registriernummer():
+    """Ohne Nummer bleibt die Beschriftung weg statt leer zu enden — nicht jeder
+    Verein hat eine, und eine frische Instanz hat sie noch nicht konfiguriert."""
+    assert _verein_zeile(_VEREIN) == 'TV Musterstadt – Registrier-Nr. VR 42'
+    assert _verein_zeile({'name': 'TV Musterstadt'}) == 'TV Musterstadt'
+    assert _verein_zeile({'name': 'TV Musterstadt', 'registrier_nr': '  '}) == 'TV Musterstadt'
 
 
 def test_fmt_datum_akzeptiert_datetime_date_und_iso():

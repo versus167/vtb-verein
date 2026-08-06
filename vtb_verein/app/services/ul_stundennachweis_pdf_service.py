@@ -30,6 +30,15 @@ _DATUM_W = 1.85 * cm
 _STD_W = 0.85 * cm
 
 
+def _verein_zeile(verein: dict) -> str:
+    """Vereinsname mit Registriernummer für die Beleg-Kopfzeile. Ohne Nummer bleibt
+    die Beschriftung weg — nicht jeder Verein hat eine, und eine frische Instanz
+    hat sie noch nicht konfiguriert."""
+    name = (verein.get('name') or '').strip()
+    nr = (verein.get('registrier_nr') or '').strip()
+    return f"{name} – Registrier-Nr. {nr}" if nr else name
+
+
 def _fmt_euro(v) -> str:
     if v is None:
         return '–'
@@ -189,7 +198,9 @@ def erstelle_stundennachweis_pdf(
             ParagraphStyle('hbox', parent=h_addr, leading=12, fontSize=9),
         ),
         [Paragraph('Übungsleiter-Stundennachweis', h_title),
-         Paragraph(f"{verein.get('name', '')} – Registrier-Nr. {verein.get('registrier_nr', '')}", h_sub)],
+         # Ohne Registriernummer bleibt die Beschriftung weg statt leer zu enden –
+         # nicht jeder Verein hat eine (und eine frische Instanz hat sie noch nicht).
+         Paragraph(_verein_zeile(verein), h_sub)],
     ]], colWidths=[9.5 * cm, 8.5 * cm])
     kopf.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
