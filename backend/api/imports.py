@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.models.permission import Permission
 from app.services.spg_import_service import run_import
+from app.services.linear_import_service import run_import as run_linear_import
 from app.services import termin_notification_service as terminmeldung
 from app.services.dfbnet_import_service import (
     dry_run as dfbnet_dry_run,
@@ -35,6 +36,38 @@ async def import_spg(
                             allow_unmatched=allow_unmatched)
     except UnicodeDecodeError:
         raise HTTPException(status_code=422, detail="Datei ist nicht im erwarteten Format (cp1252-CSV)")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
+    return asdict(result)
+
+
+@router.post("/linear")
+async def import_linear(
+    user: CurrentUser,
+    db: DB,
+    file: UploadFile = File(...),
+    commit: bool = Form(False),
+    update: bool = Form(False),
+    allow_unmatched: bool = Form(False),
+):
+    """LINEAR-CSV importieren (Admin). Ohne commit = Dry-Run (schreibt nichts).
+
+    Gleiche Flags wie beim SPG-Import; der Unterschied steckt allein im Parser
+    (Kodierung, Datum mit Uhrzeit, Abteilungen als Kreuz-Spalten).
+    """
+    if not user.has_permission(Permission.SYSTEM_CONFIG):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Nur Administratoren dürfen importieren")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Leere Datei")
+    try:
+        result = run_linear_import(db.conn, data, commit=commit, update=update,
+                                   allow_unmatched=allow_unmatched)
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422,
+                            detail="Datei ist in keiner erwarteten Kodierung lesbar "
+                                   "(UTF-8 oder Windows-1252)")
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
     return asdict(result)

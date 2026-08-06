@@ -1,9 +1,19 @@
 <template>
   <q-page class="q-pa-md">
-    <div class="text-h5 q-mb-md">Datenimport (SPG-Verein)</div>
+    <div class="text-h5 q-mb-md">Datenimport</div>
 
     <q-card flat bordered class="q-mb-md" style="max-width: 720px">
       <q-card-section class="q-gutter-md">
+        <!-- Format zuerst: Die beiden Exporte unterscheiden sich in Kodierung,
+             Datumsformat und darin, wie die Abteilungen kodiert sind — eine
+             Datei im falschen Format ergibt keinen sinnvollen Dry-Run. -->
+        <q-btn-toggle
+          v-model="format"
+          no-caps unelevated spread
+          toggle-color="primary" color="grey-3" text-color="primary"
+          :options="formatOptionen" />
+        <div class="text-caption text-grey-7">{{ formatHinweis }}</div>
+
         <q-file
           v-model="file"
           label="CSV-Export auswählen"
@@ -17,7 +27,7 @@
           <q-toggle v-model="commit" color="negative"
             :label="commit ? 'Schreiben (COMMIT) – Änderungen werden gespeichert' : 'Dry-Run – nur Vorschau, schreibt nichts'" />
           <div>
-            <q-toggle v-model="update" dense label="Bestehende Mitglieder aktualisieren (per Mitgliedsnummer)" />
+            <q-toggle v-model="update" dense :label="updateLabel" />
           </div>
           <div>
             <q-toggle v-model="allowUnmatched" dense
@@ -73,7 +83,7 @@
             <q-item-section>{{ a.name }}</q-item-section>
             <q-item-section side>{{ a.count }} Mitglieder</q-item-section>
           </q-item>
-          <q-item v-if="result.ehrenmitglieder_count">
+          <q-item v-if="result.ehrenmitglieder_count" :key="'ehren'">
             <q-item-section avatar><q-icon name="star" color="amber-8" /></q-item-section>
             <q-item-section>Ehrenmitglieder → Funktion „ehrenmitglied"</q-item-section>
             <q-item-section side>{{ result.ehrenmitglieder_count }}</q-item-section>
@@ -112,8 +122,24 @@
         </div>
       </q-card-section>
 
-      <q-card-section v-if="result.neue_funktionen.length" class="q-pt-none text-caption text-grey-7">
+      <q-card-section v-if="result.neue_funktionen?.length" class="q-pt-none text-caption text-grey-7">
         Neue Funktions-Katalogeinträge: {{ result.neue_funktionen.join(', ') }}
+      </q-card-section>
+
+      <!-- Nur LINEAR: Werte, die nicht gedeutet werden konnten. Sie werden nicht
+           geraten, sondern leer gelassen — hier fallen sie vor dem Commit auf. -->
+      <q-card-section
+        v-if="result.geschlecht_unbekannt || result.status_unbekannt"
+        class="q-pt-none">
+        <q-banner dense class="vtb-warnung">
+          <template #avatar><q-icon name="help_outline" /></template>
+          Nicht gedeutete Werte bleiben leer:
+          <span v-if="result.geschlecht_unbekannt">
+            {{ result.geschlecht_unbekannt }}× Geschlecht</span>
+          <span v-if="result.geschlecht_unbekannt && result.status_unbekannt">, </span>
+          <span v-if="result.status_unbekannt">
+            {{ result.status_unbekannt }}× Status</span>
+        </q-banner>
       </q-card-section>
     </q-card>
   </q-page>
@@ -126,6 +152,32 @@ import { api } from 'src/boot/axios'
 
 const $q = useQuasar()
 
+// Zwei Quellformate mit eigenen Parsern: SPG führt Abteilungen als nummerierte
+// Feldgruppen, LINEAR als Kreuz-Spalten (eine Spalte je Abteilung). Deshalb
+// getrennte Endpunkte statt einer Automatik — ein falsch geratenes Format
+// erzeugt stillschweigend Unsinn.
+const FORMATE = {
+  spg: {
+    label: 'SPG-Verein',
+    endpunkt: '/api/import/spg',
+    hinweis: 'Windows-1252-CSV mit Abteilungs-Feldgruppen (Abteilung_1…7), '
+      + 'Funktionen und Mannschaften.',
+    updateLabel: 'Bestehende Mitglieder aktualisieren (per SPG-Nummer)',
+  },
+  linear: {
+    label: 'LINEAR',
+    endpunkt: '/api/import/linear',
+    hinweis: 'UTF-8-CSV mit einer Spalte je Abteilung („X" = Mitglied). '
+      + 'Ohne Funktionen, Mannschaften und SEPA-Mandate — die sind nachzupflegen.',
+    updateLabel: 'Bestehende Mitglieder aktualisieren (per LINEAR-Nummer)',
+  },
+}
+
+const format = ref('spg')
+const formatOptionen = Object.entries(FORMATE).map(([value, f]) => ({ label: f.label, value }))
+const formatHinweis = computed(() => FORMATE[format.value].hinweis)
+const updateLabel = computed(() => FORMATE[format.value].updateLabel)
+
 const file = ref(null)
 const fileError = ref('')
 const commit = ref(false)
@@ -133,10 +185,20 @@ const update = ref(false)
 const allowUnmatched = ref(false)
 const running = ref(false)
 const result = ref(null)
+// Format, mit dem das angezeigte Ergebnis entstanden ist.
+const resultFormat = ref('spg')
 
 const summary = computed(() => {
   const r = result.value
   if (!r) return []
+  // Kennzahlen, die es nur beim SPG-Import gibt, werden ausgeblendet statt mit
+  // einer Null angezeigt — eine „0 Kader-Zuordnungen" beim LINEAR-Import läse
+  // sich wie ein Fehlschlag, dabei kennt das Format weder Mannschaften noch
+  // Funktionen. Maßgeblich ist das Format des ANGEZEIGTEN Ergebnisses, nicht
+  // die aktuelle Auswahl: Sonst ändert sich die Anzeige beim Umschalten.
+  const nurSpg = resultFormat.value === 'spg'
+    ? []
+    : ['davon Ehrenmitglied', 'Funktions-Zuordnungen', 'Kader-Zuordnungen']
   return [
     { label: 'Mitglieder neu', value: r.neu },
     { label: 'aktualisiert', value: r.aktualisiert },
@@ -148,7 +210,7 @@ const summary = computed(() => {
     { label: 'Funktions-Zuordnungen', value: r.funktionen },
     { label: 'Kader-Zuordnungen', value: r.kader },
     { label: 'Zeilen gelesen', value: r.rows },
-  ]
+  ].filter((s) => !nurSpg.includes(s.label))
 })
 
 async function doImport() {
@@ -160,10 +222,11 @@ async function doImport() {
     fd.append('commit', commit.value ? 'true' : 'false')
     fd.append('update', update.value ? 'true' : 'false')
     fd.append('allow_unmatched', allowUnmatched.value ? 'true' : 'false')
-    const { data } = await api.post('/api/import/spg', fd, {
+    const { data } = await api.post(FORMATE[format.value].endpunkt, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     result.value = data
+    resultFormat.value = format.value
     if (data.aborted) {
       $q.notify({ type: 'warning', message: 'Import abgebrochen (siehe Ergebnis).' })
     } else if (data.committed) {
