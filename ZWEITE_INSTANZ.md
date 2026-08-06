@@ -97,13 +97,15 @@ Code. Hier ist nichts zu tun außer Pflege.
 
 ## Support und Entwicklung
 
-- Die **Ticket-Brücke** (`tools/vtb_tickets.py` + `tools/tickets.local.env`)
-  zeigt auf genau eine Instanz. Bei zwei Instanzen braucht es zwei
-  Konfigurationen — und eine Entscheidung, wo Entwickler-Tickets leben: der
-  Bereich „VTB-App" existiert dann zweimal, oder Meldungen aus Instanz B müssen
-  in die eine Entwicklungs-Instanz gespiegelt werden.
-- Die **Feedback-Funktion** in der App legt Tickets in der jeweils eigenen
-  Instanz an — für Vereinsanliegen richtig, für Bugs an der Software nicht.
+- **Entschieden (2026-08-06): kein zweites Profil der Ticket-Brücke.** Externe
+  Nutzer melden Fehler an der Software über **GitHub Issues**, nicht über die
+  App. Die Brücke (`tools/vtb_tickets.py`) bleibt damit auf die VTB-Instanz
+  gerichtet, der Bereich „VTB-App" existiert nur dort.
+- Die **Feedback-Funktion** in der App legt Tickets weiterhin in der jeweils
+  eigenen Instanz an — für Vereinsanliegen richtig. Meldungen zur Software
+  landen in Instanz B also zunächst beim dortigen Admin, der sie nach GitHub
+  weiterträgt. Die Adresse ist in der App bereits vorhanden: `/api/app-info`
+  liefert `source_url` (AGPL §13), heute als Quell-Link im Menü.
 - **Zugriff des Entwicklers** auf Echtdaten des zweiten Vereins: eigener
   Account, dokumentiert. Kein geteiltes Admin-Konto. Betreibt der Verein selbst
   (s. Entscheidung unten), ist er datenschutzrechtlich Verantwortlicher — ein
@@ -265,14 +267,37 @@ ist das billig, weil sie zur Laufzeit entsteht. Das SPA-Theme bleibt außen vor
 schnell ein zweites Template-System mit eigenem Wartungsbedarf. Name und Kürzel
 aus der Env genügen, alles andere bleibt Code.
 
-**Zwei Fallstricke:**
+### Neutraler Icon-Satz in der Auslieferung — entschieden (2026-08-06)
 
-- Im Dev-Server kommen die Icons aus `frontend/public/`, nicht vom Backend. Die
-  Überlagerung greift nur im echten Betrieb, wo das Backend die SPA ausliefert —
-  lokal sieht man also weiter die VTB-Icons.
-- Das ausgelieferte Standard-Logo ist heute das VTB-Wappen. Für eine neutrale
-  Auslieferung müsste es ein neutrales Platzhalterbild werden — oder gar keins,
-  dann greift automatisch die vereinfachte Mail.
+**Was ausgeliefert wird, ist neutral; gebrandet wird über Env-Variablen und den
+Branding-Ordner.** Der Name der Software bleibt „VTB-App" — das ist der
+Produktname, keine Instanz-Beschriftung.
+
+Folge, die man am Update-Tag nicht vergessen darf: **Danach ist auch der VTB
+eine gebrandete Instanz.** Die Produktivinstanz zeigt neutrale Icons, bis ihr
+Branding-Ordner das Wappen enthält — das gehört in den Deploy-Schritt, nicht in
+die Nacharbeit.
+
+**Korrektur am Entwurf oben:** Der `/icons`-Mount deckt nur den PWA-Satz ab.
+`index.html` verweist zusätzlich auf `/favicon.ico`, `/favicon-16x16.png`,
+`-32x32`, `-48x48` und `/apple-touch-icon.png`; dazu kommen
+`mstile-150x150.png` und `browserconfig.xml`. Diese Dateien liegen im **Root**
+von `frontend/public/` und werden über den SPA-Fallback ausgeliefert, nicht über
+den Mount. Die Überlagerung braucht deshalb **zwei Stellen** — den Mount und
+einen Vorrang-Griff im Fallback —, sonst bleibt das Browser-Tab-Icon fremd,
+während die PWA schon stimmt.
+
+Zu erzeugen sind damit (neutral, als Auslieferungs-Standard): `icon-128`, `-192`,
+`-256`, `-384`, `-512`, `icon-maskable-512x512`, `apple-icon-120|152|167|180`,
+`ms-icon-144x144`, `favicon-128x128`, `safari-pinned-tab.svg` sowie im Root
+`favicon.ico`, `favicon-16|32|48x48`, `apple-touch-icon.png`,
+`mstile-150x150.png` — und ein neutrales Logo als Ersatz für
+`vtb-wappen-512.png` im Mail-Layout.
+
+**Ein Fallstrick bleibt:** Im Dev-Server kommen die Icons aus
+`frontend/public/`, nicht vom Backend. Die Überlagerung greift nur im echten
+Betrieb, wo das Backend die SPA ausliefert — lokal sieht man immer den
+ausgelieferten Satz.
 
 Aufwandsverhältnis: Der Mail-Umbau ist der größere Teil (Layout plus drei
 Mailtypen, Tests gegen feste Strings), die Icon-Überlagerung ist ein Mount und
@@ -374,26 +399,31 @@ ein fremdes Wappen auf der Login-Seite oder ein fehlgeschlagener Import nicht.
    DB, Strukturvergleich. Klein, unabhängig, und das einzige Risiko auf der
    Liste, das erst beim Aufsetzen auffällt und dann teuer ist: `_create_tables`
    & Co. sind bisher nur in Tests gelaufen.
-2. **Branding-Ordner** (`VTB_BRANDING_PATH`): Icon-Überlagerung mit Fallback je
-   Datei, Mail-Layout auf `VEREIN_NAME`/`VEREIN_KURZ` und Env-Farben, dazu die
-   vereinfachte Mail ohne Logo.
-3. **Restliche VTB-Texte**: Login- und Magic-Link-Seite, PWA-Manifest.
-4. **LINEAR-Import** gegen den Muster-Export: Schema-Feld
+2. **Neutraler Icon-Satz** als Auslieferungs-Standard (ersetzt den
+   Wappen-basierten Satz in `frontend/public/`, Namen bleiben).
+3. **Branding-Ordner** (`VTB_BRANDING_PATH`): Überlagerung mit Fallback je Datei
+   an beiden Stellen (Mount `/icons` **und** Root-Favicons über den
+   SPA-Fallback), Mail-Layout auf `VEREIN_NAME`/`VEREIN_KURZ` und Env-Farben,
+   dazu die vereinfachte Mail ohne Logo.
+4. **Restliche VTB-Texte**: Login- und Magic-Link-Seite, PWA-Manifest.
+5. **LINEAR-Import** gegen den Muster-Export: Schema-Feld
    `staatsangehoerigkeit`, Parser, Endpunkt, Formatauswahl, Tests.
 
 **Woche 2 — Betriebsfähigkeit und Puffer**
 
-5. **Auslieferungs-Doku**: compose-Vorlage, Update- und Backup-Anleitung, die
-   beiden Warnungen (Migration ohne Rückfrage, `VTB_VAULT_KEY` nicht verlieren).
-6. **Ticket #131 / neutrales Theme**, so weit es trägt. Wenn es knapp wird,
+6. **Auslieferungs-Doku**: compose-Vorlage, Update- und Backup-Anleitung, die
+   beiden Warnungen (Migration ohne Rückfrage, `VTB_VAULT_KEY` nicht verlieren),
+   dazu der Hinweis auf GitHub Issues als Meldeweg für Software-Fehler.
+7. **Ticket #131 / neutrales Theme**, so weit es trägt. Wenn es knapp wird,
    startet Instanz B mit dem neutralen Grund ohne eigene Vereinsfarben — die
    Parametrierung ist nachrüstbar, ohne dass die Instanz noch einmal aufgesetzt
    werden muss.
-7. **Puffer für den Echt-Export**: Anpassung des Parsers und ein Probelauf als
+8. **Puffer für den Echt-Export**: Anpassung des Parsers und ein Probelauf als
    Dry-Run gegen die echten Daten.
 
-**Was ausdrücklich nach dem Termin kommt:** das zweite Profil der
-Ticket-Brücke, die volle Farb-Parametrierung, jede Verfeinerung am Theme.
+**Was ausdrücklich nach dem Termin kommt:** die volle Farb-Parametrierung und
+jede Verfeinerung am Theme. Ein zweites Profil der Ticket-Brücke ist gestrichen
+(s. „Support und Entwicklung").
 
 **Größtes Terminrisiko** ist der LINEAR-Echt-Export, weil er nicht in unserer
 Hand liegt. Bisher gibt es nur den Muster-Auszug; die vier offenen Fragen im
