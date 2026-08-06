@@ -26,7 +26,7 @@ ist der eigentliche Arbeitsanteil — nicht das Aufsetzen des Stacks.
 | Datenbank | Eigene DB **und** eigene Rolle, nicht nur ein anderes Schema |
 | `./uploads`-Volume | Rechnungsanhänge, Ticket-Bilder, Belege |
 | `VTB_VAULT_KEY` | Tresor-Verschlüsselung. Eigener Schlüssel je Instanz, niemals teilen — und niemals verlieren, sonst sind die Tresordaten unlesbar |
-| `VTB_STORAGE_SECRET` | Sessions/Cookies |
+| `VTB_SECRET_KEY` | Signatur der Session-Tokens. Geteilter Schlüssel = Sitzungen der einen Instanz gelten in der anderen |
 | VAPID-Schlüsselpaar | Web-Push hängt an Origin **und** Schlüsselpaar; geteilte Keys auf zwei Domains geben unzustellbare Subscriptions |
 | `BASE_URL` | Steckt in Magic-Links und in der Wappen-URL der Mails. Falsch gesetzt = Login-Links zeigen auf die andere Instanz |
 | `MAIL_FROM` / SMTP | Eigener Absender je Verein, inkl. SPF/DKIM für die Domain |

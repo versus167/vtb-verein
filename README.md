@@ -134,8 +134,8 @@ serviert es als statische PWA zusammen mit der API.
 2. **Environment-Datei anlegen**
    ```bash
    cp .env.example .env
-   # mindestens VTB_PG_USER / VTB_PG_PASSWORD / VTB_PG_DB setzen,
-   # optional SMTP-Daten für Magic-Link-Login
+   # mindestens VTB_PG_USER / VTB_PG_PASSWORD / VTB_PG_DB und VTB_SECRET_KEY setzen
+   # (Reihenfolge und Schlüssel-Erzeugung: ERSTEINRICHTUNG.md)
    ```
 3. **Stack starten** (PostgreSQL + App-Container)
    ```bash
@@ -192,34 +192,20 @@ Beim ersten Start wird automatisch ein Admin-Account angelegt:
 
 ⚠️ **Passwort sofort nach dem ersten Login ändern.**
 
+Damit läuft die App — eingerichtet ist sie aber noch nicht: Ohne eigenen
+Signaturschlüssel, ohne SMTP und ohne Vereins-Stammdaten (die Instanz nennt sich
+sonst sichtbar „Beispielverein"). Der vollständige Weg steht in
+**[ERSTEINRICHTUNG.md](ERSTEINRICHTUNG.md)**.
+
 ## Konfiguration
 
-Konfiguration über Umgebungsvariablen (bzw. `.env`):
+Alle Einstellungen kommen aus Umgebungsvariablen (bzw. `.env`). Die vollständige,
+kommentierte Liste steht in **[`.env.example`](.env.example)** — sie ist die
+maßgebliche Referenz und wird bewusst nicht hier zweitverwertet.
 
-```bash
-# Datenbank (PostgreSQL)
-VTB_DATABASE_URL=postgresql://USER:PASSWORT@HOST:PORT/DBNAME
-# Für docker compose werden daraus genutzt:
-VTB_PG_USER=vtb
-VTB_PG_PASSWORD=...
-VTB_PG_DB=verein
-
-# Server
-VTB_PORT=8000            # Host-Port (Compose), Default 8000
-
-# Uploads
-VTB_UPLOAD_PATH=uploads/ # Docker: /app/uploads
-VTB_MAX_UPLOAD_MB=10
-
-# Magic-Link-Login (SMTP)
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USE_TLS=true
-SMTP_USERNAME=...
-SMTP_PASSWORD=...
-MAIL_FROM=VTB Verein <vereinsverwaltung@gmail.com>
-BASE_URL=http://localhost:8000
-```
+Der Weg durch die Ersteinrichtung — in welcher Reihenfolge was gesetzt wird, welche
+Schlüssel vorher zu erzeugen sind und was man danach prüft — steht in
+**[ERSTEINRICHTUNG.md](ERSTEINRICHTUNG.md)**.
 
 **Datenbank zurücksetzen (Docker):**
 ```bash
