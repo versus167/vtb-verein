@@ -31,9 +31,11 @@ services:
     environment:
       VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
       VTB_UPLOAD_PATH: /app/uploads
-      # Vereinswappen statt der neutralen Wortmarke. Der Satz liegt im Image;
-      # eine fremde Instanz mountet hier stattdessen ihr eigenes Verzeichnis.
-      VTB_BRANDING_PATH: ${VTB_BRANDING_PATH:-/app/branding/vtb}
+      # Container-Pfad wie VTB_UPLOAD_PATH darüber: Das Vereinswappen liegt im
+      # Image unter /app/branding/vtb und ersetzt die neutrale Wortmarke. Ein
+      # anderer Verein trägt hier seinen Pfad ein und hängt das Verzeichnis
+      # unten als Volume ein — Pfad und Mount gehören zusammen.
+      VTB_BRANDING_PATH: /app/branding/vtb
 
     ports:
       - "${VTB_PORT:-8000}:8000"
