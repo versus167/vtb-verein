@@ -7,7 +7,7 @@
 
       <q-card flat dark class="login-card">
         <q-card-section class="text-center q-pb-none">
-          <div class="login-title text-h5 text-weight-bold">VTB Chemnitz</div>
+          <div v-if="vereinName" class="login-title text-h5 text-weight-bold">{{ vereinName }}</div>
           <div class="login-subtitle">Vereinsverwaltung</div>
         </q-card-section>
 
@@ -167,7 +167,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
-import { ladeAppInfo, versionLabel } from 'src/composables/useAppInfo'
+import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInfo'
 
 const router = useRouter()
 const auth = useAuthStore()

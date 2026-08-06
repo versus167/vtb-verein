@@ -7,7 +7,7 @@
 
       <q-card flat dark class="login-card">
         <q-card-section class="text-center q-pb-none">
-          <div class="login-title text-h5 text-weight-bold">VTB Chemnitz</div>
+          <div v-if="vereinName" class="login-title text-h5 text-weight-bold">{{ vereinName }}</div>
           <div class="login-subtitle">Vereinsverwaltung</div>
         </q-card-section>
 
@@ -75,6 +75,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
+import { ladeAppInfo, vereinName } from 'src/composables/useAppInfo'
 
 const route = useRoute()
 const router = useRouter()
@@ -85,6 +86,7 @@ const rememberMe = ref(false)
 const errorMsg = ref('Der Link ist ungültig oder wurde bereits verwendet.')
 
 onMounted(() => {
+  ladeAppInfo()          // Vereinsname für die Kopfzeile der Karte
   if (!route.query.token) {
     state.value = 'error'
   }

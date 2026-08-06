@@ -1,7 +1,7 @@
 {
   "name": "VTB Vereinsverwaltung",
   "short_name": "VTB",
-  "description": "Vereinsverwaltung für den VTB",
+  "description": "Mitglieder, Beiträge, Termine und Kassen eines Vereins verwalten",
   "display": "standalone",
   "orientation": "portrait",
   "start_url": "/",

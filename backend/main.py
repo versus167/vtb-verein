@@ -142,9 +142,11 @@ def app_info():
     ``source_url`` erfüllt AGPL §13: die App verweist auf den Quellcode dieser
     Fassung (per ``VTB_SOURCE_URL`` überschreibbar, s. Settings).
     ``verein_kurz`` ist das Kürzel vor dem Mannschaftsnamen – das Frontend baut
-    daraus den Spieltitel („VTB AH – SV X"), ohne den Verein fest zu verdrahten."""
+    daraus den Spieltitel („VTB AH – SV X"), ohne den Verein fest zu verdrahten.
+    ``verein_name`` trägt die Login-Seite. Beides ist öffentlich, weil die
+    Login-Seite vor der Anmeldung wissen muss, für welchen Verein sie steht."""
     return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL,
-            "verein_kurz": settings.VEREIN_KURZ}
+            "verein_kurz": settings.VEREIN_KURZ, "verein_name": settings.VEREIN_NAME}
 
 
 # Branding-Ordner: instanzeigene Icons überlagern die ausgelieferten, je Datei.
