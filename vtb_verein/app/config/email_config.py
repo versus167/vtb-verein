@@ -64,13 +64,23 @@ class EmailConfig:
 
     @staticmethod
     def get_mail_farbe_flaeche() -> str:
-        """Farbe der Inhaltsflächen (Karte). Muss hellen Text tragen können."""
-        return EmailConfig._hexfarbe('VTB_MAIL_FARBE_FLAECHE', '#023a90')
+        """Farbe der Inhaltsflächen (Karte). Muss hellen Text tragen können.
+
+        Grundlage sind die Vereinsfarben VTB_FARBE_* — dieselben zwei Werte, die
+        auch die Oberfläche einfärben (backend/core/branding.py). Die Mail-Variable
+        bleibt als Feinjustierung darüber: Wer nur die Vereinsfarben setzt, färbt
+        beides zugleich; wer die Mail abweichend will, setzt zusätzlich diese.
+        """
+        return EmailConfig._hexfarbe(
+            'VTB_MAIL_FARBE_FLAECHE',
+            EmailConfig._hexfarbe('VTB_FARBE_FLAECHE', '#023a90'))
 
     @staticmethod
     def get_mail_farbe_akzent() -> str:
         """Akzentfarbe (Seitengrund, Button). Muss dunklen Text tragen können."""
-        return EmailConfig._hexfarbe('VTB_MAIL_FARBE_AKZENT', '#feeb03')
+        return EmailConfig._hexfarbe(
+            'VTB_MAIL_FARBE_AKZENT',
+            EmailConfig._hexfarbe('VTB_FARBE_AKZENT', '#feeb03'))
 
     @staticmethod
     def get_mail_logo() -> bool:

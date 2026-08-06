@@ -38,22 +38,36 @@ ist der eigentliche Arbeitsanteil — nicht das Aufsetzen des Stacks.
 Die Vereinsidentität liegt an vier unabhängigen Stellen. Wer nur eine ändert,
 bekommt einen Mischmasch:
 
-1. **Farben**: `frontend/src/css/quasar.variables.scss` (`$vtb-blau`,
-   `$vtb-gelb` und die daraus abgeleiteten Navy-/Hell-Töne).
+1. **Farben**: ~~`frontend/src/css/quasar.variables.scss`~~ — **erledigt mit
+   Ticket #131**: Die zwei Grundfarben kommen aus der Env
+   (`VTB_FARBE_FLAECHE`/`VTB_FARBE_AKZENT`) und werden als CSS-Variablen über
+   `/api/branding.css` ausgeliefert, eingebunden im Kopf der `index.html`. Kein
+   eigener Build mehr nötig, und dieselben zwei Werte färben auch die Mails
+   (Punkt 3). Im SCSS liegen sie als `$flaeche`/`$akzent` vor; die `$vtb-*`-Hexe
+   bleiben Rückfallwerte. Fest verdrahtet bleiben nur die von Hand gemischten
+   Zwischentöne der getönten Statusflächen (`bg-blue-1` & Co. in „VTB"/„Dunkel").
 2. **Theme**: `frontend/src/css/app.scss` — der „VTB-Look" (blaue Flächen auf
    Vereinsgelb) und der Dark Mode sind ~500 Zeilen, die auf genau diesen zwei
    Farben aufbauen. Ein Verein mit Rot/Weiß bekommt hier echte Arbeit, kein
    Variablen-Tausch.
 
-   **Entschärft durch Ticket #131:** Es gibt jetzt drei Themes, und das dritte
-   („Hell") ist praktisch vereinsneutral — weiße Karten auf hellem Grau, die
-   Marke nur als Akzent (Kopfzeile, Aktivmarken, Fokusringe). Sein Block in
-   `app.scss` ist kurz und zieht seine Farben ausschließlich aus den zwei
-   Markenvariablen; der VTB-Look bleibt der teure Teil, den eine zweite Instanz
-   aber weglassen kann (Auswahl in `useTheme.js` kürzen).
-3. **Mail-Layout**: `vtb_verein/app/services/email_service.py` — eigene
-   Hex-Konstanten (`_VTB_BLAU`, `_VTB_GELB`), Wappen-URL, „VTB Chemnitz" in
-   Kopf und Signatur, Betreffzeilen („Login-Link für VTB Vereinsverwaltung").
+   **Erledigt durch Ticket #131.** Es gibt jetzt drei Themes, und „Hell" ist
+   vereinsneutral: weiße Karten auf hellem Grau, die Marke nur als Akzent
+   (Kopfzeile, Aktivmarken, Fokusringe). Es folgt vollständig den zwei
+   Env-Farben — für einen fremden Verein ist es das Standard-Theme.
+
+   „VTB" und „Dunkel" tragen die zwei Farben ebenfalls (inkl. der gerechneten
+   Menü-/Chip-Töne), behalten aber die blau-grauen Tönungen der Statusflächen.
+   Beide bleiben damit benutzbar, sind aber nicht auf einen fremden Verein hin
+   entworfen; wer will, kürzt `THEME_AUSWAHL` in `useTheme.js` auf „Hell" und
+   „Dunkel". Zu beachten bleibt der Farbvertrag: FLAECHE muss hellen Text
+   tragen können, AKZENT dunklen — anders als die Mail-Vorlage rechnet die
+   Oberfläche das nicht nach.
+3. **Mail-Layout**: `vtb_verein/app/services/email_service.py` — Wappen-URL,
+   „VTB Chemnitz" in Kopf und Signatur, Betreffzeilen („Login-Link für VTB
+   Vereinsverwaltung"). Die Farben sind es nicht mehr: die Vorlage erbt
+   `VTB_FARBE_*` und mischt ihre Volltöne daraus (`VTB_MAIL_FARBE_*` nur noch
+   für eine abweichende Mail).
 4. **Bilder**: `frontend/public/icons/vtb-wappen-512.png`, Favicons,
    `apple-touch-icon.png`, `mstile-150x150.png`, `browserconfig.xml`.
 

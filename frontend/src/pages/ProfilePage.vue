@@ -871,11 +871,11 @@ onMounted(() => {
   border-radius: 50%;
 }
 body:not(.body--dark) .profil-avatar__badge {
-  background: $vtb-blau-btn-dark;
-  color: $vtb-gelb;
+  background: $flaeche-hoch;
+  color: $akzent;
 }
 body.body--dark .profil-avatar__badge {
-  background: $vtb-blau-btn-dark;
+  background: $flaeche-hoch;
   color: #fff;
 }
 

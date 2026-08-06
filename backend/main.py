@@ -12,7 +12,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core import branding
@@ -147,6 +147,22 @@ def app_info():
     Login-Seite vor der Anmeldung wissen muss, für welchen Verein sie steht."""
     return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL,
             "verein_kurz": settings.VEREIN_KURZ, "verein_name": settings.VEREIN_NAME}
+
+
+@app.get("/api/branding.css", include_in_schema=False)
+def branding_css():
+    """Vereinsfarben als CSS-Custom-Properties (s. backend/core/branding.py).
+
+    Hängt als ``<link>`` in der index.html, damit die Farben schon im ersten
+    Bild stimmen — auch auf der Login-Seite, die vor jeder Anmeldung steht.
+    Bewusst ohne Cache: die Datei ist ein paar hundert Byte, dafür wirkt eine
+    geänderte Env sofort nach dem Neustart statt erst nach Ablauf eines TTL.
+    """
+    return Response(
+        content=branding.farben_css(settings.FARBE_FLAECHE, settings.FARBE_AKZENT),
+        media_type="text/css",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # Branding-Ordner: instanzeigene Icons überlagern die ausgelieferten, je Datei.

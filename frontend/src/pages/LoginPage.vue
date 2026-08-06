@@ -237,7 +237,7 @@ async function onRequestMagicLink() {
   align-items: flex-start;
   justify-content: center;
   padding: 24px;
-  background: linear-gradient(165deg, #fff05a 0%, $vtb-gelb 45%, #e3d100 100%);
+  background: linear-gradient(165deg, #fff05a 0%, $akzent 45%, #e3d100 100%);
 }
 
 .login-panel {
@@ -285,7 +285,7 @@ async function onRequestMagicLink() {
   padding-top: 92px;
   color: #fff;
   /* Wappenblau mit leichtem Verlauf */
-  background: linear-gradient(170deg, #0d3a85 0%, $vtb-blau 45%, #022a68 100%);
+  background: linear-gradient(170deg, #0d3a85 0%, $flaeche 45%, #022a68 100%);
   /* Kräftiger Schlagschatten — das helle Gelb verschluckt zarte Schatten,
      daher hohe Deckkraft und warmer, dunkler Ton (wirkt auf Gelb natürlich). */
   box-shadow:
@@ -294,7 +294,7 @@ async function onRequestMagicLink() {
 }
 
 .login-title {
-  color: $vtb-gelb;
+  color: $akzent;
   letter-spacing: 0.5px;
 }
 
@@ -324,7 +324,7 @@ async function onRequestMagicLink() {
 /* Fehlermeldungen in Gelb auf der blauen Karte */
 .login-error {
   font-weight: 600;
-  color: $vtb-gelb;
+  color: $akzent;
 }
 
 /* Eingabefelder: weichere Ecken, Rahmen in Gelb */
@@ -332,10 +332,10 @@ async function onRequestMagicLink() {
   border-radius: 12px;
 }
 :deep(.q-field--outlined .q-field__control:before) {
-  border-color: rgba($vtb-gelb, 0.5);
+  border-color: rgba($akzent-rgb, 0.5);
 }
 :deep(.q-field--outlined:hover .q-field__control:before) {
-  border-color: $vtb-gelb;
+  border-color: $akzent;
 }
 
 /* Tab-Panels ohne eigenen Hintergrund (sonst Kasten auf der blauen Karte) */

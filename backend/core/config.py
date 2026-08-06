@@ -17,6 +17,14 @@ class Settings:
     # mitgelieferten Wappen-Satz (`/app/branding/vtb`), andere Instanzen mounten
     # ihr eigenes Verzeichnis. Leerer Ordner oder falscher Pfad = neutraler Stand.
     BRANDING_PATH: str = os.getenv("VTB_BRANDING_PATH", str(_ROOT / "branding"))
+
+    # Vereinsfarben für die Oberfläche (/api/branding.css). Gleiche Aufteilung wie
+    # in den Mails: FLAECHE trägt Inhaltsflächen und muss hellen Text tragen
+    # können, AKZENT ist Seitengrund/Markierung und muss dunklen Text tragen
+    # können. Die Mail-Variablen VTB_MAIL_FARBE_* bleiben als Feinjustierung und
+    # schlagen diese hier; wer nur die zwei setzt, färbt App und Mail zugleich.
+    FARBE_FLAECHE: str = os.getenv("VTB_FARBE_FLAECHE", "")
+    FARBE_AKZENT: str = os.getenv("VTB_FARBE_AKZENT", "")
     HOST: str = os.getenv("VTB_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("VTB_PORT", "8000"))
     FRONTEND_ORIGINS: list[str] = os.getenv(

@@ -1634,6 +1634,6 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
 
 // Bank-Karte (Zahlungsempfänger) in den Salden mit gelbem Akzent abgesetzt (#127)
 .tt-bank-card {
-  border-left: 4px solid $vtb-gelb;
+  border-left: 4px solid $akzent;
 }
 </style>

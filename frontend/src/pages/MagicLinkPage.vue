@@ -122,7 +122,7 @@ async function doLogin() {
   align-items: flex-start;
   justify-content: center;
   padding: 24px;
-  background: linear-gradient(165deg, #fff05a 0%, $vtb-gelb 45%, #e3d100 100%);
+  background: linear-gradient(165deg, #fff05a 0%, $akzent 45%, #e3d100 100%);
 }
 
 .login-panel {
@@ -170,7 +170,7 @@ async function doLogin() {
   padding-top: 92px;
   color: #fff;
   /* Wappenblau mit leichtem Verlauf */
-  background: linear-gradient(170deg, #0d3a85 0%, $vtb-blau 45%, #022a68 100%);
+  background: linear-gradient(170deg, #0d3a85 0%, $flaeche 45%, #022a68 100%);
   /* Kräftiger Schlagschatten — das helle Gelb verschluckt zarte Schatten,
      daher hohe Deckkraft und warmer, dunkler Ton (wirkt auf Gelb natürlich). */
   box-shadow:
@@ -179,7 +179,7 @@ async function doLogin() {
 }
 
 .login-title {
-  color: $vtb-gelb;
+  color: $akzent;
   letter-spacing: 0.5px;
 }
 
@@ -200,6 +200,6 @@ async function doLogin() {
 /* Fehlermeldungen in Gelb auf der blauen Karte */
 .login-error {
   font-weight: 600;
-  color: $vtb-gelb;
+  color: $akzent;
 }
 </style>

@@ -79,11 +79,25 @@ export function setTheme(wert) {
   klasseSetzen()
 }
 
+// Die Farbe der Browser-Leiste (Handy) trägt in der index.html den VTB-Wert.
+// Sie muss der Akzentfarbe dieser Instanz folgen, sonst rahmt ein fremder Verein
+// seine App in Vereinsgelb. Der Wert kommt aus derselben Custom Property, die
+// das Backend ausliefert — steht keine da, bleibt der Wert aus dem Dokument.
+function browserleisteFaerben() {
+  const akzent = getComputedStyle(document.documentElement)
+    .getPropertyValue('--vtb-akzent')
+    .trim()
+  if (!akzent) return
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (meta) meta.setAttribute('content', akzent)
+}
+
 // Beim Start: gespeicherte Wahl anwenden und auf Systemwechsel horchen. Quasars
 // eigener Listener setzt nur `body--dark` um — die Theme-Klasse müssen wir
 // selbst nachziehen, sonst bliebe bei 'auto' die alte am Body stehen.
 export function initTheme() {
   setTheme(gespeicherteWahl())
+  browserleisteFaerben()
   window
     .matchMedia('(prefers-color-scheme: dark)')
     .addEventListener('change', () => {

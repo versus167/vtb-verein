@@ -138,7 +138,7 @@ function baueMonat(y, m0) {
 // blauer Schrift, wie alle Akzente auf Blau; nie weißer Text auf Gelb.
 .kal-badge {
   font-weight: 600;
-  background: $vtb-gelb;
-  color: $vtb-blau;
+  background: $akzent;
+  color: $flaeche;
 }
 </style>
