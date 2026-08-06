@@ -2,7 +2,7 @@
   <div class="login-screen">
     <div class="login-panel">
       <div class="login-badge">
-        <img src="/icons/vtb-wappen-512.png" alt="VTB-Wappen" />
+        <img src="/icons/logo-512.png" alt="Vereinslogo" />
       </div>
 
       <q-card flat dark class="login-card">

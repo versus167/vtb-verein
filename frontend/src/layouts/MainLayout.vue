@@ -71,7 +71,7 @@
           <!-- Wappen als Home-Button: gleiche Höhe wie die Header-Leiste daneben -->
           <q-item clickable :to="{ name: 'dashboard' }" exact active-class="vtb-nav-active" class="vtb-drawer-home">
             <q-item-section avatar>
-              <img src="/icons/vtb-wappen-512.png" alt="VTB-Wappen" class="vtb-drawer-home__logo" />
+              <img src="/icons/logo-512.png" alt="Vereinslogo" class="vtb-drawer-home__logo" />
             </q-item-section>
             <q-item-section>Home</q-item-section>
           </q-item>

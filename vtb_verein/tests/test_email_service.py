@@ -42,7 +42,7 @@ def test_app_link_ohne_doppelten_slash():
     """BASE_URL mit Schrägstrich am Ende darf keine //-URLs erzeugen."""
     html = _render(base_url=f'{APP_URL}/')
     assert f'{APP_URL}//' not in html
-    assert f'{APP_URL}/icons/vtb-wappen-512.png' in html
+    assert f'{APP_URL}/icons/logo-512.png' in html
 
 
 def test_app_link_nicht_in_weiss_auf_gelb():

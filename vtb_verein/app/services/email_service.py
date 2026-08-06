@@ -61,7 +61,7 @@ class EmailService:
         base_url = EmailConfig.get_base_url().rstrip('/')
         # Ohne Schema lesbarer in der Fußzeile (app.vtbchemnitz.de statt https://…)
         base_url_label = base_url.split('://', 1)[-1]
-        wappen_url = f"{base_url}/icons/vtb-wappen-512.png"
+        logo_url = f"{base_url}/icons/logo-512.png"
         hints_html = "".join(
             f'<p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5;'
             f' color: {EmailService._BLAU_TEXT_75};">{hint}</p>'
@@ -78,7 +78,7 @@ class EmailService:
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{gelb}">
         <tr>
             <td align="center" style="padding: 36px 16px 28px;">
-                <img src="{wappen_url}" alt="VTB-Wappen" width="150"
+                <img src="{logo_url}" alt="Vereinslogo" width="150"
                      style="display: block; width: 150px; height: auto; margin: 0 auto;">
                 <!--[if mso]><table role="presentation" width="460" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
