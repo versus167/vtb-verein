@@ -9,12 +9,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "vtb_verein"))
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from backend.core import branding
 from backend.core.config import settings
 from app.config.app_info import APP_NAME, get_app_version
 from backend.api.auth import router as auth_router
@@ -146,16 +147,45 @@ def app_info():
             "verein_kurz": settings.VEREIN_KURZ}
 
 
+# Branding-Ordner: instanzeigene Icons überlagern die ausgelieferten, je Datei.
+# Zwei Stellen sind zu bedienen, weil die Icons an zwei Orten liegen — der
+# PWA-Satz unter /icons/…, die Favicons direkt im Wurzelverzeichnis. Details und
+# die Traversal-Absicherung stehen in backend/core/branding.py.
+_BRANDING = branding.basis_pfad(settings.BRANDING_PATH)
+
+
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
 if _FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
-    app.mount("/icons", StaticFiles(directory=str(_FRONTEND_DIST / "icons")), name="icons")
 
     _FRONTEND_DIST_RESOLVED = _FRONTEND_DIST.resolve()
+    _ICONS_DIST = _FRONTEND_DIST_RESOLVED / "icons"
+
+    @app.get("/icons/{datei:path}", include_in_schema=False)
+    def icons(datei: str):
+        """PWA-Icons und Logo — Branding-Ordner schlägt Auslieferung, je Datei."""
+        if (eigene := branding.datei(_BRANDING, f"icons/{datei}")) is not None:
+            return FileResponse(str(eigene))
+        try:
+            kandidat = (_ICONS_DIST / datei).resolve()
+            kandidat.relative_to(_ICONS_DIST)
+        except (ValueError, OSError):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Icon nicht gefunden")
+        if kandidat.is_file():
+            return FileResponse(str(kandidat))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Icon nicht gefunden")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
+        """Alles Übrige: erst Branding, dann Build, sonst die SPA selbst.
+
+        Der Branding-Griff gilt hier den Favicons im Wurzelverzeichnis. Er kommt
+        vor dem Build-Verzeichnis, damit ein Verein sie überhaupt ersetzen kann.
+        """
         index = _FRONTEND_DIST_RESOLVED / "index.html"
+        if full_path in branding.ROOT_DATEIEN:
+            if (eigene := branding.datei(_BRANDING, full_path)) is not None:
+                return FileResponse(str(eigene))
         try:
             candidate = (_FRONTEND_DIST_RESOLVED / full_path).resolve()
             candidate.relative_to(_FRONTEND_DIST_RESOLVED)  # raises ValueError on traversal

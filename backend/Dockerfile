@@ -35,6 +35,12 @@ COPY tools/clubdeckel_beitrag_lauf.py ./tools/clubdeckel_beitrag_lauf.py
 # Muss in /app liegen (= Path(app_info.py).parents[3]), sonst Fallback auf 0.0.1.
 COPY VERSION ./VERSION
 
+# Branding-Sätze mit ins Image: Ein Image für alle Instanzen, die Auswahl trifft
+# VTB_BRANDING_PATH. Der VTB zeigt auf /app/branding/vtb (Wappen), eine fremde
+# Instanz mountet ihr eigenes Verzeichnis oder lässt es weg — dann greift der
+# ausgelieferte neutrale Satz. Kostet ~1,3 MB und spart einen zweiten Build.
+COPY branding/ ./branding/
+
 # Frontend-Build aus Stage 1 kopieren
 COPY --from=frontend-builder /frontend/dist/pwa/ ./frontend_dist/
 

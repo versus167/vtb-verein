@@ -10,6 +10,13 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("VTB_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h
     DATABASE_URL: str = os.getenv("VTB_DATABASE_URL", "")
     UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", str(_ROOT / "vtb_verein" / "uploads"))
+
+    # Branding-Ordner: überlagert die ausgelieferten Icons je Datei (s. main.py).
+    # Ein Image für alle Instanzen — was ein Verein selbst mitbringt, legt er hier
+    # ab; alles Übrige kommt weiter aus dem Build. Der VTB zeigt auf den im Image
+    # mitgelieferten Wappen-Satz (`/app/branding/vtb`), andere Instanzen mounten
+    # ihr eigenes Verzeichnis. Leerer Ordner oder falscher Pfad = neutraler Stand.
+    BRANDING_PATH: str = os.getenv("VTB_BRANDING_PATH", str(_ROOT / "branding"))
     HOST: str = os.getenv("VTB_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("VTB_PORT", "8000"))
     FRONTEND_ORIGINS: list[str] = os.getenv(
