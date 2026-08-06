@@ -404,8 +404,8 @@ ein fremdes Wappen auf der Login-Seite oder ein fehlgeschlagener Import nicht.
    SPA-Fallback), Mail-Layout auf `VEREIN_NAME`/`VEREIN_KURZ` und Env-Farben,
    dazu die vereinfachte Mail ohne Logo.
 4. **Restliche VTB-Texte**: Login- und Magic-Link-Seite, PWA-Manifest.
-5. **LINEAR-Import** gegen den Muster-Export: Schema-Feld
-   `staatsangehoerigkeit`, Parser, Endpunkt, Formatauswahl, Tests.
+5. **LINEAR-Import** gegen den Muster-Export: Parser, Endpunkt, Formatauswahl,
+   Tests — ohne Schema-Migration, seit die Staatsangehörigkeit draußen bleibt.
 
 **Woche 2 — Betriebsfähigkeit und Puffer**
 

@@ -74,7 +74,7 @@ letzte bekannte Stammdatenspalte, `Mobiltelefon`).
 | Telefon | Kontakt `telefon` (primär) | zusätzlich `mitglied.telefon` |
 | Mobiltelefon | Kontakt `mobil` (primär) | |
 | Geschlecht | `geschlecht` | MÄNNLICH → `m`, WEIBLICH → `w`, sonst `d`/leer |
-| Staatsangehörigkeit | neues Feld | s. Entscheidung 3 |
+| Staatsangehörigkeit | — | wird nicht übernommen, s. Entscheidung 3 |
 | Abteilungsspalten mit „X" | `mitglied_abteilung` | Status `aktiv`, Von = Eintrittsdatum |
 | | `kontoinhaber` | LINEAR hat kein Zahler-Feld → „Vorname Nachname" |
 
@@ -89,9 +89,12 @@ letzte bekannte Stammdatenspalte, `Mobiltelefon`).
    in die Bemerkungen (Wiedererkennung beim Re-Import), intern vergibt die App
    eine neue Nummer. Grund: `mitgliedsnummer` ist numerisch, führende Nullen
    gingen verloren, und die alten Nummern könnten mit dem Bestand kollidieren.
-3. **Staatsangehörigkeit bekommt ein eigenes Feld** am Mitglied — inklusive
-   Schema-Migration und Anzeige im Mitglied-Dialog. Nicht in die Bemerkungen,
-   damit die Angabe auswertbar bleibt.
+3. ~~Staatsangehörigkeit bekommt ein eigenes Feld.~~ **Revidiert (2026-08-06):
+   Die Staatsangehörigkeit wird gar nicht übernommen** — weder als Feld noch in
+   den Bemerkungen. Die Vereinsverwaltung hat für die Angabe keinen Zweck; was
+   nicht gebraucht wird, wird auch nicht gespeichert. Praktischer Nebeneffekt:
+   Der Import braucht damit **keine Schema-Migration**, die Spalte wird beim
+   Parsen schlicht übergangen.
 4. **Ort wird bereinigt:** „Chemnitz , Sachs" → „Chemnitz". Der Zusatz ist die
    postalische Unterscheidung gleichnamiger Orte und in der App nur Ballast.
 
@@ -122,16 +125,17 @@ letzte bekannte Stammdatenspalte, `Mobiltelefon`).
 
 ## Etappen
 
-1. **Schema**: Feld `staatsangehoerigkeit` am Mitglied — `SCHEMA_VERSION`
-   hochzählen, `_migrate_vN_to_vN+1`, Frischaufbau und Migration gleichziehen,
-   Anzeige im Mitglied-Dialog.
-2. **`linear_import_service.py`**: Parser (Kodierung, Datum, Kreuz-Spalten) und
+Ohne das Staatsangehörigkeits-Feld (s. Entscheidung 3) entfällt die
+Schema-Etappe: Der Import kommt **ohne Migration** aus und fasst nur
+Anwendungscode an.
+
+1. **`linear_import_service.py`**: Parser (Kodierung, Datum, Kreuz-Spalten) und
    Mapping. Dabei prüfen, was sich mit dem SPG-Service teilen lässt (Kontakte,
    Abteilungs-Matching, Update-Pfad) — gemeinsame Teile herausziehen statt
    kopieren.
-3. **Endpunkt** `POST /api/import/linear` analog `/spg`; ImportPage um eine
+2. **Endpunkt** `POST /api/import/linear` analog `/spg`; ImportPage um eine
    Formatauswahl erweitern.
-4. **Tests**: Parser-Einheiten (Kodierungsvarianten, Leerzeilen, Datum,
+3. **Tests**: Parser-Einheiten (Kodierungsvarianten, Leerzeilen, Datum,
    Kreuz-Spalten, fehlende Pflichtfelder) und ein Integrationstest gegen den
    Wegwerf-Postgres — Dry-Run und Commit.
 
