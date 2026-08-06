@@ -105,7 +105,10 @@ Code. Hier ist nichts zu tun außer Pflege.
 - Die **Feedback-Funktion** in der App legt Tickets in der jeweils eigenen
   Instanz an — für Vereinsanliegen richtig, für Bugs an der Software nicht.
 - **Zugriff des Entwicklers** auf Echtdaten des zweiten Vereins: eigener
-  Account, dokumentiert, und ein AV-Vertrag. Kein geteiltes Admin-Konto.
+  Account, dokumentiert. Kein geteiltes Admin-Konto. Betreibt der Verein selbst
+  (s. Entscheidung unten), ist er datenschutzrechtlich Verantwortlicher — ein
+  Auftragsverarbeitungsvertrag entsteht erst dadurch, dass für Support Zugriff
+  auf Echtdaten eingeräumt wird. Im Zweifel juristisch prüfen lassen.
 
 ## Fallen, die beim ersten Aufsetzen zubeißen
 
@@ -315,11 +318,94 @@ Login `admin` / `admin123` (der Standard-Admin aus dem Seed). `VTB_VEREIN_NAME`
 wirkt derzeit nur in PDF-Belegen — in der Oberfläche ist bisher allein das
 Kürzel sichtbar.
 
+## Zuschnitt entschieden (2026-08-06)
+
+Die vier Grundsatzfragen sind beantwortet. Sie hängen zusammen — zwei der
+Antworten entscheiden Punkte mit, die oben noch offen standen.
+
+| Frage | Antwort |
+|---|---|
+| Host | **Getrennte Hosts** |
+| Branding | **Name, Kürzel, Logo *und* eigene Vereinsfarben** |
+| Betrieb | **Der zweite Verein selbst** |
+| Verbindlichkeit | **Konkret — Aufsetzen am 20.08.2026** |
+
+**Getrennte Hosts** streichen die Compose-Parametrierung (feste Container-Namen,
+Ports, `./pg_data`) ersatzlos — sie kollidieren nur auf einem gemeinsamen Host.
+Der Verein braucht dafür eine eigene `docker-compose.yml` als Vorlage.
+
+**Eigene Farben bei Fremdbetrieb schließen „zwei Images" aus.** Im Farben-Absatz
+oben standen zwei Images und ein Laufzeit-Theme noch gleichwertig nebeneinander.
+Baut der Betreiber nicht selbst, wäre ein instanzspezifisches Image ein zweiter
+Build je Release und ein Artefakt, das nur für einen Verein existiert. Es bleibt
+also: abgeleitete Töne als **CSS-Variablen auf `:root`**, Werte aus
+`/api/app-info`, `app.scss` nur noch über `var(--…)`, **ein Image für alle**.
+
+Damit rückt **Ticket #131 auf den kritischen Pfad**. Der heutige Look mit
+Vereinsgelb als Seitenfläche lässt sich nicht parametrieren — ein neutraler
+Grund mit den Vereinsfarben als Akzent ist die Voraussetzung dafür, dass zwei
+Eingangsfarben überhaupt genügen. #131 ist damit keine Sparmaßnahme mehr,
+sondern Vorarbeit.
+
+**Fremdbetrieb macht die Auslieferung zum Produkt.** Das Deployment ist heute
+undokumentiertes Kopfwissen. Dazu gehören mindestens: compose-Vorlage,
+`.env.example` (vorhanden), eine Update- und eine Backup-Anleitung — und
+ausdrücklich die zwei Stellen, an denen Fremdbetrieb wehtut: Migrationen laufen
+beim Start **ohne Rückfrage und ohne Downgrade-Pfad**, und ein verlorener
+`VTB_VAULT_KEY` macht die Tresordaten dauerhaft unlesbar.
+
+**Software-Tickets brauchen einen Weg zurück.** Die Feedback-Funktion legt
+Meldungen in der jeweils eigenen Instanz an — Bugs an der Software landen damit
+in Instanz B, wo sie niemand sieht. Die Brücke (`tools/vtb_tickets.py`) zeigt
+heute auf genau eine Instanz und braucht ein zweites Profil.
+
+## Reihenfolge bis zum 20.08.2026
+
+Zwei Wochen reichen nicht für alles. Der Maßstab ist deshalb nicht „fertig",
+sondern **was am Starttag nicht fehlen darf**: Die Instanz muss auf einer leeren
+DB sauber hochkommen, darf nirgends „VTB" sagen, muss brauchbare Mails
+verschicken, die Mitgliederdaten tragen und vom Verein selbst betreibbar sein.
+Ein noch nicht in Vereinsfarben getauchtes Theme ist am Starttag verzeihlich —
+ein fremdes Wappen auf der Login-Seite oder ein fehlgeschlagener Import nicht.
+
+**Woche 1 — das Unverzichtbare**
+
+1. **Schema-Diff Frischaufbau gegen Migration.** Leere DB gegen durchmigrierte
+   DB, Strukturvergleich. Klein, unabhängig, und das einzige Risiko auf der
+   Liste, das erst beim Aufsetzen auffällt und dann teuer ist: `_create_tables`
+   & Co. sind bisher nur in Tests gelaufen.
+2. **Branding-Ordner** (`VTB_BRANDING_PATH`): Icon-Überlagerung mit Fallback je
+   Datei, Mail-Layout auf `VEREIN_NAME`/`VEREIN_KURZ` und Env-Farben, dazu die
+   vereinfachte Mail ohne Logo.
+3. **Restliche VTB-Texte**: Login- und Magic-Link-Seite, PWA-Manifest.
+4. **LINEAR-Import** gegen den Muster-Export: Schema-Feld
+   `staatsangehoerigkeit`, Parser, Endpunkt, Formatauswahl, Tests.
+
+**Woche 2 — Betriebsfähigkeit und Puffer**
+
+5. **Auslieferungs-Doku**: compose-Vorlage, Update- und Backup-Anleitung, die
+   beiden Warnungen (Migration ohne Rückfrage, `VTB_VAULT_KEY` nicht verlieren).
+6. **Ticket #131 / neutrales Theme**, so weit es trägt. Wenn es knapp wird,
+   startet Instanz B mit dem neutralen Grund ohne eigene Vereinsfarben — die
+   Parametrierung ist nachrüstbar, ohne dass die Instanz noch einmal aufgesetzt
+   werden muss.
+7. **Puffer für den Echt-Export**: Anpassung des Parsers und ein Probelauf als
+   Dry-Run gegen die echten Daten.
+
+**Was ausdrücklich nach dem Termin kommt:** das zweite Profil der
+Ticket-Brücke, die volle Farb-Parametrierung, jede Verfeinerung am Theme.
+
+**Größtes Terminrisiko** ist der LINEAR-Echt-Export, weil er nicht in unserer
+Hand liegt. Bisher gibt es nur den Muster-Auszug; die vier offenen Fragen im
+`LINEAR_IMPORT_PLAN.md` (Status-Werte, zusätzliche Spalten, Dubletten mit dem
+Bestand, einmalig oder wiederholt) lassen sich erst daran beantworten. Der
+Parser entsteht deshalb gegen das Muster — er muss aber **spätestens am
+17.08.** echte Daten gesehen haben, sonst ist der Import am Starttag ungeprüft.
+
 ## Offene Fragen
 
-- Läuft die zweite Instanz auf **demselben Host** oder getrennt? Auf demselben
-  Host teilen sich beide Instanzen Ausfälle, Ressourcen und die Postgres-Version.
-- Wie viel **Branding** ist gefordert? Nur Name und Logo ist überschaubar;
-  eigene Vereinsfarben bedeuten Arbeit am Theme.
-- Wer betreibt die zweite Instanz — dieselbe Person oder der zweite Verein
-  selbst? Davon hängen Update-Prozess, Zugriffsrechte und Datenschutz ab.
+- **Vereinsfarben** des zweiten Vereins (zwei Hexwerte: Fläche und Akzent) sowie
+  der Icon-Satz. Ohne die Werte bleibt es beim neutralen Theme.
+- Bekommt der Entwickler **Zugriff auf die laufende Instanz B** (Support,
+  Fehlersuche) oder läuft alles über Exporte und Beschreibungen?
+- **LINEAR-Echt-Export**: Termin für die Bereitstellung.
