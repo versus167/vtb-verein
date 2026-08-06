@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 86
+SCHEMA_VERSION = 87
 
 
 # ---------------------------------------------------------------------------
@@ -1700,7 +1700,7 @@ _TRESOR_KONTAKT_TRIGGERS = (
 
 
 # ============================================================================
-# Teamtresor / Clubdeckel (Schema v75, Ticket #98)
+# Teamkasse / Clubdeckel (Schema v75, Ticket #98)
 # ----------------------------------------------------------------------------
 # Mannschaftsinterne Getränke-Strichliste, bewusst getrennt von Kassenbuch/FiBu/
 # Vereinsbeiträgen (eigenes Ledger, kein Geldfluss über die Vereinskasse). Rechte
@@ -2841,6 +2841,13 @@ _TICKET_ZUGRIFF_LOG_INDEXES = (
     ("idx_ticket_zugriff_log_created", "ticket_zugriff_log(created_at)"),
 )
 
+# Entstanden in v43→v44, im Frischaufbau aber lange vergessen (s. v86→v87):
+# geteilte Konstante, damit beide Pfade dieselben Indexe anlegen.
+_TICKET_TEILNEHMER_INDEXES = (
+    ("idx_ticket_teilnehmer_deleted_at",  "ticket_teilnehmer(deleted_at)"),
+    ("idx_ticket_teilnehmer_history_id",  "ticket_teilnehmer_history(id)"),
+)
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -2974,6 +2981,7 @@ class Database:
             84: self._migrate_v83_to_v84,
             85: self._migrate_v84_to_v85,
             86: self._migrate_v85_to_v86,
+            87: self._migrate_v86_to_v87,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6103,7 +6111,7 @@ class Database:
             cur.execute("UPDATE schema_version SET version = 74 WHERE id = 1")
 
     def _migrate_v74_to_v75(self) -> None:
-        """Teamtresor/Clubdeckel (#98): mannschaftsinterne Strichliste.
+        """Teamkasse/Clubdeckel (#98): mannschaftsinterne Strichliste.
 
         Neue Tabellen clubdeckel, clubdeckel_berechtigung (Wart-ACL),
         clubdeckel_artikel, clubdeckel_buchung (+_history, Audit-Trigger, Indexe).
@@ -6129,7 +6137,7 @@ class Database:
             cur.execute("UPDATE schema_version SET version = 75 WHERE id = 1")
 
     def _migrate_v75_to_v76(self) -> None:
-        """Teamtresor „komplett löschen mit Wiederherstellung" (#125).
+        """Teamkasse „komplett löschen mit Wiederherstellung" (#125).
 
         Batch-Marker `loesch_ref` (uuid) auf allen 6 clubdeckel-Live-Tabellen: Ein
         Admin-Löschvorgang soft-löscht Deckel + alle Kinder in einem Batch mit
@@ -6453,6 +6461,35 @@ class Database:
             )
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 86 WHERE id = 1")
+
+    def _migrate_v86_to_v87(self) -> None:
+        """Zwei Abweichungen zwischen Frischaufbau und gewachsenem Schema einebnen.
+
+        Beim Schema-Diff (leere DB gegen durchmigrierte DB) aufgefallen:
+
+        1. `fn_fibu_einstellungen_audit_insert/update` kennen auf migrierten DBs die
+           SEPA-Spalten nicht. v78→v79 hat `sepa_glaeubiger_id/-name/-iban/-bic` an
+           `fibu_einstellungen` und die History gehängt, aber die Audit-Funktionen nicht
+           neu erzeugt — die stammen dort noch aus v62→v63. Folge: Änderungen an den
+           Gläubiger-Angaben landen zwar in `fibu_einstellungen_history`, die fünf
+           SEPA-Spalten bleiben dort aber NULL. Der Frischaufbau ist korrekt, weil er
+           die Konstante nutzt; nur Bestands-DBs tragen die alte Fassung.
+        2. `idx_ticket_teilnehmer_deleted_at` und `idx_ticket_teilnehmer_history_id`
+           entstehen nur in v43→v44, nicht in `_create_indexes`. Umgekehrter Fall:
+           gewachsene DBs haben sie, frisch aufgesetzte nie. `_create_indexes` ist
+           mitgezogen; hier stehen sie für DBs, die irgendwann frisch angelegt wurden.
+
+        Beides idempotent (CREATE OR REPLACE bzw. IF NOT EXISTS). Alte History-Zeilen
+        werden nicht nachgefüllt — was beim Schreiben nicht mitgeschnitten wurde, lässt
+        sich nachträglich nicht rekonstruieren.
+        """
+        with self.cursor() as cur:
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+            for name, ziel in _TICKET_TEILNEHMER_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {ziel}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 87 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
@@ -7766,7 +7803,7 @@ class Database:
         # Tresor-Kontakte (Schema v73, #106): unverschlüsselte Ansprechpartner je
         # Tresor. DDL geteilt mit Migration v72→v73.
         cur.execute(_DDL_TRESOR_KONTAKT)
-        # Teamtresor/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
+        # Teamkasse/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
         # DDL geteilt mit Migration v74→v75.
         cur.execute(_DDL_CLUBDECKEL)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
@@ -8720,6 +8757,7 @@ class Database:
             ("idx_ticket_anhaenge_deleted_at",                      "ticket_anhaenge(deleted_at)"),
             ("idx_ticket_teilnehmer_ticket_id",                     "ticket_teilnehmer(ticket_id)"),
             ("idx_ticket_teilnehmer_user_id",                       "ticket_teilnehmer(user_id)"),
+            *_TICKET_TEILNEHMER_INDEXES,
             ("idx_ticket_bereich_berechtigungen_bereich_id",        "ticket_bereich_berechtigungen(bereich_id)"),
             ("idx_ticket_bereich_berechtigungen_user_id",           "ticket_bereich_berechtigungen(user_id)"),
             ("idx_ticket_bereich_berechtigungen_deleted_at",        "ticket_bereich_berechtigungen(deleted_at)"),
@@ -8833,54 +8871,51 @@ class Database:
                 ON CONFLICT DO NOTHING
             """, (admin_id, perm))
 
-        for name, beschreibung in [
-            ('Platz 1',      'Hauptspielfeld'),
-            ('Platz 2',      'Nebenspielfeld'),
-            ('Kabinen',      'Umkleiden und Sanitaranlagen'),
-            ('Vereinsheim',  'Clubhaus und Gastraum'),
-            ('Aussenanlage', 'Zaeune, Wege, Parkplatz'),
-            ('Sonstiges',    None),
-        ]:
-            cur.execute("""
-                INSERT INTO ticket_bereiche (name, beschreibung, created_by, updated_by)
-                VALUES (%s, %s, 'SYSTEM', 'SYSTEM')
-                RETURNING id
-            """, (name, beschreibung))
-            bereich_id = cur.fetchone()['id']
-            cur.execute("""
-                INSERT INTO ticket_bereich_berechtigungen
-                    (bereich_id, user_id, darf_lesen, darf_bearbeiten, darf_schliessen, created_by, updated_by)
-                VALUES (%s, %s, 1, 1, 1, 'SYSTEM', 'SYSTEM')
-                ON CONFLICT DO NOTHING
-            """, (bereich_id, admin_id))
+        # Startwerte bewusst neutral: je ein Bereich und eine Kategorie „Allgemein".
+        # Eine vorgefundene Liste („Platz 1", „Kabinen", „Schaden" …) unterstellt einen
+        # Fußballverein mit eigener Anlage und wird erfahrungsgemäß mitgeschleppt statt
+        # aufgeräumt; den Zuschnitt legt jeder Verein selbst über die Ticket-Verwaltung an.
+        # Ganz ohne Startwert ginge es nicht: bereich_id/kategorie_id sind zwar nullable,
+        # aber ohne Bereich greifen die Bereichsrechte nicht und der Auswahl-Dialog
+        # bliebe leer.
+        cur.execute("""
+            INSERT INTO ticket_bereiche (name, beschreibung, created_by, updated_by)
+            VALUES ('Allgemein', NULL, 'SYSTEM', 'SYSTEM')
+            RETURNING id
+        """)
+        bereich_id = cur.fetchone()['id']
+        cur.execute("""
+            INSERT INTO ticket_bereich_berechtigungen
+                (bereich_id, user_id, darf_lesen, darf_bearbeiten, darf_schliessen, created_by, updated_by)
+            VALUES (%s, %s, 1, 1, 1, 'SYSTEM', 'SYSTEM')
+            ON CONFLICT DO NOTHING
+        """, (bereich_id, admin_id))
 
-        for name, icon in [
-            ('Schaden',      'wrench'),
-            ('Sicherheit',   'shield-alert'),
-            ('Ausstattung',  'package'),
-            ('Reinigung',    'sparkles'),
-            ('IT / Technik', 'monitor'),
-            ('Sonstiges',    'circle-help'),
-        ]:
-            cur.execute("""
-                INSERT INTO ticket_kategorien (name, icon, created_by, updated_by)
-                VALUES (%s, %s, 'SYSTEM', 'SYSTEM')
-            """, (name, icon))
+        # icon = Material-Icon-Name (so heißt das Feld auch in der Ticket-Verwaltung);
+        # 'label' ist zugleich der Anzeige-Fallback.
+        cur.execute("""
+            INSERT INTO ticket_kategorien (name, icon, created_by, updated_by)
+            VALUES ('Allgemein', 'label', 'SYSTEM', 'SYSTEM')
+        """)
 
-        for key, name in [
-            ('schiedsrichter',   'Schiedsrichter'),
-            ('uebungsleiter',    'Übungsleiter'),
-            ('abteilungsleiter', 'Abteilungsleiter'),
-        ]:
-            cur.execute("""
-                INSERT INTO funktion (key, name, created_by)
-                SELECT %s, %s, 'SYSTEM'
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM funktion WHERE key = %s AND deleted_at IS NULL
-                )
-            """, (key, name, key))
+        # Auch hier nur ein neutraler Startwert: „Vorstand" gibt es in jedem Verein,
+        # alles Weitere (Übungsleiter, Abteilungsleiter, Kampfrichter …) hängt an der
+        # Struktur und wird in der Funktionsverwaltung angelegt. Der Schlüssel folgt der
+        # Konvention des SPG-Imports (FUNKTION_MAP), damit ein späterer Import nicht
+        # dieselbe Funktion ein zweites Mal anlegt.
+        cur.execute("""
+            INSERT INTO funktion (key, name, created_by)
+            SELECT 'vorstand', 'Vorstand', 'SYSTEM'
+            WHERE NOT EXISTS (
+                SELECT 1 FROM funktion WHERE key = 'vorstand' AND deleted_at IS NULL
+            )
+        """)
 
-        # Standard-Berechtigungen der ÜL-Stundenerfassung an die Funktionen hängen.
+        # Die folgenden beiden Blöcke hängen Rechte an 'uebungsleiter'/'abteilungsleiter'.
+        # Frisch aufgesetzt greifen sie ins Leere (die Funktionen gibt es dann noch nicht) –
+        # sie stehen hier für den Fall, dass die Schlüssel doch existieren, und spiegeln
+        # die Migrationspfade. Auf einer neuen Instanz vergibt der Admin die
+        # Funktionsrechte über die Oberfläche.
         for fkey, perm in _UL_FUNKTION_PERMISSIONS:
             cur.execute("""
                 INSERT INTO funktion_permission (funktion_id, permission, created_by, updated_by)

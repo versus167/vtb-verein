@@ -13,8 +13,12 @@ import csv
 from collections import Counter
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
+
+# Feldbereinigung, Datums-/Zahlenparsen und Namensnormalisierung teilen sich beide
+# Importe (s. import_common). Die Namen bleiben hier im Modul erreichbar, weil
+# Aufrufer sie von hier importieren.
+from app.services.import_common import clean, norm_abt, to_iso, to_nr  # noqa: F401
 
 from app.models.mitglied import Mitglied
 from app.db.mitglied_repository import MitgliedRepository
@@ -88,46 +92,12 @@ class ImportResult:
 
 # --- Hilfsfunktionen ---------------------------------------------------------
 
-def clean(v):
-    if v is None:
-        return ''
-    v = v.strip()
-    if len(v) >= 2 and v[0] == "'" and v[-1] == "'":
-        v = v[1:-1]
-    return v.strip()
-
-
-def to_iso(d):
-    d = clean(d)
-    if not d:
-        return None
-    for fmt in ('%d.%m.%Y', '%Y-%m-%d'):
-        try:
-            return datetime.strptime(d, fmt).date().isoformat()
-        except ValueError:
-            continue
-    return None
-
-
-def to_nr(s):
-    s = clean(s)
-    try:
-        return int(s)
-    except ValueError:
-        return None
-
-
 def funktion_key_name(raw):
     if raw in FUNKTION_MAP:
         return FUNKTION_MAP[raw]
     key = (raw.lower().replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue').replace('ß', 'ss'))
     key = ''.join(c if c.isalnum() else '_' for c in key).strip('_')
     return key, raw
-
-
-def norm_abt(s):
-    s = (s or '').lower().replace('ß', 'ss')
-    return ''.join(c for c in s if c.isalnum())
 
 
 def parse_csv_bytes(data: bytes):

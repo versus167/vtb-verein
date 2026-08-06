@@ -1,4 +1,4 @@
-"""Artikel-Katalog des Teamtresors (#98): clubdeckel_artikel.
+"""Artikel-Katalog der Teamkasse (#98): clubdeckel_artikel.
 
 Der „Deckelinhalt" — Getränke/Waren mit Preis, in Gruppen organisiert, gepflegt
 von den Warten. Der Preis wird beim Konsum als Betrag eingefroren (Snapshot in

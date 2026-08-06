@@ -244,7 +244,7 @@ class VereinsDB:
         self._tresor_zugriff_log_repo = TresorZugriffLogRepository(self.conn)
         self._tresor_kontakt_repo = TresorKontaktRepository(self.conn)
 
-        # Teamtresor/Clubdeckel (#98)
+        # Teamkasse/Clubdeckel (#98)
         self._clubdeckel_repo = ClubdeckelRepository(self.conn)
         self._clubdeckel_berechtigung_repo = ClubdeckelBerechtigungRepository(self.conn)
         self._clubdeckel_gruppe_repo = ClubdeckelGruppeRepository(self.conn)
@@ -432,7 +432,7 @@ class VereinsDB:
     def tresor_kontakte(self) -> TresorKontaktRepository:
         return self._tresor_kontakt_repo
 
-    # --- Teamtresor/Clubdeckel (#98) ---
+    # --- Teamkasse/Clubdeckel (#98) ---
     @property
     def clubdeckel(self) -> ClubdeckelRepository:
         return self._clubdeckel_repo

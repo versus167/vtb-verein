@@ -71,7 +71,7 @@
           <!-- Wappen als Home-Button: gleiche Höhe wie die Header-Leiste daneben -->
           <q-item clickable :to="{ name: 'dashboard' }" exact active-class="vtb-nav-active" class="vtb-drawer-home">
             <q-item-section avatar>
-              <img src="/icons/vtb-wappen-512.png" alt="VTB-Wappen" class="vtb-drawer-home__logo" />
+              <img src="/icons/logo-512.png" alt="Vereinslogo" class="vtb-drawer-home__logo" />
             </q-item-section>
             <q-item-section>Home</q-item-section>
           </q-item>
@@ -97,13 +97,13 @@
           </q-item>
 
           <q-item
-            v-if="hatTeamtresorZugriff"
+            v-if="hatTeamkasseZugriff"
             clickable
-            :to="{ name: 'teamtresor' }"
+            :to="{ name: 'teamkasse' }"
             active-class="vtb-nav-active"
           >
             <q-item-section avatar><q-icon name="sports_bar" /></q-item-section>
-            <q-item-section>Teamtresor</q-item-section>
+            <q-item-section>Teamkasse</q-item-section>
           </q-item>
 
           <q-item
@@ -332,19 +332,29 @@ const zeigeKopfExtras = computed(() => $q.screen.gt.sm || route.name === 'dashbo
 
 // Seitentitel aus der Route (meta.title) — im Header und im Browser-Tab.
 const pageTitle = computed(() => route.meta?.title || '')
+
+// Vereinskürzel als Titel-Präfix; Stammdatum aus /api/app-info (VTB_VEREIN_KURZ).
+// Solange nichts geladen ist, bleibt das Präfix weg — lieber ohne als mit einem
+// fremden Vereinskürzel.
+const vereinKurz = computed(() => (appInfo.value.verein_kurz || '').trim())
+
 watch(
-  pageTitle,
-  (t) => {
-    document.title = t ? `VTB – ${t}` : 'VTB Vereinsverwaltung'
+  [pageTitle, vereinKurz],
+  ([t, kurz]) => {
+    if (t) document.title = kurz ? `${kurz} – ${t}` : t
+    else document.title = kurz ? `${kurz} Vereinsverwaltung` : 'Vereinsverwaltung'
   },
   { immediate: true },
 )
 
-// Kopfzeilen-Titel: am Desktop „VTB – <Seite>". Am Handy ohne „VTB – "-Präfix
-// nur der Seitenname — und auf der Übersicht gar nichts, dort steht bereits die
+// Kopfzeilen-Titel: am Desktop „<Kürzel> – <Seite>". Am Handy ohne Präfix nur der
+// Seitenname — und auf der Übersicht gar nichts, dort steht bereits die
 // „Willkommen …"-Begrüßung auf der Seite.
 const toolbarTitle = computed(() => {
-  if ($q.screen.gt.sm) return pageTitle.value ? `VTB – ${pageTitle.value}` : 'VTB'
+  if ($q.screen.gt.sm) {
+    if (!pageTitle.value) return vereinKurz.value
+    return vereinKurz.value ? `${vereinKurz.value} – ${pageTitle.value}` : pageTitle.value
+  }
   return route.name === 'dashboard' ? '' : pageTitle.value
 })
 
@@ -407,7 +417,7 @@ const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
-const hatTeamtresorZugriff = ref(false)
+const hatTeamkasseZugriff = ref(false)
 
 const appVersion = versionLabel
 const sourceUrl = computed(() => appInfo.value.source_url || '')   // AGPL §13
@@ -450,12 +460,12 @@ async function loadMannschaftenZugriff() {
   }
 }
 
-async function loadTeamtresorZugriff() {
+async function loadTeamkasseZugriff() {
   try {
     const { data } = await api.get('/api/clubdeckel/teams')
-    hatTeamtresorZugriff.value = data.length > 0
+    hatTeamkasseZugriff.value = data.length > 0
   } catch {
-    hatTeamtresorZugriff.value = false
+    hatTeamkasseZugriff.value = false
   }
 }
 
@@ -470,7 +480,7 @@ async function loadTeamtresorZugriff() {
 function ladeZugriffsProben() {
   return Promise.all([auth.loadMe().catch(() => {}),
     loadKassenZugriff(), loadTresorZugriff(), loadTermineZugriff(),
-    loadMannschaftenZugriff(), loadTeamtresorZugriff(), aufgaben.laden()])
+    loadMannschaftenZugriff(), loadTeamkasseZugriff(), aufgaben.laden()])
 }
 
 async function onLogout() {
@@ -479,7 +489,7 @@ async function onLogout() {
   hatTresorZugriff.value = false
   hatTermineZugriff.value = false
   hatMannschaftenZugriff.value = false
-  hatTeamtresorZugriff.value = false
+  hatTeamkasseZugriff.value = false
   aufgaben.zuruecksetzen()
   router.push({ name: 'login' })
 }

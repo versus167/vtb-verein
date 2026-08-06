@@ -1,4 +1,4 @@
-"""Teamtresor-API (#98, backend/api/clubdeckel.py) — Stub-basiert.
+"""Teamkassen-API (#98, backend/api/clubdeckel.py) — Stub-basiert.
 
 Zugriffsmatrix der teaminternen Stufen (mitglied < wart < verwalten, Admin-Bypass)
 und die Validierungen der Buchungs-Endpunkte im korrigierten Modell (konsum/
@@ -33,7 +33,7 @@ _AUDIT = dict(version=1, created_at='x', created_by='t', updated_at='x', updated
 
 
 def _deckel(**kw):
-    base = dict(id=7, mannschaft_id=3, name='Teamtresor Erste', aktiv=1,
+    base = dict(id=7, mannschaft_id=3, name='Teamkasse Erste', aktiv=1,
                 beitrag=None, beitrag_ab=None, zahlungsempfaenger_mitglied_id=None,
                 zahlweg_iban=None, zahlweg_wero=None, zahlweg_paypal=None, **_AUDIT)
     base.update(kw)
@@ -256,7 +256,7 @@ def test_einschalten_default_name_aus_mannschaft():
     seen = []
     db.clubdeckel.create = lambda man, name, by: (seen.append(name), _deckel(name=name))[1]
     api.deckel_einschalten(3, api.DeckelCreate(), _USER, db)
-    assert seen == ['Teamtresor Erste']
+    assert seen == ['Teamkasse Erste']
 
 
 # --------------------------------------------------------------------- Beitragslauf

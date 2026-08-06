@@ -1,4 +1,4 @@
-"""Integrationstests des Teamtresors (#98, Schema v75) gegen echtes PostgreSQL.
+"""Integrationstests der Teamkasse (#98, Schema v75) gegen echtes PostgreSQL.
 
 Prüft die neuen Tabellen (History-Trigger, CHECK, partielle Unique-Indexe), die
 Kader-Rechteableitung (aktiv am Stichtag, Rollen-Stufen), die Wart-ACL inkl.
@@ -139,11 +139,11 @@ def test_list_teams_for_user_mit_deckel_und_ohne(db):
         mid = cur.fetchone()['id']
         cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,von,created_by,updated_by) "
                     "VALUES (%s,%s,'spieler',%s,'t','t')", (mid, man2, LASTWEEK))
-    db.clubdeckel.create(man1, "Teamtresor Erste", 't')
+    db.clubdeckel.create(man1, "Teamkasse Erste", 't')
 
     teams = {t['mannschaft_id']: t for t in db.clubdeckel.list_teams_for_user(uid)}
     assert teams[man1]['zugriff'] == 'verwalten'
-    assert teams[man1]['deckel']['name'] == 'Teamtresor Erste'
+    assert teams[man1]['deckel']['name'] == 'Teamkasse Erste'
     assert teams[man2]['zugriff'] == 'mitglied'
     assert teams[man2]['deckel'] is None
 
@@ -151,7 +151,7 @@ def test_list_teams_for_user_mit_deckel_und_ohne(db):
 # ------------------------------------------------------------- Schema/Unique
 def test_ein_deckel_pro_mannschaft_und_neuanlage_nach_softdelete(db):
     man = _make_mannschaft(db)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     with pytest.raises(psycopg.errors.UniqueViolation):
         db.clubdeckel.create(man, "Zweiter", 't')
     # Nach Soft-Delete ist die Mannschaft wieder frei (partieller Index)
@@ -163,17 +163,17 @@ def test_ein_deckel_pro_mannschaft_und_neuanlage_nach_softdelete(db):
 def test_stammdaten_update_fuehrt_beitrag_ab(db):
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
 
     # Beitrag setzen -> beitrag_ab = Folgemonat (nie im laufenden Monat)
-    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
+    assert db.clubdeckel.update(deckel.id, "Teamkasse", 1, Decimal('5.00'),
                                 mid, 'DE12', None, 'paypal.me/x', 't', deckel.version)
     d2 = db.clubdeckel.get(deckel.id)
     assert d2.beitrag == Decimal('5.00')
     assert d2.beitrag_ab == NAECHSTER_MONAT
     assert d2.zahlungsempfaenger_name == 'Anna Deckeltest'
     # Beitrag entfernen -> beitrag_ab leer
-    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, None, None,
+    assert db.clubdeckel.update(deckel.id, "Teamkasse", 1, None, None,
                                 None, None, None, 't', d2.version)
     d3 = db.clubdeckel.get(deckel.id)
     assert d3.beitrag is None and d3.beitrag_ab is None
@@ -185,7 +185,7 @@ def test_stammdaten_update_fuehrt_beitrag_ab(db):
 def test_buchung_typ_check(db):
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     with pytest.raises(psycopg.errors.CheckViolation):
         with db.cursor() as cur:
             cur.execute(
@@ -197,7 +197,7 @@ def test_buchung_typ_check(db):
 def test_wart_setzen_revoken_reaktivieren(db):
     man = _make_mannschaft(db)
     uid, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
 
     assert not db.clubdeckel_berechtigungen.ist_wart_user(deckel.id, uid)
     db.clubdeckel_berechtigungen.set_wart(deckel.id, mid, 't')
@@ -220,7 +220,7 @@ def test_wart_setzen_revoken_reaktivieren(db):
 def test_team_verkauf_preis_snapshot_und_team_saldo(db):
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('1.50'), 1, 0, 't')
@@ -243,7 +243,7 @@ def test_mitglieds_verkaeufer_erzeugt_nullsummen_paar(db):
     man = _make_mannschaft(db)
     _, kaeufer = _make_kader_user(db, man, 'spieler', 'Anna')
     _, trompete = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Essen", trompete, 1, 0, 't')
     roster = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Roster",
                                           Decimal('2.50'), 1, 0, 't')
@@ -268,7 +268,7 @@ def test_bezeichnung_und_gegenkonto_bleiben_eingefroren(db):
     list_for_deckel sie direkt aus der Zeile liest (kein Live-Katalog-JOIN)."""
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('1.50'), 1, 0, 't')
@@ -292,7 +292,7 @@ def test_gegen_name_snapshot_je_buchungstyp(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, brd = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gr = db.clubdeckel_gruppen.create(deckel.id, "Essen", brd, 1, 0, 't')
     roster = db.clubdeckel_artikel.create(deckel.id, gr.id, "Roster",
                                           Decimal('2.00'), 1, 0, 't')
@@ -338,7 +338,7 @@ def test_beispielkette_aus_dem_fachmodell(db):
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, b = _make_kader_user(db, man, 'spieler', 'Bernd')
     _, c = _make_kader_user(db, man, 'spieler', 'Clara')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('2.00'), 1, 0, 't')
@@ -373,7 +373,7 @@ def test_storno_und_restore_buchung(db):
     mit_storniert zeigt die Zeile weiter, restore reaktiviert sie samt Saldo."""
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('1.50'), 1, 0, 't')
@@ -401,7 +401,7 @@ def test_restore_paar_reaktiviert_beide_zeilen(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     db.clubdeckel_buchungen.create_zahlung(deckel.id, a, bernd, Decimal('5.00'), None, 't')
     (row,) = [r for r in db.clubdeckel_buchungen.list_for_deckel(deckel.id)
               if r.mitglied_id == a]
@@ -417,7 +417,7 @@ def test_list_for_deckel_volltextsuche(db):
     man = _make_mannschaft(db)
     _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
     _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('1.50'), 1, 0, 't')
@@ -448,7 +448,7 @@ def test_salden_sortiert_nach_saldo_desc(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     db.clubdeckel_buchungen.create_einkauf(deckel.id, a, Decimal('20.00'), None, 't')  # A +20
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
@@ -465,7 +465,7 @@ def test_an_verkauf_team_und_mitglied_paar(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, b = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
 
     # Gegen Team: kauft von (Belastung) und verkauft an (Gutschrift) je Einzelzeile
     db.clubdeckel_buchungen.create_an_verkauf(deckel.id, a, None, False,
@@ -496,7 +496,7 @@ def test_an_verkauf_team_und_mitglied_paar(db):
 def test_an_verkauf_mit_wertdatum(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     db.clubdeckel_buchungen.create_an_verkauf(deckel.id, a, None, False,
                                               Decimal('2.00'), None, 't',
                                               wert_datum='2026-01-15T12:00')
@@ -511,7 +511,7 @@ def test_zahlung_paar_storno(db):
     man = _make_mannschaft(db)
     _, a = _make_kader_user(db, man, 'spieler', 'Anna')
     _, b = _make_kader_user(db, man, 'spieler', 'Bernd')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
 
     ref = db.clubdeckel_buchungen.create_zahlung(deckel.id, a, b, Decimal('7.50'),
                                                  'bar', 't')
@@ -540,7 +540,7 @@ def test_beitragslauf_monatsfenster_befreiung_und_erlass(db):
     _, befreit = _make_kader_user(db, man, 'spieler', 'Clara', von=vormonat_erster)
     _, ex = _make_kader_user(db, man, 'spieler', 'Doro', von=vormonat_erster,
                              bis=vormonat_letzter)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     db.clubdeckel_befreiungen.set_befreiung(deckel.id, befreit, 't')
 
     vormonat = _vormonat(MONAT)
@@ -608,9 +608,9 @@ def test_beitrag_startet_erst_naechsten_monat(db):
     erster_aktuell = date.today().replace(day=1)
     vormonat_erster = (erster_aktuell - timedelta(days=1)).replace(day=1).isoformat()
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna', von=vormonat_erster)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
 
-    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
+    assert db.clubdeckel.update(deckel.id, "Teamkasse", 1, Decimal('5.00'),
                                 None, None, None, None, 't', deckel.version)
     d = db.clubdeckel.get(deckel.id)
     assert d.beitrag_ab == NAECHSTER_MONAT
@@ -633,8 +633,8 @@ def test_beitragsaenderung_schliesst_laufenden_monat_alt_ab(db):
 
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna', von=vormonat_erster)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
-    assert db.clubdeckel.update(deckel.id, "Teamtresor", 1, Decimal('5.00'),
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    assert db.clubdeckel.update(deckel.id, "Teamkasse", 1, Decimal('5.00'),
                                 None, None, None, None, 't', deckel.version)
     # Beitrag läuft bereits: laufenden Monat zum alten Satz fällig stellen
     with db.cursor() as cur:
@@ -644,7 +644,7 @@ def test_beitragsaenderung_schliesst_laufenden_monat_alt_ab(db):
     # Betrag über die API ändern (5,00 -> 8,00)
     api.update_deckel(
         deckel.id,
-        api.DeckelUpdate(name="Teamtresor", aktiv=True, beitrag=8.0,
+        api.DeckelUpdate(name="Teamkasse", aktiv=True, beitrag=8.0,
                          expected_version=d.version),
         admin, db)
 
@@ -664,7 +664,7 @@ def test_beitragsaenderung_schliesst_laufenden_monat_alt_ab(db):
 
 def test_gruppe_loeschen_nur_ohne_artikel(db):
     man = _make_mannschaft(db)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     artikel = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                            Decimal('1.50'), 1, 0, 't')
@@ -676,7 +676,7 @@ def test_gruppe_loeschen_nur_ohne_artikel(db):
 
 def test_katalog_filtert_inaktive_gruppen(db):
     man = _make_mannschaft(db)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     aktiv_g = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     inaktiv_g = db.clubdeckel_gruppen.create(deckel.id, "Essen", None, 0, 1, 't')
     db.clubdeckel_artikel.create(deckel.id, aktiv_g.id, "Bier", Decimal('1.50'), 1, 0, 't')
@@ -692,7 +692,7 @@ def test_katalog_filtert_inaktive_gruppen(db):
 def test_konsum_24h_striche_und_letzte_konsum(db):
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier", Decimal('1.50'), 1, 0, 't')
     wasser = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Wasser", Decimal('1.00'), 1, 0, 't')
@@ -744,7 +744,7 @@ def _loesch_ref(db, table, deckel_id):
 def test_loeschen_komplett_und_wiederherstellen(db):
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier",
                                         Decimal('1.50'), 1, 0, 't')
@@ -767,7 +767,7 @@ def test_loeschen_komplett_und_wiederherstellen(db):
     assert db.clubdeckel.get(deckel.id) is None             # aktiv nicht mehr sichtbar
     assert db.clubdeckel.get_by_mannschaft(man) is None
     weg = db.clubdeckel.get_geloescht(deckel.id)
-    assert weg is not None and weg.name == "Teamtresor"
+    assert weg is not None and weg.name == "Teamkasse"
     # Alle Kinder + Deckel gelöscht und teilen dieselbe loesch_ref …
     for table in ("clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
                   "clubdeckel_gruppe", "clubdeckel_berechtigung",
@@ -803,7 +803,7 @@ def test_loeschen_komplett_und_wiederherstellen(db):
 
 def test_loeschen_idempotent_und_papierkorb(db):
     man = _make_mannschaft(db)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     assert db.clubdeckel.loesche_komplett(deckel.id, 'admin') is not None
     assert db.clubdeckel.loesche_komplett(deckel.id, 'admin') is None   # schon weg
     eintraege = {e['id']: e for e in db.clubdeckel.list_geloescht()}
@@ -825,7 +825,7 @@ def test_restore_konflikt_wenn_neuer_deckel(db):
 
 def test_restore_unbekannt(db):
     man = _make_mannschaft(db)
-    deckel = db.clubdeckel.create(man, "Teamtresor", 't')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
     assert db.clubdeckel.restore(deckel.id, 'admin') == 'not_found'   # aktiv, nicht gelöscht
     assert db.clubdeckel.restore(deckel.id + 999, 'admin') == 'not_found'
 

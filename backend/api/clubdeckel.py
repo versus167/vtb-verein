@@ -1,4 +1,4 @@
-"""Teamtresor/Clubdeckel (#98) — mannschaftsinterne Getränke-Strichliste.
+"""Teamkasse/Clubdeckel (#98) — mannschaftsinterne Getränke-Strichliste.
 
 Zugriffsmodell (komplett teamintern, KEIN globaler Permission-Key, kein
 Vorstands-Einblick): Stufen je Deckel sind mitglied < wart < verwalten.
@@ -38,7 +38,7 @@ _STUFEN_RANG = {'mitglied': 1, 'wart': 2, 'verwalten': 3}
 
 # --------------------------------------------------------------------------- I/O
 class DeckelCreate(BaseModel):
-    name: Optional[str] = None               # Default: "Teamtresor <Mannschaft>"
+    name: Optional[str] = None               # Default: "Teamkasse <Mannschaft>"
 
 
 class DeckelUpdate(BaseModel):
@@ -146,28 +146,28 @@ def _stufe(db: DB, user, deckel) -> Optional[str]:
 def _deckel_mit_stufe(db: DB, user, deckel_id: int, mindest: str):
     deckel = db.clubdeckel.get(deckel_id)
     if deckel is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teamtresor nicht gefunden")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teamkasse nicht gefunden")
     stufe = _stufe(db, user, deckel)
     if stufe is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            "Kein Zugriff auf den Teamtresor dieser Mannschaft")
+                            "Kein Zugriff auf die Teamkasse dieser Mannschaft")
     if _STUFEN_RANG[stufe] < _STUFEN_RANG[mindest]:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            "Keine Berechtigung für diese Aktion am Teamtresor")
+                            "Keine Berechtigung für diese Aktion an der Teamkasse")
     return deckel, stufe
 
 
 def _require_aktiv(deckel) -> None:
     if not deckel.aktiv:
         raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Teamtresor ist deaktiviert — Buchen nicht möglich")
+                            "Teamkasse ist deaktiviert — Buchen nicht möglich")
 
 
 def _require_admin(user) -> None:
-    """Löschen und Wiederherstellen eines Teamtresors sind app-weit admin-only (#125)."""
+    """Löschen und Wiederherstellen einer Teamkasse sind app-weit admin-only (#125)."""
     if user.role != 'admin':
         raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            "Nur Administratoren dürfen einen Teamtresor löschen "
+                            "Nur Administratoren dürfen eine Teamkasse löschen "
                             "oder wiederherstellen")
 
 
@@ -190,7 +190,7 @@ def _beitragslauf(db: DB, deckel) -> None:
 # ---------------------------------------------------------------------- Teams
 @router.get("/teams")
 def list_meine_teams(user: CurrentUser, db: DB):
-    """Meine Teamtresor-Teams (= Nav-Probe): Kader-Teams mit vorhandenem Deckel
+    """Meine Teamkassen-Teams (= Nav-Probe): Kader-Teams mit vorhandenem Deckel
     sowie — für Verwalter — Teams ohne Deckel (Einschalt-Angebot)."""
     teams = (db.clubdeckel.list_all_teams() if user.role == 'admin'
              else db.clubdeckel.list_teams_for_user(user.id))
@@ -207,11 +207,11 @@ def deckel_einschalten(mannschaft_id: int, data: DeckelCreate,
             db.clubdeckel.get_access_for_user(user.id, mannschaft_id) != 'verwalten':
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Nur Übungsleiter/Betreuer der Mannschaft dürfen den "
-                            "Teamtresor einschalten")
+                            "Teamkasse einschalten")
     if db.clubdeckel.get_by_mannschaft(mannschaft_id) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Diese Mannschaft hat bereits einen Teamtresor")
-    name = (data.name or '').strip() or f"Teamtresor {mannschaft.name}"
+                            "Diese Mannschaft hat bereits eine Teamkasse")
+    name = (data.name or '').strip() or f"Teamkasse {mannschaft.name}"
     deckel = db.clubdeckel.create(mannschaft_id, name, user.username)
     return asdict(deckel)
 
@@ -221,25 +221,25 @@ def deckel_einschalten(mannschaft_id: int, data: DeckelCreate,
 # int-Pfadparameter, "papierkorb" zu parsen (422). Admin-only (#125).
 @router.get("/papierkorb")
 def list_papierkorb(user: CurrentUser, db: DB):
-    """Gelöschte Teamtresore (Admin-Papierkorb) — Grundlage fürs Wiederherstellen."""
+    """Gelöschte Teamkassen (Admin-Papierkorb) — Grundlage fürs Wiederherstellen."""
     _require_admin(user)
     return db.clubdeckel.list_geloescht()
 
 
 @router.post("/papierkorb/{deckel_id}/restore")
 def restore_deckel(deckel_id: int, user: CurrentUser, db: DB):
-    """Einen gelöschten Teamtresor komplett wiederherstellen (Deckel + Buchungen +
-    Katalog + Warte + Befreiungen). 409, wenn die Mannschaft inzwischen wieder einen
-    aktiven Teamtresor hat."""
+    """Eine gelöschte Teamkasse komplett wiederherstellen (Deckel + Buchungen +
+    Katalog + Warte + Befreiungen). 409, wenn die Mannschaft inzwischen wieder eine
+    aktive Teamkasse hat."""
     _require_admin(user)
     ergebnis = db.clubdeckel.restore(deckel_id, user.username)
     if ergebnis == 'not_found':
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            "Kein gelöschter Teamtresor mit dieser ID")
+                            "Keine gelöschte Teamkasse mit dieser ID")
     if ergebnis == 'conflict':
         raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Diese Mannschaft hat bereits wieder einen aktiven "
-                            "Teamtresor — Wiederherstellen nicht möglich")
+                            "Diese Mannschaft hat bereits wieder eine aktive "
+                            "Teamkasse — Wiederherstellen nicht möglich")
     return {"status": "wiederhergestellt"}
 
 
@@ -283,7 +283,7 @@ def update_deckel(deckel_id: int, data: DeckelUpdate, user: CurrentUser, db: DB)
     ze = data.zahlungsempfaenger_mitglied_id
     if ze is not None and not _mitglied_am_deckel(db, deckel, ze):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Zahlungsempfänger gehört nicht zu diesem Teamtresor")
+                            "Zahlungsempfänger gehört nicht zu dieser Teamkasse")
     # Vor einer Beitragsänderung offene Monate noch zum ALTEN Satz abschließen;
     # der (evtl. neue) Beitrag greift erst ab dem Folgemonat (siehe update()).
     _beitragslauf(db, deckel)
@@ -294,29 +294,29 @@ def update_deckel(deckel_id: int, data: DeckelUpdate, user: CurrentUser, db: DB)
             (data.zahlweg_paypal or '').strip() or None,
             user.username, data.expected_version):
         raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Der Teamtresor wurde zwischenzeitlich geändert")
+                            "Die Teamkasse wurde zwischenzeitlich geändert")
     return asdict(db.clubdeckel.get(deckel_id))
 
 
 @router.put("/{deckel_id}/aktiv")
 def set_deckel_aktiv(deckel_id: int, data: AktivUpdate, user: CurrentUser, db: DB):
-    """Teamtresor (de)aktivieren durch den Verwalter — nur der Aktiv-Status, ohne die
+    """Teamkasse (de)aktivieren durch den Verwalter — nur der Aktiv-Status, ohne die
     Stammdaten anzufassen. Deaktiviert = Buchen gesperrt, jederzeit reversibel."""
     _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
     if not db.clubdeckel.set_aktiv(deckel_id, 1 if data.aktiv else 0,
                                    user.username, data.expected_version):
         raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Der Teamtresor wurde zwischenzeitlich geändert")
+                            "Die Teamkasse wurde zwischenzeitlich geändert")
     return asdict(db.clubdeckel.get(deckel_id))
 
 
 @router.delete("/{deckel_id}")
 def delete_deckel(deckel_id: int, user: CurrentUser, db: DB):
-    """Kompletter Soft-Delete des Teamtresors (Deckel + Buchungen + Katalog + Warte +
+    """Kompletter Soft-Delete der Teamkasse (Deckel + Buchungen + Katalog + Warte +
     Befreiungen) als ein Batch — admin-only (#125), über den Papierkorb wiederherstellbar."""
     _require_admin(user)
     if db.clubdeckel.loesche_komplett(deckel_id, user.username) is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teamtresor nicht gefunden")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teamkasse nicht gefunden")
     return {"status": "geloescht"}
 
 
@@ -334,7 +334,7 @@ def _validate_gruppe(db: DB, deckel, data: GruppeWrite) -> str:
     v = data.verkaeufer_mitglied_id
     if v is not None and not _mitglied_am_deckel(db, deckel, v):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Verkäufer gehört nicht zu diesem Teamtresor")
+                            "Verkäufer gehört nicht zu dieser Teamkasse")
     return name
 
 
@@ -352,7 +352,7 @@ def _gruppe_im_deckel(db: DB, deckel_id: int, gruppe_id: int):
     gruppe = db.clubdeckel_gruppen.get(gruppe_id)
     if gruppe is None or gruppe.deckel_id != deckel_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            "Gruppe nicht in diesem Teamtresor gefunden")
+                            "Gruppe nicht in dieser Teamkasse gefunden")
     return gruppe
 
 
@@ -419,7 +419,7 @@ def _artikel_im_deckel(db: DB, deckel_id: int, artikel_id: int):
     artikel = db.clubdeckel_artikel.get(artikel_id)
     if artikel is None or artikel.deckel_id != deckel_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            "Artikel nicht in diesem Teamtresor gefunden")
+                            "Artikel nicht in dieser Teamkasse gefunden")
     return artikel
 
 
@@ -535,7 +535,7 @@ def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
     artikel = db.clubdeckel_artikel.get_mit_verkaeufer(data.artikel_id)
     if artikel is None or artikel['deckel_id'] != deckel_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            "Artikel nicht in diesem Teamtresor gefunden")
+                            "Artikel nicht in dieser Teamkasse gefunden")
     if not artikel['aktiv'] or not (artikel['gruppe_aktiv'] if
                                     artikel['gruppe_aktiv'] is not None else 1):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -620,7 +620,7 @@ def buche_zahlung(deckel_id: int, data: ZahlungCreate, user: CurrentUser, db: DB
     for mid in (data.von_mitglied_id, data.an_mitglied_id):
         if not _mitglied_am_deckel(db, deckel, mid):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "Mitglied gehört nicht zu diesem Teamtresor")
+                                "Mitglied gehört nicht zu dieser Teamkasse")
     datum = _parse_datum(data.datum)
     methode = _METHODE_LABEL.get(data.methode or '')
     freitext = (data.notiz or '').strip()
@@ -646,14 +646,14 @@ def buche_an_verkauf(deckel_id: int, data: AnVerkaufCreate, user: CurrentUser, d
                             "Betrag muss größer 0 sein")
     if not _mitglied_am_deckel(db, deckel, data.mitglied_id):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Mitglied gehört nicht zu diesem Teamtresor")
+                            "Mitglied gehört nicht zu dieser Teamkasse")
     if data.gegen_mitglied_id is not None:
         if data.gegen_mitglied_id == data.mitglied_id:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "Gegenkonto muss ein anderes Mitglied sein")
         if not _mitglied_am_deckel(db, deckel, data.gegen_mitglied_id):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                "Gegen-Mitglied gehört nicht zu diesem Teamtresor")
+                                "Gegen-Mitglied gehört nicht zu dieser Teamkasse")
     datum = _parse_datum(data.datum)
     ergebnis = db.clubdeckel_buchungen.create_an_verkauf(
         deckel_id, data.mitglied_id, data.gegen_mitglied_id, data.verkauft,

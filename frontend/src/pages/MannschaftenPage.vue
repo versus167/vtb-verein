@@ -121,7 +121,7 @@
             :caption="form.dfbnet_name || 'nicht zugeordnet'" class="q-mt-sm">
             <div class="q-gutter-sm q-pt-sm">
               <q-input v-model="form.dfbnet_name" label="Teamname im DFBnet" outlined dense
-                hint="Exakt wie im Spielplan, z. B. „VTB Chemnitz 2“" />
+                :hint="dfbnetHint" />
               <q-input v-model="form.dfbnet_mannschaftsart" label="Mannschaftsart" outlined dense
                 hint="z. B. Herren, A-Junioren, Herren Ü35" />
               <q-select v-model="form.dfbnet_aliasse" label="Weitere Namen (Spielgemeinschaften)"
@@ -203,6 +203,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { vereinName } from 'src/composables/useAppInfo'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
@@ -216,6 +217,12 @@ const abteilungen = ref([])
 // ── Filter & Gruppierung ───────────────────────────────────
 const filterAbteilung = ref(null)
 const search = ref('')
+
+// Beispiel im Hinweis mit dem eigenen Vereinsnamen — „Exakt wie im Spielplan"
+// versteht man erst am Beispiel, und ein fremder Verein hilft dabei nicht.
+const dfbnetHint = computed(() => vereinName.value
+  ? `Exakt wie im Spielplan, z. B. „${vereinName.value} 2“`
+  : 'Exakt wie im Spielplan geschrieben')
 
 const abteilungFilterOptions = computed(() =>
   abteilungen.value.map(a => ({ label: a.name, value: a.id })))

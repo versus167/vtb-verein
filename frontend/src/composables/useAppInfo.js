@@ -5,7 +5,11 @@
 import { computed, ref } from 'vue'
 import { api } from 'src/boot/axios'
 
-export const appInfo = ref({ name: '', version: '', source_url: '', verein_kurz: '' })
+export const appInfo = ref({ name: '', version: '', source_url: '', verein_kurz: '', verein_name: '' })
+
+// Vereinsname für die Login-Seite. Solange nichts geladen ist, bleibt die Zeile
+// leer – lieber kurz kein Name als der eines fremden Vereins.
+export const vereinName = computed(() => (appInfo.value.verein_name || '').trim())
 
 // „v.2026.08.04.162" – Anzeigeform; leer, solange nichts geladen ist.
 export const versionLabel = computed(() =>
