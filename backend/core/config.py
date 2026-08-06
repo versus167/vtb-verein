@@ -42,15 +42,19 @@ class Settings:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     VAULT_KEY: str = os.getenv("VTB_VAULT_KEY", "")
 
-    # Vereins-Stammdaten für Belege/PDFs (z. B. Übungsleiter-Stundennachweis).
-    # Defaults entsprechen dem Muster-Beleg; per Env überschreibbar.
-    VEREIN_NAME: str = os.getenv("VTB_VEREIN_NAME", "VTB Chemnitz e.V.")
+    # Vereins-Stammdaten für Oberfläche, Mails und Belege/PDFs (z. B.
+    # Übungsleiter-Stundennachweis). Die Defaults sind bewusst erkennbare
+    # Platzhalter: Eine unkonfigurierte Instanz soll sichtbar „Beispielverein"
+    # heißen, statt sich stillschweigend nach dem Verein zu nennen, für den die
+    # App zuerst gebaut wurde. Wer eine Instanz aufsetzt, sieht am Namen sofort,
+    # dass die Stammdaten noch fehlen.
+    VEREIN_NAME: str = os.getenv("VTB_VEREIN_NAME", "Beispielverein")
     # Kürzel vor dem Mannschaftsnamen („VTB" + „AH" → „VTB AH"). Steht in
     # Spieltiteln und Termin-Meldungen; deshalb kurz halten, nicht der volle Name.
-    VEREIN_KURZ: str = os.getenv("VTB_VEREIN_KURZ", "VTB")
-    VEREIN_STRASSE: str = os.getenv("VTB_VEREIN_STRASSE", "Guerickestraße 48")
-    VEREIN_PLZ_ORT: str = os.getenv("VTB_VEREIN_PLZ_ORT", "09116 Chemnitz")
-    VEREIN_REGISTRIER_NR: str = os.getenv("VTB_VEREIN_REGISTRIER_NR", "400193")
+    VEREIN_KURZ: str = os.getenv("VTB_VEREIN_KURZ", "Beispiel")
+    VEREIN_STRASSE: str = os.getenv("VTB_VEREIN_STRASSE", "Beispielstraße 1")
+    VEREIN_PLZ_ORT: str = os.getenv("VTB_VEREIN_PLZ_ORT", "12345 Beispielstadt")
+    VEREIN_REGISTRIER_NR: str = os.getenv("VTB_VEREIN_REGISTRIER_NR", "")
 
     # SMTP / Magic-Link
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")

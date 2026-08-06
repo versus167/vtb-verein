@@ -78,11 +78,12 @@ def eigenes_team(mannschaft_name: Optional[str]) -> str:
 
     Das Kürzel ist Stammdatum (``VTB_VEREIN_KURZ``, im Backend
     ``settings.VEREIN_KURZ``) – die Domänenschicht kennt die API-Settings nicht
-    und liest die Env darum direkt. Trägt der Mannschaftsname das Kürzel schon,
-    bleibt er unverändert; sonst stünde da „VTB VTB Chemnitz 2".
+    und liest die Env darum direkt; der Platzhalter-Default („Beispiel") ist
+    derselbe. Trägt der Mannschaftsname das Kürzel schon, bleibt er unverändert;
+    sonst stünde da „VTB VTB Chemnitz 2".
     """
     name = (mannschaft_name or '').strip()
-    kurz = os.getenv('VTB_VEREIN_KURZ', 'VTB').strip()
+    kurz = os.getenv('VTB_VEREIN_KURZ', 'Beispiel').strip()
     if not name or not kurz or name.lower().startswith(kurz.lower()):
         return name
     return f"{kurz} {name}"

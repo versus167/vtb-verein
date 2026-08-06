@@ -151,7 +151,7 @@ def test_logo_kann_abgeschaltet_werden():
     assert '<img' in mit
     assert '<img' not in ohne
     # Der Vereinsname bleibt — die Mail ist schlicht, nicht anonym.
-    assert 'VTB Chemnitz e.V.' in ohne
+    assert 'Beispielverein' in ohne
 
 
 def test_button_bleibt_lesbar_bei_zwei_dunklen_farben():
@@ -198,9 +198,17 @@ def test_gemischte_toene_entsprechen_den_frueheren_festwerten():
 
 
 def test_vtb_mail_bleibt_unveraendert():
-    """Gegenprobe am ganzen Dokument: Ohne gesetzte Env sieht die Mail aus wie bisher."""
+    """Gegenprobe am ganzen Dokument: Ohne gesetzte Env bleibt die VTB-Optik.
+
+    Die Farben sind weiterhin die Defaults; der Name dagegen ist bewusst ein
+    Platzhalter, damit eine unkonfigurierte Instanz nicht im fremden Namen
+    schreibt. Mit gesetzten Stammdaten sieht die VTB-Mail aus wie eh und je.
+    """
     html = _render_mit({})
-    assert '>VTB Chemnitz e.V.</div>' in html
-    assert 'VTB Vereinsverwaltung' in html
+    assert '>Beispielverein</div>' in html
+    assert 'Beispiel Vereinsverwaltung' in html
+    vtb = _render_mit({'VTB_VEREIN_NAME': 'VTB Chemnitz e.V.', 'VTB_VEREIN_KURZ': 'VTB'})
+    assert '>VTB Chemnitz e.V.</div>' in vtb
+    assert 'VTB Vereinsverwaltung' in vtb
     for farbe in ('#023a90', '#feeb03', '#a6bad8', '#c0cee3', '#8c8102'):
         assert farbe in html, f'{farbe} fehlt — die VTB-Optik hat sich verschoben'

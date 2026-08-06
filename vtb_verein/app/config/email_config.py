@@ -48,13 +48,19 @@ class EmailConfig:
 
     @staticmethod
     def get_verein_name() -> str:
-        """Voller Vereinsname — steht als Überschrift auf der Mail-Karte."""
-        return os.getenv('VTB_VEREIN_NAME', 'VTB Chemnitz e.V.')
+        """Voller Vereinsname — steht als Überschrift auf der Mail-Karte.
+
+        Default ist ein erkennbarer Platzhalter: Eine unkonfigurierte Instanz
+        verschickt sichtbar „Beispielverein"-Mails, statt sich nach dem Verein zu
+        nennen, für den die App zuerst gebaut wurde (Default gleich gehalten mit
+        ``backend/core/config.py``).
+        """
+        return os.getenv('VTB_VEREIN_NAME', 'Beispielverein')
 
     @staticmethod
     def get_verein_kurz() -> str:
         """Kürzel für Betreff und Signatur („<Kürzel> Vereinsverwaltung")."""
-        return os.getenv('VTB_VEREIN_KURZ', 'VTB')
+        return os.getenv('VTB_VEREIN_KURZ', 'Beispiel')
 
     @staticmethod
     def get_mail_farbe_flaeche() -> str:
