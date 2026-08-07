@@ -20,7 +20,12 @@
       <q-separator class="q-mt-sm" />
 
       <q-card-section class="q-gutter-sm vtb-dialog-body">
-        <q-input v-model="form.titel" label="Titel *" outlined dense autofocus />
+        <!-- 120 Zeichen: Durchgesetzt wird die Grenze im Backend
+             (TITEL_MAX_LAENGE in tickets.py); hier steht sie, damit man beim
+             Tippen sieht, wo Schluss ist, statt beim Absenden abgewiesen zu
+             werden. Der Zähler steht rechts unter dem Feld. -->
+        <q-input v-model="form.titel" label="Titel *" outlined dense autofocus
+          maxlength="120" counter />
         <q-select v-model="form.bereich_id" :options="bereiche"
           option-value="id" option-label="name" emit-value map-options
           label="Bereich *" outlined dense />

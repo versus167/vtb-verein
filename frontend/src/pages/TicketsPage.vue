@@ -203,11 +203,21 @@
 
               <!-- ── Editierbare Felder (wenn Schreibrecht) ── -->
               <template v-if="canWrite && !selectedIstGeloescht">
+                <!-- autogrow: Am Handy passt ein Ticket-Titel selten in eine
+                     Zeile — einzeilig sah man nur den Anfang und musste im Feld
+                     scrollen (#156). Das Feld wächst stattdessen mit. Die
+                     Eingabetaste bleibt wirkungslos, damit aus dem Titel keine
+                     mehrzeilige Überschrift wird; Zeilenumbrüche aus der
+                     Zwischenablage fängt onDetailSave ab. -->
                 <q-input
                   v-model="detailForm.titel"
                   label="Titel *"
                   outlined
+                  autogrow
+                  maxlength="120"
+                  counter
                   class="q-mb-sm"
+                  @keydown.enter.prevent
                 />
                 <q-input
                   v-model="detailForm.beschreibung"
@@ -1037,6 +1047,10 @@ async function onDetailSave() {
     $q.notify({ type: 'warning', message: 'Bitte einen Titel eingeben.' })
     return
   }
+  // Das Titelfeld wächst seit #156 mit, ist technisch also ein Textfeld: Aus der
+  // Zwischenablage können Umbrüche hineingeraten. Ein Titel ist eine Zeile —
+  // sonst zerreißt er Liste, Kopfleiste und Betreffzeilen der Benachrichtigungen.
+  detailForm.value.titel = detailForm.value.titel.replace(/\s*\n+\s*/g, ' ').trim()
   detailSaving.value = true
   try {
     const { data } = await api.put(`/api/tickets/${selectedTicket.value.id}`, {
