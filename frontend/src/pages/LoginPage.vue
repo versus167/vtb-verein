@@ -178,6 +178,17 @@ const appVersion = versionLabel
 
 onMounted(ladeAppInfo)
 
+// Layout und Übersicht schon während der Eingabe holen (#157). Der Sprung nach
+// dem Anmelden braucht beide Dateien; lädt der Browser sie erst in dem Moment,
+// hängt der wichtigste Klick der App am Netz — und auf einem frisch geöffneten
+// Gerät installiert sich zeitgleich der Service Worker. Vorher geholt, ist der
+// Wechsel rein lokal. Fehlschlag ist unkritisch: Dann lädt der Router sie beim
+// Wechsel nach, und scheitert das auch, greift router.onError.
+onMounted(() => {
+  import('layouts/MainLayout.vue').catch(() => {})
+  import('pages/DashboardPage.vue').catch(() => {})
+})
+
 const username = ref('')
 const password = ref('')
 const showPassword = ref(false)
@@ -203,11 +214,24 @@ async function onLogin() {
   loading.value = true
   try {
     await auth.login(username.value, password.value, rememberMe.value)
-    router.push({ name: 'dashboard' })
   } catch (err) {
     errorMsg.value = err.response?.data?.detail || 'Anmeldung fehlgeschlagen'
+    return
   } finally {
     loading.value = false
+  }
+
+  // Ab hier ist die Anmeldung durch. Ein Fehler ist jetzt ein Navigations-, kein
+  // Anmeldeproblem — deshalb getrennt behandelt und nicht als „Anmeldung
+  // fehlgeschlagen" gemeldet (#157). Vorher lief die push()-Promise ins Leere:
+  // Wer die Übersicht nicht geladen bekam, stand ohne jede Meldung weiter vor
+  // dem Passwortfeld, obwohl die Sitzung längst stand. Den häufigsten Grund
+  // (Seiten-Chunk nicht ladbar) fängt schon router.onError ab; bleibt einer
+  // übrig, führt der harte Aufruf ans Ziel.
+  try {
+    await router.push({ name: 'dashboard' })
+  } catch {
+    window.location.assign('/')
   }
 }
 

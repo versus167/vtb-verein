@@ -102,7 +102,13 @@ async function doLogin() {
   try {
     await auth.loginWithMagicToken(token, rememberMe.value)
     state.value = 'success'
-    setTimeout(() => router.push({ name: 'dashboard' }), 1000)
+    // Wie beim Passwort-Login (#157): Bleibt die Navigation hängen, weil der
+    // Seiten-Chunk nicht lädt, hart ans Ziel. Hier ist der Fall sogar
+    // wahrscheinlicher — ein Login-Link wird typischerweise auf einem Gerät
+    // geöffnet, das die App noch nie geladen hat.
+    setTimeout(() => {
+      router.push({ name: 'dashboard' }).catch(() => window.location.assign('/'))
+    }, 1000)
   } catch (err) {
     errorMsg.value =
       err.response?.data?.detail || 'Der Link ist ungültig oder wurde bereits verwendet.'
