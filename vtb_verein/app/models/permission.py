@@ -25,6 +25,12 @@ class Permission:
     PERSONEN_WRITE       = 'personen.write'
     PERSONEN_DELETE      = 'personen.delete'
     PERSONEN_PERMISSIONS = 'personen.permissions'
+    # Schmales Recht für den App-Rollout: einem bestehenden Mitglied einen Login
+    # freischalten (Rolle immer 'mitglied', kein Passwort, nur Willkommens-Mail),
+    # Einladung erneut senden, Zugang wieder deaktivieren. Bewusst OHNE
+    # personen.write/-permissions: Freischalter sehen eine schlanke Liste ohne
+    # Bankdaten und dürfen weder Mitgliedsdaten noch Rechte ändern.
+    PERSONEN_FREISCHALTEN = 'personen.freischalten'
 
     # --- Abteilungen ---
     ABTEILUNGEN_READ   = 'abteilungen.read'

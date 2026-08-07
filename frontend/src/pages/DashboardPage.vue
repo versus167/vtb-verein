@@ -28,6 +28,13 @@
         <SettingsTile to="personen" icon="people" title="Personen" caption="Personen verwalten" />
       </div>
 
+      <div
+        v-if="auth.hasPermission('personen.freischalten') || auth.hasPermission('personen.permissions')"
+        class="col-6 col-sm-4 col-md-3"
+      >
+        <SettingsTile to="zugaenge" icon="how_to_reg" title="Zugänge" caption="Mitglieder freischalten" />
+      </div>
+
       <div v-if="hatMannschaftenZugriff || auth.hasPermission('mannschaften.read')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="mannschaften" icon="sports_soccer" title="Mannschaften" caption="Teams & Kader verwalten" />
       </div>

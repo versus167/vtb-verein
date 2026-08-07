@@ -141,6 +141,16 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('personen.freischalten') || auth.hasPermission('personen.permissions')"
+            clickable
+            :to="{ name: 'zugaenge' }"
+            active-class="vtb-nav-active"
+          >
+            <q-item-section avatar><q-icon name="how_to_reg" /></q-item-section>
+            <q-item-section>Zugänge</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')"
             clickable
             :to="{ name: auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch' }"
