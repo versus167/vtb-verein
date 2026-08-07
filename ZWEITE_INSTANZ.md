@@ -16,8 +16,10 @@ Vereinen steht der Aufwand in keinem Verhältnis, und jeder vergessene Filter
 ist ein Datenleck über Vereinsgrenzen hinweg. Der Preis der zweiten Instanz ist
 doppelter Betrieb, nicht doppelte Entwicklung.
 
-Aber: Der Code ist heute nicht *vereinsneutral*, sondern *VTB-spezifisch*. Das
-ist der eigentliche Arbeitsanteil — nicht das Aufsetzen des Stacks.
+Das war lange der eigentliche Arbeitsanteil, weil der Code nicht
+*vereinsneutral* war, sondern *VTB-spezifisch*. Dieser Teil ist erledigt (s.
+nächster Abschnitt): Farben, Bilder, Namen und Texte kommen aus Env und
+Branding-Ordner. Übrig bleibt der doppelte Betrieb.
 
 ## Was pro Instanz zwingend getrennt gehört
 
@@ -33,62 +35,47 @@ ist der eigentliche Arbeitsanteil — nicht das Aufsetzen des Stacks.
 | TTLock-Zugang | Eigenes Konto. Achtung: die Callback-URL ist global pro Developer-App (s. Ticket #61) — zwei Instanzen an einer App sind nicht sauber trennbar |
 | Backups | DB **und** `uploads`, getrennt je Instanz |
 
-## Was heute fest verdrahtet ist
+## Was die Vereinsidentität ausmacht
 
-Die Vereinsidentität liegt an vier unabhängigen Stellen. Wer nur eine ändert,
-bekommt einen Mischmasch:
+Stand 2026-08-07: Die Identität steckt **nicht mehr im Code**, sondern in Env
+und Branding-Ordner. Der Abschnitt hieß früher „Was heute fest verdrahtet ist" —
+die Liste ist abgearbeitet, sie steht hier als Prüfliste fürs Aufsetzen.
 
-1. **Farben**: ~~`frontend/src/css/quasar.variables.scss`~~ — **erledigt mit
-   Ticket #131**: Die zwei Grundfarben kommen aus der Env
-   (`VTB_FARBE_FLAECHE`/`VTB_FARBE_AKZENT`) und werden als CSS-Variablen über
-   `/api/branding.css` ausgeliefert, eingebunden im Kopf der `index.html`. Kein
-   eigener Build mehr nötig, und dieselben zwei Werte färben auch die Mails
-   (Punkt 3). Im SCSS liegen sie als `$flaeche`/`$akzent` vor; die `$vtb-*`-Hexe
-   bleiben Rückfallwerte. Fest verdrahtet bleiben nur die von Hand gemischten
-   Zwischentöne der getönten Statusflächen (`bg-blue-1` & Co. in „VTB"/„Dunkel").
-2. **Theme**: `frontend/src/css/app.scss` — der „VTB-Look" (blaue Flächen auf
-   Vereinsgelb) und der Dark Mode sind ~500 Zeilen, die auf genau diesen zwei
-   Farben aufbauen. Ein Verein mit Rot/Weiß bekommt hier echte Arbeit, kein
-   Variablen-Tausch.
+| Sache | Woher | Vergessen heißt |
+|---|---|---|
+| Farben | `VTB_FARBE_FLAECHE` / `VTB_FARBE_AKZENT` (#131) | Wappenblau/-gelb |
+| Wappen, Favicons, PWA-Icons | Branding-Ordner `VTB_BRANDING_PATH` | neutrale Wortmarke (kein VTB-Wappen) |
+| Vereinsname, Kürzel, Anschrift | `VTB_VEREIN_*` | sichtbar „Beispielverein" |
+| Mail-Absender | `MAIL_FROM` | sichtbar `noreply@example.org` |
+| Push-Kontakt | `VAPID_SUBJECT` | `admin@example.org` — **fällt nie von selbst auf** |
 
-   **Erledigt durch Ticket #131.** Es gibt jetzt drei Themes, und „Hell" ist
-   vereinsneutral: weiße Karten auf hellem Grau, die Marke nur als Akzent
-   (Kopfzeile, Aktivmarken, Fokusringe). Es folgt vollständig den zwei
-   Env-Farben — für einen fremden Verein ist es das Standard-Theme.
+Zum Aussehen: Für einen fremden Verein ist **„Hell" das Standard-Theme**, es
+folgt den zwei Env-Farben vollständig. „VTB" und „Dunkel" tragen die Farben
+ebenfalls (inkl. der gerechneten Menü- und Chip-Töne), behalten aber die
+blau-grauen Tönungen der Statusflächen (`bg-blue-1` & Co.) — benutzbar, aber
+nicht auf einen fremden Verein hin entworfen; wer will, kürzt `THEME_AUSWAHL`
+in `useTheme.js`. Zu beachten ist der Farbvertrag: FLAECHE muss hellen Text
+tragen können, AKZENT dunklen — anders als die Mail-Vorlage rechnet die
+Oberfläche das nicht nach.
 
-   „VTB" und „Dunkel" tragen die zwei Farben ebenfalls (inkl. der gerechneten
-   Menü-/Chip-Töne), behalten aber die blau-grauen Tönungen der Statusflächen.
-   Beide bleiben damit benutzbar, sind aber nicht auf einen fremden Verein hin
-   entworfen; wer will, kürzt `THEME_AUSWAHL` in `useTheme.js` auf „Hell" und
-   „Dunkel". Zu beachten bleibt der Farbvertrag: FLAECHE muss hellen Text
-   tragen können, AKZENT dunklen — anders als die Mail-Vorlage rechnet die
-   Oberfläche das nicht nach.
-3. **Mail-Layout**: `vtb_verein/app/services/email_service.py` — Wappen-URL,
-   „VTB Chemnitz" in Kopf und Signatur, Betreffzeilen („Login-Link für VTB
-   Vereinsverwaltung"). Die Farben sind es nicht mehr: die Vorlage erbt
-   `VTB_FARBE_*` und mischt ihre Volltöne daraus (`VTB_MAIL_FARBE_*` nur noch
-   für eine abweichende Mail).
-4. **Bilder**: `frontend/public/icons/vtb-wappen-512.png`, Favicons,
-   `apple-touch-icon.png`, `mstile-150x150.png`, `browserconfig.xml`.
+Die Mail-Vorlage (`email_service.py`) ist vollständig parametrisiert: Logo über
+`BASE_URL/icons/logo-512.png` (also aus dem Branding-Ordner), Name und Kürzel
+aus den Stammdaten, Farben aus der Env, Logo per `VTB_MAIL_LOGO=aus`
+abschaltbar. Ebenso Login-Seite, Kopfzeile und Dokumenttitel (über
+`/api/app-info`) und der App-Name auf dem Homescreen („Vereinsverwaltung").
+Auch die Seed-Daten sind neutral: `_seed_data` legt genau einen Ticket-Bereich
+„Allgemein" an, keine Fußballplätze.
 
-Dazu die Textstellen:
+Die verbliebenen „VTB Chemnitz"-Fundstellen im Code sind ausnahmslos
+Kommentare, die das Namens-Matching erklären („VTB Chemnitz 2" gibt es bei
+Herren wie E-Junioren) — kein Ausgabetext.
 
-- `frontend/src/layouts/MainLayout.vue` — Dokumenttitel und Kopfzeile („VTB –
-  <Seite>").
-- `frontend/src/pages/LoginPage.vue` — Wappen, „VTB Chemnitz",
-  „Vereinsverwaltung".
-- PWA-Manifest und `index.html` (App-Name auf dem Homescreen).
-
-Und die Seed-Daten in `database.py::_seed_data`, die einen Fußballverein
-annehmen: Ticket-Bereiche „Platz 1", „Platz 2", „Kabinen", „Vereinsheim",
-„Aussenanlage" samt Kategorien. Für einen anderen Verein passt das nicht
-zwingend — entweder anpassbar machen oder nach dem Aufsetzen in der App
-korrigieren.
-
-Schließlich `docker-compose.yml`: die Container heißen fest `vtb-pg`,
-`vtb-verein`, `vtb-zutritt-sync`, `vtb-clubdeckel-beitrag`, dazu feste Ports
-und `./pg_data`. Auf demselben Host kollidiert das — Namen, Ports und Pfade
-müssen je Instanz variabel sein (Compose-Projektname oder eigenes Verzeichnis).
+**Offen bleibt nur der Compose-Stack**, und auch nur bei zwei Instanzen auf
+*einem* Host: Container heißen fest `vtb-pg`, `vtb-verein`, `vtb-zutritt-sync`,
+`vtb-clubdeckel-beitrag`, dazu feste Ports und `./pg_data`. Dann müssen Namen,
+Ports und Pfade variabel werden (Compose-Projektname oder eigenes Verzeichnis).
+Läuft Instanz B auf einer eigenen Maschine — so der Stand der Planung —, ist
+nichts zu tun.
 
 ## Was ohne Code pro Verein gepflegt wird
 
