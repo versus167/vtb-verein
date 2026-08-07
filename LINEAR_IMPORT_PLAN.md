@@ -1,13 +1,16 @@
 # Plan: Datenübernahme aus dem Vereinsprogramm LINEAR
 
-> Status (2026-08-06): **Konzept, noch keine Umsetzung.** Zuschnitt aus einer
-> Diskussionsrunde anhand eines Muster-Exports. Die Entscheidungen unten sind
-> getroffen, die offenen Fragen brauchen einen Blick in den Echt-Export.
+> Status (2026-08-07): **Umgesetzt gegen den Muster-Export, ungeprüft gegen
+> Echtdaten.** Parser, Mapping, Endpunkt und Formatauswahl stehen (`ddb7253`),
+> das Schreib-Gerüst folgt dem SPG-Import (Dry-Run, Abteilungen nur matchen,
+> Wiedererkennung über einen Vermerk in `bemerkungen`). Was fehlt, ist nicht
+> Code, sondern **Datenlage**: Die offenen Fragen unten brauchen einen Blick in
+> den Echt-Export, und der eigentliche Übernahmelauf steht noch aus.
 >
 > **Terminlage:** Instanz B wird am **20.08.2026** aufgesetzt, der Import gehört
-> dazu. Vorliegen tut bisher nur der **Muster-Auszug** — der Parser entsteht
-> gegen ihn, muss aber spätestens am **17.08.** echte Daten gesehen haben, sonst
-> geht ein ungeprüfter Import in Betrieb. Das ist das größte Terminrisiko des
+> dazu. Vorliegen tut bisher nur der **Muster-Auszug** — der Parser ist gegen
+> ihn gebaut, muss aber spätestens am **17.08.** echte Daten gesehen haben,
+> sonst geht ein ungeprüfter Import in Betrieb. Das ist das größte Terminrisiko des
 > Vorhabens, weil die Bereitstellung nicht in unserer Hand liegt.
 >
 > **Keine Echtdaten im Repo:** Der Muster-Export enthält Namen, Adressen und

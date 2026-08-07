@@ -70,7 +70,9 @@ class Settings:
     SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
     SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    MAIL_FROM: str = os.getenv("MAIL_FROM", "noreply@vtb-verein.de")
+    # Erkennbarer Platzhalter wie VEREIN_NAME: Ein fremder Absender fällt in der
+    # ersten Mail auf, eine stillschweigend geerbte Adresse nicht.
+    MAIL_FROM: str = os.getenv("MAIL_FROM", "Beispielverein <noreply@example.org>")
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:9000")
 
     # TTLock / Zutrittskontrolle (ein Vereinskonto, Secrets nur aus Env/.env).

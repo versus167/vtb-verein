@@ -25,7 +25,13 @@ class PushConfig:
 
     @staticmethod
     def get_subject() -> str:
-        return os.getenv('VAPID_SUBJECT', 'mailto:admin@vtbchemnitz.de')
+        """Kontaktadresse, die der Push-Dienst bei Problemen anschreibt.
+
+        Erkennbarer Platzhalter als Default: Ein falscher Wert stört den
+        Versand nicht und fällt deshalb nie von selbst auf — anders als beim
+        Absender einer Mail, den der SMTP-Server prüft.
+        """
+        return os.getenv('VAPID_SUBJECT', 'mailto:admin@example.org')
 
     @staticmethod
     def get_ttl() -> int:

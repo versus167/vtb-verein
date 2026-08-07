@@ -25,7 +25,13 @@ class EmailConfig:
     
     @staticmethod
     def get_mail_from() -> str:
-        return os.getenv('MAIL_FROM', 'noreply@vtb-verein.de')
+        """Absender der System-Mails.
+
+        Default ist ein erkennbarer Platzhalter (wie VTB_VEREIN_NAME), keine
+        echte Adresse: Wer ihn stehen lässt, sieht es in der ersten Mail.
+        Wert gleich gehalten mit ``backend/core/config.py``.
+        """
+        return os.getenv('MAIL_FROM', 'Beispielverein <noreply@example.org>')
     
     @staticmethod
     def get_use_tls() -> bool:
