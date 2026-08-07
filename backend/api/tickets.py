@@ -13,7 +13,7 @@ Berechtigungsmodell:
 
 from dataclasses import asdict
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from backend.core.deps import CurrentUser, DB
@@ -32,8 +32,20 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 # Pydantic Schemas
 # ---------------------------------------------------------------------------
 
+# Obergrenze für den Titel. 120 Zeichen sind reichlich — der längste Titel im
+# Bestand hat 87 —, verhindern aber den eingefügten Absatz: Ein Titel steht in
+# der Listenkarte, in der Kopfleiste des Dialogs und in der Betreffzeile der
+# Benachrichtigungen, und in allen dreien zerreißt ihn ein Roman. Ausführliches
+# gehört in die Beschreibung, die bleibt unbegrenzt.
+#
+# Bewusst hier und nicht als Spaltentyp: `titel TEXT` bliebe auch als
+# VARCHAR(120) technisch gleichwertig, kostete aber eine Migration und würde bei
+# einer späteren Änderung der Obergrenze die nächste verlangen.
+TITEL_MAX_LAENGE = 120
+
+
 class TicketWrite(BaseModel):
-    titel: str
+    titel: str = Field(..., max_length=TITEL_MAX_LAENGE)
     beschreibung: str = ''
     prioritaet: str = TicketPrioritaet.NORMAL
     bereich_id: Optional[int] = None
