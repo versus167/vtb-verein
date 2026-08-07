@@ -16,6 +16,10 @@ PERMISSION_GROUPS = [
             (Permission.PERSONEN_WRITE,       'Bearbeiten'),
             (Permission.PERSONEN_DELETE,      'Löschen'),
             (Permission.PERSONEN_PERMISSIONS, 'Berechtigungen verwalten'),
+            # Bewusst eigenständig neben 'Berechtigungen verwalten': schaltet nur
+            # den Login frei (Rolle 'mitglied', kein Passwort), ohne Einblick in
+            # Bankdaten und ohne Rechte- oder Stammdaten-Änderung.
+            (Permission.PERSONEN_FREISCHALTEN, 'Zugang freischalten'),
         ],
     },
     {

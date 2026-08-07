@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 87
+SCHEMA_VERSION = 88
 
 
 # ---------------------------------------------------------------------------
@@ -1340,6 +1340,11 @@ _ZUTRITT_TRIGGERS = (
 # gekoppelt, das aber zusätzlich Datenbereinigung und Mitglieder-Import öffnet.
 _PERM_SPIELSTAETTEN_VERWALTEN = 'spielstaetten.verwalten'
 _PERM_SYSTEM_CONFIG = 'system.config'
+
+# Zugang freischalten als eigenes Recht (Schema v88) – vorher nur über
+# personen.permissions möglich, das zusätzlich Rechtevergabe und fremde
+# Passwörter öffnet und deshalb für den App-Rollout zu groß ist.
+_PERM_PERSONEN_FREISCHALTEN = 'personen.freischalten'
 
 # Neue Permission-Keys (Seed Admin + Migration für Bestands-Admins).
 _ZUTRITT_PERMISSIONS = (
@@ -2982,6 +2987,7 @@ class Database:
             85: self._migrate_v84_to_v85,
             86: self._migrate_v85_to_v86,
             87: self._migrate_v86_to_v87,
+            88: self._migrate_v87_to_v88,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6491,6 +6497,28 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 87 WHERE id = 1")
 
+    def _migrate_v87_to_v88(self) -> None:
+        """Neues Recht 'personen.freischalten' für Bestands-Admins nachziehen.
+
+        Reine Rechte-Migration, kein DDL: Das Freischalten eines Logins hing bisher
+        an personen.permissions (Rechtevergabe, fremde Passwörter) und ist damit für
+        die Leute, die beim Rollout Zugänge verteilen sollen, deutlich zu groß.
+        Admins haben ohnehin implizit alles (User.has_permission), die Zeile hier
+        hält nur den Frischaufbau (_seed_data) und gewachsene DBs deckungsgleich.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, %s, 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_PERSONEN_FREISCHALTEN,),
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 88 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8853,6 +8881,7 @@ class Database:
             'tresor.verwalten',
             'termine.verwalten',
             'spielstaetten.verwalten',
+            _PERM_PERSONEN_FREISCHALTEN,
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

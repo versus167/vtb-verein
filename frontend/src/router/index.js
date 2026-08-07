@@ -57,6 +57,18 @@ const routes = [
         meta: { title: 'Personen', permission: 'personen.read' },
       },
       {
+        // Eigene Seite statt Tab in PersonenPage: die hängt komplett hinter
+        // personen.read, Freischalter sollen aber gerade keine Stammdaten sehen.
+        // ODER-Array – personen.permissions ist Obermenge (durfte das schon immer).
+        path: 'zugaenge',
+        name: 'zugaenge',
+        component: () => import('pages/ZugaengePage.vue'),
+        meta: {
+          title: 'Zugänge',
+          permission: ['personen.freischalten', 'personen.permissions'],
+        },
+      },
+      {
         path: 'users/:id/permissions',
         name: 'user-permissions',
         component: () => import('pages/UserPermissionsPage.vue'),
