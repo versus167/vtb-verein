@@ -66,6 +66,20 @@ Code.
   (`$vtb-blau: #023a90` = `$primary`, `$vtb-gelb: #feeb03`). Als Blauton im UI
   ausschließlich das VTB-Blau verwenden (semantisch über `primary`) — keine anderen
   Blau-Hexwerte in Komponenten. Gelb nur als Akzent/Hintergrund, nie mit weißem Text.
+  **In Styles nicht `$vtb-blau`/`$vtb-gelb` schreiben, sondern `$flaeche`/`$akzent`**
+  (bzw. `rgba($flaeche-rgb, .1)` für Tönungen): Das sind dieselben Farben, aber als
+  CSS-Variablen, die das Backend aus `VTB_FARBE_FLAECHE`/`_AKZENT` ausliefert
+  (`/api/branding.css`) — eine zweite Instanz färbt damit ohne eigenen Build um.
+  Die `$vtb-*`-Hexwerte bleiben Rückfallwerte und Quelle der abgeleiteten Töne.
+- **Drei Themes** (`vtb` | `hell` | `dunkel`, Wahl pro Gerät in `useTheme.js`): Quasars
+  `body--dark` allein reicht dafür nicht, deshalb hängt zusätzlich `vtb-theme--<name>`
+  am `<body>`, und die Regeln in `app.scss` hängen daran. **Grundstil = Theme „Hell"**:
+  Neue Komponenten für weiße Karten mit dunkler Schrift bauen (Quasar-Default, inkl.
+  Tint-Muster `bg-blue-1 text-blue-10`); die dunkel-flächigen Themes „VTB" (Wappenblau
+  auf Gelb) und „Dunkel" (Navy) biegen das in ihren Blöcken um. Wer eine Fläche baut,
+  prüft alle drei. In scoped Styles greift ein `body`-Präfix vor `:deep()` nicht (das
+  `data-v`-Attribut landet am `body`) — dort die Theme-Klasse an die `q-page` hängen
+  (`:class="\`page--${aktivesTheme}\`"`, s. `PersonenPage.vue`).
 
 ## Release-/Commit-Workflow
 - **Nur nach ausdrücklicher Rücksprache committen** — nie selbstständig. Auf `master` erst

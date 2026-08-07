@@ -9,6 +9,25 @@
 $vtb-blau: #023a90; // Wappenblau
 $vtb-gelb: #feeb03; // Wappengelb
 
+// ── Zur Laufzeit austauschbar: $flaeche / $akzent ───────────────────────────
+//
+// Die beiden Grundfarben liegen zusätzlich als CSS-Custom-Properties vor, die
+// das Backend aus VTB_FARBE_FLAECHE/_AKZENT ausliefert (/api/branding.css,
+// eingebunden in index.html). Wo im Theme eine der beiden Farben *flächig oder
+// als Akzent* auftritt, gehören diese Variablen hin — dann färbt eine zweite
+// Instanz die Oberfläche allein über die Env um, ohne eigenes Image.
+//
+// Die Hexwerte oben bleiben der Fallback (und die Quelle für alle abgeleiteten
+// Töne). Ohne Backend — etwa im Storybook-artigen Direktaufruf einer gebauten
+// CSS — sieht daher weiterhin alles nach VTB aus.
+//
+// $*-rgb ist die Kanalfassung für halbtransparente Tönungen: rgba() braucht
+// eine Kanalliste, `rgba(var(--vtb-akzent), .2)` wäre ungültiges CSS.
+$flaeche: var(--vtb-flaeche, #{$vtb-blau});
+$flaeche-rgb: var(--vtb-flaeche-rgb, 2, 58, 144);
+$akzent: var(--vtb-akzent, #{$vtb-gelb});
+$akzent-rgb: var(--vtb-akzent-rgb, 254, 235, 3);
+
 // Abgeleitete Blautöne (Dark Mode = "Navy" statt Schwarz, Basis Wappenblau)
 $vtb-navy-page: #0a1428; // Seitenhintergrund dunkel
 $vtb-navy-flaeche: #13233f; // Karten, Dialoge, Tabellen
@@ -21,6 +40,24 @@ $vtb-blau-btn-dark: #1a4fae; // Primär-Buttons im Dark Mode (satter, hebt sich 
 
 // Töne für den gelben Hell-Modus ("VTB-Look": blaue Flächen auf Vereinsgelb)
 $vtb-blau-tief: #022a68; // Drawer/abgesenkte Flächen (dunkles Ende des Login-Gradients)
+
+// Abgesenkter und angehobener Ton der Flächenfarbe (Menü bzw. Chips/Buttons).
+// Die Rückfallwerte sind die handgemischten VTB-Töne $vtb-blau-tief und
+// $vtb-blau-btn-dark; das Backend rechnet sie nur bei eigenen Vereinsfarben aus,
+// damit der VTB-Look exakt bleibt (Begründung in backend/core/branding.py).
+$flaeche-tief: var(--vtb-flaeche-tief, #{$vtb-blau-tief});
+$flaeche-tief-rgb: var(--vtb-flaeche-tief-rgb, 2, 42, 104);
+$flaeche-hoch: var(--vtb-flaeche-hoch, #{$vtb-blau-btn-dark});
+
+// Töne für das neutrale Theme "Hell" (#131): weiße Flächen auf hellem Grau,
+// dunkle Schrift — blau und gelb nur noch als Akzent. Bewusst leicht blau
+// unterlegte Graustufen, damit auch das helle Theme nach Verein aussieht.
+$vtb-hell-page: #eef1f7; // Seitenhintergrund (Karten heben sich als Weiß ab)
+$vtb-hell-flaeche: #fff; // Karten, Dialoge, Tabellen, Menü
+$vtb-hell-hoch: #e3e8f2; // erhöhte/abgesetzte Flächen: Chips, Zebra, Hover
+$vtb-hell-linie: #d5dbe8; // Trennlinien, Rahmen
+$vtb-hell-text: #1b2437; // Fließtext (nicht reines Schwarz)
+$vtb-hell-text-schwach: #5c6880; // Captions, Hinweise, Sekundärtext
 
 // Quasar-Markenfarben
 $primary: $vtb-blau;

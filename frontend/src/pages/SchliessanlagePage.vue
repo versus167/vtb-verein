@@ -1183,7 +1183,7 @@ function deleteChip() {
 }
 .schl-karte:hover {
   box-shadow:
-    0 0 0 2px $vtb-blau,
+    0 0 0 2px $flaeche,
     0 4px 12px rgba(0, 0, 0, 0.12);
   transition: box-shadow 0.15s ease;
 }
@@ -1194,8 +1194,8 @@ function deleteChip() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba($vtb-blau, 0.08);
-  color: $vtb-blau;
+  background: rgba($flaeche-rgb, 0.08);
+  color: $flaeche;
   flex-shrink: 0;
 }
 .schl-icon--klein {
@@ -1267,7 +1267,7 @@ function deleteChip() {
   color: rgba(0, 0, 0, 0.55);
 
   .q-icon {
-    color: $vtb-blau;
+    color: $flaeche;
   }
 }
 .schl-gruppe__titel {
@@ -1279,8 +1279,8 @@ function deleteChip() {
 .schl-gruppe__anzahl {
   font-size: 11px;
   font-weight: 600;
-  background: rgba($vtb-blau, 0.1);
-  color: $vtb-blau;
+  background: rgba($flaeche-rgb, 0.1);
+  color: $flaeche;
   border-radius: 10px;
   padding: 0 7px;
 }
@@ -1357,7 +1357,7 @@ body.body--dark {
   }
   .schl-karte:hover {
     box-shadow: none;
-    border-color: $vtb-gelb;
+    border-color: $akzent;
   }
   .schl-gruppe {
     color: #9fb0cc;
@@ -1388,15 +1388,16 @@ body.body--dark {
   }
 }
 
-/* VTB-Look Hell-Modus: Karten/Dialoge sind Wappenblau (app.scss) — die für
-   weiße Karten gedachten Grau-/Tint-Töne dort aufhellen (wie im Dark Mode).
-   Die Pills im Seitenkopf liegen dagegen direkt auf dem gelben Grund und
-   behalten kräftige dunkle Farben. */
-body:not(.body--dark) {
+/* Theme „VTB": Karten/Dialoge sind Wappenblau (app.scss) — die für weiße
+   Karten gedachten Grau-/Tint-Töne dort aufhellen (wie im Dark Mode). Die
+   Pills im Seitenkopf liegen dagegen direkt auf dem gelben Grund und behalten
+   kräftige dunkle Farben. Das Theme „Hell" braucht nichts davon: die
+   scoped-Grundstile oben sind für weiße Karten gemacht. */
+body.vtb-theme--vtb {
   /* Elemente, die immer auf blauen Flächen sitzen (Karten & Dialoge) */
   .schl-icon {
     background: rgba(255, 255, 255, 0.12);
-    color: $vtb-gelb;
+    color: $akzent;
   }
   .schl-icon--aus {
     background: rgba(255, 255, 255, 0.08);
@@ -1411,8 +1412,8 @@ body:not(.body--dark) {
   /* Gesamt-Log-Tab liegt direkt auf Gelb: kräftige dunkle Töne wie die Pills.
      Die hellen Varianten gelten weiter unten nur auf blauen Karten/Dialogen. */
   .schl-log-icon {
-    background: rgba($vtb-blau, 0.1);
-    color: $vtb-blau;
+    background: rgba($flaeche-rgb, 0.1);
+    color: $flaeche;
   }
   .schl-log-icon--ok {
     background: rgba(33, 186, 69, 0.22);
@@ -1423,8 +1424,8 @@ body:not(.body--dark) {
     color: #a30017;
   }
   .schl-dsgvo {
-    background: rgba($vtb-blau, 0.08);
-    color: rgba($vtb-blau, 0.85);
+    background: rgba($flaeche-rgb, 0.08);
+    color: rgba($flaeche-rgb, 0.85);
   }
   .q-card .schl-log-icon,
   .q-dialog .schl-log-icon {
@@ -1449,20 +1450,20 @@ body:not(.body--dark) {
   /* Hover-Ring in Gelb — Blau auf Blau wäre unsichtbar */
   .schl-karte:hover {
     box-shadow:
-      0 0 0 2px $vtb-gelb,
+      0 0 0 2px $akzent,
       0 4px 12px rgba(0, 0, 0, 0.25);
   }
 
   /* Standort-Überschriften liegen auf Gelb → Wappenblau */
   .schl-gruppe {
-    color: rgba($vtb-blau, 0.8);
+    color: rgba($flaeche-rgb, 0.8);
   }
 
   /* Pills im Seitenkopf (auf Gelb): Grundton blau, Statusfarben kräftig.
      Die Varianten stehen NACH dem Grundton, damit sie ihn überstimmen. */
   .schl-pill {
-    background: rgba($vtb-blau, 0.1);
-    color: $vtb-blau;
+    background: rgba($flaeche-rgb, 0.1);
+    color: $flaeche;
   }
   .schl-pill--ok {
     background: rgba(33, 186, 69, 0.18);

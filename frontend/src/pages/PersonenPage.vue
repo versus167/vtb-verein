@@ -1,5 +1,5 @@
 <template>
-  <q-page padding :class="{ 'page--dark': $q.dark.isActive }">
+  <q-page padding :class="`page--${aktivesTheme}`">
     <!-- Kopfzeile -->
     <div class="row items-center q-mb-md q-gutter-sm">
       <div class="text-h5 col">Personen</div>
@@ -674,6 +674,7 @@ import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
 import { formatDateTime } from 'src/utils/datetime'
+import { aktivesTheme } from 'src/composables/useTheme'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
 // damit der Listen-Zustand beim Zurückkehren erhalten bleibt.
@@ -1587,23 +1588,28 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* Zebra-Streifen: Tabellen sind in beiden Modi dunkelblaue Flächen —
-   heller Überzug statt Hellgrau, damit die weiße Schrift lesbar bleibt
-   (Hellgrau + weißer Text = unsichtbare Zeilen, Ticket #102). */
-:deep(.q-table tbody tr:nth-child(even) td) {
+/* Zebra-Streifen je Theme (#131). Die Theme-Klasse hängt an der q-page, nicht
+   am body: scoped Styles hängen ihr data-v-Attribut an den letzten Selektor
+   VOR :deep() — an einem body-Präfix träfe die Regel nie zu.
+   In den dunkel-flächigen Themes ein heller Überzug (Hellgrau + weißer Text
+   ergäbe unsichtbare Zeilen, Ticket #102), im Theme „Hell" ein Hellgrau. */
+.page--vtb :deep(.q-table tbody tr:nth-child(even) td),
+.page--dunkel :deep(.q-table tbody tr:nth-child(even) td) {
   background-color: rgba(255, 255, 255, 0.07);
 }
-.page--dark :deep(.q-table tbody tr:nth-child(even) td) {
-  background-color: rgba(255, 255, 255, 0.07);
+.page--hell :deep(.q-table tbody tr:nth-child(even) td) {
+  background-color: rgba(0, 0, 0, 0.03);
 }
 
-/* Zebra der Karten-Liste: auf Wappenblau ein etwas hellerer Blauton.
-   body-Prefix nötig, um die globale Karten-Farbe zu überstimmen. */
-body:not(.body--dark) .q-card.stripe {
+/* Zebra der Karten-Liste: auf Wappenblau ein etwas hellerer Blauton, im
+   Dark Mode ein hellerer Navy-Ton, im Theme „Hell" ein zartes Grau. */
+.page--vtb .q-card.stripe {
   background-color: #0b4099;
 }
-.page--dark .stripe {
-  /* Navy-Ton passend zum dunklen Theme (statt Neutralgrau) */
+.page--dunkel .q-card.stripe {
   background-color: #16264a;
+}
+.page--hell .q-card.stripe {
+  background-color: #f5f7fb;
 }
 </style>

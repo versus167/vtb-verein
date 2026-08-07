@@ -68,4 +68,17 @@ defineProps({
     background: rgba(255, 255, 255, 0.2);
   }
 }
+
+// Theme „Hell": die Karte ist weiß — ein weißer Schleier wäre kein Hover.
+body.vtb-theme--hell .profil-panel {
+  :deep(.profil-panel__kopf:hover) {
+    background: rgba(0, 0, 0, 0.04);
+  }
+  :deep(.profil-panel__pfeil) {
+    background: rgba(0, 0, 0, 0.06);
+  }
+  :deep(.profil-panel__kopf:hover .profil-panel__pfeil) {
+    background: rgba(0, 0, 0, 0.12);
+  }
+}
 </style>

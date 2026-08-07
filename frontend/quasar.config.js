@@ -3,7 +3,7 @@ import { configure } from 'quasar/wrappers'
 
 export default configure(function (/* ctx */) {
   return {
-    boot: ['pinia', 'axios', 'auth', 'darkmode', 'notify'],
+    boot: ['pinia', 'axios', 'auth', 'theme', 'notify'],
 
     css: ['app.scss'],
 

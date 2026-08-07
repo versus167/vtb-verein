@@ -90,7 +90,7 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .vtb-push-aktiv {
-  color: $vtb-gelb;
+  color: $akzent;
 }
 .vtb-push-inaktiv {
   opacity: 0.6;

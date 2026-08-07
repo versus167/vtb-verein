@@ -27,8 +27,32 @@
              sie am Handy dem Seitentitel zu viel Platz weg. Am Desktop überall. -->
         <FeedbackFab v-if="auth.hasPermission('tickets.access')" />
         <PushStatusButton v-if="zeigeKopfExtras" />
-        <q-btn v-if="zeigeKopfExtras" flat :dense="$q.screen.gt.sm" round :icon="darkModeIcon" @click="toggleDarkMode">
-          <q-tooltip>{{ darkModeLabel }}</q-tooltip>
+        <!-- Erscheinungsbild (#131): VTB-Look, neutrales Hell, Dunkel oder System.
+             Menü statt Durchklicken — bei vier Zuständen rät man sonst, was kommt. -->
+        <q-btn v-if="zeigeKopfExtras" flat :dense="$q.screen.gt.sm" round :icon="themeIcon">
+          <q-tooltip>Erscheinungsbild: {{ themeLabel }}</q-tooltip>
+          <q-menu>
+            <q-list style="min-width: 200px">
+              <q-item-label header class="q-py-sm">Erscheinungsbild</q-item-label>
+              <!-- Kein eigenes active-class: die gewählte Zeile soll die
+                   Aktiv-Farbe des jeweiligen Themes tragen (app.scss färbt
+                   .q-item--active in Menüs je Theme um). -->
+              <q-item
+                v-for="t in THEME_AUSWAHL"
+                :key="t.wert"
+                clickable
+                v-close-popup
+                :active="themeWahl === t.wert"
+                @click="setTheme(t.wert)"
+              >
+                <q-item-section avatar><q-icon :name="t.icon" /></q-item-section>
+                <q-item-section>{{ t.label }}</q-item-section>
+                <q-item-section side v-if="themeWahl === t.wert">
+                  <q-icon name="check" />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-menu>
         </q-btn>
         <q-btn flat :dense="$q.screen.gt.sm" round icon="account_circle">
           <q-menu class="vtb-konto-menu">
@@ -309,6 +333,7 @@ import FeedbackFab from 'src/components/FeedbackFab.vue'
 import PushStatusButton from 'src/components/PushStatusButton.vue'
 import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
 import { appInfo, ladeAppInfo, versionLabel } from 'src/composables/useAppInfo'
+import { THEME_AUSWAHL, setTheme, themeWahl, themeIcon, themeLabel } from 'src/composables/useTheme'
 
 const router = useRouter()
 const route = useRoute()
@@ -388,30 +413,6 @@ const hatRechnungenZugriff = computed(
 
 // Refresh der aktuell sichtbaren Listen-Seite (Button + Auto bei App-Fokus).
 const { refreshing, hasHandler, triggerRefresh } = useRefreshControl()
-
-const darkModeIcon = computed(() => {
-  const v = $q.dark.mode
-  if (v === true) return 'dark_mode'
-  if (v === false) return 'light_mode'
-  return 'brightness_auto'
-})
-
-const darkModeLabel = computed(() => {
-  const v = $q.dark.mode
-  if (v === true) return 'Dunkel'
-  if (v === false) return 'Hell'
-  return 'Systemeinstellung'
-})
-
-function toggleDarkMode() {
-  const v = $q.dark.mode
-  let next
-  if (v === 'auto') next = false
-  else if (v === false) next = true
-  else next = 'auto'
-  $q.dark.set(next)
-  localStorage.setItem('darkMode', next === 'auto' ? 'auto' : String(next))
-}
 
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)

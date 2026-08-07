@@ -58,7 +58,7 @@ function go() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba($vtb-blau, 0.08);
+  background: rgba($flaeche-rgb, 0.08);
   margin-bottom: 10px;
 }
 .settings-tile__pfeil {
