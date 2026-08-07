@@ -246,10 +246,50 @@ const routes = [
   },
 ]
 
+// ── Seiten-Chunk nicht ladbar (#157) ────────────────────────────────────────
+//
+// Die Seiten oben werden einzeln nachgeladen (`() => import(...)`). Schlägt das
+// fehl, bricht vue-router die Navigation ab und verwirft die push()-Promise —
+// für den Nutzer passiert schlicht NICHTS. Genau das war der Login, der „hängen
+// bleibt": Die Anmeldung lief durch (F5 führte sofort in die App), nur Layout-
+// und Dashboard-Chunk kamen nicht an.
+//
+// Zwei Lagen führen dahin, beide selten und darum kaum reproduzierbar:
+//   * Erster Besuch auf einem Gerät — der Service Worker installiert sich und
+//     übernimmt die schon geladene Seite (skipWaiting + clientsClaim), während
+//     sein Precache noch gefüllt wird.
+//   * Ein Deploy zwischen Seitenaufruf und Klick: Die index.html im Browser
+//     zeigt auf Chunk-Namen mit altem Hash, die es im neuen Build nicht gibt.
+//
+// Beides heilt ein vollständiger Seitenaufruf — dasselbe, was Nutzer heute per
+// F5 von Hand tun. Also hart auf das Ziel navigieren statt still zu scheitern.
+// Die Meldungen der Browser unterscheiden sich im Wortlaut („Failed to fetch…"
+// in Chrome, „error loading…" in Firefox, „Importing a module script failed."
+// in Safari), teilen sich aber den Kern.
+const NACHLADEFEHLER = /dynamically imported module|Importing a module script failed|ChunkLoadError|Loading chunk/i
+const marke = (pfad) => `vtb_nachladen:${pfad}`
+
 export default route(function () {
-  return createRouter({
+  const router = createRouter({
     scrollBehavior: () => ({ left: 0, top: 0 }),
     routes,
     history: createWebHistory(),
   })
+
+  router.onError((fehler, to) => {
+    if (!NACHLADEFEHLER.test(fehler?.message ?? '')) return
+    // Höchstens ein Versuch je Ziel: Fehlt die Datei wirklich (kaputter Build),
+    // soll sich die Seite nicht in einer Schleife neu laden.
+    if (sessionStorage.getItem(marke(to.fullPath))) return
+    sessionStorage.setItem(marke(to.fullPath), '1')
+    window.location.assign(to.fullPath)
+  })
+
+  // Kam die Seite an, ist die Sperre verbraucht — ein späterer Fehlschlag auf
+  // derselben Route (nächster Deploy) darf wieder neu laden.
+  router.afterEach((to) => {
+    sessionStorage.removeItem(marke(to.fullPath))
+  })
+
+  return router
 })
