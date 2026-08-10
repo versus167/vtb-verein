@@ -113,10 +113,18 @@
 
     <!-- ====================== Chips ====================== -->
     <div v-if="tab === 'chips'">
-      <!-- Status-Filter: standardmäßig nur aktive Chips, rechtsbündig -->
-      <div class="row items-center justify-end q-mb-md">
-        <q-btn-toggle v-model="chipFilter" :options="chipFilterOptionen" unelevated rounded dense no-caps
-          toggle-color="primary" class="vtb-segment" />
+      <!-- Filter: standardmäßig nur aktive UND zugeordnete Chips, rechtsbündig -->
+      <div class="q-mb-md">
+        <div class="row items-center justify-end q-gutter-sm">
+          <q-btn-toggle v-model="chipZuordnung" :options="chipZuordnungOptionen" unelevated rounded dense no-caps
+            toggle-color="primary" class="vtb-segment" />
+          <q-btn-toggle v-model="chipFilter" :options="chipFilterOptionen" unelevated rounded dense no-caps
+            toggle-color="primary" class="vtb-segment" />
+        </div>
+        <div v-if="ausgeblendeteChips" class="schl-filter-hinweis text-right q-mt-xs">
+          {{ ausgeblendeteChips === 1 ? '1 nicht zugeordneter Chip ausgeblendet'
+            : ausgeblendeteChips + ' nicht zugeordnete Chips ausgeblendet' }}
+        </div>
       </div>
       <div class="row q-col-gutter-md">
         <div v-for="c in chipsGefiltert" :key="c.id" class="col-12 col-sm-6 col-lg-4">
@@ -143,7 +151,7 @@
         </div>
       </div>
       <div v-if="chipsGefiltert.length === 0" class="text-grey text-center q-py-lg">
-        {{ chips.length ? 'Keine Chips mit diesem Status.' : 'Noch keine Chips erfasst.' }}
+        {{ chips.length ? 'Keine Chips für diese Auswahl.' : 'Noch keine Chips erfasst.' }}
       </div>
       <!-- Anlegen bewusst unten: erst die Übersicht, dann die Aktion -->
       <div v-if="status.darf_verwalten" class="row justify-center q-mt-lg">
@@ -878,8 +886,33 @@ const chipFilterOptionen = [
   { label: 'Verloren', value: 'verloren' },
   { label: 'Alle', value: 'alle' },
 ]
-const chipsGefiltert = computed(() =>
-  chipFilter.value === 'alle' ? chips.value : chips.value.filter((c) => c.status === chipFilter.value))
+// Zuordnungs-Filter (#160). „Zugeordnet" ist der Standard und meint genau das, was die
+// Karte anzeigt: an ein Mitglied ausgegeben ODER mit Standardstandort hinterlegt. Der
+// Rest – frisch erfasste, noch nie ausgegebene Chips – interessiert nur bei der
+// Neuausgabe und macht die Liste sonst unlesbar lang.
+const chipZuordnung = ref('zugeordnet')
+const chipZuordnungOptionen = [
+  { label: 'Zugeordnet', value: 'zugeordnet' },
+  { label: 'Nicht zugeordnet', value: 'frei' },
+  { label: 'Alle', value: 'alle' },
+]
+const istZugeordnet = (c) => !!(c.mitglied_id || c.aufbewahrungsort)
+const passtZumStatus = (c) => chipFilter.value === 'alle' || c.status === chipFilter.value
+const chipsGefiltert = computed(() => chips.value.filter(
+  (c) => passtZumStatus(c)
+    && (chipZuordnung.value === 'alle' || istZugeordnet(c) === (chipZuordnung.value === 'zugeordnet'))))
+// Wie viele Chips der Standardfilter gerade schluckt – sonst wirkt die Liste unvollständig.
+const ausgeblendeteChips = computed(() => (chipZuordnung.value !== 'zugeordnet' ? 0
+  : chips.value.filter((c) => passtZumStatus(c) && !istZugeordnet(c)).length))
+// Nach dem Speichern die Filter so nachziehen, dass der Chip sichtbar bleibt – ein frisch
+// angelegter, noch nicht zugeordneter Chip wirkte sonst wie verschluckt.
+function chipSichtbarMachen(c) {
+  if (chipFilter.value !== 'alle' && c.status !== chipFilter.value) chipFilter.value = c.status
+  if (chipZuordnung.value !== 'alle'
+      && istZugeordnet(c) !== (chipZuordnung.value === 'zugeordnet')) {
+    chipZuordnung.value = istZugeordnet(c) ? 'zugeordnet' : 'frei'
+  }
+}
 
 // Kreis-Farbe für Konnektivitäts-Einträge im Log (online grün, offline rot, unbekannt grau)
 const statusLogClass = (o) =>
@@ -1330,6 +1363,7 @@ async function saveChip() {
       await api.post('/api/schliessanlage/chips', { ...payload, kartennummer: chipForm.value.kartennummer })
     }
     chipFormDialog.value = false; chipDialog.value = false
+    chipSichtbarMachen(payload)
     await loadChips()
   } catch (e) { chipError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen' }
   finally { saving.value = false }
@@ -1488,6 +1522,12 @@ function deleteChip() {
   border-radius: 8px;
   padding: 4px 10px;
 }
+/* Zähler unter den Chip-Filtern – liegt wie die Standort-Überschriften direkt
+   auf dem Seitengrund, braucht deshalb je Theme einen eigenen Ton. */
+.schl-filter-hinweis {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.55);
+}
 /* Hinweis auf ein externes Schloss: erklärt, warum hier Gateway/Akku/Anlernen
    fehlen. Neutral getönt wie der DSGVO-Hinweis – es ist keine Warnung. */
 .schl-extern-hinweis {
@@ -1570,6 +1610,9 @@ body.body--dark {
     background: rgba(255, 255, 255, 0.06);
     color: #9fb0cc;
   }
+  .schl-filter-hinweis {
+    color: #9fb0cc;
+  }
 }
 
 /* Theme „VTB": Karten/Dialoge sind Wappenblau (app.scss) — die für weiße
@@ -1610,6 +1653,9 @@ body.vtb-theme--vtb {
   .schl-dsgvo {
     background: rgba($flaeche-rgb, 0.08);
     color: rgba($flaeche-rgb, 0.85);
+  }
+  .schl-filter-hinweis {
+    color: rgba($flaeche-rgb, 0.8);
   }
   .q-card .schl-log-icon,
   .q-dialog .schl-log-icon {
