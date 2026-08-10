@@ -9,6 +9,11 @@ Die App ist Orchestrierungsschicht über der TTLock-Cloud (Quelle der Wahrheit):
 - TuerBerechtigung: Chip an einem Schloss = eine TTLock-IC-Card (pro Schloss eigene cardId).
 - TuerZutrittLog:   append-only Zutrittslog (dedupe über ttlock_record_id = recordId).
 
+Ausnahme: ein Schloss mit `quelle='extern'` hängt NICHT an der Cloud (eigene Anlage,
+gleiche Chips). Dort gibt es keine lockId, keine recordId und kein Fernöffnen – sein
+Log kommt per CSV-Import und wird über `SchluesselChip.externe_kennung` auf Chip →
+Mitglied aufgelöst (s. `services/zutritt_import_service.py`).
+
 `record_type` ist der TTLock-Code der Öffnungs-/Verriegelungsmethode; `record_type_label`
 mappt ihn auf einen lesbaren Text (vollständiger Schlüssel aus der TTLock-Doc, 2026-06).
 """
@@ -59,6 +64,40 @@ ALARM_RECORD_TYPES = frozenset({44, 48})
 # VTB-User lässt sich per Korrelation mit dem access_log ('schliessanlage_unlock')
 # auflösen (Phase-5-Teil B). 3/12 = „Gateway (remote)".
 GATEWAY_REMOTE_RECORD_TYPES = frozenset({3, 12})
+
+# Herkunft eines Schlosses bzw. einer Log-Zeile. 'ttlock' = an der Cloud (Inventar/Logs
+# kommen aus dem Sync); 'extern' = eigenständige Fremdanlage, die nur dieselben Chips
+# akzeptiert (Tor-Einfahrt) – ihr Log kommt per CSV-Import, Fernöffnen gibt es dort nicht.
+QUELLE_TTLOCK = 'ttlock'
+QUELLE_EXTERN = 'extern'
+
+# 'Unlock Type' der Fremdanlage → TTLock-recordType. Der Import führt die fremden
+# Bezeichnungen auf dieselben Codes zurück, damit Auswertung und Anzeige nicht je
+# Herkunft zwei Vokabulare kennen müssen; der Originaltext bleibt in `raw` erhalten.
+_EXTERN_UNLOCK_TYPES: tuple[tuple[str, int], ...] = (
+    ('karte', 7),          # 'Karte entsperren'
+    ('card', 7),
+    ('finger', 8),
+    ('passwort', 4),
+    ('passcode', 4),
+    ('code', 4),
+    ('app', 1),
+    ('schlüssel', 10),
+    ('key', 10),
+)
+
+
+def extern_record_type(unlock_type: Optional[str]) -> Optional[int]:
+    """'Unlock Type' aus dem Fremd-Export auf einen recordType abbilden; None,
+    wenn die Bezeichnung unbekannt ist (dann trägt nur `methode` den Originaltext)."""
+    text = (unlock_type or '').strip().lower()
+    if not text:
+        return None
+    for stichwort, code in _EXTERN_UNLOCK_TYPES:
+        if stichwort in text:
+            return code
+    return None
+
 
 # Credential-Typen am Schloss (read-only Inventar, 1:1 aus der Cloud gespiegelt).
 CRED_FINGERPRINT = 'fingerprint'
@@ -117,9 +156,10 @@ class TTLockKonto:
 
 @dataclass
 class TuerSchloss:
-    """Gespiegeltes Schloss/Tür-Inventar (aus v3/lock/list)."""
+    """Gespiegeltes Schloss/Tür-Inventar (aus v3/lock/list) oder externes Schloss."""
     id: Optional[int] = None
-    ttlock_lock_id: int = 0
+    ttlock_lock_id: Optional[int] = None          # NULL bei quelle='extern'
+    quelle: str = QUELLE_TTLOCK
     name: str = ""
     standort: Optional[str] = None
     abteilung_id: Optional[int] = None            # NULL = vereinsweit (Scope)
@@ -155,6 +195,9 @@ class SchluesselChip:
     id: Optional[int] = None
     kartennummer: str = ""
     bezeichnung: Optional[str] = None
+    # Kontoname desselben Chips in einer Fremdanlage ('Unlock Account' im Tor-Export) –
+    # nur darüber lässt sich deren Log auf Chip → Mitglied auflösen.
+    externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None             # Inhaber, falls personalisiert ausgegeben
     aufbewahrungsort: Optional[str] = None        # Standard-Standort, falls nicht personalisiert
     status: str = CHIP_AKTIV
@@ -248,10 +291,17 @@ class TuerCredential:
 
 @dataclass
 class TuerZutrittLog:
-    """Append-only Zutrittslog (aus v3/lockRecord/list, dedupe über ttlock_record_id)."""
+    """Append-only Zutrittslog.
+
+    Zwei Herkünfte, eine Tabelle: TTLock-Records (aus v3/lockRecord/list, dedupe über
+    `ttlock_record_id`) und importierte Zeilen einer Fremdanlage (`quelle='extern'`,
+    dedupe über Schloss + `lock_date` + `extern_konto`). Alles darunter – Auswertung,
+    Anzeige, Prune – behandelt beide gleich."""
     id: Optional[int] = None
-    ttlock_record_id: int = 0
+    ttlock_record_id: Optional[int] = None        # NULL bei quelle='extern'
     schloss_id: int = 0
+    quelle: str = QUELLE_TTLOCK
+    extern_konto: Optional[str] = None            # 'Unlock Account' der Fremdanlage
     record_type: Optional[int] = None
     record_type_from_lock: Optional[int] = None
     methode: Optional[str] = None                 # record_type_label(record_type)

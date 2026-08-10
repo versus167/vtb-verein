@@ -19,6 +19,12 @@
       </q-btn>
       <q-btn v-if="status.darf_sync && $q.screen.gt.xs" color="primary" unelevated no-caps rounded icon="sync"
         label="Synchronisieren" :loading="syncing" @click="doSync" />
+      <!-- Fremd-Log (Schloss ohne Cloud-Anschluss) kommt nicht per Sync, sondern per Datei.
+           Eigenes Flag: der Bericht zeigt die Nutzung, verlangt also auch das Protokollrecht. -->
+      <q-btn v-if="status.darf_import" flat round dense icon="upload_file" color="primary"
+        class="q-ml-xs" @click="openImport">
+        <q-tooltip>Zutrittslog importieren (externes Schloss)</q-tooltip>
+      </q-btn>
     </div>
 
     <!-- Mini-Statistik über alle Schlösser -->
@@ -58,13 +64,20 @@
                   <div class="text-weight-bold ellipsis">{{ s.name }}</div>
                   <div v-if="s.abteilung_name" class="text-caption text-grey ellipsis">{{ s.abteilung_name }}</div>
                   <div class="row items-center q-gutter-xs q-mt-xs no-wrap">
-                    <span class="schl-pill" :class="onlinePillClass(s.gateway_online)">
-                      <span class="schl-dot" :class="onlineDotClass(s.gateway_online)"></span>
-                      {{ onlineKurz(s.gateway_online) }}
+                    <!-- Externes Schloss: keine Cloud, also weder Gateway- noch Akku-Wert -->
+                    <span v-if="istExtern(s)" class="schl-pill">
+                      <q-icon name="link_off" size="13px" /> extern
+                      <q-tooltip>Nicht in der TTLock-Cloud – Log kommt per Import</q-tooltip>
                     </span>
-                    <span v-if="s.akku_prozent != null" class="schl-pill" :class="akkuPillClass(s.akku_prozent)">
-                      <q-icon :name="akkuIcon(s.akku_prozent)" size="13px" /> {{ s.akku_prozent }} %
-                    </span>
+                    <template v-else>
+                      <span class="schl-pill" :class="onlinePillClass(s.gateway_online)">
+                        <span class="schl-dot" :class="onlineDotClass(s.gateway_online)"></span>
+                        {{ onlineKurz(s.gateway_online) }}
+                      </span>
+                      <span v-if="s.akku_prozent != null" class="schl-pill" :class="akkuPillClass(s.akku_prozent)">
+                        <q-icon :name="akkuIcon(s.akku_prozent)" size="13px" /> {{ s.akku_prozent }} %
+                      </span>
+                    </template>
                   </div>
                   <div v-if="offlineSeit(s)" class="text-caption text-negative q-mt-xs ellipsis">
                     <q-icon name="cloud_off" size="12px" /> {{ offlineSeit(s) }}
@@ -78,7 +91,8 @@
                 </div>
                 <!-- „Fernöffnen" ist die Hauptaktion (#89): großer gelber Rundbutton, gut tippbar -->
                 <div class="column items-center q-gutter-xs">
-                  <q-btn v-if="status.darf_oeffnen" unelevated round color="vtb-gelb" text-color="primary"
+                  <q-btn v-if="status.darf_oeffnen && !istExtern(s)" unelevated round color="vtb-gelb"
+                    text-color="primary"
                     size="md" icon="lock_open" :loading="opening === s.id" @click.stop="doOeffnen(s)">
                     <q-tooltip>Fernöffnen</q-tooltip>
                   </q-btn>
@@ -192,27 +206,30 @@
         </q-card-section>
         <q-separator />
         <q-card-section>
-          <!-- Status-Streifen: Gateway / Akku / letzter Vorgang -->
+          <!-- Status-Streifen: Gateway / Akku / letzter Vorgang. Beim externen Schloss
+               gibt es weder Gateway noch Akkustand – dort bleibt der letzte Vorgang. -->
           <div class="row q-col-gutter-sm q-mb-md">
-            <div class="col-4">
-              <div class="schl-stat">
-                <div class="schl-stat__label">Gateway</div>
-                <div class="schl-stat__wert">
-                  <span class="schl-dot" :class="onlineDotClass(schlossDetail.schloss?.gateway_online)"></span>
-                  {{ onlineKurz(schlossDetail.schloss?.gateway_online) }}
+            <template v-if="!istExtern(schlossDetail.schloss)">
+              <div class="col-4">
+                <div class="schl-stat">
+                  <div class="schl-stat__label">Gateway</div>
+                  <div class="schl-stat__wert">
+                    <span class="schl-dot" :class="onlineDotClass(schlossDetail.schloss?.gateway_online)"></span>
+                    {{ onlineKurz(schlossDetail.schloss?.gateway_online) }}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="col-4">
-              <div class="schl-stat">
-                <div class="schl-stat__label">Akku</div>
-                <div class="schl-stat__wert" :class="{ 'text-negative': akkuLow(schlossDetail.schloss?.akku_prozent) }">
-                  <q-icon :name="akkuIcon(schlossDetail.schloss?.akku_prozent ?? 100)" size="15px" />
-                  {{ schlossDetail.schloss?.akku_prozent ?? '–' }} %
+              <div class="col-4">
+                <div class="schl-stat">
+                  <div class="schl-stat__label">Akku</div>
+                  <div class="schl-stat__wert" :class="{ 'text-negative': akkuLow(schlossDetail.schloss?.akku_prozent) }">
+                    <q-icon :name="akkuIcon(schlossDetail.schloss?.akku_prozent ?? 100)" size="15px" />
+                    {{ schlossDetail.schloss?.akku_prozent ?? '–' }} %
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="col-4">
+            </template>
+            <div :class="istExtern(schlossDetail.schloss) ? 'col-12' : 'col-4'">
               <div class="schl-stat">
                 <div class="schl-stat__label">Letzter Vorgang</div>
                 <div class="schl-stat__wert schl-stat__wert--klein">
@@ -222,6 +239,17 @@
             </div>
           </div>
 
+          <!-- Externes Schloss: alles, was über die Cloud liefe (Anlernen, App-Öffnung,
+               Credential-Mirror), gibt es dort nicht – statt leerer Listen ein klarer Satz. -->
+          <q-banner v-if="istExtern(schlossDetail.schloss)" dense rounded class="schl-extern-hinweis">
+            <template #avatar><q-icon name="link_off" size="20px" /></template>
+            Externes Schloss – hängt nicht an der TTLock-Cloud. Chips werden dort direkt an
+            der Anlage angelernt; der Zutrittslog kommt per Import
+            <span v-if="schlossDetail.schloss?.letztes_event_at">
+              (Stand {{ fmtDateTime(schlossDetail.schloss.letztes_event_at) }})</span>.
+          </q-banner>
+
+          <template v-if="!istExtern(schlossDetail.schloss)">
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Zugeteilte Chips</div>
             <q-space />
@@ -306,6 +334,7 @@
               </q-item>
             </q-list>
           </template>
+          </template>
         </q-card-section>
       </q-card>
     </q-dialog>
@@ -383,6 +412,8 @@
               Nr. {{ chipDetail.chip?.kartennummer }} ·
               {{ chipDetail.chip?.mitglied_id ? ('ausgegeben an ' + mitgliedName(chipDetail.chip))
                  : ('liegt: ' + (chipDetail.chip?.aufbewahrungsort || '—')) }}
+              <span v-if="chipDetail.chip?.externe_kennung">
+                · extern: {{ chipDetail.chip.externe_kennung }}</span>
             </div>
           </div>
           <q-btn v-if="status.darf_verwalten" flat round dense icon="edit" @click="openChipEdit" />
@@ -463,6 +494,9 @@
           <q-input v-model="chipForm.kartennummer" label="Kartennummer *" outlined dense
             :readonly="!!chipForm.id" :hint="chipForm.id ? 'Kartennummer ist fix' : ''" />
           <q-input v-model="chipForm.bezeichnung" label="Bezeichnung (z. B. Chip blau 14)" outlined dense />
+          <!-- Ohne diese Kennung bleibt der Chip im importierten Tor-Log anonym -->
+          <q-input v-model="chipForm.externe_kennung" label="Kennung am externen Schloss" outlined dense
+            hint="Kontoname im Tor-Export (Spalte „Unlock Account“), falls abweichend von der Bezeichnung" />
           <q-select v-model="chipForm.mitglied_id" :options="mitgliedOptions" option-value="id"
             :option-label="mitgliedLabel" emit-value map-options use-input input-debounce="0"
             @filter="filterMitglieder" label="Mitglied (optional)" outlined dense clearable
@@ -488,6 +522,102 @@
           <q-btn flat no-caps label="Abbrechen" v-close-popup />
           <q-btn unelevated rounded no-caps color="primary" :label="chipForm.id ? 'Speichern' : 'Anlegen'"
             :loading="saving" @click="saveChip" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Fremd-Log importieren ====================== -->
+    <q-dialog v-model="importDialog" persistent :maximized="$q.screen.lt.sm">
+      <q-card class="column no-wrap schl-dialog"
+        :style="`min-width:min(640px,96vw)${$q.screen.lt.sm ? '' : ';max-height:85vh'}`">
+        <q-card-section class="row items-center no-wrap col-auto">
+          <div class="schl-icon schl-icon--klein"><q-icon name="upload_file" size="20px" /></div>
+          <div class="col q-ml-sm" style="min-width: 0">
+            <div class="text-subtitle1 text-weight-bold">Zutrittslog importieren</div>
+            <div class="text-caption text-grey">Export eines Schlosses ohne Cloud-Anschluss</div>
+          </div>
+          <q-btn flat round dense icon="close" v-close-popup />
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="col scroll q-gutter-sm">
+          <q-file v-model="importDatei" label="CSV-Datei" outlined dense accept=".csv,text/csv"
+            clearable @update:model-value="importVorschau = null">
+            <template #prepend><q-icon name="attach_file" /></template>
+          </q-file>
+          <div class="text-caption text-grey-7">
+            Erwartete Spalten: Unlock Account, Unlock Type, Lock Name, Unlock Time.
+            Bereits eingelesene Zeilen werden erkannt – derselbe Export darf erneut rein.
+          </div>
+
+          <template v-if="importVorschau">
+            <q-separator class="q-my-sm" />
+            <div class="row q-col-gutter-sm">
+              <div class="col-4"><div class="schl-stat">
+                <div class="schl-stat__label">Zeilen</div>
+                <div class="schl-stat__wert">{{ importVorschau.zeilen }}</div></div></div>
+              <div class="col-4"><div class="schl-stat">
+                <div class="schl-stat__label">{{ importVorschau.commit ? 'übernommen' : 'neu' }}</div>
+                <div class="schl-stat__wert">{{ importVorschau.neu }}</div></div></div>
+              <div class="col-4"><div class="schl-stat">
+                <div class="schl-stat__label">schon vorhanden</div>
+                <div class="schl-stat__wert">{{ importVorschau.doppelt }}</div></div></div>
+            </div>
+
+            <div v-for="s in importVorschau.schloesser" :key="s.name" class="q-mt-md">
+              <div class="row items-center q-gutter-xs">
+                <q-icon name="meeting_room" size="16px" />
+                <span class="text-weight-medium">{{ s.name }}</span>
+                <q-badge v-if="s.neu_angelegt" color="primary" class="q-ml-xs">
+                  {{ importVorschau.commit ? 'angelegt' : 'wird angelegt' }}</q-badge>
+              </div>
+              <div class="text-caption text-grey q-mb-xs">
+                {{ s.zeilen }} Zeilen · {{ fmtDateTime(s.von) }} – {{ fmtDateTime(s.bis) }}
+              </div>
+              <q-list dense bordered separator>
+                <q-item v-for="k in s.konten" :key="k.konto">
+                  <q-item-section>
+                    <q-item-label>{{ k.konto || '(ohne Konto)' }}</q-item-label>
+                    <q-item-label caption>
+                      <span v-if="k.mitglied_name">{{ k.mitglied_name }}</span>
+                      <span v-else-if="k.chip_id">Chip „{{ k.chip_bezeichnung }}" – keinem Mitglied zugeordnet</span>
+                      <span v-else class="text-negative">kein Chip mit dieser Kennung</span>
+                    </q-item-label>
+                  </q-item-section>
+                  <q-item-section side>
+                    <q-badge :color="k.chip_id ? 'green-3' : 'orange-3'" text-color="black">
+                      {{ k.anzahl }}×</q-badge>
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </div>
+
+            <q-banner v-if="importVorschau.ohne_zuordnung" dense rounded class="vtb-warnung q-mt-md">
+              <template #avatar><q-icon name="help_outline" size="20px" /></template>
+              {{ importVorschau.ohne_zuordnung }} Zeilen lassen sich keinem Chip zuordnen.
+              Sie werden trotzdem importiert – trage die Kennung beim passenden Chip nach,
+              dann werden sie nachträglich zugeordnet.
+            </q-banner>
+            <q-banner v-if="importVorschau.fehler_gesamt" dense rounded class="vtb-warnung q-mt-sm">
+              <template #avatar><q-icon name="report_problem" size="20px" /></template>
+              {{ importVorschau.fehler_gesamt }} Zeilen unlesbar:
+              {{ importVorschau.fehler.join('; ') }}
+            </q-banner>
+            <div v-if="importVorschau.commit" class="text-positive q-mt-sm">
+              <q-icon name="check_circle" size="18px" /> Import abgeschlossen
+              <span v-if="importVorschau.nachgezogen">
+                · {{ importVorschau.nachgezogen }} frühere Zeilen nachträglich zugeordnet</span>
+            </div>
+          </template>
+          <div v-if="importError" class="text-negative text-caption">{{ importError }}</div>
+        </q-card-section>
+        <q-separator />
+        <q-card-actions align="right" class="q-px-md q-py-sm col-auto">
+          <q-btn flat no-caps label="Schließen" v-close-popup />
+          <q-btn v-if="!importVorschau?.commit" unelevated rounded no-caps color="grey-7" label="Vorschau"
+            :disable="!importDatei" :loading="importLoading && !importCommitLaeuft" @click="doImport(false)" />
+          <q-btn v-if="!importVorschau?.commit" unelevated rounded no-caps color="primary" label="Übernehmen"
+            :disable="!importVorschau || !importVorschau.neu"
+            :loading="importCommitLaeuft" @click="doImport(true)" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -674,7 +804,7 @@ function credentialGruppen(credentials) {
 }
 
 const tab = ref('schloesser')
-const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false, letzter_sync_at: null })
+const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false, darf_import: false, letzter_sync_at: null })
 const schloesser = ref([])
 const chips = ref([])
 const abteilungen = ref([])
@@ -714,6 +844,9 @@ const offlineSeit = (s) => {
   const wort = s.gateway_online === false ? 'offline' : 'nicht erreichbar'
   return `${wort} seit ${fmtDateTime(s.gateway_online_seit)}`
 }
+// Externes Schloss (eigene Anlage, gleiche Chips): kein Gateway, kein Akku, kein
+// Fernöffnen – sein Log kommt per Import statt per Sync.
+const istExtern = (s) => !!s && s.quelle === 'extern'
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
@@ -817,6 +950,35 @@ async function doSync() {
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Sync fehlgeschlagen' })
   } finally { syncing.value = false }
+}
+
+// --- Fremd-Log importieren (Schloss ohne Cloud-Anschluss) ---
+const importDialog = ref(false)
+const importDatei = ref(null)
+const importVorschau = ref(null)
+const importError = ref('')
+const importLoading = ref(false)
+const importCommitLaeuft = ref(false)
+function openImport() {
+  importDatei.value = null; importVorschau.value = null; importError.value = ''
+  importDialog.value = true
+}
+async function doImport(commit) {
+  if (!importDatei.value) return
+  const form = new FormData()
+  form.append('file', importDatei.value)
+  form.append('commit', commit ? 'true' : 'false')
+  importLoading.value = true; importCommitLaeuft.value = commit; importError.value = ''
+  try {
+    const { data } = await api.post('/api/schliessanlage/import', form)
+    importVorschau.value = data
+    if (commit) {
+      $q.notify({ type: 'positive', message: data.zusammenfassung })
+      await reloadAll()
+    }
+  } catch (e) {
+    importError.value = e.response?.data?.detail || 'Import fehlgeschlagen'
+  } finally { importLoading.value = false; importCommitLaeuft.value = false }
 }
 
 // Für html:true-Dialoge: Schloss-Namen sicher einbetten
@@ -1139,15 +1301,16 @@ function filterMitglieder(val, update) {
 }
 async function openChipCreate() {
   await loadMitglieder()
-  chipForm.value = { id: null, kartennummer: '', bezeichnung: '', mitglied_id: null,
-    aufbewahrungsort: '', status: 'aktiv' }
+  chipForm.value = { id: null, kartennummer: '', bezeichnung: '', externe_kennung: '',
+    mitglied_id: null, aufbewahrungsort: '', status: 'aktiv' }
   chipError.value = ''; chipFormDialog.value = true
 }
 async function openChipEdit() {
   await loadMitglieder()
   const c = chipDetail.value.chip
   chipForm.value = { id: c.id, kartennummer: c.kartennummer, bezeichnung: c.bezeichnung,
-    mitglied_id: c.mitglied_id, aufbewahrungsort: c.aufbewahrungsort, status: c.status, version: c.version }
+    externe_kennung: c.externe_kennung, mitglied_id: c.mitglied_id,
+    aufbewahrungsort: c.aufbewahrungsort, status: c.status, version: c.version }
   chipError.value = ''; chipFormDialog.value = true
 }
 async function saveChip() {
@@ -1155,6 +1318,7 @@ async function saveChip() {
   saving.value = true; chipError.value = ''
   const payload = {
     bezeichnung: chipForm.value.bezeichnung || null,
+    externe_kennung: chipForm.value.externe_kennung || null,
     mitglied_id: chipForm.value.mitglied_id || null,
     aufbewahrungsort: chipForm.value.aufbewahrungsort || null,
     status: chipForm.value.status || 'aktiv',
@@ -1324,6 +1488,13 @@ function deleteChip() {
   border-radius: 8px;
   padding: 4px 10px;
 }
+/* Hinweis auf ein externes Schloss: erklärt, warum hier Gateway/Akku/Anlernen
+   fehlen. Neutral getönt wie der DSGVO-Hinweis – es ist keine Warnung. */
+.schl-extern-hinweis {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.04);
+}
 .schl-neu-btn {
   min-width: 220px;
 }
@@ -1394,7 +1565,8 @@ body.body--dark {
     background: rgba(229, 57, 53, 0.16);
     color: #ef9a9a;
   }
-  .schl-dsgvo {
+  .schl-dsgvo,
+  .schl-extern-hinweis {
     background: rgba(255, 255, 255, 0.06);
     color: #9fb0cc;
   }
@@ -1455,7 +1627,9 @@ body.vtb-theme--vtb {
     color: #ef9a9a;
   }
   .q-card .schl-dsgvo,
-  .q-dialog .schl-dsgvo {
+  .q-dialog .schl-dsgvo,
+  .q-card .schl-extern-hinweis,
+  .q-dialog .schl-extern-hinweis {
     background: rgba(255, 255, 255, 0.08);
     color: #c6d2e8;
   }

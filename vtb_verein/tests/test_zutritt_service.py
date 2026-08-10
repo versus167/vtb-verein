@@ -112,6 +112,7 @@ class FakeClient:
 
 class FakeSchloss:
     def __init__(self, id, ttlock_lock_id, name="s3"):
+        # ttlock_lock_id=None ⇒ externes Schloss (eigene Anlage, kein Cloud-Anschluss)
         self.id, self.ttlock_lock_id, self.aktiv = id, ttlock_lock_id, True
         self.name = name
         self.lock_mac = self.ttlock_gateway_id = self.gateway_online = None
@@ -126,8 +127,15 @@ class FakeSchlossRepo:
     def get(self, id):
         return self._by_id.get(id)
 
-    def list_all(self, nur_aktive=False):
-        return [s for s in self._by_id.values() if s.aktiv or not nur_aktive]
+    def list_all(self, nur_aktive=False, nur_ttlock=False):
+        return [s for s in self._by_id.values()
+                if (s.aktiv or not nur_aktive) and (s.ttlock_lock_id or not nur_ttlock)]
+
+    def add_extern(self, name="Tor Einfahrt"):
+        """Externes Schloss einhängen (ohne lockId) – darf in keinen Cloud-Sync geraten."""
+        s = FakeSchloss(self._next, None, name); self._next += 1
+        self._by_id[s.id] = s
+        return s
 
     def upsert_inventory(self, *, ttlock_lock_id, name, lock_mac, ttlock_gateway_id,
                          gateway_online, akku_prozent, akku_stand_at, by='SYSTEM'):
@@ -362,6 +370,28 @@ def test_logs_sync_chip_aufloesung_nur_fuer_ic_karte():
     assert by_rec[1].methode == "IC-Karte" and by_rec[1].erfolg is True
     # Passcode-Record (recordType 4) → keine Chip-Auflösung, obwohl keyboardPwd gesetzt
     assert by_rec[2].chip_id is None and by_rec[2].erfolg is False
+
+
+def test_externes_schloss_bleibt_aus_cloud_syncs_heraus():
+    """Ein Schloss ohne lockId (eigene Anlage, gleiche Chips) darf in keinen Cloud-
+    Aufruf geraten – dort liefe die lockId None gegen ein fremdes oder gar kein Schloss."""
+    svc = _service()
+    svc.inventar_sync()                       # ein echtes TTLock-Schloss
+    extern = svc.schloss_repo.add_extern()
+    assert svc.logs_sync()["neu"] == 3        # nur das Cloud-Schloss geliefert
+    assert {r.schloss_id for r in svc.log_repo.rows} == {1}
+    # Auch gezielt angefragt bleibt es unberührt (kein Fehler, kein Cloud-Call)
+    assert svc.logs_sync(schloss_id=extern.id)["neu"] == 0
+
+
+def test_externes_schloss_laesst_sich_nicht_fernsteuern():
+    svc = _service()
+    extern = svc.schloss_repo.add_extern()
+    with pytest.raises(ValueError, match="extern"):
+        svc.oeffnen(extern.id)
+    with pytest.raises(ValueError, match="extern"):
+        svc.verriegeln(extern.id)
+    assert svc._client_factory().unlocked == []
 
 
 def test_logs_sync_status_snapshot():

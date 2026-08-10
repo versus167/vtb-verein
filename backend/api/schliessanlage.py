@@ -8,16 +8,22 @@ Master-Detail:
   (hinter `schliessanlage.protokoll`).
 - Sync: Inventar + Logs aus der Cloud ziehen (on-demand-Button), `schliessanlage.verwalten`.
 
+- Import: Zutrittslog einer Fremdanlage (Schloss ohne TTLock-Anschluss) als CSV
+  einlesen – `schliessanlage.verwalten` UND `schliessanlage.protokoll`, beides
+  vereinsweit (der Import-Bericht ist selbst eine Nutzungsauswertung).
+
 Bewegungsdaten (Logs) sind DSGVO-sensibel → eigenes Recht `schliessanlage.protokoll`.
 Chip-/Schloss-Stammdatenpflege ist reine DB-Arbeit (kein Cloud-Write in Phase 1).
 """
+from dataclasses import asdict
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 
 from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
+from app.services.zutritt_import_service import ImportFehler, run_import
 from app.services.ttlock_client import TTLockError
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_schloss_ids, darf_schloss
@@ -35,10 +41,36 @@ def _require(user, perm: str, was: str) -> None:
 def _darf_oeffnen(user, db, schloss) -> bool:
     """Öffnen darf, wer das Betätigungsrecht für genau dieses Schloss hat (global ODER
     abteilungsgebunden, Phase-3-Scope) ODER eine gültige Berechtigung dafür besitzt
-    (Self-Service: Mitglied → Chip → Berechtigung bzw. befristete App-Berechtigung)."""
+    (Self-Service: Mitglied → Chip → Berechtigung bzw. befristete App-Berechtigung).
+    Externe Schlösser lassen sich gar nicht fernsteuern – dort ist nichts zu erlauben."""
+    if not schloss.ttlock_lock_id:
+        return False
     return (darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN)
             or db.tuer_berechtigungen.user_has_valid_for_schloss(user.id, schloss.id)
             or db.tuer_app_berechtigungen.user_has_valid_for_schloss(user.id, schloss.id))
+
+
+def _konto_nachziehen(db, chip) -> int:
+    """Bereits importierte Fremd-Log-Zeilen diesem Chip zuordnen.
+
+    Die Zuordnung entsteht meist erst NACH dem ersten Import – der Bericht zeigt ja
+    gerade die unbekannten Konten. Ohne diesen Schritt blieben die Zeilen für immer
+    anonym, obwohl die Kennung inzwischen gepflegt ist.
+
+    Geprüft wird über dieselbe Auflösung, die auch der Import nutzt: nur wenn ein
+    Kandidatenname tatsächlich auf DIESEN Chip zeigt, werden Zeilen übernommen –
+    sonst schnappte eine gleichlautende Bezeichnung Zeilen weg, die per gepflegter
+    `externe_kennung` einem anderen Chip gehören.
+    """
+    gesamt = 0
+    for kandidat in (chip.externe_kennung, chip.bezeichnung, chip.kartennummer):
+        if not (kandidat or "").strip():
+            continue
+        treffer = db.schluessel_chips.find_active_by_externes_konto(kandidat)
+        if treffer and treffer.id == chip.id:
+            gesamt += db.tuer_zutritt_logs.resolve_extern_konto(
+                kandidat, chip_id=chip.id, mitglied_id=chip.mitglied_id)
+    return gesamt
 
 
 def _require_berechtigung_verwalten(user, db, berechtigung_id: int) -> None:
@@ -65,6 +97,7 @@ class SchlossUpdateIn(BaseModel):
 class ChipIn(BaseModel):
     kartennummer: str
     bezeichnung: Optional[str] = None
+    externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None
     aufbewahrungsort: Optional[str] = None
     status: str = "aktiv"
@@ -72,6 +105,7 @@ class ChipIn(BaseModel):
 
 class ChipUpdateIn(BaseModel):
     bezeichnung: Optional[str] = None
+    externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None
     aufbewahrungsort: Optional[str] = None
     status: str = "aktiv"
@@ -113,6 +147,10 @@ def status_info(user: CurrentUser, db: DB):
         "darf_protokoll": user.has_permission(Permission.SCHLIESSANLAGE_PROTOKOLL),
         "darf_oeffnen": user.has_permission(Permission.SCHLIESSANLAGE_OEFFNEN),
         "darf_sync": user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN),
+        # Eigenes Flag statt „darf_sync UND darf_protokoll" im Frontend: die Regel des
+        # Imports (beides vereinsweit, s. log_import) gehört an eine Stelle – hierher.
+        "darf_import": (user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN)
+                        and user.has_permission_global(Permission.SCHLIESSANLAGE_PROTOKOLL)),
     }
 
 
@@ -204,6 +242,56 @@ def sync(request: Request, user: CurrentUser, db: DB,
     return ergebnis
 
 
+@router.post("/import")
+async def log_import(request: Request, user: CurrentUser, db: DB,
+                     file: UploadFile = File(...), commit: bool = Form(False)):
+    """Zutrittslog einer Fremdanlage (Schloss ohne TTLock-Anschluss) als CSV einlesen.
+
+    Ohne `commit` reine Vorschau – sie zeigt exakt das, was der Lauf tun würde,
+    inklusive der Konten, die (noch) auf keinen Chip zeigen. Der Lauf legt ein
+    unbekanntes Schloss automatisch als externes Schloss an und ist idempotent
+    (Dedupe über Schloss + Zeitpunkt + Konto), derselbe Export darf also erneut rein.
+
+    Verlangt BEIDE Rechte, jedes aus eigenem Grund:
+    - `schliessanlage.verwalten` **vereinsweit**, weil der Import ein Schloss anlegen
+      kann und Bewegungsdaten schreibt – keine abteilungsgebundene Entscheidung.
+    - `schliessanlage.protokoll`, ebenfalls vereinsweit, weil der Bericht selbst
+      Bewegungsdaten IST: er nennt je Konto Person und Anzahl und je Schloss den
+      Zeitraum – über alle Schlösser der Datei, nicht nur über die eigene Abteilung.
+      Anders als bei `/sync` (nur Zählwerte und Alarme) käme man hier sonst am
+      Protokollrecht vorbei an genau die Auswertung, die es schützt. Wer die Nutzung
+      nicht sehen darf, importiert sie auch nicht – ein entpersonalisierter Bericht
+      wäre wertlos, denn sein Kern ist gerade die Liste der Konten ohne Chip.
+    """
+    if not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung: Zutrittslog importieren (vereinsweit)")
+    if not user.has_permission_global(Permission.SCHLIESSANLAGE_PROTOKOLL):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Keine Berechtigung: Der Import-Bericht zeigt die Nutzung – dafür ist "
+                   "das Zutrittsprotokoll-Recht (vereinsweit) nötig")
+    daten = await file.read()
+    if not daten:
+        raise HTTPException(status_code=422, detail="Leere Datei")
+    try:
+        bericht = run_import(db, daten, commit=commit, actor=user.username)
+    except ImportFehler as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Import fehlgeschlagen: {e}")
+    if commit:
+        try:
+            db.access_log_repository.log(
+                "schliessanlage_log_import", category="schliessanlage",
+                user_id=user.id, username=user.username, ip=_client_ip(request),
+                detail=f"Fremd-Log importiert ({file.filename}): {bericht.zusammenfassung}",
+            )
+        except Exception:
+            pass
+    return {**asdict(bericht), "zusammenfassung": bericht.zusammenfassung}
+
+
 # --- Schlösser ---------------------------------------------------------------
 @router.get("/schloesser")
 def schloesser_liste(user: CurrentUser, db: DB):
@@ -250,8 +338,10 @@ def schloss_detail(schloss_id: int, user: CurrentUser, db: DB):
         "darf_protokoll": darf_protokoll,
         "darf_verwalten": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN),
         "darf_oeffnen": _darf_oeffnen(user, db, schloss),
-        # Verriegeln ist reines Betätigungsrecht (kein Self-Service über Chip/App-Grant).
-        "darf_verriegeln": darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN),
+        # Verriegeln ist reines Betätigungsrecht (kein Self-Service über Chip/App-Grant);
+        # an einem externen Schloss gibt es beides nicht.
+        "darf_verriegeln": bool(schloss.ttlock_lock_id)
+        and darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_OEFFNEN),
     }
 
 
@@ -540,10 +630,13 @@ def chip_anlegen(data: ChipIn, user: CurrentUser, db: DB):
     from app.models.schliessanlage import SchluesselChip
     chip = SchluesselChip(
         kartennummer=data.kartennummer, bezeichnung=data.bezeichnung,
+        externe_kennung=(data.externe_kennung or None),
         mitglied_id=data.mitglied_id, aufbewahrungsort=data.aufbewahrungsort,
         status=data.status,
     )
-    return db.schluessel_chips.create(chip, user.username)
+    angelegt = db.schluessel_chips.create(chip, user.username)
+    _konto_nachziehen(db, angelegt)
+    return angelegt
 
 
 @router.put("/chips/{chip_id}")
@@ -570,6 +663,7 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
         chip = db.schluessel_chips.get(chip_id)      # Version durch den Status-Schreib
         data.version = chip.version
     chip.bezeichnung = data.bezeichnung
+    chip.externe_kennung = data.externe_kennung or None
     chip.mitglied_id = data.mitglied_id
     chip.aufbewahrungsort = data.aufbewahrungsort
     chip.status = data.status
@@ -578,6 +672,7 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
     if not updated:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Konflikt (zwischenzeitlich geändert) – bitte neu laden")
+    _konto_nachziehen(db, updated)
     return updated
 
 

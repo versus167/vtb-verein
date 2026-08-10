@@ -69,6 +69,17 @@ def _iso_to_ms(iso: Optional[str]) -> int:
         return 0
 
 
+def _cloud_schloss(schloss) -> None:
+    """Sicherstellen, dass dieses Schloss überhaupt an der Cloud hängt.
+
+    Ein externes Schloss (eigene Anlage, gleiche Chips) hat keine lockId – jeder
+    Cloud-Aufruf liefe dort ins Leere bzw. gegen ein fremdes Schloss."""
+    if not schloss.ttlock_lock_id:
+        raise ValueError(
+            f"'{schloss.name}' ist ein externes Schloss (nicht in der TTLock-Cloud) – "
+            f"Fernöffnen/-verriegeln und Anlernen gibt es dort nicht")
+
+
 def sperr_fenster(jetzt: Optional[datetime] = None) -> tuple[int, int]:
     """Gültigkeitsfenster, das eine IC-Karte sofort wirkungslos macht.
 
@@ -216,6 +227,7 @@ class ZutrittService:
         schloss = self.schloss_repo.get(schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
+        _cloud_schloss(schloss)
         self._client().unlock(schloss.ttlock_lock_id)
         logger.info("Schloss %s (lockId=%s) ferngeöffnet.", schloss.name, schloss.ttlock_lock_id)
         return {"ok": True, "schloss": schloss.name}
@@ -225,6 +237,7 @@ class ZutrittService:
         schloss = self.schloss_repo.get(schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
+        _cloud_schloss(schloss)
         self._client().remote_lock(schloss.ttlock_lock_id)
         logger.info("Schloss %s (lockId=%s) fernverriegelt.", schloss.name, schloss.ttlock_lock_id)
         return {"ok": True, "schloss": schloss.name}
@@ -249,6 +262,7 @@ class ZutrittService:
         schloss = self.schloss_repo.get(schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
+        _cloud_schloss(schloss)
         if self.berechtigung_repo.find_active_for_chip_schloss(chip_id, schloss_id):
             raise ValueError("Chip ist diesem Schloss bereits zugeteilt")
 
@@ -402,7 +416,7 @@ class ZutrittService:
         nachziehen. Read-only gegenüber dem Schloss (keine Cloud-Writes), idempotent."""
         client = self._client()
         neu_chips = neu_ber = akt_ber = 0
-        for s in self.schloss_repo.list_all(nur_aktive=True):
+        for s in self.schloss_repo.list_all(nur_aktive=True, nur_ttlock=True):
             for card in client.ic_cards(s.ttlock_lock_id).get("list", []):
                 cn = str(card.get("cardNumber") or "").strip()
                 if not cn:
@@ -510,7 +524,7 @@ class ZutrittService:
             (CRED_EKEY, client.ekeys, self._ekey_row),
             (CRED_IC, client.ic_cards, self._ic_row),
         )
-        for s in self.schloss_repo.list_all(nur_aktive=True):
+        for s in self.schloss_repo.list_all(nur_aktive=True, nur_ttlock=True):
             for typ, fetch, build in spezifikation:
                 try:
                     items = self._fetch_all_pages(fetch, s.ttlock_lock_id)
@@ -555,9 +569,10 @@ class ZutrittService:
         client = self._client()
         if schloss_id is not None:
             s = self.schloss_repo.get(schloss_id)
-            schloesser = [s] if s else []
+            # Externe Schlösser haben keine lockId – ihr Log kommt per Import.
+            schloesser = [s] if s and s.ttlock_lock_id else []
         else:
-            schloesser = self.schloss_repo.list_all(nur_aktive=True)
+            schloesser = self.schloss_repo.list_all(nur_aktive=True, nur_ttlock=True)
 
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         total_new = 0

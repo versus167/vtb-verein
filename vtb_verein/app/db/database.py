@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 89
+SCHEMA_VERSION = 90
 
 
 # ---------------------------------------------------------------------------
@@ -1089,7 +1089,7 @@ _RECHNUNG_KATEGORIEN_SEED = (
 #  * tuer_zutritt_log  – append-only Zutrittslog (kein History-Mirror, dedupe über recordId).
 # ============================================================================
 _TUER_SCHLOSS_COLS = (
-    "id, version, ttlock_lock_id, name, standort, abteilung_id, ttlock_gateway_id, "
+    "id, version, ttlock_lock_id, quelle, name, standort, abteilung_id, ttlock_gateway_id, "
     "gateway_online, lock_mac, akku_prozent, akku_stand_at, aktiv, notiz, "
     "letzter_log_serverdate, letztes_event_at, letztes_event_type, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
@@ -1114,7 +1114,8 @@ _FN_TUER_SCHLOSS_AUDIT_UPDATE = f"""
 """
 
 _SCHLUESSEL_CHIP_COLS = (
-    "id, version, kartennummer, bezeichnung, mitglied_id, aufbewahrungsort, status, "
+    "id, version, kartennummer, bezeichnung, externe_kennung, mitglied_id, "
+    "aufbewahrungsort, status, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _SCHLUESSEL_CHIP_VALS = ", ".join("NEW." + c.strip() for c in _SCHLUESSEL_CHIP_COLS.split(","))
@@ -1324,6 +1325,44 @@ _ZUTRITT_UNIQUE_INDEXES = (
     "ON schluessel_chip (kartennummer) WHERE deleted_at IS NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS uix_tuer_berechtigung_chip_schloss_active "
     "ON tuer_berechtigung (chip_id, schloss_id) WHERE deleted_at IS NULL",
+)
+
+# ----------------------------------------------------------------------------
+# Externes Schloss (Schema v90): ein Schloss, das NICHT an der TTLock-Cloud hängt,
+# aber mit denselben Chips geöffnet wird (Tor-Einfahrt). Sein Log kommt als CSV-Export
+# aus der Fremdanlage statt aus v3/lockRecord/list — deshalb:
+#  * tuer_schloss.ttlock_lock_id wird optional (extern = keine lockId) und `quelle`
+#    unterscheidet die beiden Welten (nur 'ttlock' geht in Cloud-Syncs/Fernöffnen).
+#  * schluessel_chip.externe_kennung = Kontoname desselben Chips in der Fremdanlage
+#    ('Unlock Account'), damit deren Log auf Chip → Mitglied auflösbar ist.
+#  * tuer_zutritt_log.ttlock_record_id wird optional; extern dedupliziert nicht über
+#    die recordId, sondern über Schloss + Zeitpunkt + Konto (s. Unique-Index unten).
+# Geteilt zwischen Frischaufbau und Migration v89→v90 (Fresh == Migriert).
+_ZUTRITT_EXTERN_SQL = (
+    "ALTER TABLE tuer_schloss ALTER COLUMN ttlock_lock_id DROP NOT NULL",
+    "ALTER TABLE tuer_schloss ADD COLUMN IF NOT EXISTS quelle TEXT NOT NULL DEFAULT 'ttlock'",
+    "ALTER TABLE tuer_schloss_history ADD COLUMN IF NOT EXISTS quelle TEXT",
+    "ALTER TABLE schluessel_chip ADD COLUMN IF NOT EXISTS externe_kennung TEXT",
+    "ALTER TABLE schluessel_chip_history ADD COLUMN IF NOT EXISTS externe_kennung TEXT",
+    "ALTER TABLE tuer_zutritt_log ALTER COLUMN ttlock_record_id DROP NOT NULL",
+    "ALTER TABLE tuer_zutritt_log ADD COLUMN IF NOT EXISTS quelle TEXT NOT NULL DEFAULT 'ttlock'",
+    "ALTER TABLE tuer_zutritt_log ADD COLUMN IF NOT EXISTS extern_konto TEXT",
+)
+
+# Indexe zu den Extern-Spalten – eigene Konstante, weil _ZUTRITT_INDEXES/-UNIQUE auch
+# in der alten Migration v56→v57 laufen, wo es diese Spalten noch nicht gibt.
+_ZUTRITT_EXTERN_INDEXES = (
+    ("idx_tuer_zutritt_log_extern_konto", "tuer_zutritt_log(extern_konto)"),
+    ("idx_schluessel_chip_externe_kennung", "schluessel_chip(externe_kennung)"),
+)
+
+# Dedupe für importierte Fremd-Logs: dieselbe Zeile (Schloss, Zeitpunkt, Konto) darf
+# beim erneuten Einlesen desselben Exports nicht doppelt landen. COALESCE, weil ein
+# Unique-Index NULLs als verschieden ansieht und damit gar nicht deduplizieren würde.
+_ZUTRITT_EXTERN_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_tuer_zutritt_log_extern "
+    "ON tuer_zutritt_log (schloss_id, lock_date, COALESCE(extern_konto, '')) "
+    "WHERE quelle = 'extern'",
 )
 
 # Audit-Trigger (Tabelle ↔ Funktion), geteilt zwischen Frischaufbau und Migration.
@@ -3075,6 +3114,7 @@ class Database:
             87: self._migrate_v86_to_v87,
             88: self._migrate_v87_to_v88,
             89: self._migrate_v88_to_v89,
+            90: self._migrate_v89_to_v90,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6630,6 +6670,37 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 89 WHERE id = 1")
 
+    def _migrate_v89_to_v90(self) -> None:
+        """Externes Schloss (nicht in der TTLock-Cloud) samt Log-Import ermöglichen.
+
+        Das Tor an der Einfahrt hängt an einer eigenen Anlage, wird aber mit
+        denselben Chips geöffnet. Bisher setzte das Schema voraus, dass jedes
+        Schloss eine TTLock-lockId hat und jede Log-Zeile eine recordId — beides
+        gibt es dort nicht. Deshalb werden beide Spalten optional, `quelle`
+        trennt die Welten (nur 'ttlock' läuft in Cloud-Syncs und Fernöffnen), und
+        `schluessel_chip.externe_kennung` hält den Kontonamen desselben Chips in
+        der Fremdanlage, über den ihr CSV-Export auf Chip → Mitglied auflöst.
+
+        Bestandsdaten bleiben unangetastet: `quelle` bekommt per DEFAULT 'ttlock',
+        was für alles Vorhandene stimmt. Die Audit-Funktionen werden neu erzeugt,
+        weil ihre Spaltenlisten die neuen Spalten mitführen müssen — sonst fehlten
+        sie in der History. DDL/Indexe kommen aus denselben Konstanten wie der
+        Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            for sql in _ZUTRITT_EXTERN_SQL:
+                cur.execute(sql)
+            cur.execute(_FN_TUER_SCHLOSS_AUDIT_INSERT)
+            cur.execute(_FN_TUER_SCHLOSS_AUDIT_UPDATE)
+            cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_INSERT)
+            cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
+            for name, target in _ZUTRITT_EXTERN_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _ZUTRITT_EXTERN_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 90 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7930,6 +8001,10 @@ class Database:
         # Zutrittskontrolle/Schließsystem (Schema v57): TTLock-Konto, Schlösser, Chips,
         # Berechtigungen (+History) und append-only Zutrittslog. DDL geteilt mit v56→v57.
         cur.execute(_DDL_ZUTRITT_TABLES)
+        # Externes (nicht-TTLock-)Schloss + Chip-Kennung dort (Schema v90).
+        # Geteilt mit Migration v89→v90.
+        for sql in _ZUTRITT_EXTERN_SQL:
+            cur.execute(sql)
         # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
         cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
@@ -8935,6 +9010,7 @@ class Database:
             ("idx_fibu_exporte_storno_von_export_id",               "fibu_exporte(storno_von_export_id)"),
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
             *_ZUTRITT_INDEXES,
+            *_ZUTRITT_EXTERN_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
             *_TRESOR_KONTAKT_INDEXES,
@@ -8958,6 +9034,8 @@ class Database:
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_kassen_kategorien_scope_name ON kassen_kategorien (COALESCE(kasse_id, 0), lower(name)) WHERE deleted_at IS NULL")
         for sql in _ZUTRITT_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _ZUTRITT_EXTERN_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)
