@@ -153,7 +153,20 @@ def test_beschreibung_buendelt_treffpunkt_untergrund_und_link():
     assert "Treffpunkt: 12:15 Vereinsheim" in entfaltet
     assert "Untergrund: Kunstrasen" in entfaltet
     assert "Trikots mitbringen" in entfaltet
-    assert "https://app.example.de/termine" in entfaltet
+    assert "https://app.example.de/termine?termin=7" in entfaltet
+
+
+def test_link_zeigt_auf_genau_diesen_termin():
+    """Ohne die ID landete man in der Liste und müsste den Termin erst suchen."""
+    entfaltet = _kalender(_termin(id=42), basis_url='https://app.example.de').replace("\r\n ", "")
+    assert "URL:https://app.example.de/termine?termin=42" in entfaltet
+    assert "In der App öffnen: https://app.example.de/termine?termin=42" in entfaltet
+
+
+def test_ohne_basis_url_kein_link():
+    text = _kalender(_termin())
+    assert "URL:" not in text
+    assert "In der App öffnen" not in text
 
 
 def test_abgesagter_termin_bleibt_sichtbar_und_ist_markiert():
