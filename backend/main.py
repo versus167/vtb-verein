@@ -48,6 +48,7 @@ from backend.api.termine import router as termine_router
 from backend.api.spielstaetten import router as spielstaetten_router
 from backend.api.clubdeckel import router as clubdeckel_router
 from backend.api.aufgaben import router as aufgaben_router
+from backend.api.kalender import AccessLogTokenFilter, router as kalender_router
 
 _FRONTEND_DIST = Path(__file__).parent.parent / "frontend_dist"
 
@@ -60,6 +61,8 @@ async def lifespan(app: FastAPI):
             handler.setFormatter(fmt)
     logging.getLogger("app").setLevel(logging.INFO)
     logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
+    # Kalender-Feed-Token stehen in der URL und dürfen nicht im Access-Log landen (#153)
+    logging.getLogger("uvicorn.access").addFilter(AccessLogTokenFilter())
 
     # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
     from backend.core.db import get_db
@@ -127,6 +130,7 @@ app.include_router(termine_router, prefix="/api")
 app.include_router(spielstaetten_router, prefix="/api")
 app.include_router(clubdeckel_router, prefix="/api")
 app.include_router(aufgaben_router, prefix="/api")
+app.include_router(kalender_router, prefix="/api")
 
 
 
