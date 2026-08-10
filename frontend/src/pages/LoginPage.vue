@@ -168,6 +168,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
 import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInfo'
+import { zurUebersicht } from 'src/router/nach-login'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -216,23 +217,16 @@ async function onLogin() {
     await auth.login(username.value, password.value, rememberMe.value)
   } catch (err) {
     errorMsg.value = err.response?.data?.detail || 'Anmeldung fehlgeschlagen'
-    return
-  } finally {
     loading.value = false
+    return
   }
 
-  // Ab hier ist die Anmeldung durch. Ein Fehler ist jetzt ein Navigations-, kein
-  // Anmeldeproblem — deshalb getrennt behandelt und nicht als „Anmeldung
-  // fehlgeschlagen" gemeldet (#157). Vorher lief die push()-Promise ins Leere:
-  // Wer die Übersicht nicht geladen bekam, stand ohne jede Meldung weiter vor
-  // dem Passwortfeld, obwohl die Sitzung längst stand. Den häufigsten Grund
-  // (Seiten-Chunk nicht ladbar) fängt schon router.onError ab; bleibt einer
-  // übrig, führt der harte Aufruf ans Ziel.
-  try {
-    await router.push({ name: 'dashboard' })
-  } catch {
-    window.location.assign('/')
-  }
+  // Ab hier ist die Anmeldung durch; was jetzt schiefgeht, ist ein Navigations-
+  // und kein Anmeldeproblem — deshalb nicht als „Anmeldung fehlgeschlagen"
+  // melden, sondern ans Ziel bringen (alle Fälle in `zurUebersicht`, #157).
+  // Der Knopf bleibt dabei im Ladezustand: Der Klick ist erst fertig, wenn die
+  // Übersicht steht, nicht schon, wenn das Passwort stimmt.
+  await zurUebersicht(router)
 }
 
 async function onRequestMagicLink() {
