@@ -138,6 +138,19 @@ def _ort(t: dict) -> str:
     return ", ".join(x for x in teile if x)
 
 
+def termin_link(t: dict, basis_url: str) -> str:
+    """Link auf genau diesen Termin in der App (leer ohne basis_url).
+
+    Dieselbe Form wie der Deep-Link aus den Benachrichtigungen (#158,
+    termin_notification_service.termin_url): Die Termine-Seite springt zur Card
+    und hebt sie hervor — dort sitzen die Zusage-Knöpfe. Eine Adresse ohne ID
+    landete nur in der Liste, in der man den gemeinten Termin erst suchen muss.
+    """
+    if not basis_url or not t.get('id'):
+        return ""
+    return f"{basis_url.rstrip('/')}/termine?termin={t['id']}"
+
+
 def _beschreibung(t: dict, basis_url: str) -> str:
     """Alles, was am Termin hängt und im Kalender sonst verloren ginge."""
     zeilen = []
@@ -158,8 +171,11 @@ def _beschreibung(t: dict, basis_url: str) -> str:
         zeilen.append(f"Untergrund: {t['spielstaette_untergrund']}")
     if t.get('beschreibung'):
         zeilen.append(str(t['beschreibung']))
-    if basis_url:
-        zeilen.append(f"{basis_url.rstrip('/')}/termine")
+    link = termin_link(t, basis_url)
+    if link:
+        # Zusätzlich zum URL-Feld: Google zeigt bei abonnierten Kalendern nur die
+        # Beschreibung an und macht Adressen darin selbst klickbar.
+        zeilen.append(f"In der App öffnen: {link}")
     return "\n".join(zeilen)
 
 
@@ -188,6 +204,12 @@ def _vevent(t: dict, host: str, basis_url: str, dtstamp: str) -> list[str]:
     beschreibung = _beschreibung(t, basis_url)
     if beschreibung:
         zeilen.append(f"DESCRIPTION:{escape(beschreibung)}")
+    link = termin_link(t, basis_url)
+    if link:
+        # Das dafür vorgesehene Feld (RFC 5545 §3.8.4.6). Apple und Thunderbird
+        # zeigen es als eigenen Knopf; Google ignoriert es bei Abos, deshalb
+        # steht der Link zusätzlich in der Beschreibung.
+        zeilen.append(f"URL:{escape(link)}")
     # Abgesagte Termine bleiben im Kalender stehen, statt kommentarlos zu
     # verschwinden: Wer schon hinfährt, soll die Absage sehen. STATUS wertet
     # nicht jeder Client aus (Google bei Abos gar nicht) – deshalb tragen der
