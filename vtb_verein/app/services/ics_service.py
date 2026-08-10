@@ -53,6 +53,9 @@ END:VTIMEZONE""".split("\n")
 
 _TYP_LABEL = {'training': 'Training', 'spiel': 'Spiel', 'sonstiges': 'Termin'}
 
+# Eigene Zu-/Absage – Wortwahl wie in der App (ANTWORTEN in useTermine.js).
+_ANTWORT_LABEL = {'zu': 'Zusage', 'vielleicht': 'Vielleicht', 'ab': 'Absage'}
+
 
 def escape(wert: Optional[str]) -> str:
     """Sonderzeichen nach RFC 5545 §3.3.11 maskieren.
@@ -138,6 +141,14 @@ def _ort(t: dict) -> str:
 def _beschreibung(t: dict, basis_url: str) -> str:
     """Alles, was am Termin hängt und im Kalender sonst verloren ginge."""
     zeilen = []
+    # Die Absage zuerst – wer die Details aufklappt, soll nicht erst
+    # Treffpunkt und Untergrund lesen, bevor er erfährt, dass nichts stattfindet.
+    if t.get('status') == 'abgesagt':
+        zeilen.append("Dieser Termin wurde abgesagt.")
+    elif t.get('meine_antwort') in _ANTWORT_LABEL:
+        # Hier die Wörter aus der App (Zusage/Vielleicht/Absage), nicht die
+        # Titelmarke: Wer nachsieht, soll denselben Begriff lesen wie im Termin.
+        zeilen.append(f"Deine Antwort: {_ANTWORT_LABEL[t['meine_antwort']]}")
     if t.get('mannschaft_name'):
         zeilen.append(f"Mannschaft: {t['mannschaft_name']}")
     treff = " ".join(x for x in (t.get('treffpunkt_zeit'), t.get('treffpunkt')) if x)
@@ -147,8 +158,6 @@ def _beschreibung(t: dict, basis_url: str) -> str:
         zeilen.append(f"Untergrund: {t['spielstaette_untergrund']}")
     if t.get('beschreibung'):
         zeilen.append(str(t['beschreibung']))
-    if t.get('status') == 'abgesagt':
-        zeilen.append("Dieser Termin wurde abgesagt.")
     if basis_url:
         zeilen.append(f"{basis_url.rstrip('/')}/termine")
     return "\n".join(zeilen)
@@ -179,9 +188,18 @@ def _vevent(t: dict, host: str, basis_url: str, dtstamp: str) -> list[str]:
     beschreibung = _beschreibung(t, basis_url)
     if beschreibung:
         zeilen.append(f"DESCRIPTION:{escape(beschreibung)}")
-    # Abgesagte Termine bleiben im Kalender stehen (durchgestrichen), statt
-    # kommentarlos zu verschwinden: Wer schon hinfährt, soll die Absage sehen.
-    zeilen.append("STATUS:CANCELLED" if t.get('status') == 'abgesagt' else "STATUS:CONFIRMED")
+    # Abgesagte Termine bleiben im Kalender stehen, statt kommentarlos zu
+    # verschwinden: Wer schon hinfährt, soll die Absage sehen. STATUS wertet
+    # nicht jeder Client aus (Google bei Abos gar nicht) – deshalb tragen der
+    # Titel und die Beschreibung die Absage ebenfalls.
+    abgesagt = t.get('status') == 'abgesagt'
+    zeilen.append("STATUS:CANCELLED" if abgesagt else "STATUS:CONFIRMED")
+    # Die Zeit blockieren nur Termine, bei denen man wirklich gebunden ist. Ein
+    # abgesagter Termin und einer, für den man selbst abgesagt hat, sollen einen
+    # nicht als beschäftigt zeigen, wenn jemand nach der Stunde fragt.
+    # „Vielleicht" bleibt bewusst belegt – man könnte ja hingehen.
+    frei = abgesagt or t.get('meine_antwort') == 'ab'
+    zeilen.append("TRANSP:TRANSPARENT" if frei else "TRANSP:OPAQUE")
     zeilen.append("END:VEVENT")
     return zeilen
 
@@ -189,11 +207,25 @@ def _vevent(t: dict, host: str, basis_url: str, dtstamp: str) -> list[str]:
 def _summary(t: dict) -> str:
     """Titel wie in der App (termin_titel), bei Training/Sonstiges um die
     Mannschaft ergänzt: Im eigenen Kalender stehen die Termine ohne Kontext
-    nebeneinander, und „Training" allein sagt bei zwei Teams nichts."""
+    nebeneinander, und „Training" allein sagt bei zwei Teams nichts.
+
+    Eine Absage steht VORNE im Titel, nicht nur in STATUS:CANCELLED. Google
+    stellt abonnierte Kalender nicht durch — es streicht nur echte Einladungen
+    durch. Ein abgesagter Termin sah dort deshalb aus wie jeder andere, und der
+    Titel ist das Einzige, was jeder Client zuverlässig anzeigt.
+    """
     titel = termin_titel(SimpleNamespace(**t))
     if t.get('typ') != 'spiel' and t.get('mannschaft_name'):
-        return f"{titel} {t['mannschaft_name']}"
-    return titel
+        titel = f"{titel} {t['mannschaft_name']}"
+    # Der abgesagte Termin schlägt die eigene Antwort: Findet er gar nicht statt,
+    # ist es unerheblich, ob man zugesagt hatte.
+    if t.get('status') == 'abgesagt':
+        return f"Abgesagt: {titel}"
+    # „Nicht dabei" statt „Absage": Im Kalender stünde „Absage" direkt neben
+    # „Abgesagt" und beides ließe sich im Vorbeigehen verwechseln – dabei meint
+    # das eine den Termin und das andere nur mich.
+    marke = {'ab': 'Nicht dabei', 'vielleicht': 'Vielleicht'}.get(t.get('meine_antwort'))
+    return f"{marke}: {titel}" if marke else titel
 
 
 def baue_kalender(termine: list[dict], *, host: str, basis_url: str = "",

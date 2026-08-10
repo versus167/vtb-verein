@@ -57,10 +57,15 @@ class FakeTerminRepo:
         return self._termine.get(user_id, [])
 
 
-def _db(abo=None, token_user=None, termine=None):
+def _db(abo=None, token_user=None, termine=None, mitglied_id=None, antworten=None):
+    """`mitglied_id=None` = User ohne Mitglied (dann gibt es keine eigene Antwort)."""
     return SimpleNamespace(
         kalender_abos=FakeAboRepo(abo, token_user),
         termine=FakeTerminRepo(termine),
+        get_mitglied_by_user_id=lambda uid: (SimpleNamespace(id=mitglied_id)
+                                             if mitglied_id else None),
+        termin_zusagen=SimpleNamespace(
+            answer_for=lambda mid, ids: dict(antworten or {})),
     )
 
 
@@ -159,6 +164,23 @@ def test_feed_wird_nicht_zwischengespeichert():
     db = _db(token_user={"GUT": 42}, termine={42: []})
     antwort = api.feed("GUT", db)
     assert "no-store" in antwort.headers["cache-control"]
+
+
+def test_feed_traegt_die_eigene_absage_nach():
+    """Ohne diesen Schritt sähe ein Training, für das man abgesagt hat, im
+    Kalender aus wie jedes andere."""
+    db = _db(token_user={"GUT": 42}, termine={42: [_termin(id=9)]},
+             mitglied_id=3, antworten={9: 'ab'})
+    text = api.feed("GUT", db).body.decode("utf-8")
+    assert "SUMMARY:Nicht dabei: Training AH" in text
+
+
+def test_feed_ohne_mitglied_kommt_ohne_antwort_aus():
+    """Ein User ohne verknüpftes Mitglied kann nicht zu-/absagen – der Feed
+    darf daran nicht scheitern."""
+    db = _db(token_user={"GUT": 42}, termine={42: [_termin(id=9)]}, mitglied_id=None)
+    text = api.feed("GUT", db).body.decode("utf-8")
+    assert "SUMMARY:Training AH" in text
 
 
 def test_feed_kalendername_traegt_den_verein():
