@@ -95,6 +95,25 @@ def abo_widerrufen(user: CurrentUser, db: DB):
     return {"widerrufen": db.kalender_abos.revoke_for_user(user.id, user.username)}
 
 
+def _eigene_antwort_ergaenzen(db: DB, user_id: int, termine: list[dict]) -> None:
+    """`meine_antwort` je Termin nachtragen (zu | vielleicht | ab | None).
+
+    Ohne sie sähe ein Training, für das man abgesagt hat, im Kalender aus wie
+    jedes andere. Bewusst nicht über `_enrich_zusagen` aus dem Termine-Router:
+    Das lädt zusätzlich Zähler, Kader-Zugehörigkeit und Spielplan-Abweichungen —
+    alles Dinge, die im ICS nicht vorkommen, aber bei jedem Kalender-Poll
+    abgefragt würden. Hier reichen zwei Abfragen.
+    """
+    if not termine:
+        return
+    mitglied = db.get_mitglied_by_user_id(user_id)
+    if mitglied is None:
+        return
+    antworten = db.termin_zusagen.answer_for(mitglied.id, [t['id'] for t in termine])
+    for t in termine:
+        t['meine_antwort'] = antworten.get(t['id'])
+
+
 @router.get("/{token}.ics")
 def feed(token: str, db: DB):
     """Der Feed selbst — ohne Anmeldung, der Token ist der Ausweis."""
@@ -109,6 +128,7 @@ def feed(token: str, db: DB):
         von=(heute - timedelta(days=FENSTER_RUECKBLICK_TAGE)).isoformat(),
         bis=(heute + timedelta(days=FENSTER_VORAUS_TAGE)).isoformat(),
     )
+    _eigene_antwort_ergaenzen(db, user_id, termine)
     basis = settings.BASE_URL.rstrip("/")
     ics = baue_kalender(
         termine,

@@ -18,7 +18,7 @@ def _termin(**kw) -> dict:
         'treffpunkt_zeit': None, 'mannschaft_name': 'AH',
         'spielstaette_name': None, 'spielstaette_strasse': None,
         'spielstaette_plz': None, 'spielstaette_ort': None,
-        'spielstaette_untergrund': None,
+        'spielstaette_untergrund': None, 'meine_antwort': None,
     }
     basis.update(kw)
     return basis
@@ -163,8 +163,66 @@ def test_abgesagter_termin_bleibt_sichtbar_und_ist_markiert():
     assert "BEGIN:VEVENT" in text
 
 
-def test_geplanter_termin_ist_bestaetigt():
-    assert "STATUS:CONFIRMED" in _kalender(_termin())
+def test_absage_steht_im_titel():
+    """Google stellt abonnierte Kalender nicht durch – STATUS:CANCELLED allein
+    bliebe dort unsichtbar, der Termin sähe aus wie jeder andere."""
+    assert "SUMMARY:Abgesagt: Training AH" in _kalender(_termin(status='abgesagt'))
+
+
+def test_absage_steht_am_anfang_der_beschreibung():
+    text = _kalender(_termin(status='abgesagt', treffpunkt='Vereinsheim'))
+    beschreibung = [z for z in text.replace("\r\n ", "").split("\r\n")
+                    if z.startswith("DESCRIPTION:")][0]
+    assert beschreibung.startswith("DESCRIPTION:Dieser Termin wurde abgesagt.")
+
+
+def test_abgesagter_termin_blockiert_die_zeit_nicht():
+    """Sonst gilt man in dieser Stunde als beschäftigt, obwohl nichts stattfindet."""
+    assert "TRANSP:TRANSPARENT" in _kalender(_termin(status='abgesagt'))
+
+
+def test_geplanter_termin_ist_bestaetigt_und_belegt_die_zeit():
+    text = _kalender(_termin())
+    assert "STATUS:CONFIRMED" in text
+    assert "TRANSP:OPAQUE" in text
+    assert "Abgesagt" not in text
+
+
+# --------------------------------------------------------- Eigene Zu-/Absage
+
+def test_eigene_absage_steht_im_titel():
+    """Sonst sähe ein Training, für das man abgesagt hat, aus wie jedes andere."""
+    assert "SUMMARY:Nicht dabei: Training AH" in _kalender(_termin(meine_antwort='ab'))
+
+
+def test_eigene_absage_blockiert_die_zeit_nicht():
+    assert "TRANSP:TRANSPARENT" in _kalender(_termin(meine_antwort='ab'))
+
+
+def test_vielleicht_wird_markiert_belegt_die_zeit_aber_weiter():
+    """Man könnte ja hingehen – der Kalender soll die Stunde freihalten."""
+    text = _kalender(_termin(meine_antwort='vielleicht'))
+    assert "SUMMARY:Vielleicht: Training AH" in text
+    assert "TRANSP:OPAQUE" in text
+
+
+def test_zusage_laesst_den_titel_unberuehrt():
+    text = _kalender(_termin(meine_antwort='zu'))
+    assert "SUMMARY:Training AH" in text
+    assert "TRANSP:OPAQUE" in text
+
+
+def test_eigene_antwort_steht_in_der_beschreibung():
+    text = _kalender(_termin(meine_antwort='zu')).replace("\r\n ", "")
+    assert "DESCRIPTION:Deine Antwort: Zusage" in text
+
+
+def test_abgesagter_termin_schlaegt_die_eigene_antwort():
+    """Findet er nicht statt, ist unerheblich, ob man zugesagt hatte."""
+    text = _kalender(_termin(status='abgesagt', meine_antwort='zu'))
+    assert "SUMMARY:Abgesagt: Training AH" in text
+    assert "Nicht dabei" not in text
+    assert "Deine Antwort" not in text.replace("\r\n ", "")
 
 
 # ------------------------------------------------------------------- Rahmen
