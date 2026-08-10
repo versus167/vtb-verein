@@ -46,9 +46,13 @@ class EintragUpdate(BaseModel):
     titel: str
     benutzername: Optional[str] = None
     url: Optional[str] = None
-    # passwort/notiz nur setzen, wenn passwort_aendern=True (sonst bleibt der Ciphertext).
+    # Passwort und Notiz liegen in EINEM Ciphertext. Jede Hälfte wird nur ersetzt, wenn ihr
+    # `*_aendern`-Flag gesetzt ist; die andere übernimmt der Server aus dem bestehenden
+    # Geheimnis (#162 – sonst löschte ein Passwortwechsel stillschweigend die Notiz).
+    # Ohne beide Flags bleibt der Ciphertext unangetastet (kein Vault-Key nötig).
     passwort_aendern: bool = False
     passwort: str = ""
+    notiz_aendern: bool = False
     notiz: str = ""
     expected_version: int
 
@@ -110,6 +114,18 @@ def _require_vault() -> None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Tresor ist nicht konfiguriert (VTB_VAULT_KEY fehlt).",
+        )
+
+
+def _entschluesseln(ct: bytes) -> dict:
+    """Ciphertext → ``{'passwort': ..., 'notiz': ...}`` mit einheitlicher Fehlerantwort,
+    wenn der Ciphertext nicht (mehr) zum Vault-Key passt."""
+    try:
+        return vault_crypto.decrypt_secret(ct)
+    except vault_crypto.VaultDecryptError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Passwort ließ sich nicht entschlüsseln (Schlüssel geändert?).",
         )
 
 
@@ -226,9 +242,22 @@ def update_eintrag(eintrag_id: int, data: EintragUpdate, user: CurrentUser, db: 
     if not data.titel.strip():
         raise HTTPException(422, "Titel darf nicht leer sein")
     ct = None
-    if data.passwort_aendern:
+    if data.passwort_aendern or data.notiz_aendern:
         _require_vault()
-        ct = vault_crypto.encrypt_secret(data.passwort, data.notiz)
+        passwort, notiz = data.passwort, data.notiz
+        if not (data.passwort_aendern and data.notiz_aendern):
+            # Nur eine Hälfte wird ersetzt → die andere aus dem bestehenden Geheimnis
+            # übernehmen. Werden beide ersetzt, ist das alte irrelevant: dann klappt das
+            # Überschreiben auch, wenn der alte Ciphertext nicht mehr entschlüsselbar ist.
+            alt_ct = db.tresor_eintraege.get_ciphertext(eintrag_id)
+            if alt_ct is None:
+                raise HTTPException(404, "Eintrag nicht gefunden")
+            alt = _entschluesseln(alt_ct)
+            if not data.passwort_aendern:
+                passwort = alt["passwort"]
+            if not data.notiz_aendern:
+                notiz = alt["notiz"]
+        ct = vault_crypto.encrypt_secret(passwort, notiz)
     ok = db.tresor_eintraege.update(
         eintrag_id, data.titel.strip(),
         (data.benutzername or '').strip() or None,
@@ -259,13 +288,7 @@ def reveal_eintrag(eintrag_id: int, request: Request, user: CurrentUser, db: DB)
     ct = db.tresor_eintraege.get_ciphertext(eintrag_id)
     if ct is None:
         raise HTTPException(404, "Eintrag nicht gefunden")
-    try:
-        secret = vault_crypto.decrypt_secret(ct)
-    except vault_crypto.VaultDecryptError:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Passwort ließ sich nicht entschlüsseln (Schlüssel geändert?).",
-        )
+    secret = _entschluesseln(ct)
     db.tresor_zugriff_log.log(
         tresor_id=e.tresor_id, eintrag_id=e.id, eintrag_titel=e.titel,
         user_id=user.id, username=user.username, aktion='reveal', ip=_client_ip(request),
@@ -274,6 +297,31 @@ def reveal_eintrag(eintrag_id: int, request: Request, user: CurrentUser, db: DB)
         "id": e.id, "titel": e.titel, "benutzername": e.benutzername, "url": e.url,
         "passwort": secret["passwort"], "notiz": secret["notiz"],
     }
+
+
+@router.get("/eintraege/{eintrag_id}/notiz")
+def eintrag_notiz(eintrag_id: int, request: Request, user: CurrentUser, db: DB):
+    """Nur die geheime Notiz – damit der Bearbeiten-Dialog sie vorbefüllen kann (#162).
+
+    Schreibzugriff nötig (wer bearbeiten darf, darf sie ohnehin über /reveal sehen) und
+    bewusst OHNE Passwort: zum Ändern der Notiz muss das Passwort den Server nie verlassen.
+    Wird als eigene Aktion auditiert, damit im Zugriffslog erkennbar bleibt, ob jemand ein
+    Passwort angesehen oder eine Notiz zum Bearbeiten geöffnet hat.
+    """
+    e = db.tresor_eintraege.get(eintrag_id)
+    if e is None:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    _require_write(db, user, e.tresor_id)
+    _require_vault()
+    ct = db.tresor_eintraege.get_ciphertext(eintrag_id)
+    if ct is None:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    secret = _entschluesseln(ct)
+    db.tresor_zugriff_log.log(
+        tresor_id=e.tresor_id, eintrag_id=e.id, eintrag_titel=e.titel,
+        user_id=user.id, username=user.username, aktion='reveal_notiz', ip=_client_ip(request),
+    )
+    return {"id": e.id, "notiz": secret["notiz"]}
 
 
 # ------------------------------------------------------------------- Kontakte
@@ -370,13 +418,7 @@ def reveal_verlauf(eintrag_id: int, version: int, request: Request, user: Curren
     ct = db.tresor_eintraege.get_history_ciphertext(eintrag_id, version)
     if ct is None:
         raise HTTPException(404, "Version nicht gefunden")
-    try:
-        secret = vault_crypto.decrypt_secret(ct)
-    except vault_crypto.VaultDecryptError:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Passwort ließ sich nicht entschlüsseln (Schlüssel geändert?).",
-        )
+    secret = _entschluesseln(ct)
     db.tresor_zugriff_log.log(
         tresor_id=e.tresor_id, eintrag_id=e.id, eintrag_titel=e.titel,
         user_id=user.id, username=user.username, aktion='reveal_verlauf', ip=_client_ip(request),

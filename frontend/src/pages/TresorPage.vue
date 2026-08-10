@@ -251,7 +251,11 @@
           <q-toggle v-if="eintragForm.id" v-model="eintragForm.passwort_aendern"
             label="Passwort ändern" dense />
           <q-input v-model="eintragForm.notiz" label="Geheime Notiz (verschlüsselt)" outlined dense
-            type="textarea" autogrow :disable="eintragForm.id && !eintragForm.passwort_aendern" />
+            type="textarea" autogrow :disable="!!eintragForm.id && !notizGeladen"
+            :hint="notizLaedt ? 'Notiz wird entschlüsselt …' : ''">
+            <template v-if="notizLaedt" #append><q-spinner size="xs" color="primary" /></template>
+          </q-input>
+          <div v-if="notizFehler" class="text-negative text-caption">{{ notizFehler }}</div>
           <div class="text-caption text-grey-6">
             Passwort &amp; Notiz werden verschlüsselt gespeichert. Titel/Benutzer/URL bleiben Klartext.
           </div>
@@ -567,13 +571,38 @@ function deleteTresor(t) {
 const eintragDialog = ref(false)
 const eintragForm = ref({})
 const eintragError = ref('')
+// Die Notiz steckt im selben Ciphertext wie das Passwort und muss zum Bearbeiten erst
+// entschlüsselt werden (#162). Solange das nicht geklappt hat, bleibt das Feld gesperrt –
+// sonst würde ein leeres Feld die vorhandene Notiz beim Speichern überschreiben.
+const notizLaedt = ref(false)
+const notizGeladen = ref(false)
+const notizOriginal = ref('')
+const notizFehler = ref('')
 function openEintragDialog(e = null) {
   eintragError.value = ''; showPw.value = false
+  notizLaedt.value = false; notizGeladen.value = !e; notizOriginal.value = ''; notizFehler.value = ''
   eintragForm.value = e
     ? { id: e.id, titel: e.titel, benutzername: e.benutzername || '', url: e.url || '',
         passwort: '', notiz: '', passwort_aendern: false, version: e.version }
     : { id: null, titel: '', benutzername: '', url: '', passwort: '', notiz: '', passwort_aendern: true }
   eintragDialog.value = true
+  if (e) ladeNotiz(e.id)
+}
+async function ladeNotiz(id) {
+  notizLaedt.value = true
+  try {
+    const { data } = await api.get(`/api/tresor/eintraege/${id}/notiz`)
+    if (eintragForm.value.id !== id) return          // Dialog zwischenzeitlich gewechselt
+    eintragForm.value.notiz = data.notiz || ''
+    notizOriginal.value = data.notiz || ''
+    notizGeladen.value = true
+  } catch (err) {
+    if (eintragForm.value.id !== id) return
+    notizFehler.value = (err.response?.data?.detail || 'Die geheime Notiz konnte nicht geladen werden.')
+      + ' Sie bleibt beim Speichern unverändert.'
+  } finally {
+    if (eintragForm.value.id === id) notizLaedt.value = false
+  }
 }
 async function saveEintrag() {
   if (!eintragForm.value.titel.trim()) { eintragError.value = 'Titel darf nicht leer sein.'; return }
@@ -581,11 +610,16 @@ async function saveEintrag() {
   try {
     const f = eintragForm.value
     if (f.id) {
+      // Nur senden, was der Server auch ersetzen soll – die jeweils andere Hälfte des
+      // Geheimnisses übernimmt er selbst aus dem bestehenden Ciphertext.
+      const notizGeaendert = notizGeladen.value && (f.notiz || '') !== notizOriginal.value
       await api.put(`/api/tresor/eintraege/${f.id}`, {
         titel: f.titel.trim(), benutzername: f.benutzername || null, url: f.url || null,
-        passwort_aendern: f.passwort_aendern, passwort: f.passwort, notiz: f.notiz,
+        passwort_aendern: f.passwort_aendern, passwort: f.passwort,
+        notiz_aendern: notizGeaendert, notiz: f.notiz,
         expected_version: f.version,
       })
+      if (notizGeaendert || f.passwort_aendern) hide(f.id)   // enthüllter Stand ist veraltet
     } else {
       await api.post(`/api/tresor/${selectedId.value}/eintraege`, {
         titel: f.titel.trim(), benutzername: f.benutzername || null, url: f.url || null,
@@ -753,10 +787,12 @@ async function openZugriffe(t) {
 }
 function zugriffLabel(a) {
   return { reveal: 'angezeigt', reveal_verlauf: 'alte Version angezeigt',
+    reveal_notiz: 'Notiz zum Bearbeiten geöffnet',
     wiederhergestellt: 'wiederhergestellt' }[a] || a
 }
 function zugriffIcon(a) {
-  return { wiederhergestellt: 'restore', reveal_verlauf: 'history' }[a] || 'visibility'
+  return { wiederhergestellt: 'restore', reveal_verlauf: 'history',
+    reveal_notiz: 'sticky_note_2' }[a] || 'visibility'
 }
 
 // ── Passwort-Verlauf ──
