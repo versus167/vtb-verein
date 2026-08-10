@@ -161,6 +161,29 @@ def test_widerruf_ohne_abo_meldet_false(db, user_id):
     assert db.kalender_abos.revoke_for_user(user_id, "tester") is False
 
 
+# --------------------------------------------------------------- Aufsichtsliste
+
+def test_uebersicht_zeigt_aktive_abos_mit_kontonamen(db, user_id):
+    db.kalender_abos.create_for_user(user_id, "tester")
+    zeile = next(a for a in db.kalender_abos.list_all() if a['user_id'] == user_id)
+    assert zeile['username'].startswith('kalendertester_')
+    assert zeile['abrufe'] == 0
+
+
+def test_uebersicht_enthaelt_keinen_token(db, user_id):
+    """Auch nicht den Hash: Die Liste beantwortet „wer hat einen Link", nicht
+    „welcher"."""
+    db.kalender_abos.create_for_user(user_id, "tester")
+    zeile = next(a for a in db.kalender_abos.list_all() if a['user_id'] == user_id)
+    assert 'token_hash' not in zeile
+
+
+def test_widerrufenes_abo_verschwindet_aus_der_uebersicht(db, user_id):
+    db.kalender_abos.create_for_user(user_id, "tester")
+    db.kalender_abos.revoke_for_user(user_id, "tester")
+    assert all(a['user_id'] != user_id for a in db.kalender_abos.list_all())
+
+
 def test_widerruf_wird_soft_geloescht_und_historisiert(db, user_id):
     """Nie hart löschen (CLAUDE.md): Der Widerruf muss nachvollziehbar bleiben."""
     db.kalender_abos.create_for_user(user_id, "tester")

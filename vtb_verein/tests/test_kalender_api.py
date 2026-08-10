@@ -47,6 +47,14 @@ class FakeAboRepo:
         return self._token_user.get(token)
 
 
+class FakeAccessLog:
+    def __init__(self):
+        self.eintraege = []
+
+    def log(self, event_type, **kw):
+        self.eintraege.append((event_type, kw))
+
+
 class FakeTerminRepo:
     def __init__(self, termine_je_user=None):
         self._termine = termine_je_user or {}
@@ -57,11 +65,17 @@ class FakeTerminRepo:
         return self._termine.get(user_id, [])
 
 
-def _db(abo=None, token_user=None, termine=None, mitglied_id=None, antworten=None):
+def _db(abo=None, token_user=None, termine=None, mitglied_id=None, antworten=None,
+        users=None, alle_abos=None):
     """`mitglied_id=None` = User ohne Mitglied (dann gibt es keine eigene Antwort)."""
+    repo = FakeAboRepo(abo, token_user)
+    repo.alle = list(alle_abos or [])
+    repo.list_all = lambda: repo.alle
     return SimpleNamespace(
-        kalender_abos=FakeAboRepo(abo, token_user),
+        kalender_abos=repo,
         termine=FakeTerminRepo(termine),
+        access_log_repository=FakeAccessLog(),
+        get_user_by_id=lambda uid: (users or {}).get(uid),
         get_mitglied_by_user_id=lambda uid: (SimpleNamespace(id=mitglied_id)
                                              if mitglied_id else None),
         termin_zusagen=SimpleNamespace(
@@ -69,8 +83,14 @@ def _db(abo=None, token_user=None, termine=None, mitglied_id=None, antworten=Non
     )
 
 
-def _user(uid=5, username='spieler'):
-    return SimpleNamespace(id=uid, username=username)
+def _user(uid=5, username='spieler', perms=()):
+    return SimpleNamespace(id=uid, username=username,
+                           has_permission=lambda p: p in perms)
+
+
+def _request():
+    return SimpleNamespace(headers={"user-agent": "pytest"},
+                           client=SimpleNamespace(host="1.2.3.4"))
 
 
 def _termin(**kw):
@@ -116,7 +136,7 @@ def test_status_gibt_die_adresse_nicht_heraus():
 
 def test_erzeugen_liefert_feed_und_webcal_adresse():
     db = _db()
-    ergebnis = api.abo_erzeugen(_user(uid=5, username='spieler'), db)
+    ergebnis = api.abo_erzeugen(_request(), _user(uid=5, username='spieler'), db)
     assert ergebnis["url"] == "https://app.example.de/api/kalender/TOKEN123.ics"
     # webcal:// öffnet auf iOS/macOS den Abo-Dialog statt eines einmaligen Downloads
     assert ergebnis["webcal_url"] == "webcal://app.example.de/api/kalender/TOKEN123.ics"
@@ -125,12 +145,111 @@ def test_erzeugen_liefert_feed_und_webcal_adresse():
 
 def test_widerrufen_reicht_den_handelnden_durch():
     db = _db(abo={"created_at": "x", "letzter_abruf_at": None, "abrufe": 0})
-    assert api.abo_widerrufen(_user(uid=5, username='spieler'), db) == {"widerrufen": True}
+    assert api.abo_widerrufen(_request(), _user(uid=5, username='spieler'), db) \
+        == {"widerrufen": True}
     assert db.kalender_abos.widerrufen_fuer == [(5, 'spieler')]
 
 
 def test_widerrufen_ohne_abo_meldet_false():
-    assert api.abo_widerrufen(_user(), _db()) == {"widerrufen": False}
+    assert api.abo_widerrufen(_request(), _user(), _db()) == {"widerrufen": False}
+
+
+# ------------------------------------------------------------------ Protokoll
+
+def test_erzeugen_wird_protokolliert():
+    """Ein Feed-Link ist eine dauerhafte, anmeldungsfreie Leseberechtigung –
+    seine Vergabe gehört ins Protokoll."""
+    db = _db()
+    api.abo_erzeugen(_request(), _user(username='spieler'), db)
+    typ, kw = db.access_log_repository.eintraege[0]
+    assert typ == "kalender_abo_erzeugt"
+    assert kw["category"] == "kalender"
+    assert kw["username"] == "spieler"
+    assert kw["ip"] == "1.2.3.4"
+
+
+def test_neu_erzeugen_ist_im_protokoll_unterscheidbar():
+    db = _db(abo={"created_at": "x", "letzter_abruf_at": None, "abrufe": 0})
+    api.abo_erzeugen(_request(), _user(), db)
+    assert "alte widerrufen" in db.access_log_repository.eintraege[0][1]["detail"]
+
+
+def test_widerruf_wird_protokolliert():
+    db = _db(abo={"created_at": "x", "letzter_abruf_at": None, "abrufe": 0})
+    api.abo_widerrufen(_request(), _user(), db)
+    assert db.access_log_repository.eintraege[0][0] == "kalender_abo_widerrufen"
+
+
+def test_widerruf_ohne_abo_schreibt_nichts():
+    """Nichts passiert, nichts zu protokollieren – sonst stünde Rauschen drin."""
+    db = _db()
+    api.abo_widerrufen(_request(), _user(), db)
+    assert db.access_log_repository.eintraege == []
+
+
+def test_abrufe_werden_nicht_protokolliert():
+    """Kalender fragen alle paar Stunden nach; jeder Poll im Protokoll wäre
+    Rauschen. Wann zuletzt abgerufen wurde, steht am Abo."""
+    db = _db(token_user={"GUT": 42}, termine={42: []})
+    api.feed("GUT", db)
+    assert db.access_log_repository.eintraege == []
+
+
+# ------------------------------------------------------------------- Aufsicht
+
+def test_uebersicht_braucht_das_protokoll_recht():
+    with pytest.raises(HTTPException) as e:
+        api.abos_uebersicht(_user(), _db())
+    assert e.value.status_code == 403
+
+
+def test_uebersicht_listet_die_abos():
+    db = _db(alle_abos=[{"id": 1, "user_id": 42, "username": "spieler",
+                         "abrufe": 7, "letzter_abruf_at": "2026-08-09T04:00:00+00:00"}])
+    ergebnis = api.abos_uebersicht(_user(perms=('system.protokoll',)), db)
+    assert ergebnis[0]["username"] == "spieler"
+
+
+def test_uebersicht_gibt_keine_adressen_heraus():
+    """In der DB liegt nur der Hash – hier darf nichts Token-Artiges auftauchen."""
+    db = _db(alle_abos=[{"id": 1, "user_id": 42, "username": "spieler",
+                         "abrufe": 0, "letzter_abruf_at": None}])
+    ergebnis = api.abos_uebersicht(_user(perms=('system.protokoll',)), db)
+    assert not any('token' in k or 'url' in k for k in ergebnis[0])
+
+
+def test_fremdwiderruf_braucht_das_protokoll_recht():
+    db = _db(users={42: SimpleNamespace(id=42, username='spieler')})
+    with pytest.raises(HTTPException) as e:
+        api.abo_fremd_widerrufen(42, _request(), _user(), db)
+    assert e.value.status_code == 403
+
+
+def test_fremdwiderruf_nennt_den_betroffenen_im_protokoll():
+    db = _db(abo={"created_at": "x", "letzter_abruf_at": None, "abrufe": 0},
+             users={42: SimpleNamespace(id=42, username='spieler')})
+    api.abo_fremd_widerrufen(42, _request(), _user(username='chef',
+                                                   perms=('system.protokoll',)), db)
+    typ, kw = db.access_log_repository.eintraege[0]
+    # Protokolliert wird der Handelnde, der Betroffene steht im Detail (wie bei
+    # den Zugängen) – so beantwortet das Protokoll „wer hat wem was entzogen".
+    assert typ == "kalender_abo_widerrufen"
+    assert kw["username"] == "chef"
+    assert "spieler" in kw["detail"]
+
+
+def test_fremdwiderruf_bei_unbekanntem_benutzer_ist_404():
+    db = _db(users={})
+    with pytest.raises(HTTPException) as e:
+        api.abo_fremd_widerrufen(99, _request(), _user(perms=('system.protokoll',)), db)
+    assert e.value.status_code == 404
+
+
+def test_fremdwiderruf_ohne_aktives_abo_ist_404():
+    db = _db(users={42: SimpleNamespace(id=42, username='spieler')})   # abo=None
+    with pytest.raises(HTTPException) as e:
+        api.abo_fremd_widerrufen(42, _request(), _user(perms=('system.protokoll',)), db)
+    assert e.value.status_code == 404
 
 
 # ---------------------------------------------------------------------- Feed

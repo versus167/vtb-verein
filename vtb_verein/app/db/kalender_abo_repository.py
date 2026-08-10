@@ -39,6 +39,29 @@ class KalenderAboRepository(BaseRepository):
             )
             return cur.fetchone()
 
+    def list_all(self) -> list[dict]:
+        """Alle aktiven Abos mit Kontonamen – Aufsicht darüber, wer einen Feed-Link
+        besitzt. Ein solcher Link ist eine dauerhafte, anmeldungsfreie
+        Leseberechtigung auf persönliche Termine; ohne diese Liste wüsste niemand,
+        wie viele davon im Umlauf sind."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT k.id, k.user_id, u.username,
+                       -- Anzeigename wie im UI (_klarname in auth.py): der steht
+                       -- am verknüpften Mitglied, nicht am Konto.
+                       NULLIF(TRIM(COALESCE(m.vorname, '') || ' '
+                                   || COALESCE(m.nachname, '')), '') AS display_name,
+                       k.letzter_abruf_at, k.abrufe, k.created_at
+                FROM kalender_abo k
+                JOIN users u ON u.id = k.user_id
+                LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
+                WHERE k.deleted_at IS NULL
+                ORDER BY k.letzter_abruf_at DESC NULLS LAST, k.created_at DESC
+                """
+            )
+            return cur.fetchall()
+
     def create_for_user(self, user_id: int, actor: str) -> str:
         """Neues Abo anlegen und den Klartext-Token zurückgeben (einmalig!).
 
