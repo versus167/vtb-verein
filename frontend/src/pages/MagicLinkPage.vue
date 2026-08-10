@@ -76,6 +76,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { ladeAppInfo, vereinName } from 'src/composables/useAppInfo'
+import { zurUebersicht } from 'src/router/nach-login'
 
 const route = useRoute()
 const router = useRouter()
@@ -102,13 +103,9 @@ async function doLogin() {
   try {
     await auth.loginWithMagicToken(token, rememberMe.value)
     state.value = 'success'
-    // Wie beim Passwort-Login (#157): Bleibt die Navigation hängen, weil der
-    // Seiten-Chunk nicht lädt, hart ans Ziel. Hier ist der Fall sogar
-    // wahrscheinlicher — ein Login-Link wird typischerweise auf einem Gerät
-    // geöffnet, das die App noch nie geladen hat.
-    setTimeout(() => {
-      router.push({ name: 'dashboard' }).catch(() => window.location.assign('/'))
-    }, 1000)
+    // Wie beim Passwort-Login (#157) — hier sogar wichtiger: Ein Login-Link wird
+    // typischerweise auf einem Gerät geöffnet, das die App noch nie geladen hat.
+    setTimeout(() => zurUebersicht(router), 1000)
   } catch (err) {
     errorMsg.value =
       err.response?.data?.detail || 'Der Link ist ungültig oder wurde bereits verwendet.'
