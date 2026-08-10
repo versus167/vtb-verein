@@ -59,6 +59,14 @@ IC_CARD_RECORD_TYPES = frozenset({7, 35})
 # 44 = Sabotage-Alarm, 48 = mehrfach falscher Passcode.
 ALARM_RECORD_TYPES = frozenset({44, 48})
 
+# recordType-Codes, die ein ÖFFNEN sind – die Grundgesamtheit der Auswertung (#161).
+# Bewusst eine Positivliste: Verriegeln (11, 33–36, 47), Türmagnet (30/31), Parksperre
+# (2, 5, 6), Auto-Lock (45) und Alarme (44/48) sind keine Öffnungen und würden die
+# Rangliste sonst verfälschen. Unbekannte Codes zählen nicht mit; Zeilen aus einer
+# Fremdanlage ohne erkannten Typ (record_type IS NULL, quelle='extern') schon – dort
+# protokolliert die Anlage ausschließlich Öffnungen.
+OEFFNUNG_RECORD_TYPES = frozenset({1, 3, 4, 7, 8, 9, 10, 12, 29, 32, 37, 46})
+
 # recordType-Codes einer Gateway-Fernöffnung (v3/lock/unlock). Öffnungen über UNSERE App
 # laufen so und erscheinen in der Cloud nur unter dem TTLock-Sammelkonto – der auslösende
 # VTB-User lässt sich per Korrelation mit dem access_log ('schliessanlage_unlock')

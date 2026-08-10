@@ -38,10 +38,14 @@
         <q-icon name="battery_alert" size="13px" /> {{ anzahlAkkuNiedrig }}× Akku niedrig</span>
     </div>
 
-    <q-tabs v-model="tab" align="left" class="q-mb-md vtb-tabs" no-caps inline-label>
+    <!-- Vier Reiter: am Handy Icon über Label (sonst zu breit), dazwischen schmalere
+         Segmente als der app.scss-Standard – die Pille scrollt nicht. -->
+    <q-tabs v-model="tab" align="left" class="q-mb-md vtb-tabs schl-tabs" no-caps
+      :inline-label="$q.screen.gt.xs">
       <q-tab name="schloesser" icon="meeting_room" label="Schlösser" />
       <q-tab name="chips" icon="badge" label="Chips" />
       <q-tab v-if="status.darf_protokoll" name="log" icon="history" label="Log" />
+      <q-tab v-if="status.darf_protokoll" name="auswertung" icon="insights" label="Auswertung" />
     </q-tabs>
 
     <!-- ====================== Schlösser ====================== -->
@@ -185,6 +189,207 @@
         <q-item v-if="!gesamtLog.length"><q-item-section class="text-grey">
           noch keine Einträge</q-item-section></q-item>
       </q-list>
+    </div>
+
+    <!-- ====================== Auswertung (#161) ====================== -->
+    <div v-if="tab === 'auswertung'">
+      <div class="row items-center justify-end q-mb-sm">
+        <q-btn-toggle v-model="ausZeitraum" :options="zeitraumOptionen" unelevated rounded dense
+          no-caps toggle-color="primary" class="vtb-segment" @update:model-value="ladeAuswertung" />
+      </div>
+      <div class="schl-dsgvo q-mb-md">
+        <q-icon name="privacy_tip" size="14px" /> Personenbezogene Bewegungsdaten –
+        nur zweckgebunden einsehen (DSGVO)
+      </div>
+
+      <div v-if="ausLoading" class="row justify-center q-py-xl">
+        <q-spinner size="32px" color="primary" />
+      </div>
+      <div v-else-if="!auswertung" class="text-grey text-center q-py-lg">
+        Auswertung konnte nicht geladen werden.
+      </div>
+      <div v-else-if="!auswertung.kennzahlen.oeffnungen" class="text-grey text-center q-py-xl">
+        <q-icon name="insights" size="42px" class="q-mb-sm block" />
+        In diesem Zeitraum wurde keine Tür geöffnet.
+      </div>
+      <template v-else>
+        <!-- Kennzahlen -->
+        <div class="row q-col-gutter-sm q-mb-md">
+          <div v-for="k in kennzahlKacheln" :key="k.label" class="col-6 col-sm-3">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pa-sm text-center">
+                <div class="aus-zahl">{{ k.wert }}</div>
+                <div class="schl-stat__label">{{ k.label }}</div>
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
+        <div v-if="ausHinweisPills.length" class="row items-center q-gutter-xs q-mb-md">
+          <span v-for="p in ausHinweisPills" :key="p.text" class="schl-pill" :class="p.klasse">
+            <q-icon :name="p.icon" size="13px" /> {{ p.text }}
+          </span>
+          <span class="schl-pill">
+            <q-icon name="event" size="13px" /> {{ ausZeitraumText }}
+          </span>
+        </div>
+
+        <!-- Auszeichnungen: die spielerische Bestenliste -->
+        <div v-if="auswertung.auszeichnungen.length" class="row q-col-gutter-sm q-mb-md">
+          <div v-for="a in auswertung.auszeichnungen" :key="a.schluessel"
+            class="col-12 col-sm-6 col-lg-4">
+            <q-card class="schl-karte aus-medaille fit">
+              <q-card-section class="row items-start no-wrap q-gutter-sm q-pa-sm">
+                <div class="schl-icon schl-icon--klein"><q-icon :name="a.icon" size="20px" /></div>
+                <div class="col" style="min-width: 0">
+                  <div class="aus-medaille__titel">{{ a.titel }}</div>
+                  <div class="row items-baseline no-wrap q-gutter-xs">
+                    <span class="aus-medaille__wert">{{ a.wert }}</span>
+                    <span v-if="a.wer" class="col ellipsis text-weight-medium">{{ a.wer }}</span>
+                  </div>
+                  <div v-if="a.detail" class="text-caption text-grey ellipsis">{{ a.detail }}</div>
+                  <div class="aus-medaille__spruch">{{ a.spruch }}</div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
+
+        <div class="row q-col-gutter-sm">
+          <!-- Verlauf -->
+          <div class="col-12">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">Verlauf</div>
+                <div class="text-caption text-grey">{{ verlaufUntertitel }}</div>
+              </q-card-section>
+              <q-card-section>
+                <div class="aus-chart">
+                  <div v-for="(p, i) in auswertung.verlauf.punkte" :key="p.datum" class="aus-saeule">
+                    <div class="aus-saeule__spur">
+                      <div class="aus-saeule__balken" :class="{ 'aus-saeule__balken--leer': !p.anzahl }"
+                        :style="{ height: balkenHoehe(p.anzahl, verlaufMax) }"></div>
+                      <q-tooltip anchor="top middle" self="bottom middle">
+                        {{ p.label }}: {{ p.anzahl }}</q-tooltip>
+                    </div>
+                    <div class="aus-saeule__label">{{ verlaufLabel(i) }}</div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <!-- Rangliste der Türen -->
+          <div class="col-12 col-md-6">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">Welche Tür wird am meisten benutzt?</div>
+              </q-card-section>
+              <q-card-section>
+                <div v-for="(s, i) in auswertung.schloesser" :key="s.schloss_id" class="aus-rang">
+                  <div class="row items-center no-wrap">
+                    <span class="aus-rang__platz">{{ i + 1 }}</span>
+                    <span class="col ellipsis">{{ s.name }}</span>
+                    <span class="text-weight-medium q-ml-sm">{{ s.anzahl }}</span>
+                    <span class="aus-rang__anteil">{{ prozent(s.anteil) }}</span>
+                  </div>
+                  <div class="aus-rang__spur">
+                    <div class="aus-rang__balken" :style="{ width: balkenBreite(s.anzahl, schlossMax) }"></div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <!-- Top-Öffner -->
+          <div class="col-12 col-md-6">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">Wer schließt am häufigsten auf?</div>
+                <div class="text-caption text-grey">Person, sonst die Bezeichnung der Karte</div>
+              </q-card-section>
+              <q-card-section>
+                <div v-if="!auswertung.personen.length" class="text-grey text-caption">
+                  Keine Öffnung ließ sich einer Person oder Karte zuordnen.
+                </div>
+                <div v-for="(p, i) in auswertung.personen" :key="p.wer" class="aus-rang">
+                  <div class="row items-center no-wrap">
+                    <span class="aus-rang__platz">{{ i + 1 }}</span>
+                    <span class="col ellipsis">{{ p.wer }}</span>
+                    <span class="text-weight-medium q-ml-sm">{{ p.anzahl }}</span>
+                    <span class="aus-rang__anteil">{{ prozent(p.anteil) }}</span>
+                  </div>
+                  <div class="aus-rang__spur">
+                    <div class="aus-rang__balken" :style="{ width: balkenBreite(p.anzahl, personMax) }"></div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <!-- Tagesverlauf über 24 Stunden -->
+          <div class="col-12 col-md-6">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">Um welche Uhrzeit?</div>
+                <div class="text-caption text-grey">{{ stundenUntertitel }}</div>
+              </q-card-section>
+              <q-card-section>
+                <div class="aus-chart aus-chart--klein">
+                  <div v-for="s in auswertung.stunden" :key="s.stunde" class="aus-saeule">
+                    <div class="aus-saeule__spur">
+                      <div class="aus-saeule__balken" :class="{ 'aus-saeule__balken--leer': !s.anzahl }"
+                        :style="{ height: balkenHoehe(s.anzahl, stundenMax) }"></div>
+                      <q-tooltip anchor="top middle" self="bottom middle">
+                        {{ s.label }}–{{ String((s.stunde + 1) % 24).padStart(2, '0') }} Uhr:
+                        {{ s.anzahl }}</q-tooltip>
+                    </div>
+                    <div class="aus-saeule__label">{{ s.stunde % 6 === 0 ? s.label : '' }}</div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <!-- Wochentage -->
+          <div class="col-12 col-md-6">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">An welchem Wochentag?</div>
+                <div class="text-caption text-grey">{{ wochentagUntertitel }}</div>
+              </q-card-section>
+              <q-card-section>
+                <div class="aus-chart aus-chart--klein">
+                  <div v-for="t in auswertung.wochentage" :key="t.tag" class="aus-saeule">
+                    <div class="aus-saeule__spur">
+                      <div class="aus-saeule__balken"
+                        :class="{ 'aus-saeule__balken--leer': !t.anzahl, 'aus-saeule__balken--akzent': t.tag >= 6 }"
+                        :style="{ height: balkenHoehe(t.anzahl, wochentagMax) }"></div>
+                      <q-tooltip anchor="top middle" self="bottom middle">
+                        {{ t.label }}: {{ t.anzahl }}</q-tooltip>
+                    </div>
+                    <div class="aus-saeule__label">{{ t.label }}</div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+
+          <!-- Methoden -->
+          <div class="col-12">
+            <q-card class="schl-karte fit">
+              <q-card-section class="q-pb-none">
+                <div class="text-subtitle2 text-weight-bold">Womit wird geöffnet?</div>
+              </q-card-section>
+              <q-card-section class="row items-center q-gutter-xs">
+                <span v-for="m in auswertung.methoden" :key="m.label" class="schl-pill">
+                  <q-icon :name="methodeIcon(m)" size="13px" />
+                  {{ m.label }} · {{ m.anzahl }} ({{ prozent(m.anteil) }})
+                </span>
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- ====================== Schloss-Detail ====================== -->
@@ -960,11 +1165,117 @@ async function loadGesamtLog() {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Log laden fehlgeschlagen' })
   } finally { gesamtLogLoading.value = false }
 }
-watch(tab, (t) => { if (t === 'log' && !gesamtLogGeladen) loadGesamtLog() })
+watch(tab, (t) => {
+  if (t === 'log' && !gesamtLogGeladen) loadGesamtLog()
+  if (t === 'auswertung' && !auswertung.value) ladeAuswertung()
+})
+
+// ── Auswertung (#161): serverseitig aggregiert, lazy beim ersten Öffnen ──
+const auswertung = ref(null)
+const ausLoading = ref(false)
+const ausZeitraum = ref(90)
+const zeitraumOptionen = [
+  { label: '30 Tage', value: 30 },
+  { label: '3 Monate', value: 90 },
+  { label: '1 Jahr', value: 365 },
+  { label: 'Alles', value: 0 },
+]
+async function ladeAuswertung() {
+  ausLoading.value = true
+  try {
+    const { data } = await api.get('/api/schliessanlage/auswertung',
+      { params: { tage: ausZeitraum.value } })
+    auswertung.value = data
+  } catch (e) {
+    auswertung.value = null
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Auswertung laden fehlgeschlagen' })
+  } finally { ausLoading.value = false }
+}
+
+const kennzahlKacheln = computed(() => {
+  const k = auswertung.value?.kennzahlen
+  if (!k) return []
+  return [
+    { label: 'Öffnungen', wert: k.oeffnungen },
+    { label: 'Ø pro Tag', wert: String(k.pro_tag).replace('.', ',') },
+    { label: k.schloesser === 1 ? 'Tür benutzt' : 'Türen benutzt', wert: k.schloesser },
+    { label: 'Personen / Karten', wert: k.akteure },
+  ]
+})
+// Nebenbefunde, die nur auftauchen, wenn es sie gibt – sonst nur Rauschen.
+const ausHinweisPills = computed(() => {
+  const k = auswertung.value?.kennzahlen
+  if (!k) return []
+  const pills = []
+  if (k.fehlversuche) {
+    pills.push({ icon: 'block', klasse: 'schl-pill--achtung',
+      text: `${k.fehlversuche}× abgewiesen` })
+  }
+  if (k.alarme) {
+    pills.push({ icon: 'warning', klasse: 'schl-pill--warn', text: `${k.alarme}× Alarm` })
+  }
+  if (k.aktive_tage) {
+    pills.push({ icon: 'today', klasse: '',
+      text: `an ${k.aktive_tage} ${k.aktive_tage === 1 ? 'Tag' : 'Tagen'} genutzt` })
+  }
+  return pills
+})
+const ausZeitraumText = computed(() => {
+  const z = auswertung.value?.zeitraum
+  if (!z?.erster_tag) return ''
+  return `${fmtTag(z.erster_tag)} – ${fmtTag(z.letzter_tag)}`
+})
+
+const verlaufMax = computed(() =>
+  Math.max(1, ...(auswertung.value?.verlauf.punkte || []).map((p) => p.anzahl)))
+const stundenMax = computed(() =>
+  Math.max(1, ...(auswertung.value?.stunden || []).map((s) => s.anzahl)))
+const wochentagMax = computed(() =>
+  Math.max(1, ...(auswertung.value?.wochentage || []).map((t) => t.anzahl)))
+const schlossMax = computed(() =>
+  Math.max(1, ...(auswertung.value?.schloesser || []).map((s) => s.anzahl)))
+const personMax = computed(() =>
+  Math.max(1, ...(auswertung.value?.personen || []).map((p) => p.anzahl)))
+
+const balkenHoehe = (wert, max) => (wert ? `${Math.max(6, (wert / max) * 100)}%` : '0%')
+const balkenBreite = (wert, max) => `${Math.max(3, (wert / max) * 100)}%`
+const prozent = (anteil) => `${Math.round((anteil || 0) * 100)} %`
+const fmtTag = (iso) => (iso ? iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4) : '')
+
+// Bei vielen Säulen nur jede n-te beschriften, sonst überlappen die Labels am Handy.
+const verlaufLabel = (i) => {
+  const punkte = auswertung.value?.verlauf.punkte || []
+  const schritt = Math.max(1, Math.ceil(punkte.length / 6))
+  return i % schritt === 0 ? punkte[i].label : ''
+}
+const verlaufUntertitel = computed(() => {
+  const gran = auswertung.value?.verlauf.granularitaet
+  return { tag: 'Öffnungen je Tag', woche: 'Öffnungen je Kalenderwoche',
+    monat: 'Öffnungen je Monat' }[gran] || ''
+})
+// Kleine Einordnung statt nackter Balken: „Stoßzeit 18 Uhr", „ruhigster Tag: Mi".
+const stundenUntertitel = computed(() => {
+  const stunden = auswertung.value?.stunden || []
+  const top = stunden.reduce((a, b) => (b.anzahl > a.anzahl ? b : a), stunden[0] || {})
+  if (!top?.anzahl) return ''
+  return `Stoßzeit ${top.label}–${String((top.stunde + 1) % 24).padStart(2, '0')} Uhr`
+})
+const wochentagUntertitel = computed(() => {
+  const tage = auswertung.value?.wochentage || []
+  if (!tage.length) return ''
+  const top = tage.reduce((a, b) => (b.anzahl > a.anzahl ? b : a))
+  const flau = tage.reduce((a, b) => (b.anzahl < a.anzahl ? b : a))
+  return `am meisten ${top.label}, am wenigsten ${flau.label}`
+})
+const methodeIcon = (m) => ({
+  1: 'smartphone', 3: 'router', 4: 'dialpad', 7: 'badge', 8: 'fingerprint',
+  9: 'watch', 10: 'key', 12: 'router', 32: 'door_front', 37: 'settings_remote',
+}[m.record_type] || 'lock_open')
 
 async function reloadAll() {
   await Promise.all([loadStatus(), loadSchloesser(), loadChips()])
   if (gesamtLogGeladen) await loadGesamtLog()
+  if (auswertung.value) await ladeAuswertung()
 }
 usePageRefresh(reloadAll)
 onMounted(async () => {
@@ -1387,6 +1698,24 @@ function deleteChip() {
 </script>
 
 <style lang="scss" scoped>
+/* Die 180-px-Segmente aus app.scss sind für drei Reiter gedacht; mit vieren passt
+   die Pille erst ab ~840 px. Darunter nur so breit wie nötig, am Handy zusätzlich
+   kleinere Labels unter dem Icon (Muster wie Teamkasse). */
+@media (max-width: 839px) {
+  .schl-tabs :deep(.q-tab) {
+    min-width: 0;
+    padding: 0 12px;
+  }
+}
+@media (max-width: 599px) {
+  .schl-tabs :deep(.q-tab) {
+    padding: 0 8px;
+  }
+  .schl-tabs :deep(.q-tab__label) {
+    font-size: 11px;
+  }
+}
+
 /* Karten im Kachel-Stil: mobil volle Breite, ab sm zweispaltig, ab lg dreispaltig */
 .schl-karte {
   border-radius: 14px;
@@ -1528,6 +1857,112 @@ function deleteChip() {
   font-size: 11px;
   color: rgba(0, 0, 0, 0.55);
 }
+
+/* ── Auswertung (#161) ──────────────────────────────────────────────────
+   Diagramme aus reinem CSS (keine Chart-Bibliothek): Säulen für Verlauf/
+   Uhrzeit/Wochentag, liegende Balken für die Ranglisten. Alles sitzt in
+   Karten, deren Grundfarbe je Theme wechselt – die Balkenfarbe zieht in den
+   Theme-Blöcken weiter unten mit. */
+.aus-zahl {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: $flaeche;
+}
+.aus-medaille__titel {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(0, 0, 0, 0.5);
+}
+.aus-medaille__wert {
+  font-size: 17px;
+  font-weight: 700;
+  color: $flaeche;
+  white-space: nowrap;
+}
+.aus-medaille__spruch {
+  font-size: 11px;
+  font-style: italic;
+  color: rgba(0, 0, 0, 0.45);
+  margin-top: 2px;
+}
+.aus-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 132px;
+}
+.aus-chart--klein {
+  height: 104px;
+}
+.aus-saeule {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+/* Die Spur ist die volle Höhe – so trifft der Tooltip auch leere Tage. */
+.aus-saeule__spur {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+}
+.aus-saeule__balken {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: $flaeche;
+  transition: height 0.25s ease;
+}
+.aus-saeule__balken--akzent {
+  background: rgba($flaeche-rgb, 0.45);
+}
+.aus-saeule__balken--leer {
+  background: transparent;
+}
+.aus-saeule__label {
+  font-size: 9px;
+  color: rgba(0, 0, 0, 0.5);
+  margin-top: 4px;
+  white-space: nowrap;
+}
+.aus-rang {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.aus-rang__platz {
+  width: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+}
+.aus-rang__anteil {
+  width: 44px;
+  text-align: right;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+}
+.aus-rang__spur {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  margin-top: 3px;
+  overflow: hidden;
+}
+.aus-rang__balken {
+  height: 100%;
+  border-radius: 4px;
+  background: $flaeche;
+  transition: width 0.25s ease;
+}
 /* Hinweis auf ein externes Schloss: erklärt, warum hier Gateway/Akku/Anlernen
    fehlen. Neutral getönt wie der DSGVO-Hinweis – es ist keine Warnung. */
 .schl-extern-hinweis {
@@ -1613,6 +2048,36 @@ body.body--dark {
   .schl-filter-hinweis {
     color: #9fb0cc;
   }
+  /* Auswertung: Navy-Karten → helles Blau für die Balken, gedimmte Spuren. */
+  .aus-zahl,
+  .aus-medaille__wert {
+    color: $vtb-blau-hell;
+  }
+  .aus-medaille__titel {
+    color: #9fb0cc;
+  }
+  .aus-medaille__spruch {
+    color: #8093b5;
+  }
+  .aus-saeule__spur,
+  .aus-rang__spur {
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .aus-saeule__balken,
+  .aus-rang__balken {
+    background: $vtb-blau-hell;
+  }
+  .aus-saeule__balken--akzent {
+    background: rgba($vtb-blau-hell, 0.5);
+  }
+  .aus-saeule__balken--leer {
+    background: transparent;
+  }
+  .aus-saeule__label,
+  .aus-rang__platz,
+  .aus-rang__anteil {
+    color: #8093b5;
+  }
 }
 
 /* Theme „VTB": Karten/Dialoge sind Wappenblau (app.scss) — die für weiße
@@ -1656,6 +2121,37 @@ body.vtb-theme--vtb {
   }
   .schl-filter-hinweis {
     color: rgba($flaeche-rgb, 0.8);
+  }
+  /* Auswertung: die Karten sind hier Wappenblau – Balken deshalb in Vereinsgelb,
+     Blau auf Blau wäre unsichtbar. */
+  .q-card .aus-zahl,
+  .q-card .aus-medaille__wert {
+    color: $akzent;
+  }
+  .q-card .aus-medaille__titel {
+    color: rgba(255, 255, 255, 0.65);
+  }
+  .q-card .aus-medaille__spruch {
+    color: #c6d2e8;
+  }
+  .q-card .aus-saeule__spur,
+  .q-card .aus-rang__spur {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .q-card .aus-saeule__balken,
+  .q-card .aus-rang__balken {
+    background: $akzent;
+  }
+  .q-card .aus-saeule__balken--akzent {
+    background: rgba($akzent-rgb, 0.5);
+  }
+  .q-card .aus-saeule__balken--leer {
+    background: transparent;
+  }
+  .q-card .aus-saeule__label,
+  .q-card .aus-rang__platz,
+  .q-card .aus-rang__anteil {
+    color: rgba(255, 255, 255, 0.6);
   }
   .q-card .schl-log-icon,
   .q-dialog .schl-log-icon {
