@@ -474,8 +474,14 @@
           </q-select>
           <q-input v-model="chipForm.aufbewahrungsort" label="Standardstandort (wenn nicht ausgegeben)"
             outlined dense />
+          <!-- Der Status wirkt an den Türen: alles außer „aktiv" setzt die Karten des
+               Chips an allen Schlössern auf abgelaufen, „aktiv" stellt sie wieder her.
+               Das braucht das Gateway – schlägt es fehl, bleibt der alte Status stehen. -->
           <q-select v-model="chipForm.status" :options="['aktiv','gesperrt','verloren']" label="Status"
-            outlined dense />
+            outlined dense
+            :hint="chipForm.status === 'aktiv'
+              ? 'Karte gilt an allen zugeteilten Schlössern'
+              : 'Sperrt die Karte an allen Schlössern (über das Gateway)'" />
           <div v-if="chipError" class="text-negative text-caption">{{ chipError }}</div>
         </q-card-section>
         <q-card-actions align="right" class="q-px-md q-pb-md">
@@ -1166,7 +1172,13 @@ async function saveChip() {
 }
 function deleteChip() {
   const c = chipDetail.value.chip
-  $q.dialog({ title: 'Chip löschen', message: `Chip „${c.bezeichnung || c.kartennummer}" löschen?`, cancel: true })
+  const anzahl = chipDetail.value.berechtigungen?.length || 0
+  $q.dialog({
+    title: 'Chip löschen',
+    message: `Chip „${c.bezeichnung || c.kartennummer}" löschen?`
+      + (anzahl ? ` Die Karte wird zuvor von ${anzahl} Schloss/Schlössern entfernt.` : ''),
+    cancel: true,
+  })
     .onOk(async () => {
       try {
         await api.delete(`/api/schliessanlage/chips/${c.id}`)

@@ -552,6 +552,23 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
     chip = db.schluessel_chips.get(chip_id)
     if not chip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chip nicht gefunden")
+    # Der Status wirkt an den Schlössern: alles außer 'aktiv' setzt die IC-Karten des
+    # Chips auf ein abgelaufenes Gültigkeitsfenster, 'aktiv' stellt sie wieder her.
+    # Deshalb zuerst die Cloud — schlägt sie fehl, bleibt der alte Status stehen,
+    # statt in der Liste eine Sperre zu behaupten, die es an der Tür nicht gibt.
+    if data.status != chip.status:
+        try:
+            db.zutritt.chip_status_setzen(chip_id=chip_id, status=data.status,
+                                          actor=user.username)
+        except ZutrittNichtKonfiguriertError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except TTLockError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                                detail=f"TTLock-Cloud: {e}")
+        chip = db.schluessel_chips.get(chip_id)      # Version durch den Status-Schreib
+        data.version = chip.version
     chip.bezeichnung = data.bezeichnung
     chip.mitglied_id = data.mitglied_id
     chip.aufbewahrungsort = data.aufbewahrungsort
@@ -566,6 +583,19 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
 
 @router.delete("/chips/{chip_id}", status_code=status.HTTP_204_NO_CONTENT)
 def chip_loeschen(chip_id: int, user: CurrentUser, db: DB):
+    """Chip entfernen — inklusive der IC-Karten an allen Schlössern.
+
+    Ohne diesen Schritt öffnete der Chip weiter jede Tür, an der er angelernt ist,
+    nur eben unsichtbar. Ist ein Schloss nicht erreichbar, bricht der Vorgang ab.
+    """
     _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
-    if not db.schluessel_chips.soft_delete(chip_id, user.username):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chip nicht gefunden")
+    try:
+        db.zutritt.chip_loeschen(chip_id=chip_id, actor=user.username)
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except TTLockError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"Karte konnte nicht von allen Schlössern entfernt "
+                                   f"werden ({e}) – Chip bleibt bestehen")
