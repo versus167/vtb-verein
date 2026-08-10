@@ -126,6 +126,22 @@ def test_wer_wird_ueber_mitglied_chip_und_rohfeld_aufgeloest(db):
     assert b['kennzahlen']['akteure'] == 3
 
 
+def test_gateway_fernoeffnung_erscheint_nicht_als_person_ttlock(db):
+    """In der Cloud laufen App-Öffnungen unter dem Sammelkonto – dessen Kontoname
+    als „häufigster Öffner" wäre schlicht falsch."""
+    tor = _schloss(db, "Tor")
+    with db.conn.cursor() as cur:
+        cur.execute("UPDATE tuer_schloss SET ttlock_lock_id = 4711 WHERE id = %s", (tor.id,))
+    db.conn.commit()
+    for tag in (1, 2):
+        db.tuer_zutritt_logs.insert_if_new(TuerZutrittLog(
+            ttlock_record_id=tag, schloss_id=tor.id, record_type=3, erfolg=True,
+            key_name="ttlock", lock_date=f"2026-07-0{tag}T08:00:00+00:00"))
+
+    personen = service.bericht(db, tage=0)['personen']
+    assert [(p['wer'], p['anzahl']) for p in personen] == [('Fernöffnung (App)', 2)]
+
+
 def test_rangliste_und_vielfalt_ueber_mehrere_schloesser(db):
     kueche, tor = _schloss(db, "Küche"), _schloss(db, "Tor")
     chip = db.schluessel_chips.create(

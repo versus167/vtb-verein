@@ -11,7 +11,8 @@ from typing import Optional
 from psycopg.types.json import Json
 
 from app.models.schliessanlage import (
-    TuerZutrittLog, QUELLE_EXTERN, ALARM_RECORD_TYPES, OEFFNUNG_RECORD_TYPES,
+    TuerZutrittLog, QUELLE_EXTERN, ALARM_RECORD_TYPES, GATEWAY_REMOTE_RECORD_TYPES,
+    OEFFNUNG_RECORD_TYPES,
 )
 from app.db.base_repository import BaseRepository
 
@@ -41,11 +42,16 @@ def _map(row) -> TuerZutrittLog:
 _ORTSZEIT = "(l.lock_date::timestamptz AT TIME ZONE 'Europe/Berlin')"
 
 # Wer war es? Gleiche Auflösungskette wie im Log: Mitglied → Chip-Bezeichnung → das, was
-# die Anlage selbst mitgeliefert hat. NULL, wenn sich niemand zuordnen lässt (z. B.
-# Fernöffnung über das Gateway – die läuft unter dem Sammelkonto).
+# die Anlage selbst mitgeliefert hat. Ausnahme Gateway-Fernöffnung: die läuft in der Cloud
+# unter dem Sammelkonto, deren `key_name` ist der Kontoname ('ttlock') und wäre in einer
+# Personen-Rangliste schlicht falsch – sie wird als eigene „Person" ausgewiesen, bis die
+# Korrelation mit dem access_log den echten Auslöser liefert (Phase 5, Teil B).
 _WER = """COALESCE(
              NULLIF(TRIM(COALESCE(m.vorname, '') || ' ' || COALESCE(m.nachname, '')), ''),
-             c.bezeichnung, l.key_name, l.extern_konto)"""
+             c.bezeichnung,
+             CASE WHEN l.record_type = ANY(%(gateway)s) THEN 'Fernöffnung (App)'
+                  ELSE l.key_name END,
+             l.extern_konto)"""
 
 # Gemeinsamer Filter beider Grundmengen: Zeitraum + Abteilungs-Scope.
 _ZEITRAUM_UND_SCOPE = """
@@ -165,6 +171,7 @@ class TuerZutrittLogRepository(BaseRepository):
             "oeffnung": sorted(OEFFNUNG_RECORD_TYPES),
             "extern": QUELLE_EXTERN,
             "alarm": sorted(ALARM_RECORD_TYPES),
+            "gateway": sorted(GATEWAY_REMOTE_RECORD_TYPES),
             "top": top,
         }
 

@@ -136,7 +136,7 @@ def _auszeichnungen(roh: dict, schloesser: list[dict], personen: list[dict],
     if personen:
         top = personen[0]
         dazu('stammgast', 'Stammgast', 'local_fire_department', f"{top['anzahl']}×",
-             wer=top['wer'], detail='so oft aufgeschlossen wie sonst niemand',
+             wer=top['wer'], detail='meiste Öffnungen im Zeitraum',
              spruch='Kennt den Weg auch im Dunkeln.')
 
     if schloesser:
@@ -160,7 +160,7 @@ def _auszeichnungen(roh: dict, schloesser: list[dict], personen: list[dict],
     vielfalt = roh.get('vielfalt')
     if vielfalt and vielfalt['schloesser'] > 1:
         dazu('vielfalt', 'Schlüsselbund', 'vpn_key', f"{vielfalt['schloesser']} Türen",
-             wer=vielfalt['wer'], detail='an so vielen verschiedenen Türen unterwegs',
+             wer=vielfalt['wer'], detail='verschiedene Türen benutzt',
              spruch='Kommt überall rein – zum Glück offiziell.')
 
     if rekordtag:

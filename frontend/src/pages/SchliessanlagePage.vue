@@ -38,7 +38,10 @@
         <q-icon name="battery_alert" size="13px" /> {{ anzahlAkkuNiedrig }}× Akku niedrig</span>
     </div>
 
-    <q-tabs v-model="tab" align="left" class="q-mb-md vtb-tabs" no-caps inline-label>
+    <!-- Vier Reiter: am Handy Icon über Label (sonst zu breit), dazwischen schmalere
+         Segmente als der app.scss-Standard – die Pille scrollt nicht. -->
+    <q-tabs v-model="tab" align="left" class="q-mb-md vtb-tabs schl-tabs" no-caps
+      :inline-label="$q.screen.gt.xs">
       <q-tab name="schloesser" icon="meeting_room" label="Schlösser" />
       <q-tab name="chips" icon="badge" label="Chips" />
       <q-tab v-if="status.darf_protokoll" name="log" icon="history" label="Log" />
@@ -1695,6 +1698,24 @@ function deleteChip() {
 </script>
 
 <style lang="scss" scoped>
+/* Die 180-px-Segmente aus app.scss sind für drei Reiter gedacht; mit vieren passt
+   die Pille erst ab ~840 px. Darunter nur so breit wie nötig, am Handy zusätzlich
+   kleinere Labels unter dem Icon (Muster wie Teamkasse). */
+@media (max-width: 839px) {
+  .schl-tabs :deep(.q-tab) {
+    min-width: 0;
+    padding: 0 12px;
+  }
+}
+@media (max-width: 599px) {
+  .schl-tabs :deep(.q-tab) {
+    padding: 0 8px;
+  }
+  .schl-tabs :deep(.q-tab__label) {
+    font-size: 11px;
+  }
+}
+
 /* Karten im Kachel-Stil: mobil volle Breite, ab sm zweispaltig, ab lg dreispaltig */
 .schl-karte {
   border-radius: 14px;
