@@ -20,11 +20,13 @@ import re
 from datetime import date, timedelta
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
+from app.models.permission import Permission
 from app.services.ics_service import baue_kalender
 from ..core.config import settings
 from ..core.deps import CurrentUser, DB
+from .auth import _client_ip
 
 router = APIRouter(prefix="/kalender", tags=["kalender"])
 
@@ -54,6 +56,30 @@ class AccessLogTokenFilter(logging.Filter):
         return True
 
 
+def _log_kalender(db: DB, request: Request, event_type: str, actor, *, detail: str) -> None:
+    """Abo-Ereignis ins Zugriffsprotokoll – best-effort, nie den Request brechen.
+
+    Protokolliert werden nur Erzeugen und Widerrufen, nicht die Abrufe: Ein Link
+    ist eine dauerhafte, anmeldungsfreie Leseberechtigung, seine Vergabe gehört
+    ins Protokoll. Die Abrufe selbst sind Routine (Kalender fragen alle paar
+    Stunden nach) und stünden nur als Rauschen darin — wann zuletzt abgerufen
+    wurde, steht ohnehin am Abo.
+
+    Wie bei den Zugängen (_log_zugang in personen.py) wird der *Handelnde*
+    protokolliert; wen es betrifft, steht im Detail.
+    """
+    try:
+        db.access_log_repository.log(
+            event_type, category="kalender",
+            user_id=actor.id, username=actor.username,
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            detail=detail,
+        )
+    except Exception:
+        pass
+
+
 def _feed_url(token: str) -> str:
     return f"{settings.BASE_URL.rstrip('/')}/api/kalender/{token}.ics"
 
@@ -80,19 +106,57 @@ def abo_status(user: CurrentUser, db: DB):
 
 
 @router.post("/abo")
-def abo_erzeugen(user: CurrentUser, db: DB):
+def abo_erzeugen(request: Request, user: CurrentUser, db: DB):
     """Abo (neu) erzeugen und die URL zurückgeben — das einzige Mal, dass es sie
     im Klartext gibt. Ein bestehendes Abo wird dabei widerrufen: Der alte Link
     ist sofort tot."""
+    ersetzt = db.kalender_abos.get_for_user(user.id) is not None
     token = db.kalender_abos.create_for_user(user.id, user.username)
+    _log_kalender(db, request, "kalender_abo_erzeugt", user,
+                  detail="Adresse neu erzeugt (alte widerrufen)" if ersetzt
+                         else "Kalender-Abo erzeugt")
     return {"url": _feed_url(token), "webcal_url": _webcal_url(token)}
 
 
 @router.delete("/abo")
-def abo_widerrufen(user: CurrentUser, db: DB):
+def abo_widerrufen(request: Request, user: CurrentUser, db: DB):
     """Abo widerrufen. Der Link funktioniert danach nicht mehr; abonnierte
     Kalender laufen leer bzw. melden einen Fehler."""
-    return {"widerrufen": db.kalender_abos.revoke_for_user(user.id, user.username)}
+    widerrufen = db.kalender_abos.revoke_for_user(user.id, user.username)
+    if widerrufen:
+        _log_kalender(db, request, "kalender_abo_widerrufen", user,
+                      detail="Eigenes Kalender-Abo widerrufen")
+    return {"widerrufen": widerrufen}
+
+
+# ------------------------------------------------------------------- Aufsicht
+@router.get("/abos")
+def abos_uebersicht(user: CurrentUser, db: DB):
+    """Wer hat einen Feed-Link, seit wann und wird er benutzt.
+
+    Am Recht fürs Zugriffsprotokoll aufgehängt: Es ist dieselbe Frage — wer
+    kommt an welche Daten. Die Adressen selbst stehen hier nicht (in der DB
+    liegt nur ihr Hash), es geht um Bestand und Benutzung.
+    """
+    if not user.has_permission(Permission.SYSTEM_PROTOKOLL):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung")
+    return db.kalender_abos.list_all()
+
+
+@router.delete("/abos/{ziel_user_id}")
+def abo_fremd_widerrufen(ziel_user_id: int, request: Request, user: CurrentUser, db: DB):
+    """Fremdes Abo widerrufen — der Notausschalter, wenn ein Link in falsche
+    Hände geraten ist und der Betroffene nicht selbst handeln kann."""
+    if not user.has_permission(Permission.SYSTEM_PROTOKOLL):
+        raise HTTPException(status_code=403, detail="Keine Berechtigung")
+    ziel = db.get_user_by_id(ziel_user_id)
+    if ziel is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    if not db.kalender_abos.revoke_for_user(ziel_user_id, user.username):
+        raise HTTPException(status_code=404, detail="Kein aktives Abo")
+    _log_kalender(db, request, "kalender_abo_widerrufen", user,
+                  detail=f"Kalender-Abo von {ziel.username} widerrufen")
+    return {"widerrufen": True}
 
 
 def _eigene_antwort_ergaenzen(db: DB, user_id: int, termine: list[dict]) -> None:

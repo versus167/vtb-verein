@@ -11,7 +11,43 @@
       </q-btn>
     </div>
 
-    <q-card flat bordered class="q-mb-md">
+    <q-tabs v-model="tab" dense align="left" active-color="primary"
+      indicator-color="primary" class="text-grey-7 q-mb-md" :breakpoint="0">
+      <q-tab name="eintraege" label="Einträge" />
+      <q-tab name="kalender" label="Kalender-Abos" />
+    </q-tabs>
+
+    <!-- Kalender-Abos: wer besitzt einen Feed-Link, seit wann, wird er benutzt -->
+    <div v-if="tab === 'kalender'">
+      <div class="text-caption text-grey-7 q-mb-md">
+        Ein Kalender-Abo ist ein Link, mit dem die eigenen Termine ohne Anmeldung
+        gelesen werden können – wer ihn hat, sieht sie. Die Adressen selbst stehen
+        hier nicht: In der Datenbank liegt nur ihre Prüfsumme.
+      </div>
+      <q-table
+        flat bordered
+        :rows="abos"
+        :columns="aboColumns"
+        row-key="id"
+        :loading="abosLoading"
+        :rows-per-page-options="[25, 50, 0]"
+        no-data-label="Niemand hat ein Kalender-Abo"
+      >
+        <template #body-cell-aktion="props">
+          <q-td :props="props" class="text-right">
+            <q-btn
+              flat round dense icon="link_off" color="negative"
+              :loading="widerrufeId === props.row.user_id"
+              @click="onAboWiderrufen(props.row)"
+            >
+              <q-tooltip>Abo widerrufen</q-tooltip>
+            </q-btn>
+          </q-td>
+        </template>
+      </q-table>
+    </div>
+
+    <q-card v-if="tab === 'eintraege'" flat bordered class="q-mb-md">
       <q-card-section class="row q-col-gutter-md items-end">
         <q-select
           v-model="filter.category" :options="categoryOptions" label="Kategorie"
@@ -40,6 +76,7 @@
     </q-card>
 
     <q-table
+      v-if="tab === 'eintraege'"
       flat bordered
       :rows="rows"
       :columns="columns"
@@ -71,7 +108,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -124,6 +161,7 @@ const categoryOptions = [
   { label: 'Seitenaufrufe (page)', value: 'page' },
   { label: 'Zugänge (zugang)', value: 'zugang' },
   { label: 'Datenbereinigung (prune)', value: 'prune' },
+  { label: 'Kalender-Abos (kalender)', value: 'kalender' },
 ]
 
 const EVENT_META = {
@@ -140,6 +178,8 @@ const EVENT_META = {
   prune_executed: { label: 'Bereinigung ausgeführt', color: 'negative' },
   prune_config_changed: { label: 'Bereinigung: Einstellung geändert', color: 'warning' },
   prune_config_reset: { label: 'Bereinigung: Einstellung zurückgesetzt', color: 'grey' },
+  kalender_abo_erzeugt: { label: 'Kalender-Abo erzeugt', color: 'info' },
+  kalender_abo_widerrufen: { label: 'Kalender-Abo widerrufen', color: 'warning' },
 }
 
 const eventTypeOptions = Object.entries(EVENT_META).map(([value, m]) => ({ label: m.label, value }))
@@ -157,6 +197,58 @@ const columns = [
   { name: 'ip', label: 'IP', field: (r) => r.ip || '–', align: 'left' },
   { name: 'user_agent', label: 'Gerät', field: 'user_agent', align: 'left' },
 ]
+
+// ── Kalender-Abos (#153) ──────────────────────────────────────────────
+const tab = ref('eintraege')
+const abos = ref([])
+const abosLoading = ref(false)
+const widerrufeId = ref(null)
+
+const aboColumns = [
+  { name: 'user', label: 'Benutzer', align: 'left',
+    field: (r) => r.display_name ? `${r.display_name} (${r.username})` : r.username },
+  { name: 'created_at', label: 'Erzeugt', field: 'created_at', align: 'left', format: fmtDate },
+  { name: 'letzter_abruf_at', label: 'Zuletzt abgerufen', field: 'letzter_abruf_at',
+    align: 'left', format: fmtDate },
+  { name: 'abrufe', label: 'Abrufe', field: 'abrufe', align: 'right' },
+  { name: 'aktion', label: '', field: 'id', align: 'right' },
+]
+
+async function ladeAbos() {
+  abosLoading.value = true
+  try {
+    const { data } = await api.get('/api/kalender/abos')
+    abos.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Kalender-Abos konnten nicht geladen werden' })
+  } finally {
+    abosLoading.value = false
+  }
+}
+
+function onAboWiderrufen(row) {
+  $q.dialog({
+    title: 'Kalender-Abo widerrufen?',
+    message: `Der Link von ${row.username} funktioniert danach nicht mehr. `
+      + 'Bereits abonnierte Kalender laufen leer – der Betroffene muss sich '
+      + 'im Profil eine neue Adresse erzeugen.',
+    cancel: true,
+    ok: { label: 'Widerrufen', color: 'negative' },
+  }).onOk(async () => {
+    widerrufeId.value = row.user_id
+    try {
+      await api.delete(`/api/kalender/abos/${row.user_id}`)
+      $q.notify({ type: 'info', message: 'Abo widerrufen' })
+      await ladeAbos()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Widerruf fehlgeschlagen' })
+    } finally {
+      widerrufeId.value = null
+    }
+  })
+}
+
+watch(tab, (v) => { if (v === 'kalender') ladeAbos() })
 
 async function onRequest(props) {
   const { page, rowsPerPage } = props.pagination
@@ -186,6 +278,7 @@ async function onRequest(props) {
 
 function reload() {
   onRequest({ pagination: { ...pagination.value, page: 1 } })
+  if (tab.value === 'kalender') ladeAbos()
 }
 
 usePageRefresh(reload)
