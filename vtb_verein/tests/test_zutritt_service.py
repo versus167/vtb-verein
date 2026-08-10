@@ -7,12 +7,14 @@ Geprüft:
 - Kartennummer → Chip → Mitglied wird nur für IC-Karten-Records aufgelöst.
 - Status-Snapshot (letztes Event) entspricht dem jüngsten Log.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 import requests
 
-from app.services.zutritt_service import ZutrittService, build_alarm_digest, _ms_to_iso
+from app.services.zutritt_service import (
+    ZutrittService, build_alarm_digest, _ms_to_iso, _iso_to_ms, sperr_fenster,
+)
 from app.services.ttlock_client import TTLockError
 from app.models.schliessanlage import (
     TuerCredential, CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
@@ -29,6 +31,8 @@ class FakeClient:
         self.deleted = []
         self.cards_by_lock = {}      # lock_id -> Liste Card-Dicts (für ic_cards/Import)
         self.add_should_fail = False
+        self.change_should_fail = False
+        self.delete_should_fail = False
         # Credential-Mirror (read-only): lock_id -> Liste typ-spezifischer Dicts
         self.fingerprints_by_lock = {}
         self.passcodes_by_lock = {}
@@ -49,9 +53,13 @@ class FakeClient:
         self.added.append((lock_id, card_number, start_ms, end_ms)); return {"errcode": 0, "cardId": 9001}
 
     def ic_card_change_period(self, lock_id, card_id, start_ms=0, end_ms=0, *, change_type=2):
+        if self.change_should_fail:
+            raise TTLockError("Gateway offline", errcode=-3003)
         self.changed.append((lock_id, card_id, start_ms, end_ms)); return {"errcode": 0}
 
     def ic_card_delete(self, lock_id, card_id, *, delete_type=2):
+        if self.delete_should_fail:
+            raise TTLockError("Gateway offline", errcode=-3003)
         self.deleted.append((lock_id, card_id)); return {"errcode": 0}
 
     def ic_cards(self, lock_id, page_no=1, page_size=100):
@@ -143,9 +151,10 @@ class FakeSchlossRepo:
 
 
 class FakeChip:
-    def __init__(self, id, mitglied_id, kartennummer="", bezeichnung=None):
+    def __init__(self, id, mitglied_id, kartennummer="", bezeichnung=None, status="aktiv"):
         self.id, self.mitglied_id = id, mitglied_id
         self.kartennummer, self.bezeichnung = kartennummer, bezeichnung
+        self.status, self.version, self.deleted = status, 1, False
 
 
 class FakeChipRepo:
@@ -158,13 +167,26 @@ class FakeChipRepo:
         return self._m.get(kn)
 
     def get(self, id):
-        return self._by_id.get(id)
+        chip = self._by_id.get(id)
+        return chip if (chip and not chip.deleted) else None
 
     def create(self, c, created_by):
         chip = FakeChip(self._next, getattr(c, "mitglied_id", None),
                         kartennummer=c.kartennummer, bezeichnung=c.bezeichnung)
         self._by_id[chip.id] = chip; self._m[c.kartennummer] = chip; self._next += 1
         return chip
+
+    def update(self, c, updated_by):
+        chip = self._by_id[c.id]
+        chip.status, chip.bezeichnung = c.status, c.bezeichnung
+        chip.version += 1
+        return chip
+
+    def soft_delete(self, id, deleted_by):
+        chip = self._by_id.get(id)
+        if chip:
+            chip.deleted = True
+        return bool(chip)
 
 
 class FakeBer:
@@ -193,6 +215,9 @@ class FakeBerechtigungRepo:
     def get(self, id):
         r = self.rows.get(id)
         return r if (r and not r.deleted) else None
+
+    def list_for_chip(self, chip_id):
+        return [r for r in self.rows.values() if not r.deleted and r.chip_id == chip_id]
 
     def find_active_for_chip_schloss(self, chip_id, schloss_id):
         return next((r for r in self.rows.values()
@@ -667,3 +692,106 @@ def test_build_alarm_digest():
     ])
     assert "1" in titel
     assert "s3" in text and "Sabotage-Alarm" in text
+
+
+# --- Chip-weite Aktionen: sperren / entsperren / löschen ---------------------
+# Kern der Sache: Der Chip-Status und der Papierkorb müssen an der TÜR wirken.
+# Ein Chip, der in der Liste als gesperrt oder gelöscht steht, aber weiter öffnet,
+# ist gefährlicher als gar keine Funktion – man hält das Problem für erledigt.
+
+def _chip_mit_zwei_schloessern(fake):
+    """Chip 7, angelernt an zwei Schlössern (das zweite direkt im Fake-Repo)."""
+    chip = FakeChip(7, None, kartennummer="818229331", bezeichnung="Chip blau")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()                                   # Schloss id=1 (lockId 30392116)
+    svc.schloss_repo._by_id[2] = FakeSchloss(2, 30392117, "Kabine")
+    svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+    svc.chip_anlernen(chip_id=7, schloss_id=2, gueltig_bis="2026-12-31T23:00:00+00:00",
+                      actor="admin")
+    return svc
+
+
+def test_chip_sperren_setzt_alle_karten_auf_abgelaufen():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+
+    out = svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+
+    assert out["schloesser"] == 2
+    assert {c[0] for c in fake.changed} == {30392116, 30392117}
+    jetzt_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    for _, _, von, bis in fake.changed:
+        # Vollständig in der Vergangenheit – nicht 0/0, das hieße bei TTLock unbefristet.
+        assert 0 < von < bis < jetzt_ms
+    assert svc.chip_repo.get(7).status == "gesperrt"
+
+
+def test_chip_entsperren_stellt_die_hinterlegte_gueltigkeit_wieder_her():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    fake.changed.clear()
+
+    svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+
+    nach_schloss = {c[0]: (c[2], c[3]) for c in fake.changed}
+    assert nach_schloss[30392116] == (0, 0)               # war unbefristet
+    assert nach_schloss[30392117] == (0, _iso_to_ms("2026-12-31T23:00:00+00:00"))
+    assert svc.chip_repo.get(7).status == "aktiv"
+
+
+def test_chip_sperren_bei_cloud_fehler_aendert_den_status_nicht():
+    """Sonst stünde „gesperrt" in der Liste, während die Karte weiter öffnet."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.change_should_fail = True
+
+    with pytest.raises(TTLockError):
+        svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+
+    assert svc.chip_repo.get(7).status == "aktiv"
+    assert all(r.sync_status == "fehler" and r.sync_fehler
+               for r in svc.berechtigung_repo.rows.values())
+
+
+def test_gesperrter_chip_laesst_sich_nicht_anlernen():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    svc.schloss_repo._by_id[3] = FakeSchloss(3, 30392118, "Lager")
+    fake.added.clear()
+
+    with pytest.raises(ValueError):
+        svc.chip_anlernen(chip_id=7, schloss_id=3, actor="admin")
+    assert fake.added == []
+
+
+def test_chip_loeschen_entfernt_die_karten_von_allen_schloessern():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+
+    out = svc.chip_loeschen(chip_id=7, actor="admin")
+
+    assert out["berechtigungen_entzogen"] == 2
+    assert {d[0] for d in fake.deleted} == {30392116, 30392117}
+    assert svc.chip_repo.get(7) is None
+    assert all(r.deleted for r in svc.berechtigung_repo.rows.values())
+
+
+def test_chip_loeschen_bricht_ab_wenn_ein_schloss_nicht_erreichbar_ist():
+    """Der Chip bleibt bestehen – sonst öffnete er unsichtbar weiter."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.delete_should_fail = True
+
+    with pytest.raises(TTLockError):
+        svc.chip_loeschen(chip_id=7, actor="admin")
+
+    assert svc.chip_repo.get(7) is not None
+    assert fake.deleted == []
+
+
+def test_sperr_fenster_liegt_vollstaendig_in_der_vergangenheit():
+    von, bis = sperr_fenster(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc))
+    jetzt_ms = int(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    assert von < bis < jetzt_ms

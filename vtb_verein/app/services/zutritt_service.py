@@ -26,6 +26,7 @@ from app.models.schliessanlage import (
     TuerZutrittLog, SchluesselChip, TuerBerechtigung, TuerCredential, record_type_label,
     IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, GATEWAY_REMOTE_RECORD_TYPES,
     SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
+    CHIP_AKTIV,
     CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
 )
 from app.services.ttlock_client import TTLockClient, TTLockError
@@ -66,6 +67,19 @@ def _iso_to_ms(iso: Optional[str]) -> int:
         return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
     except (ValueError, TypeError):
         return 0
+
+
+def sperr_fenster(jetzt: Optional[datetime] = None) -> tuple[int, int]:
+    """Gültigkeitsfenster, das eine IC-Karte sofort wirkungslos macht.
+
+    TTLock kennt für IC-Karten kein „einfrieren", nur einen Gültigkeitszeitraum.
+    Ein Fenster, das komplett in der Vergangenheit liegt, ist die eindeutige Form
+    von „gilt nicht mehr" — anders als endDate=0, das bei TTLock *unbefristet*
+    bedeutet. Zwei getrennte Zeitpunkte, damit nirgends Ende <= Beginn steht.
+    """
+    jetzt = jetzt or datetime.now(timezone.utc)
+    ende = int(jetzt.timestamp() * 1000) - 60_000        # vor einer Minute abgelaufen
+    return ende - 60_000, ende
 
 
 def build_alarm_digest(alarme: list[dict]) -> Optional[tuple[str, str]]:
@@ -227,6 +241,11 @@ class ZutrittService:
             raise ValueError("Chip nicht gefunden")
         if not (chip.kartennummer or "").strip():
             raise ValueError("Chip hat keine Kartennummer – Anlernen über Gateway nicht möglich")
+        if chip.status != CHIP_AKTIV:
+            # Sonst führe der Chip an einem Schloss, während er in der Liste als
+            # gesperrt/verloren steht – genau die Lüge, die der Status verhindern soll.
+            raise ValueError(
+                f'Chip ist als "{chip.status}" markiert – erst wieder aktiv setzen')
         schloss = self.schloss_repo.get(schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
@@ -301,6 +320,81 @@ class ZutrittService:
         self.berechtigung_repo.soft_delete(ber.id, actor)
         logger.info("Berechtigung %s entzogen (Chip von Schloss entfernt).", berechtigung_id)
         return {"ok": True}
+
+    # --- Chip-weite Aktionen (alle Schlösser eines Chips auf einmal) -------
+    def chip_status_setzen(self, *, chip_id: int, status: str, actor: str = "SYSTEM") -> dict:
+        """Setzt den Chip-Status und zieht ihn an ALLEN Schlössern des Chips nach.
+
+        `aktiv` stellt die hinterlegte Gültigkeit jeder Berechtigung wieder her,
+        jeder andere Status setzt sie auf ein abgelaufenes Fenster (s. `sperr_fenster`).
+        Die lokal gespeicherte Gültigkeit bleibt dabei unangetastet — nur so lässt
+        sich beim Entsperren wiederherstellen, was ursprünglich gelten sollte.
+
+        Der Status wird erst gespeichert, wenn alle Schlösser erreicht wurden: Ein
+        Chip, der als „gesperrt" in der Liste steht, aber noch an einer Tür öffnet,
+        wäre schlimmer als eine sichtbare Fehlermeldung. Fehlgeschlagene Schlösser
+        stehen als `fehler` an der Berechtigung und in der Rückgabe.
+        """
+        chip = self.chip_repo.get(chip_id)
+        if not chip:
+            raise ValueError("Chip nicht gefunden")
+
+        gesperrt = status != CHIP_AKTIV
+        fehler: list[dict] = []
+        geaendert = 0
+        for ber in self.berechtigung_repo.list_for_chip(chip_id):
+            if not ber.ttlock_card_id:
+                continue          # nie angelernt → am Schloss gibt es nichts zu ändern
+            schloss = self.schloss_repo.get(ber.schloss_id)
+            if not schloss:
+                continue
+            von, bis = (sperr_fenster() if gesperrt
+                        else (_iso_to_ms(ber.gueltig_von), _iso_to_ms(ber.gueltig_bis)))
+            try:
+                self._client().ic_card_change_period(
+                    schloss.ttlock_lock_id, ber.ttlock_card_id, von, bis)
+            except TTLockError as e:
+                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                sync_status=SYNC_FEHLER, sync_fehler=str(e),
+                                                by=actor)
+                fehler.append({"schloss": schloss.name, "meldung": str(e)})
+                continue
+            self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                            sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+            geaendert += 1
+
+        if fehler:
+            raise TTLockError(
+                f"{len(fehler)} von {geaendert + len(fehler)} Schlössern nicht erreicht "
+                f"({', '.join(f['schloss'] for f in fehler)}) – Status nicht geändert")
+
+        chip.status = status
+        aktualisiert = self.chip_repo.update(chip, actor)
+        logger.info("Chip %s auf Status '%s' gesetzt (%d Schlösser nachgezogen).",
+                    chip.kartennummer, status, geaendert)
+        return {"chip": aktualisiert, "schloesser": geaendert}
+
+    def chip_loeschen(self, *, chip_id: int, actor: str = "SYSTEM") -> dict:
+        """Chip entfernen: erst die IC-Karte an jedem Schloss löschen, dann den Chip
+        soft-löschen.
+
+        Ohne den ersten Schritt öffnete der Chip weiter jede Tür, an der er angelernt
+        ist – nur eben unsichtbar, weil er aus der Liste verschwunden wäre. Scheitert
+        ein Schloss, bricht der Vorgang ab und der Chip bleibt bestehen.
+        """
+        chip = self.chip_repo.get(chip_id)
+        if not chip:
+            raise ValueError("Chip nicht gefunden")
+
+        entzogen = 0
+        for ber in self.berechtigung_repo.list_for_chip(chip_id):
+            self.berechtigung_entziehen(berechtigung_id=ber.id, actor=actor)
+            entzogen += 1
+
+        self.chip_repo.soft_delete(chip_id, actor)
+        logger.info("Chip %s gelöscht (%d Berechtigungen zuvor entzogen).",
+                    chip.kartennummer, entzogen)
+        return {"ok": True, "berechtigungen_entzogen": entzogen}
 
     def ic_cards_sync(self) -> dict:
         """Bereits am Schloss (per BLE) angelernte IC-Karten aus der Cloud spiegeln:
