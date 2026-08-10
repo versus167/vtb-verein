@@ -258,6 +258,74 @@
           </div>
         </ProfilPanel>
 
+        <!-- Terminkalender abonnieren (#153) -->
+        <ProfilPanel icon="event_available" titel="Terminkalender" :info="kalenderInfo">
+          <div class="text-caption text-grey-7 q-mb-md">
+            „Meine Termine" im Kalender deines Handys oder Rechners abonnieren – der
+            Kalender holt sie sich dann selbst. Nur lesen: Zu- und Absagen laufen
+            weiter über die App.
+          </div>
+
+          <!-- Frisch erzeugt: der einzige Moment, in dem es die URL gibt -->
+          <div v-if="kalenderUrl" class="profil-stapel q-mb-md">
+            <q-input :model-value="kalenderUrl" label="Kalender-Adresse" outlined dense readonly>
+              <template #append>
+                <q-btn flat round dense icon="content_copy" @click="onKalenderKopieren">
+                  <q-tooltip>Adresse kopieren</q-tooltip>
+                </q-btn>
+              </template>
+            </q-input>
+            <q-banner class="bg-blue-1 text-blue-10 rounded-borders">
+              <template #avatar><q-icon name="warning" /></template>
+              Kopiere die Adresse jetzt – sie wird später nicht mehr angezeigt.
+              Wer sie hat, sieht deine Termine.
+            </q-banner>
+            <q-btn
+              class="full-width"
+              label="Auf diesem Gerät abonnieren"
+              icon="calendar_month"
+              color="primary"
+              unelevated
+              no-caps
+              :href="kalenderWebcal"
+            />
+          </div>
+
+          <div v-if="kalenderAbo?.vorhanden" class="text-caption text-grey-7 q-mb-md">
+            Abo erstellt am {{ fmt(kalenderAbo.erstellt_am) }}.
+            <template v-if="kalenderAbo.letzter_abruf">
+              Zuletzt abgerufen: {{ fmt(kalenderAbo.letzter_abruf) }}.
+            </template>
+            <template v-else>
+              Noch nie abgerufen – abonnierte Kalender melden sich oft erst nach
+              einigen Stunden.
+            </template>
+          </div>
+
+          <q-btn
+            class="full-width q-mb-sm"
+            :label="kalenderAbo?.vorhanden ? 'Adresse neu erzeugen' : 'Kalender-Adresse erzeugen'"
+            icon="link"
+            color="primary"
+            :outline="kalenderAbo?.vorhanden"
+            :unelevated="!kalenderAbo?.vorhanden"
+            no-caps
+            :loading="kalenderBusy"
+            @click="onKalenderErzeugen"
+          />
+          <q-btn
+            v-if="kalenderAbo?.vorhanden"
+            class="full-width"
+            label="Abo widerrufen"
+            icon="link_off"
+            color="negative"
+            outline
+            no-caps
+            :loading="kalenderBusy"
+            @click="onKalenderWiderrufen"
+          />
+        </ProfilPanel>
+
         <!-- Meine Geräte / angemeldete Sessions (Ticket #24) -->
         <ProfilPanel icon="devices" titel="Meine Geräte" :info="geraeteInfo">
           <div class="text-caption text-grey-7 q-mb-md">
@@ -430,7 +498,7 @@ import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { usePush } from 'src/composables/usePush'
 import { useRouter } from 'vue-router'
-import { useQuasar } from 'quasar'
+import { useQuasar, copyToClipboard } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
@@ -523,6 +591,14 @@ const pushConfigured = ref(false)
 const pushSubscribed = ref(false)
 const pushBusy = ref(false)
 
+// Kalender-Abo (#153). kalenderUrl lebt nur in diesem Seitenbesuch: Der Server
+// speichert vom Token nur den Hash und kann die Adresse später nicht noch einmal
+// herausgeben – wer sie verliert, erzeugt eine neue.
+const kalenderAbo = ref(null)
+const kalenderUrl = ref('')
+const kalenderWebcal = ref('')
+const kalenderBusy = ref(false)
+
 const contactOptions = computed(() => {
   const opts = [
     { label: 'E-Mail', value: 'email' },
@@ -553,6 +629,13 @@ const benachrichtigungInfo = computed(() => {
   const haupt = { email: 'E-Mail', matrix: 'Matrix', push: 'Nur Push' }[preferredContact.value] || 'E-Mail'
   if (preferredContact.value !== 'push' && pushSubscribed.value) return `${haupt} · Push auf diesem Gerät`
   return haupt
+})
+
+const kalenderInfo = computed(() => {
+  if (!kalenderAbo.value?.vorhanden) return 'Termine im eigenen Kalender abonnieren'
+  return kalenderAbo.value.letzter_abruf
+    ? `Abonniert · zuletzt abgerufen ${fmt(kalenderAbo.value.letzter_abruf)}`
+    : 'Abonniert · noch nicht abgerufen'
 })
 
 const geraeteInfo = computed(() => {
@@ -593,6 +676,10 @@ async function load() {
     const { data: mz } = await api.get('/api/schliessanlage/mein-zugang')
     meinZugang.value = mz
   } catch { /* Schließanlage optional – Panel bleibt ausgeblendet */ }
+  try {
+    const { data: abo } = await api.get('/api/kalender/abo')
+    kalenderAbo.value = abo
+  } catch { /* Kalender-Abo optional – Panel zeigt dann den Erzeugen-Knopf */ }
   try {
     const { data: m } = await api.get('/api/personen/mein-mitglied')
     meinMitglied.value = m
@@ -690,6 +777,61 @@ async function onTogglePush(value) {
     $q.notify({ type: 'negative', message: e.message || 'Push konnte nicht geändert werden' })
   } finally {
     pushBusy.value = false
+  }
+}
+
+// ---- Kalender-Abo (#153) ----
+
+async function onKalenderErzeugen() {
+  // Neu erzeugen macht die alte Adresse sofort ungültig – das muss vorher klar
+  // sein, sonst wundert man sich später über einen Kalender, der nicht mehr zieht.
+  if (kalenderAbo.value?.vorhanden) {
+    const weiter = await new Promise(resolve => {
+      $q.dialog({
+        title: 'Adresse neu erzeugen?',
+        message: 'Die bisherige Adresse funktioniert danach nicht mehr. Kalender, '
+          + 'die damit abonniert wurden, musst du neu einrichten.',
+        cancel: true,
+        ok: { label: 'Neu erzeugen', color: 'primary' },
+      }).onOk(() => resolve(true)).onCancel(() => resolve(false))
+    })
+    if (!weiter) return
+  }
+  kalenderBusy.value = true
+  try {
+    const { data } = await api.post('/api/kalender/abo')
+    kalenderUrl.value = data.url
+    kalenderWebcal.value = data.webcal_url
+    const { data: abo } = await api.get('/api/kalender/abo')
+    kalenderAbo.value = abo
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Adresse konnte nicht erzeugt werden' })
+  } finally {
+    kalenderBusy.value = false
+  }
+}
+
+async function onKalenderKopieren() {
+  try {
+    await copyToClipboard(kalenderUrl.value)
+    $q.notify({ type: 'positive', message: 'Adresse kopiert' })
+  } catch {
+    $q.notify({ type: 'warning', message: 'Kopieren nicht möglich – Adresse bitte von Hand markieren' })
+  }
+}
+
+async function onKalenderWiderrufen() {
+  kalenderBusy.value = true
+  try {
+    await api.delete('/api/kalender/abo')
+    kalenderAbo.value = { vorhanden: false }
+    kalenderUrl.value = ''
+    kalenderWebcal.value = ''
+    $q.notify({ type: 'info', message: 'Kalender-Abo widerrufen' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abo konnte nicht widerrufen werden' })
+  } finally {
+    kalenderBusy.value = false
   }
 }
 

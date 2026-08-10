@@ -245,6 +245,10 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("termin_serie", "spielstaette_id"),
                     ChildRef("termin_abweichung", "spielstaette_id"),
                 )),
+    # Kalender-Abos (#153): Blatt ohne Kinder. Hängt an users, und users werden
+    # nicht geprunt – deshalb genügt der eigene Eintrag, kein ChildRef nach oben.
+    PruneEntity("kalender_abo", "Kalender-Abos", "kalender_abo",
+                history_table="kalender_abo_history"),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),

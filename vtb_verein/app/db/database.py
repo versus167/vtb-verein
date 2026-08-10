@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 88
+SCHEMA_VERSION = 89
 
 
 # ---------------------------------------------------------------------------
@@ -2854,6 +2854,92 @@ _TICKET_TEILNEHMER_INDEXES = (
 )
 
 
+# ============================================================================
+# Kalender-Abos (Schema v89, #153): eigener Termin-Feed als ICS
+# ----------------------------------------------------------------------------
+# Ein Abo je User, adressiert über einen Token IN DER URL — Kalender-Clients
+# (iOS, Google, Thunderbird) können weder Cookie noch Magic-Link, der Token IST
+# also das Geheimnis. Wie bei auth_tokens liegt deshalb nur der SHA-256-Hash in
+# der DB; den Klartext gibt es genau einmal beim Erzeugen.
+#
+# Bewusst eine eigene Tabelle statt auth_tokens: Dort hängt Ablauf-Semantik dran
+# (expires_at, Single-Use). Ein Abo läuft nie ab, ist dafür jederzeit widerrufbar
+# und merkt sich, wann es zuletzt abgerufen wurde — daran sieht man im Profil, ob
+# der Kalender überhaupt zieht. Ein Zähler auf Fehlversuche fehlt absichtlich: Ein
+# falscher Token trifft keine Zeile, an der man ihn hochzählen könnte, und bei
+# 256 Bit Entropie ist Raten ohnehin aussichtslos.
+#
+# letzter_abruf_at/created_at sind technische Zeitstempel (TIMESTAMPTZ), keine
+# Wandzeit — anders als die Termine selbst.
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v88→v89.
+# ============================================================================
+_KALENDER_ABO_COLS = (
+    "id, version, user_id, token_hash, letzter_abruf_at, abrufe, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_KALENDER_ABO_VALS = ", ".join("NEW." + c.strip() for c in _KALENDER_ABO_COLS.split(","))
+
+_DDL_KALENDER_ABO = """
+    CREATE TABLE IF NOT EXISTS kalender_abo (
+      id                SERIAL PRIMARY KEY,
+      user_id           INTEGER NOT NULL REFERENCES users(id),
+      token_hash        TEXT NOT NULL UNIQUE,
+      letzter_abruf_at  TIMESTAMPTZ,
+      abrufe            INTEGER NOT NULL DEFAULT 0,
+      version           INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by        TEXT NOT NULL,
+      updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by        TEXT NOT NULL,
+      deleted_at        TEXT,
+      deleted_by        TEXT
+    );
+    CREATE TABLE IF NOT EXISTS kalender_abo_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      user_id INTEGER, token_hash TEXT, letzter_abruf_at TIMESTAMPTZ, abrufe INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+_FN_KALENDER_ABO_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_kalender_abo_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO kalender_abo_history ({_KALENDER_ABO_COLS}) VALUES ({_KALENDER_ABO_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_KALENDER_ABO_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_kalender_abo_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO kalender_abo_history ({_KALENDER_ABO_COLS}) VALUES ({_KALENDER_ABO_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_KALENDER_ABO_TRIGGERS = (
+    ('trig_kalender_abo_audit_insert', 'INSERT', 'kalender_abo', 'fn_kalender_abo_audit_insert'),
+    ('trig_kalender_abo_audit_update', 'UPDATE', 'kalender_abo', 'fn_kalender_abo_audit_update'),
+)
+
+_KALENDER_ABO_INDEXES = (
+    ("idx_kalender_abo_user_id",     "kalender_abo(user_id)"),
+    ("idx_kalender_abo_deleted_at",  "kalender_abo(deleted_at)"),
+    ("idx_kalender_abo_history_id",  "kalender_abo_history(id)"),
+)
+
+# Höchstens EIN aktives Abo je User: „Link neu erzeugen" widerruft das alte, statt
+# ein zweites danebenzulegen — sonst bliebe ein weitergegebener Link gültig, obwohl
+# der Nutzer ihn für ersetzt hält. Widerrufene Zeilen bleiben als Protokoll liegen.
+_KALENDER_ABO_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_kalender_abo_user "
+    "ON kalender_abo (user_id) WHERE deleted_at IS NULL",
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -2988,6 +3074,7 @@ class Database:
             86: self._migrate_v85_to_v86,
             87: self._migrate_v86_to_v87,
             88: self._migrate_v87_to_v88,
+            89: self._migrate_v88_to_v89,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6519,6 +6606,30 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 88 WHERE id = 1")
 
+    def _migrate_v88_to_v89(self) -> None:
+        """Kalender-Abos (#153): Tabelle + History, Trigger und Indexe anlegen.
+
+        Reines DDL, keine Datenübernahme — Abos entstehen erst, wenn jemand im
+        Profil einen Link erzeugt. DDL/Trigger/Indexe kommen aus denselben
+        Konstanten wie der Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_KALENDER_ABO)
+            cur.execute(_FN_KALENDER_ABO_AUDIT_INSERT)
+            cur.execute(_FN_KALENDER_ABO_AUDIT_UPDATE)
+            for name, event, table, fn in _KALENDER_ABO_TRIGGERS:
+                cur.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
+                cur.execute(
+                    f"CREATE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}()"
+                )
+            for name, target in _KALENDER_ABO_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _KALENDER_ABO_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 89 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7866,6 +7977,9 @@ class Database:
         # Offene Abweichungen aus dem Spielplan-Import (Schema v84) – geteilt
         # mit Migration v83→v84. Steht nach termine (FK auf termine.id).
         cur.execute(_DDL_TERMIN_ABWEICHUNG)
+        # Kalender-Abos (Schema v89, #153): ein ICS-Feed je User, adressiert über
+        # einen gehashten Token. DDL geteilt mit Migration v88→v89.
+        cur.execute(_DDL_KALENDER_ABO)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -8084,6 +8198,8 @@ class Database:
         cur.execute(_FN_SPIELSTAETTE_AUDIT_UPDATE)
         cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_INSERT)
         cur.execute(_FN_TERMIN_ABWEICHUNG_AUDIT_UPDATE)
+        cur.execute(_FN_KALENDER_ABO_AUDIT_INSERT)
+        cur.execute(_FN_KALENDER_ABO_AUDIT_UPDATE)
         cur.execute(_FN_ALIAS_AUDIT_INSERT)
         cur.execute(_FN_ALIAS_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
@@ -8702,6 +8818,7 @@ class Database:
             *_SPIELSTAETTE_TRIGGERS,
             *_MANNSCHAFT_DFBNET_TRIGGERS,
             *_TERMIN_ABWEICHUNG_TRIGGERS,
+            *_KALENDER_ABO_TRIGGERS,
         ]:
             cur.execute(f"""
                 CREATE OR REPLACE TRIGGER {name}
@@ -8829,6 +8946,7 @@ class Database:
             *_SPIELSTAETTE_INDEXES,
             *_MANNSCHAFT_DFBNET_INDEXES,
             *_TERMIN_ABWEICHUNG_INDEXES,
+            *_KALENDER_ABO_INDEXES,
         ]:
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
 
@@ -8856,6 +8974,8 @@ class Database:
         for sql in _MANNSCHAFT_DFBNET_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TERMIN_ABWEICHUNG_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _KALENDER_ABO_UNIQUE_INDEXES:
             cur.execute(sql)
 
     # -----------------------------------
