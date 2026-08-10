@@ -94,6 +94,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useQuasar } from 'quasar'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { useAufgabenStore } from 'src/stores/aufgaben'
@@ -105,6 +106,7 @@ import { useTerminAktionen } from 'src/composables/useTermine'
 
 const auth = useAuthStore()
 const router = useRouter()
+const $q = useQuasar()
 // Geladen wird zentral im MainLayout (auch bei jedem Refresh) – hier nur gelesen.
 const aufgaben = useAufgabenStore()
 
@@ -113,7 +115,15 @@ const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
 const hatTeamkasseZugriff = ref(false)
-const naechsteTermine = ref([])
+const geladeneTermine = ref([])
+
+// Am Desktop stehen die Cards zu zweit nebeneinander (col-md-6) – vier füllen
+// also genau zwei Zeilen. Am Handy steht jede allein, drei sind dort die Grenze,
+// ab der die Kacheln darunter aus dem Blick rutschen (#159). Als computed, damit
+// ein Dreh des Geräts nicht nachladen muss.
+const naechsteTermine = computed(() =>
+  geladeneTermine.value.slice(0, $q.screen.lt.md ? 3 : 4),
+)
 
 const kassenZiel = computed(() =>
   auth.hasPermission('kassen.verwalten') ? 'kassenverwaltung' : 'kassenbuch',
@@ -175,7 +185,7 @@ async function ladeNaechsteTermine() {
   try {
     const von = new Date().toISOString().slice(0, 10)
     const { data } = await api.get('/api/termine/meine', { params: { von } })
-    naechsteTermine.value = data.slice(0, 3)
+    geladeneTermine.value = data.slice(0, 4)
   } catch { /* ignorieren */ }
 }
 

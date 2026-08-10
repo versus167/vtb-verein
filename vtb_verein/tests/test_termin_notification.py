@@ -114,8 +114,8 @@ def gesendet(monkeypatch):
     calls = []
     monkeypatch.setattr(
         NotificationService, 'send_notification_async',
-        staticmethod(lambda user, title, message, push_service=None:
-                     calls.append((user.id, title, message))))
+        staticmethod(lambda user, title, message, push_service=None, url='/':
+                     calls.append((user.id, title, message, url))))
     return calls
 
 
@@ -128,7 +128,7 @@ def test_notify_termin_empfaengerkreis(gesendet):
     db = _StubDB(kader_user_ids=[1, 2, 2, 3, 4], users=users)  # 4 = kein User mehr
     tn.notify_termin(db, _termin(ort='Halle 1'), tn.AKTION_NEU, actor_user_id=1)
     assert [c[0] for c in gesendet] == [2]
-    uid, title, message = gesendet[0]
+    uid, title, message, _url = gesendet[0]
     assert title == 'Neuer Termin – Erste'
     assert 'Training am Mi., 22.07.2026 18:30 (Erste)' in message
     assert 'Ort: Halle 1' in message
@@ -150,7 +150,7 @@ def test_notify_termin_geaendert_mit_diff(gesendet):
     db = _StubDB(kader_user_ids=[2], users={2: SimpleNamespace(id=2, active=True)})
     tn.notify_termin(db, _termin(), tn.AKTION_GEAENDERT, actor_user_id=1,
                      aenderungen=['Ort: Halle 1 → Halle 2'])
-    _, title, message = gesendet[0]
+    _, title, message, _url = gesendet[0]
     assert title == 'Termin geändert – Erste'
     assert 'Änderungen:' in message and '- Ort: Halle 1 → Halle 2' in message
 
@@ -172,7 +172,7 @@ def test_notify_serie(gesendet):
                             beschreibung=None, start_datum='2026-07-21',
                             ende_datum='2026-12-15')
     tn.notify_serie(db, serie, actor_user_id=1)
-    _, title, message = gesendet[0]
+    _, title, message, _url = gesendet[0]
     assert title == 'Neue Terminserie – Erste'
     assert 'Training wöchentlich dienstags um 18:30 Uhr (Erste)' in message
     assert 'Ab Di., 21.07.2026 bis Di., 15.12.2026' in message
@@ -205,7 +205,7 @@ def test_notify_abweichungen_geht_nur_an_betreuer_und_ul(gesendet):
                                         heim_auswaerts='heim')})
     tn.notify_abweichungen(db, 5, [(7, 'beginn')], actor_user_id=1)
     assert sorted(c[0] for c in gesendet) == [2, 3]
-    _, title, message = gesendet[0]
+    _, title, message, _url = gesendet[0]
     assert title == 'Spielplan: Entscheidung nötig – Erste'
     assert 'Eine Ansetzung braucht eine Entscheidung' in message
     assert '- Spiel (H) Beispiel Erste - SV Gegner am Mi., 22.07.2026 18:30: Anstoß' in message
@@ -218,7 +218,7 @@ def test_notify_abweichungen_buendelt_mehrere_felder_je_termin(gesendet):
     tn.notify_abweichungen(db, 5, [(7, 'beginn'), (7, 'ort'), (8, 'entfallen')],
                            actor_user_id=1)
     assert len(gesendet) == 1
-    _, _, message = gesendet[0]
+    _, _, message, _url = gesendet[0]
     assert '2 Ansetzungen brauchen eine Entscheidung' in message
     assert ': Anstoß, Spielort' in message
     assert ': nicht mehr in diesem Auszug' in message
@@ -238,3 +238,45 @@ def test_notify_abweichungen_ueberspringt_verschwundene_termine(gesendet):
     tn.notify_abweichungen(db, 5, [(7, 'beginn')], actor_user_id=1)
     assert len(gesendet) == 1
     assert 'Bitte im Termin entscheiden' in gesendet[0][2]
+
+
+# ------------------------------------------------------- Deep-Link (#158)
+def test_termin_url_zeigt_auf_den_termin():
+    assert tn.termin_url(42) == '/termine?termin=42'
+
+
+def test_termin_url_ohne_id_bleibt_bei_der_liste():
+    assert tn.termin_url() == '/termine'
+    assert tn.termin_url(None) == '/termine'
+
+
+def test_notify_termin_verlinkt_den_termin(gesendet):
+    """Klick auf die Nachricht soll direkt beim Termin landen – dort sitzen die
+    Zusage-Knöpfe, und genau die will man drücken."""
+    db = _StubDB(kader_user_ids=[2], users={2: SimpleNamespace(id=2, active=True)})
+    tn.notify_termin(db, _termin(id=42), tn.AKTION_NEU, actor_user_id=1)
+    assert gesendet[0][3] == '/termine?termin=42'
+
+
+def test_notify_serie_verlinkt_nur_die_liste(gesendet):
+    """Eine Serie hat viele Termine und keinen gemeinten – kein Deep-Link."""
+    db = _StubDB(kader_user_ids=[2], users={2: SimpleNamespace(id=2, active=True)})
+    serie = SimpleNamespace(mannschaft_id=5, typ='training', beginn_zeit='18:30',
+                            ort=None, treffpunkt=None, treffpunkt_zeit=None,
+                            beschreibung=None, start_datum='2026-07-21', ende_datum=None)
+    tn.notify_serie(db, serie, actor_user_id=1)
+    assert gesendet[0][3] == '/termine'
+
+
+def test_notify_abweichungen_verlinkt_einzelnen_termin(gesendet):
+    db = _StubAbwDB(verwalter=[2], users={2: SimpleNamespace(id=2, active=True)},
+                    termine={7: _termin(id=7)})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn'), (7, 'ort')], actor_user_id=1)
+    assert gesendet[0][3] == '/termine?termin=7'
+
+
+def test_notify_abweichungen_bei_mehreren_terminen_ohne_deeplink(gesendet):
+    db = _StubAbwDB(verwalter=[2], users={2: SimpleNamespace(id=2, active=True)},
+                    termine={7: _termin(id=7), 8: _termin(id=8)})
+    tn.notify_abweichungen(db, 5, [(7, 'beginn'), (8, 'ort')], actor_user_id=1)
+    assert gesendet[0][3] == '/termine'

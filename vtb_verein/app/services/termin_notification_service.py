@@ -151,15 +151,28 @@ def _detail_zeilen(t) -> list[str]:
 
 
 # ----------------------------------------------------------------------- Versand
+def termin_url(termin_id: Optional[int] = None) -> str:
+    """Ziel für den Klick auf die Nachricht (#158).
+
+    Mit ID direkt auf den Termin — dort stecken die Zusage-Knöpfe, und genau die
+    will man drücken, wenn einen die Meldung erreicht. Ohne ID (Serie: viele
+    Termine, keiner davon „der" gemeinte) bleibt es bei der Liste.
+    Pendant für Tickets: TicketService._ticket_url.
+    """
+    return f"/termine?termin={termin_id}" if termin_id else "/termine"
+
+
 def _mannschaft_name(db, mannschaft_id: int) -> str:
     mannschaft = db.get_mannschaft(mannschaft_id)
     return mannschaft.name if mannschaft else f"Mannschaft {mannschaft_id}"
 
 
 def _send(db, user_ids: list[int], exclude_user_id: Optional[int],
-          title: str, message: str) -> None:
+          title: str, message: str, url: str = '/') -> None:
     """Lädt die Empfänger im Request-Thread und stößt den Versand im
-    Hintergrund an; der Auslöser selbst und inaktive User werden übersprungen."""
+    Hintergrund an; der Auslöser selbst und inaktive User werden übersprungen.
+    `url` ist das Ziel beim Klick auf die Nachricht (Push-Deep-Link bzw. Link
+    in der E-Mail)."""
     from app.services.notification_service import NotificationService
     for uid in dict.fromkeys(user_ids):
         if uid == exclude_user_id:
@@ -167,7 +180,7 @@ def _send(db, user_ids: list[int], exclude_user_id: Optional[int],
         user = db.users.get_by_id(uid)
         if user and user.active:
             NotificationService.send_notification_async(user, title, message,
-                                                        push_service=db.push)
+                                                        push_service=db.push, url=url)
 
 
 def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
@@ -188,7 +201,8 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
         zeilen += ["", "Der abgesagte Termin findet wieder statt."]
     user_ids = db.termine.list_kader_user_ids(termin.mannschaft_id, termin.beginn[:10])
     user_ids += db.termin_zusagen.list_user_ids_mit_zusage(termin.id)   # Gäste
-    _send(db, user_ids, actor_user_id, title, "\n".join(zeilen))
+    _send(db, user_ids, actor_user_id, title, "\n".join(zeilen),
+          url=termin_url(termin.id))
 
 
 def notify_abweichungen(db, mannschaft_id: int, fragen: list[tuple],
@@ -220,8 +234,12 @@ def notify_abweichungen(db, mannschaft_id: int, fragen: list[tuple],
         zeilen.append(f"- {termin_titel(termin, m_name)} am {format_wandzeit(termin.beginn)}"
                       f": {', '.join(felder)}")
     zeilen += ["", "Bitte im Termin entscheiden, welcher Stand gilt."]
+    # Betrifft es genau einen Termin, führt der Klick dorthin; bei mehreren gäbe
+    # es kein richtiges Ziel, dann bleibt es bei der Liste.
+    betroffene = {t for t, _ in fragen}
     _send(db, empfaenger, actor_user_id,
-          f"Spielplan: Entscheidung nötig – {m_name}", "\n".join(zeilen))
+          f"Spielplan: Entscheidung nötig – {m_name}", "\n".join(zeilen),
+          url=termin_url(next(iter(betroffene)) if len(betroffene) == 1 else None))
 
 
 def _fragen_je_termin(db, fragen: list[tuple]) -> list[tuple]:
@@ -250,4 +268,5 @@ def notify_serie(db, serie, actor_user_id: Optional[int]) -> None:
         zeilen.append(f"Beschreibung: {serie.beschreibung}")
     stichtag = max(serie.start_datum, date.today().isoformat())
     user_ids = db.termine.list_kader_user_ids(serie.mannschaft_id, stichtag)
-    _send(db, user_ids, actor_user_id, f"Neue Terminserie – {m_name}", "\n".join(zeilen))
+    _send(db, user_ids, actor_user_id, f"Neue Terminserie – {m_name}", "\n".join(zeilen),
+          url=termin_url())
