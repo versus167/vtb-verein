@@ -451,6 +451,50 @@ Eine **Credential→Mitglied-Zuordnung für alle Typen**, analog zur Chip→Mitg
 **Aufwand:** App-/Gateway-Auflösung klein (Daten liegen schon vor); Fingerprint/Passcode/
 eKey mittel–groß (Mapping + UI + Resolver + Migration + Tests). Eigener Branch.
 
+## Externes Schloss ohne Cloud-Anschluss (umgesetzt, Schema v90)
+
+Das Tor an der Einfahrt hängt an einer **eigenen Anlage**, wird aber mit **denselben
+Chips** geöffnet. Es gehört fachlich in dieselbe Übersicht wie die TTLock-Schlösser –
+nur kommt sein Log nicht per Sync, sondern als CSV-Export aus der Fremdanlage:
+
+```
+Unlock Account,Unlock Type, Lock Name,Unlock Time
+Chip8,Karte entsperren,Tor Einfahrt,2026-08-10 17:47:05
+```
+
+**Entscheidung: eine Tabelle, zwei Herkünfte.** `tuer_schloss.quelle` und
+`tuer_zutritt_log.quelle` (`ttlock` | `extern`) trennen die Welten, statt ein zweites
+Log daneben zu stellen – Gesamt-Log, Schloss-Protokoll, Chip-Nutzung und „Mein Zugang"
+funktionieren dadurch unverändert. Dafür wurden `ttlock_lock_id` und `ttlock_record_id`
+optional; alles Bestehende bekam per DEFAULT `quelle='ttlock'`.
+
+- **Dedupe** ohne recordId: partieller Unique-Index über
+  `(schloss_id, lock_date, COALESCE(extern_konto,''))` für `quelle='extern'` – derselbe
+  Export darf beliebig oft erneut eingelesen werden (auch überlappende Zeiträume).
+- **Personenbezug**: Das Konto der Fremdanlage (`Unlock Account`) wird über
+  `schluessel_chip.externe_kennung` → Bezeichnung → Kartennummer auf Chip und Mitglied
+  aufgelöst (case-insensitiv, gepflegte Kennung gewinnt). Unbekannte Konten stehen im
+  Import-Bericht; sobald jemand die Kennung am Chip pflegt, werden **früher importierte
+  Zeilen nachträglich zugeordnet** (`resolve_extern_konto`).
+- **Zeit**: Die Anlage schreibt naive Ortszeit; gespeichert wird wie überall UTC-ISO
+  (`Europe/Berlin`, in der doppelten Stunde der Zeitumstellung gilt Sommerzeit).
+- **Cloud-Operationen sind gesperrt**: Fernöffnen/-verriegeln, Anlernen und alle Syncs
+  überspringen Schlösser ohne lockId (`list_all(nur_ttlock=True)`, `_cloud_schloss`).
+  Das Schloss-Detail zeigt statt leerer Gateway-/Akku-/Credential-Kästen einen Hinweis.
+- **Rechte**: `POST /api/schliessanlage/import` verlangt `schliessanlage.verwalten`
+  **und** `schliessanlage.protokoll`, beides **vereinsweit**. Verwalten, weil der
+  Import ein Schloss anlegen kann und Bewegungsdaten schreibt; Protokoll, weil der
+  **Bericht selbst eine Nutzungsauswertung ist** (Person + Anzahl je Konto, Zeitraum
+  je Schloss) – anders als bei `/sync`, dessen Antwort nur Zählwerte und Alarme
+  enthält, käme man sonst am Protokollrecht vorbei an genau die Daten, die es
+  schützt. Sichtbarkeit des Buttons über das eigene Flag `darf_import` aus `/status`,
+  damit die Regel nicht im Frontend nachgebaut wird. Ohne `commit` reine Vorschau
+  („Vorschau == Aktion").
+
+Ein unbekannter `Lock Name` wird beim Lauf automatisch als externes Schloss angelegt
+(die Vorschau kündigt das an); Standort/Abteilung/Notiz danach normal im
+Stammdaten-Dialog pflegbar. Code: `app/services/zutritt_import_service.py`.
+
 ## Offene Punkte (vor/während Phase 1 klären)
 
 - ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29, umgesetzt

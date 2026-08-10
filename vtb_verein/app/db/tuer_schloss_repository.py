@@ -1,11 +1,12 @@
-"""Repository für das gespiegelte Schloss-/Tür-Inventar (aus v3/lock/list)."""
+"""Repository für das Schloss-/Tür-Inventar: gespiegelt aus v3/lock/list
+(`quelle='ttlock'`) oder extern angelegt (`quelle='extern'`, kein Cloud-Anschluss)."""
 from typing import Optional
 
-from app.models.schliessanlage import TuerSchloss
+from app.models.schliessanlage import TuerSchloss, QUELLE_EXTERN
 from app.db.base_repository import BaseRepository
 
 _SELECT = """
-    SELECT s.id, s.ttlock_lock_id, s.name, s.standort, s.abteilung_id,
+    SELECT s.id, s.ttlock_lock_id, s.quelle, s.name, s.standort, s.abteilung_id,
            s.ttlock_gateway_id, s.gateway_online, s.lock_mac, s.akku_prozent, s.akku_stand_at,
            s.aktiv, s.notiz, s.letzter_log_serverdate, s.letztes_event_at, s.letztes_event_type,
            (SELECT MAX(sl.geaendert_am) FROM tuer_schloss_status_log sl
@@ -17,7 +18,7 @@ _SELECT = """
               LEFT JOIN mitglied m ON m.id = l.mitglied_id
               LEFT JOIN schluessel_chip c ON c.id = l.chip_id
               WHERE l.schloss_id = s.id
-              ORDER BY l.server_date DESC NULLS LAST
+              ORDER BY l.server_date DESC NULLS LAST, l.lock_date DESC NULLS LAST, l.id DESC
               LIMIT 1) AS letztes_event_wer,
            ab.name AS abteilung_name,
            s.version, s.created_at, s.created_by, s.updated_at, s.updated_by,
@@ -46,13 +47,48 @@ class TuerSchlossRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
-    def list_all(self, *, nur_aktive: bool = False) -> list[TuerSchloss]:
+    def find_extern_by_name(self, name: str) -> Optional[TuerSchloss]:
+        """Externes Schloss anhand seines Namens finden (Import: 'Lock Name' aus dem
+        Fremd-Export). Case-insensitiv, damit ein Export mit anderer Schreibweise
+        kein zweites Schloss erzeugt."""
+        if not (name or "").strip():
+            return None
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE s.quelle = %s AND lower(btrim(s.name)) = lower(btrim(%s)) "
+                          "AND s.deleted_at IS NULL ORDER BY s.id LIMIT 1",
+                (QUELLE_EXTERN, name),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
+    def list_all(self, *, nur_aktive: bool = False,
+                 nur_ttlock: bool = False) -> list[TuerSchloss]:
+        """`nur_ttlock` blendet externe Schlösser aus – die Cloud-Syncs dürfen sie
+        nicht anfassen (sie haben keine lockId)."""
         where = "WHERE s.deleted_at IS NULL"
         if nur_aktive:
             where += " AND s.aktiv = TRUE"
+        if nur_ttlock:
+            where += " AND s.ttlock_lock_id IS NOT NULL"
         with self.cursor() as cur:
             cur.execute(_SELECT + where + " ORDER BY s.name, s.id")
             return [_map(r) for r in cur.fetchall()]
+
+    def create_extern(self, *, name: str, standort: Optional[str] = None,
+                      notiz: Optional[str] = None, by: str = 'SYSTEM') -> TuerSchloss:
+        """Externes Schloss anlegen (ohne lockId/Gateway). Entsteht beim Import eines
+        Fremd-Logs, dessen 'Lock Name' noch kein Schloss kennt."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO tuer_schloss (quelle, name, standort, notiz, created_by, updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id
+                """,
+                (QUELLE_EXTERN, name, standort, notiz, by, by),
+            )
+            new_id = cur.fetchone()['id']
+        return self.get(new_id)
 
     def upsert_inventory(self, *, ttlock_lock_id: int, name: str,
                          lock_mac: Optional[str], ttlock_gateway_id: Optional[int],
@@ -133,6 +169,25 @@ class TuerSchlossRepository(BaseRepository):
                 WHERE id=%s
                 """,
                 (serverdate, letztes_event_at, letztes_event_type, by, schloss_id),
+            )
+
+    def update_letztes_event(self, schloss_id: int, *, letztes_event_at: Optional[str],
+                             letztes_event_type: Optional[int], by: str = 'SYSTEM') -> None:
+        """Status-Snapshot eines externen Schlosses fortschreiben (kein Sync-Cursor –
+        dort gibt es kein serverDate). Nur vorwärts und nur bei echter Änderung: sonst
+        erzeugte jeder Import-Lauf einen No-Op-Version-Bump samt History-Zeile."""
+        if not letztes_event_at:
+            return
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tuer_schloss
+                SET letztes_event_at = %s, letztes_event_type = %s,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE id=%s AND deleted_at IS NULL
+                  AND (letztes_event_at IS NULL OR letztes_event_at < %s)
+                """,
+                (letztes_event_at, letztes_event_type, by, schloss_id, letztes_event_at),
             )
 
     def update_stammdaten(self, s: TuerSchloss, updated_by: str) -> Optional[TuerSchloss]:

@@ -5,7 +5,8 @@ from app.models.schliessanlage import SchluesselChip
 from app.db.base_repository import BaseRepository
 
 _SELECT = """
-    SELECT c.id, c.kartennummer, c.bezeichnung, c.mitglied_id, c.aufbewahrungsort, c.status,
+    SELECT c.id, c.kartennummer, c.bezeichnung, c.externe_kennung, c.mitglied_id,
+           c.aufbewahrungsort, c.status,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            m.mitgliedsnummer AS mitgliedsnummer,
            c.version, c.created_at, c.created_by, c.updated_at, c.updated_by,
@@ -37,6 +38,36 @@ class SchluesselChipRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
+    def find_active_by_externes_konto(self, konto: str) -> Optional[SchluesselChip]:
+        """Kontoname aus einer Fremdanlage ('Unlock Account') → Chip.
+
+        Drei Stufen in dieser Reihenfolge: gepflegte `externe_kennung` (die explizite
+        Zuordnung gewinnt immer), sonst die Chip-Bezeichnung, sonst die Kartennummer.
+        Die beiden Rückfälle greifen den Normalfall ab, dass die Fremdanlage mit
+        denselben Namen bespielt wurde, ohne dass jemand etwas nachpflegen muss.
+        Vergleich case-insensitiv und ohne Randleerzeichen.
+        """
+        if not (konto or "").strip():
+            return None
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + """
+                WHERE c.deleted_at IS NULL
+                  AND lower(btrim(%s)) IN (lower(btrim(c.externe_kennung)),
+                                           lower(btrim(c.bezeichnung)),
+                                           lower(btrim(c.kartennummer)))
+                ORDER BY CASE
+                           WHEN lower(btrim(c.externe_kennung)) = lower(btrim(%s)) THEN 0
+                           WHEN lower(btrim(c.bezeichnung))     = lower(btrim(%s)) THEN 1
+                           ELSE 2
+                         END, c.id
+                LIMIT 1
+                """,
+                (konto, konto, konto),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
     def list_all(self) -> list[SchluesselChip]:
         with self.cursor() as cur:
             cur.execute(_SELECT + " WHERE c.deleted_at IS NULL ORDER BY c.bezeichnung, c.id")
@@ -54,12 +85,12 @@ class SchluesselChipRepository(BaseRepository):
             cur.execute(
                 """
                 INSERT INTO schluessel_chip
-                    (kartennummer, bezeichnung, mitglied_id, aufbewahrungsort, status,
-                     created_by, updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                    (kartennummer, bezeichnung, externe_kennung, mitglied_id,
+                     aufbewahrungsort, status, created_by, updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
                 """,
-                (c.kartennummer, c.bezeichnung, c.mitglied_id, c.aufbewahrungsort,
-                 c.status, created_by, created_by),
+                (c.kartennummer, c.bezeichnung, c.externe_kennung, c.mitglied_id,
+                 c.aufbewahrungsort, c.status, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -69,12 +100,13 @@ class SchluesselChipRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE schluessel_chip
-                SET bezeichnung=%s, mitglied_id=%s, aufbewahrungsort=%s, status=%s,
+                SET bezeichnung=%s, externe_kennung=%s, mitglied_id=%s,
+                    aufbewahrungsort=%s, status=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND version=%s AND deleted_at IS NULL
                 """,
-                (c.bezeichnung, c.mitglied_id, c.aufbewahrungsort, c.status,
-                 updated_by, c.id, c.version),
+                (c.bezeichnung, c.externe_kennung, c.mitglied_id, c.aufbewahrungsort,
+                 c.status, updated_by, c.id, c.version),
             )
             if cur.rowcount == 0:
                 return None
