@@ -495,6 +495,39 @@ Ein unbekannter `Lock Name` wird beim Lauf automatisch als externes Schloss ange
 (die Vorschau kündigt das an); Standort/Abteilung/Notiz danach normal im
 Stammdaten-Dialog pflegbar. Code: `app/services/zutritt_import_service.py`.
 
+## Auswertung: „wer, wann, welche Tür" verdichtet (umgesetzt, #161)
+
+Vierter Reiter neben Schlösser/Chips/Log. Kein neues Schema – reine Aggregation über
+`tuer_zutritt_log`, hinter demselben Recht wie das Log (`schliessanlage.protokoll`) und
+mit demselben Abteilungs-Scope: verdichtete Bewegungsdaten sind dieselbe DSGVO-Klasse
+wie die Einzelzeilen, nur bequemer lesbar.
+
+- **Grundmenge „Öffnung"**: Positivliste `OEFFNUNG_RECORD_TYPES` (App, Gateway,
+  Passcode, IC-Karte, Fingerprint, Armband, mech. Schlüssel, von innen, Fernbedienung)
+  plus Fremdanlagen-Zeilen ohne erkannten Typ, jeweils nur mit `erfolg IS NOT FALSE`.
+  Verriegeln, Türmagnet, Auto-Lock und Alarme zählen bewusst nicht mit — sie würden die
+  Rangliste verdoppeln. Fehlversuche und Alarme erscheinen separat als Randnotiz.
+- **Ortszeit ist Pflicht**: `lock_date` steht als UTC-ISO in der Spalte; Stunde,
+  Wochentag und „früheste Öffnung" ergeben nur in `Europe/Berlin` Sinn. Die Umrechnung
+  passiert einmal in SQL (`AT TIME ZONE`), das Ergebnis geht als fertiger String raus –
+  so kann im Frontend niemand ein zweites Mal umrechnen.
+- **Aufteilung**: SQL-Aggregate im Repository (`auswertung()`), Aufbereitung im
+  `zutritt_auswertung_service` (aufgefüllte Achsen, Anteile, Labels, Auszeichnungen),
+  dünner Endpunkt `GET /api/schliessanlage/auswertung?tage=30|90|365|0`.
+- **Auszeichnungen** (Frühaufsteher, Nachteule, Stammgast, meistgenutzte Tür,
+  Wochenend-Held, Nachtschicht, Schlüsselbund, Rekordtag, längste Serie) erscheinen nur,
+  wenn es sie wirklich gibt – ein leerer Zeitraum zeigt keine leeren Medaillen.
+- **Verlauf** wird nach Spannweite gebündelt (bis 45 Tage täglich, bis 200 wöchentlich,
+  darüber monatlich) und beginnt frühestens beim ersten Zutritt, damit „1 Jahr" bei
+  einem Monat Daten keine elf leeren Monate zeigt.
+- Diagramme sind reines CSS (keine Chart-Bibliothek): Säulen für Verlauf/Uhrzeit/
+  Wochentag, liegende Balken für die Ranglisten – Balkenfarbe je Theme, in „VTB" gelb
+  auf blauer Karte.
+
+Aktuell 13 kleine Aggregat-Queries pro Aufruf über die volle Log-Tabelle. Bei ein paar
+tausend Zeilen unkritisch; wenn das Log irgendwann sechsstellig wird, wäre ein
+Ausdrucks-Index auf `(lock_date::timestamptz)` der erste Hebel.
+
 ## Offene Punkte (vor/während Phase 1 klären)
 
 - ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29, umgesetzt

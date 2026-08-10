@@ -11,6 +11,8 @@ Master-Detail:
 - Import: Zutrittslog einer Fremdanlage (Schloss ohne TTLock-Anschluss) als CSV
   einlesen – `schliessanlage.verwalten` UND `schliessanlage.protokoll`, beides
   vereinsweit (der Import-Bericht ist selbst eine Nutzungsauswertung).
+- Auswertung: aggregierte Nutzungsstatistik über die sichtbaren Schlösser, hinter
+  `schliessanlage.protokoll` – dieselben Bewegungsdaten wie das Log, nur verdichtet.
 
 Bewegungsdaten (Logs) sind DSGVO-sensibel → eigenes Recht `schliessanlage.protokoll`.
 Chip-/Schloss-Stammdatenpflege ist reine DB-Arbeit (kein Cloud-Write in Phase 1).
@@ -24,6 +26,7 @@ from pydantic import BaseModel
 from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.zutritt_import_service import ImportFehler, run_import
+from app.services import zutritt_auswertung_service
 from app.services.ttlock_client import TTLockError
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_schloss_ids, darf_schloss
@@ -313,6 +316,22 @@ def gesamt_log(user: CurrentUser, db: DB, limit: int = 100):
     visible = visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_PROTOKOLL)
     return db.tuer_zutritt_logs.list_neueste(
         limit=limit, schloss_ids=None if visible is None else list(visible))
+
+
+@router.get("/auswertung")
+def auswertung(user: CurrentUser, db: DB, tage: int = 90):
+    """Nutzungsstatistik über die sichtbaren Schlösser (#161).
+
+    Verdichtete Bewegungsdaten – also dieselbe DSGVO-Klasse wie das Log und hinter
+    demselben Recht; der Abteilungs-Scope greift identisch. `tage` = Länge des
+    Zeitraums, 0 bedeutet „seit jeher"; andere Werte werden auf die Auswahl der
+    Oberfläche gerundet, damit die Aggregation kalkulierbar bleibt.
+    """
+    _require(user, Permission.SCHLIESSANLAGE_PROTOKOLL, "Zutrittsprotokoll einsehen")
+    if tage not in zutritt_auswertung_service.ZEITRAEUME:
+        tage = 90
+    visible = visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_PROTOKOLL)
+    return zutritt_auswertung_service.bericht(db, tage=tage, schloss_ids=visible)
 
 
 @router.get("/schloesser/{schloss_id}")
