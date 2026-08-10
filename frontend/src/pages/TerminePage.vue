@@ -30,6 +30,8 @@
     <!-- Card-Liste (nach beginn sortiert; Datum steckt in der Card) -->
     <div class="column q-gutter-md">
       <TerminCard v-for="t in termine" :key="t.id" :termin="t"
+        :id="`termin-${t.id}`"
+        :class="{ 'termin--hervorgehoben': hervorgehoben === t.id }"
         :darf-verwalten="kannVerwalten(t)"
         @bearbeiten="openEdit" @absagen="setStatus($event, 'absagen')"
         @reaktivieren="setStatus($event, 'reaktivieren')" @loeschen="confirmDelete"
@@ -47,7 +49,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
@@ -59,6 +62,8 @@ import { useTerminAktionen } from 'src/composables/useTermine'
 
 const $q = useQuasar()
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
 const teams = ref([])
 const termine = ref([])
@@ -117,6 +122,37 @@ async function loadTermine() {
   }
 }
 
+// ── Deep-Link aus einer Benachrichtigung: /termine?termin=NN (#158) ──
+// Kein eigener Dialog: Die Zusage-Knöpfe sitzen in der Card selbst. Es genügt
+// also, zur richtigen Card zu springen und sie kurz zu markieren – dann steht
+// der Finger direkt über „Zusage"/„Absage".
+const hervorgehoben = ref(null)
+
+async function zeigeTerminAusQuery() {
+  const id = Number(route.query.termin)
+  if (!id) return
+  // Query in jedem Fall entfernen: Sonst springt jeder Reload erneut – und die
+  // Meldung unten käme bei jedem Auto-Refresh wieder.
+  const rest = { ...route.query }
+  delete rest.termin
+  router.replace({ query: rest })
+
+  if (!termine.value.some(t => t.id === id)) {
+    // Kann passieren, wenn der Termin inzwischen vorbei ist (Filter „ab heute")
+    // oder zu einem Team gehört, dessen Tab gerade nicht offen ist.
+    $q.notify({ type: 'info', message: 'Der Termin steht nicht in dieser Liste – '
+      + 'ggf. „Vergangene anzeigen" einschalten oder das Team-Tab wechseln.' })
+    return
+  }
+  hervorgehoben.value = id
+  await nextTick()
+  document.getElementById(`termin-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Die Markierung ist ein Hinweis, kein Zustand – nach ein paar Sekunden weg.
+  setTimeout(() => { if (hervorgehoben.value === id) hervorgehoben.value = null }, 4000)
+}
+
+watch(() => route.query.termin, (v) => { if (v) zeigeTerminAusQuery() })
+
 async function load() {
   try {
     const { data } = await api.get('/api/termine/mannschaften')
@@ -131,7 +167,12 @@ async function load() {
   await loadTermine()
 }
 usePageRefresh(load)
-onMounted(load)
+// Der Deep-Link wird genau einmal ausgewertet – nach dem ersten Laden. Über
+// usePageRefresh liefe er sonst bei jedem Auto-Refresh erneut.
+onMounted(async () => {
+  await load()
+  await zeigeTerminAusQuery()
+})
 watch(tab, loadTermine)
 // Wird der Haken gesetzt, während ein fremdes Team offen ist, verschwindet dessen
 // Tab – ohne Rücksprung bliebe eine Liste stehen, zu der kein Tab mehr gehört.
@@ -160,3 +201,22 @@ const { setStatus, confirmDelete } = useTerminAktionen(loadTermine)
 // ── Terminserien ──────────────────────────────────────────
 const serienOffen = ref(false)
 </script>
+
+<style lang="scss" scoped>
+/* Ziel eines Deep-Links aus einer Benachrichtigung (#158): kurz sichtbar machen,
+   welche Card gemeint ist. Der Akzentton trägt in allen drei Themes (er ist die
+   Vereinsfarbe, nicht themenabhängig); die Animation läuft aus, damit die
+   Markierung ein Hinweis bleibt und kein Dauerzustand wird. */
+.termin--hervorgehoben {
+  animation: termin-blick 4s ease-out;
+}
+
+@keyframes termin-blick {
+  0%, 60% {
+    box-shadow: 0 0 0 3px rgba($akzent-rgb, 1);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba($akzent-rgb, 0);
+  }
+}
+</style>
