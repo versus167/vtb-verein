@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.ul_stunden import (
-    ULAbrechnung, ULStunde, STATUS_ENTWURF, STATUS_EINGEREICHT,
+    ULAbrechnung, ULStunde, STATUS_ENTWURF, STATUS_EINGEREICHT, STATUS_BESTAETIGT,
 )
 from app.services.ul_stunden_service import ULStundenService
 
@@ -262,3 +262,69 @@ class TestLetzteVorlage:
         out = _svc(_FakeRepo(vorlage_quelle=None)).letzte_vorlage(
             mitglied_id=10, abteilung_id=5, exclude_id=1)
         assert out == []
+
+
+class TestBelegPdf:
+    """Der Stundennachweis wird an zwei Stellen gebraucht – Einzeldownload in der App
+    und Beleg-Beilage im Fibu-Export – und deshalb im Service gebaut."""
+
+    @staticmethod
+    def _svc_mit(abrechnung, mitglied=None, users=None):
+        repo = _FakeRepo(stunden=[_stunde('2026-06-02')])
+        db = SimpleNamespace(
+            ul_abrechnungen=repo,
+            ul_saetze=SimpleNamespace(resolve=lambda *a, **k: None),
+            get_mitglied=lambda mid: mitglied,
+            get_user_by_username=lambda name: (users or {}).get(name),
+            get_mitglied_by_user_id=lambda uid: mitglied,
+        )
+        return ULStundenService(db)
+
+    @staticmethod
+    def _abgefangen(monkeypatch):
+        """Fängt den Aufruf des PDF-Bauers ab – geprüft wird, was er zu sehen bekommt."""
+        gesehen = {}
+
+        def _fake(**kw):
+            gesehen.update(kw)
+            return b'%PDF-fake'
+
+        monkeypatch.setattr('app.services.ul_stunden_service.erstelle_stundennachweis_pdf',
+                            _fake)
+        return gesehen
+
+    def test_bestaetigter_beleg_nutzt_den_eingefrorenen_lizenz_snapshot(self, monkeypatch):
+        """Eine später am Mitglied geänderte Lizenz darf den fertigen Beleg nicht
+        rückwirkend verändern (#63)."""
+        gesehen = self._abgefangen(monkeypatch)
+        a = _abr(status=STATUS_BESTAETIGT)
+        a.trainerlizenz_nr, a.qualifikation = 'ALT-1', 'B-Lizenz'
+        mitglied = SimpleNamespace(trainerlizenz_nr='NEU-9', qualifikation='C-Lizenz')
+        self._svc_mit(a, mitglied).beleg_pdf(a, verein={'name': 'TV'})
+        assert gesehen['trainerlizenz_nr'] == 'ALT-1'
+        assert gesehen['qualifikation'] == 'B-Lizenz'
+
+    def test_entwurf_zieht_die_lizenz_live_vom_mitglied(self, monkeypatch):
+        gesehen = self._abgefangen(monkeypatch)
+        a = _abr(status=STATUS_ENTWURF)
+        mitglied = SimpleNamespace(trainerlizenz_nr='NEU-9', qualifikation='C-Lizenz')
+        self._svc_mit(a, mitglied).beleg_pdf(a, verein={'name': 'TV'})
+        assert gesehen['trainerlizenz_nr'] == 'NEU-9'
+
+    def test_erfasser_erscheint_mit_klarnamen(self, monkeypatch):
+        gesehen = self._abgefangen(monkeypatch)
+        a = _abr(status=STATUS_BESTAETIGT)
+        a.eingereicht_von = 'awagner'
+        mitglied = SimpleNamespace(vorname='Annett', nachname='Wagner',
+                                   trainerlizenz_nr=None, qualifikation=None)
+        svc = self._svc_mit(a, mitglied, users={'awagner': SimpleNamespace(id=3)})
+        svc.beleg_pdf(a, verein={'name': 'TV'})
+        assert gesehen['eingereicht_von'] == 'Annett Wagner'
+
+    def test_ohne_mitglied_bleibt_der_beleg_baubar(self, monkeypatch):
+        """Ein fehlendes Mitglied darf den Beleg nicht sprengen – im Fibu-Export
+        hinge sonst der ganze Lauf am Stammdatensatz."""
+        gesehen = self._abgefangen(monkeypatch)
+        a = _abr(status=STATUS_ENTWURF)
+        self._svc_mit(a, mitglied=None).beleg_pdf(a, verein={'name': 'TV'})
+        assert gesehen['trainerlizenz_nr'] is None
