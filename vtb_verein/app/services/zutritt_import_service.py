@@ -245,6 +245,7 @@ def _log_zeile(z: Zeile, schloss_id: int, chip) -> TuerZutrittLog:
         key_name=z.konto or None,    # Anzeige-Rückfall, solange kein Chip zugeordnet ist
         chip_id=chip.id if chip else None,
         mitglied_id=chip.mitglied_id if chip else None,
+        user_id=chip.user_id if chip else None,
         lock_date=z.zeitpunkt,
         raw=z.roh,
     )
@@ -328,6 +329,7 @@ def run_import(db, daten: bytes, *, commit: bool = False,
         for konto, chip in chips.items():
             if chip is not None:
                 bericht.nachgezogen += db.tuer_zutritt_logs.resolve_extern_konto(
-                    konto, chip_id=chip.id, mitglied_id=chip.mitglied_id)
+                    konto, chip_id=chip.id, mitglied_id=chip.mitglied_id,
+                    user_id=chip.user_id)
         logger.info("Fremd-Log-Import: %s", bericht.zusammenfassung)
     return bericht

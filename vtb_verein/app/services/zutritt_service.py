@@ -600,6 +600,10 @@ class ZutrittService:
                     if credential and rt in IC_CARD_RECORD_TYPES:
                         chip = self.chip_repo.find_active_by_kartennummer(credential)
                     mitglied_id = chip.mitglied_id if chip else None
+                    # Inhaber ohne Mitgliedsdatensatz: genauso festhalten wie das
+                    # Mitglied, damit die Zeile auch nach einer Chip-Weitergabe noch
+                    # sagt, wer damals aufgeschlossen hat.
+                    user_id = chip.user_id if chip else None
                     # App-/Gateway-Fernöffnung (v3/lock/unlock) → auslösenden VTB-User per
                     # access_log-Korrelation auf ein Mitglied auflösen (#66, Teil B). Nur wenn
                     # nicht ohnehin schon über eine IC-Karte aufgelöst.
@@ -613,7 +617,7 @@ class ZutrittService:
                         credential=credential, key_name=r.get("keyName"),
                         ttlock_username=r.get("username"),
                         chip_id=chip.id if chip else None,
-                        mitglied_id=mitglied_id,
+                        mitglied_id=mitglied_id, user_id=user_id,
                         lock_date=_ms_to_iso(r.get("lockDate")),
                         server_date=r.get("serverDate"), raw=r,
                     )):

@@ -77,12 +77,12 @@ class FakeLogRepo:
         self.rows.append(log)
         return True
 
-    def resolve_extern_konto(self, konto, *, chip_id, mitglied_id):
+    def resolve_extern_konto(self, konto, *, chip_id, mitglied_id, user_id=None):
         treffer = [r for r in self.rows
                    if r.chip_id is None
                    and (r.extern_konto or '').strip().lower() == konto.strip().lower()]
         for r in treffer:
-            r.chip_id, r.mitglied_id = chip_id, mitglied_id
+            r.chip_id, r.mitglied_id, r.user_id = chip_id, mitglied_id, user_id
         self.nachgezogen.append((konto, len(treffer)))
         return len(treffer)
 

@@ -72,7 +72,8 @@ def _konto_nachziehen(db, chip) -> int:
         treffer = db.schluessel_chips.find_active_by_externes_konto(kandidat)
         if treffer and treffer.id == chip.id:
             gesamt += db.tuer_zutritt_logs.resolve_extern_konto(
-                kandidat, chip_id=chip.id, mitglied_id=chip.mitglied_id)
+                kandidat, chip_id=chip.id, mitglied_id=chip.mitglied_id,
+                user_id=chip.user_id)
     return gesamt
 
 
@@ -230,6 +231,11 @@ def mein_zugang(user: CurrentUser, db: DB):
     Chips erreichen einen über zwei Wege: das verknüpfte Mitglied oder – ohne
     Mitgliedsdatensatz – direkt das Benutzerkonto. `verknuepft` meint weiterhin die
     Mitgliedsverknüpfung, sagt aber nichts mehr darüber, ob es hier etwas zu sehen gibt.
+
+    Die Zutritte kommen ausschließlich über die in der Log-Zeile festgehaltene Person
+    (`mitglied_id`/`user_id`), nie über die heutigen Chips: ein weitergegebener Chip
+    würde sonst die Bewegungsdaten seines Vorbesitzers an den neuen Inhaber ausliefern
+    – und zwar an dieser Stelle ohne jedes Protokoll-Recht.
     """
     app_ber = db.tuer_app_berechtigungen.list_for_user(user.id)
     mitglied = db.get_mitglied_by_user_id(user.id)
@@ -246,7 +252,7 @@ def mein_zugang(user: CurrentUser, db: DB):
         "app_berechtigungen": app_ber,
         "zutritte": db.tuer_zutritt_logs.list_selbstauskunft(
             mitglied_id=mitglied.id if mitglied else None,
-            chip_ids=tuple(c.id for c in chips), limit=50),
+            user_id=user.id, limit=50),
     }
 
 
