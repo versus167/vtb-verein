@@ -19,11 +19,17 @@
     <q-banner dense rounded class="bg-blue-1 text-blue-10 q-mb-md">
       <template #avatar><q-icon name="visibility" color="blue-10" /></template>
       <b>Vorschau – es wird nichts gelöscht.</b>
-      Die Tabelle zeigt, was ein späterer Bereinigungslauf <i>entfernen würde</i>:
-      gelöschte (im Papierkorb liegende) Einträge, die alt genug und von nichts mehr
-      abhängig sind. Die Werte je Bereich sind einstellbar; ohne eigenen Wert gilt der
-      Standard. Orange markierte Bereiche (z.&nbsp;B. „Vergangene Termine") werden nach
-      Alter zunächst nur <i>in den Papierkorb verschoben</i> und bleiben wiederherstellbar.
+      Die Tabelle zeigt, was ein späterer Bereinigungslauf <i>entfernen würde</i>. Die
+      Werte je Bereich sind einstellbar; ohne eigenen Wert gilt der Standard.
+      <div class="q-mt-xs">
+        <b>Papierkorb:</b> gelöschte Einträge, die alt genug und von nichts mehr abhängig
+        sind – diese verschwinden endgültig.
+        <b>Aufbewahrungsfristen</b> (orange): Datensätze, deren Frist abgelaufen ist,
+        wandern nach Alter zunächst nur <i>in den Papierkorb</i> und bleiben
+        wiederherstellbar.
+        <b>Protokolle, Gerätebindungen und Dateien:</b> kein Papierkorb – hier wird nach
+        Alter direkt entfernt.
+      </div>
     </q-banner>
 
     <div class="row items-center q-mb-md text-grey-8" v-if="report">
@@ -34,6 +40,9 @@
         <span v-if="report.summe_archivierbar">
           · <b>{{ report.summe_archivierbar }}</b> Datensätze werden altersbedingt
           archiviert (Papierkorb).
+        </span>
+        <span v-if="report.summe_verwaiste_dateien">
+          · <b>{{ report.summe_verwaiste_dateien }}</b> verwaiste Dateien.
         </span>
       </div>
       <div class="col-auto" v-if="report.generated_at">
@@ -47,10 +56,26 @@
       :columns="columns"
       row-key="name"
       :loading="loading"
-      :pagination="{ rowsPerPage: 0 }"
+      :filter="filter"
+      :pagination="{ rowsPerPage: 0, sortBy: 'gruppe' }"
       hide-bottom
       no-data-label="Keine Bereiche konfiguriert"
     >
+      <template #top-right>
+        <q-input
+          v-model="filter" dense outlined clearable debounce="200"
+          placeholder="Bereich suchen"
+        >
+          <template #prepend><q-icon name="search" /></template>
+        </q-input>
+      </template>
+
+      <template #body-cell-gruppe="props">
+        <q-td :props="props">
+          <q-chip dense outline color="primary" :label="props.row.gruppe" />
+        </q-td>
+      </template>
+
       <template #body-cell-loeschbar="props">
         <q-td :props="props">
           <q-chip
@@ -181,14 +206,17 @@ const nothingToDelete = computed(() =>
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
 
+const filter = ref('')
+
 const columns = [
-  { name: 'label', label: 'Bereich', field: 'label', align: 'left' },
+  { name: 'gruppe', label: 'Gruppe', field: 'gruppe', align: 'left', sortable: true },
+  { name: 'label', label: 'Bereich', field: 'label', align: 'left', sortable: true },
   { name: 'eintraege', label: 'Einträge', field: (r) => r.eintraege ?? '–', align: 'right' },
   { name: 'im_papierkorb', label: 'Im Papierkorb', field: (r) => r.im_papierkorb ?? '–', align: 'right' },
   { name: 'loeschbar', label: 'Jetzt löschbar', field: 'loeschbar', align: 'right' },
   { name: 'history_gesamt', label: 'History gesamt', field: (r) => r.history_gesamt ?? '–', align: 'right' },
   { name: 'history_loeschbar', label: 'History löschbar', field: (r) => r.history_loeschbar ?? '–', align: 'right' },
-  { name: 'retention_days', label: 'Tage im Papierkorb', field: 'retention_days', align: 'center' },
+  { name: 'retention_days', label: 'Aufbewahrung (Tage)', field: 'retention_days', align: 'center' },
   { name: 'keep_min', label: 'Min. behalten', field: 'keep_min', align: 'center' },
   { name: 'history_retention_days', label: 'History-Tage', field: 'history_retention_days', align: 'center' },
   { name: 'quelle', label: 'Quelle', field: 'is_override', align: 'center' },
@@ -247,7 +275,8 @@ async function execute() {
     $q.notify({
       type: 'positive',
       message: `Bereinigt: ${data.summe_geloescht} Datensätze, ${data.summe_history_geloescht} History-Zeilen`
-        + (data.summe_archiviert ? `, ${data.summe_archiviert} archiviert` : ''),
+        + (data.summe_archiviert ? `, ${data.summe_archiviert} archiviert` : '')
+        + (data.summe_dateien_geloescht ? `, ${data.summe_dateien_geloescht} Dateien` : ''),
     })
     await reload()
   } catch {

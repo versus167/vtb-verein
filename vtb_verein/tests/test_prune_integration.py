@@ -518,6 +518,56 @@ def test_registry_deckt_alle_eingehenden_fks_ab(db):
     )
 
 
+def test_jede_tabelle_hat_einen_loeschpfad(db):
+    """Inventur-Wächter: JEDE Tabelle muss in einer der Registries auftauchen.
+
+    Der Befund vom 11.08.2026 war nicht, dass einzelne Fristen falsch gesetzt waren –
+    sondern dass ganze Tabellen (Zutrittsprotokolle, Rechte-Zuweisungen, Sessions) nie
+    zur Entscheidung vorgelegt worden waren und einfach immer weiter wuchsen. Dieser Test
+    macht das Vergessen unmöglich: eine neue Tabelle ohne Löschpfad färbt ihn rot, und wer
+    sie bewusst dauerhaft halten will, muss das hier unten mit Begründung hinschreiben.
+    """
+    from app.services.prune_service import (
+        ARCHIVE_REGISTRY, LOG_REGISTRY, PRUNE_REGISTRY,
+    )
+
+    # Bewusst ohne Löschpfad – jede Zeile braucht eine Begründung.
+    OHNE_PFAD = {
+        "schema_version":  "eine Zeile, IST der Schema-Stand",
+        "beitrag_einstellungen": "Singleton-Konfiguration, eine Zeile",
+        "fibu_einstellungen":    "Singleton-Konfiguration, eine Zeile",
+        "prune_einstellungen":   "Konfiguration dieses Dienstes, wächst nur mit Overrides",
+        "ttlock_konto":          "Zugangsdaten der Schließanlage, eine Zeile",
+        "tuer_credential":       "Spiegel des TTLock-Cloud-Zustands, wird dort hart ersetzt",
+    }
+
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+        )
+        alle = {r["table_name"] for r in cur.fetchall()}
+
+    abgedeckt = {e.table for e in PRUNE_REGISTRY}
+    abgedeckt |= {e.history_table for e in PRUNE_REGISTRY if e.history_table}
+    abgedeckt |= {r.table for r in ARCHIVE_REGISTRY}
+    abgedeckt |= {r.table for r in LOG_REGISTRY}
+
+    ohne = sorted(alle - abgedeckt - set(OHNE_PFAD))
+    assert not ohne, (
+        "Tabellen ohne Löschpfad – bitte entscheiden: entweder in PRUNE_REGISTRY / "
+        "ARCHIVE_REGISTRY / LOG_REGISTRY aufnehmen, oder mit Begründung in OHNE_PFAD "
+        "eintragen: " + ", ".join(ohne)
+    )
+
+    # Andersherum: eine Ausnahme, die es gar nicht mehr gibt, ist ein Karteileichen-Alibi.
+    verwaiste_ausnahmen = sorted(set(OHNE_PFAD) - alle)
+    assert not verwaiste_ausnahmen, (
+        "OHNE_PFAD nennt Tabellen, die es nicht (mehr) gibt: "
+        + ", ".join(verwaiste_ausnahmen)
+    )
+
+
 def test_mitglied_durch_schluessel_chip_blockiert(db):
     """Regression Befund #75: ein soft-gelöschtes Mitglied mit Chip ist NICHT prunebar.
 
@@ -536,3 +586,227 @@ def test_mitglied_durch_schluessel_chip_blockiert(db):
     assert {e["name"]: e for e in svc.report()["entities"]}["mitglied"]["loeschbar"] == 0
     svc.prune(dry_run=False)                 # kein FK-Crash
     assert _row_exists(db, "mitglied", m)    # Mitglied bleibt (durch Chip blockiert)
+
+
+# --- Neue Löschpfade (Inventur 11.08.2026) ----------------------------------------
+
+def test_log_prune_trifft_nur_die_eigene_kategorie(db):
+    """Die access_log-Bereiche teilen sich eine Tabelle – ein Lauf darf nur seine
+    Kategorie treffen. Sonst nähme das Aufräumen der Seitenaufrufe (90 Tage) die
+    Anmelde-Ereignisse (365 Tage) mit."""
+    from app.services.prune_service import (
+        PruneService, build_log_delete_sql, LOG_BY_NAME,
+    )
+    with db.cursor() as cur:
+        cur.execute("TRUNCATE access_log RESTART IDENTITY")
+        for kategorie in ("page", "auth", "schliessanlage", "kalender"):
+            cur.execute(
+                "INSERT INTO access_log (category, event_type, created_at) "
+                "VALUES (%s, 'x', now() - interval '400 days')", (kategorie,)
+            )
+
+    with db.cursor() as cur:
+        cur.execute(build_log_delete_sql(LOG_BY_NAME["access_log_page"]), (90,))
+        assert cur.rowcount == 1
+
+    with db.cursor() as cur:
+        cur.execute("SELECT category FROM access_log ORDER BY category")
+        assert [r["category"] for r in cur.fetchall()] == ["auth", "kalender", "schliessanlage"]
+
+    # Das Auffangbecken nimmt genau die Kategorie, für die es keinen eigenen Bereich gibt.
+    with db.cursor() as cur:
+        cur.execute(build_log_delete_sql(LOG_BY_NAME["access_log_uebrige"]), (365,))
+        assert cur.rowcount == 1
+    with db.cursor() as cur:
+        cur.execute("SELECT category FROM access_log ORDER BY category")
+        assert [r["category"] for r in cur.fetchall()] == ["auth", "schliessanlage"]
+
+
+def test_aktives_push_abo_ueberlebt_den_prune(db):
+    """Regression-Wächter: ts_expr ist NULL, solange nicht widerrufen wurde. Ein Fehler
+    hier würde allen Nutzern still die Push-Benachrichtigungen abschalten."""
+    from app.services.prune_service import build_log_delete_sql, LOG_BY_NAME
+    from datetime import datetime, timedelta
+    with db.cursor() as cur:
+        cur.execute("TRUNCATE push_subscriptions, push_subscriptions_history "
+                    "RESTART IDENTITY CASCADE")
+        cur.execute(
+            "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
+            "VALUES ('pushuser','push@x.de','h','mitglied','t','t') RETURNING id"
+        )
+        uid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at) "
+            "VALUES (%s, 'https://example/aktiv', 'k', 'a', now() - interval '5 years')",
+            (uid,),
+        )
+        cur.execute(
+            "INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at, "
+            "revoked_at) VALUES (%s, 'https://example/tot', 'k', 'a', "
+            "now() - interval '5 years', %s)",
+            (uid, (datetime.now() - timedelta(days=400)).isoformat()),
+        )
+
+    with db.cursor() as cur:
+        cur.execute(build_log_delete_sql(LOG_BY_NAME["push_subscriptions"]), (90,))
+        assert cur.rowcount == 1, "nur das widerrufene Abo darf fallen"
+    with db.cursor() as cur:
+        cur.execute("SELECT endpoint FROM push_subscriptions")
+        assert [r["endpoint"] for r in cur.fetchall()] == ["https://example/aktiv"]
+
+
+def test_finanz_archivierung_rechnet_ab_jahresende(db):
+    """Ein Beleg vom März 2015 wird wie einer vom 31.12.2015 behandelt – und ein Beleg
+    ohne Datum bleibt unangetastet (sonst risse ihn das leere Jahr sofort mit)."""
+    from app.services.prune_service import (
+        build_archive_parent_delete_sql, ARCHIVE_REGISTRY,
+    )
+    regel = next(r for r in ARCHIVE_REGISTRY if r.name == "beitrag_sollstellung_alter")
+    # Marker statt TRUNCATE: `beitragsregel` teilt sich den Wegwerf-Container mit dem
+    # SEPA-Modul, das auf fortlaufenden IDs aufbaut. Ein RESTART IDENTITY hier lässt
+    # dort den Audit-Trigger auf ein schon vergebenes (id, version) laufen.
+    marke = "PRUNE-ARCHIV-TEST"
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mitglied (vorname,nachname,zahlungsart,created_by) "
+                    "VALUES ('A','B','lastschrift',%s) RETURNING id", (marke,))
+        mid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO beitragsregel (name, betrag_pro_monat, einzug_turnus, "
+            "gueltig_ab, zahler_typ, created_by) VALUES ('R', 10, 'monatlich', "
+            "'2010-01-01', 'mitglied', %s) RETURNING id", (marke,)
+        )
+        rid = cur.fetchone()["id"]
+        ids = []
+        for datum, betrag in (("2015-03-04", 100), ("2024-03-04", 200), ("", 300)):
+            cur.execute(
+                "INSERT INTO beitrag_sollstellung "
+                "(mitglied_id, beitragsregel_id, betrag_soll, faelligkeitsdatum, zeitraum, "
+                " status, created_by) "
+                "VALUES (%s, %s, %s, %s, '2015', 'offen', %s) RETURNING id",
+                (mid, rid, betrag, datum, marke)
+            )
+            ids.append(cur.fetchone()["id"])
+
+    # Stichtag: 10 Jahre zurück. 2015 ist durch, 2024 nicht, undatiert nie.
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=10 * 365)).isoformat()
+    with db.cursor() as cur:
+        cur.execute(
+            build_archive_parent_delete_sql(regel) + " AND created_by = %s",
+            ("TEST", cutoff, marke),
+        )
+        assert cur.rowcount == 1
+
+    with db.cursor() as cur:
+        cur.execute("SELECT betrag_soll, deleted_at FROM beitrag_sollstellung "
+                    "WHERE id = ANY(%s) ORDER BY betrag_soll", (ids,))
+        zeilen = cur.fetchall()
+    archiviert = {int(r["betrag_soll"]): r["deleted_at"] is not None for r in zeilen}
+    assert archiviert[100] is True, "Beleg von 2015 muss archiviert sein"
+    assert archiviert[200] is False, "Beleg von 2024 ist noch aufbewahrungspflichtig"
+    assert archiviert[300] is False, "undatierter Beleg darf NIE automatisch verschwinden"
+
+    # Eigene Spuren beseitigen – der Container wird von allen Modulen geteilt.
+    with db.cursor() as cur:
+        for tabelle in ("beitrag_sollstellung", "beitragsregel", "mitglied"):
+            cur.execute(f"DELETE FROM {tabelle}_history WHERE created_by = %s", (marke,))
+            cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (marke,))
+
+
+def test_verwaiste_datei_wird_erkannt_aber_bekannte_nicht(db, tmp_path):
+    """Der Orphan-Scan darf nur Dateien nehmen, die keine DB-Zeile kennt – und auch die
+    erst nach der Schonfrist. Ein Anhang im Papierkorb ist wiederherstellbar, seine Datei
+    gehört also NICHT dazu."""
+    import os
+    import time
+    from app.services.prune_service import PruneService
+
+    dienst = db.anhang_service
+    verzeichnis = dienst.upload_path
+    verzeichnis.mkdir(parents=True, exist_ok=True)
+    for p in verzeichnis.iterdir():
+        if p.is_file():
+            p.unlink()
+
+    alt = time.time() - 60 * 86400          # deutlich älter als die 30-Tage-Schonfrist
+    (verzeichnis / "verwaist.pdf").write_bytes(b"x")
+    os.utime(verzeichnis / "verwaist.pdf", (alt, alt))
+    (verzeichnis / "frisch.pdf").write_bytes(b"x")          # innerhalb der Schonfrist
+    (verzeichnis / "beansprucht.pdf").write_bytes(b"x")
+    os.utime(verzeichnis / "beansprucht.pdf", (alt, alt))
+
+    with db.cursor() as cur:
+        cur.execute("TRUNCATE tickets, ticket_anhaenge RESTART IDENTITY CASCADE")
+        cur.execute("TRUNCATE tickets_history RESTART IDENTITY")
+        cur.execute(
+            "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
+            "VALUES ('anhanguser','anhang@x.de','h','mitglied','t','t') RETURNING id"
+        )
+        uid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO tickets (titel, beschreibung, status, gemeldet_von, created_by, "
+            "updated_by) VALUES ('t', 'b', 'offen', %s, 't', 't') RETURNING id", (uid,)
+        )
+        ticket_id = cur.fetchone()["id"]
+        # bewusst SOFT-GELÖSCHT: die Datei muss trotzdem als beansprucht gelten
+        cur.execute(
+            "INSERT INTO ticket_anhaenge (ticket_id, original_name, stored_name, mime_type, "
+            "dateigroesse, hochgeladen_von, deleted_at) "
+            "VALUES (%s, 'b.pdf', 'beansprucht.pdf', 'application/pdf', 1, %s, now())",
+            (ticket_id, uid),
+        )
+
+    svc = PruneService(db)
+    gefunden = {p.name for p in svc.verwaiste_dateien(30)}
+    assert gefunden == {"verwaist.pdf"}, f"unerwartet: {gefunden}"
+
+
+def test_verwaiste_datei_wird_beim_lauf_entfernt(db):
+    """Vorschau = Aktion, auch auf der Platte."""
+    import os
+    import time
+    from app.services.prune_service import PruneService, DATEI_VERWAIST
+
+    verzeichnis = db.anhang_service.upload_path
+    verzeichnis.mkdir(parents=True, exist_ok=True)
+    for p in verzeichnis.iterdir():
+        if p.is_file():
+            p.unlink()
+    alt = time.time() - 60 * 86400
+    ziel = verzeichnis / "muell.pdf"
+    ziel.write_bytes(b"x")
+    os.utime(ziel, (alt, alt))
+
+    svc = PruneService(db)
+    vorschau = {e["name"]: e for e in svc.report()["entities"]}[DATEI_VERWAIST]
+    assert vorschau["loeschbar"] == 1
+
+    ergebnis = {e["name"]: e for e in svc.prune(dry_run=False)["entities"]}[DATEI_VERWAIST]
+    assert ergebnis["dateien_geloescht"] == 1
+    assert not ziel.exists()
+
+
+def test_archiv_kinder_kennen_ihre_version_spalte(db):
+    """`has_version` steuert, ob der Archiv-Soft-Delete ein `version = version + 1`
+    schreibt. Steht es falsch, scheitert der Lauf zur Laufzeit auf einer fehlenden
+    Spalte – und zwar erst nach zehn Jahren, wenn die erste Zeile fällig wird. Deshalb
+    wird die Annahme hier gegen das echte Schema geprüft."""
+    from app.services.prune_service import ARCHIVE_REGISTRY
+
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT table_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND column_name = 'version'"
+        )
+        mit_version = {r["table_name"] for r in cur.fetchall()}
+
+    falsch = [
+        (rule.name, child.table, child.has_version)
+        for rule in ARCHIVE_REGISTRY
+        for child in rule.children
+        if child.has_version != (child.table in mit_version)
+    ]
+    assert not falsch, (
+        "has_version stimmt nicht mit dem Schema überein: "
+        + ", ".join(f"{r}/{t} steht auf {v}" for r, t, v in falsch)
+    )

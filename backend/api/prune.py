@@ -12,20 +12,20 @@ from pydantic import BaseModel, Field
 
 from app.models.permission import Permission
 from app.services.prune_service import (
-    ACCESS_LOG_PAGE, ARCHIVE_REGISTRY, PRUNE_REGISTRY, PruneService,
-    TICKET_ZUGRIFF_LOG,
+    ARCHIVE_REGISTRY, DATEI_VERWAIST, LOG_REGISTRY, PRUNE_REGISTRY, PruneService,
 )
 from ..core.deps import CurrentUser, DB
 from .auth import _client_ip
 
 router = APIRouter(prefix="/prune", tags=["prune"])
 
-# Konfigurierbar sind die Soft-Delete-Bereiche, die Alters-Archivierungen (ArchiveRule)
-# und der Sonder-Bereich Protokoll-Seitenaufrufe.
+# Konfigurierbar sind die Soft-Delete-Bereiche, die Alters-Archivierungen (ArchiveRule),
+# die Protokoll-/Gerätebereiche (LogRule) und die verwaisten Upload-Dateien.
 _ENTITY_NAMES = (
     {e.name for e in PRUNE_REGISTRY}
     | {r.name for r in ARCHIVE_REGISTRY}
-    | {ACCESS_LOG_PAGE, TICKET_ZUGRIFF_LOG}
+    | {r.name for r in LOG_REGISTRY}
+    | {DATEI_VERWAIST}
 )
 
 
