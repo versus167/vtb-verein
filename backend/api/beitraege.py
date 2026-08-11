@@ -2,8 +2,9 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from app.db.mitglied_abteilung_repository import VALID_STATUS
 from app.models.beitrag import Beitragsregel, BeitragEinstellungen
 from app.models.permission import Permission
 from app.services.beitrags_service import BeitragsService
@@ -53,6 +54,24 @@ class RegelCreate(BaseModel):
     zahler_typ: str = 'mitglied'
     gegenkonto: Optional[str] = None
     steuerschluessel: Optional[str] = None
+
+    @field_validator('bedingung_abteilung_status')
+    @classmethod
+    def _bekannte_status(cls, v: Optional[str]) -> Optional[str]:
+        """Nur bekannte Abteilungs-Status zulassen.
+
+        Ein Tippfehler ergäbe sonst eine Bedingung, auf die kein Mitglied passt –
+        die Regel bliebe stumm, und auffallen würde das erst, wenn die Beiträge
+        eines Quartals fehlen."""
+        gewaehlt = [s.strip() for s in (v or '').split(',') if s.strip()]
+        if not gewaehlt:
+            return None            # leer = Grundregel (alle außer passiv), nie ''
+        unbekannt = [s for s in gewaehlt if s not in VALID_STATUS]
+        if unbekannt:
+            raise ValueError(
+                f"Unbekannter Abteilungs-Status: {', '.join(unbekannt)}. "
+                f"Erlaubt: {', '.join(VALID_STATUS)}")
+        return ','.join(gewaehlt)
 
 
 class RegelUpdate(RegelCreate):
