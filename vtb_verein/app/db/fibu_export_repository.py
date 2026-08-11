@@ -12,6 +12,8 @@ from app.db.base_repository import BaseRepository
 _SQL_BEITRAG = """
     SELECT 'beitrag' AS quelle_typ, s.id AS quelle_id,
            s.zeitraum AS periode, s.betrag_soll, s.created_at AS belegdatum,
+           -- Grund der Gegenbuchung (Storno vs. gelöscht) für den Buchungstext
+           s.status AS quelle_status, s.deleted_at AS quelle_deleted_at,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.zahlungsart, m.kontoinhaber,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
@@ -44,6 +46,7 @@ _SQL_BEITRAG = """
 _SQL_GEBUEHR = """
     SELECT 'gebuehr' AS quelle_typ, f.id AS quelle_id,
            NULL AS periode, f.betrag_soll, f.datum AS belegdatum,
+           f.status AS quelle_status, f.deleted_at AS quelle_deleted_at,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.zahlungsart, m.kontoinhaber,
            m.sepa_mandatsref, m.sepa_mandatsdatum, m.eintrittsdatum,
@@ -72,6 +75,7 @@ _SQL_UL = """
            a.zeitraum_von || ' – ' || a.zeitraum_bis AS periode,
            COALESCE(st.summe_stunden, 0) * COALESCE(a.verguetung_pro_stunde, 0) AS betrag_soll,
            a.bestaetigt_am AS belegdatum,
+           a.status AS quelle_status, a.deleted_at AS quelle_deleted_at,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
            m.strasse, m.plz, m.ort, m.land, m.iban, m.bic, m.kontoinhaber,
            (SELECT k.wert FROM mitglied_kontakt k
