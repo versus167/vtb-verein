@@ -8,12 +8,14 @@ Anzeige und Beleg. Berechtigungs-/Eigentümer-Prüfungen liegen im API-Router.
 Validierungsfehler werden als ValueError geworfen; der Router bildet sie auf
 HTTP 400 ab (Muster GebuehrenService).
 """
+from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Optional
 
 from app.models.ul_stunden import (
     ULAbrechnung, ULStunde, LIZENZ_MIT, LIZENZ_OHNE, STATUS_ENTWURF,
 )
+from app.services.ul_stundennachweis_pdf_service import erstelle_stundennachweis_pdf
 
 
 def _as_date(s: str) -> date:
@@ -283,3 +285,60 @@ class ULStundenService:
             'monatssummen': monat,
             'anzahl_termine': len(stunden),
         }
+
+    # ----------------------------------------------------------------- Beleg
+    def _klarname(self, username: Optional[str]) -> Optional[str]:
+        """Login → Klarname des verknüpften Mitglieds; Fallback auf den Usernamen."""
+        if not username:
+            return None
+        u = self.db.get_user_by_username(username)
+        if u is not None:
+            m = self.db.get_mitglied_by_user_id(u.id)
+            if m is not None and (m.vorname or m.nachname):
+                return f"{m.vorname or ''} {m.nachname or ''}".strip()
+        return username
+
+    def beleg_pdf(self, abrechnung: ULAbrechnung, *, verein: dict,
+                  erstellt_von: str = '') -> bytes:
+        """Stundennachweis-Beleg (PDF) zu einer Abrechnung.
+
+        Geteilt zwischen dem Einzeldownload in der App und dem Fibu-Export, der den
+        Beleg der exportierten Abrechnung beilegt – beide Wege müssen dasselbe Papier
+        erzeugen.
+
+        :param verein: {'name','strasse','plz_ort','registrier_nr'} für den Beleg-Kopf;
+            kommt aus der Instanz-Konfiguration und wird deshalb hereingereicht.
+        """
+        try:
+            m = self.db.get_mitglied(abrechnung.mitglied_id)
+        except (KeyError, AttributeError):
+            m = None
+        # Eingereichte/bestätigte Belege aus dem beim Einreichen eingefrorenen Snapshot,
+        # Entwürfe live aus dem Mitglied – ein fertiger Beleg ändert sich so nicht mehr
+        # rückwirkend, wenn die Lizenz-Stammdaten später angepasst werden (#63).
+        if abrechnung.status == STATUS_ENTWURF:
+            lizenz_nr = m.trainerlizenz_nr if m else None
+            qualifikation = m.qualifikation if m else None
+        else:
+            lizenz_nr = abrechnung.trainerlizenz_nr
+            qualifikation = abrechnung.qualifikation
+        name = f"{abrechnung.mitglied_vorname or ''} {abrechnung.mitglied_nachname or ''}"
+        return erstelle_stundennachweis_pdf(
+            verein=verein,
+            ul_name=name.strip(),
+            sportart=abrechnung.abteilung_name or '',
+            iban=abrechnung.mitglied_iban,
+            trainerlizenz_nr=lizenz_nr,
+            qualifikation=qualifikation,
+            lizenz_klassifikation=abrechnung.lizenz_klassifikation,
+            foerder_klassifikation=abrechnung.foerder_klassifikation,
+            zeitraum_von=abrechnung.zeitraum_von,
+            zeitraum_bis=abrechnung.zeitraum_bis,
+            termine=[asdict(s) for s in self.db.ul_abrechnungen.list_stunden(abrechnung.id)],
+            summen=self.summen(abrechnung),
+            erstellt_von=erstellt_von,
+            eingereicht_von=self._klarname(abrechnung.eingereicht_von),
+            eingereicht_am=abrechnung.eingereicht_am,
+            bestaetigt_von=self._klarname(abrechnung.bestaetigt_von),
+            bestaetigt_am=abrechnung.bestaetigt_am,
+        )

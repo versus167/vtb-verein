@@ -12,10 +12,10 @@ from pydantic import BaseModel
 from app.models.permission import Permission
 from app.models.fibu import FibuEinstellungen, FibuExport, FibuExportPosition
 from app.models.sepa import SepaLauf
-from app.services.fibu_export_service import FibuExportService, FibuExportFehler
-from app.services.fibu_formatter import FBASC_DATEINAME
+from app.services.fibu_export_service import FibuExportService, FibuExportFehler, ExportDatei
 from app.services import sepa_formatter
 from app.services.sepa_service import SepaService, SepaFehler
+from ..core.config import settings
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/fibu", tags=["fibu"])
@@ -24,6 +24,16 @@ router = APIRouter(prefix="/fibu", tags=["fibu"])
 def _require_export(user):
     if not user.has_permission(Permission.FIBU_EXPORT):
         raise HTTPException(status_code=403, detail="Keine Berechtigung für den Fibu-Export")
+
+
+def _export_service(db) -> FibuExportService:
+    """Export-Service mit den Vereins-Kopfdaten für die beiliegenden ÜL-Belege."""
+    return FibuExportService(db, verein={
+        'name': settings.VEREIN_NAME,
+        'strasse': settings.VEREIN_STRASSE,
+        'plz_ort': settings.VEREIN_PLZ_ORT,
+        'registrier_nr': settings.VEREIN_REGISTRIER_NR,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -107,11 +117,13 @@ def _export_dict(x: FibuExport) -> dict:
     }
 
 
-def _datei_response(content: bytes) -> StreamingResponse:
+def _datei_response(datei: ExportDatei) -> StreamingResponse:
+    """Auslieferung des Laufs: die nackte `.hia` oder – wenn ÜL-Belege beiliegen –
+    ein Zip. Der Dateiname steht im Content-Disposition, das Frontend liest ihn dort."""
     return StreamingResponse(
-        io.BytesIO(content),
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{FBASC_DATEINAME}"'},
+        io.BytesIO(datei.inhalt),
+        media_type=datei.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{datei.name}"'},
     )
 
 
@@ -153,7 +165,7 @@ def update_einstellungen(data: EinstellungenUpdate, user: CurrentUser, db: DB):
 @router.get("/vorschau")
 def vorschau(user: CurrentUser, db: DB):
     _require_export(user)
-    v = FibuExportService(db).vorschau()
+    v = _export_service(db).vorschau()
     forderungen = [_pos_dict(p) for p in v['forderungen']]
     gegenbuchungen = [_pos_dict(p) for p in v['gegenbuchungen']]
     # Vorzeichenbehaftete Netto-Summe (Soll +, Haben −) über alle Positionen. Abteilungs-
@@ -174,7 +186,7 @@ def vorschau(user: CurrentUser, db: DB):
 def export(user: CurrentUser, db: DB):
     _require_export(user)
     try:
-        _, content = FibuExportService(db).exportieren(erstellt_von=user.username)
+        _, datei = _export_service(db).exportieren(erstellt_von=user.username)
     except FibuExportFehler as e:
         raise HTTPException(status_code=400, detail={
             'message': "Export nicht möglich – unvollständige Konten-Konfiguration.",
@@ -182,7 +194,7 @@ def export(user: CurrentUser, db: DB):
         })
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return _datei_response(content)
+    return _datei_response(datei)
 
 
 @router.get("/exporte")
@@ -198,8 +210,7 @@ def download_export(export_id: int, user: CurrentUser, db: DB):
         db.fibu_exporte.get_export(export_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Export nicht gefunden")
-    content = FibuExportService(db).re_download(export_id)
-    return _datei_response(content)
+    return _datei_response(_export_service(db).re_download(export_id))
 
 
 @router.post("/exporte/{export_id}/zuruecknehmen")
@@ -207,7 +218,7 @@ def zuruecknehmen(export_id: int, user: CurrentUser, db: DB):
     """Un-Export: jüngsten, noch nicht in die Fibu eingelesenen Lauf zurücknehmen."""
     _require_export(user)
     try:
-        return FibuExportService(db).zuruecknehmen(export_id, benutzer=user.username)
+        return _export_service(db).zuruecknehmen(export_id, benutzer=user.username)
     except KeyError:
         raise HTTPException(status_code=404, detail="Export nicht gefunden")
     except ValueError as e:
@@ -331,9 +342,9 @@ def storno_lauf(export_id: int, user: CurrentUser, db: DB):
     """Gegenbuchungs-Lauf für einen bereits eingelesenen Lauf (bucht ihn komplett gegen)."""
     _require_export(user)
     try:
-        _, content = FibuExportService(db).stornieren(export_id, benutzer=user.username)
+        _, datei = _export_service(db).stornieren(export_id, benutzer=user.username)
     except KeyError:
         raise HTTPException(status_code=404, detail="Export nicht gefunden")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return _datei_response(content)
+    return _datei_response(datei)

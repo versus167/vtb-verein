@@ -23,8 +23,16 @@
       <div class="row items-center q-mb-sm q-gutter-sm">
         <q-btn color="primary" outline icon="refresh" label="Vorschau" :loading="ladeVorschau" @click="loadVorschau" />
         <q-space />
-        <q-btn color="primary" unelevated icon="download" label="Exportieren (fbasc.hia)"
+        <q-btn color="primary" unelevated icon="download"
+          :label="anzahlBelege ? 'Exportieren (Zip mit Belegen)' : 'Exportieren (fbasc.hia)'"
           :disable="!kannExportieren" :loading="exportiere" @click="doExport" />
+      </div>
+
+      <div v-if="anzahlBelege" class="text-caption text-grey-7 q-mb-sm">
+        <q-icon name="attach_file" size="16px" class="q-mr-xs" />
+        {{ anzahlBelege }} ÜL-Honorar(e) im Lauf – der Export kommt als Zip:
+        <code>fbasc.hia</code> plus je Abrechnung den Stundennachweis als PDF
+        (Dateiname steht in Feld 39 der Buchung).
       </div>
 
       <q-banner v-if="vorschau && vorschau.fehler.length" class="vtb-warnung q-mb-md" rounded>
@@ -356,6 +364,14 @@ const erzeugeSepa = ref(false)
 const kannExportieren = computed(() =>
   !!vorschau.value && vorschau.value.anzahl > 0 && vorschau.value.fehler.length === 0)
 
+// ÜL-Honorare bringen ihren Stundennachweis als Beleg mit → der Lauf kommt als Zip.
+const anzahlBelege = computed(() => {
+  const v = vorschau.value
+  if (!v) return 0
+  return [...v.forderungen, ...v.gegenbuchungen]
+    .filter(p => p.quelle_typ === 'ul_abrechnung').length
+})
+
 const kannEinziehen = computed(() =>
   !!sepaVorschau.value && sepaVorschau.value.anzahl > 0
   && sepaVorschau.value.konfiguration_fehler.length === 0)
@@ -399,7 +415,8 @@ function downloadBlob(data, filename) {
   URL.revokeObjectURL(url)
 }
 
-// Dateiname aus dem Content-Disposition des Servers (SEPA-Läufe heißen nach Einzugstermin).
+// Dateiname aus dem Content-Disposition des Servers: SEPA-Läufe heißen nach Einzugstermin,
+// Fibu-Läufe je nach Inhalt .hia oder – mit beiliegenden ÜL-Belegen – .zip.
 function dateinameAusResponse(res, fallback) {
   const treffer = /filename="?([^"]+)"?/.exec(res.headers?.['content-disposition'] || '')
   return treffer ? treffer[1] : fallback
@@ -418,8 +435,9 @@ async function doExport() {
   exportiere.value = true
   try {
     const res = await api.post('/api/fibu/export', null, { responseType: 'blob' })
-    downloadBlob(res.data, 'fbasc.hia')
-    $q.notify({ type: 'positive', message: 'Export erstellt (fbasc.hia)' })
+    const name = dateinameAusResponse(res, 'fbasc.hia')
+    downloadBlob(res.data, name)
+    $q.notify({ type: 'positive', message: `Export erstellt (${name})` })
     await Promise.all([loadVorschau(), loadExporte()])
   } catch {
     $q.notify({ type: 'negative', message: 'Export fehlgeschlagen' })
@@ -434,7 +452,7 @@ async function loadExporte() {
 async function reDownload(id) {
   try {
     const res = await api.get(`/api/fibu/exporte/${id}/download`, { responseType: 'blob' })
-    downloadBlob(res.data, 'fbasc.hia')
+    downloadBlob(res.data, dateinameAusResponse(res, 'fbasc.hia'))
   } catch { $q.notify({ type: 'negative', message: 'Download fehlgeschlagen' }) }
 }
 
@@ -479,8 +497,9 @@ function stornieren(x) {
   }).onOk(async () => {
     try {
       const res = await api.post(`/api/fibu/exporte/${x.id}/storno`, null, { responseType: 'blob' })
-      downloadBlob(res.data, 'fbasc.hia')
-      $q.notify({ type: 'positive', message: `Gegenbuchungs-Lauf für #${x.id} erstellt (fbasc.hia)` })
+      const name = dateinameAusResponse(res, 'fbasc.hia')
+      downloadBlob(res.data, name)
+      $q.notify({ type: 'positive', message: `Gegenbuchungs-Lauf für #${x.id} erstellt (${name})` })
       await Promise.all([loadVorschau(), loadExporte()])
     } catch (e) {
       $q.notify({ type: 'negative', message: await blobFehler(e, 'Storno fehlgeschlagen') })

@@ -2,15 +2,19 @@
 Tests für den Fibu-Delta-Export (Format hmd FBASC):
 - Formatter (reine Zeilen-/Feldlogik)
 - FibuExportService (Konten-Auflösung, Delta/Soll-Haben, Validierung, Export-Lauf)
+- Beleg-Beilage: ÜL-Honorare bringen ihren Stundennachweis als PDF ins Export-Zip
 """
+import io
+import zipfile
 from types import SimpleNamespace
 
 import pytest
 
 from app.models.fibu import FibuEinstellungen, FibuExportPosition, FibuExport
+from app.models.ul_stunden import ULAbrechnung, ULStunde
 from app.services import fibu_formatter as ff
 from app.services.fibu_export_service import (
-    FibuExportService, FibuExportFehler, personenkonto)
+    FibuExportService, FibuExportFehler, personenkonto, beleg_dateiname)
 
 
 # ---------------------------------------------------------------------------
@@ -202,13 +206,60 @@ class _FibuExporteStub:
                           storno_von_export_id=kw['original_id'])
 
 
-def _service(neu=None, gegen=None, einst=None):
+_VEREIN = {'name': 'TV Musterstadt', 'strasse': 'Hauptstr. 1',
+           'plz_ort': '12345 Musterstadt', 'registrier_nr': 'VR 42'}
+
+
+def _abrechnung(id=1, nachname='Wagner', **kw):
+    """Bestätigte Abrechnung, wie sie der Beleg-Bau aus dem Repository zieht."""
+    base = dict(id=id, mitglied_id=20, abteilung_id=3, zeitraum_von='2026-01-01',
+                zeitraum_bis='2026-03-31', status='bestaetigt', verguetung_pro_stunde=15.0,
+                mitglied_vorname='Annett', mitglied_nachname=nachname, mitglied_iban='DE12',
+                abteilung_name='Aerobic')
+    base.update(kw)
+    return ULAbrechnung(**base)
+
+
+class _UlAbrechnungenStub:
+    """Fake von db.ul_abrechnungen für den Stundennachweis-Beleg."""
+
+    def __init__(self, abrechnungen=None):
+        self._abr = {a.id: a for a in (abrechnungen or [])}
+
+    def get(self, id):
+        return self._abr.get(id)
+
+    def list_stunden(self, id):
+        return [ULStunde(datum='2026-01-07', stunden=2.0, wochentag=3),
+                ULStunde(datum='2026-01-14', stunden=2.0, wochentag=3)]
+
+
+def _service(neu=None, gegen=None, einst=None, abrechnungen=None):
     stub = _FibuExporteStub(neu or [], gegen or [])
     db = SimpleNamespace(
         fibu_einstellungen=SimpleNamespace(get=lambda: einst or _einst()),
         fibu_exporte=stub,
+        ul_abrechnungen=_UlAbrechnungenStub(abrechnungen),
+        ul_saetze=SimpleNamespace(resolve=lambda *a, **k: None),
+        get_mitglied=lambda mid: None,
+        get_user_by_username=lambda name: None,
     )
-    return FibuExportService(db), stub
+    return FibuExportService(db, verein=_VEREIN), stub
+
+
+def _zip_namen(inhalt: bytes) -> list[str]:
+    with zipfile.ZipFile(io.BytesIO(inhalt)) as zf:
+        return zf.namelist()
+
+
+def _hia_zeilen(datei) -> list[str]:
+    """Buchungszeilen der fbasc.hia – egal ob flach oder im Zip geliefert."""
+    if datei.ist_zip:
+        with zipfile.ZipFile(io.BytesIO(datei.inhalt)) as zf:
+            roh = zf.read(ff.FBASC_DATEINAME)
+    else:
+        roh = datei.inhalt
+    return roh.decode('utf-8').strip().split('\r\n')
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +510,8 @@ class TestAbteilungUmbuchung:
 
     def test_export_rendert_zwei_zeilen_mit_getauschter_kostenstelle(self):
         svc, stub = _service(neu=[_abt_row(quelle_id=1)])
-        export, content = svc.exportieren(erstellt_von='admin')
-        zeilen = content.decode('utf-8').strip().split('\r\n')
+        export, datei = svc.exportieren(erstellt_von='admin')
+        zeilen = _hia_zeilen(datei)
         assert len(zeilen) == 2
         assert zeilen[0].split(';')[3] == 'S' and zeilen[0].split(';')[7] == '12'  # Einbuchung/Verein
         assert zeilen[1].split(';')[3] == 'H' and zeilen[1].split(';')[7] == '20'  # Gegenb./Abteilung
@@ -590,14 +641,15 @@ class TestUlHonorar:
         assert svc.vorschau()['fehler'] == []
 
     def test_export_stempelt_ul_ids_und_summe_negativ(self):
-        svc, stub = _service(neu=[_ul_row(quelle_id=1, betrag_soll=315.0)])
-        export, content = svc.exportieren(erstellt_von='admin')
+        svc, stub = _service(neu=[_ul_row(quelle_id=1, betrag_soll=315.0)],
+                             abrechnungen=[_abrechnung(id=1)])
+        export, datei = svc.exportieren(erstellt_von='admin')
         kw = stub.calls[0]
         assert kw['neu_ids'] == {'beitrag': [], 'gebuehr': [], 'ul_abrechnung': [1]}
         assert kw['anzahl_positionen'] == 1
         # Haben-Buchung → Netto-Summe negativ.
         assert kw['summe_cent'] == -31500
-        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+        assert _hia_zeilen(datei)[0].split(';')[3] == 'H'
 
 
 # ---------------------------------------------------------------------------
@@ -611,8 +663,8 @@ class TestExportieren:
                  _row(quelle_typ='gebuehr', quelle_id=2, gegenkonto='4100')],
             gegen=[_row(quelle_typ='beitrag', quelle_id=3)],
         )
-        export, content = svc.exportieren(erstellt_von='admin')
-        assert isinstance(content, bytes) and content
+        export, datei = svc.exportieren(erstellt_von='admin')
+        assert datei.inhalt and datei.name.endswith('.hia')
         kw = stub.calls[0]
         assert kw['neu_ids'] == {'beitrag': [1], 'gebuehr': [2], 'ul_abrechnung': []}
         assert kw['storno_ids'] == {'beitrag': [3], 'gebuehr': [], 'ul_abrechnung': []}
@@ -670,26 +722,26 @@ class TestGegenbuchungsLauf:
         # Original: eine Forderung (S) über 30 € → Gegenbuchung (H), Netto-Summe negativ.
         svc, stub = _service(neu=[_row(quelle_typ='beitrag', quelle_id=1, betrag_soll=30.0)])
         stub.exporte = {5: FibuExport(id=5)}
-        export, content = svc.stornieren(5, benutzer='admin')
+        export, datei = svc.stornieren(5, benutzer='admin')
         assert export.storno_von_export_id == 5
         assert stub.storno_calls[0]['original_id'] == 5
         assert stub.storno_calls[0]['summe_cent'] == -3000
         # Erste Buchungszeile muss Haben sein (Feld 03), Original war Soll.
-        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+        assert _hia_zeilen(datei)[0].split(';')[3] == 'H'
 
     def test_storno_lauf_vermerkt_storno_im_buchungstext(self):
         """Hier ist die Sollstellung selbst unverändert offen – storniert wird der
         ganze Lauf. Der Vermerk kann also nicht aus der Zeile stammen."""
         svc, stub = _service(neu=[_row(quelle_status='offen', quelle_deleted_at=None)])
         stub.exporte = {5: FibuExport(id=5)}
-        _, content = svc.stornieren(5, benutzer='admin')
-        assert content.decode('utf-8').split('\r\n')[0].split(';')[12].startswith('Storno ')
+        _, datei = svc.stornieren(5, benutzer='admin')
+        assert _hia_zeilen(datei)[0].split(';')[12].startswith('Storno ')
 
     def test_re_download_storno_lauf_rekonstruiert_aus_original(self):
         svc, stub = _service(neu=[_row(quelle_typ='beitrag', quelle_id=1)])
         stub.exporte = {99: FibuExport(id=99, storno_von_export_id=5)}
-        content = svc.re_download(99)
-        assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+        datei = svc.re_download(99)
+        assert _hia_zeilen(datei)[0].split(';')[3] == 'H'
 
     def test_doppel_storno_abgelehnt(self):
         svc, stub = _service(neu=[_row()])
@@ -710,3 +762,124 @@ class TestGegenbuchungsLauf:
         stub.exporte = {5: FibuExport(id=5)}
         with pytest.raises(ValueError):
             svc.stornieren(5, benutzer='admin')
+
+
+# ---------------------------------------------------------------------------
+# Beleg-Beilage (ÜL-Stundennachweis)
+# ---------------------------------------------------------------------------
+
+class TestBelegDateiname:
+    """Der Name verbindet Buchung und Datei: Feld 39 nennt ihn, im Zip liegt er."""
+
+    def test_beginnt_mit_der_belegnummer(self):
+        assert beleg_dateiname(12, 'Wagner') == 'U12-Stundennachweis-Wagner.pdf'
+
+    def test_umlaute_bleiben_erhalten(self):
+        # Die fbasc.hia ist UTF-8 und Zip-Einträge tragen ihr eigenes UTF-8-Flag –
+        # der Name muss also nicht entstellt werden.
+        assert beleg_dateiname(3, 'Süß-Meier') == 'U3-Stundennachweis-Süß-Meier.pdf'
+
+    def test_ohne_nachname_bleibt_die_belegnummer(self):
+        assert beleg_dateiname(7, None) == 'U7-Stundennachweis.pdf'
+
+    def test_sonderzeichen_sprengen_weder_zip_noch_feld(self):
+        """';' ist das Feldtrennzeichen, '/' machte im Zip einen Ordner auf."""
+        assert beleg_dateiname(9, 'A;B/C') == 'U9-Stundennachweis-A-B-C.pdf'
+
+
+class TestBelegBeilage:
+    def test_ul_lauf_kommt_als_zip_mit_stundennachweis(self):
+        svc, _ = _service(neu=[_ul_row(quelle_id=4, nachname='Wagner')],
+                          abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert datei.ist_zip and datei.name.endswith('.zip')
+        assert _zip_namen(datei.inhalt) == ['fbasc.hia', 'U4-Stundennachweis-Wagner.pdf']
+
+    def test_beigelegter_beleg_ist_ein_pdf(self):
+        svc, _ = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        with zipfile.ZipFile(io.BytesIO(datei.inhalt)) as zf:
+            pdf = zf.read('U4-Stundennachweis-Wagner.pdf')
+        assert pdf[:4] == b'%PDF' and len(pdf) > 1000
+
+    def test_feld_39_nennt_die_beiliegende_datei(self):
+        svc, _ = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert _hia_zeilen(datei)[0].split(';')[39] == 'U4-Stundennachweis-Wagner.pdf'
+
+    def test_umlaut_im_namen_kommt_in_datei_und_feld_39_gleich_an(self):
+        """Beide Seiten sind UTF-8; entscheidend ist, dass Zip-Eintrag und Feld 39
+        denselben Namen tragen – sonst findet die Fibu den Beleg nicht."""
+        svc, _ = _service(neu=[_ul_row(quelle_id=4, nachname='Süß')],
+                          abrechnungen=[_abrechnung(id=4, nachname='Süß')])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert _zip_namen(datei.inhalt)[1] == 'U4-Stundennachweis-Süß.pdf'
+        assert _hia_zeilen(datei)[0].split(';')[39] == 'U4-Stundennachweis-Süß.pdf'
+
+    def test_lauf_ohne_ul_bleibt_eine_flache_datei(self):
+        """Beiträge und Gebühren haben nichts anzuhängen – kein Zip um nichts herum."""
+        svc, _ = _service(neu=[_row()])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert not datei.ist_zip and datei.name.endswith('.hia')
+        assert _hia_zeilen(datei)[0].split(';')[39] == ''
+
+    def test_dateiname_des_laufs_steht_im_header(self):
+        svc, stub = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert stub.calls[0]['dateiname'] == datei.name
+
+    def test_fehlender_beleg_leert_feld_39_statt_ins_leere_zu_zeigen(self):
+        """Ohne Abrechnung (z. B. weggeräumt) gibt es kein PDF – dann darf die Buchung
+        auch keins nennen, sonst sucht die Fibu eine Datei, die nicht existiert."""
+        svc, _ = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert not datei.ist_zip
+        assert _hia_zeilen(datei)[0].split(';')[39] == ''
+
+    def test_nur_der_fehlende_beleg_faellt_weg(self):
+        svc, _ = _service(neu=[_ul_row(quelle_id=4), _ul_row(quelle_id=5, nachname='Kern')],
+                          abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert _zip_namen(datei.inhalt) == ['fbasc.hia', 'U4-Stundennachweis-Wagner.pdf']
+        felder = [z.split(';') for z in _hia_zeilen(datei)]
+        assert felder[0][39] == 'U4-Stundennachweis-Wagner.pdf'
+        assert felder[1][39] == ''
+
+    def test_gegenbuchung_bekommt_den_beleg_ebenso(self):
+        """Auch die Rücknahme eines Honorars gehört belegt."""
+        svc, _ = _service(gegen=[_ul_row(quelle_id=4, quelle_status='abgelehnt')],
+                          abrechnungen=[_abrechnung(id=4, status='abgelehnt')])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert 'U4-Stundennachweis-Wagner.pdf' in _zip_namen(datei.inhalt)
+
+    def test_storno_lauf_legt_den_beleg_erneut_bei(self):
+        svc, stub = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        stub.exporte = {5: FibuExport(id=5)}
+        _, datei = svc.stornieren(5, benutzer='admin')
+        assert datei.name.startswith('fbasc_storno_') and datei.ist_zip
+        assert 'U4-Stundennachweis-Wagner.pdf' in _zip_namen(datei.inhalt)
+
+    def test_re_download_eines_alten_laufs_wird_zum_zip(self):
+        """Läufe von vor der Beleg-Beilage stehen als „.hia" im Header – die Endung
+        entscheidet sich beim Rendern neu, sonst hieße ein Zip `.hia`."""
+        svc, stub = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        stub.exporte = {7: FibuExport(id=7, dateiname='fbasc_2026-05-01.hia')}
+        datei = svc.re_download(7)
+        assert datei.name == 'fbasc_2026-05-01.zip'
+        assert 'U4-Stundennachweis-Wagner.pdf' in _zip_namen(datei.inhalt)
+
+    def test_ein_beleg_je_abrechnung_auch_bei_mehreren_zeilen(self):
+        svc, stub = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        stub.exporte = {5: FibuExport(id=5)}
+        # Storno-Lauf rendert Forderung + Gegenbuchung derselben Quelle.
+        stub._gegen = [_ul_row(quelle_id=4, quelle_status='abgelehnt')]
+        _, datei = svc.stornieren(5, benutzer='admin')
+        assert _zip_namen(datei.inhalt).count('U4-Stundennachweis-Wagner.pdf') == 1
+
+    def test_vorschau_erzeugt_keine_belege(self):
+        """Die Vorschau läuft bei jedem Seitenaufruf – sie darf keine PDFs bauen."""
+        svc, _ = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
+        gerufen = []
+        svc._ul_beleg = lambda quelle_id: gerufen.append(quelle_id)
+        svc.vorschau()
+        assert gerufen == []

@@ -15,9 +15,8 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.models.permission import Permission
-from app.models.ul_stunden import ULSatz, STATUS_ENTWURF
+from app.models.ul_stunden import ULSatz
 from app.services.ul_stunden_service import ULStundenService
-from app.services.ul_stundennachweis_pdf_service import erstelle_stundennachweis_pdf
 from ..core.config import settings
 from ..core.deps import CurrentUser, DB
 
@@ -123,18 +122,6 @@ def _load(db, abrechnung_id: int):
     if a is None:
         raise HTTPException(status_code=404, detail="Abrechnung nicht gefunden")
     return a
-
-
-def _display_name(db, username: Optional[str]) -> Optional[str]:
-    """Login → Klarname des verknüpften Mitglieds; Fallback auf den Usernamen."""
-    if not username:
-        return None
-    u = db.get_user_by_username(username)
-    if u is not None:
-        m = db.get_mitglied_by_user_id(u.id)
-        if m is not None and (m.vorname or m.nachname):
-            return f"{m.vorname or ''} {m.nachname or ''}".strip()
-    return username
 
 
 def _can_view(user, db, a) -> bool:
@@ -352,45 +339,15 @@ def beleg_pdf(abrechnung_id: int, user: CurrentUser, db: DB):
     a = _load(db, abrechnung_id)
     if not _can_view(user, db, a):
         raise HTTPException(status_code=403, detail="Kein Zugriff auf diese Abrechnung")
-    # Lizenz-/Qualifikations-Stammdaten am Mitglied (für den Beleg-Kopf)
-    try:
-        m = db.get_mitglied(a.mitglied_id)
-    except KeyError:
-        m = None
-    # Eingereichte/bestätigte Belege aus dem beim Einreichen eingefrorenen Snapshot (a.*),
-    # Entwürfe live aus dem Mitglied (m.*) – ein fertiger Beleg ändert sich so nicht mehr
-    # rückwirkend, wenn die Lizenz-Stammdaten später angepasst werden (#63).
-    if a.status == STATUS_ENTWURF:
-        beleg_lizenz_nr = m.trainerlizenz_nr if m else None
-        beleg_qualifikation = m.qualifikation if m else None
-    else:
-        beleg_lizenz_nr = a.trainerlizenz_nr
-        beleg_qualifikation = a.qualifikation
+    # Denselben Beleg legt der Fibu-Export der exportierten Abrechnung bei – deshalb
+    # baut ihn der Service, nicht dieser Router.
     verein = {
         'name': settings.VEREIN_NAME,
         'strasse': settings.VEREIN_STRASSE,
         'plz_ort': settings.VEREIN_PLZ_ORT,
         'registrier_nr': settings.VEREIN_REGISTRIER_NR,
     }
-    pdf = erstelle_stundennachweis_pdf(
-        verein=verein,
-        ul_name=f"{a.mitglied_vorname or ''} {a.mitglied_nachname or ''}".strip(),
-        sportart=a.abteilung_name or '',
-        iban=a.mitglied_iban,
-        trainerlizenz_nr=beleg_lizenz_nr,
-        qualifikation=beleg_qualifikation,
-        lizenz_klassifikation=a.lizenz_klassifikation,
-        foerder_klassifikation=a.foerder_klassifikation,
-        zeitraum_von=a.zeitraum_von,
-        zeitraum_bis=a.zeitraum_bis,
-        termine=[asdict(s) for s in db.ul_abrechnungen.list_stunden(a.id)],
-        summen=ULStundenService(db).summen(a),
-        erstellt_von=user.username,
-        eingereicht_von=_display_name(db, a.eingereicht_von),
-        eingereicht_am=a.eingereicht_am,
-        bestaetigt_von=_display_name(db, a.bestaetigt_von),
-        bestaetigt_am=a.bestaetigt_am,
-    )
+    pdf = ULStundenService(db).beleg_pdf(a, verein=verein, erstellt_von=user.username)
     nachname = (a.mitglied_nachname or 'UL').replace(' ', '_')
     dateiname = f"Stundennachweis_{nachname}_{a.zeitraum_von}_{a.zeitraum_bis}.pdf"
     # Content-Disposition muss latin-1-codierbar sein → Dateiname auf ASCII reduzieren
