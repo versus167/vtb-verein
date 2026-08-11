@@ -141,7 +141,9 @@
                 <div class="text-weight-bold ellipsis">{{ c.bezeichnung || ('Chip #' + c.id) }}</div>
                 <div class="text-caption text-grey ellipsis">Nr. {{ c.kartennummer }}</div>
                 <div class="text-caption text-grey ellipsis q-mt-xs">
-                  <span v-if="c.mitglied_id"><q-icon name="person" size="12px" /> {{ mitgliedName(c) }}</span>
+                  <span v-if="chipInhaber(c)">
+                    <q-icon :name="c.user_id ? 'account_circle' : 'person'" size="12px" /> {{ chipInhaber(c) }}
+                  </span>
                   <span v-else-if="c.aufbewahrungsort"><q-icon name="inventory_2" size="12px" /> {{ c.aufbewahrungsort }}</span>
                   <span v-else>nicht zugeordnet</span>
                 </div>
@@ -623,7 +625,7 @@
             </div>
             <div class="text-caption text-grey ellipsis">
               Nr. {{ chipDetail.chip?.kartennummer }} ·
-              {{ chipDetail.chip?.mitglied_id ? ('ausgegeben an ' + mitgliedName(chipDetail.chip))
+              {{ chipInhaber(chipDetail.chip) ? ('ausgegeben an ' + chipInhaber(chipDetail.chip))
                  : ('liegt: ' + (chipDetail.chip?.aufbewahrungsort || '—')) }}
               <span v-if="chipDetail.chip?.externe_kennung">
                 · extern: {{ chipDetail.chip.externe_kennung }}</span>
@@ -710,11 +712,26 @@
           <!-- Ohne diese Kennung bleibt der Chip im importierten Tor-Log anonym -->
           <q-input v-model="chipForm.externe_kennung" label="Kennung am externen Schloss" outlined dense
             hint="Kontoname im Tor-Export (Spalte „Unlock Account“), falls abweichend von der Bezeichnung" />
-          <q-select v-model="chipForm.mitglied_id" :options="mitgliedOptions" option-value="id"
-            :option-label="mitgliedLabel" emit-value map-options use-input input-debounce="0"
-            @filter="filterMitglieder" label="Mitglied (optional)" outlined dense clearable
-            :hint="mitglieder.length ? 'Wem ausgegeben – leer = Pool-Chip mit Standort'
-              : 'keine Mitglieder geladen'">
+          <!-- Inhaber: Mitglied ODER Benutzerkonto. Nicht jeder mit Chip ist Mitglied
+               (Platzwart, Hausmeister, Gastverein); Benutzer MIT Mitgliedsdatensatz
+               stehen nur in der Mitglieder-Gruppe, damit dieselbe Person nicht doppelt
+               auftaucht. -->
+          <q-select v-model="chipForm.inhaber" :options="inhaberOptionen" option-label="label"
+            use-input input-debounce="0" @filter="filterInhaber"
+            label="Ausgegeben an (optional)" outlined dense clearable
+            :hint="inhaberAlle.length ? 'Mitglied oder Benutzer – leer = Pool-Chip mit Standort'
+              : 'keine Auswahl geladen'">
+            <template #option="{ itemProps, opt }">
+              <q-item v-bind="itemProps">
+                <q-item-section avatar>
+                  <q-icon :name="opt.typ === 'user' ? 'account_circle' : 'person'" size="20px" />
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ opt.label }}</q-item-label>
+                  <q-item-label caption>{{ opt.caption }}</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
             <template #no-option>
               <q-item><q-item-section class="text-grey">kein Treffer</q-item-section></q-item>
             </template>
@@ -791,8 +808,8 @@
                   <q-item-section>
                     <q-item-label>{{ k.konto || '(ohne Konto)' }}</q-item-label>
                     <q-item-label caption>
-                      <span v-if="k.mitglied_name">{{ k.mitglied_name }}</span>
-                      <span v-else-if="k.chip_id">Chip „{{ k.chip_bezeichnung }}" – keinem Mitglied zugeordnet</span>
+                      <span v-if="k.inhaber_name">{{ k.inhaber_name }}</span>
+                      <span v-else-if="k.chip_id">Chip „{{ k.chip_bezeichnung }}" – niemandem zugeordnet</span>
                       <span v-else class="text-negative">kein Chip mit dieser Kennung</span>
                     </q-item-label>
                   </q-item-section>
@@ -1092,16 +1109,16 @@ const chipFilterOptionen = [
   { label: 'Alle', value: 'alle' },
 ]
 // Zuordnungs-Filter (#160). „Zugeordnet" ist der Standard und meint genau das, was die
-// Karte anzeigt: an ein Mitglied ausgegeben ODER mit Standardstandort hinterlegt. Der
-// Rest – frisch erfasste, noch nie ausgegebene Chips – interessiert nur bei der
-// Neuausgabe und macht die Liste sonst unlesbar lang.
+// Karte anzeigt: an ein Mitglied oder Benutzerkonto ausgegeben ODER mit Standardstandort
+// hinterlegt. Der Rest – frisch erfasste, noch nie ausgegebene Chips – interessiert nur
+// bei der Neuausgabe und macht die Liste sonst unlesbar lang.
 const chipZuordnung = ref('zugeordnet')
 const chipZuordnungOptionen = [
   { label: 'Zugeordnet', value: 'zugeordnet' },
   { label: 'Nicht zugeordnet', value: 'frei' },
   { label: 'Alle', value: 'alle' },
 ]
-const istZugeordnet = (c) => !!(c.mitglied_id || c.aufbewahrungsort)
+const istZugeordnet = (c) => !!(c.mitglied_id || c.user_id || c.aufbewahrungsort)
 const passtZumStatus = (c) => chipFilter.value === 'alle' || c.status === chipFilter.value
 const chipsGefiltert = computed(() => chips.value.filter(
   (c) => passtZumStatus(c)
@@ -1123,13 +1140,20 @@ function chipSichtbarMachen(c) {
 const statusLogClass = (o) =>
   o === true ? 'schl-log-icon--ok' : o === false ? 'schl-log-icon--fehler' : ''
 const mitgliedName = (x) => `${x.mitglied_vorname || ''} ${x.mitglied_nachname || ''}`.trim() || ('Mitglied #' + x.mitglied_id)
+// Inhaber eines Chips: Mitglied oder Benutzerkonto (wer keinen Mitgliedsdatensatz hat).
+// Leer = Pool-Chip, dann zählt der Aufbewahrungsort.
+const chipInhaber = (c) => (!c ? ''
+  : c.mitglied_id ? mitgliedName(c)
+    : c.user_id ? (c.user_username || ('Benutzer #' + c.user_id)) : '')
 // Wer hat womit geöffnet: aufgelöstes Mitglied UND – bei IC-Karten – die Karten-
 // Bezeichnung ("Max M. · karte1"), damit erkennbar bleibt, welche Karte benutzt wurde
 // (#100). Ohne Mitglied fällt es auf Chip-Bezeichnung > Cloud-Credential-Name (key_name,
 // z. B. eKey/Fingerprint, aussagekräftiger als das geteilte ttlock_username) > TTLock-
 // Sammelkonto zurück.
 const logWer = (l) => {
-  const person = l.mitglied_vorname ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim() : ''
+  const person = l.mitglied_vorname
+    ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
+    : (l.chip_user_username || '')      // Chip läuft auf ein Konto ohne Mitgliedsdatensatz
   const karte = l.chip_bezeichnung || ''
   if (person && karte) return `${person} · ${karte}`
   return person || karte || l.key_name || l.ttlock_username || ''
@@ -1624,7 +1648,6 @@ const chipFormDialog = ref(false)
 const chipForm = ref({})
 const chipError = ref('')
 const mitglieder = ref([])
-const mitgliedOptions = ref([])
 const mitgliedLabel = (m) => (m
   ? `${m.nachname || ''}, ${m.vorname || ''}`.trim() + (m.mitgliedsnummer ? ` (Nr. ${m.mitgliedsnummer})` : '')
   : '')
@@ -1632,38 +1655,66 @@ async function loadMitglieder() {
   if (mitglieder.value.length) return
   try {
     const { data } = await api.get('/api/schliessanlage/mitglieder')
-    mitglieder.value = data; mitgliedOptions.value = data
-  } catch { mitglieder.value = []; mitgliedOptions.value = [] }
+    mitglieder.value = data
+  } catch { mitglieder.value = [] }
 }
-function filterMitglieder(val, update) {
+// Auswahl „Ausgegeben an": Mitglieder zuerst, danach die Benutzerkonten OHNE
+// Mitgliedsdatensatz. Wer beides ist, steht nur oben – der Chip hängt dann am
+// Mitglied, weil dort Log-Auflösung und Mitglieder-Ansicht hängen (das Backend
+// schreibt eine solche Auswahl ohnehin auf das Mitglied um).
+const inhaberAlle = computed(() => [
+  ...mitglieder.value.map(m => ({ typ: 'mitglied', id: m.id, label: mitgliedLabel(m),
+    caption: 'Mitglied' })),
+  ...users.value.filter(u => !u.mitglied_id).map(u => ({ typ: 'user', id: u.id,
+    label: u.username, caption: 'Benutzer (kein Mitglied)' })),
+])
+const inhaberOptionen = ref([])
+function filterInhaber(val, update) {
   const n = (val || '').toLowerCase()
   update(() => {
-    mitgliedOptions.value = n
-      ? mitglieder.value.filter(m => mitgliedLabel(m).toLowerCase().includes(n))
-      : mitglieder.value
+    inhaberOptionen.value = n
+      ? inhaberAlle.value.filter(o => o.label.toLowerCase().includes(n))
+      : inhaberAlle.value
   })
 }
+// Chip → Option, damit der Dialog den aktuellen Inhaber vorbelegt anzeigt.
+function inhaberAusChip(c) {
+  if (c.mitglied_id) {
+    return { typ: 'mitglied', id: c.mitglied_id, label: mitgliedName(c), caption: 'Mitglied' }
+  }
+  if (c.user_id) {
+    return { typ: 'user', id: c.user_id, label: c.user_username || ('Benutzer #' + c.user_id),
+      caption: 'Benutzer (kein Mitglied)' }
+  }
+  return null
+}
+async function ladeInhaberAuswahl() {
+  await Promise.all([loadMitglieder(), loadUsers()])
+  inhaberOptionen.value = inhaberAlle.value
+}
 async function openChipCreate() {
-  await loadMitglieder()
+  await ladeInhaberAuswahl()
   chipForm.value = { id: null, kartennummer: '', bezeichnung: '', externe_kennung: '',
-    mitglied_id: null, aufbewahrungsort: '', status: 'aktiv' }
+    inhaber: null, aufbewahrungsort: '', status: 'aktiv' }
   chipError.value = ''; chipFormDialog.value = true
 }
 async function openChipEdit() {
-  await loadMitglieder()
+  await ladeInhaberAuswahl()
   const c = chipDetail.value.chip
   chipForm.value = { id: c.id, kartennummer: c.kartennummer, bezeichnung: c.bezeichnung,
-    externe_kennung: c.externe_kennung, mitglied_id: c.mitglied_id,
+    externe_kennung: c.externe_kennung, inhaber: inhaberAusChip(c),
     aufbewahrungsort: c.aufbewahrungsort, status: c.status, version: c.version }
   chipError.value = ''; chipFormDialog.value = true
 }
 async function saveChip() {
   if (!chipForm.value.kartennummer) { chipError.value = 'Kartennummer ist erforderlich.'; return }
   saving.value = true; chipError.value = ''
+  const inhaber = chipForm.value.inhaber
   const payload = {
     bezeichnung: chipForm.value.bezeichnung || null,
     externe_kennung: chipForm.value.externe_kennung || null,
-    mitglied_id: chipForm.value.mitglied_id || null,
+    mitglied_id: inhaber?.typ === 'mitglied' ? inhaber.id : null,
+    user_id: inhaber?.typ === 'user' ? inhaber.id : null,
     aufbewahrungsort: chipForm.value.aufbewahrungsort || null,
     status: chipForm.value.status || 'aktiv',
   }

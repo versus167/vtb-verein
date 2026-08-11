@@ -90,7 +90,9 @@ class KontoBericht:
     chip_id: Optional[int] = None
     chip_bezeichnung: Optional[str] = None
     mitglied_id: Optional[int] = None
-    mitglied_name: Optional[str] = None
+    # Wem der Chip gehört – Mitglied oder Benutzerkonto (Platzwart & Co. haben keinen
+    # Mitgliedsdatensatz). Für den Bericht zählt der Name, nicht die Herkunft.
+    inhaber_name: Optional[str] = None
 
     @property
     def zugeordnet(self) -> bool:
@@ -218,11 +220,16 @@ def parse(daten: bytes) -> tuple[list[Zeile], list[str]]:
 
 
 # --- Import ------------------------------------------------------------------
-def _mitglied_name(chip) -> Optional[str]:
-    if chip is None or chip.mitglied_id is None:
+def _inhaber_name(chip) -> Optional[str]:
+    """Wem der Chip gehört: Mitglied, sonst Benutzerkonto, sonst niemandem."""
+    if chip is None:
         return None
-    name = f"{chip.mitglied_vorname or ''} {chip.mitglied_nachname or ''}".strip()
-    return name or f"Mitglied #{chip.mitglied_id}"
+    if chip.mitglied_id is not None:
+        name = f"{chip.mitglied_vorname or ''} {chip.mitglied_nachname or ''}".strip()
+        return name or f"Mitglied #{chip.mitglied_id}"
+    if chip.user_id is not None:
+        return chip.user_username or f"Benutzer #{chip.user_id}"
+    return None
 
 
 def _log_zeile(z: Zeile, schloss_id: int, chip) -> TuerZutrittLog:
@@ -299,7 +306,7 @@ def run_import(db, daten: bytes, *, commit: bool = False,
                 chip_id=chips[konto].id if chips.get(konto) else None,
                 chip_bezeichnung=chips[konto].bezeichnung if chips.get(konto) else None,
                 mitglied_id=(chips[konto].mitglied_id if chips.get(konto) else None),
-                mitglied_name=_mitglied_name(chips.get(konto)),
+                inhaber_name=_inhaber_name(chips.get(konto)),
             ) for konto, anzahl in je_konto.items()),
             key=lambda k: (-k.anzahl, k.konto.lower()),
         )

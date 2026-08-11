@@ -76,6 +76,32 @@ def _konto_nachziehen(db, chip) -> int:
     return gesamt
 
 
+def _inhaber_pruefen(db, mitglied_id: Optional[int],
+                     user_id: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+    """Inhaber eines Chips normalisieren: (mitglied_id, user_id) – höchstens eines gesetzt.
+
+    Ein Chip gehört einem Mitglied ODER einem Benutzer ohne Mitgliedsdatensatz
+    (Platzwart, Hausmeister, Betreuer eines Gastvereins) – oder niemandem, dann ist er
+    ein Pool-Chip mit Standort. Zwei Inhaber gleichzeitig gäbe es an der Tür nicht.
+
+    Ist der gewählte Benutzer mit einem Mitglied verknüpft, wird auf dieses Mitglied
+    umgeschrieben statt abzulehnen: dieselbe Person, aber am Mitglied hängen
+    Log-Auflösung (`tuer_zutritt_log.mitglied_id`) und Mitglieder-Ansicht. Sonst
+    entstünde je nach Auswahl eine andere Wahrheit über denselben Menschen.
+    """
+    if mitglied_id and user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Chip gehört entweder einem Mitglied oder einem "
+                                   "Benutzer – nicht beiden.")
+    if not user_id:
+        return mitglied_id, None
+    if not db.get_user_by_id(user_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Benutzer nicht gefunden")
+    mitglied = db.get_mitglied_by_user_id(user_id)
+    return (mitglied.id, None) if mitglied else (None, user_id)
+
+
 def _require_berechtigung_verwalten(user, db, berechtigung_id: int) -> None:
     """404, wenn die (Chip↔Schloss-)Berechtigung fehlt; 403, wenn der User das zugehörige
     Schloss nicht verwalten darf (Phase-3-Scope)."""
@@ -102,6 +128,7 @@ class ChipIn(BaseModel):
     bezeichnung: Optional[str] = None
     externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None
+    user_id: Optional[int] = None
     aufbewahrungsort: Optional[str] = None
     status: str = "aktiv"
 
@@ -110,6 +137,7 @@ class ChipUpdateIn(BaseModel):
     bezeichnung: Optional[str] = None
     externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None
+    user_id: Optional[int] = None
     aufbewahrungsort: Optional[str] = None
     status: str = "aktiv"
     version: int
@@ -159,13 +187,19 @@ def status_info(user: CurrentUser, db: DB):
 
 @router.get("/users")
 def user_lookup(user: CurrentUser, db: DB):
-    """Schlanke User-Liste (id + username) für den Berechtigungs-Picker.
+    """Schlanke User-Liste (id + username) für den Berechtigungs- und Chip-Picker.
     Eigener Endpoint (statt /api/users, das personen.read verlangt) – hier reicht
-    schliessanlage.verwalten."""
+    schliessanlage.verwalten.
+
+    `mitglied_id` sagt, ob hinter dem Konto ein Mitgliedsdatensatz steht: Solche
+    Benutzer gehören in den Chip-Picker nicht noch einmal als „Benutzer" – sie stehen
+    schon in der Mitgliederliste, und dort landet die Zuordnung ohnehin."""
     _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
     from app.services.user_service import UserService
+    mitglied_je_user = {m.user_id: m.id for m in db.list_mitglieder() if m.user_id}
     return [
-        {"id": u.id, "username": u.username, "active": u.active}
+        {"id": u.id, "username": u.username, "active": u.active,
+         "mitglied_id": mitglied_je_user.get(u.id)}
         for u in UserService(db).list_all()
         if u.active
     ]
@@ -190,23 +224,29 @@ def mitglied_lookup(user: CurrentUser, db: DB):
 @router.get("/mein-zugang")
 def mein_zugang(user: CurrentUser, db: DB):
     """Self-Service (Phase 4): eigene Chips, Türen, befristete App-Berechtigungen und
-    letzte eigene Zutritte des eingeloggten Users – über das verknüpfte Mitglied. Kein
-    schliessanlage-Recht nötig (nur eigene Daten); Bewegungsdaten betreffen nur ihn selbst."""
+    letzte eigene Zutritte des eingeloggten Users. Kein schliessanlage-Recht nötig (nur
+    eigene Daten); Bewegungsdaten betreffen nur ihn selbst.
+
+    Chips erreichen einen über zwei Wege: das verknüpfte Mitglied oder – ohne
+    Mitgliedsdatensatz – direkt das Benutzerkonto. `verknuepft` meint weiterhin die
+    Mitgliedsverknüpfung, sagt aber nichts mehr darüber, ob es hier etwas zu sehen gibt.
+    """
     app_ber = db.tuer_app_berechtigungen.list_for_user(user.id)
     mitglied = db.get_mitglied_by_user_id(user.id)
-    if not mitglied:
-        return {"verknuepft": False, "chips": [], "berechtigungen": [],
-                "app_berechtigungen": app_ber, "zutritte": []}
-    chips = db.schluessel_chips.list_for_mitglied(mitglied.id)
+    chips = db.schluessel_chips.list_for_user(user.id)
+    if mitglied:
+        chips = db.schluessel_chips.list_for_mitglied(mitglied.id) + chips
     berechtigungen = []
     for c in chips:
         berechtigungen.extend(db.tuer_berechtigungen.list_for_chip(c.id))
     return {
-        "verknuepft": True,
+        "verknuepft": mitglied is not None,
         "chips": chips,
         "berechtigungen": berechtigungen,
         "app_berechtigungen": app_ber,
-        "zutritte": db.tuer_zutritt_logs.list_for_mitglied(mitglied.id, limit=50),
+        "zutritte": db.tuer_zutritt_logs.list_selbstauskunft(
+            mitglied_id=mitglied.id if mitglied else None,
+            chip_ids=tuple(c.id for c in chips), limit=50),
     }
 
 
@@ -647,10 +687,12 @@ def chip_detail(chip_id: int, user: CurrentUser, db: DB):
 def chip_anlegen(data: ChipIn, user: CurrentUser, db: DB):
     _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
     from app.models.schliessanlage import SchluesselChip
+    mitglied_id, user_id = _inhaber_pruefen(db, data.mitglied_id, data.user_id)
     chip = SchluesselChip(
         kartennummer=data.kartennummer, bezeichnung=data.bezeichnung,
         externe_kennung=(data.externe_kennung or None),
-        mitglied_id=data.mitglied_id, aufbewahrungsort=data.aufbewahrungsort,
+        mitglied_id=mitglied_id, user_id=user_id,
+        aufbewahrungsort=data.aufbewahrungsort,
         status=data.status,
     )
     angelegt = db.schluessel_chips.create(chip, user.username)
@@ -664,6 +706,7 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
     chip = db.schluessel_chips.get(chip_id)
     if not chip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chip nicht gefunden")
+    mitglied_id, inhaber_user_id = _inhaber_pruefen(db, data.mitglied_id, data.user_id)
     # Der Status wirkt an den Schlössern: alles außer 'aktiv' setzt die IC-Karten des
     # Chips auf ein abgelaufenes Gültigkeitsfenster, 'aktiv' stellt sie wieder her.
     # Deshalb zuerst die Cloud — schlägt sie fehl, bleibt der alte Status stehen,
@@ -683,7 +726,8 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
         data.version = chip.version
     chip.bezeichnung = data.bezeichnung
     chip.externe_kennung = data.externe_kennung or None
-    chip.mitglied_id = data.mitglied_id
+    chip.mitglied_id = mitglied_id
+    chip.user_id = inhaber_user_id
     chip.aufbewahrungsort = data.aufbewahrungsort
     chip.status = data.status
     chip.version = data.version

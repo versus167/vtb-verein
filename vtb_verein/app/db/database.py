@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 90
+SCHEMA_VERSION = 91
 
 
 # ---------------------------------------------------------------------------
@@ -1114,7 +1114,7 @@ _FN_TUER_SCHLOSS_AUDIT_UPDATE = f"""
 """
 
 _SCHLUESSEL_CHIP_COLS = (
-    "id, version, kartennummer, bezeichnung, externe_kennung, mitglied_id, "
+    "id, version, kartennummer, bezeichnung, externe_kennung, mitglied_id, user_id, "
     "aufbewahrungsort, status, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
@@ -1354,6 +1354,28 @@ _ZUTRITT_EXTERN_SQL = (
 _ZUTRITT_EXTERN_INDEXES = (
     ("idx_tuer_zutritt_log_extern_konto", "tuer_zutritt_log(extern_konto)"),
     ("idx_schluessel_chip_externe_kennung", "schluessel_chip(externe_kennung)"),
+)
+
+# ----------------------------------------------------------------------------
+# Chip an einen Benutzer statt an ein Mitglied (Schema v91): Nicht jeder, der einen
+# Chip bekommt, ist Mitglied — Platzwarte, Hausmeister, Betreuer aus einem anderen
+# Verein. Sie haben ein App-Konto, aber keinen Mitgliedsdatensatz, und ihre Chips
+# standen bisher zwangsweise als „nicht zugeordnet" in der Liste (seit #160 sogar
+# ausgeblendet). `user_id` ist die zweite mögliche Inhaberschaft; genau eine von
+# beiden ist gesetzt (Chips ohne Inhaber sind Pool-Chips mit `aufbewahrungsort`).
+# Bewusst KEIN DB-CHECK: die Regel gehört in die API (dort mit Fehlermeldung), und
+# ein CHECK auf einer bestehenden Tabelle müsste jede Altzeile mitprüfen.
+# users wird nicht geprunt (s. prune_service-Kopfkommentar) — der FK braucht also
+# keinen ChildRef. Geteilt zwischen Frischaufbau und Migration v90→v91.
+_ZUTRITT_CHIP_USER_SQL = (
+    "ALTER TABLE schluessel_chip ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE schluessel_chip_history ADD COLUMN IF NOT EXISTS user_id INTEGER",
+)
+
+# Eigene Konstante (nicht in _ZUTRITT_INDEXES), weil die auch in der alten Migration
+# v56→v57 läuft, wo es die Spalte noch nicht gibt.
+_ZUTRITT_CHIP_USER_INDEXES = (
+    ("idx_schluessel_chip_user_id", "schluessel_chip(user_id)"),
 )
 
 # Dedupe für importierte Fremd-Logs: dieselbe Zeile (Schloss, Zeitpunkt, Konto) darf
@@ -3115,6 +3137,7 @@ class Database:
             88: self._migrate_v87_to_v88,
             89: self._migrate_v88_to_v89,
             90: self._migrate_v89_to_v90,
+            91: self._migrate_v90_to_v91,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6701,6 +6724,31 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 90 WHERE id = 1")
 
+    def _migrate_v90_to_v91(self) -> None:
+        """Chips auch an Benutzer ohne Mitgliedsdatensatz ausgeben können.
+
+        Bisher kannte ein Chip nur `mitglied_id` als Inhaber. Wer keinen
+        Mitgliedsdatensatz hat, aber ein App-Konto — Platzwart, Hausmeister,
+        Betreuer eines Gastvereins — bekam seinen Chip deshalb nur als „nicht
+        zugeordnet" in die Liste (seit #160 sogar standardmäßig ausgeblendet).
+        `user_id` ist die zweite mögliche Inhaberschaft.
+
+        Bestandsdaten bleiben unangetastet: die neue Spalte ist NULL, alle
+        bisherigen Zuordnungen laufen weiter über `mitglied_id`. Die Audit-
+        Funktionen werden neu erzeugt, weil ihre Spaltenlisten die neue Spalte
+        mitführen müssen — sonst bliebe sie in der History still leer. DDL und
+        Index kommen aus denselben Konstanten wie der Frischaufbau.
+        """
+        with self.cursor() as cur:
+            for sql in _ZUTRITT_CHIP_USER_SQL:
+                cur.execute(sql)
+            cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_INSERT)
+            cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
+            for name, target in _ZUTRITT_CHIP_USER_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 91 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8005,6 +8053,10 @@ class Database:
         # Geteilt mit Migration v89→v90.
         for sql in _ZUTRITT_EXTERN_SQL:
             cur.execute(sql)
+        # Chip an einen Benutzer ohne Mitgliedsdatensatz (Schema v91).
+        # Geteilt mit Migration v90→v91.
+        for sql in _ZUTRITT_CHIP_USER_SQL:
+            cur.execute(sql)
         # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
         cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
@@ -9011,6 +9063,7 @@ class Database:
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
             *_ZUTRITT_INDEXES,
             *_ZUTRITT_EXTERN_INDEXES,
+            *_ZUTRITT_CHIP_USER_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
             *_TRESOR_KONTAKT_INDEXES,
