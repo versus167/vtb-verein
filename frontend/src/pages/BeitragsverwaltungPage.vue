@@ -375,14 +375,17 @@
                 @click="markStorniert(props.row)">
                 <q-tooltip>{{ props.row.exportiert_in_export_id ? 'Stornieren (Gegenbuchung im nächsten Fibu-Export)' : 'Stornieren (bleibt bestehen, wird nicht neu abgerechnet)' }}</q-tooltip>
               </q-btn>
-              <!-- An die Fibu übergebene Sollstellungen nicht löschbar – Rücknahme nur per Storno. -->
-              <q-btn v-if="!props.row.exportiert_in_export_id" flat dense round icon="delete" color="negative" size="sm"
+              <!-- Auch nach der Fibu-Übergabe löschbar (#165): Löschen heißt „für
+                   diesen Zeitraum wurde nichts abgerechnet". Die Gegenbuchung
+                   entsteht im nächsten Export von allein. -->
+              <q-btn flat dense round icon="delete" color="negative" size="sm"
                 @click="deleteSollstellung(props.row)">
-                <q-tooltip>In den Papierkorb (wird bei der nächsten Abrechnung neu erzeugt)</q-tooltip>
+                <q-tooltip>
+                  {{ props.row.exportiert_in_export_id
+                    ? 'In den Papierkorb (Gegenbuchung im nächsten Fibu-Export, wird bei der nächsten Abrechnung neu erzeugt)'
+                    : 'In den Papierkorb (wird bei der nächsten Abrechnung neu erzeugt)' }}
+                </q-tooltip>
               </q-btn>
-              <q-icon v-else name="lock" size="xs" color="grey-6">
-                <q-tooltip>An Fibu übergeben – Rücknahme nur per Storno (Gegenbuchung)</q-tooltip>
-              </q-icon>
             </q-td>
             <q-td :props="props" v-else />
           </template>
@@ -1046,16 +1049,28 @@ async function markStorniert(s) {
 }
 
 async function deleteSollstellung(s) {
+  // Bei bereits übergebenen Posten die Fibu-Folge ausdrücklich nennen: Es
+  // entsteht eine Gegenbuchung, und zurückholen lässt sich das danach nicht
+  // mehr (#165) – das gehört vor die Entscheidung, nicht in eine Fehlermeldung.
+  const fibu = s.exportiert_in_export_id
+    ? ' Der Posten war bereits an die Fibu übergeben: Der nächste Export enthält '
+      + 'dafür eine Gegenbuchung, und danach ist kein Wiederherstellen mehr möglich.'
+    : ''
   $q.dialog({
     title: 'Löschen?',
-    message: `Sollstellung für ${s.mitglied_name} in den Papierkorb verschieben? Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.`,
+    message: `Sollstellung für ${s.mitglied_name} in den Papierkorb verschieben? `
+      + `Anders als beim Storno wird sie bei der nächsten Abrechnung wieder neu angelegt.${fibu}`,
     cancel: true,
     ok: { label: 'Löschen', color: 'negative' },
   })
     .onOk(async () => {
-      await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
-      await ladeSollstellungen()
-      if (papierkorbOffen.value) await ladePapierkorb()
+      try {
+        await api.delete(`/api/beitraege/sollstellungen/${s.id}`)
+        await ladeSollstellungen()
+        if (papierkorbOffen.value) await ladePapierkorb()
+      } catch (e) {
+        $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Löschen fehlgeschlagen' })
+      }
     })
 }
 
