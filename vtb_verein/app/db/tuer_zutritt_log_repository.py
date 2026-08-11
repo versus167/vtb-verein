@@ -20,15 +20,16 @@ _SELECT = """
     SELECT l.id, l.ttlock_record_id, l.schloss_id, l.quelle, l.extern_konto,
            l.record_type, l.record_type_from_lock,
            l.methode, l.erfolg, l.credential, l.key_name, l.ttlock_username,
-           l.chip_id, l.mitglied_id, l.lock_date, l.server_date, l.raw, l.created_at,
+           l.chip_id, l.mitglied_id, l.user_id, l.lock_date, l.server_date, l.raw,
+           l.created_at,
            s.name AS schloss_name, c.bezeichnung AS chip_bezeichnung,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
-           cu.username AS chip_user_username
+           u.username AS user_username
     FROM tuer_zutritt_log l
     LEFT JOIN tuer_schloss s ON s.id = l.schloss_id
     LEFT JOIN schluessel_chip c ON c.id = l.chip_id
     LEFT JOIN mitglied m ON m.id = l.mitglied_id
-    LEFT JOIN users cu ON cu.id = c.user_id
+    LEFT JOIN users u ON u.id = l.user_id
 """
 
 
@@ -43,15 +44,17 @@ def _map(row) -> TuerZutrittLog:
 # Zeit versehentlich ein zweites Mal umrechnen.
 _ORTSZEIT = "(l.lock_date::timestamptz AT TIME ZONE 'Europe/Berlin')"
 
-# Wer war es? Gleiche Auflösungskette wie im Log: Mitglied → Benutzer, auf den der Chip
-# läuft → Chip-Bezeichnung → das, was die Anlage selbst mitgeliefert hat. Ausnahme
-# Gateway-Fernöffnung: die läuft in der Cloud unter dem Sammelkonto, deren `key_name` ist
-# der Kontoname ('ttlock') und wäre in einer Personen-Rangliste schlicht falsch – sie wird
-# als eigene „Person" ausgewiesen, bis die Korrelation mit dem access_log den echten
-# Auslöser liefert (Phase 5, Teil B).
+# Wer war es? Gleiche Auflösungskette wie im Log: Mitglied → Benutzer ohne Mitglieds-
+# datensatz → Chip-Bezeichnung → das, was die Anlage selbst mitgeliefert hat. Beide
+# Personenspalten stammen aus der Log-Zeile, nicht aus dem heutigen Chip-Inhaber: ein
+# weitergegebener Chip würde sonst alte Öffnungen dem neuen Inhaber zuschreiben.
+# Ausnahme Gateway-Fernöffnung: die läuft in der Cloud unter dem Sammelkonto, deren
+# `key_name` ist der Kontoname ('ttlock') und wäre in einer Personen-Rangliste schlicht
+# falsch – sie wird als eigene „Person" ausgewiesen, bis die Korrelation mit dem
+# access_log den echten Auslöser liefert (Phase 5, Teil B).
 _WER = """COALESCE(
              NULLIF(TRIM(COALESCE(m.vorname, '') || ' ' || COALESCE(m.nachname, '')), ''),
-             cu.username,
+             u.username,
              c.bezeichnung,
              CASE WHEN l.record_type = ANY(%(gateway)s) THEN 'Fernöffnung (App)'
                   ELSE l.key_name END,
@@ -73,7 +76,7 @@ WITH ereignis AS (
     LEFT JOIN tuer_schloss s ON s.id = l.schloss_id
     LEFT JOIN schluessel_chip c ON c.id = l.chip_id
     LEFT JOIN mitglied m ON m.id = l.mitglied_id
-    LEFT JOIN users cu ON cu.id = c.user_id
+    LEFT JOIN users u ON u.id = l.user_id
     WHERE l.lock_date IS NOT NULL
       AND l.erfolg IS NOT FALSE
       AND (l.record_type = ANY(%(oeffnung)s)
@@ -96,15 +99,15 @@ class TuerZutrittLogRepository(BaseRepository):
                 INSERT INTO tuer_zutritt_log
                     (ttlock_record_id, schloss_id, record_type, record_type_from_lock,
                      methode, erfolg, credential, key_name, ttlock_username,
-                     chip_id, mitglied_id, lock_date, server_date, raw)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     chip_id, mitglied_id, user_id, lock_date, server_date, raw)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (ttlock_record_id) DO NOTHING
                 RETURNING id
                 """,
                 (log.ttlock_record_id, log.schloss_id, log.record_type,
                  log.record_type_from_lock, log.methode, log.erfolg, log.credential,
                  log.key_name, log.ttlock_username, log.chip_id, log.mitglied_id,
-                 log.lock_date, log.server_date,
+                 log.user_id, log.lock_date, log.server_date,
                  Json(log.raw) if log.raw is not None else None),
             )
             return cur.fetchone() is not None
@@ -118,14 +121,14 @@ class TuerZutrittLogRepository(BaseRepository):
                 """
                 INSERT INTO tuer_zutritt_log
                     (quelle, extern_konto, schloss_id, record_type, methode, erfolg,
-                     key_name, chip_id, mitglied_id, lock_date, raw)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     key_name, chip_id, mitglied_id, user_id, lock_date, raw)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING
                 RETURNING id
                 """,
                 (QUELLE_EXTERN, log.extern_konto, log.schloss_id, log.record_type,
                  log.methode, log.erfolg, log.key_name, log.chip_id, log.mitglied_id,
-                 log.lock_date, Json(log.raw) if log.raw is not None else None),
+                 log.user_id, log.lock_date, Json(log.raw) if log.raw is not None else None),
             )
             return cur.fetchone() is not None
 
@@ -141,7 +144,8 @@ class TuerZutrittLogRepository(BaseRepository):
             return {(r['lock_date'], r['extern_konto']) for r in cur.fetchall()}
 
     def resolve_extern_konto(self, konto: str, *, chip_id: int,
-                             mitglied_id: Optional[int]) -> int:
+                             mitglied_id: Optional[int],
+                             user_id: Optional[int] = None) -> int:
         """Bereits importierte Zeilen eines Kontos nachträglich einem Chip zuordnen.
 
         Nötig, weil die Zuordnung typischerweise erst NACH dem ersten Import entsteht
@@ -154,11 +158,13 @@ class TuerZutrittLogRepository(BaseRepository):
             cur.execute(
                 """
                 UPDATE tuer_zutritt_log
-                SET chip_id = %s, mitglied_id = COALESCE(%s, mitglied_id)
+                SET chip_id = %s,
+                    mitglied_id = COALESCE(%s, mitglied_id),
+                    user_id = COALESCE(%s, user_id)
                 WHERE quelle = %s AND chip_id IS NULL
                   AND lower(btrim(extern_konto)) = lower(btrim(%s))
                 """,
-                (chip_id, mitglied_id, QUELLE_EXTERN, konto),
+                (chip_id, mitglied_id, user_id, QUELLE_EXTERN, konto),
             )
             return cur.rowcount
 
@@ -333,37 +339,27 @@ class TuerZutrittLogRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
-    def list_for_mitglied(self, mitglied_id: int, limit: int = 50) -> list[TuerZutrittLog]:
-        """Eigene Zutritte eines Mitglieds (Self-Service) – über die im Log aufgelöste
-        mitglied_id (Kartennummer → Chip → Mitglied)."""
-        with self.cursor() as cur:
-            cur.execute(
-                _SELECT + " WHERE l.mitglied_id = %s ORDER BY l.lock_date DESC NULLS LAST, l.id DESC "
-                          "LIMIT %s",
-                (mitglied_id, limit),
-            )
-            return [_map(r) for r in cur.fetchall()]
-
     def list_selbstauskunft(self, *, mitglied_id: Optional[int] = None,
-                            chip_ids: tuple[int, ...] = (),
+                            user_id: Optional[int] = None,
                             limit: int = 50) -> list[TuerZutrittLog]:
-        """Eigene Zutritte des eingeloggten Users (Self-Service), aus beiden Quellen.
+        """Eigene Zutritte des eingeloggten Users (Self-Service).
 
-        Wer einen Mitgliedsdatensatz hat, findet sich über die im Log aufgelöste
-        `mitglied_id` (historisch korrekt: sie steht in der Zeile). Wer keinen hat,
-        aber Chips auf seinem Benutzerkonto, wird über diese Chips gefunden — dort
-        gibt es keine Spur in der Log-Zeile, also zählt der heutige Inhaber.
+        Beide Spalten sind Momentaufnahmen aus dem Moment der Öffnung — wer damals
+        den Chip hatte, steht in der Zeile. Bewusst NICHT über den heutigen Inhaber
+        (`schluessel_chip.mitglied_id/user_id`) gesucht: Chips werden weitergegeben,
+        und die Selbstauskunft läuft ohne Protokoll-Recht. Wer eine Zeile bekommt,
+        die er nicht selbst erzeugt hat, sieht fremde Bewegungsdaten.
         """
-        if mitglied_id is None and not chip_ids:
+        if mitglied_id is None and user_id is None:
             return []
         with self.cursor() as cur:
             cur.execute(
                 _SELECT + """
-                WHERE l.mitglied_id = %(mid)s     -- NULL trifft nichts: kein Mitglied
-                   OR l.chip_id = ANY(%(chips)s::int[])
+                WHERE l.mitglied_id = %(mid)s     -- NULL trifft nichts (SQL-Semantik)
+                   OR l.user_id = %(uid)s
                 ORDER BY l.lock_date DESC NULLS LAST, l.id DESC
                 LIMIT %(limit)s
                 """,
-                {"mid": mitglied_id, "chips": list(chip_ids), "limit": limit},
+                {"mid": mitglied_id, "uid": user_id, "limit": limit},
             )
             return [_map(r) for r in cur.fetchall()]

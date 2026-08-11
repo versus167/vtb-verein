@@ -545,13 +545,32 @@ ausgeblendet. `schluessel_chip.user_id` ist deshalb die zweite mögliche Inhaber
   (`tuer_zutritt_log.mitglied_id`) liefe ins Leere. Der Picker bietet solche Konten
   entsprechend gar nicht erst in der Benutzer-Gruppe an (`/users` liefert `mitglied_id`).
 - **Namensauflösung**: Log-Anzeige und Auswertung setzen den Benutzernamen zwischen
-  Mitglied und Chip-Bezeichnung (`_WER`, `chip_user_username`). Anders als beim Mitglied
-  steht dabei nichts in der Log-Zeile selbst — es zählt der heutige Inhaber des Chips.
+  Mitglied und Chip-Bezeichnung (`_WER`, `user_username`).
 - **Self-Service** greift über beide Wege: `user_has_valid_for_schloss` prüft Mitglied
-  *und* `schluessel_chip.user_id`, „Mein Zugang" listet Chips aus beiden Quellen und
-  holt die eigenen Zutritte über `list_selbstauskunft` (Mitglied-Spur ODER eigene Chips).
+  *und* `schluessel_chip.user_id`, „Mein Zugang" listet Chips aus beiden Quellen.
 - Kein `PRUNE_REGISTRY`-Eintrag nötig: `users` wird bewusst nicht geprunt, der neue FK
   kann also nichts blockieren.
+
+### „Wer war es" gehört in die Log-Zeile, nicht an den heutigen Chip (Schema v92)
+
+`tuer_zutritt_log.mitglied_id` ist seit jeher eine **Momentaufnahme**: beim Einfügen aus
+dem damaligen Chip-Inhaber gestempelt, danach fest. Für Inhaber ohne Mitgliedsdatensatz
+fehlte das Gegenstück — sie ließen sich nur über den heutigen `schluessel_chip.user_id`
+auflösen. Chips werden aber weitergegeben, und `tuer_zutritt_log.chip_id` bleibt dabei
+stehen: Der neue Inhaber hätte in „Mein Zugang" die Öffnungen seines Vorgängers gesehen,
+mit Tür, Uhrzeit und Namen — an einer Stelle, die bewusst **ohne** `schliessanlage.protokoll`
+läuft. Deshalb `tuer_zutritt_log.user_id`, gesetzt in beiden Schreibpfaden (Cloud-Sync und
+Fremd-Log-Import, inkl. `resolve_extern_konto`).
+
+- **Selbstauskunft** sucht nur noch über die gestempelten Personenspalten:
+  `list_selbstauskunft(mitglied_id=…, user_id=…)` → `WHERE l.mitglied_id = … OR l.user_id = …`.
+  Nie über die heutigen Chips.
+- **Kein Backfill**: Vor v91 konnte kein Chip auf ein Konto laufen, es gibt also nichts
+  richtig zuzuordnen — und aus dem heutigen Inhaber zu schließen wäre genau der Fehler.
+  Zeilen aus dem Fenster zwischen v91 und v92 bleiben NULL und tauchen in keiner
+  Selbstauskunft auf (fail closed).
+- Dieselbe Momentaufnahme trägt die Auswertung: eine Chip-Weitergabe verschiebt dort
+  keine Öffnungen mehr von einem Öffner zum nächsten.
 
 ## Offene Punkte (vor/während Phase 1 klären)
 

@@ -91,7 +91,7 @@ class _LogRepo:
     def insert_extern_if_new(self, log):
         self.rows.append(log); return True
 
-    def resolve_extern_konto(self, konto, *, chip_id, mitglied_id):
+    def resolve_extern_konto(self, konto, *, chip_id, mitglied_id, user_id=None):
         self.aufrufe.append((konto, chip_id))
         return 1
 

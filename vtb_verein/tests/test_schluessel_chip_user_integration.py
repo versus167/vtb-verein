@@ -75,11 +75,13 @@ def _schloss(db, name="Tor"):
     return db.tuer_schloesser.create_extern(name=name, by="tester")
 
 
-def _log(db, schloss, zeit_utc, *, chip_id=None, mitglied_id=None, konto=None):
+def _log(db, schloss, zeit_utc, *, chip_id=None, mitglied_id=None, user_id=None,
+         konto=None):
     db.tuer_zutritt_logs.insert_extern_if_new(TuerZutrittLog(
         schloss_id=schloss.id, quelle=QUELLE_EXTERN, extern_konto=konto,
         record_type=7, methode="IC-Karte", erfolg=True,
-        chip_id=chip_id, mitglied_id=mitglied_id, lock_date=zeit_utc))
+        chip_id=chip_id, mitglied_id=mitglied_id, user_id=user_id,
+        lock_date=zeit_utc))
 
 
 def test_chip_laeuft_auf_ein_benutzerkonto_und_liefert_dessen_namen(db):
@@ -115,11 +117,28 @@ def test_log_zeigt_den_benutzer_statt_nur_der_chip_bezeichnung(db):
     tor = _schloss(db)
     chip = db.schluessel_chips.create(
         SchluesselChip(kartennummer="4711", bezeichnung="Chip blau", user_id=uid), "t")
-    _log(db, tor, "2026-07-01T08:00:00+00:00", chip_id=chip.id, konto="Chip blau")
+    _log(db, tor, "2026-07-01T08:00:00+00:00", chip_id=chip.id, user_id=uid,
+         konto="Chip blau")
 
     zeile = db.tuer_zutritt_logs.list_for_schloss(tor.id)[0]
-    assert zeile.chip_user_username == "chipuser-platzwart"
+    assert zeile.user_username == "chipuser-platzwart"
     assert zeile.mitglied_vorname is None       # die Zeile selbst kennt kein Mitglied
+
+
+def test_import_stempelt_den_inhaber_in_die_log_zeile(db):
+    """Der Name darf nicht erst beim Anzeigen aus dem heutigen Chip-Inhaber
+    entstehen – sonst wandert er beim nächsten Inhaberwechsel mit."""
+    from app.services.zutritt_import_service import run_import
+    uid = _user(db, "chipuser-platzwart")
+    db.schluessel_chips.create(
+        SchluesselChip(kartennummer="4711", bezeichnung="Chip8", user_id=uid), "t")
+    run_import(db, b"Unlock Account,Unlock Type, Lock Name,Unlock Time\n"
+                   b"Chip8,Karte entsperren,Tor Einfahrt,2026-08-07 19:56:16\n",
+               commit=True, actor="tester")
+
+    with db.conn.cursor() as cur:
+        cur.execute("SELECT user_id FROM tuer_zutritt_log")
+        assert [r['user_id'] for r in cur.fetchall()] == [uid]
 
 
 def test_auswertung_zaehlt_den_benutzer_als_person(db):
@@ -130,7 +149,7 @@ def test_auswertung_zaehlt_den_benutzer_als_person(db):
     chip = db.schluessel_chips.create(
         SchluesselChip(kartennummer="4711", bezeichnung="Chip blau", user_id=uid), "t")
     for tag in (1, 2, 3):
-        _log(db, tor, f"2026-07-0{tag}T08:00:00+00:00", chip_id=chip.id)
+        _log(db, tor, f"2026-07-0{tag}T08:00:00+00:00", chip_id=chip.id, user_id=uid)
 
     personen = zutritt_auswertung_service.bericht(db, tage=0)['personen']
     assert [(p['wer'], p['anzahl']) for p in personen] == [("chipuser-platzwart", 3)]
@@ -171,7 +190,7 @@ def test_self_service_am_schloss_gilt_auch_ohne_mitgliedsdatensatz(db):
     assert db.tuer_berechtigungen.user_has_valid_for_schloss(fremder, tor.id) is False
 
 
-def test_eigene_zutritte_kommen_ueber_mitglied_und_ueber_chip(db):
+def test_selbstauskunft_zeigt_nur_die_eigenen_zeilen(db):
     uid = _user(db, "chipuser-platzwart")
     mit_uid = _user(db, "chipuser-mitglied", mitglied=True)
     tor = _schloss(db)
@@ -181,13 +200,37 @@ def test_eigene_zutritte_kommen_ueber_mitglied_und_ueber_chip(db):
     db.conn.commit()
     chip = db.schluessel_chips.create(
         SchluesselChip(kartennummer="4711", bezeichnung="Chip blau", user_id=uid), "t")
-    _log(db, tor, "2026-07-01T08:00:00+00:00", chip_id=chip.id)
+    _log(db, tor, "2026-07-01T08:00:00+00:00", chip_id=chip.id, user_id=uid)
     _log(db, tor, "2026-07-02T08:00:00+00:00", mitglied_id=mid, konto="mitglied")
 
-    ueber_chip = db.tuer_zutritt_logs.list_selbstauskunft(chip_ids=(chip.id,))
-    assert [z.chip_id for z in ueber_chip] == [chip.id]
+    eigene = db.tuer_zutritt_logs.list_selbstauskunft(user_id=uid)
+    assert [z.user_id for z in eigene] == [uid]
     ueber_mitglied = db.tuer_zutritt_logs.list_selbstauskunft(mitglied_id=mid)
     assert [z.mitglied_id for z in ueber_mitglied] == [mid]
     # Ohne Anhaltspunkt gibt es nichts zu zeigen – und vor allem nicht alles.
     assert db.tuer_zutritt_logs.list_selbstauskunft() == []
-    assert db.tuer_zutritt_logs.list_selbstauskunft(chip_ids=()) == []
+
+
+def test_chip_weitergabe_gibt_dem_neuen_inhaber_keine_fremden_zutritte(db):
+    """Der Kern der Sache: „Mein Zugang" läuft OHNE Protokoll-Recht. Würde die
+    Selbstauskunft über den heutigen Chip gesucht statt über die gestempelte
+    Person, bekäme der neue Inhaber das Bewegungsprofil seines Vorgängers."""
+    alt = _user(db, "chipuser-alt")
+    neu = _user(db, "chipuser-neu")
+    tor = _schloss(db)
+    chip = db.schluessel_chips.create(
+        SchluesselChip(kartennummer="4711", bezeichnung="Chip blau", user_id=alt), "t")
+    _log(db, tor, "2026-07-01T22:41:00+00:00", chip_id=chip.id, user_id=alt)
+
+    chip.user_id = neu                      # Fob wird weitergereicht
+    db.schluessel_chips.update(chip, "t")
+    _log(db, tor, "2026-08-01T08:00:00+00:00", chip_id=chip.id, user_id=neu)
+
+    assert [z.lock_date[:10] for z in db.tuer_zutritt_logs.list_selbstauskunft(user_id=neu)] \
+        == ["2026-08-01"]
+    assert [z.lock_date[:10] for z in db.tuer_zutritt_logs.list_selbstauskunft(user_id=alt)] \
+        == ["2026-07-01"]
+    # Und in der Auswertung (mit Protokoll-Recht) bleiben beide sauber getrennt.
+    personen = zutritt_auswertung_service.bericht(db, tage=0)['personen']
+    assert sorted((p['wer'], p['anzahl']) for p in personen) == [
+        ("chipuser-alt", 1), ("chipuser-neu", 1)]

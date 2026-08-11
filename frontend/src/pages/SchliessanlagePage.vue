@@ -1153,7 +1153,7 @@ const chipInhaber = (c) => (!c ? ''
 const logWer = (l) => {
   const person = l.mitglied_vorname
     ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
-    : (l.chip_user_username || '')      // Chip läuft auf ein Konto ohne Mitgliedsdatensatz
+    : (l.user_username || '')      // Öffner ohne Mitgliedsdatensatz, aus der Log-Zeile
   const karte = l.chip_bezeichnung || ''
   if (person && karte) return `${person} · ${karte}`
   return person || karte || l.key_name || l.ttlock_username || ''

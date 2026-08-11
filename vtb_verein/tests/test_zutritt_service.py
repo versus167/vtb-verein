@@ -159,8 +159,9 @@ class FakeSchlossRepo:
 
 
 class FakeChip:
-    def __init__(self, id, mitglied_id, kartennummer="", bezeichnung=None, status="aktiv"):
-        self.id, self.mitglied_id = id, mitglied_id
+    def __init__(self, id, mitglied_id, kartennummer="", bezeichnung=None, status="aktiv",
+                 user_id=None):
+        self.id, self.mitglied_id, self.user_id = id, mitglied_id, user_id
         self.kartennummer, self.bezeichnung = kartennummer, bezeichnung
         self.status, self.version, self.deleted = status, 1, False
 

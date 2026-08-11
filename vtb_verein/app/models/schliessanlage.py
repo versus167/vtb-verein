@@ -324,6 +324,10 @@ class TuerZutrittLog:
     ttlock_username: Optional[str] = None
     chip_id: Optional[int] = None                 # aufgelöst, falls Kartennummer matcht
     mitglied_id: Optional[int] = None             # aufgelöst über Chip
+    # Inhaber ohne Mitgliedsdatensatz – wie `mitglied_id` eine Momentaufnahme beim
+    # Einfügen. Bewusst nicht über den heutigen `schluessel_chip.user_id` hergeleitet:
+    # ein weitergegebener Chip schriebe sonst alte Öffnungen dem neuen Inhaber zu.
+    user_id: Optional[int] = None
     lock_date: Optional[str] = None               # Ereigniszeit am Schloss
     server_date: Optional[int] = None             # serverDate (ms) – Cursor-Basis
     raw: Optional[dict] = None
@@ -333,10 +337,7 @@ class TuerZutrittLog:
     chip_bezeichnung: Optional[str] = None
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None
-    # Inhaber des Chips, wenn er auf ein Benutzerkonto statt auf ein Mitglied läuft.
-    # Steht nicht in der Log-Zeile selbst (die kennt nur mitglied_id) – kommt über
-    # den Chip und ist deshalb immer der HEUTIGE Inhaber.
-    chip_user_username: Optional[str] = None
+    user_username: Optional[str] = None           # zu user_id (Anzeige)
 
 
 @dataclass

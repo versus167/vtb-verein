@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 91
+SCHEMA_VERSION = 92
 
 
 # ---------------------------------------------------------------------------
@@ -1376,6 +1376,25 @@ _ZUTRITT_CHIP_USER_SQL = (
 # v56→v57 läuft, wo es die Spalte noch nicht gibt.
 _ZUTRITT_CHIP_USER_INDEXES = (
     ("idx_schluessel_chip_user_id", "schluessel_chip(user_id)"),
+)
+
+# ----------------------------------------------------------------------------
+# Wer war es? – als Momentaufnahme in der Log-Zeile (Schema v92). `mitglied_id` wird
+# seit jeher beim Einfügen aus dem damaligen Chip-Inhaber gestempelt und bleibt
+# deshalb auch dann richtig, wenn der Chip später jemand anderem gegeben wird.
+# Für Inhaber ohne Mitgliedsdatensatz (v91) fehlte dieses Gegenstück: Wer sie über
+# den heutigen `schluessel_chip.user_id` auflöst, schreibt alte Öffnungen dem neuen
+# Inhaber zu — in der Selbstauskunft wären das fremde Bewegungsdaten. Also dieselbe
+# Mechanik wie beim Mitglied: eigene Spalte, beim Einfügen gesetzt, danach fest.
+# tuer_zutritt_log ist append-only (keine History) — kein Audit-Trigger anzupassen,
+# und users wird nicht geprunt, also auch kein ChildRef.
+# Geteilt zwischen Frischaufbau und Migration v91→v92.
+_ZUTRITT_LOG_USER_SQL = (
+    "ALTER TABLE tuer_zutritt_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+)
+
+_ZUTRITT_LOG_USER_INDEXES = (
+    ("idx_tuer_zutritt_log_user_id", "tuer_zutritt_log(user_id)"),
 )
 
 # Dedupe für importierte Fremd-Logs: dieselbe Zeile (Schloss, Zeitpunkt, Konto) darf
@@ -3138,6 +3157,7 @@ class Database:
             89: self._migrate_v88_to_v89,
             90: self._migrate_v89_to_v90,
             91: self._migrate_v90_to_v91,
+            92: self._migrate_v91_to_v92,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6749,6 +6769,31 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 91 WHERE id = 1")
 
+    def _migrate_v91_to_v92(self) -> None:
+        """Auslösenden Benutzer in der Log-Zeile festhalten statt ihn herzuleiten.
+
+        `tuer_zutritt_log.mitglied_id` ist seit jeher eine Momentaufnahme: beim
+        Einfügen aus dem damaligen Chip-Inhaber gestempelt und danach fest. Für
+        die Inhaber ohne Mitgliedsdatensatz (v91) fehlte dieses Gegenstück — sie
+        ließen sich nur über den HEUTIGEN `schluessel_chip.user_id` auflösen. Wird
+        ein Chip weitergegeben, schriebe das die alten Öffnungen dem neuen Inhaber
+        zu; in der Selbstauskunft („Mein Zugang", ohne Protokoll-Recht) wären das
+        fremde Bewegungsdaten. `user_id` schließt die Lücke.
+
+        Kein Backfill: Chips konnten erst ab v91 auf ein Benutzerkonto laufen, für
+        alles Ältere gibt es also nichts richtig zuzuordnen — und aus dem heutigen
+        Chip-Inhaber zu schließen wäre genau der Fehler, den die Spalte behebt.
+        Zeilen aus dem schmalen Fenster zwischen v91 und v92 bleiben NULL und
+        tauchen in der Selbstauskunft ihres Inhabers nicht auf (fail closed).
+        """
+        with self.cursor() as cur:
+            for sql in _ZUTRITT_LOG_USER_SQL:
+                cur.execute(sql)
+            for name, target in _ZUTRITT_LOG_USER_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 92 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8057,6 +8102,10 @@ class Database:
         # Geteilt mit Migration v90→v91.
         for sql in _ZUTRITT_CHIP_USER_SQL:
             cur.execute(sql)
+        # Auslösender Benutzer als Momentaufnahme in der Log-Zeile (Schema v92).
+        # Geteilt mit Migration v91→v92.
+        for sql in _ZUTRITT_LOG_USER_SQL:
+            cur.execute(sql)
         # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
         cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
@@ -9064,6 +9113,7 @@ class Database:
             *_ZUTRITT_INDEXES,
             *_ZUTRITT_EXTERN_INDEXES,
             *_ZUTRITT_CHIP_USER_INDEXES,
+            *_ZUTRITT_LOG_USER_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
             *_TRESOR_INDEXES,
             *_TRESOR_KONTAKT_INDEXES,
