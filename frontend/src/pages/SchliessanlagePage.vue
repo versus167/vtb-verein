@@ -138,12 +138,18 @@
                 <q-icon name="badge" size="24px" />
               </div>
               <div class="col" style="min-width: 0">
-                <div class="text-weight-bold ellipsis">{{ c.bezeichnung || ('Chip #' + c.id) }}</div>
-                <div class="text-caption text-grey ellipsis">Nr. {{ c.kartennummer }}</div>
+                <!-- #163: Oben steht, WER den Chip hat – danach sucht man in der Liste.
+                     Der Chip-Name rutscht klein darunter und trägt die Zeile nur dann,
+                     wenn der Chip niemandem gehört (sonst wäre die Karte namenlos). -->
+                <div class="text-weight-bold ellipsis">
+                  <q-icon v-if="chipInhaber(c)" :name="c.user_id ? 'account_circle' : 'person'"
+                    size="14px" /> {{ chipInhaber(c) || chipName(c) }}
+                </div>
+                <div class="text-caption text-grey ellipsis">
+                  {{ chipInhaber(c) ? chipName(c) : ('Nr. ' + c.kartennummer) }}
+                </div>
                 <div class="text-caption text-grey ellipsis q-mt-xs">
-                  <span v-if="chipInhaber(c)">
-                    <q-icon :name="c.user_id ? 'account_circle' : 'person'" size="12px" /> {{ chipInhaber(c) }}
-                  </span>
+                  <span v-if="chipInhaber(c)">Nr. {{ c.kartennummer }}</span>
                   <span v-else-if="c.aufbewahrungsort"><q-icon name="inventory_2" size="12px" /> {{ c.aufbewahrungsort }}</span>
                   <span v-else>nicht zugeordnet</span>
                 </div>
@@ -183,9 +189,9 @@
             </div>
           </q-item-section>
           <q-item-section>
-            <q-item-label class="text-weight-medium">{{ l.schloss_name }} · {{ l.methode }}</q-item-label>
-            <q-item-label caption>{{ fmtRelativ(l.lock_date) }}
-              <span v-if="logWer(l)">· {{ logWer(l) }}</span></q-item-label>
+            <!-- #164: Kopfzeile = Tür und Person, Fußzeile = Zeitpunkt und womit geöffnet wurde -->
+            <q-item-label class="text-weight-medium">{{ logZeile([l.schloss_name, logPerson(l)]) }}</q-item-label>
+            <q-item-label caption>{{ logZeile([fmtRelativ(l.lock_date), l.methode, logMedium(l)]) }}</q-item-label>
           </q-item-section>
         </q-item>
         <q-item v-if="!gesamtLog.length"><q-item-section class="text-grey">
@@ -599,9 +605,11 @@
                   </div>
                 </q-item-section>
                 <q-item-section>
-                  <q-item-label class="text-weight-medium">{{ it.methode }}</q-item-label>
-                  <q-item-label caption>{{ fmtDateTime(it.lock_date) }}
-                    <span v-if="logWer(it)">· {{ logWer(it) }}</span></q-item-label>
+                  <!-- Das Schloss steht im Dialogkopf; hier trägt die Person die Zeile
+                       und weicht nur dann auf die Methode aus, wenn niemand aufgelöst ist. -->
+                  <q-item-label class="text-weight-medium">{{ logPerson(it) || it.methode }}</q-item-label>
+                  <q-item-label caption>{{ logZeile([fmtDateTime(it.lock_date),
+                    logPerson(it) ? it.methode : '', logMedium(it)]) }}</q-item-label>
                 </q-item-section>
               </template>
             </q-item>
@@ -620,13 +628,15 @@
             <q-icon name="badge" size="20px" />
           </div>
           <div class="col q-ml-sm" style="min-width: 0">
+            <!-- Gleiche Reihenfolge wie in der Karte (#163): erst der Inhaber, dann der Chip -->
             <div class="text-subtitle1 text-weight-bold ellipsis">
-              {{ chipDetail.chip?.bezeichnung || ('Chip #' + chipDetail.chip?.id) }}
+              {{ chipInhaber(chipDetail.chip) || chipName(chipDetail.chip) }}
             </div>
             <div class="text-caption text-grey ellipsis">
-              Nr. {{ chipDetail.chip?.kartennummer }} ·
-              {{ chipInhaber(chipDetail.chip) ? ('ausgegeben an ' + chipInhaber(chipDetail.chip))
-                 : ('liegt: ' + (chipDetail.chip?.aufbewahrungsort || '—')) }}
+              <span v-if="chipInhaber(chipDetail.chip)">{{ chipName(chipDetail.chip) }} · </span>
+              Nr. {{ chipDetail.chip?.kartennummer }}
+              <span v-if="!chipInhaber(chipDetail.chip)">
+                · liegt: {{ chipDetail.chip?.aufbewahrungsort || '—' }}</span>
               <span v-if="chipDetail.chip?.externe_kennung">
                 · extern: {{ chipDetail.chip.externe_kennung }}</span>
             </div>
@@ -1120,9 +1130,15 @@ const chipZuordnungOptionen = [
 ]
 const istZugeordnet = (c) => !!(c.mitglied_id || c.user_id || c.aufbewahrungsort)
 const passtZumStatus = (c) => chipFilter.value === 'alle' || c.status === chipFilter.value
+// Sortiert nach dem, was seit #163 oben auf der Karte steht – eine Liste voller Namen in
+// Chip-Namen-Reihenfolge wirkt ungeordnet. Mitglieder nach Nachnamen wie im Adressbuch.
+const chipSortKey = (c) => (c.mitglied_id
+  ? `${c.mitglied_nachname || ''} ${c.mitglied_vorname || ''}`.trim()
+  : chipInhaber(c) || chipName(c))
 const chipsGefiltert = computed(() => chips.value.filter(
   (c) => passtZumStatus(c)
-    && (chipZuordnung.value === 'alle' || istZugeordnet(c) === (chipZuordnung.value === 'zugeordnet'))))
+    && (chipZuordnung.value === 'alle' || istZugeordnet(c) === (chipZuordnung.value === 'zugeordnet')))
+  .sort((a, b) => chipSortKey(a).localeCompare(chipSortKey(b), 'de')))
 // Wie viele Chips der Standardfilter gerade schluckt – sonst wirkt die Liste unvollständig.
 const ausgeblendeteChips = computed(() => (chipZuordnung.value !== 'zugeordnet' ? 0
   : chips.value.filter((c) => passtZumStatus(c) && !istZugeordnet(c)).length))
@@ -1140,24 +1156,25 @@ function chipSichtbarMachen(c) {
 const statusLogClass = (o) =>
   o === true ? 'schl-log-icon--ok' : o === false ? 'schl-log-icon--fehler' : ''
 const mitgliedName = (x) => `${x.mitglied_vorname || ''} ${x.mitglied_nachname || ''}`.trim() || ('Mitglied #' + x.mitglied_id)
+const chipName = (c) => (c?.bezeichnung || ('Chip #' + (c?.id ?? '')))
 // Inhaber eines Chips: Mitglied oder Benutzerkonto (wer keinen Mitgliedsdatensatz hat).
 // Leer = Pool-Chip, dann zählt der Aufbewahrungsort.
 const chipInhaber = (c) => (!c ? ''
   : c.mitglied_id ? mitgliedName(c)
     : c.user_id ? (c.user_username || ('Benutzer #' + c.user_id)) : '')
-// Wer hat womit geöffnet: aufgelöstes Mitglied UND – bei IC-Karten – die Karten-
-// Bezeichnung ("Max M. · karte1"), damit erkennbar bleibt, welche Karte benutzt wurde
-// (#100). Ohne Mitglied fällt es auf Chip-Bezeichnung > Cloud-Credential-Name (key_name,
-// z. B. eKey/Fingerprint, aussagekräftiger als das geteilte ttlock_username) > TTLock-
-// Sammelkonto zurück.
-const logWer = (l) => {
-  const person = l.mitglied_vorname
-    ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
-    : (l.user_username || '')      // Öffner ohne Mitgliedsdatensatz, aus der Log-Zeile
-  const karte = l.chip_bezeichnung || ''
-  if (person && karte) return `${person} · ${karte}`
-  return person || karte || l.key_name || l.ttlock_username || ''
-}
+// Log-Zeilen (#164): Person und Medium sind getrennte Angaben – die Person trägt die
+// Kopfzeile, das Medium die Fußzeile. Leere Teile fallen raus, sonst blieben lose „·".
+const logZeile = (teile) => teile.filter(Boolean).join(' · ')
+// Wer geöffnet hat: aufgelöstes Mitglied, sonst das Benutzerkonto aus der Log-Zeile
+// (Öffner ohne Mitgliedsdatensatz). Leer, wenn niemand aufgelöst werden konnte.
+const logPerson = (l) => (l.mitglied_vorname
+  ? `${l.mitglied_vorname} ${l.mitglied_nachname || ''}`.trim()
+  : (l.user_username || ''))
+// Womit geöffnet wurde: die Karten-Bezeichnung, damit bei mehreren IC-Karten erkennbar
+// bleibt, welche benutzt wurde (#100). Ohne Chip fällt es auf den Cloud-Credential-Namen
+// (key_name, z. B. eKey/Fingerprint – aussagekräftiger als das geteilte ttlock_username)
+// und zuletzt auf das TTLock-Sammelkonto zurück.
+const logMedium = (l) => l.chip_bezeichnung || l.key_name || l.ttlock_username || ''
 
 async function loadStatus() {
   const { data } = await api.get('/api/schliessanlage/status')
