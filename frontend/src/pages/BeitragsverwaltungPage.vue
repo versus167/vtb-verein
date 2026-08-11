@@ -272,7 +272,20 @@
             </div>
           </div>
           <q-table :rows="sichtbareVorschau" :columns="vorschauColumns" :row-key="vorschauRowKey"
-            flat bordered dense :rows-per-page-options="[0]" hide-bottom>
+            flat bordered dense :rows-per-page-options="[0]" hide-bottom binary-state-sort>
+            <!-- Klick auf den Namen filtert danach; nochmal klicken hebt es auf (#166).
+                 Wer eine Position prüft, will meist alle Zeilen dieser Person sehen. -->
+            <template #body-cell-mitglied_name="props">
+              <q-td :props="props">
+                <span class="vorschau-name" @click="nameFiltern(props.row.mitglied_name)">
+                  {{ props.row.mitglied_name }}
+                  <q-tooltip>
+                    {{ vorschauFilterName === props.row.mitglied_name
+                      ? 'Filter aufheben' : 'Nur diese Person zeigen' }}
+                  </q-tooltip>
+                </span>
+              </q-td>
+            </template>
             <template #body-cell-status="props">
               <q-td :props="props">
                 <q-chip dense size="sm"
@@ -805,6 +818,14 @@ const gefilterteVorschau = computed(() => {
   return rows
 })
 
+// Klick auf einen Namen in der Tabelle setzt den Namensfilter – ein zweiter Klick
+// auf denselben Namen hebt ihn wieder auf (#166). Der Filter läuft über dasselbe
+// Suchfeld wie die Eingabe von Hand, damit oben sichtbar bleibt, warum die Liste
+// kurz ist.
+function nameFiltern(name) {
+  vorschauFilterName.value = vorschauFilterName.value === name ? '' : name
+}
+
 // In der Tabelle gezeigte Zeilen: vorhandene nur, wenn das Häkchen gesetzt ist.
 const sichtbareVorschau = computed(() =>
   vorschauZeigeVorhandene.value
@@ -872,14 +893,19 @@ const summenAbtColumns = [
   { name: 'anzahl',   label: 'Positionen', field: 'anzahl', align: 'center' },
 ]
 
+// Alle Spalten sortierbar (#166). Betrag und Monate liegen bewusst als ROHWERT im
+// `field` und werden erst über `format` beschriftet: Auf dem fertigen Text sortierte
+// Quasar alphabetisch, und dann stünde „100,00 €" vor „99,00 €".
 const vorschauGrundspalten = [
-  { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left' },
-  { name: 'beitragsregel_name',label: 'Regel',        field: 'beitragsregel_name',align: 'left' },
-  { name: 'betrag',            label: 'Betrag',       field: r => r.betrag.toFixed(2) + ' €', align: 'right' },
-  { name: 'monate',            label: 'Monate',       field: r => `${r.anzahl_monate}/${r.monate_im_zeitraum}`, align: 'center' },
-  { name: 'zeitraum',          label: 'Zeitraum',     field: 'zeitraum',           align: 'left' },
-  { name: 'zahler',            label: 'Zahler',       field: 'zahler_typ',         align: 'left' },
-  { name: 'status',            label: 'Status',       field: 'bereits_vorhanden',  align: 'left' },
+  { name: 'mitglied_name',     label: 'Mitglied',     field: 'mitglied_name',     align: 'left',   sortable: true },
+  { name: 'beitragsregel_name',label: 'Regel',        field: 'beitragsregel_name',align: 'left',   sortable: true },
+  { name: 'betrag',            label: 'Betrag',       field: 'betrag',            align: 'right',  sortable: true,
+    format: v => v.toFixed(2) + ' €' },
+  { name: 'monate',            label: 'Monate',       field: 'anzahl_monate',     align: 'center', sortable: true,
+    format: (v, r) => `${v}/${r.monate_im_zeitraum}` },
+  { name: 'zeitraum',          label: 'Zeitraum',     field: 'zeitraum',           align: 'left',  sortable: true },
+  { name: 'zahler',            label: 'Zahler',       field: 'zahler_typ',         align: 'left',  sortable: true },
+  { name: 'status',            label: 'Status',       field: 'bereits_vorhanden',  align: 'left',  sortable: true },
   { name: 'edit',              label: '',             field: 'edit',               align: 'right' },
 ]
 
@@ -891,7 +917,7 @@ const vorschauColumns = computed(() => {
   const cols = [...vorschauGrundspalten]
   cols.splice(1, 0, {
     name: 'debitor', label: 'Debitor', align: 'left', sortable: true,
-    field: r => r.debitor_konto ?? '',
+    field: 'debitor_konto', format: v => v ?? '',
   })
   return cols
 })
@@ -1084,3 +1110,19 @@ onMounted(async () => {
     ladeZeitraeume(), ladeEinstellungen()])
 })
 </script>
+
+<style lang="scss" scoped>
+/* Klickbarer Name in der Vorschau (#166). Bewusst ohne eigene Farbe, nur
+   gepunktete Unterstreichung: Das signalisiert „hier passiert etwas" und trägt
+   in allen drei Themes, ohne einen Farbton zu setzen, der auf dunklem Grund
+   absäuft. */
+.vorschau-name {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.vorschau-name:hover {
+  text-decoration-style: solid;
+}
+</style>
