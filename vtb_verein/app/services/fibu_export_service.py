@@ -80,19 +80,46 @@ def _plus_tage(iso, tage):
         return None
 
 
-def _buchungstext(bezeichnung: str, person: str) -> str:
-    """Buchungstext = Bezeichnung, hinten der Name der Person (#167-Wunsch).
+def _gegenbuchungs_grund(row: dict) -> Optional[str]:
+    """„Storno" oder „Gelöscht" – warum die Gegenbuchung entsteht.
 
-    Auf dem Kontoauszug der Fibu steht sonst nur „Erwachsenenbeitrag 2026-Q3" —
-    wer gemeint ist, verrät erst das Personenkonto. Der Name gehört ans Ende,
-    damit die Bezeichnung vorn steht und die Zeilen untereinander lesbar bleiben.
-    Geschrieben wie im Debitorenstamm („Nachname, Vorname"), damit beide Seiten
-    dieselbe Schreibweise zeigen.
+    Beides führt zur selben Haben-Zeile, bedeutet in der App aber Verschiedenes:
+    Storno heißt „aufheben und diesmal nicht abrechnen", Löschen heißt „für
+    diesen Zeitraum wurde nichts abgerechnet" – Letzteres kommt beim nächsten
+    Abrechnungslauf also wieder. Wer den Kontoauszug liest, sieht damit sofort,
+    ob er eine erneute Forderung zu erwarten hat.
+
+    Gelöscht schlägt Storno: Beides kann gesetzt sein (erst storniert, dann
+    gelöscht), und dann ist das Löschen der jüngere und stärkere Vorgang.
+    """
+    if row.get('quelle_deleted_at'):
+        return 'Gelöscht'
+    if row.get('quelle_status') in ('storniert', 'zurueckgezogen'):
+        return 'Storno'
+    # ÜL-Abrechnungen kennen kein 'storniert': Dort ist jeder Status außer
+    # 'bestaetigt' der Grund (s. _COND_UL_STORNO im Repository).
+    if row.get('quelle_typ') == 'ul_abrechnung' and row.get('quelle_status'):
+        return 'Storno'
+    return None
+
+
+def _buchungstext(bezeichnung: str, person: str, grund: Optional[str] = None) -> str:
+    """Buchungstext: vorn der Grund einer Gegenbuchung, dann die Bezeichnung,
+    hinten der Name der Person.
+
+    Auf dem Kontoauszug der Fibu stand vorher nur „Erwachsenenbeitrag 2026-Q3" —
+    wer gemeint ist, verriet erst das Personenkonto, und ob es eine Forderung
+    oder deren Rücknahme ist, nur das Vorzeichen. Der Name gehört ans Ende, damit
+    die Bezeichnung vorn steht und die Zeilen untereinander lesbar bleiben;
+    geschrieben wie im Debitorenstamm („Nachname, Vorname"). Der Grund gehört
+    dagegen an den Anfang: Er ist beim Überfliegen einer Kontoauszugsspalte das
+    Erste, was man wissen will.
 
     Die Längengrenze des Felds (250 Zeichen) steht im Formatter, wo das Format
     beschrieben ist — hier wird nicht gekürzt.
     """
-    return f"{bezeichnung} {person}".strip() if person else bezeichnung
+    teile = [grund, bezeichnung, person]
+    return " ".join(t for t in teile if t).strip()
 
 
 def personenkonto(basis: Optional[int], mitgliedsnummer: Optional[int]) -> Optional[int]:
@@ -235,20 +262,25 @@ class FibuExportService:
 
     def _storno_positionen(self, original_id: int) -> list[FibuExportPosition]:
         """Positionen, die ein Original gegenbuchen: dessen Forderungen (S) werden zu
-        Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S)."""
+        Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S).
+
+        Jede Zeile trägt „Storno" im Buchungstext – auch die zurückgedrehten
+        Gegenbuchungen. Storniert wird hier der ganze Lauf, nicht der einzelne
+        Posten: Dessen Sollstellung ist unverändert offen, aus ihr allein ließe
+        sich der Vermerk also nicht ableiten."""
         einst = self.db.fibu_einstellungen.get()
         neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(original_id)
         return ([p for r in neu_rows
-                 for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)]
+                 for p in self._positionen_fuer_row(r, 'gegenbuchung', einst, grund='Storno')]
                 + [p for r in storno_rows
-                   for p in self._positionen_fuer_row(r, 'forderung', einst)])
+                   for p in self._positionen_fuer_row(r, 'forderung', einst, grund='Storno')])
 
     # ------------------------------------------------------------------
     # Interne Hilfsmethoden
     # ------------------------------------------------------------------
 
-    def _positionen_fuer_row(self, row: dict, art: str,
-                             einst: FibuEinstellungen) -> list[FibuExportPosition]:
+    def _positionen_fuer_row(self, row: dict, art: str, einst: FibuEinstellungen,
+                             grund: Optional[str] = None) -> list[FibuExportPosition]:
         """Expandiert eine Buchungs-Rohzeile zu FBASC-Positionen.
 
         Normalfall (zahler_typ='mitglied'): genau eine Position.
@@ -256,10 +288,16 @@ class FibuExportService:
         Erlöskonto und gleicher Belegnummer (sich ausgleichendes Debitor-OPOS-Paar):
         Einbuchung (Kostenstelle Verein) und Gegenbuchung (S↔H, Kostenstelle Abteilung).
         Im Storno-Pfad (art='gegenbuchung') sind beide Zeilen bereits invertiert.
-        ÜL-Honorar (quelle_typ='ul_abrechnung'): genau eine Kreditor-Position."""
+        ÜL-Honorar (quelle_typ='ul_abrechnung'): genau eine Kreditor-Position.
+
+        `grund` überschreibt den Vermerk im Buchungstext. Nötig für den
+        Lauf-Storno: Dort ist die Quellzeile selbst weder storniert noch
+        gelöscht — storniert wird der ganze Export."""
+        if grund is None and art != 'forderung':
+            grund = _gegenbuchungs_grund(row)
         if row['quelle_typ'] == 'ul_abrechnung':
-            return [self._position_ul(row, art, einst)]
-        basis = self._position(row, art, einst)
+            return [self._position_ul(row, art, einst, grund)]
+        basis = self._position(row, art, einst, grund)
         if row.get('zahler_typ') != 'abteilung':
             return [basis]
         # Beträge fließen nicht real (reine Kostenstellen-Umbuchung) → kein Lastschrifteinzug.
@@ -270,7 +308,8 @@ class FibuExportService:
             kostenstelle=row.get('abteilung_kostenstelle'), lastschrifteinzug=None)
         return [einbuchung, gegenbuchung]
 
-    def _position(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
+    def _position(self, row: dict, art: str, einst: FibuEinstellungen,
+                  grund: Optional[str] = None) -> FibuExportPosition:
         """Baut aus einer Buchungs-Rohzeile eine FBASC-Position (Forderung=S / Gegenbuchung=H)."""
         nummer = row.get('mitgliedsnummer')
         konto = personenkonto(einst.debitor_konto_basis, nummer)
@@ -333,7 +372,7 @@ class FibuExportService:
             kostentraeger=kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=_buchungstext(bezeichnung, person),
+            buchungstext=_buchungstext(bezeichnung, person, grund),
             lastschrifteinzug=1 if (ist_lastschrift and iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
@@ -350,7 +389,8 @@ class FibuExportService:
             kontoinhaber=abw_kontoinhaber,
         )
 
-    def _position_ul(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
+    def _position_ul(self, row: dict, art: str, einst: FibuEinstellungen,
+                     grund: Optional[str] = None) -> FibuExportPosition:
         """ÜL-Honorar als Kreditor-Buchung – gegenläufig zum Debitor-Pfad:
         Aufwand (Soll-Sachkonto) gegen Kreditor (Haben). Eine neue, bestätigte Abrechnung
         (art='forderung') bucht den Kreditor im HABEN; der Storno-Pfad dreht auf Soll.
@@ -395,7 +435,7 @@ class FibuExportService:
             kostentraeger=einst.default_kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=_buchungstext(bezeichnung, person),
+            buchungstext=_buchungstext(bezeichnung, person, grund),
             lastschrifteinzug=None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,

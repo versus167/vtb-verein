@@ -122,6 +122,8 @@ def _row(**kw):
         quelle_name='Vereinsbeitrag', zahler_typ='mitglied', gegenkonto='4000',
         steuerschluessel=None, abteilung_id=None, abteilung_kostenstelle=None,
         quelle_kostenstelle=None, quelle_kostentraeger=None,
+        # Grund einer Gegenbuchung (Storno vs. gelöscht) – Standard: lebender Posten
+        quelle_status='offen', quelle_deleted_at=None,
     )
     base.update(kw)
     return base
@@ -146,6 +148,7 @@ def _ul_row(**kw):
         strasse='Turnweg 2', plz='01067', ort='Dresden', land='DE',
         iban='DE12', bic='YBIC', kontoinhaber=None, email='annett@example.org',
         quelle_name='Aerobic', abteilung_id=3, abteilung_kostenstelle=44,
+        quelle_status='bestaetigt', quelle_deleted_at=None,
     )
     base.update(kw)
     return base
@@ -253,8 +256,41 @@ class TestBuchungstext:
 
     def test_gegenbuchung_traegt_den_namen_ebenso(self):
         """Sonst ließe sich die Gegenbuchung im Kontoauszug nicht zuordnen."""
-        svc, _ = _service(gegen=[_row(vorname='Anna', nachname='Müller')])
-        assert svc.vorschau()['gegenbuchungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 Müller, Anna'
+        svc, _ = _service(gegen=[_row(vorname='Anna', nachname='Müller',
+                                      quelle_status='storniert')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext \
+            == 'Storno Vereinsbeitrag 2026-Q4 Müller, Anna'
+
+
+class TestGegenbuchungsGrund:
+    """Vorn im Buchungstext steht, warum gegengebucht wird. Storno und Löschen
+    ergeben dieselbe Haben-Zeile, bedeuten aber Verschiedenes: Gelöschtes kommt
+    beim nächsten Abrechnungslauf wieder, Storniertes nicht."""
+
+    def test_stornierter_posten_meldet_storno(self):
+        svc, _ = _service(gegen=[_row(quelle_status='storniert')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext.startswith('Storno ')
+
+    def test_geloeschter_posten_meldet_geloescht(self):
+        svc, _ = _service(gegen=[_row(quelle_deleted_at='2026-07-01T10:00:00+00')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext.startswith('Gelöscht ')
+
+    def test_geloescht_schlaegt_storno(self):
+        """Erst storniert, dann gelöscht: Das Löschen ist der jüngere Vorgang."""
+        svc, _ = _service(gegen=[_row(quelle_status='storniert',
+                                      quelle_deleted_at='2026-07-01T10:00:00+00')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext.startswith('Gelöscht ')
+
+    def test_forderung_bekommt_keinen_vermerk(self):
+        svc, _ = _service(neu=[_row()])
+        text = svc.vorschau()['forderungen'][0].buchungstext
+        assert not text.startswith('Storno') and not text.startswith('Gelöscht')
+
+    def test_ul_gegenbuchung_meldet_storno(self):
+        """ÜL-Abrechnungen kennen kein 'storniert' – dort ist jeder Status außer
+        'bestaetigt' der Grund."""
+        svc, _ = _service(gegen=[_ul_row(quelle_status='offen')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext.startswith('Storno ')
 
     def test_ul_honorar_traegt_den_uebungsleiter(self):
         svc, _ = _service(neu=[_ul_row(vorname='Annett', nachname='Wagner')])
@@ -640,6 +676,14 @@ class TestGegenbuchungsLauf:
         assert stub.storno_calls[0]['summe_cent'] == -3000
         # Erste Buchungszeile muss Haben sein (Feld 03), Original war Soll.
         assert content.decode('utf-8').split('\r\n')[0].split(';')[3] == 'H'
+
+    def test_storno_lauf_vermerkt_storno_im_buchungstext(self):
+        """Hier ist die Sollstellung selbst unverändert offen – storniert wird der
+        ganze Lauf. Der Vermerk kann also nicht aus der Zeile stammen."""
+        svc, stub = _service(neu=[_row(quelle_status='offen', quelle_deleted_at=None)])
+        stub.exporte = {5: FibuExport(id=5)}
+        _, content = svc.stornieren(5, benutzer='admin')
+        assert content.decode('utf-8').split('\r\n')[0].split(';')[12].startswith('Storno ')
 
     def test_re_download_storno_lauf_rekonstruiert_aus_original(self):
         svc, stub = _service(neu=[_row(quelle_typ='beitrag', quelle_id=1)])
