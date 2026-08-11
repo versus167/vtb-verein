@@ -37,17 +37,21 @@ DEFAULT_RETENTION_DAYS = 90      # Original: Mindest-Verweildauer im Papierkorb
 DEFAULT_KEEP_MIN = 10            # Original: so viele zuletzt Gelöschte bleiben immer
 DEFAULT_HISTORY_RETENTION_DAYS = 365   # History: eigenes, längeres Fenster
 
-# Zugriffsprotokoll-Seitenaufrufe: KEIN Soft-Delete-Eintrag, sondern eigene Retention –
-# Hard-Delete nach created_at-Alter, nur category 'page' (auth/prune bleiben dauerhaft).
-# Als Sonder-Bereich in Report/Prune geführt, damit es auf der Bereinigungs-Seite sichtbar
-# und einstellbar ist (Schlüssel auch in der Override-Tabelle prune_einstellungen nutzbar).
+# --- Sonder-Bereiche: Protokolle & gerätegebundene Tabellen (siehe LogRule) --------
+# Kein Soft-Delete/Papierkorb, sondern Hard-Delete nach Alter. Schlüssel sind stabil und
+# in der Override-Tabelle `prune_einstellungen` einstellbar wie jede PruneEntity.
 ACCESS_LOG_PAGE = "access_log_page"
 DEFAULT_PAGE_VIEW_RETENTION_DAYS = 90
 
-# Ticket-„Gesehen"-Log (ticket_zugriff_log): append-only, KEIN Soft-Delete/History –
-# Hard-Delete nach created_at-Alter. Als Sonder-Bereich wie die Seitenaufrufe geführt.
 TICKET_ZUGRIFF_LOG = "ticket_zugriff_log"
 DEFAULT_TICKET_VIEW_RETENTION_DAYS = 180
+
+# Protokolle mit Personenbezug (wer war wann wo / hat was gesehen): 1 Jahr.
+DEFAULT_PROTOKOLL_RETENTION_DAYS = 365
+# Rein technische Protokolle ohne Personenbezug (Batteriestand, Schloss-Status): 90 Tage.
+DEFAULT_TECHNIK_LOG_RETENTION_DAYS = 90
+# Gerätebindungen, nachdem sie tot sind (abgelaufen bzw. widerrufen): 90 Tage Nachlauf.
+DEFAULT_GERAET_NACHLAUF_DAYS = 90
 
 # Alters-Archivierung (generisch, siehe ArchiveRule): datierte Datensätze werden nach
 # Alter auf soft-deleted gesetzt (in den Papierkorb verschoben) – KEIN Hard-Delete.
@@ -61,6 +65,33 @@ DEFAULT_TERMIN_ALTER_RETENTION_DAYS = 5 * 365   # ~5 Jahre (Standard, per Overri
 # (Alters-Archivierung wie Termine); der reguläre Ticket-Prune räumt sie danach ab.
 TICKET_ABGESCHLOSSEN_ALTER = "ticket_abgeschlossen_alter"
 DEFAULT_TICKET_ABGESCHLOSSEN_RETENTION_DAYS = 5 * 365   # ~5 Jahre
+
+# Steuerliche Aufbewahrung: 10 Jahre, gerechnet AB JAHRESENDE des Belegdatums (dafür
+# sorgt `_ab_jahresende`). Bewusst der konservative Wert – die kürzere Frist für reine
+# Buchungsbelege ist nicht genommen worden. Wie alles andere in `prune_einstellungen`
+# nachjustierbar, falls die Kassenprüfung etwas anderes verlangt.
+DEFAULT_FINANZ_RETENTION_DAYS = 10 * 365
+
+# Ausgeschiedene Mitglieder: bewusst dasselbe Fenster wie die Finanzdaten. Kürzer wäre
+# wirkungslos – solange Sollstellungen und Buchungen des Mitglieds aufbewahrt werden
+# müssen, hält Tor 4 den Stammsatz ohnehin fest, sonst hingen Belege an einer leeren ID.
+DEFAULT_MITGLIED_AUSTRITT_RETENTION_DAYS = 10 * 365
+
+# Rechte-Zuweisungen (individuelle Grants/Denies, Kassen-ACL): länger als der 90-Tage-
+# Standard, weil ein Rechte-Entzug nachvollziehbar bleiben soll.
+DEFAULT_RECHTE_RETENTION_DAYS = 365
+
+# Deaktivierte Benutzerkonten. KEIN Ablauf wegen Inaktivität – ein aktives Konto bleibt,
+# auch wenn sich lange niemand anmeldet; erst das Deaktivieren startet die Uhr.
+DEFAULT_USERS_RETENTION_DAYS = 365
+
+# Verwaiste Anhang-Dateien: liegen auf der Platte, ohne dass eine DB-Zeile sie kennt –
+# typischerweise ein Upload, der nach dem Schreiben der Datei abgebrochen ist. Die Frist
+# ist bewusst großzügig: zwischen Datei-Schreiben und DB-Insert liegen Millisekunden,
+# aber ein zu enges Fenster würde bei einer langsamen Anfrage die Datei unter einem
+# gerade entstehenden Anhang wegziehen.
+DATEI_VERWAIST = "datei_verwaist"
+DEFAULT_VERWAISTE_DATEI_RETENTION_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -121,21 +152,49 @@ class ArchiveRule:
     children: tuple[ChildRef, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class LogRule:
+    """Append-only-Tabelle ohne Papierkorb: Hard-Delete nach Alter, sonst nichts.
+
+    Deckt zwei Sorten ab, die dieselbe Mechanik brauchen:
+      * **Protokolle** (`access_log`, `*_zugriff_log`, `tuer_zutritt_log`, …) – das Log IST
+        der Audit-Datensatz, es gibt kein `deleted_at` und keine History.
+      * **Gerätebindungen und deren History** (`user_sessions`, `auth_tokens`,
+        `push_subscriptions`) – sie sterben nicht per Soft-Delete, sondern indem sie
+        ablaufen oder widerrufen werden.
+
+    ``ts_expr`` ist der Zeitpunkt, ab dem die Zeile *tot* ist und die Frist läuft: bei
+    Protokollen der Anfall (``created_at``), bei Gerätebindungen der Tod
+    (``COALESCE(revoked_at, expires_at)``). Ergibt der Ausdruck NULL, ist die Zeile nie
+    fällig – so bleiben aktive Sessions und nie widerrufene Abos unangetastet, ohne dass
+    es dafür eine Sonderregel braucht. ``where`` schränkt zusätzlich ein (z.B. auf eine
+    ``access_log``-Kategorie), ``gruppe`` bündelt die Zeilen nur in der UI.
+    """
+    name: str                       # Schlüssel (auch in prune_einstellungen nutzbar)
+    label: str                      # Anzeigename (DE)
+    table: str
+    ts_expr: str = "created_at"     # Zeitpunkt, ab dem die Frist läuft
+    where: str = ""                 # zusätzliche Einschränkung, ohne führendes AND
+    default_days: int = DEFAULT_PROTOKOLL_RETENTION_DAYS
+    gruppe: str = "Protokolle"      # Überschrift in der Admin-UI
+
+
 # Reihenfolge: Blatt → Wurzel. So sind beim echten Lauf die Kinder schon weg, bevor
 # das Eltern-Element drankommt. History wird je Entität separat (und vorgelagert) geprunt.
 #
-# Abgedeckte Domänen: Anhänge (mit Disk-Datei), Mitglied, Tickets, Stammdaten,
-# Schließanlage/Zutritt und Übungsleiter-Abrechnung.
-# BEWUSST NICHT drin: Finanzdaten (Kassen/Buchungen/Beiträge/Gebühren,
-# Rechnungen/Rechnungs-Kategorien/Rechnungs-Exporte sowie die SEPA-Einzugsläufe
-# sepa_lauf/sepa_lauf_position – Aufbewahrungspflicht; ein Lastschriftlauf ist der Beleg
-# dafür, was wann von wem eingezogen wurde) und
-# users (Auth-/Audit-verflochten, Last-Admin-Schutz).
-# Ebenfalls NICHT drin: geräte-gebundene Tabellen mit revoked_at statt deleted_at
-# (user_sessions, push_subscriptions) – sie haben eigene zeitbasierte Cleanups
-# (cleanup_expired / cleanup_revoked) analog access_log, kein deleted_at-Prune.
+# Grundsatz (Entscheidung 2026-08-11): Es gibt KEINE Daten, die dauerhaft bleiben. Wo
+# früher „bewusst nicht drin" stand, war das meist eine offene Frage und kein Entschluss –
+# inzwischen hat jede Tabelle ein Fenster, nur unterschiedlich lange. Daten mit
+# Aufbewahrungspflicht (Finanzen) und ausgeschiedene Mitglieder werden nicht hier
+# geführt, sondern über die ARCHIVE_REGISTRY: sie sind aktiv und hätten nie ein
+# `deleted_at`, an dem Tor 1 greifen könnte. Erst schiebt die Archivierung sie nach
+# Ablauf der Frist in den Papierkorb, dann räumt der reguläre Prune sie hier ab.
+# Protokolle und Gerätebindungen (kein Papierkorb, Hard-Delete nach Alter) stehen in der
+# LOG_REGISTRY.
 # Vollständigkeit der Child-Refs wird per Schema-Drift-Test (test_prune_integration.py)
 # gegen die echten FKs abgesichert – neue FK auf eine geprunte Tabelle -> Test rot.
+# `test_jede_tabelle_hat_einen_loeschpfad` bewacht zusätzlich, dass überhaupt jede
+# Tabelle in einer der drei Registries auftaucht.
 #
 # Child-Refs listen ALLE eingehenden FKs (auch aus nicht-geprunten Tabellen) – fehlt
 # einer, würde der DB-FK (RESTRICT) das echte Löschen blockieren. Anhänge sind reine
@@ -249,6 +308,75 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # nicht geprunt – deshalb genügt der eigene Eintrag, kein ChildRef nach oben.
     PruneEntity("kalender_abo", "Kalender-Abos", "kalender_abo",
                 history_table="kalender_abo_history"),
+    # --- Finanzdaten (Blatt → Wurzel, steht VOR mitglied/abteilung) ---
+    # Diese Entitäten löschen NICHT nach Alter des Belegs, sondern wie jede andere: erst
+    # muss die Zeile im Papierkorb liegen. Dorthin bringt sie die ARCHIVE_REGISTRY nach
+    # Ablauf der Aufbewahrungsfrist. Ein von Hand gelöschter Beleg (Tippfehler im Entwurf)
+    # läuft dagegen über das kurze Standard-Fenster – Tor 4 verhindert trotzdem, dass ein
+    # Beleg verschwindet, an dem noch etwas hängt.
+    PruneEntity("kassen_zaehlung", "Kassenzählungen", "kassen_zaehlungen",
+                history_table="kassen_zaehlungen_history"),
+    PruneEntity("beitrag_sollstellung", "Beitrags-Sollstellungen", "beitrag_sollstellung",
+                history_table="beitrag_sollstellung_history"),
+    PruneEntity("gebuehr_forderung", "Gebühren-Forderungen", "gebuehr_forderung",
+                history_table="gebuehr_forderung_history"),
+    PruneEntity("sepa_lauf_position", "SEPA-Positionen", "sepa_lauf_position",
+                history_table="sepa_lauf_position_history"),
+    PruneEntity("sepa_lauf", "SEPA-Einzugsläufe", "sepa_lauf",
+                history_table="sepa_lauf_history",
+                children=(ChildRef("sepa_lauf_position", "sepa_lauf_id"),)),
+    PruneEntity("rechnung", "Rechnungen", "rechnung",
+                history_table="rechnung_history",
+                children=(ChildRef("rechnung_anhaenge", "rechnung_id"),)),
+    PruneEntity("rechnung_kategorie", "Rechnungs-Kategorien", "rechnung_kategorie",
+                history_table="rechnung_kategorie_history",
+                children=(ChildRef("rechnung", "kategorie_id"),)),
+    PruneEntity("rechnung_export", "Rechnungs-Exporte", "rechnung_exporte",
+                history_table="rechnung_exporte_history",
+                children=(ChildRef("rechnung", "exportiert_in_export_id"),)),
+    PruneEntity("kassenbuchung", "Kassenbuchungen", "kassenbuchungen",
+                history_table="kassenbuchungen_history",
+                children=(
+                    ChildRef("beitrag_sollstellung", "kassenbuchung_id"),
+                    ChildRef("gebuehr_forderung", "kassenbuchung_id"),
+                    ChildRef("kassen_zaehlungen", "ausloesende_buchung_id"),
+                    ChildRef("kassen_zaehlungen", "buchung_id"),
+                    ChildRef("kassenbuchung_anhaenge", "buchung_id"),
+                )),
+    PruneEntity("kassenbuch_export", "Kassenbuch-Exporte", "kassenbuch_exporte",
+                history_table="kassenbuch_exporte_history",
+                children=(ChildRef("kassenbuchungen", "exportiert_in_export_id"),)),
+    # Storno-Exporte zeigen auf den Ur-Export (Selbstbezug) – der Guard verhindert, dass
+    # der Ur-Export vor seinem Storno verschwindet.
+    PruneEntity("fibu_export", "Fibu-Exporte", "fibu_exporte",
+                history_table="fibu_exporte_history",
+                children=(
+                    ChildRef("beitrag_sollstellung", "exportiert_in_export_id"),
+                    ChildRef("beitrag_sollstellung", "storno_exportiert_in_export_id"),
+                    ChildRef("gebuehr_forderung", "exportiert_in_export_id"),
+                    ChildRef("gebuehr_forderung", "storno_exportiert_in_export_id"),
+                    ChildRef("fibu_exporte", "storno_von_export_id"),
+                )),
+    PruneEntity("gebuehr", "Gebühren", "gebuehr",
+                history_table="gebuehr_history",
+                children=(ChildRef("gebuehr_forderung", "gebuehr_id"),)),
+    PruneEntity("beitragsregel", "Beitragsregeln", "beitragsregel",
+                history_table="beitragsregel_history",
+                children=(ChildRef("beitrag_sollstellung", "beitragsregel_id"),)),
+    PruneEntity("kassen_kategorie", "Kassen-Kategorien", "kassen_kategorien",
+                history_table="kassen_kategorien_history"),
+    PruneEntity("kasse_berechtigung", "Kassen-Berechtigungen", "kasse_berechtigungen",
+                history_table="kasse_berechtigungen_history",
+                retention_days=DEFAULT_RECHTE_RETENTION_DAYS),
+    PruneEntity("kasse", "Kassen", "kassen",
+                history_table="kassen_history",
+                children=(
+                    ChildRef("kasse_berechtigungen", "kasse_id"),
+                    ChildRef("kassen_kategorien", "kasse_id"),
+                    ChildRef("kassen_zaehlungen", "kasse_id"),
+                    ChildRef("kassenbuch_exporte", "kasse_id"),
+                    ChildRef("kassenbuchungen", "kasse_id"),
+                )),
     # --- Mitglied-Domäne (Blatt → Wurzel) ---
     PruneEntity("mitglied_kontakt", "Kontaktdaten", "mitglied_kontakt",
                 history_table="mitglied_kontakt_history"),
@@ -317,6 +445,11 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("ticket_bereich_berechtigungen", "bereich_id"),
                 )),
     # --- Stammdaten (Blatt → Wurzel) ---
+    # Individuelle Grants/Denies: hoher Durchsatz (jede Rechteänderung legt die alte Zeile
+    # in den Papierkorb), deshalb überhaupt prunenswert – aber mit längerem Fenster.
+    PruneEntity("user_permission", "Individuelle Rechte", "user_permissions",
+                history_table="user_permissions_history",
+                retention_days=DEFAULT_RECHTE_RETENTION_DAYS),
     PruneEntity("funktion_permission", "Funktionsrechte", "funktion_permission",
                 history_table="funktion_permission_history"),
     PruneEntity("funktion", "Funktionen", "funktion",
@@ -342,7 +475,57 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("ul_satz", "abteilung_id"),
                     ChildRef("rechnung", "abteilung_id"),
                 )),
+    # Benutzerkonten stehen ganz am Ende: fast alles trägt eine Urheber-Spalte auf users.
+    # Ein deaktiviertes Konto verschwindet daher erst, wenn auch die letzte Spur davon
+    # weg ist (Tor 4) – in der Praxis oft erst Jahre später über die Protokoll-Fristen.
+    # Der Last-Admin-Schutz liegt im Repository und wird hiervon nicht berührt: geprunt
+    # wird nur, was ohnehin schon deaktiviert (soft-deleted) ist.
+    PruneEntity("user", "Benutzerkonten", "users",
+                history_table="users_history",
+                retention_days=DEFAULT_USERS_RETENTION_DAYS,
+                children=(
+                    ChildRef("access_log", "user_id"),
+                    ChildRef("auth_tokens", "user_id"),
+                    ChildRef("kalender_abo", "user_id"),
+                    ChildRef("kasse_berechtigungen", "user_id"),
+                    ChildRef("kassenbuchung_anhaenge", "hochgeladen_von"),
+                    ChildRef("mitglied", "user_id"),
+                    ChildRef("push_subscriptions", "user_id"),
+                    ChildRef("rechnung", "ersteller_user_id"),
+                    ChildRef("schluessel_chip", "user_id"),
+                    ChildRef("ticket_anhaenge", "hochgeladen_von"),
+                    ChildRef("ticket_bereich_berechtigungen", "user_id"),
+                    ChildRef("ticket_kommentare", "autor_id"),
+                    ChildRef("ticket_teilnehmer", "hinzugefuegt_von"),
+                    ChildRef("ticket_teilnehmer", "user_id"),
+                    ChildRef("ticket_zugriff_log", "user_id"),
+                    ChildRef("tickets", "gemeldet_von"),
+                    ChildRef("tickets", "geschlossen_von"),
+                    ChildRef("tickets", "zugewiesen_an"),
+                    ChildRef("tresor_zugriff_log", "user_id"),
+                    ChildRef("tuer_app_berechtigung", "erteilt_von"),
+                    ChildRef("tuer_app_berechtigung", "user_id"),
+                    ChildRef("tuer_berechtigung", "erteilt_von"),
+                    ChildRef("tuer_zutritt_log", "user_id"),
+                    ChildRef("user_permissions", "user_id"),
+                    ChildRef("user_sessions", "user_id"),
+                )),
 )
+
+
+def _ab_jahresende(spalte: str) -> str:
+    """Datums-Ausdruck, der die Frist erst am JAHRESENDE des Belegdatums starten lässt.
+
+    Aufbewahrungsfristen laufen ab Schluss des Kalenderjahres, in dem der Beleg entstand –
+    ein Beleg vom 04.03.2015 ist also wie einer vom 31.12.2015 zu behandeln. Genau das
+    tut der Ausdruck: er ersetzt das Datum durch den Silvestertag seines Jahres.
+
+    ``NULLIF(..., '')`` ist hier kein Beiwerk, sondern die Sicherung: ohne sie ergäbe eine
+    leere Datumsspalte den Text ``-12-31``, der vor jedem Stichtag liegt – ein undatierter
+    Beleg würde sofort archiviert. Mit NULLIF wird der ganze Ausdruck NULL und damit nie
+    fällig.
+    """
+    return f"(NULLIF(LEFT({spalte}::text, 4), '') || '-12-31')"
 
 
 # Alters-Archivierung (siehe ArchiveRule): fällige Datensätze wandern in den Papierkorb;
@@ -374,7 +557,146 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("ticket_anhaenge", "ticket_id", has_version=False),
         ),
     ),
+
+    # --- Finanzdaten: 10 Jahre ab Jahresende des Belegdatums ---
+    # Jede Regel datiert über ihren eigenen Beleg, nicht über den Kopfsatz: eine
+    # Sollstellung hängt zwar an einer Regel, ist aber selbst der aufbewahrungspflichtige
+    # Posten. Stammdaten (Kassen, Gebühren, Beitragsregeln, Kategorien) haben bewusst
+    # KEINE Regel – die altern nicht, die werden von Hand gelöscht und laufen dann über
+    # das Standard-Fenster.
+    ArchiveRule(
+        "kassenbuchung_alter", "Kassenbuchungen (Aufbewahrung)", "kassenbuchungen",
+        date_expr=_ab_jahresende("buchungsdatum"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+        children=(
+            ChildRef("kassen_zaehlungen", "buchung_id"),
+            ChildRef("kassen_zaehlungen", "ausloesende_buchung_id"),
+            ChildRef("kassenbuchung_anhaenge", "buchung_id", has_version=False),
+        ),
+    ),
+    ArchiveRule(
+        "beitrag_sollstellung_alter", "Beitrags-Sollstellungen (Aufbewahrung)",
+        "beitrag_sollstellung",
+        date_expr=_ab_jahresende("faelligkeitsdatum"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+    ),
+    ArchiveRule(
+        "gebuehr_forderung_alter", "Gebühren-Forderungen (Aufbewahrung)", "gebuehr_forderung",
+        date_expr=_ab_jahresende("datum"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+    ),
+    ArchiveRule(
+        "rechnung_alter", "Rechnungen (Aufbewahrung)", "rechnung",
+        date_expr=_ab_jahresende("rechnungsdatum"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+        children=(ChildRef("rechnung_anhaenge", "rechnung_id", has_version=False),),
+    ),
+    ArchiveRule(
+        "sepa_lauf_alter", "SEPA-Einzugsläufe (Aufbewahrung)", "sepa_lauf",
+        date_expr=_ab_jahresende("ausfuehrungsdatum"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+        children=(ChildRef("sepa_lauf_position", "sepa_lauf_id"),),
+    ),
+    ArchiveRule(
+        "kassenbuch_export_alter", "Kassenbuch-Exporte (Aufbewahrung)", "kassenbuch_exporte",
+        date_expr=_ab_jahresende("exportiert_am"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+    ),
+    ArchiveRule(
+        "fibu_export_alter", "Fibu-Exporte (Aufbewahrung)", "fibu_exporte",
+        date_expr=_ab_jahresende("exportiert_am"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+    ),
+    ArchiveRule(
+        "rechnung_export_alter", "Rechnungs-Exporte (Aufbewahrung)", "rechnung_exporte",
+        date_expr=_ab_jahresende("exportiert_am"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+    ),
+
+    # --- Ausgeschiedene Mitglieder ---
+    # Nur wer ein Austrittsdatum trägt, altert überhaupt (sonst NULL → nie fällig). Die
+    # Kinder sind die Mitgliedschafts-Artefakte; die Finanz-Kinder bleiben bewusst außen
+    # vor, die haben ihre eigene, gleich lange Uhr und werden nicht vorzeitig entwertet.
+    ArchiveRule(
+        "mitglied_austritt_alter", "Ausgeschiedene Mitglieder", "mitglied",
+        date_expr=_ab_jahresende("NULLIF(austrittsdatum, '')"),
+        default_days=DEFAULT_MITGLIED_AUSTRITT_RETENTION_DAYS,
+        children=(
+            ChildRef("mitglied_kontakt", "mitglied_id"),
+            ChildRef("mitglied_abteilung", "mitglied_id"),
+            ChildRef("mitglied_funktion", "mitglied_id"),
+            ChildRef("mitglied_mannschaft", "mitglied_id"),
+            ChildRef("termin_zusage", "mitglied_id"),
+            ChildRef("schluessel_chip", "mitglied_id"),
+            ChildRef("clubdeckel_berechtigung", "mitglied_id"),
+            ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
+        ),
+    ),
 )
+
+
+# Protokolle und Gerätebindungen (siehe LogRule): Hard-Delete nach Alter, kein Papierkorb.
+#
+# `access_log` ist nach Kategorie aufgeteilt, weil Seitenaufrufe (Bewegungsrauschen) ein
+# anderes Fenster verdienen als Login-Versuche. Die letzte Regel ist bewusst ein
+# Auffangbecken über alle ÜBRIGEN Kategorien: so bekommt auch eine künftig neu
+# eingeführte Kategorie automatisch eine Frist, statt still liegen zu bleiben.
+LOG_REGISTRY: tuple[LogRule, ...] = (
+    LogRule(ACCESS_LOG_PAGE, "Seitenaufrufe (Protokoll)", "access_log",
+            where="category = 'page'", default_days=DEFAULT_PAGE_VIEW_RETENTION_DAYS),
+    LogRule("access_log_auth", "Anmelde-Ereignisse (Protokoll)", "access_log",
+            where="category = 'auth'"),
+    LogRule("access_log_schliessanlage", "Schließanlagen-Ereignisse (Protokoll)", "access_log",
+            where="category = 'schliessanlage'"),
+    LogRule("access_log_uebrige", "Übrige Protokoll-Ereignisse", "access_log",
+            where="category NOT IN ('page', 'auth', 'schliessanlage')"),
+    LogRule(TICKET_ZUGRIFF_LOG, "Ticket-Sichten (Gesehen)", "ticket_zugriff_log",
+            default_days=DEFAULT_TICKET_VIEW_RETENTION_DAYS),
+    LogRule("tuer_zutritt_log", "Tür-Zutritte (Protokoll)", "tuer_zutritt_log"),
+    LogRule("tresor_zugriff_log", "Tresor-Zugriffe (Protokoll)", "tresor_zugriff_log"),
+    LogRule("tuer_schloss_status_log", "Schloss-Status (Technik)", "tuer_schloss_status_log",
+            default_days=DEFAULT_TECHNIK_LOG_RETENTION_DAYS),
+
+    # --- Gerätebindungen: Frist läuft ab dem Tod der Zeile, nicht ab Anlage ---
+    # Für diese drei gab es die Cleanup-Methoden schon lange (cleanup_expired /
+    # cleanup_revoked / cleanup_expired_tokens) – sie wurden nur nie aufgerufen. Jetzt
+    # laufen sie über dieselbe Registry wie alles andere und sind einstellbar.
+    LogRule("user_sessions", "Abgelaufene Sitzungen", "user_sessions",
+            ts_expr="COALESCE(NULLIF(revoked_at, ''), NULLIF(expires_at, ''))",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    LogRule("user_sessions_history", "Sitzungs-Historie", "user_sessions_history",
+            ts_expr="COALESCE(NULLIF(revoked_at, ''), NULLIF(expires_at, ''))",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    LogRule("auth_tokens", "Verbrauchte Anmelde-Token", "auth_tokens",
+            ts_expr="COALESCE(NULLIF(used_at, ''), NULLIF(expires_at, ''))",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    LogRule("auth_tokens_history", "Token-Historie", "auth_tokens_history",
+            ts_expr="COALESCE(NULLIF(used_at, ''), NULLIF(expires_at, ''))",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    # Aktive Abos haben kein revoked_at -> ts_expr NULL -> nie fällig.
+    LogRule("push_subscriptions", "Widerrufene Push-Abos", "push_subscriptions",
+            ts_expr="NULLIF(revoked_at, '')",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    LogRule("push_subscriptions_history", "Push-Abo-Historie", "push_subscriptions_history",
+            ts_expr="NULLIF(revoked_at, '')",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+
+    # --- Historie von Einstellungs-Singletons ---
+    # Die Einstellungen selbst sind je eine einzige Zeile, die nie gelöscht wird; nur ihre
+    # Änderungs-Historie wächst. Ohne Eltern-PruneEntity gibt es dafür keinen Tor-5-Bezug,
+    # also läuft sie schlicht nach Alter ab.
+    LogRule("beitrag_einstellungen_history", "Beitrags-Einstellungen (Historie)",
+            "beitrag_einstellungen_history",
+            ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
+    LogRule("fibu_einstellungen_history", "Fibu-Einstellungen (Historie)",
+            "fibu_einstellungen_history",
+            ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
+    LogRule("prune_einstellungen_history", "Bereinigungs-Einstellungen (Historie)",
+            "prune_einstellungen_history",
+            ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
+)
+
+LOG_BY_NAME: dict[str, LogRule] = {r.name: r for r in LOG_REGISTRY}
 
 
 # --- Reine SQL-Bausteine (ohne DB testbar) ----------------------------------------
@@ -386,12 +708,19 @@ def _ts(col: str) -> str:
     return f"NULLIF({col}::text, '')::timestamptz"
 
 
-def _history_effective_ts(prefix: str = "") -> str:
+# Zeitspalten einer History-Zeile in absteigender Aussagekraft: Lösch- vor Änderungs-
+# vor Anlagezeit. Nicht jede History führt alle drei – die Export-Köpfe (fibu_exporte,
+# kassenbuch_exporte, rechnung_exporte) kennen kein `updated_at`, weil ein Export nie
+# geändert, sondern nur angelegt und beim Un-Export gelöscht wird. Der Service reicht
+# deshalb die tatsächlich vorhandenen Spalten herein; die Reihenfolge bleibt.
+HISTORY_TS_COLS: tuple[str, ...] = ("deleted_at", "updated_at", "created_at")
+
+
+def _history_effective_ts(prefix: str = "",
+                          cols: tuple[str, ...] = HISTORY_TS_COLS) -> str:
     """Effektiver Zeitstempel einer History-Zeile: Lösch- vor Änderungs- vor Anlagezeit."""
     p = f"{prefix}." if prefix else ""
-    return (
-        f"COALESCE({_ts(p + 'deleted_at')}, {_ts(p + 'updated_at')}, {_ts(p + 'created_at')})"
-    )
+    return f"COALESCE({', '.join(_ts(p + c) for c in cols)})"
 
 
 def build_papierkorb_count_sql(entity: PruneEntity) -> tuple[str, list]:
@@ -417,6 +746,7 @@ def build_original_candidate_ids_sql(
     retention_days: int,
     keep_min: int,
     history_retention_days: int,
+    history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS,
 ) -> tuple[str, list]:
     """SELECT der IDs aller endgültig löschbaren Original-Datensätze (alle 5 Tore).
 
@@ -445,7 +775,7 @@ def build_original_candidate_ids_sql(
         where.append(
             f"NOT EXISTS (SELECT 1 FROM {entity.history_table} h "
             f"WHERE h.{entity.history_id_col} = r.id "
-            f"AND {_history_effective_ts('h')} >= now() - make_interval(days => %s))"
+            f"AND {_history_effective_ts('h', history_ts_cols)} >= now() - make_interval(days => %s))"
         )
         params.append(history_retention_days)
 
@@ -466,15 +796,18 @@ def build_original_candidate_count_sql(
     retention_days: int,
     keep_min: int,
     history_retention_days: int,
+    history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS,
 ) -> tuple[str, list]:
     """Zahl der endgültig löschbaren Original-Datensätze (zählt das ID-SELECT)."""
     ids_sql, params = build_original_candidate_ids_sql(
-        entity, retention_days, keep_min, history_retention_days
+        entity, retention_days, keep_min, history_retention_days, history_ts_cols
     )
     return f"SELECT COUNT(*) AS n FROM ({ids_sql}) c", params
 
 
-def build_history_prune_count_sql(entity: PruneEntity) -> tuple[str, list]:
+def build_history_prune_count_sql(
+    entity: PruneEntity, history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS
+) -> tuple[str, list]:
     """Zahl der History-Zeilen, die das (vorgelagerte) History-Prune entfernen würde.
 
     Datums-only und ohne Mindestanzahl: die History muss vollständig abfließen können,
@@ -483,7 +816,7 @@ def build_history_prune_count_sql(entity: PruneEntity) -> tuple[str, list]:
     assert entity.history_table is not None
     sql = (
         f"SELECT COUNT(*) AS n FROM {entity.history_table} "
-        f"WHERE {_history_effective_ts()} < now() - make_interval(days => %s)"
+        f"WHERE {_history_effective_ts('', history_ts_cols)} < now() - make_interval(days => %s)"
     )
     return sql, []  # history_retention_days wird vom Service als Param ergänzt
 
@@ -494,14 +827,41 @@ def build_history_total_count_sql(entity: PruneEntity) -> tuple[str, list]:
     return f"SELECT COUNT(*) AS n FROM {entity.history_table}", []
 
 
-def build_history_prune_delete_sql(entity: PruneEntity) -> tuple[str, list]:
+def build_history_prune_delete_sql(
+    entity: PruneEntity, history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS
+) -> tuple[str, list]:
     """DELETE der abgeflossenen History-Zeilen – gleiche WHERE-Logik wie der Zähler."""
     assert entity.history_table is not None
     sql = (
         f"DELETE FROM {entity.history_table} "
-        f"WHERE {_history_effective_ts()} < now() - make_interval(days => %s)"
+        f"WHERE {_history_effective_ts('', history_ts_cols)} < now() - make_interval(days => %s)"
     )
     return sql, []  # history_retention_days wird vom Service als Param ergänzt
+
+
+# --- Protokolle & Gerätebindungen (LogRule) ---------------------------------------
+# Alle drei Bausteine teilen sich dieselbe WHERE-Klausel, damit „Vorschau = Aktion" auch
+# hier gilt: gezählt wird exakt das, was gelöscht wird. Der Alters-Parameter (%s, Tage)
+# ist immer der letzte.
+def _log_faellig_where(rule: LogRule) -> str:
+    bedingung = f"{_ts('(' + rule.ts_expr + ')')} < now() - make_interval(days => %s)"
+    return f"{rule.where} AND {bedingung}" if rule.where else bedingung
+
+
+def build_log_total_sql(rule: LogRule) -> str:
+    """Gesamtzahl der Zeilen im Bereich – Mengengefühl für den Report (ohne Alters-Param)."""
+    where = f" WHERE {rule.where}" if rule.where else ""
+    return f"SELECT COUNT(*) AS n FROM {rule.table}{where}"
+
+
+def build_log_due_count_sql(rule: LogRule) -> str:
+    """Zahl der fälligen (löschbaren) Zeilen. Param: Alter in Tagen."""
+    return f"SELECT COUNT(*) AS n FROM {rule.table} WHERE {_log_faellig_where(rule)}"
+
+
+def build_log_delete_sql(rule: LogRule) -> str:
+    """Hard-Delete der fälligen Zeilen. Param: Alter in Tagen."""
+    return f"DELETE FROM {rule.table} WHERE {_log_faellig_where(rule)}"
 
 
 # --- Alters-Archivierung (ArchiveRule) --------------------------------------------
@@ -554,6 +914,32 @@ class PruneService:
 
     def __init__(self, db):
         self._db = db
+        self._history_cols_cache: Optional[dict[str, tuple[str, ...]]] = None
+
+    def _history_ts_cols(self, entity: PruneEntity) -> tuple[str, ...]:
+        """Welche der drei Zeitspalten führt die History dieser Entität wirklich?
+
+        Einmal pro Service-Instanz aus dem Schema gelesen, statt sie an der Registry zu
+        pflegen: eine gepflegte Liste wäre eine zweite Wahrheit neben dem Schema und
+        würde beim nächsten `_DDL_*` still falsch werden.
+        """
+        if self._history_cols_cache is None:
+            with self._db.cursor() as cur:
+                cur.execute(
+                    "SELECT table_name, column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND column_name = ANY(%s)",
+                    (list(HISTORY_TS_COLS),),
+                )
+                vorhanden: dict[str, set] = {}
+                for row in cur.fetchall():
+                    vorhanden.setdefault(row["table_name"], set()).add(row["column_name"])
+            self._history_cols_cache = {
+                t: tuple(c for c in HISTORY_TS_COLS if c in cols)
+                for t, cols in vorhanden.items()
+            }
+        if not entity.history_table:
+            return HISTORY_TS_COLS
+        return self._history_cols_cache.get(entity.history_table) or HISTORY_TS_COLS
 
     def _count(self, sql: str, params: list) -> int:
         with self._db.cursor() as cur:
@@ -577,55 +963,110 @@ class PruneService:
             }
         return result
 
-    def page_view_retention(self) -> tuple[int, bool]:
-        """Aufbewahrung der Protokoll-Seitenaufrufe in Tagen + ob ein Override gesetzt ist."""
-        o = self._db.prune_einstellungen.get_all().get(ACCESS_LOG_PAGE)
+    def log_retention(self, rule: LogRule) -> tuple[int, bool]:
+        """Wirksames Alters-Fenster (Tage) einer LogRule + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(rule.name)
         if o:
             return o["retention_days"], True
-        return DEFAULT_PAGE_VIEW_RETENTION_DAYS, False
+        return rule.default_days, False
 
-    def _access_log_report_row(self) -> dict:
-        """Sonder-Bereich „Seitenaufrufe (Protokoll)": Hard-Delete nach Alter, kein Soft-Delete."""
-        days, is_override = self.page_view_retention()
-        return {
-            "name": ACCESS_LOG_PAGE,
-            "label": "Seitenaufrufe (Protokoll)",
-            "table": "access_log",
-            "soft_delete": False,            # kein Papierkorb/keep_min/History
-            "retention_days": days,
-            "keep_min": None,
-            "history_retention_days": None,
-            "is_override": is_override,
-            "eintraege": self._db.access_log_repository.count(category="page"),
-            "im_papierkorb": None,
-            "loeschbar": self._db.access_log_repository.count_page_views_older_than(days),
-            "history_table": None,
-            "history_gesamt": None,
-            "history_loeschbar": None,
-        }
+    def page_view_retention(self) -> tuple[int, bool]:
+        """Aufbewahrung der Protokoll-Seitenaufrufe in Tagen (Bequemlichkeits-Zugriff)."""
+        return self.log_retention(LOG_BY_NAME[ACCESS_LOG_PAGE])
 
     def ticket_view_retention(self) -> tuple[int, bool]:
-        """Aufbewahrung des Ticket-„Gesehen"-Logs in Tagen + ob ein Override gesetzt ist."""
-        o = self._db.prune_einstellungen.get_all().get(TICKET_ZUGRIFF_LOG)
+        """Aufbewahrung des Ticket-„Gesehen"-Logs in Tagen (Bequemlichkeits-Zugriff)."""
+        return self.log_retention(LOG_BY_NAME[TICKET_ZUGRIFF_LOG])
+
+    # --- Verwaiste Anhang-Dateien ------------------------------------------------
+    def datei_retention(self) -> tuple[int, bool]:
+        """Schonfrist für verwaiste Dateien in Tagen + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(DATEI_VERWAIST)
         if o:
             return o["retention_days"], True
-        return DEFAULT_TICKET_VIEW_RETENTION_DAYS, False
+        return DEFAULT_VERWAISTE_DATEI_RETENTION_DAYS, False
 
-    def _ticket_zugriff_report_row(self) -> dict:
-        """Sonder-Bereich „Ticket-Sichten (Gesehen)": Hard-Delete nach Alter, kein Soft-Delete."""
-        days, is_override = self.ticket_view_retention()
+    def _bekannte_dateinamen(self) -> set[str]:
+        """Alle Dateinamen, die irgendeine DB-Zeile beansprucht – inklusive der
+        soft-gelöschten. Ein Anhang im Papierkorb ist wiederherstellbar, seine Datei
+        gehört also nicht zu den Verwaisten."""
+        namen: set[str] = set()
+        with self._db.cursor() as cur:
+            for entity in PRUNE_REGISTRY:
+                if not entity.stored_name_col:
+                    continue
+                cur.execute(
+                    f"SELECT {entity.stored_name_col} AS sn FROM {entity.table} "
+                    f"WHERE {entity.stored_name_col} IS NOT NULL"
+                )
+                namen.update(r["sn"] for r in cur.fetchall())
+        return namen
+
+    def verwaiste_dateien(self, days: Optional[int] = None) -> list:
+        """Dateien im Upload-Verzeichnis, die keine DB-Zeile kennt und die älter als die
+        Schonfrist sind. Gibt ``Path``-Objekte zurück (Reihenfolge: Name).
+
+        Maßstab ist die Änderungszeit der Datei: sie ist der einzige Zeitstempel, den ein
+        verwaistes Fragment überhaupt noch hat – eine DB-Zeile mit ``created_at`` gibt es
+        ja gerade nicht.
+        """
+        if days is None:
+            days, _ = self.datei_retention()
+        dienst = self._db.anhang_service
+        verzeichnis = dienst.upload_path
+        if not verzeichnis.is_dir():
+            return []
+        bekannt = self._bekannte_dateinamen()
+        grenze = datetime.now(timezone.utc).timestamp() - days * 86400
+        treffer = []
+        for pfad in sorted(verzeichnis.iterdir()):
+            if not pfad.is_file() or pfad.name in bekannt:
+                continue
+            if pfad.stat().st_mtime < grenze:
+                treffer.append(pfad)
+        return treffer
+
+    def _datei_report_row(self) -> dict:
+        """Sonder-Bereich „Verwaiste Dateien": kein DB-Bereich, sondern das Upload-Verzeichnis."""
+        days, is_override = self.datei_retention()
+        dienst = self._db.anhang_service
+        verzeichnis = dienst.upload_path
+        gesamt = sum(1 for p in verzeichnis.iterdir() if p.is_file()) \
+            if verzeichnis.is_dir() else 0
         return {
-            "name": TICKET_ZUGRIFF_LOG,
-            "label": "Ticket-Sichten (Gesehen)",
-            "table": "ticket_zugriff_log",
+            "name": DATEI_VERWAIST,
+            "label": "Verwaiste Dateien (Upload-Verzeichnis)",
+            "table": str(verzeichnis),
+            "gruppe": "Dateien",
             "soft_delete": False,
             "retention_days": days,
             "keep_min": None,
             "history_retention_days": None,
             "is_override": is_override,
-            "eintraege": self._db.ticket_zugriff_log.count(),
+            "eintraege": gesamt,
             "im_papierkorb": None,
-            "loeschbar": self._db.ticket_zugriff_log.count_older_than(days),
+            "loeschbar": len(self.verwaiste_dateien(days)),
+            "history_table": None,
+            "history_gesamt": None,
+            "history_loeschbar": None,
+        }
+
+    def _log_report_row(self, rule: LogRule) -> dict:
+        """Report-Zeile eines Protokoll-/Gerätebereichs: Hard-Delete nach Alter, kein Papierkorb."""
+        days, is_override = self.log_retention(rule)
+        return {
+            "name": rule.name,
+            "label": rule.label,
+            "table": rule.table,
+            "gruppe": rule.gruppe,
+            "soft_delete": False,            # kein Papierkorb/keep_min/History
+            "retention_days": days,
+            "keep_min": None,
+            "history_retention_days": None,
+            "is_override": is_override,
+            "eintraege": self._count(build_log_total_sql(rule), []),
+            "im_papierkorb": None,
+            "loeschbar": self._count(build_log_due_count_sql(rule), [days]),
             "history_table": None,
             "history_gesamt": None,
             "history_loeschbar": None,
@@ -648,6 +1089,7 @@ class PruneService:
             "name": rule.name,
             "label": rule.label,
             "table": rule.table,
+            "gruppe": "Aufbewahrungsfristen",
             "soft_delete": False,            # kein Papierkorb-Ausgangspunkt/keep_min/History
             "retention_days": days,          # hier: Alters-Fenster in Tagen
             "keep_min": None,
@@ -672,14 +1114,15 @@ class PruneService:
                 "label": e.label,
                 "table": e.table,
                 "history_table": e.history_table,
+                "gruppe": "Papierkorb",
                 "soft_delete": True,
                 **cfg[e.name],
             }
             for e in PRUNE_REGISTRY
         ]
         rows.extend(self._archive_report_row(r) for r in ARCHIVE_REGISTRY)
-        rows.append(self._access_log_report_row())
-        rows.append(self._ticket_zugriff_report_row())
+        rows.extend(self._log_report_row(r) for r in LOG_REGISTRY)
+        rows.append(self._datei_report_row())
         return rows
 
     def report(self) -> dict:
@@ -697,8 +1140,10 @@ class PruneService:
             akt_sql, akt_params = build_active_count_sql(entity)
             eintraege = self._count(akt_sql, akt_params)
 
+            ts_cols = self._history_ts_cols(entity)
             cand_sql, cand_params = build_original_candidate_count_sql(
-                entity, c["retention_days"], c["keep_min"], c["history_retention_days"]
+                entity, c["retention_days"], c["keep_min"], c["history_retention_days"],
+                ts_cols,
             )
             loeschbar = self._count(cand_sql, cand_params)
 
@@ -707,7 +1152,7 @@ class PruneService:
             if entity.history_table:
                 ht_sql, ht_params = build_history_total_count_sql(entity)
                 history_gesamt = self._count(ht_sql, ht_params)
-                h_sql, h_params = build_history_prune_count_sql(entity)
+                h_sql, h_params = build_history_prune_count_sql(entity, ts_cols)
                 history_loeschbar = self._count(h_sql, h_params + [c["history_retention_days"]])
                 summe_history += history_loeschbar
                 summe_history_gesamt += history_gesamt
@@ -717,6 +1162,7 @@ class PruneService:
                 "name": entity.name,
                 "label": entity.label,
                 "table": entity.table,
+                "gruppe": "Papierkorb",
                 "soft_delete": True,
                 "retention_days": c["retention_days"],
                 "keep_min": c["keep_min"],
@@ -738,15 +1184,15 @@ class PruneService:
             summe_archivierbar += row["archivierbar"]
             entities.append(row)
 
-        # Sonder-Bereich: Protokoll-Seitenaufrufe (Hard-Delete nach Alter)
-        protokoll = self._access_log_report_row()
-        summe_loeschbar += protokoll["loeschbar"]
-        entities.append(protokoll)
+        # Sonder-Bereiche: Protokolle und Gerätebindungen (Hard-Delete nach Alter)
+        for rule in LOG_REGISTRY:
+            row = self._log_report_row(rule)
+            summe_loeschbar += row["loeschbar"]
+            entities.append(row)
 
-        # Sonder-Bereich: Ticket-Sichten (Hard-Delete nach Alter)
-        ticket_sichten = self._ticket_zugriff_report_row()
-        summe_loeschbar += ticket_sichten["loeschbar"]
-        entities.append(ticket_sichten)
+        # Sonder-Bereich: verwaiste Dateien (zählt zu den Dateien, nicht zu den Zeilen)
+        datei_row = self._datei_report_row()
+        entities.append(datei_row)
 
         return {
             "dry_run": True,
@@ -756,6 +1202,7 @@ class PruneService:
             "summe_archivierbar": summe_archivierbar,
             "summe_history_loeschbar": summe_history,
             "summe_history_gesamt": summe_history_gesamt,
+            "summe_verwaiste_dateien": datei_row["loeschbar"],
         }
 
     def prune(self, dry_run: bool = True) -> dict:
@@ -817,7 +1264,8 @@ class PruneService:
             history_geloescht: dict[str, int] = {}
             for entity in PRUNE_REGISTRY:
                 if entity.history_table:
-                    hsql, hparams = build_history_prune_delete_sql(entity)
+                    hsql, hparams = build_history_prune_delete_sql(
+                        entity, self._history_ts_cols(entity))
                     cur.execute(hsql, tuple(hparams + [cfg[entity.name]["history_retention_days"]]))
                     history_geloescht[entity.name] = cur.rowcount
 
@@ -826,7 +1274,8 @@ class PruneService:
             for entity in PRUNE_REGISTRY:
                 c = cfg[entity.name]
                 ids_sql, params = build_original_candidate_ids_sql(
-                    entity, c["retention_days"], c["keep_min"], c["history_retention_days"]
+                    entity, c["retention_days"], c["keep_min"], c["history_retention_days"],
+                    self._history_ts_cols(entity),
                 )
                 cur.execute(ids_sql, tuple(params))
                 ids = [row["id"] for row in cur.fetchall()]
@@ -869,28 +1318,40 @@ class PruneService:
             eintrag_by_name[name]["dateien_geloescht"] = anzahl
             summe_dateien += anzahl
 
-        # 5) Sonder-Bereich: Protokoll-Seitenaufrufe (eigene Transaktion, best-effort).
-        page_days, _ = self.page_view_retention()
-        page_geloescht = self._db.access_log_repository.cleanup_page_views(page_days)
-        summe_loeschbar += page_geloescht
-        entities.append({
-            "name": ACCESS_LOG_PAGE,
-            "label": "Seitenaufrufe (Protokoll)",
-            "geloescht": page_geloescht,
-            "history_geloescht": None,
-            "dateien_geloescht": 0,
-        })
+        # 5) Sonder-Bereiche: Protokolle und Gerätebindungen (Hard-Delete nach Alter).
+        #    Je eigene Transaktion und bewusst NACH dem Original-Prune: ein Fehler hier
+        #    darf den Papierkorb-Lauf nicht zurückrollen, und umgekehrt hängt kein
+        #    Protokoll an den gelöschten Originalen (alle FK-frei bzw. Snapshot-Spalten).
+        for rule in LOG_REGISTRY:
+            days, _ = self.log_retention(rule)
+            with self._db.cursor() as cur:
+                cur.execute(build_log_delete_sql(rule), (days,))
+                n = cur.rowcount
+            summe_loeschbar += n
+            entities.append({
+                "name": rule.name,
+                "label": rule.label,
+                "geloescht": n,
+                "history_geloescht": None,
+                "dateien_geloescht": 0,
+            })
 
-        # 5b) Sonder-Bereich: Ticket-Sichten „Gesehen" (Hard-Delete nach Alter).
-        ticket_view_days, _ = self.ticket_view_retention()
-        ticket_view_geloescht = self._db.ticket_zugriff_log.cleanup_older_than(ticket_view_days)
-        summe_loeschbar += ticket_view_geloescht
+        # 6) Verwaiste Dateien vom Upload-Verzeichnis entfernen. Ganz am Schluss und mit
+        #    frisch gelesener Namensliste: die gerade geprunten Anhänge sind aus der DB
+        #    raus, ihre Dateien hat Schritt 4 bereits genommen – was hier noch übrig
+        #    bleibt, kennt wirklich niemand mehr.
+        datei_days, _ = self.datei_retention()
+        verwaist_geloescht = 0
+        for pfad in self.verwaiste_dateien(datei_days):
+            if self._db.anhang_service.loesche(pfad.name):
+                verwaist_geloescht += 1
+        summe_dateien += verwaist_geloescht
         entities.append({
-            "name": TICKET_ZUGRIFF_LOG,
-            "label": "Ticket-Sichten (Gesehen)",
-            "geloescht": ticket_view_geloescht,
+            "name": DATEI_VERWAIST,
+            "label": "Verwaiste Dateien (Upload-Verzeichnis)",
+            "geloescht": 0,
             "history_geloescht": None,
-            "dateien_geloescht": 0,
+            "dateien_geloescht": verwaist_geloescht,
         })
 
         # Archiv-Zeilen anhängen, damit die UI sie je Bereich anzeigen kann.

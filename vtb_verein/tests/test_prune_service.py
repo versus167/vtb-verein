@@ -6,21 +6,32 @@ Ausführung. Echte DB-Integrationstests folgen mit dem tatsächlichen Löschen (
 """
 from app.services.prune_service import (
     ChildRef,
+    LogRule,
+    LOG_REGISTRY,
     PruneEntity,
     PRUNE_REGISTRY,
+    ARCHIVE_REGISTRY,
     build_active_count_sql,
     build_history_prune_count_sql,
     build_history_prune_delete_sql,
     build_history_total_count_sql,
+    build_log_delete_sql,
+    build_log_due_count_sql,
+    build_log_total_sql,
     build_original_candidate_count_sql,
     build_original_candidate_ids_sql,
     build_papierkorb_count_sql,
     DEFAULT_HISTORY_RETENTION_DAYS,
+    _ab_jahresende,
 )
 
 
 def _entity(name: str) -> PruneEntity:
     return next(e for e in PRUNE_REGISTRY if e.name == name)
+
+
+def _log(name: str) -> LogRule:
+    return next(r for r in LOG_REGISTRY if r.name == name)
 
 
 class TestRegistry:
@@ -74,13 +85,28 @@ class TestRegistry:
 
     def test_kinder_stehen_vor_dem_elternteil(self):
         """Invariante: ist eine Kind-Tabelle selbst eine Prune-Entität, kommt sie früher
-        (Blatt → Wurzel) – sonst stimmt die Löschreihenfolge im Report nicht."""
+        (Blatt → Wurzel) – sonst stimmt die Löschreihenfolge im Report nicht.
+
+        Selbstbezüge sind davon ausgenommen: ein Storno-Fibu-Export zeigt auf seinen
+        Ur-Export in derselben Tabelle. Der Guard wirkt trotzdem (er hält den Ur-Export
+        fest, solange sein Storno existiert), nur eine Reihenfolge kann es dafür nicht
+        geben – die Tabelle müsste vor sich selbst stehen.
+        """
         pos_by_table = {e.table: i for i, e in enumerate(PRUNE_REGISTRY)}
         for i, e in enumerate(PRUNE_REGISTRY):
             for child in e.children:
+                if child.table == e.table:
+                    continue
                 if child.table in pos_by_table:
                     assert pos_by_table[child.table] < i, \
                         f"{child.table} muss vor {e.name} stehen"
+
+    def test_selbstbezug_loest_sich_ueber_mehrere_laeufe(self):
+        """Der Selbstbezug darf nicht dazu führen, dass gar nichts mehr geht: das Storno
+        ist selbst kinderlos und damit im ersten Lauf löschbar, der Ur-Export folgt im
+        nächsten. Genau das Verhalten hat „kein Cascade in einem Lauf" ohnehin."""
+        kinder = {(c.table, c.fk) for c in _entity("fibu_export").children}
+        assert ("fibu_exporte", "storno_von_export_id") in kinder
 
 
 class TestOriginalCandidateSql:
@@ -168,3 +194,71 @@ class TestCandidateIds:
         assert "FROM funktion_permission c WHERE c.funktion_id = r.id" in sql   # id-basiert
         assert ("FROM mitglied_funktion c WHERE c.funktion = "
                 "(SELECT p.key FROM funktion p WHERE p.id = r.id)") in sql      # key-basiert
+
+
+class TestLogRuleSql:
+    """Protokolle/Gerätebindungen: Hard-Delete nach Alter, kein Papierkorb."""
+
+    def test_zaehlen_und_loeschen_teilen_dieselbe_bedingung(self):
+        """„Vorschau = Aktion" auch hier: was gezählt wird, wird gelöscht."""
+        rule = _log("tuer_zutritt_log")
+        zaehl = build_log_due_count_sql(rule)
+        loesch = build_log_delete_sql(rule)
+        bedingung = zaehl.split("WHERE", 1)[1]
+        assert loesch.split("WHERE", 1)[1] == bedingung
+
+    def test_kategorie_filter_gilt_auch_beim_loeschen(self):
+        """Sonst würde das Löschen der Seitenaufrufe die Anmelde-Ereignisse mitnehmen."""
+        loesch = build_log_delete_sql(_log("access_log_page"))
+        assert "category = 'page'" in loesch
+        assert loesch.startswith("DELETE FROM access_log WHERE")
+
+    def test_auffangbecken_deckt_die_uebrigen_kategorien_ab(self):
+        """Neue access_log-Kategorien dürfen nicht still ohne Frist bleiben."""
+        rule = _log("access_log_uebrige")
+        assert "NOT IN" in rule.where
+        # Die drei namentlich geführten Kategorien sind ausgenommen – und nur die.
+        for eigene in ("'page'", "'auth'", "'schliessanlage'"):
+            assert eigene in rule.where
+
+    def test_gesamtzahl_ohne_alters_parameter(self):
+        """Die Mengenangabe im Report darf nicht vom Fenster abhängen."""
+        sql = build_log_total_sql(_log("tresor_zugriff_log"))
+        assert "%s" not in sql
+
+    def test_geraetebindung_datiert_ab_dem_tod_der_zeile(self):
+        """Nicht ab Anlage: eine seit Jahren laufende Sitzung ist nicht fällig."""
+        rule = _log("user_sessions")
+        assert "revoked_at" in rule.ts_expr and "expires_at" in rule.ts_expr
+        assert "created_at" not in rule.ts_expr
+
+    def test_aktives_push_abo_ist_nie_faellig(self):
+        """revoked_at NULL -> ts NULL -> Vergleich NULL -> Zeile bleibt. Ohne das würde
+        der Prune die aktiven Push-Abos aller Nutzer abräumen."""
+        rule = _log("push_subscriptions")
+        assert rule.ts_expr == "NULLIF(revoked_at, '')"
+
+    def test_leerer_string_zaehlt_als_nicht_gesetzt(self):
+        """revoked_at ist TEXT – '' ist im Schema genauso verbreitet wie NULL."""
+        assert "NULLIF" in _log("auth_tokens").ts_expr
+
+
+class TestJahresendeVerankerung:
+    """Aufbewahrungsfristen laufen ab Schluss des Kalenderjahres."""
+
+    def test_datum_wird_auf_silvester_gezogen(self):
+        assert _ab_jahresende("buchungsdatum") == \
+            "(NULLIF(LEFT(buchungsdatum::text, 4), '') || '-12-31')"
+
+    def test_leeres_datum_wird_nie_faellig(self):
+        """Der gefährliche Fall: ohne NULLIF ergäbe '' den Text '-12-31', der vor jedem
+        Stichtag liegt – ein undatierter Beleg würde sofort archiviert."""
+        ausdruck = _ab_jahresende("buchungsdatum")
+        assert "NULLIF(LEFT(buchungsdatum::text, 4), '')" in ausdruck
+
+    def test_finanzregeln_nutzen_die_verankerung(self):
+        finanz = [r for r in ARCHIVE_REGISTRY if r.name.endswith("_alter")
+                  and r.default_days >= 10 * 365]
+        assert finanz, "keine Finanz-Archivregel gefunden"
+        for regel in finanz:
+            assert "-12-31" in regel.date_expr, f"{regel.name} datiert nicht ab Jahresende"
