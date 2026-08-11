@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
-from app.models.beitrag import Beitragsregel, BeitragSollstellung
+from app.models.beitrag import (
+    ABTEILUNG_STATUS_BEITRAGSFREI, Beitragsregel, BeitragSollstellung,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -558,94 +560,115 @@ class BeitragsService:
     def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str,
                                periode_start: date, periode_ende: date,
                                mitglied_id: Optional[int] = None) -> list[dict]:
-        """
-        Ermittelt alle Mitglieder auf die eine Regel zutrifft, inkl. ihres Aktiv-
-        Intervalls (`aktiv_von`/`aktiv_bis`) für die anteilige Monatsberechnung.
-        Mit ``mitglied_id`` auf dieses eine Mitglied beschränkt (Einzel-Vorschau).
-
-        - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
-        - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
-        - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
-          ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
-
-        Funktions-Einschlüsse/-Ausnahmen werden hier NICHT mehr gefiltert: sie wirken
-        zeitraumgenau auf die abgerechneten Monate und rechnet der Service über
-        `funktions_monats_restriktion` (Einschluss = Schnittmenge, Ausnahme = Abzug).
-        Diese Methode liefert daher alle Mitgliedschaften der Regel; die maßgebliche
-        Monatsüberlappung bestimmt der Service.
-
-        Der Datums-Vorfilter grenzt nur grob auf den Zeitraum ein (string-Vergleich,
-        regex-geschützt gegen ungültige Werte).
-        """
-        joins: list[str] = []
-        # Gastspieler (art='gastspieler') sind keine Vereinsmitglieder und werden
-        # nie beitragspflichtig – auch nicht über Abteilungsregeln, obwohl sie
-        # eine mitglied_abteilung-Zuordnung haben (Gast-Kreis der Termine, #95).
-        where: list[str] = ["m.deleted_at IS NULL", "m.art = 'mitglied'"]
-        params: list = []
-
-        # Einzel-Vorschau: nur dieses Mitglied (Klausel + Param zusammen, damit die
-        # Param-Reihenfolge zu den folgenden %s passt).
-        if mitglied_id is not None:
-            where.append("m.id = %s")
-            params.append(mitglied_id)
-
-        # Datums-Vorfilter: NULL/leer/ungültig immer einschließen (die maßgebliche
-        # Monatsüberlappung rechnet der Service); nur gültige Daten ausserhalb des
-        # Zeitraums vorab ausschließen. Wichtig: ohne das explizite IS NULL würde
-        # NOT(... AND ...) bei NULL zu NULL → die Zeile fiele aus der WHERE-Klausel.
-        if regel.abteilung_id is None:
-            aktiv_cols = "m.eintrittsdatum AS aktiv_von, m.austrittsdatum AS aktiv_bis"
-            where += [
-                "(m.eintrittsdatum IS NULL OR m.eintrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.eintrittsdatum,10) <= %s)",
-                "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
-            ]
-            params.extend([periode_ende.isoformat(), periode_start.isoformat()])
-        else:
-            # Vereinsaustritt beendet implizit auch die Abteilungsmitgliedschaft:
-            # austrittsdatum wird mitgeladen und im Service als Obergrenze des
-            # Aktiv-Intervalls angewendet (min(ma.bis, austrittsdatum)).
-            aktiv_cols = ("ma.von AS aktiv_von, ma.bis AS aktiv_bis, "
-                          "m.austrittsdatum AS verein_bis")
-            joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
-            where += [
-                "ma.abteilung_id = %s", "ma.deleted_at IS NULL",
-                "(ma.von IS NULL OR ma.von !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.von,10) <= %s)",
-                "(ma.bis IS NULL OR ma.bis !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.bis,10) >= %s)",
-                "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
-            ]
-            params.extend([regel.abteilung_id, periode_ende.isoformat(),
-                           periode_start.isoformat(), periode_start.isoformat()])
-
-            status_filter = regel.bedingung_status_liste
-            if status_filter:
-                placeholders = ','.join(['%s'] * len(status_filter))
-                where.append(f"ma.status IN ({placeholders})")
-                params.extend(status_filter)
-
-        # Funktions-Einschlüsse/-Ausnahmen werden bewusst NICHT hier gefiltert (siehe
-        # Docstring): der Service wertet sie zeitraumgenau über die Monate aus.
-
-        if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
-            # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
-            age_expr = ("(CASE WHEN m.geburtsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "
-                        "THEN date_part('year', age(%s::date, left(m.geburtsdatum,10)::date)) END)")
-            if regel.bedingung_alter_min is not None:
-                where.append(f"{age_expr} >= %s")
-                params.extend([stichtag_str, regel.bedingung_alter_min])
-            if regel.bedingung_alter_max is not None:
-                where.append(f"{age_expr} <= %s")
-                params.extend([stichtag_str, regel.bedingung_alter_max])
-
-        sql = f"""
-            SELECT DISTINCT m.id, m.mitgliedsnummer, m.vorname, m.nachname,
-                   m.iban, m.kontoinhaber,
-                   {aktiv_cols}
-            FROM mitglied m
-            {' '.join(joins)}
-            WHERE {' AND '.join(where)}
-            ORDER BY m.nachname, m.vorname
-        """
+        """Führt die Abfrage aus `betroffene_mitglieder_sql` aus."""
+        sql, params = betroffene_mitglieder_sql(
+            regel, stichtag_str, periode_start, periode_ende, mitglied_id)
         with self.db.conn.cursor() as cur:
             cur.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
+
+
+def betroffene_mitglieder_sql(regel: Beitragsregel, stichtag_str: str,
+                              periode_start: date, periode_ende: date,
+                              mitglied_id: Optional[int] = None) -> tuple[str, list]:
+    """
+    Baut die Abfrage für alle Mitglieder, auf die eine Regel zutrifft, inkl. ihres
+    Aktiv-Intervalls (`aktiv_von`/`aktiv_bis`) für die anteilige Monatsberechnung.
+    Mit ``mitglied_id`` auf dieses eine Mitglied beschränkt (Einzel-Vorschau).
+
+    Reine Funktion (kein DB-Zugriff), damit die Bedingungen prüfbar sind, ohne
+    einen Postgres zu brauchen — insbesondere der Passiv-Ausschluss, der sonst
+    erst bei der nächsten Abrechnung auffiele.
+
+    - Vereinsbeitrag (abteilung_id IS NULL): Vereinsmitglieder; Intervall = Eintritt/Austritt
+    - Abteilungsbeitrag: Mitglieder der Abteilung; Intervall = von/bis der Mitgliedschaft
+    - bedingung_alter_min/max: Alter (am Stichtag) muss im Bereich liegen; Mitglieder
+      ohne gültiges Geburtsdatum werden bei gesetzter Altersbedingung ausgeschlossen
+
+    Funktions-Einschlüsse/-Ausnahmen werden hier NICHT mehr gefiltert: sie wirken
+    zeitraumgenau auf die abgerechneten Monate und rechnet der Service über
+    `funktions_monats_restriktion` (Einschluss = Schnittmenge, Ausnahme = Abzug).
+    Diese Methode liefert daher alle Mitgliedschaften der Regel; die maßgebliche
+    Monatsüberlappung bestimmt der Service.
+
+    Der Datums-Vorfilter grenzt nur grob auf den Zeitraum ein (string-Vergleich,
+    regex-geschützt gegen ungültige Werte).
+    """
+    joins: list[str] = []
+    # Gastspieler (art='gastspieler') sind keine Vereinsmitglieder und werden
+    # nie beitragspflichtig – auch nicht über Abteilungsregeln, obwohl sie
+    # eine mitglied_abteilung-Zuordnung haben (Gast-Kreis der Termine, #95).
+    where: list[str] = ["m.deleted_at IS NULL", "m.art = 'mitglied'"]
+    params: list = []
+
+    # Einzel-Vorschau: nur dieses Mitglied (Klausel + Param zusammen, damit die
+    # Param-Reihenfolge zu den folgenden %s passt).
+    if mitglied_id is not None:
+        where.append("m.id = %s")
+        params.append(mitglied_id)
+
+    # Datums-Vorfilter: NULL/leer/ungültig immer einschließen (die maßgebliche
+    # Monatsüberlappung rechnet der Service); nur gültige Daten ausserhalb des
+    # Zeitraums vorab ausschließen. Wichtig: ohne das explizite IS NULL würde
+    # NOT(... AND ...) bei NULL zu NULL → die Zeile fiele aus der WHERE-Klausel.
+    if regel.abteilung_id is None:
+        aktiv_cols = "m.eintrittsdatum AS aktiv_von, m.austrittsdatum AS aktiv_bis"
+        where += [
+            "(m.eintrittsdatum IS NULL OR m.eintrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.eintrittsdatum,10) <= %s)",
+            "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
+        ]
+        params.extend([periode_ende.isoformat(), periode_start.isoformat()])
+    else:
+        # Vereinsaustritt beendet implizit auch die Abteilungsmitgliedschaft:
+        # austrittsdatum wird mitgeladen und im Service als Obergrenze des
+        # Aktiv-Intervalls angewendet (min(ma.bis, austrittsdatum)).
+        aktiv_cols = ("ma.von AS aktiv_von, ma.bis AS aktiv_bis, "
+                      "m.austrittsdatum AS verein_bis")
+        joins.append("JOIN mitglied_abteilung ma ON ma.mitglied_id = m.id")
+        where += [
+            "ma.abteilung_id = %s", "ma.deleted_at IS NULL",
+            "(ma.von IS NULL OR ma.von !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.von,10) <= %s)",
+            "(ma.bis IS NULL OR ma.bis !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(ma.bis,10) >= %s)",
+            "(m.austrittsdatum IS NULL OR m.austrittsdatum !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' OR left(m.austrittsdatum,10) >= %s)",
+        ]
+        params.extend([regel.abteilung_id, periode_ende.isoformat(),
+                       periode_start.isoformat(), periode_start.isoformat()])
+
+        # Status-Bedingung: genannte Status gelten wörtlich, sonst greift die
+        # Grundregel „Passive zahlen keinen Abteilungsbeitrag". Bewusst als
+        # Ausschluss und nicht als Aufzählung der zahlenden Status – sonst
+        # müsste jede Regel jeden künftigen Status nachtragen, und wer das
+        # vergisst, merkt es erst am Einzug.
+        status_filter = regel.bedingung_status_liste
+        if status_filter:
+            placeholders = ','.join(['%s'] * len(status_filter))
+            where.append(f"ma.status IN ({placeholders})")
+            params.extend(status_filter)
+        else:
+            where.append("ma.status <> %s")
+            params.append(ABTEILUNG_STATUS_BEITRAGSFREI)
+
+    # Funktions-Einschlüsse/-Ausnahmen werden bewusst NICHT hier gefiltert (siehe
+    # Docstring): der Service wertet sie zeitraumgenau über die Monate aus.
+
+    if regel.bedingung_alter_min is not None or regel.bedingung_alter_max is not None:
+        # Alter am Stichtag aus geburtsdatum; ungültige/fehlende Daten -> ausgeschlossen
+        age_expr = ("(CASE WHEN m.geburtsdatum ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "
+                    "THEN date_part('year', age(%s::date, left(m.geburtsdatum,10)::date)) END)")
+        if regel.bedingung_alter_min is not None:
+            where.append(f"{age_expr} >= %s")
+            params.extend([stichtag_str, regel.bedingung_alter_min])
+        if regel.bedingung_alter_max is not None:
+            where.append(f"{age_expr} <= %s")
+            params.extend([stichtag_str, regel.bedingung_alter_max])
+
+    sql = f"""
+        SELECT DISTINCT m.id, m.mitgliedsnummer, m.vorname, m.nachname,
+               m.iban, m.kontoinhaber,
+               {aktiv_cols}
+        FROM mitglied m
+        {' '.join(joins)}
+        WHERE {' AND '.join(where)}
+        ORDER BY m.nachname, m.vorname
+    """
+    return sql, params

@@ -123,8 +123,14 @@
                 <q-chip v-else dense size="sm" color="primary" text-color="white">
                   Alle Mitglieder
                 </q-chip>
-                <q-chip v-if="r.bedingung_abteilung_status" dense size="sm" color="orange" text-color="white">
-                  Status: {{ r.bedingung_abteilung_status }}
+                <!-- Nur Abteilungsregeln werten den Status aus; beim Vereinsbeitrag
+                     wäre der Chip eine Bedingung, die gar nicht greift. -->
+                <q-chip v-if="r.abteilung_id" dense size="sm"
+                        :color="r.bedingung_abteilung_status ? 'orange' : 'grey-6'"
+                        text-color="white">
+                  {{ r.bedingung_abteilung_status
+                     ? `Status: ${r.bedingung_abteilung_status}`
+                     : 'ohne Passive' }}
                 </q-chip>
                 <q-chip v-if="r.bedingung_funktionen && r.bedingung_funktionen.length" dense size="sm" color="indigo" text-color="white">
                   Funktion: {{ bedingungText(r) }}
@@ -431,9 +437,24 @@
             <q-input v-model="regelForm.gueltig_ab" label="Gültig ab *" outlined dense type="date" class="col" />
             <q-input v-model="regelForm.gueltig_bis" label="Gültig bis" outlined dense type="date" class="col" />
           </div>
-          <q-input v-model="regelForm.bedingung_abteilung_status"
-            label="Nur für Abteilungs-Status (kommagetrennt, leer = alle)"
-            outlined dense />
+          <div v-if="regelForm.abteilung_id">
+            <q-select v-model="regelForm.bedingung_status"
+              :options="abteilungStatusOptionen" multiple use-chips
+              label="Beitragspflichtiger Abteilungs-Status" outlined dense />
+            <div class="text-caption text-grey-7 q-mt-xs">
+              <template v-if="!regelForm.bedingung_status?.length">
+                Leer = alle außer <b>passiv</b>. Passive Abteilungsmitglieder zahlen
+                keinen Abteilungsbeitrag.
+              </template>
+              <template v-else>
+                Nur die gewählten Status zahlen – die Auswahl gilt wörtlich.
+                <span v-if="regelForm.bedingung_status.includes('passiv')">
+                  <b>Passive sind hier ausdrücklich eingeschlossen</b> (z.&nbsp;B. für
+                  einen reduzierten Passiv-Beitrag).
+                </span>
+              </template>
+            </div>
+          </div>
           <div>
             <div class="text-caption text-grey-7 q-mb-xs">
               Bedingung: nur für bestimmte Funktionen (leer = alle). Je Zeile eine
@@ -581,6 +602,9 @@ const turnusOptions = [
 function turnusLabel(t) {
   return { monat: 'Monat', quartal: 'Quartal', halbjahr: 'Halbjahr', jahr: 'Jahr' }[t] ?? t
 }
+// Status einer Abteilungszugehörigkeit – Quelle: VALID_STATUS in
+// mitglied_abteilung_repository.py (gleiche Liste wie im MitgliedEditDialog).
+const abteilungStatusOptionen = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
 // Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
 // übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
 function fibuStatus(row) {
@@ -669,7 +693,9 @@ function openRegelDialog(r = null) {
     name: r.name, abteilung_id: r.abteilung_id,
     betrag_pro_monat: r.betrag_pro_monat, einzug_turnus: r.einzug_turnus,
     gueltig_ab: r.gueltig_ab, gueltig_bis: r.gueltig_bis ?? '',
-    bedingung_abteilung_status: r.bedingung_abteilung_status ?? '',
+    // Kommaliste ↔ Auswahl; leer bleibt leer (= Grundregel „alle außer passiv").
+    bedingung_status: (r.bedingung_abteilung_status ?? '')
+      .split(',').map(s => s.trim()).filter(Boolean),
     // Index-gleiche Arrays in editierbare Zeilen {funktion, abteilung_id} zippen.
     bedingung_eintraege: (r.bedingung_funktionen ?? []).map((f, i) => ({
       funktion: f,
@@ -689,7 +715,7 @@ function openRegelDialog(r = null) {
     name: '', abteilung_id: null,
     betrag_pro_monat: 0, einzug_turnus: 'quartal',
     gueltig_ab: heute, gueltig_bis: '',
-    bedingung_abteilung_status: '',
+    bedingung_status: [],
     bedingung_eintraege: [],
     ausnahme_eintraege: [],
     bedingung_alter_min: null,
@@ -708,11 +734,17 @@ async function saveRegel() {
     // Bedingung-/Ausnahme-Zeilen ohne gewählte Funktion verwerfen, dann in index-gleiche Arrays aufspalten.
     const bedingungen = (regelForm.value.bedingung_eintraege || []).filter(e => e.funktion)
     const ausnahmen = (regelForm.value.ausnahme_eintraege || []).filter(e => e.funktion)
+    // bedingung_status ist nur Formular-Zustand (Array) – die API kennt die Kommaliste.
+    const { bedingung_status: _auswahl, ...formularfelder } = regelForm.value
     const payload = {
-      ...regelForm.value,
+      ...formularfelder,
       betrag_pro_monat: Number(regelForm.value.betrag_pro_monat),
       gueltig_bis: regelForm.value.gueltig_bis || null,
-      bedingung_abteilung_status: regelForm.value.bedingung_abteilung_status || null,
+      // Vereinsregeln werten den Abteilungs-Status nicht aus – nichts mitschicken,
+      // sonst stünde in der Regel eine Bedingung, die nie greift.
+      bedingung_abteilung_status: regelForm.value.abteilung_id
+        ? ((regelForm.value.bedingung_status || []).join(',') || null)
+        : null,
       bedingung_funktionen: bedingungen.map(e => e.funktion),
       bedingung_abteilung_ids: bedingungen.map(e => e.abteilung_id ?? null),
       ausnahme_funktionen: ausnahmen.map(e => e.funktion),

@@ -20,6 +20,7 @@ from app.services.beitrags_service import (
     aktive_monate_menge,
     funktions_monats_restriktion,
     aufhol_quartale,
+    betroffene_mitglieder_sql,
     perioden_im_quartal,
     quartal_start,
     quartal_verschieben,
@@ -576,3 +577,53 @@ class TestVorschauAufholen:
         positionen = self._service(self._regel(), self._rows()).vorschau_aufholen('2026-10-01', 4)
         schluessel = [(p.mitglied_id, p.beitragsregel_id, p.zeitraum) for p in positionen]
         assert len(schluessel) == len(set(schluessel))
+
+
+class TestAbteilungsStatusBedingung:
+    """Wer zahlt den Abteilungsbeitrag? (Grundregel: Passive nicht.)
+
+    Geprüft wird die gebaute Abfrage statt des Ergebnisses – die Bedingung fiele
+    sonst erst bei einer echten Abrechnung auf, also frühestens ein Quartal später.
+    """
+
+    START, ENDE = date(2026, 7, 1), date(2026, 9, 30)
+
+    def _sql(self, **kwargs):
+        regel = Beitragsregel(id=1, name='Abt', abteilung_id=5,
+                              betrag_pro_monat=10.0, **kwargs)
+        return betroffene_mitglieder_sql(regel, '2026-07-01', self.START, self.ENDE)
+
+    def test_ohne_angabe_bleiben_passive_draussen(self):
+        sql, params = self._sql()
+        assert 'ma.status <> %s' in sql
+        assert 'passiv' in params
+
+    def test_genannte_status_gelten_woertlich(self):
+        sql, params = self._sql(bedingung_abteilung_status='aktiv,trainer')
+        assert 'ma.status IN (%s,%s)' in sql
+        assert 'ma.status <> %s' not in sql          # Grundregel tritt zurück
+        assert params[-2:] == ['aktiv', 'trainer']
+
+    def test_passiv_kann_ausdruecklich_abgerechnet_werden(self):
+        # Reduzierter Passiv-Beitrag: die Nennung schlägt die Grundregel.
+        sql, params = self._sql(bedingung_abteilung_status='passiv')
+        assert 'ma.status IN (%s)' in sql
+        assert 'ma.status <> %s' not in sql
+        assert params[-1] == 'passiv'
+
+    def test_vereinsbeitrag_kennt_keinen_abteilungsstatus(self):
+        # Vereinsbeitrag (abteilung_id=None) joint mitglied_abteilung gar nicht –
+        # Passive bleiben dort beitragspflichtig.
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
+                              betrag_pro_monat=10.0)
+        sql, params = betroffene_mitglieder_sql(regel, '2026-07-01', self.START, self.ENDE)
+        assert 'mitglied_abteilung' not in sql
+        assert 'passiv' not in params
+
+    def test_parameter_reihenfolge_passt_zu_den_platzhaltern(self):
+        # %s-Zahl und Parameter-Zahl müssen übereinstimmen, sonst wirft psycopg
+        # erst zur Laufzeit – und zwar mitten in der Abrechnung.
+        for kwargs in ({}, {'bedingung_abteilung_status': 'aktiv,vorstand'},
+                       {'bedingung_alter_min': 18, 'bedingung_alter_max': 65}):
+            sql, params = self._sql(**kwargs)
+            assert sql.count('%s') == len(params), kwargs
