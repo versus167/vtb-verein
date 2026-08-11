@@ -36,6 +36,35 @@ def db():
     d.close()
 
 
+def _aufraeumen(db):
+    """Die eigenen Zeilen wieder entfernen – Reihenfolge Blatt → Wurzel wegen der FKs.
+
+    Der Wegwerf-Postgres wird von allen Integrationsmodulen geteilt. Blieben die
+    Mitglieder dieses Moduls stehen, zählten die vereinsweiten Statistik-KPIs anderer
+    Module sie beim nächsten Lauf mit (test_gastspieler_integration sah so 11 statt 1
+    Mitglied). Die History muss mit weg, sonst kollidiert der Audit-Trigger, sobald ein
+    anderes Modul die Sequenz zurücksetzt.
+    """
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM beitrag_sollstellung_history WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM beitrag_sollstellung WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM fibu_exporte_history WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM fibu_exporte WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM beitragsregel_history WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM beitragsregel WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM mitglied_history WHERE created_by = 'tester'")
+        cur.execute("DELETE FROM mitglied WHERE created_by = 'tester'")
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test: nur davor zu putzen ließe die Zeilen des letzten Tests
+    # stehen – und genau die stören die anderen Module.
+    _aufraeumen(db)
+    yield
+    _aufraeumen(db)
+
+
 @pytest.fixture
 def regel_id(db):
     from app.models.beitrag import Beitragsregel

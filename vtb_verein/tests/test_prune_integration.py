@@ -36,27 +36,42 @@ def db():
     d.close()
 
 
-@pytest.fixture(autouse=True)
-def clean(db):
-    """Vor jedem Test: alle relevanten Tabellen + History leeren (Wegwerf-DB)."""
+def _leeren(db):
+    """Alle Tabellen dieses Moduls leeren – OHNE die Sequenzen zurückzusetzen.
+
+    Das fehlende ``RESTART IDENTITY`` ist der Kern: ``CASCADE`` greift viel weiter als
+    die hier aufgezählten Tabellen (über ``abteilung`` bis ``beitragsregel``, ``gebuehr``,
+    ``kassen``), und deren FK-freie ``*_history`` bleibt dabei stehen. Wurden die
+    Sequenzen zurückgesetzt, vergab der nächste INSERT eine schon benutzte id und der
+    Audit-Trigger lief auf ein vorhandenes ``(id, version)`` – quer durch fremde Module,
+    die von diesem Modul gar nichts wissen. Laufende Sequenzen kosten nichts (die DB ist
+    ein Wegwerf-Container) und machen das Problem strukturell unmöglich.
+    """
     with db.cursor() as cur:
         cur.execute(
             "TRUNCATE mitglied, mannschaft, mitglied_kontakt, mitglied_abteilung, "
             "mitglied_funktion, mitglied_mannschaft, beitrag_sollstellung, "
-            "gebuehr_forderung, users, tickets, ticket_anhaenge, abteilung "
-            "RESTART IDENTITY CASCADE"
+            "gebuehr_forderung, users, tickets, ticket_anhaenge, abteilung CASCADE"
         )
         # History-Tabellen werden NICHT per CASCADE erfasst (FK-frei) – explizit leeren,
-        # sonst kollidiert der Audit-Trigger nach RESTART IDENTITY mit Alt-(id,version)
-        # aus anderen Integrationsmodulen am selben Wegwerf-Container.
+        # damit die Zählungen im Report nur die Zeilen dieses Tests sehen.
         cur.execute(
             "TRUNCATE mitglied_history, mitglied_kontakt_history, mitglied_abteilung_history, "
             "users_history, tickets_history, abteilung_history, schluessel_chip_history, "
-            "beitrag_sollstellung_history, gebuehr_forderung_history "
-            "RESTART IDENTITY"
+            "beitrag_sollstellung_history, gebuehr_forderung_history"
         )
         cur.execute("TRUNCATE prune_einstellungen, prune_einstellungen_history")
+
+
+@pytest.fixture(autouse=True)
+def clean(db):
+    # Vor UND nach dem Test aufräumen: Nur davor zu putzen lässt die Zeilen des letzten
+    # Tests im geteilten Wegwerf-Postgres stehen, wo vereinsweite Auswertungen anderer
+    # Module sie mitzählen (test_gastspieler_integration fiel genau darüber, sobald die
+    # Suite ein zweites Mal gegen dieselbe DB lief).
+    _leeren(db)
     yield
+    _leeren(db)
 
 
 # --- DB-Helfer -------------------------------------------------------------------
@@ -417,7 +432,7 @@ def test_alters_archivierung_vergangene_termine(db):
     with db.cursor() as cur:
         cur.execute(
             "TRUNCATE termine, termine_history, termin_zusage, termin_zusage_history, "
-            "mannschaft, mannschaft_history RESTART IDENTITY CASCADE"
+            "mannschaft, mannschaft_history CASCADE"
         )
     db.prune_einstellungen.upsert(TERMIN_ALTER, 30, 0, 1, updated_by="t")  # Alter: 30 Tage
     with db.cursor() as cur:
@@ -599,7 +614,7 @@ def test_log_prune_trifft_nur_die_eigene_kategorie(db):
         PruneService, build_log_delete_sql, LOG_BY_NAME,
     )
     with db.cursor() as cur:
-        cur.execute("TRUNCATE access_log RESTART IDENTITY")
+        cur.execute("TRUNCATE access_log")
         for kategorie in ("page", "auth", "schliessanlage", "kalender"):
             cur.execute(
                 "INSERT INTO access_log (category, event_type, created_at) "
@@ -629,8 +644,7 @@ def test_aktives_push_abo_ueberlebt_den_prune(db):
     from app.services.prune_service import build_log_delete_sql, LOG_BY_NAME
     from datetime import datetime, timedelta
     with db.cursor() as cur:
-        cur.execute("TRUNCATE push_subscriptions, push_subscriptions_history "
-                    "RESTART IDENTITY CASCADE")
+        cur.execute("TRUNCATE push_subscriptions, push_subscriptions_history CASCADE")
         cur.execute(
             "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
             "VALUES ('pushuser','push@x.de','h','mitglied','t','t') RETURNING id"
@@ -737,8 +751,8 @@ def test_verwaiste_datei_wird_erkannt_aber_bekannte_nicht(db, tmp_path):
     os.utime(verzeichnis / "beansprucht.pdf", (alt, alt))
 
     with db.cursor() as cur:
-        cur.execute("TRUNCATE tickets, ticket_anhaenge RESTART IDENTITY CASCADE")
-        cur.execute("TRUNCATE tickets_history RESTART IDENTITY")
+        cur.execute("TRUNCATE tickets, ticket_anhaenge CASCADE")
+        cur.execute("TRUNCATE tickets_history")
         cur.execute(
             "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
             "VALUES ('anhanguser','anhang@x.de','h','mitglied','t','t') RETURNING id"
