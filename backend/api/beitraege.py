@@ -315,16 +315,17 @@ def storniere_sollstellung(soll_id: int, user: CurrentUser, db: DB):
 
 @router.delete("/sollstellungen/{soll_id}")
 def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
-    """Soft-Delete: anders als Storno wird die Sollstellung bei einer erneuten
-    Abrechnung wieder neu angelegt. Nur offene/stornierte und noch nicht an die
-    Fibu übergebene; bezahlte und bereits exportierte bleiben gesperrt."""
+    """Soft-Delete: anders als Storno („diesmal nicht abrechnen") heißt Löschen
+    „für diesen Zeitraum wurde nichts abgerechnet" — die nächste Abrechnung legt
+    die Sollstellung wieder an. Auch nach der Übergabe an die Fibu möglich; die
+    Gegenbuchung entsteht dann im nächsten Export (#165). Nur bezahlte bleiben
+    gesperrt."""
     _require_abrechnen(user)
     ok = db.sollstellungen.soft_delete(soll_id, deleted_by=user.username)
     if not ok:
         raise HTTPException(
             status_code=409,
-            detail="Sollstellung nicht löschbar: bereits an die Fibu übergeben "
-                   "(Rücknahme nur per Storno → Gegenbuchung) oder bezahlt.",
+            detail="Sollstellung nicht löschbar: bereits bezahlt.",
         )
     return {'ok': True}
 
@@ -333,13 +334,17 @@ def delete_sollstellung(soll_id: int, user: CurrentUser, db: DB):
 def restore_sollstellung(soll_id: int, user: CurrentUser, db: DB):
     """Sollstellung aus dem Papierkorb wiederherstellen. Verweigert, wenn für
     (Mitglied, Regel, Zeitraum) zwischenzeitlich wieder eine aktive Sollstellung
-    besteht (etwa durch erneute Abrechnung)."""
+    besteht (etwa durch erneute Abrechnung) — oder wenn die Gegenbuchung schon
+    im Fibu-Export war: Die Forderung stünde dann ohne Buchung da (#165)."""
     _require_abrechnen(user)
     ok = db.sollstellungen.restore(soll_id, restored_by=user.username)
     if not ok:
         raise HTTPException(
             status_code=409,
-            detail="Wiederherstellen nicht möglich (nicht im Papierkorb oder es besteht bereits eine aktive Sollstellung für diesen Zeitraum)",
+            detail="Wiederherstellen nicht möglich: nicht im Papierkorb, es besteht "
+                   "bereits eine aktive Sollstellung für diesen Zeitraum, oder die "
+                   "Gegenbuchung ist bereits an die Fibu übergeben – dann bitte den "
+                   "Zeitraum neu abrechnen.",
         )
     return {'ok': True}
 

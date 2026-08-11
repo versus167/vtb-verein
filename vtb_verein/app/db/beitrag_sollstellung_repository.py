@@ -126,16 +126,25 @@ class BeitragSollstellungRepository(BaseRepository):
 
     def soft_delete(self, id: int, deleted_by: str) -> bool:
         """Sollstellung soft-löschen (deleted_at), damit eine erneute Abrechnung
-        sie wieder neu anlegt. Im Gegensatz zum Storno (bleibt bestehen und
-        sperrt die Neu-Anlage über exists()). Nur offene/stornierte – bezahlte
-        bleiben vorerst gesperrt (bereits bezahlt; werden nicht neu abgerechnet).
-        Hinweis: Im Beitragsflow werden keine Kassenbuchungen erzeugt; wie
-        'bezahlt' hier abgebildet wird, ist noch offen.
+        sie wieder neu anlegt.
 
-        Bereits an die Fibu übergebene Sollstellungen (exportiert_in_export_id
-        gesetzt) sind gesperrt: deren Rücknahme läuft ausschließlich über Storno
-        (Gegenbuchung im nächsten Export), sonst gäbe es eine Fibu-Buchung ohne
-        passenden VTB-Beleg."""
+        Die beiden Wege bedeuten Unterschiedliches (#165):
+        * **Storno** – aufheben und *diesmal nicht* abrechnen. Die Zeile bleibt
+          stehen und sperrt über exists() die Neu-Anlage.
+        * **Löschen** – für diesen Zeitraum wurde nichts abgerechnet. Die nächste
+          Abrechnung legt die Sollstellung wieder an.
+
+        Auch nach der Übergabe an die Fibu löschbar: Der Export zieht bereits
+        exportierte Posten, die inzwischen gelöscht sind, als Gegenbuchung
+        (_COND_STORNO in fibu_export_repository) – die Fibu-Buchung bleibt also
+        nicht ohne Ausgleich stehen. Der Beleg dafür liegt im Papierkorb, nicht
+        im Nichts; deshalb gilt die Rücknahme aus dem Papierkorb nur, solange die
+        Gegenbuchung noch nicht raus ist (s. restore).
+
+        Nur offene/stornierte – bezahlte bleiben gesperrt (werden nicht neu
+        abgerechnet). Hinweis: Im Beitragsflow werden keine Kassenbuchungen
+        erzeugt; wie 'bezahlt' hier abgebildet wird, ist noch offen.
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -143,7 +152,6 @@ class BeitragSollstellungRepository(BaseRepository):
                 SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND deleted_at IS NULL AND status IN ('offen','storniert')
-                  AND exportiert_in_export_id IS NULL
                 """,
                 (deleted_by, deleted_by, id),
             )
@@ -151,9 +159,19 @@ class BeitragSollstellungRepository(BaseRepository):
 
     def restore(self, id: int, restored_by: str) -> bool:
         """Aus dem Papierkorb wiederherstellen (deleted_at zurücksetzen).
-        Verweigert, wenn dadurch ein Duplikat entstünde, d. h. für
-        (Mitglied, Regel, Zeitraum) bereits eine aktive Sollstellung besteht –
-        etwa weil zwischenzeitlich neu abgerechnet wurde."""
+
+        Zwei Gründe, es zu verweigern:
+
+        * Es entstünde ein Duplikat – für (Mitglied, Regel, Zeitraum) besteht
+          bereits eine aktive Sollstellung, etwa weil zwischenzeitlich neu
+          abgerechnet wurde.
+        * Die Gegenbuchung ist bereits im Fibu-Export gelandet
+          (storno_exportiert_in_export_id gesetzt). Die Forderung stünde nach dem
+          Zurückholen ohne Buchung da: Der Export bucht sie nicht erneut, weil
+          exportiert_in_export_id längst gesetzt ist. Wer sie doch wieder
+          braucht, rechnet den Zeitraum neu ab – dann entsteht eine frische
+          Sollstellung mit frischer Buchung (#165).
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -161,6 +179,7 @@ class BeitragSollstellungRepository(BaseRepository):
                 SET deleted_at=NULL, deleted_by=NULL,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE s.id=%s AND s.deleted_at IS NOT NULL
+                  AND s.storno_exportiert_in_export_id IS NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM beitrag_sollstellung d
                     WHERE d.mitglied_id=s.mitglied_id AND d.beitragsregel_id=s.beitragsregel_id
