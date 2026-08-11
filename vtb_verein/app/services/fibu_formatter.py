@@ -16,6 +16,11 @@ _FELD_ANZAHL = 71          # Felder 00..70 (59 Mailadresse, 70 abw. Kontoinhaber
 _SEP = ";"
 _EOL = "\r\n"
 
+# Feld 12 (Buchungstext) fasst laut Schnittstellenbeschreibung 250 Zeichen. Seit
+# der Buchungstext den Namen der Person mitführt, kann er theoretisch anwachsen –
+# gekappt wird am Ende, also trifft es den Namen und nicht die Bezeichnung.
+_MAX_BUCHUNGSTEXT = 250
+
 
 def _datum(iso) -> str:
     """Datum → TT.MM.JJJJ; leer/ungültig → ''.
@@ -65,7 +70,7 @@ def felder(p: FibuExportPosition) -> list[str]:
             f[8] = _clean(p.kostentraeger)
     f[10] = _datum(p.belegdatum)        # Belegdatum
     f[11] = _datum(p.faelligkeitsdatum)  # Fälligkeitsdatum
-    f[12] = _clean(p.buchungstext)      # Buchungstext
+    f[12] = _clean(p.buchungstext)[:_MAX_BUCHUNGSTEXT]   # Buchungstext (max. 250)
     f[17] = "E"                         # Währung EURO
     f[19] = p.kontenart or "D"          # Kontenart 'D' Debitor | 'K' Kreditor (ÜL-Honorar)
     f[20] = _clean(p.suchname)          # Suchname (Adresscode)
