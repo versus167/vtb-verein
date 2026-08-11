@@ -180,8 +180,21 @@ def test_konto_wird_ueber_kennung_bezeichnung_und_nummer_aufgeloest():
     assert zuordnung == {'test1': (None, None), 'Chip8': (1, None), 'Volker1': (2, 7)}
     assert bericht.ohne_zuordnung == 1
     konten = {k.konto: k for k in bericht.schloesser[0].konten}
-    assert konten['Volker1'].mitglied_name == 'Max Muster'
+    assert konten['Volker1'].inhaber_name == 'Max Muster'
     assert konten['test1'].zugeordnet is False
+
+
+def test_bericht_nennt_auch_inhaber_ohne_mitgliedsdatensatz():
+    """Chips laufen auch auf Benutzerkonten (Platzwart & Co.) – der Bericht darf sie
+    dann nicht als „niemandem zugeordnet" ausweisen."""
+    db = FakeDB(chips=[
+        SchluesselChip(id=1, kartennummer='111', bezeichnung='Chip8',
+                       user_id=9, user_username='platzwart'),
+    ])
+    bericht = run_import(db, CSV, commit=True)
+    konten = {k.konto: k for k in bericht.schloesser[0].konten}
+    assert konten['Chip8'].inhaber_name == 'platzwart'
+    assert konten['Chip8'].mitglied_id is None
 
 
 def test_gepflegte_kennung_schlaegt_gleichnamige_bezeichnung():

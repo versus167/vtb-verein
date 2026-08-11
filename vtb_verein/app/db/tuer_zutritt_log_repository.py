@@ -22,11 +22,13 @@ _SELECT = """
            l.methode, l.erfolg, l.credential, l.key_name, l.ttlock_username,
            l.chip_id, l.mitglied_id, l.lock_date, l.server_date, l.raw, l.created_at,
            s.name AS schloss_name, c.bezeichnung AS chip_bezeichnung,
-           m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname
+           m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
+           cu.username AS chip_user_username
     FROM tuer_zutritt_log l
     LEFT JOIN tuer_schloss s ON s.id = l.schloss_id
     LEFT JOIN schluessel_chip c ON c.id = l.chip_id
     LEFT JOIN mitglied m ON m.id = l.mitglied_id
+    LEFT JOIN users cu ON cu.id = c.user_id
 """
 
 
@@ -41,13 +43,15 @@ def _map(row) -> TuerZutrittLog:
 # Zeit versehentlich ein zweites Mal umrechnen.
 _ORTSZEIT = "(l.lock_date::timestamptz AT TIME ZONE 'Europe/Berlin')"
 
-# Wer war es? Gleiche Auflösungskette wie im Log: Mitglied → Chip-Bezeichnung → das, was
-# die Anlage selbst mitgeliefert hat. Ausnahme Gateway-Fernöffnung: die läuft in der Cloud
-# unter dem Sammelkonto, deren `key_name` ist der Kontoname ('ttlock') und wäre in einer
-# Personen-Rangliste schlicht falsch – sie wird als eigene „Person" ausgewiesen, bis die
-# Korrelation mit dem access_log den echten Auslöser liefert (Phase 5, Teil B).
+# Wer war es? Gleiche Auflösungskette wie im Log: Mitglied → Benutzer, auf den der Chip
+# läuft → Chip-Bezeichnung → das, was die Anlage selbst mitgeliefert hat. Ausnahme
+# Gateway-Fernöffnung: die läuft in der Cloud unter dem Sammelkonto, deren `key_name` ist
+# der Kontoname ('ttlock') und wäre in einer Personen-Rangliste schlicht falsch – sie wird
+# als eigene „Person" ausgewiesen, bis die Korrelation mit dem access_log den echten
+# Auslöser liefert (Phase 5, Teil B).
 _WER = """COALESCE(
              NULLIF(TRIM(COALESCE(m.vorname, '') || ' ' || COALESCE(m.nachname, '')), ''),
+             cu.username,
              c.bezeichnung,
              CASE WHEN l.record_type = ANY(%(gateway)s) THEN 'Fernöffnung (App)'
                   ELSE l.key_name END,
@@ -69,6 +73,7 @@ WITH ereignis AS (
     LEFT JOIN tuer_schloss s ON s.id = l.schloss_id
     LEFT JOIN schluessel_chip c ON c.id = l.chip_id
     LEFT JOIN mitglied m ON m.id = l.mitglied_id
+    LEFT JOIN users cu ON cu.id = c.user_id
     WHERE l.lock_date IS NOT NULL
       AND l.erfolg IS NOT FALSE
       AND (l.record_type = ANY(%(oeffnung)s)
@@ -336,5 +341,29 @@ class TuerZutrittLogRepository(BaseRepository):
                 _SELECT + " WHERE l.mitglied_id = %s ORDER BY l.lock_date DESC NULLS LAST, l.id DESC "
                           "LIMIT %s",
                 (mitglied_id, limit),
+            )
+            return [_map(r) for r in cur.fetchall()]
+
+    def list_selbstauskunft(self, *, mitglied_id: Optional[int] = None,
+                            chip_ids: tuple[int, ...] = (),
+                            limit: int = 50) -> list[TuerZutrittLog]:
+        """Eigene Zutritte des eingeloggten Users (Self-Service), aus beiden Quellen.
+
+        Wer einen Mitgliedsdatensatz hat, findet sich über die im Log aufgelöste
+        `mitglied_id` (historisch korrekt: sie steht in der Zeile). Wer keinen hat,
+        aber Chips auf seinem Benutzerkonto, wird über diese Chips gefunden — dort
+        gibt es keine Spur in der Log-Zeile, also zählt der heutige Inhaber.
+        """
+        if mitglied_id is None and not chip_ids:
+            return []
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + """
+                WHERE l.mitglied_id = %(mid)s     -- NULL trifft nichts: kein Mitglied
+                   OR l.chip_id = ANY(%(chips)s::int[])
+                ORDER BY l.lock_date DESC NULLS LAST, l.id DESC
+                LIMIT %(limit)s
+                """,
+                {"mid": mitglied_id, "chips": list(chip_ids), "limit": limit},
             )
             return [_map(r) for r in cur.fetchall()]

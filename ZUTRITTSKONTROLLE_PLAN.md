@@ -210,6 +210,7 @@ CREATE TABLE schluessel_chip (
   version/created_*/updated_*/deleted_*
 );
 -- Inhaber XOR Standort: mitglied_id gesetzt = ausgegeben; sonst Pool-Chip mit aufbewahrungsort
+-- (seit Schema v91 zusätzlich user_id als zweite mögliche Inhaberschaft, s.u.)
 -- partieller Unique-Index auf kartennummer WHERE deleted_at IS NULL
 
 -- Berechtigung: Chip an einem Schloss = eine TTLock-IC-Card
@@ -527,6 +528,30 @@ wie die Einzelzeilen, nur bequemer lesbar.
 Aktuell 13 kleine Aggregat-Queries pro Aufruf über die volle Log-Tabelle. Bei ein paar
 tausend Zeilen unkritisch; wenn das Log irgendwann sechsstellig wird, wäre ein
 Ausdrucks-Index auf `(lock_date::timestamptz)` der erste Hebel.
+
+## Chip-Inhaber ohne Mitgliedschaft (umgesetzt, Schema v91)
+
+Nicht jeder mit Chip ist Mitglied: Platzwart, Hausmeister, Betreuer eines Gastvereins
+haben ein App-Konto, aber keinen Mitgliedsdatensatz. Bisher blieben ihre Chips
+zwangsweise „nicht zugeordnet" — seit dem Zuordnungs-Filter (#160) sogar standardmäßig
+ausgeblendet. `schluessel_chip.user_id` ist deshalb die zweite mögliche Inhaberschaft.
+
+- **Genau ein Inhaber**: `mitglied_id` ODER `user_id`, sonst Pool-Chip mit Standort. Die
+  Regel steht in der API (`_inhaber_pruefen`, 400 mit Ansage), nicht als DB-CHECK — der
+  müsste beim ALTER jede Altzeile mitprüfen und könnte nichts erklären.
+- **Wer beides ist, hängt am Mitglied**: Wählt jemand im Picker ein Benutzerkonto mit
+  verknüpftem Mitglied, schreibt der Endpunkt still auf `mitglied_id` um. Sonst gäbe es
+  je nach Auswahl zwei Wahrheiten über dieselbe Person, und die Log-Auflösung
+  (`tuer_zutritt_log.mitglied_id`) liefe ins Leere. Der Picker bietet solche Konten
+  entsprechend gar nicht erst in der Benutzer-Gruppe an (`/users` liefert `mitglied_id`).
+- **Namensauflösung**: Log-Anzeige und Auswertung setzen den Benutzernamen zwischen
+  Mitglied und Chip-Bezeichnung (`_WER`, `chip_user_username`). Anders als beim Mitglied
+  steht dabei nichts in der Log-Zeile selbst — es zählt der heutige Inhaber des Chips.
+- **Self-Service** greift über beide Wege: `user_has_valid_for_schloss` prüft Mitglied
+  *und* `schluessel_chip.user_id`, „Mein Zugang" listet Chips aus beiden Quellen und
+  holt die eigenen Zutritte über `list_selbstauskunft` (Mitglied-Spur ODER eigene Chips).
+- Kein `PRUNE_REGISTRY`-Eintrag nötig: `users` wird bewusst nicht geprunt, der neue FK
+  kann also nichts blockieren.
 
 ## Offene Punkte (vor/während Phase 1 klären)
 

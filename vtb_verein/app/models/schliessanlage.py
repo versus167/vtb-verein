@@ -199,7 +199,7 @@ class TuerSchloss:
 
 @dataclass
 class SchluesselChip:
-    """Physischer Chip ↔ Mitglied (ausgegeben) ODER Standort (Pool-Chip)."""
+    """Physischer Chip ↔ Inhaber (Mitglied ODER Benutzer) ODER Standort (Pool-Chip)."""
     id: Optional[int] = None
     kartennummer: str = ""
     bezeichnung: Optional[str] = None
@@ -207,12 +207,17 @@ class SchluesselChip:
     # nur darüber lässt sich deren Log auf Chip → Mitglied auflösen.
     externe_kennung: Optional[str] = None
     mitglied_id: Optional[int] = None             # Inhaber, falls personalisiert ausgegeben
+    # Inhaber ohne Mitgliedsdatensatz (Platzwart, Hausmeister, Gastverein): App-Konto
+    # statt Mitgliedschaft. Immer nur EINES von beiden – wer beides ist, hängt am
+    # Mitglied (dort hängen Log-Auflösung und Self-Service).
+    user_id: Optional[int] = None
     aufbewahrungsort: Optional[str] = None        # Standard-Standort, falls nicht personalisiert
     status: str = CHIP_AKTIV
     # per JOIN befüllt (Anzeige)
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None
     mitgliedsnummer: Optional[int] = None
+    user_username: Optional[str] = None
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -328,6 +333,10 @@ class TuerZutrittLog:
     chip_bezeichnung: Optional[str] = None
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None
+    # Inhaber des Chips, wenn er auf ein Benutzerkonto statt auf ein Mitglied läuft.
+    # Steht nicht in der Log-Zeile selbst (die kennt nur mitglied_id) – kommt über
+    # den Chip und ist deshalb immer der HEUTIGE Inhaber.
+    chip_user_username: Optional[str] = None
 
 
 @dataclass
