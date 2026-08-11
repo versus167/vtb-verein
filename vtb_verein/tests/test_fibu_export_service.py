@@ -72,6 +72,20 @@ class TestFormatterFelder:
         assert ff.felder(_pos(land=None))[27] == 'DE'
         assert ff.felder(_pos(land='Deutschland'))[27] == 'DE'  # zu lang → Fallback
 
+    def test_buchungstext_wird_bei_250_zeichen_gekappt(self):
+        """Feld 12 fasst 250 Zeichen – eine längere Zeile wäre ungültig."""
+        f = ff.felder(_pos(buchungstext='B' * 300))
+        assert len(f[12]) == 250
+
+    def test_buchungstext_kappt_hinten(self):
+        """Gekappt wird der Name, nicht die Bezeichnung – deshalb steht er hinten."""
+        text = 'Vereinsbeitrag 2026-Q4 ' + 'X' * 300
+        assert ff.felder(_pos(buchungstext=text))[12].startswith('Vereinsbeitrag 2026-Q4 ')
+
+    def test_normaler_buchungstext_bleibt_unangetastet(self):
+        assert ff.felder(_pos(buchungstext='Vereinsbeitrag 2026-Q4 Müller, Anna'))[12] \
+            == 'Vereinsbeitrag 2026-Q4 Müller, Anna'
+
     def test_separator_wird_entschaerft(self):
         # Ein Semikolon im Namen darf die Spaltenzahl nicht sprengen.
         assert ';' not in ff.felder(_pos(nachname='A;B'))[22]
@@ -211,6 +225,42 @@ class TestPersonenkonto:
     def test_basis_null_ist_eine_echte_basis(self):
         # 0 ist ein gültiger Offset und darf nicht wie "nicht konfiguriert" wirken.
         assert personenkonto(0, 5) == 5
+
+
+class TestBuchungstext:
+    """Der Buchungstext trägt den Namen der Person am Ende: Auf dem Kontoauszug
+    der Fibu stand sonst nur die Bezeichnung, und wer gemeint ist, verriet erst
+    das Personenkonto."""
+
+    def test_name_steht_hinter_der_bezeichnung(self):
+        svc, _ = _service(neu=[_row(vorname='Anna', nachname='Müller')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.buchungstext == 'Vereinsbeitrag 2026-Q4 Müller, Anna'
+
+    def test_bezeichnung_bleibt_ohne_namen(self):
+        """Die Bezeichnung trägt die Vorschau-Liste – dort steht der Name schon
+        in einer eigenen Spalte."""
+        svc, _ = _service(neu=[_row()])
+        assert svc.vorschau()['forderungen'][0].bezeichnung == 'Vereinsbeitrag 2026-Q4'
+
+    def test_ohne_vorname_nur_nachname(self):
+        svc, _ = _service(neu=[_row(vorname=None, nachname='Müller')])
+        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 Müller'
+
+    def test_ohne_namen_kein_leerzeichen_am_ende(self):
+        svc, _ = _service(neu=[_row(vorname=None, nachname=None)])
+        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4'
+
+    def test_gegenbuchung_traegt_den_namen_ebenso(self):
+        """Sonst ließe sich die Gegenbuchung im Kontoauszug nicht zuordnen."""
+        svc, _ = _service(gegen=[_row(vorname='Anna', nachname='Müller')])
+        assert svc.vorschau()['gegenbuchungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 Müller, Anna'
+
+    def test_ul_honorar_traegt_den_uebungsleiter(self):
+        svc, _ = _service(neu=[_ul_row(vorname='Annett', nachname='Wagner')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.buchungstext.endswith('Wagner, Annett')
+        assert p.buchungstext.startswith('ÜL-Honorar Aerobic')
 
 
 class TestAufloesung:

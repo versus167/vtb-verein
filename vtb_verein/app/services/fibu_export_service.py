@@ -80,6 +80,21 @@ def _plus_tage(iso, tage):
         return None
 
 
+def _buchungstext(bezeichnung: str, person: str) -> str:
+    """Buchungstext = Bezeichnung, hinten der Name der Person (#167-Wunsch).
+
+    Auf dem Kontoauszug der Fibu steht sonst nur „Erwachsenenbeitrag 2026-Q3" —
+    wer gemeint ist, verrät erst das Personenkonto. Der Name gehört ans Ende,
+    damit die Bezeichnung vorn steht und die Zeilen untereinander lesbar bleiben.
+    Geschrieben wie im Debitorenstamm („Nachname, Vorname"), damit beide Seiten
+    dieselbe Schreibweise zeigen.
+
+    Die Längengrenze des Felds (250 Zeichen) steht im Formatter, wo das Format
+    beschrieben ist — hier wird nicht gekürzt.
+    """
+    return f"{bezeichnung} {person}".strip() if person else bezeichnung
+
+
 def personenkonto(basis: Optional[int], mitgliedsnummer: Optional[int]) -> Optional[int]:
     """Debitor-/Kreditor-Konto = Konto-Basis + Mitgliedsnummer. Fehlt eines von
     beidem, gibt es kein Konto → None (der Export meldet das als Fehler). Auch
@@ -273,6 +288,7 @@ class FibuExportService:
             bezeichnung = f"{bezeichnung} {periode}".strip()
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
+        person = f"{nachname}, {vorname}" if vorname else nachname
         iban = row.get('iban')
         # SEPA-/Lastschrift-Daten nur für Mitglieder mit zahlungsart='lastschrift' –
         # ein Überweiser bekommt weder das Lastschrift-Kennzeichen (Feld 36) noch eine
@@ -305,7 +321,7 @@ class FibuExportService:
             quelle_id=row['quelle_id'],
             art=art,
             mitglied_id=row.get('mitglied_id') or 0,
-            mitglied_name=f"{nachname}, {vorname}" if vorname else nachname,
+            mitglied_name=person,
             bezeichnung=bezeichnung,
             konto=konto,
             gegenkonto=gegenkonto,
@@ -317,7 +333,7 @@ class FibuExportService:
             kostentraeger=kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=bezeichnung,
+            buchungstext=_buchungstext(bezeichnung, person),
             lastschrifteinzug=1 if (ist_lastschrift and iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
@@ -351,6 +367,7 @@ class FibuExportService:
 
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
+        person = f"{nachname}, {vorname}" if vorname else nachname
         belegdatum = _date_only(row.get('belegdatum'))
         faelligkeitsdatum = _plus_tage(belegdatum, NETTOTAGE)
 
@@ -365,7 +382,7 @@ class FibuExportService:
             quelle_id=row['quelle_id'],
             art=art,
             mitglied_id=row.get('mitglied_id') or 0,
-            mitglied_name=f"{nachname}, {vorname}" if vorname else nachname,
+            mitglied_name=person,
             bezeichnung=bezeichnung,
             konto=konto,
             gegenkonto=einst.ul_aufwand_konto,
@@ -378,7 +395,7 @@ class FibuExportService:
             kostentraeger=einst.default_kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=bezeichnung,
+            buchungstext=_buchungstext(bezeichnung, person),
             lastschrifteinzug=None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
