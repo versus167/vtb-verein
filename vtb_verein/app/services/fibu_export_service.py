@@ -6,6 +6,13 @@ Ablauf:
 2. exportieren(...) → Lauf anlegen, fbasc.hia rendern, Quellzeilen als „exportiert" stempeln
 3. re_download(id)  → einen früheren Lauf erneut rendern
 
+Belege: Enthält ein Lauf ÜL-Honorare, wird statt der nackten `fbasc.hia` ein Zip
+geliefert – die Datei plus je Abrechnung den Stundennachweis als PDF, dessen Dateiname
+in Feld 39 („Dokument zur Erfassung") der ÜL-Zeile steht (Muster: Kassenbuch-Export).
+Die Belege werden bei jedem Rendern neu erzeugt; das ist reproduzierbar, weil eine
+exportierte Abrechnung gegen Statuswechsel und Löschen gesperrt ist. Beitrags-/Gebühren-
+Läufe haben nichts anzuhängen und bleiben eine flache Datei.
+
 Lauf-Storno (zwei Wege, weil die App nicht weiß, ob die Datei schon in die Fibu
 eingelesen wurde):
 - zuruecknehmen(id) → Un-Export des JÜNGSTEN, noch nicht eingelesenen Laufs: Stempel der
@@ -47,14 +54,41 @@ Konten-Auflösung:
   Gebühr: forderung.datum); Fälligkeit (Feld 11) = Belegdatum + NETTOTAGE (10).
 """
 import dataclasses
+import io
+import logging
+import re
+import zipfile
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
 from app.models.fibu import FibuExport, FibuExportPosition, FibuEinstellungen
 from app.services import fibu_formatter
+from app.services.ul_stunden_service import ULStundenService
+
+logger = logging.getLogger(__name__)
 
 # Zahlungsziel: Fälligkeit = Belegdatum + NETTOTAGE.
 NETTOTAGE = 10
+
+ZIP_MEDIA_TYPE = "application/zip"
+HIA_MEDIA_TYPE = "text/plain; charset=utf-8"
+
+
+@dataclass(frozen=True)
+class ExportDatei:
+    """Was beim Export herausfällt: entweder die nackte `fbasc.hia` oder ein Zip
+    aus Datei + Belegen. Trägt den Dateinamen mit, weil er davon abhängt."""
+    name: str
+    inhalt: bytes
+
+    @property
+    def ist_zip(self) -> bool:
+        return self.name.endswith('.zip')
+
+    @property
+    def media_type(self) -> str:
+        return ZIP_MEDIA_TYPE if self.ist_zip else HIA_MEDIA_TYPE
 
 
 def _date_only(value):
@@ -78,6 +112,70 @@ def _plus_tage(iso, tage):
         return (date.fromisoformat(iso[:10]) + timedelta(days=tage)).isoformat()
     except (ValueError, TypeError):
         return None
+
+
+def _gegenbuchungs_grund(row: dict) -> Optional[str]:
+    """„Storno" oder „Gelöscht" – warum die Gegenbuchung entsteht.
+
+    Beides führt zur selben Haben-Zeile, bedeutet in der App aber Verschiedenes:
+    Storno heißt „aufheben und diesmal nicht abrechnen", Löschen heißt „für
+    diesen Zeitraum wurde nichts abgerechnet" – Letzteres kommt beim nächsten
+    Abrechnungslauf also wieder. Wer den Kontoauszug liest, sieht damit sofort,
+    ob er eine erneute Forderung zu erwarten hat.
+
+    Gelöscht schlägt Storno: Beides kann gesetzt sein (erst storniert, dann
+    gelöscht), und dann ist das Löschen der jüngere und stärkere Vorgang.
+    """
+    if row.get('quelle_deleted_at'):
+        return 'Gelöscht'
+    if row.get('quelle_status') in ('storniert', 'zurueckgezogen'):
+        return 'Storno'
+    # ÜL-Abrechnungen kennen kein 'storniert': Dort ist jeder Status außer
+    # 'bestaetigt' der Grund (s. _COND_UL_STORNO im Repository).
+    if row.get('quelle_typ') == 'ul_abrechnung' and row.get('quelle_status'):
+        return 'Storno'
+    return None
+
+
+# Alles, was kein Buchstabe/Ziffer/_-. ist, wird zum Bindestrich. Umlaute bleiben:
+# Die fbasc.hia ist UTF-8, und Zip-Einträge tragen ihr eigenes UTF-8-Flag – ein
+# „Süß" muss hier also nicht entstellt werden. Weg müssen nur das Feldtrennzeichen
+# ';' und Pfadzeichen, die im Zip sonst Ordner aufmachen.
+_UNZULAESSIG = re.compile(r'[^\w.-]+')
+
+
+def _namensteil(roh: str) -> str:
+    """Zip-/Fibu-tauglicher Namensteil (Umlaute bleiben erhalten)."""
+    return _UNZULAESSIG.sub('-', roh or '').strip('-')
+
+
+def beleg_dateiname(quelle_id: int, nachname: Optional[str]) -> str:
+    """Dateiname des ÜL-Stundennachweises im Export-Zip.
+
+    Beginnt mit der Belegnummer (U<id>), damit Datei und Buchungszeile ohne Umweg
+    zusammenfinden; der Nachname steht dahinter, damit der Stapel für Menschen
+    sortierbar bleibt."""
+    name = _namensteil(nachname)
+    return f"U{quelle_id}-Stundennachweis{'-' + name if name else ''}.pdf"
+
+
+def _buchungstext(bezeichnung: str, person: str, grund: Optional[str] = None) -> str:
+    """Buchungstext: vorn der Grund einer Gegenbuchung, dann die Bezeichnung,
+    hinten der Name der Person.
+
+    Auf dem Kontoauszug der Fibu stand vorher nur „Erwachsenenbeitrag 2026-Q3" —
+    wer gemeint ist, verriet erst das Personenkonto, und ob es eine Forderung
+    oder deren Rücknahme ist, nur das Vorzeichen. Der Name gehört ans Ende, damit
+    die Bezeichnung vorn steht und die Zeilen untereinander lesbar bleiben;
+    geschrieben wie im Debitorenstamm („Nachname, Vorname"). Der Grund gehört
+    dagegen an den Anfang: Er ist beim Überfliegen einer Kontoauszugsspalte das
+    Erste, was man wissen will.
+
+    Die Längengrenze des Felds (250 Zeichen) steht im Formatter, wo das Format
+    beschrieben ist — hier wird nicht gekürzt.
+    """
+    teile = [grund, bezeichnung, person]
+    return " ".join(t for t in teile if t).strip()
 
 
 def personenkonto(basis: Optional[int], mitgliedsnummer: Optional[int]) -> Optional[int]:
@@ -116,8 +214,12 @@ class FibuExportFehler(Exception):
 
 class FibuExportService:
 
-    def __init__(self, db):
+    def __init__(self, db, verein: Optional[dict] = None):
+        """:param verein: Kopfdaten für den ÜL-Beleg ({'name','strasse','plz_ort',
+        'registrier_nr'}). Stammen aus der Instanz-Konfiguration und werden von der
+        API hereingereicht – die Domänenschicht liest keine Env."""
         self.db = db
+        self.verein = verein or {}
 
     # ------------------------------------------------------------------
     # Öffentliche API
@@ -137,8 +239,9 @@ class FibuExportService:
         return {'forderungen': forderungen, 'gegenbuchungen': gegenbuchungen,
                 'fehler': _dedup_fehler(fehler)}
 
-    def exportieren(self, erstellt_von: str) -> tuple[FibuExport, bytes]:
-        """Führt den Export-Lauf aus: validiert, rendert fbasc.hia, stempelt die Quellzeilen."""
+    def exportieren(self, erstellt_von: str) -> tuple[FibuExport, ExportDatei]:
+        """Führt den Export-Lauf aus: validiert, rendert die Datei (ggf. mit Belegen),
+        stempelt die Quellzeilen."""
         v = self.vorschau()
         if v['fehler']:
             raise FibuExportFehler(v['fehler'])
@@ -147,7 +250,9 @@ class FibuExportService:
             raise ValueError("Keine zu exportierenden Positionen vorhanden.")
 
         positionen = forderungen + gegenbuchungen
-        content = fibu_formatter.render(positionen)
+        # Erst rendern, dann den Lauf anlegen: Der Dateiname steht erst fest, wenn klar
+        # ist, ob Belege dabei sind (.hia vs. .zip) – und er gehört so in den Header.
+        datei = self._datei(positionen, f"fbasc_{date.today().isoformat()}")
 
         # Abteilungs-Posten liefern zwei Positionen mit gleicher quelle_id → deduplizieren,
         # die Quellzeile wird genau einmal als exportiert gestempelt.
@@ -160,14 +265,13 @@ class FibuExportService:
         storno_ids = {'beitrag': _ids(gegenbuchungen, 'beitrag'),
                       'gebuehr': _ids(gegenbuchungen, 'gebuehr'),
                       'ul_abrechnung': _ids(gegenbuchungen, 'ul_abrechnung')}
-        dateiname = f"fbasc_{date.today().isoformat()}.hia"
 
         export = self.db.fibu_exporte.create_export(
-            exportiert_von=erstellt_von, dateiname=dateiname, format='fbasc',
+            exportiert_von=erstellt_von, dateiname=datei.name, format='fbasc',
             anzahl_positionen=len(positionen), summe_cent=_summe_cent(positionen),
             neu_ids=neu_ids, storno_ids=storno_ids,
         )
-        return export, content
+        return export, datei
 
     def zuruecknehmen(self, export_id: int, benutzer: str) -> dict:
         """Un-Export: den jüngsten, noch NICHT in die Fibu eingelesenen Lauf zurücknehmen.
@@ -182,7 +286,7 @@ class FibuExportService:
         anzahl = self.db.fibu_exporte.un_export(export_id, benutzer=benutzer)
         return {'zurueckgenommen': export_id, 'positionen_wieder_offen': anzahl}
 
-    def stornieren(self, export_id: int, benutzer: str) -> tuple[FibuExport, bytes]:
+    def stornieren(self, export_id: int, benutzer: str) -> tuple[FibuExport, ExportDatei]:
         """Gegenbuchungs-Lauf: bucht einen bereits in die Fibu eingelesenen Lauf komplett
         gegen (jede Soll-Buchung als Haben und umgekehrt). Original und Storno-Lauf bleiben
         in der Historie und rekonstruierbar; die Quellzeilen bleiben unverändert."""
@@ -195,15 +299,14 @@ class FibuExportService:
         positionen = self._storno_positionen(export_id)
         if not positionen:
             raise ValueError("Der Lauf enthält keine Positionen zum Gegenbuchen.")
-        content = fibu_formatter.render(positionen)
-        dateiname = f"fbasc_storno_{date.today().isoformat()}.hia"
+        datei = self._datei(positionen, f"fbasc_storno_{date.today().isoformat()}")
         export = self.db.fibu_exporte.create_storno_lauf(
-            original_id=export_id, exportiert_von=benutzer, dateiname=dateiname,
+            original_id=export_id, exportiert_von=benutzer, dateiname=datei.name,
             anzahl_positionen=len(positionen), summe_cent=_summe_cent(positionen),
         )
-        return export, content
+        return export, datei
 
-    def re_download(self, export_id: int) -> bytes:
+    def re_download(self, export_id: int) -> ExportDatei:
         """Rendert einen früheren Lauf erneut. Ein Gegenbuchungs-Lauf wird aus dem Original
         (S↔H getauscht) rekonstruiert, ein normaler Lauf aus seinen gestempelten Quellzeilen."""
         export = self.db.fibu_exporte.get_export(export_id)
@@ -216,24 +319,84 @@ class FibuExportService:
                            for p in self._positionen_fuer_row(r, 'forderung', einst)]
                           + [p for r in storno_rows
                              for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)])
-        return fibu_formatter.render(positionen)
+        # Der Name des Laufs steht im Header; die Endung entscheidet sich neu, weil
+        # Läufe von vor der Beleg-Beilage als „.hia" gespeichert sind.
+        stamm = (export.dateiname or f"fbasc_{export_id}").rsplit('.', 1)[0]
+        return self._datei(positionen, stamm)
+
+    # ------------------------------------------------------------------
+    # Datei-/Belegbau
+    # ------------------------------------------------------------------
+
+    def _datei(self, positionen: list[FibuExportPosition], stamm: str) -> ExportDatei:
+        """Rendert die Positionen zur Auslieferungsdatei – flach oder als Zip mit Belegen."""
+        positionen, belege = self._belege(positionen)
+        inhalt = fibu_formatter.render(positionen)
+        if not belege:
+            return ExportDatei(f"{stamm}.hia", inhalt)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(fibu_formatter.FBASC_DATEINAME, inhalt)
+            for name, pdf in belege.items():
+                zf.writestr(name, pdf)
+        return ExportDatei(f"{stamm}.zip", buf.getvalue())
+
+    def _belege(self, positionen: list[FibuExportPosition]) -> tuple[list, dict[str, bytes]]:
+        """Erzeugt die Stundennachweise zu den ÜL-Positionen.
+
+        Liefert die (ggf. korrigierten) Positionen und die Dateien. Lässt sich ein Beleg
+        nicht bauen – etwa weil die Abrechnung inzwischen fort ist –, wird Feld 39 der
+        Zeile geleert: Es darf nur auf eine Datei zeigen, die auch im Zip liegt."""
+        gebraucht = {p.dokument: p.quelle_id for p in positionen
+                     if p.quelle_typ == 'ul_abrechnung' and p.dokument}
+        belege: dict[str, bytes] = {}
+        for name, quelle_id in gebraucht.items():
+            pdf = self._ul_beleg(quelle_id)
+            if pdf is not None:
+                belege[name] = pdf
+        if len(belege) < len(gebraucht):
+            positionen = [p if (not p.dokument or p.dokument in belege)
+                          else dataclasses.replace(p, dokument=None) for p in positionen]
+        return positionen, belege
+
+    def _ul_beleg(self, abrechnung_id: int) -> Optional[bytes]:
+        """Stundennachweis-PDF einer Abrechnung; None, wenn er nicht zu bauen ist.
+
+        Ein fehlender Beleg darf den Export nicht verhindern – die Buchungen sind das
+        Pflichtprogramm, das PDF die Beigabe. Der Fehler steht dafür im Log."""
+        try:
+            a = self.db.ul_abrechnungen.get(abrechnung_id)
+            if a is None:
+                logger.warning("Stundennachweis fehlt im Fibu-Export: Abrechnung %s "
+                               "nicht mehr vorhanden", abrechnung_id)
+                return None
+            return ULStundenService(self.db).beleg_pdf(a, verein=self.verein)
+        except Exception:
+            logger.warning("Stundennachweis zur Abrechnung %s nicht erzeugbar – "
+                           "Beleg fehlt im Fibu-Export", abrechnung_id, exc_info=True)
+            return None
 
     def _storno_positionen(self, original_id: int) -> list[FibuExportPosition]:
         """Positionen, die ein Original gegenbuchen: dessen Forderungen (S) werden zu
-        Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S)."""
+        Gegenbuchungen (H) und dessen Gegenbuchungen (H) zu Forderungen (S).
+
+        Jede Zeile trägt „Storno" im Buchungstext – auch die zurückgedrehten
+        Gegenbuchungen. Storniert wird hier der ganze Lauf, nicht der einzelne
+        Posten: Dessen Sollstellung ist unverändert offen, aus ihr allein ließe
+        sich der Vermerk also nicht ableiten."""
         einst = self.db.fibu_einstellungen.get()
         neu_rows, storno_rows = self.db.fibu_exporte.get_positionen_fuer_export(original_id)
         return ([p for r in neu_rows
-                 for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)]
+                 for p in self._positionen_fuer_row(r, 'gegenbuchung', einst, grund='Storno')]
                 + [p for r in storno_rows
-                   for p in self._positionen_fuer_row(r, 'forderung', einst)])
+                   for p in self._positionen_fuer_row(r, 'forderung', einst, grund='Storno')])
 
     # ------------------------------------------------------------------
     # Interne Hilfsmethoden
     # ------------------------------------------------------------------
 
-    def _positionen_fuer_row(self, row: dict, art: str,
-                             einst: FibuEinstellungen) -> list[FibuExportPosition]:
+    def _positionen_fuer_row(self, row: dict, art: str, einst: FibuEinstellungen,
+                             grund: Optional[str] = None) -> list[FibuExportPosition]:
         """Expandiert eine Buchungs-Rohzeile zu FBASC-Positionen.
 
         Normalfall (zahler_typ='mitglied'): genau eine Position.
@@ -241,10 +404,16 @@ class FibuExportService:
         Erlöskonto und gleicher Belegnummer (sich ausgleichendes Debitor-OPOS-Paar):
         Einbuchung (Kostenstelle Verein) und Gegenbuchung (S↔H, Kostenstelle Abteilung).
         Im Storno-Pfad (art='gegenbuchung') sind beide Zeilen bereits invertiert.
-        ÜL-Honorar (quelle_typ='ul_abrechnung'): genau eine Kreditor-Position."""
+        ÜL-Honorar (quelle_typ='ul_abrechnung'): genau eine Kreditor-Position.
+
+        `grund` überschreibt den Vermerk im Buchungstext. Nötig für den
+        Lauf-Storno: Dort ist die Quellzeile selbst weder storniert noch
+        gelöscht — storniert wird der ganze Export."""
+        if grund is None and art != 'forderung':
+            grund = _gegenbuchungs_grund(row)
         if row['quelle_typ'] == 'ul_abrechnung':
-            return [self._position_ul(row, art, einst)]
-        basis = self._position(row, art, einst)
+            return [self._position_ul(row, art, einst, grund)]
+        basis = self._position(row, art, einst, grund)
         if row.get('zahler_typ') != 'abteilung':
             return [basis]
         # Beträge fließen nicht real (reine Kostenstellen-Umbuchung) → kein Lastschrifteinzug.
@@ -255,7 +424,8 @@ class FibuExportService:
             kostenstelle=row.get('abteilung_kostenstelle'), lastschrifteinzug=None)
         return [einbuchung, gegenbuchung]
 
-    def _position(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
+    def _position(self, row: dict, art: str, einst: FibuEinstellungen,
+                  grund: Optional[str] = None) -> FibuExportPosition:
         """Baut aus einer Buchungs-Rohzeile eine FBASC-Position (Forderung=S / Gegenbuchung=H)."""
         nummer = row.get('mitgliedsnummer')
         konto = personenkonto(einst.debitor_konto_basis, nummer)
@@ -273,6 +443,7 @@ class FibuExportService:
             bezeichnung = f"{bezeichnung} {periode}".strip()
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
+        person = f"{nachname}, {vorname}" if vorname else nachname
         iban = row.get('iban')
         # SEPA-/Lastschrift-Daten nur für Mitglieder mit zahlungsart='lastschrift' –
         # ein Überweiser bekommt weder das Lastschrift-Kennzeichen (Feld 36) noch eine
@@ -305,7 +476,7 @@ class FibuExportService:
             quelle_id=row['quelle_id'],
             art=art,
             mitglied_id=row.get('mitglied_id') or 0,
-            mitglied_name=f"{nachname}, {vorname}" if vorname else nachname,
+            mitglied_name=person,
             bezeichnung=bezeichnung,
             konto=konto,
             gegenkonto=gegenkonto,
@@ -317,7 +488,7 @@ class FibuExportService:
             kostentraeger=kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=bezeichnung,
+            buchungstext=_buchungstext(bezeichnung, person, grund),
             lastschrifteinzug=1 if (ist_lastschrift and iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
@@ -334,12 +505,17 @@ class FibuExportService:
             kontoinhaber=abw_kontoinhaber,
         )
 
-    def _position_ul(self, row: dict, art: str, einst: FibuEinstellungen) -> FibuExportPosition:
+    def _position_ul(self, row: dict, art: str, einst: FibuEinstellungen,
+                     grund: Optional[str] = None) -> FibuExportPosition:
         """ÜL-Honorar als Kreditor-Buchung – gegenläufig zum Debitor-Pfad:
         Aufwand (Soll-Sachkonto) gegen Kreditor (Haben). Eine neue, bestätigte Abrechnung
         (art='forderung') bucht den Kreditor im HABEN; der Storno-Pfad dreht auf Soll.
         Kein Lastschrifteinzug/Mandat (der Verein zahlt den ÜL per Überweisung); die
-        Kostenstelle kommt aus der Abteilung."""
+        Kostenstelle kommt aus der Abteilung.
+
+        Feld 39 nennt den Stundennachweis, der dem Export als PDF beiliegt – die
+        Abrechnung ist der Beleg zur Honorarbuchung. Ob die Datei wirklich entsteht,
+        entscheidet sich erst beim Rendern (_belege)."""
         nummer = row.get('mitgliedsnummer')
         konto = personenkonto(einst.ul_kreditor_konto_basis, nummer)
 
@@ -351,6 +527,7 @@ class FibuExportService:
 
         vorname = row.get('vorname')
         nachname = row.get('nachname') or ''
+        person = f"{nachname}, {vorname}" if vorname else nachname
         belegdatum = _date_only(row.get('belegdatum'))
         faelligkeitsdatum = _plus_tage(belegdatum, NETTOTAGE)
 
@@ -365,7 +542,7 @@ class FibuExportService:
             quelle_id=row['quelle_id'],
             art=art,
             mitglied_id=row.get('mitglied_id') or 0,
-            mitglied_name=f"{nachname}, {vorname}" if vorname else nachname,
+            mitglied_name=person,
             bezeichnung=bezeichnung,
             konto=konto,
             gegenkonto=einst.ul_aufwand_konto,
@@ -373,12 +550,13 @@ class FibuExportService:
             # Forderung = neue Verbindlichkeit → Kreditor Haben; Gegenbuchung dreht auf Soll.
             soll_haben='H' if art == 'forderung' else 'S',
             belegnummer=f"U{row['quelle_id']}",
+            dokument=beleg_dateiname(row['quelle_id'], nachname),
             kontenart='K',
             kostenstelle=row.get('abteilung_kostenstelle'),
             kostentraeger=einst.default_kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=bezeichnung,
+            buchungstext=_buchungstext(bezeichnung, person, grund),
             lastschrifteinzug=None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,
