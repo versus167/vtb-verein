@@ -207,6 +207,7 @@ class FakeBer:
         self.sync_status = kw.get("sync_status") or "pending"
         self.sync_fehler = kw.get("sync_fehler")
         self.erteilt_von = kw.get("erteilt_von")
+        self.gruppe_id = kw.get("gruppe_id")
         self.deleted = False
 
 
@@ -217,7 +218,8 @@ class FakeBerechtigungRepo:
     def create(self, b, created_by):
         r = FakeBer(self._next, b.chip_id, b.schloss_id, ttlock_card_id=b.ttlock_card_id,
                     gueltig_von=b.gueltig_von, gueltig_bis=b.gueltig_bis,
-                    sync_status=b.sync_status, erteilt_von=b.erteilt_von)
+                    sync_status=b.sync_status, erteilt_von=b.erteilt_von,
+                    gruppe_id=b.gruppe_id)
         self.rows[r.id] = r; self._next += 1
         return r
 
@@ -826,3 +828,299 @@ def test_sperr_fenster_liegt_vollstaendig_in_der_vergangenheit():
     von, bis = sperr_fenster(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc))
     jetzt_ms = int(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
     assert von < bis < jetzt_ms
+
+
+# ---------------------------------------------------------------------------
+# Rechtegruppen (#169): der Abgleich Chip ↔ Gruppen
+# ---------------------------------------------------------------------------
+
+class FakeGruppe:
+    def __init__(self, id, name):
+        self.id, self.name = id, name
+        self.schloss_ids = []
+
+
+class FakeGruppeRepo:
+    """Fake von db.chip_gruppen – hält nur den SOLL-Zustand."""
+
+    def __init__(self):
+        self.gruppen = {}            # id -> FakeGruppe
+        self.chips = {}              # gruppe_id -> set(chip_id)
+        self._next = 1
+        self.geloescht = []
+
+    def anlegen(self, name, schloss_ids=()):
+        g = FakeGruppe(self._next, name); self._next += 1
+        g.schloss_ids = list(schloss_ids)
+        self.gruppen[g.id] = g
+        self.chips[g.id] = set()
+        return g
+
+    def get(self, id):
+        return self.gruppen.get(id)
+
+    def schloss_ids(self, gruppe_id):
+        g = self.gruppen.get(gruppe_id)
+        return list(g.schloss_ids) if g else []
+
+    def set_schloesser(self, gruppe_id, schloss_ids, by):
+        self.gruppen[gruppe_id].schloss_ids = list(schloss_ids)
+        return list(schloss_ids)
+
+    def chip_ids(self, gruppe_id):
+        return sorted(self.chips.get(gruppe_id, set()))
+
+    def gruppen_fuer_chip(self, chip_id):
+        return [g for g in self.gruppen.values() if chip_id in self.chips.get(g.id, set())]
+
+    def soll_schloss_ids_fuer_chip(self, chip_id):
+        soll = set()
+        for g in self.gruppen_fuer_chip(chip_id):
+            soll |= set(g.schloss_ids)
+        return sorted(soll)
+
+    def quelle_gruppe(self, chip_id, schloss_id):
+        treffer = [g for g in self.gruppen_fuer_chip(chip_id) if schloss_id in g.schloss_ids]
+        return sorted(treffer, key=lambda g: g.name)[0].id if treffer else None
+
+    def chip_zuordnen(self, gruppe_id, chip_id, by):
+        self.chips[gruppe_id].add(chip_id)
+
+    def chip_entfernen(self, gruppe_id, chip_id, by):
+        self.chips[gruppe_id].discard(chip_id)
+        return True
+
+    def alle_chips_entfernen(self, gruppe_id, by):
+        chips = sorted(self.chips.get(gruppe_id, set()))
+        self.chips[gruppe_id] = set()
+        return chips
+
+    def soft_delete(self, id, deleted_by):
+        self.geloescht.append(id)
+        self.gruppen.pop(id, None)
+        return True
+
+
+def _gruppen_service(fake_client=None, chip_status="aktiv"):
+    """Service mit einem Chip und drei Cloud-Schlössern (ids 1..3)."""
+    fake = fake_client or FakeClient()
+    chip = FakeChip(1, mitglied_id=10, kartennummer="ABC", bezeichnung="Chip Wagner",
+                    status=chip_status)
+    schloss_repo = FakeSchlossRepo()
+    for nr in range(1, 4):
+        s = FakeSchloss(nr, 3000 + nr, f"Tür {nr}")
+        schloss_repo._by_id[nr] = s
+        schloss_repo._by_lock[s.ttlock_lock_id] = s
+    schloss_repo._next = 4
+    svc = ZutrittService(
+        konto_repo=FakeKontoRepo(), schloss_repo=schloss_repo,
+        chip_repo=FakeChipRepo({"ABC": chip}), berechtigung_repo=FakeBerechtigungRepo(),
+        gruppe_repo=FakeGruppeRepo(), log_repo=FakeLogRepo(),
+        client_factory=lambda: fake,
+    )
+    return svc, fake
+
+
+def _tueren(svc, chip_id=1):
+    return sorted(b.schloss_id for b in svc.berechtigung_repo.list_for_chip(chip_id))
+
+
+class TestGruppenAbgleich:
+    def test_gruppe_zuordnen_erteilt_alle_tueren(self):
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["erteilt"] == 2 and res["fehler"] == []
+        assert _tueren(svc) == [1, 2]
+        # An jedem Schloss ist eine IC-Karte angelegt worden (an die TTLock-lockId).
+        assert sorted(lock for lock, *_ in fake.added) == [3001, 3002]
+
+    def test_herkunft_steht_an_der_berechtigung(self):
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert svc.berechtigung_repo.list_for_chip(1)[0].gruppe_id == g.id
+
+    def test_neue_tuer_in_der_gruppe_erreicht_alle_chips(self):
+        """Der eigentliche Gewinn: eine Tür dazu, und alle Träger haben sie."""
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        # Tür 3 kommt dazu, Tür 2 fällt raus – beides wirkt sofort auf den Chip.
+        res = svc.gruppe_schloesser_setzen(gruppe_id=g.id, schloss_ids=[1, 3], actor="admin")
+        assert res["erteilt"] == 1 and res["entzogen"] == 1
+        assert _tueren(svc) == [1, 3]
+
+    def test_gruppe_entziehen_nimmt_ihre_tueren_weg(self):
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        res = svc.gruppe_chip_entfernen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["entzogen"] == 2
+        assert _tueren(svc) == []
+
+    def test_einzeln_erteilte_tuer_bleibt_unangetastet(self):
+        """Sonst nähme die erste Gruppenzuordnung dem Chip weg, was jemand
+        bewusst einzeln vergeben hat."""
+        svc, _ = _gruppen_service()
+        svc.chip_anlernen(chip_id=1, schloss_id=3, actor="admin")     # von Hand
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert _tueren(svc) == [1, 3]
+        svc.gruppe_chip_entfernen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert _tueren(svc) == [3]
+
+    def test_zwei_gruppen_teilen_sich_eine_tuer(self):
+        """Nimmt man die eine Gruppe weg, bleibt die Tür – die andere fordert sie."""
+        svc, _ = _gruppen_service()
+        a = svc.gruppe_repo.anlegen("Abteilungsleiter", [1, 2])
+        b = svc.gruppe_repo.anlegen("Übungsleiter", [2, 3])
+        svc.gruppe_chip_zuordnen(gruppe_id=a.id, chip_id=1, actor="admin")
+        svc.gruppe_chip_zuordnen(gruppe_id=b.id, chip_id=1, actor="admin")
+        assert _tueren(svc) == [1, 2, 3]
+        svc.gruppe_chip_entfernen(gruppe_id=a.id, chip_id=1, actor="admin")
+        assert _tueren(svc) == [2, 3]
+
+    def test_abgleich_ist_wiederholbar(self):
+        """Zustandsbasiert: ein zweiter Lauf ändert nichts."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
+        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "fehler": []}
+        assert len(fake.added) == 2
+
+    def test_offline_schloss_blockiert_die_uebrigen_nicht(self):
+        """Jede Tür ist ein eigener Cloud-Vorgang; eine kaputte darf nicht alle
+        anderen verhindern."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        fake.add_should_fail = True
+        res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["erteilt"] == 0 and len(res["fehler"]) == 2
+        assert res["fehler"][0]["schloss"] == "Tür 1"
+
+    def test_nachfassen_spielt_die_karte_erneut_auf(self):
+        """Maßstab ist die Karte am Schloss, nicht die Zeile in der Tabelle: Eine
+        gescheiterte Erteilung hinterlässt eine Zeile OHNE cardId – die Tür lässt
+        sich nicht öffnen und muss beim nächsten Lauf erneut versucht werden."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        fake.add_should_fail = True
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        offen = svc.berechtigung_repo.list_for_chip(1)
+        assert all(b.sync_status == "fehler" and b.ttlock_card_id is None for b in offen)
+
+        fake.add_should_fail = False
+        res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
+        assert res["erteilt"] == 2 and res["fehler"] == []
+        jetzt = svc.berechtigung_repo.list_for_chip(1)
+        assert all(b.sync_status == "aktiv" and b.ttlock_card_id for b in jetzt)
+        # Kein zweiter Datensatz je Tür – dieselben Zeilen, nur jetzt wirksam.
+        assert {b.id for b in jetzt} == {b.id for b in offen}
+        assert sorted(lock for lock, *_ in fake.added) == [3001, 3002]
+
+    def test_nachfassen_ruehrt_von_hand_erteiltes_nicht_an(self):
+        """Auch eine gescheiterte Einzelberechtigung gehört dem Menschen, der sie
+        erteilt hat – der Gruppen-Abgleich fasst sie nicht an."""
+        svc, fake = _gruppen_service()
+        fake.add_should_fail = True
+        with pytest.raises(TTLockError):
+            svc.chip_anlernen(chip_id=1, schloss_id=3, actor="admin")
+        fake.add_should_fail = False
+        res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
+        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "fehler": []}
+        assert svc.berechtigung_repo.list_for_chip(1)[0].sync_status == "fehler"
+
+    def test_gescheiterte_erteilung_laesst_sich_per_gruppenentzug_aufloesen(self):
+        """Kommt das Schloss nie wieder, muss die Leiche verschwinden können –
+        ohne Karte am Schloss ist das ein reiner Datenbank-Vorgang."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        fake.add_should_fail = True
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        fake.delete_should_fail = True          # Schloss weiterhin nicht erreichbar
+        res = svc.gruppe_chip_entfernen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["entzogen"] == 1 and _tueren(svc) == []
+
+    def test_haengengebliebene_karte_wird_beim_naechsten_lauf_entzogen(self):
+        """Scheitert das Entziehen (Schloss offline), bleibt die Zeile mit Herkunft
+        stehen, obwohl keine Gruppe sie mehr fordert – der nächste Lauf holt es nach."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        fake.delete_should_fail = True
+        res = svc.gruppe_chip_entfernen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["entzogen"] == 0 and len(res["fehler"]) == 1
+        assert _tueren(svc) == [1]
+        fake.delete_should_fail = False
+        res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
+        assert res["entzogen"] == 1 and _tueren(svc) == []
+
+    def test_gesperrter_chip_bekommt_keine_neuen_tueren(self):
+        svc, _ = _gruppen_service(chip_status="gesperrt")
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["erteilt"] == 0 and _tueren(svc) == []
+        assert "gesperrt" in res["fehler"][0]["meldung"]
+
+    def test_gesperrter_chip_verliert_trotzdem_was_wegfaellt(self):
+        """Weniger Rechte sind bei einem gesperrten Chip nie das Problem."""
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.chip_repo.get(1).status = "verloren"
+        res = svc.gruppe_chip_entfernen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["entzogen"] == 1 and _tueren(svc) == []
+
+    def test_gruppen_abgleich_fasst_fuer_alle_traeger_nach(self):
+        """Bei zwanzig Trägern ist das der Unterschied zwischen einem Klick und zwanzig."""
+        svc, fake = _gruppen_service()
+        chip2 = FakeChip(2, mitglied_id=11, kartennummer="XYZ", bezeichnung="Chip Kern")
+        svc.chip_repo._by_id[2] = chip2
+        svc.chip_repo._m["XYZ"] = chip2
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        fake.add_should_fail = True
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=2, actor="admin")
+
+        fake.add_should_fail = False
+        res = svc.gruppe_abgleichen(gruppe_id=g.id, actor="admin")
+        assert res["chips"] == 2 and res["erteilt"] == 2 and res["fehler"] == []
+        assert _tueren(svc, 1) == [1] and _tueren(svc, 2) == [1]
+
+    def test_fehler_im_gruppen_abgleich_nennt_den_chip(self):
+        """Sonst wüsste man nicht, wessen Tür hängt."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_repo.chip_zuordnen(g.id, 1, "admin")
+        fake.add_should_fail = True
+        res = svc.gruppe_abgleichen(gruppe_id=g.id, actor="admin")
+        assert res["fehler"][0]["chip"] == "Chip Wagner"
+        assert res["fehler"][0]["schloss"] == "Tür 1"
+
+    def test_gruppe_aufloesen_raeumt_die_chips_ab(self):
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        res = svc.gruppe_loeschen(gruppe_id=g.id, actor="admin")
+        assert res["geloescht"] is True and res["entzogen"] == 2
+        assert _tueren(svc) == []
+        assert svc.gruppe_repo.geloescht == [g.id]
+
+    def test_chip_loeschen_nimmt_die_gruppen_mit(self):
+        """Ein gelöschter Chip, der weiter in „Übungsleiter" steht, tauchte in
+        jeder Gruppenzählung auf."""
+        svc, _ = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.chip_loeschen(chip_id=1, actor="admin")
+        assert svc.gruppe_repo.chip_ids(g.id) == []
+
+    def test_unbekannte_gruppe_oder_chip(self):
+        svc, _ = _gruppen_service()
+        with pytest.raises(ValueError):
+            svc.gruppe_chip_zuordnen(gruppe_id=99, chip_id=1, actor="admin")
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        with pytest.raises(ValueError):
+            svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=99, actor="admin")

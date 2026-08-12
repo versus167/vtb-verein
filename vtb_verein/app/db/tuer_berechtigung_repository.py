@@ -15,13 +15,15 @@ from app.db.base_repository import BaseRepository
 
 _SELECT = """
     SELECT b.id, b.chip_id, b.schloss_id, b.ttlock_card_id, b.gueltig_von, b.gueltig_bis,
-           b.sync_status, b.sync_fehler, b.erteilt_von,
+           b.sync_status, b.sync_fehler, b.erteilt_von, b.gruppe_id,
+           g.name AS gruppe_name,
            s.name AS schloss_name, c.bezeichnung AS chip_bezeichnung,
            c.kartennummer AS kartennummer, c.mitglied_id AS mitglied_id,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            b.version, b.created_at, b.created_by, b.updated_at, b.updated_by,
            b.deleted_at, b.deleted_by
     FROM tuer_berechtigung b
+    LEFT JOIN chip_gruppe g ON g.id = b.gruppe_id
     LEFT JOIN tuer_schloss s ON s.id = b.schloss_id
     LEFT JOIN schluessel_chip c ON c.id = b.chip_id
     LEFT JOIN mitglied m ON m.id = c.mitglied_id
@@ -75,11 +77,12 @@ class TuerBerechtigungRepository(BaseRepository):
                 """
                 INSERT INTO tuer_berechtigung
                     (chip_id, schloss_id, ttlock_card_id, gueltig_von, gueltig_bis,
-                     sync_status, sync_fehler, erteilt_von, created_by, updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                     sync_status, sync_fehler, erteilt_von, gruppe_id,
+                     created_by, updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
                 """,
                 (b.chip_id, b.schloss_id, b.ttlock_card_id, b.gueltig_von, b.gueltig_bis,
-                 b.sync_status or SYNC_PENDING, b.sync_fehler, b.erteilt_von,
+                 b.sync_status or SYNC_PENDING, b.sync_fehler, b.erteilt_von, b.gruppe_id,
                  created_by, created_by),
             )
             new_id = cur.fetchone()['id']

@@ -44,6 +44,7 @@
       :inline-label="$q.screen.gt.xs">
       <q-tab name="schloesser" icon="meeting_room" label="Schlösser" />
       <q-tab name="chips" icon="badge" label="Chips" />
+      <q-tab name="gruppen" icon="workspaces" label="Gruppen" />
       <q-tab v-if="status.darf_protokoll" name="log" icon="history" label="Log" />
       <q-tab v-if="status.darf_protokoll" name="auswertung" icon="insights" label="Auswertung" />
     </q-tabs>
@@ -169,6 +170,41 @@
       <div v-if="status.darf_verwalten" class="row justify-center q-mt-lg">
         <q-btn color="vtb-gelb" text-color="primary" unelevated rounded no-caps
           icon="add" label="Neuer Chip" class="text-weight-bold schl-neu-btn" @click="openChipCreate" />
+      </div>
+    </div>
+
+    <!-- ====================== Rechtegruppen (#169) ====================== -->
+    <div v-if="tab === 'gruppen'">
+      <div class="text-caption text-grey-7 q-mb-md">
+        Eine Gruppe bündelt Türen. Wer sie trägt, öffnet alles, was drin ist –
+        kommt später eine Tür dazu, bekommen sie alle Chips der Gruppe automatisch.
+      </div>
+      <div class="row q-col-gutter-md">
+        <div v-for="g in gruppen" :key="g.id" class="col-12 col-sm-6 col-lg-4">
+          <q-card class="schl-karte cursor-pointer fit" @click="openGruppe(g.id)">
+            <q-card-section class="row items-center no-wrap q-gutter-sm">
+              <div class="schl-icon"><q-icon name="workspaces" size="24px" /></div>
+              <div class="col" style="min-width: 0">
+                <div class="text-weight-bold ellipsis">{{ g.name }}</div>
+                <div v-if="g.beschreibung" class="text-caption text-grey ellipsis">
+                  {{ g.beschreibung }}</div>
+                <div class="text-caption text-grey ellipsis q-mt-xs">
+                  {{ g.anzahl_schloesser }} {{ g.anzahl_schloesser === 1 ? 'Tür' : 'Türen' }}
+                  · {{ g.anzahl_chips }} {{ g.anzahl_chips === 1 ? 'Chip' : 'Chips' }}
+                </div>
+              </div>
+              <q-icon name="chevron_right" size="20px" class="text-grey-5" />
+            </q-card-section>
+          </q-card>
+        </div>
+      </div>
+      <div v-if="!gruppen.length" class="text-grey text-center q-py-lg">
+        Noch keine Rechtegruppen angelegt.
+      </div>
+      <div v-if="status.darf_verwalten" class="row justify-center q-mt-lg">
+        <q-btn color="vtb-gelb" text-color="primary" unelevated rounded no-caps
+          icon="add" label="Neue Gruppe" class="text-weight-bold schl-neu-btn"
+          @click="openGruppeCreate" />
       </div>
     </div>
 
@@ -649,6 +685,38 @@
         <q-card-section class="col scroll">
 
           <div class="row items-center q-mt-md">
+            <div class="text-subtitle2">Rechtegruppen</div>
+            <q-space />
+            <q-btn v-if="status.darf_verwalten && chipDetail.gruppen?.length" flat dense size="sm"
+              icon="sync" color="primary" label="Abgleichen" :loading="gruppeSpeichert"
+              @click="chipAbgleichen">
+              <q-tooltip>Türen der Gruppen erneut mit den Schlössern abgleichen</q-tooltip>
+            </q-btn>
+            <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
+              label="Gruppe geben" @click="openChipGruppeWahl" />
+          </div>
+          <!-- Eine Berechtigung ohne Karte am Schloss lässt sich nicht öffnen. Das
+               muss man sehen, sonst hält man die Zeile für erledigt. -->
+          <q-banner v-if="chipNichtAngekommen.length" dense class="vtb-warnung q-mt-xs" rounded>
+            <template #avatar><q-icon name="warning" /></template>
+            {{ chipNichtAngekommen.length === 1 ? 'Eine Tür ist' : chipNichtAngekommen.length + ' Türen sind' }}
+            nicht am Schloss angekommen
+            ({{ chipNichtAngekommen.map(b => b.schloss_name).join(', ') }}) –
+            {{ status.darf_verwalten ? 'nach „Abgleichen" wird es erneut versucht.'
+              : 'die Verwaltung muss den Abgleich wiederholen.' }}
+          </q-banner>
+          <div class="q-gutter-xs q-mt-xs">
+            <q-chip v-for="g in chipDetail.gruppen" :key="g.id" dense icon="workspaces"
+              color="primary" text-color="white"
+              :removable="status.darf_verwalten" @remove="chipGruppeEntfernen(g)">
+              {{ g.name }}
+            </q-chip>
+            <span v-if="!chipDetail.gruppen?.length" class="text-grey text-caption">
+              keine Gruppe – die Türen unten sind einzeln erteilt
+            </span>
+          </div>
+
+          <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Öffnet diese Schlösser</div>
             <q-space />
             <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
@@ -657,7 +725,11 @@
           <q-list dense bordered separator>
             <q-item v-for="b in chipDetail.berechtigungen" :key="b.id">
               <q-item-section>
-                <q-item-label>{{ b.schloss_name }}</q-item-label>
+                <q-item-label>
+                  {{ b.schloss_name }}
+                  <q-badge v-if="b.gruppe_name" color="primary" text-color="white"
+                    class="q-ml-xs">{{ b.gruppe_name }}</q-badge>
+                </q-item-label>
                 <q-item-label caption v-if="b.gueltig_bis || b.sync_fehler">
                   <span v-if="b.gueltig_bis">gültig bis {{ fmtDateTime(b.gueltig_bis) }}</span>
                   <span v-if="b.sync_fehler" class="text-negative">· {{ b.sync_fehler }}</span>
@@ -668,8 +740,16 @@
                   <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
                   <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
-                  <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="link_off"
-                    color="negative" @click="revokeBer(b)"><q-tooltip>Entziehen</q-tooltip></q-btn>
+                  <!-- Aus einer Gruppe stammende Türen lassen sich hier nicht einzeln
+                       entziehen: Der nächste Abgleich erteilte sie sofort wieder. -->
+                  <q-btn v-if="status.darf_verwalten && !b.gruppe_id" flat dense round size="sm"
+                    icon="link_off" color="negative" @click="revokeBer(b)">
+                    <q-tooltip>Entziehen</q-tooltip></q-btn>
+                  <q-icon v-else-if="status.darf_verwalten" name="workspaces" size="18px"
+                    class="text-grey-5">
+                    <q-tooltip>Kommt aus der Gruppe „{{ b.gruppe_name }}" –
+                      dort die Tür entfernen oder dem Chip die Gruppe nehmen</q-tooltip>
+                  </q-icon>
                 </div>
               </q-item-section>
             </q-item>
@@ -921,6 +1001,114 @@
         <q-card-actions align="right" class="q-px-md q-pb-md">
           <q-btn flat no-caps label="Abbrechen" v-close-popup />
           <q-btn unelevated rounded no-caps color="primary" label="Erlauben" :loading="saving" @click="saveAppGrant" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Rechtegruppe (Detail) ====================== -->
+    <q-dialog v-model="gruppeDialog" :maximized="$q.screen.lt.sm">
+      <q-card class="schl-dialog column" :style="$q.screen.lt.sm ? 'width:100%' : 'min-width:520px;max-width:640px'">
+        <q-card-section class="row items-center no-wrap">
+          <div class="schl-icon schl-icon--klein"><q-icon name="workspaces" size="20px" /></div>
+          <div class="col q-ml-sm" style="min-width: 0">
+            <div class="text-subtitle1 text-weight-bold ellipsis">{{ gruppeDetail.gruppe?.name }}</div>
+            <div class="text-caption text-grey ellipsis">
+              {{ gruppeDetail.gruppe?.beschreibung || 'ohne Beschreibung' }}
+            </div>
+          </div>
+          <q-btn v-if="status.darf_verwalten && gruppeDetail.chip_ids?.length" flat round dense
+            icon="sync" :loading="gruppeSpeichert" @click="gruppeAbgleichen">
+            <q-tooltip>Alle Chips der Gruppe erneut mit den Schlössern abgleichen</q-tooltip></q-btn>
+          <q-btn v-if="status.darf_verwalten" flat round dense icon="edit" @click="openGruppeEdit">
+            <q-tooltip>Umbenennen</q-tooltip></q-btn>
+          <q-btn flat round dense icon="close" v-close-popup />
+        </q-card-section>
+        <q-separator />
+        <q-card-section class="col scroll">
+          <div class="text-subtitle2 q-mb-xs">Türen dieser Gruppe</div>
+          <q-select v-model="gruppeSchloesser" :options="schloesserWaehlbar" multiple use-chips
+            option-value="id" option-label="name" emit-value map-options outlined dense
+            :disable="!status.darf_verwalten"
+            hint="Fremdanlagen lassen sich nicht per Gruppe anlernen und stehen deshalb nicht zur Wahl" />
+          <div v-if="status.darf_verwalten" class="row justify-end q-mt-sm">
+            <q-btn color="primary" unelevated no-caps dense label="Türen speichern"
+              :loading="gruppeSpeichert" :disable="!gruppeSchloesserGeaendert"
+              @click="saveGruppeSchloesser" />
+          </div>
+
+          <div class="text-subtitle2 q-mt-lg q-mb-xs">
+            Chips mit dieser Gruppe ({{ gruppeDetail.chip_ids?.length || 0 }})
+          </div>
+          <q-list dense bordered separator>
+            <q-item v-for="id in (gruppeDetail.chip_ids || [])" :key="id">
+              <q-item-section>
+                <q-item-label>{{ chipInhaber(chipById(id)) || chipName(chipById(id)) }}</q-item-label>
+                <q-item-label caption>Nr. {{ chipById(id)?.kartennummer }}</q-item-label>
+              </q-item-section>
+              <q-item-section side v-if="status.darf_verwalten">
+                <q-btn flat dense round size="sm" icon="person_remove" color="negative"
+                  @click="gruppeChipEntfernen(id)">
+                  <q-tooltip>Chip aus der Gruppe nehmen</q-tooltip></q-btn>
+              </q-item-section>
+            </q-item>
+            <q-item v-if="!gruppeDetail.chip_ids?.length"><q-item-section class="text-grey">
+              noch kein Chip in dieser Gruppe</q-item-section></q-item>
+          </q-list>
+          <div v-if="status.darf_verwalten" class="q-mt-sm">
+            <q-select v-model="gruppeNeuerChip" :options="chipsWaehlbar" option-value="id"
+              :option-label="gruppeChipLabel" emit-value map-options outlined dense clearable
+              label="Chip hinzufügen" @update:model-value="gruppeChipHinzufuegen" />
+          </div>
+
+          <div v-if="status.darf_verwalten" class="row justify-end q-mt-lg">
+            <q-btn flat no-caps dense color="negative" icon="delete" label="Gruppe auflösen"
+              @click="gruppeAufloesen" />
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Rechtegruppe anlegen/umbenennen ====================== -->
+    <q-dialog v-model="gruppeFormDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card class="schl-dialog" :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:420px'">
+        <q-card-section class="row items-center no-wrap">
+          <div class="schl-icon schl-icon--klein"><q-icon name="workspaces" size="20px" /></div>
+          <div class="text-subtitle1 text-weight-bold q-ml-sm col">
+            {{ gruppeForm.id ? 'Gruppe umbenennen' : 'Neue Gruppe' }}
+          </div>
+          <q-btn flat round dense icon="close" v-close-popup />
+        </q-card-section>
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="gruppeForm.name" label="Name *" outlined dense autofocus
+            hint="z. B. „Übungsleiter“" @keyup.enter="saveGruppeForm" />
+          <q-input v-model="gruppeForm.beschreibung" label="Beschreibung" outlined dense />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat no-caps label="Abbrechen" v-close-popup />
+          <q-btn color="primary" unelevated no-caps label="Speichern" :loading="gruppeSpeichert"
+            :disable="!gruppeForm.name?.trim()" @click="saveGruppeForm" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ====================== Gruppe an einen Chip geben ====================== -->
+    <q-dialog v-model="chipGruppeDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card class="schl-dialog" :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:420px'">
+        <q-card-section class="row items-center no-wrap">
+          <div class="schl-icon schl-icon--klein"><q-icon name="workspaces" size="20px" /></div>
+          <div class="text-subtitle1 text-weight-bold q-ml-sm col">Gruppe geben</div>
+          <q-btn flat round dense icon="close" v-close-popup />
+        </q-card-section>
+        <q-card-section>
+          <q-select v-model="chipGruppeWahl" :options="gruppenWaehlbar" option-value="id"
+            option-label="name" emit-value map-options outlined dense autofocus
+            label="Rechtegruppe"
+            hint="Die Türen der Gruppe werden dem Chip sofort erteilt" />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat no-caps label="Abbrechen" v-close-popup />
+          <q-btn color="primary" unelevated no-caps label="Geben" :loading="gruppeSpeichert"
+            :disable="!chipGruppeWahl" @click="chipGruppeGeben" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -1314,7 +1502,7 @@ const methodeIcon = (m) => ({
 }[m.record_type] || 'lock_open')
 
 async function reloadAll() {
-  await Promise.all([loadStatus(), loadSchloesser(), loadChips()])
+  await Promise.all([loadStatus(), loadSchloesser(), loadChips(), loadGruppen()])
   if (gesamtLogGeladen) await loadGesamtLog()
   if (auswertung.value) await ladeAuswertung()
 }
@@ -1661,6 +1849,234 @@ async function openChip(id) {
     chipDetail.value = data; chipDialog.value = true
   } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Detail fehlgeschlagen' }) }
 }
+// --- Rechtegruppen (#169) ---------------------------------------------------
+// Eine Gruppe bündelt Türen; der Server leitet daraus die Einzelberechtigungen ab
+// und meldet als `abgleich` zurück, was er an den Schlössern bewirkt hat.
+const gruppen = ref([])
+const gruppeDialog = ref(false)
+const gruppeDetail = ref({})
+const gruppeSchloesser = ref([])
+const gruppeFormDialog = ref(false)
+const gruppeForm = ref({})
+const gruppeSpeichert = ref(false)
+const gruppeNeuerChip = ref(null)
+const chipGruppeDialog = ref(false)
+const chipGruppeWahl = ref(null)
+
+const chipById = (id) => chips.value.find((c) => c.id === id)
+// Eigenes Label statt des vorhandenen chipLabel: Beim Zuordnen sucht man nach der
+// Person, nicht nach dem Chip-Namen.
+const gruppeChipLabel = (c) => (c ? `${chipInhaber(c) || chipName(c)} · Nr. ${c.kartennummer}` : '')
+// Fremdanlagen hängen nicht an der Cloud – dort lässt sich kein Chip anlernen, also
+// gehören sie auch nicht in eine Gruppe (der Server weist sie ebenfalls ab).
+const schloesserWaehlbar = computed(() => schloesser.value.filter((s) => s.ttlock_lock_id))
+const chipsWaehlbar = computed(() => chips.value.filter(
+  (c) => c.status === 'aktiv' && !(gruppeDetail.value.chip_ids || []).includes(c.id)))
+const gruppenWaehlbar = computed(() => gruppen.value.filter(
+  (g) => !(chipDetail.value.gruppen || []).some((x) => x.id === g.id)))
+const gruppeSchloesserGeaendert = computed(() => {
+  const vorher = [...(gruppeDetail.value.gruppe?.schloss_ids || [])].sort()
+  const jetzt = [...gruppeSchloesser.value].sort()
+  return JSON.stringify(vorher) !== JSON.stringify(jetzt)
+})
+
+async function loadGruppen() {
+  try { const { data } = await api.get('/api/schliessanlage/gruppen'); gruppen.value = data }
+  catch { gruppen.value = [] }
+}
+
+// Was der Abgleich an den Türen bewirkt hat – inklusive der Schlösser, die er nicht
+// erreicht hat. Die bleiben stehen und werden beim nächsten Abgleich erneut versucht.
+function meldeAbgleich(abgleich) {
+  if (!abgleich) return
+  const teile = []
+  if (abgleich.erteilt) teile.push(`${abgleich.erteilt}× erteilt`)
+  if (abgleich.entzogen) teile.push(`${abgleich.entzogen}× entzogen`)
+  if (abgleich.fehler?.length) {
+    $q.notify({
+      type: 'warning', timeout: 8000,
+      message: `${abgleich.fehler.length} Schloss/Schlösser nicht erreicht`,
+      // Beim Gruppen-Abgleich betrifft ein Fehler einen bestimmten Chip – ohne den
+      // Namen wüsste man nicht, wessen Tür hängt.
+      caption: abgleich.fehler
+        .map((f) => `${f.chip ? f.chip + ' – ' : ''}${f.schloss}: ${f.meldung}`).join(' · '),
+    })
+    return
+  }
+  $q.notify({ type: 'positive', message: teile.join(' · ') || 'Nichts zu ändern' })
+}
+
+async function openGruppe(id) {
+  try {
+    const { data } = await api.get(`/api/schliessanlage/gruppen/${id}`)
+    gruppeDetail.value = data
+    gruppeSchloesser.value = [...(data.gruppe?.schloss_ids || [])]
+    gruppeNeuerChip.value = null
+    gruppeDialog.value = true
+  } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Detail fehlgeschlagen' }) }
+}
+
+function openGruppeCreate() {
+  gruppeForm.value = { id: null, name: '', beschreibung: '' }
+  gruppeFormDialog.value = true
+}
+function openGruppeEdit() {
+  const g = gruppeDetail.value.gruppe
+  gruppeForm.value = { id: g.id, name: g.name, beschreibung: g.beschreibung, version: g.version }
+  gruppeFormDialog.value = true
+}
+
+async function saveGruppeForm() {
+  const f = gruppeForm.value
+  if (!f.name?.trim()) return
+  gruppeSpeichert.value = true
+  try {
+    if (f.id) {
+      await api.put(`/api/schliessanlage/gruppen/${f.id}`, {
+        name: f.name.trim(), beschreibung: f.beschreibung || null, expected_version: f.version })
+    } else {
+      const { data } = await api.post('/api/schliessanlage/gruppen', {
+        name: f.name.trim(), beschreibung: f.beschreibung || null, schloss_ids: [] })
+      gruppeDetail.value = data
+      gruppeSchloesser.value = []
+      gruppeDialog.value = true
+    }
+    gruppeFormDialog.value = false
+    await loadGruppen()
+    if (gruppeDetail.value.gruppe?.id) await openGruppe(gruppeDetail.value.gruppe.id)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
+  } finally { gruppeSpeichert.value = false }
+}
+
+async function saveGruppeSchloesser() {
+  gruppeSpeichert.value = true
+  try {
+    const { data } = await api.put(
+      `/api/schliessanlage/gruppen/${gruppeDetail.value.gruppe.id}/schloesser`,
+      { schloss_ids: gruppeSchloesser.value })
+    meldeAbgleich(data.abgleich)
+    await Promise.all([loadGruppen(), openGruppe(gruppeDetail.value.gruppe.id)])
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
+  } finally { gruppeSpeichert.value = false }
+}
+
+async function gruppeAbgleichen() {
+  const id = gruppeDetail.value.gruppe.id
+  gruppeSpeichert.value = true
+  try {
+    const { data } = await api.post(`/api/schliessanlage/gruppen/${id}/abgleich`)
+    meldeAbgleich(data)
+    await openGruppe(id)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abgleich fehlgeschlagen' })
+  } finally { gruppeSpeichert.value = false }
+}
+
+async function gruppeChipHinzufuegen(chipId) {
+  if (!chipId) return
+  const id = gruppeDetail.value.gruppe.id
+  try {
+    const { data } = await api.post(`/api/schliessanlage/gruppen/${id}/chips`, { chip_id: chipId })
+    meldeAbgleich(data.abgleich)
+    await Promise.all([loadGruppen(), loadChips(), openGruppe(id)])
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zuordnen fehlgeschlagen' })
+  } finally { gruppeNeuerChip.value = null }
+}
+
+function gruppeChipEntfernen(chipId) {
+  const id = gruppeDetail.value.gruppe.id
+  $q.dialog({
+    title: 'Chip aus der Gruppe nehmen?',
+    message: 'Die Türen dieser Gruppe werden dem Chip entzogen. Einzeln erteilte Türen '
+      + 'und Türen aus anderen Gruppen bleiben bestehen.',
+    cancel: true, ok: { label: 'Herausnehmen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      const { data } = await api.delete(`/api/schliessanlage/gruppen/${id}/chips/${chipId}`)
+      meldeAbgleich(data.abgleich)
+      await Promise.all([loadGruppen(), openGruppe(id)])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entfernen fehlgeschlagen' })
+    }
+  })
+}
+
+function gruppeAufloesen() {
+  const g = gruppeDetail.value.gruppe
+  $q.dialog({
+    title: `Gruppe „${g.name}“ auflösen?`,
+    message: `Alle ${gruppeDetail.value.chip_ids?.length || 0} Chips verlieren die Türen dieser `
+      + 'Gruppe. Einzeln erteilte Türen bleiben bestehen.',
+    cancel: true, ok: { label: 'Auflösen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      const { data } = await api.delete(`/api/schliessanlage/gruppen/${g.id}`)
+      meldeAbgleich(data)
+      gruppeDialog.value = false
+      await Promise.all([loadGruppen(), loadChips()])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Auflösen fehlgeschlagen' })
+    }
+  })
+}
+
+// Zeilen, die es nie ans Schloss geschafft haben: Sie stehen in der Liste, aber die
+// Karte fehlt an der Tür – erkennbar an der fehlenden cardId.
+const chipNichtAngekommen = computed(() => (chipDetail.value.berechtigungen || [])
+  .filter((b) => !b.ttlock_card_id && b.sync_status === 'fehler'))
+
+async function chipAbgleichen() {
+  const chipId = chipDetail.value.chip.id
+  gruppeSpeichert.value = true
+  try {
+    const { data } = await api.post(`/api/schliessanlage/chips/${chipId}/gruppen-abgleich`)
+    meldeAbgleich(data)
+    await openChip(chipId)
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abgleich fehlgeschlagen' })
+  } finally { gruppeSpeichert.value = false }
+}
+
+function openChipGruppeWahl() {
+  chipGruppeWahl.value = null
+  chipGruppeDialog.value = true
+}
+
+async function chipGruppeGeben() {
+  const chipId = chipDetail.value.chip.id
+  gruppeSpeichert.value = true
+  try {
+    const { data } = await api.post(
+      `/api/schliessanlage/gruppen/${chipGruppeWahl.value}/chips`, { chip_id: chipId })
+    meldeAbgleich(data.abgleich)
+    chipGruppeDialog.value = false
+    await Promise.all([loadGruppen(), openChip(chipId)])
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zuordnen fehlgeschlagen' })
+  } finally { gruppeSpeichert.value = false }
+}
+
+function chipGruppeEntfernen(gruppe) {
+  const chipId = chipDetail.value.chip.id
+  $q.dialog({
+    title: `Gruppe „${gruppe.name}“ entziehen?`,
+    message: 'Die Türen dieser Gruppe werden dem Chip entzogen. Einzeln erteilte Türen '
+      + 'und Türen aus anderen Gruppen bleiben bestehen.',
+    cancel: true, ok: { label: 'Entziehen', color: 'negative' },
+  }).onOk(async () => {
+    try {
+      const { data } = await api.delete(`/api/schliessanlage/gruppen/${gruppe.id}/chips/${chipId}`)
+      meldeAbgleich(data.abgleich)
+      await Promise.all([loadGruppen(), openChip(chipId)])
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entziehen fehlgeschlagen' })
+    }
+  })
+}
+
 const chipFormDialog = ref(false)
 const chipForm = ref({})
 const chipError = ref('')

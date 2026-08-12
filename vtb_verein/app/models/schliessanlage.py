@@ -228,6 +228,30 @@ class SchluesselChip:
 
 
 @dataclass
+class ChipGruppe:
+    """Rechtegruppe: bündelt Schlösser und wird Chips dauerhaft zugeordnet (#169).
+
+    Am Schloss selbst gibt es keine Gruppen – TTLock kennt nur die einzelne
+    IC-Karte. Die Gruppe ist der SOLL-Zustand, aus dem der Abgleich die
+    `TuerBerechtigung`en anlegt und entzieht."""
+    id: Optional[int] = None
+    name: str = ""
+    beschreibung: Optional[str] = None
+    # per Subquery befüllt (Anzeige/Übersicht)
+    anzahl_schloesser: int = 0
+    anzahl_chips: int = 0
+    # nur im Detail befüllt
+    schloss_ids: Optional[list[int]] = None
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+
+
+@dataclass
 class TuerBerechtigung:
     """Chip an einem Schloss = eine TTLock-IC-Card (pro Schloss eigene cardId)."""
     id: Optional[int] = None
@@ -239,7 +263,11 @@ class TuerBerechtigung:
     sync_status: str = SYNC_PENDING
     sync_fehler: Optional[str] = None
     erteilt_von: Optional[int] = None
+    # Herkunft: aus welcher Rechtegruppe stammt diese Berechtigung (#169). NULL =
+    # von Hand erteilt – daran rührt der Gruppen-Abgleich nie.
+    gruppe_id: Optional[int] = None
     # per JOIN befüllt (Anzeige)
+    gruppe_name: Optional[str] = None
     schloss_name: Optional[str] = None
     chip_bezeichnung: Optional[str] = None
     kartennummer: Optional[str] = None

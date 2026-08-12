@@ -73,6 +73,7 @@ from app.db.tuer_schloss_repository import TuerSchlossRepository
 from app.db.tuer_schloss_status_log_repository import TuerSchlossStatusLogRepository
 from app.db.schluessel_chip_repository import SchluesselChipRepository
 from app.db.tuer_berechtigung_repository import TuerBerechtigungRepository
+from app.db.chip_gruppe_repository import ChipGruppeRepository
 from app.db.tuer_app_berechtigung_repository import TuerAppBerechtigungRepository
 from app.db.tuer_zutritt_log_repository import TuerZutrittLogRepository
 from app.db.tuer_credential_repository import TuerCredentialRepository
@@ -152,6 +153,7 @@ class VereinsDB:
         self._tuer_schloss_status_log_repo = TuerSchlossStatusLogRepository(self.conn)
         self._schluessel_chip_repo = SchluesselChipRepository(self.conn)
         self._tuer_berechtigung_repo = TuerBerechtigungRepository(self.conn)
+        self._chip_gruppe_repo = ChipGruppeRepository(self.conn)
         self._tuer_app_berechtigung_repo = TuerAppBerechtigungRepository(self.conn)
         self._tuer_zutritt_log_repo = TuerZutrittLogRepository(self.conn)
         self._tuer_credential_repo = TuerCredentialRepository(self.conn)
@@ -160,6 +162,7 @@ class VereinsDB:
             schloss_repo=self._tuer_schloss_repo,
             chip_repo=self._schluessel_chip_repo,
             berechtigung_repo=self._tuer_berechtigung_repo,
+            gruppe_repo=self._chip_gruppe_repo,
             log_repo=self._tuer_zutritt_log_repo,
             credential_repo=self._tuer_credential_repo,
             # Log-Auflösung von App-/Gateway-Öffnungen (#66): access_log-Korrelation → Mitglied.
@@ -356,6 +359,10 @@ class VereinsDB:
     @property
     def tuer_berechtigungen(self) -> TuerBerechtigungRepository:
         return self._tuer_berechtigung_repo
+
+    @property
+    def chip_gruppen(self) -> ChipGruppeRepository:
+        return self._chip_gruppe_repo
 
     @property
     def tuer_app_berechtigungen(self) -> TuerAppBerechtigungRepository:
