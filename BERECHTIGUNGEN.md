@@ -2,8 +2,9 @@
 
 > Zielbild und Stufenplan für den Umbau des Berechtigungssystems.
 > Stand: Stufen A–E umgesetzt (Schema v36, funktionsbasierte Rechte, Funktions-
-> und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
-> Personen-/Mitgliederliste). Der Umbau aus Ticket #22 ist damit abgeschlossen.
+> und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung im gesamten
+> Personenbereich). Der Umbau aus Ticket #22 ist damit abgeschlossen; später
+> ergänzt um die Delegationsregel (niemand vergibt, was er selbst nicht hat).
 
 ## Zielbild
 
@@ -112,11 +113,11 @@ wäre eine Rolle, die unbegrenzt Rechte erzeugt, ohne selbst welche zu tragen.
 
 ### Bekannte, akzeptierte Punkte
 
-- **Selbst-Eskalation über Funktions-Zuweisung**: Wer `personen.write` hat,
-  kann Mitgliedern (auch sich selbst) Funktionen zuweisen und erbt deren
-  Rechte. Bewusst akzeptiert; die Funktions-Matrix selbst pflegt nur der
-  Admin. Gegenmaßnahme bei Bedarf: Zuweisung rechte-tragender Funktionen an
-  `personen.permissions` knüpfen.
+- **Selbst-Eskalation über Funktions-Zuweisung** (behoben, s. Delegationsregel
+  oben): War lange bewusst akzeptiert — wer `personen.write` hatte, konnte
+  Mitgliedern und sich selbst Funktionen zuweisen und deren Rechte erben. Seit
+  `authorize_permission_delegation` geht das nur noch für Rechte, die der
+  Handelnde selbst besitzt; Funktionen ohne Rechte bleiben frei zuordenbar.
 - **Admin-Vergabe** (umgesetzt, Stufe D): Das Admin-Flag darf nur noch von
   Admins gesetzt oder entzogen werden (`backend/core/authz.py::authorize_role_assignment`,
   eingehängt in alle User-Create/Update-Endpoints). Reine Daten-Änderungen an
@@ -140,7 +141,7 @@ wäre eine Rolle, die unbegrenzt Rechte erzeugt, ohne selbst welche zu tragen.
 | **B** | Funktions-Matrix-UI: GET/PUT `/api/funktionen/{id}/permissions` (PUT hart Admin), Matrix-Komponente aus UserPermissionsPage extrahieren, Dialog im Einstellungen-Tab „Funktionen". | ✅ umgesetzt |
 | **C** | Persönlicher Berechtigungsscreen mit Herkunftsanzeige („geerbt von Funktion X (Abteilung Y)" / „Sockel") und Tri-State-Bedienung (Grant/Deny); PUT-Format `{grants, denies}`. | ✅ umgesetzt |
 | **D** | Rollen-Ablösung (v36): nur noch `admin`/`mitglied`; `defaults_for_role` entfällt (Bestand bleibt als Grants erhalten – Permissions wurden schon immer beim Anlegen materialisiert, es gibt keinen Rollen-Fallback zur Laufzeit). Harte `role=='admin'`-Checks ersetzt: `funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien → `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`. Admin-Flag-Vergabe nur durch Admins. | ✅ umgesetzt |
-| **E** | Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste: bei nur-scoped `personen.read` Filterung auf Mitglieder der erlaubten Abteilungen via `allowed_abteilungen()`. | ✅ umgesetzt |
+| **E** | Scoping-Durchsetzung: erst Pilot Personen-/Mitgliederliste (Filterung via `allowed_abteilungen()`), dann Ausbau auf **alle ID-adressierten Endpunkte** der fünf Personen-Router (`require_mitglied`/`require_person`/`require_abteilung`) — ohne den zweiten Schritt war die Listenfilterung über die ID umgehbar. | ✅ umgesetzt |
 
 ## Technische Referenz (Stufe A)
 
