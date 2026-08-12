@@ -156,8 +156,9 @@ class Client:
         eintraege = self.get(f"/tickets/{ticket_id}/anhaenge") or []
         return [a for a in eintraege if not a.get("deleted_at")]
 
-    def download(self, stored_name: str) -> bytes:
-        return _request("GET", f"{self.base}/uploads/{stored_name}",
+    def download(self, ticket_id: int, anhang_id: int) -> bytes:
+        """Anhang über den Ticket-Endpunkt holen – der prüft den Lesezugriff."""
+        return _request("GET", f"{self.base}/tickets/{ticket_id}/anhaenge/{anhang_id}/datei",
                         token=self.token, raw=True)
 
     def me(self) -> dict:
@@ -300,7 +301,7 @@ def cmd_attach(client: Client, args) -> None:
     ziel = ROOT / "tickets" / "anhaenge" / str(args.id)
     ziel.mkdir(parents=True, exist_ok=True)
     for a in anhaenge:
-        daten = client.download(a["stored_name"])
+        daten = client.download(args.id, a["id"])
         basis = os.path.basename(a.get("original_name") or a["stored_name"]).replace("\\", "_")
         pfad = ziel / f"{a['id']}_{basis}"
         pfad.write_bytes(daten)

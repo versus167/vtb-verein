@@ -24,6 +24,7 @@ from app.models.ticket import (
 )
 from app.services.ticket_service import TicketNichtGefundenError, UngueltigerStatusWechselError
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
+from .uploads import anhang_antwort
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -607,6 +608,23 @@ async def upload_anhang(
     except IOError as exc:
         raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {exc}")
     return asdict(anhang)
+
+
+@router.get("/{ticket_id}/anhaenge/{anhang_id}/datei")
+def download_anhang(ticket_id: int, anhang_id: int, user: CurrentUser, db: DB):
+    """Die Datei selbst – bewusst hier und nicht in einem allgemeinen Upload-Pfad.
+
+    Es gilt dieselbe Prüfung wie für die Anhang-Liste darüber: Wer das Ticket
+    lesen darf, darf auch seine Anhänge lesen. Ein Anhang, der zu einem anderen
+    Ticket gehört, ist an dieser Stelle nicht vorhanden.
+    """
+    ticket = _get_ticket_or_404(ticket_id, db)
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
+    anhang = db.tickets.get_anhang(anhang_id)
+    if anhang is None or anhang.deleted_at or anhang.ticket_id != ticket_id:
+        raise HTTPException(status_code=404, detail=f"Anhang {anhang_id} nicht gefunden.")
+    return anhang_antwort(db, anhang)
 
 
 @router.delete("/{ticket_id}/anhaenge/{anhang_id}", status_code=204)

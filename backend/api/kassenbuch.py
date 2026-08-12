@@ -29,6 +29,7 @@ from app.services.kassenbuch_service import (
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
+from .uploads import anhang_antwort
 
 router = APIRouter(prefix="/kassen", tags=["kassenbuch"])
 
@@ -772,6 +773,25 @@ async def upload_anhang(
     except IOError as exc:
         raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {exc}")
     return asdict(anhang)
+
+
+@router.get("/{kasse_id}/buchungen/{buchung_id}/anhaenge/{anhang_id}/datei")
+def download_anhang(kasse_id: int, buchung_id: int, anhang_id: int,
+                    user: CurrentUser, db: DB):
+    """Das Belegfoto selbst – hinter derselben Kassen-ACL wie die Anhang-Liste."""
+    try:
+        db.kassenbuch._pruefe_lesezugriff(kasse_id, user.id, is_admin=_kassen_admin(user))
+        buchung = db.kassenbuch._buchung.get_kassenbuchung(buchung_id)
+    except KeinLesezugriffError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Buchung {buchung_id} nicht gefunden.")
+    if buchung.kasse_id != kasse_id:
+        raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
+    anhang = db.kassenbuch.get_anhang(anhang_id)
+    if anhang is None or anhang.deleted_at or anhang.buchung_id != buchung_id:
+        raise HTTPException(status_code=404, detail=f"Anhang {anhang_id} nicht gefunden.")
+    return anhang_antwort(db, anhang)
 
 
 @router.delete("/{kasse_id}/buchungen/{buchung_id}/anhaenge/{anhang_id}", status_code=204)
