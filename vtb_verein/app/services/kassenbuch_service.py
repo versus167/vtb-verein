@@ -867,6 +867,14 @@ class KassenbuchService:
     def get_anhaenge(self, buchung_id: int) -> list[KassenbuchungAnhang]:
         return self._anhang_repo.list_by_buchung(buchung_id)
 
+    def get_anhang(self, id: int) -> KassenbuchungAnhang | None:
+        """Einzelner Anhang inkl. gelöschter – der Aufrufer entscheidet, was zählt.
+
+        Wird für den Datei-Download gebraucht: Der Router prüft damit, ob der
+        Anhang zur angefragten Buchung gehört, bevor er die Datei ausliefert.
+        """
+        return self._anhang_repo.get(id)
+
     def mark_anhang_deleted(self, id: int, deleted_by: str) -> bool:
         return self._anhang_repo.mark_deleted(id, deleted_by)
 

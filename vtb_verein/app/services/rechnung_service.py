@@ -411,6 +411,20 @@ class RechnungService:
         self._hole_sichtbar(rechnung_id, user)
         return self._anhang_repo.list_by_rechnung(rechnung_id)
 
+    def hole_anhang(self, rechnung_id: int, anhang_id: int, user) -> RechnungAnhang:
+        """Einzelnen Beleg holen – für den Datei-Download.
+
+        Sieht ihn, wer die Rechnung sehen darf: dieselbe Prüfung wie bei
+        :meth:`list_anhaenge`, damit die Datei nicht schwächer geschützt ist als
+        der Eintrag, der auf sie zeigt. Ein Beleg, der zu einer anderen Rechnung
+        gehört, ist hier schlicht nicht vorhanden.
+        """
+        self._hole_sichtbar(rechnung_id, user)
+        anhang = self._anhang_repo.get(anhang_id)
+        if anhang is None or anhang.deleted_at or anhang.rechnung_id != rechnung_id:
+            raise KeyError(f"Anhang {anhang_id} nicht gefunden")
+        return anhang
+
     def add_anhang(self, rechnung_id: int, user, *, original_name: str,
                    mime_type: str, inhalt: bytes) -> RechnungAnhang:
         """Beleg speichern. Bilder werden verkleinert und als JPEG abgelegt.

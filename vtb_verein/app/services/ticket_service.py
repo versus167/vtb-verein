@@ -421,6 +421,14 @@ class TicketService:
     def get_anhaenge(self, ticket_id: int) -> list[TicketAnhang]:
         return self._anhang_repo.list_by_ticket(ticket_id)
 
+    def get_anhang(self, id: int) -> Optional[TicketAnhang]:
+        """Einzelner Anhang inkl. gelöschter – der Aufrufer entscheidet, was zählt.
+
+        Wird für den Datei-Download gebraucht: Der Router prüft damit, ob der
+        Anhang zum angefragten Ticket gehört, bevor er die Datei ausliefert.
+        """
+        return self._anhang_repo.get(id)
+
     def get_anhaenge_by_comment(self, comment_id: int) -> list[TicketAnhang]:
         return self._anhang_repo.list_by_comment(comment_id)
 

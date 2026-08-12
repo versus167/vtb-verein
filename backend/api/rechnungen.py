@@ -37,6 +37,7 @@ from app.services.rechnung_export_service import (
     KeineRechnungenError,
     NichtJuengsterLaufError,
 )
+from .uploads import anhang_antwort
 
 router = APIRouter(prefix="/rechnungen", tags=["rechnungen"])
 
@@ -372,6 +373,20 @@ async def upload_anhang(rechnung_id: int, user: CurrentUser, db: DB,
     except Exception as exc:
         raise _fehler_zu_http(exc)
     return asdict(anhang)
+
+
+@router.get("/{rechnung_id}/anhaenge/{anhang_id}/datei")
+def download_anhang(rechnung_id: int, anhang_id: int, user: CurrentUser, db: DB):
+    """Den Beleg selbst ausliefern – sichtbar für den, der die Rechnung sieht.
+
+    Die Prüfung steckt im Service (``hole_anhang``), damit Liste und Datei
+    dieselbe Sichtbarkeitsregel benutzen.
+    """
+    try:
+        anhang = db.rechnungen.hole_anhang(rechnung_id, anhang_id, user)
+    except Exception as exc:
+        raise _fehler_zu_http(exc)
+    return anhang_antwort(db, anhang)
 
 
 @router.delete("/{rechnung_id}/anhaenge/{anhang_id}", status_code=204)
