@@ -31,6 +31,7 @@ class FakeClient:
         self.deleted = []
         self.cards_by_lock = {}      # lock_id -> Liste Card-Dicts (für ic_cards/Import)
         self.add_should_fail = False
+        self.add_errcode = -3007       # Standard: Störung; -4043 = Absage des Modells
         self.change_should_fail = False
         self.delete_should_fail = False
         # Credential-Mirror (read-only): lock_id -> Liste typ-spezifischer Dicts
@@ -49,7 +50,9 @@ class FakeClient:
 
     def ic_card_add(self, lock_id, card_number, card_name, start_ms=0, end_ms=0, *, add_type=2):
         if self.add_should_fail:
-            raise TTLockError("add fehlgeschlagen", errcode=-3007)
+            # Wortlaut wie im echten Client (_request): Pfad + errcode + Cloud-Text.
+            raise TTLockError(f"v3/identityCard/add: errcode={self.add_errcode} "
+                              f"add fehlgeschlagen", errcode=self.add_errcode)
         self.added.append((lock_id, card_number, start_ms, end_ms)); return {"errcode": 0, "cardId": 9001}
 
     def ic_card_change_period(self, lock_id, card_id, start_ms=0, end_ms=0, *, change_type=2):
@@ -1031,6 +1034,35 @@ class TestGruppenAbgleich:
         res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
         assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "fehler": []}
         assert svc.berechtigung_repo.list_for_chip(1)[0].sync_status == "fehler"
+
+    def test_absage_des_schlosses_wird_als_dauerhaft_gemeldet(self):
+        """errcode -4043 heißt nicht „offline", sondern „kann das Modell nicht".
+        Ein Wiederholen wird da nie helfen – das muss der Anwender sehen."""
+        svc, fake = _gruppen_service()
+        fake.add_errcode = -4043
+        fake.add_should_fail = True
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["fehler"][0]["dauerhaft"] is True
+        assert res["fehler"][0]["meldung"].startswith("Das Schloss unterstützt keine Chip-Karten")
+
+    def test_offline_schloss_bleibt_ein_vorlaeufiger_fehler(self):
+        svc, fake = _gruppen_service()
+        fake.add_should_fail = True          # Standard-errcode: Störung, nicht Absage
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        assert res["fehler"][0]["dauerhaft"] is False
+
+    def test_absage_steht_auch_an_der_gespeicherten_zeile(self):
+        """Die Notification ist weg, sobald man wegklickt – die Zeile bleibt."""
+        svc, fake = _gruppen_service()
+        fake.add_errcode = -4043
+        fake.add_should_fail = True
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        ber = svc.berechtigung_repo.list_for_chip(1)[0]
+        assert ber.sync_fehler.startswith("Das Schloss unterstützt keine Chip-Karten")
+        assert "-4043" in ber.sync_fehler          # rohe Meldung bleibt für die Fehlersuche
 
     def test_gescheiterte_erteilung_laesst_sich_per_gruppenentzug_aufloesen(self):
         """Kommt das Schloss nie wieder, muss die Leiche verschwinden können –

@@ -69,6 +69,27 @@ def _iso_to_ms(iso: Optional[str]) -> int:
         return 0
 
 
+# TTLock-errcodes, die keine Störung sind, sondern eine Absage: Das Schloss wurde
+# erreicht und kann die Operation grundsätzlich nicht (Modell ohne Kartenleser).
+# −4043 = "The function is not supported for this lock". Der Unterschied zu einem
+# offline Gateway (−3003) ist für den Anwender der entscheidende: Ein Wiederholen
+# holt das offline Schloss nach, hier wird es nie klappen.
+NICHT_UNTERSTUETZT_ERRCODES = frozenset({-4043})
+
+
+def ist_dauerhaft(e: Exception) -> bool:
+    """Ist der Fehler eine grundsätzliche Absage des Schlosses (kein Wiederholen)?"""
+    return isinstance(e, TTLockError) and e.errcode in NICHT_UNTERSTUETZT_ERRCODES
+
+
+def fehlertext(e: Exception) -> str:
+    """Cloud-Fehler für Menschen. Bei einer Absage steht die Ursache im Klartext
+    vorn; die rohe Meldung bleibt für die Fehlersuche dahinter stehen."""
+    if ist_dauerhaft(e):
+        return f"Das Schloss unterstützt keine Chip-Karten ({e})"
+    return str(e)
+
+
 def _cloud_schloss(schloss) -> None:
     """Sicherstellen, dass dieses Schloss überhaupt an der Cloud hängt.
 
@@ -290,7 +311,8 @@ class ZutrittService:
             )
         except TTLockError as e:
             self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
-                                            sync_status=SYNC_FEHLER, sync_fehler=str(e), by=actor)
+                                            sync_status=SYNC_FEHLER, sync_fehler=fehlertext(e),
+                                            by=actor)
             raise
         card_id = resp.get("cardId")
         logger.info("Chip %s an Schloss %s angelernt (cardId=%s).",
@@ -473,9 +495,13 @@ class ZutrittService:
 
         def _fehler(schloss_id: int, e: Exception) -> None:
             schloss = self.schloss_repo.get(schloss_id)
+            # `dauerhaft` trennt „später nochmal" von „geht an diesem Schloss nie":
+            # Nur so weiß der Anwender, ob Abgleichen hilft oder die Tür aus der
+            # Gruppe muss.
             fehler.append({"schloss_id": schloss_id,
                            "schloss": schloss.name if schloss else f"#{schloss_id}",
-                           "meldung": str(e)})
+                           "dauerhaft": ist_dauerhaft(e),
+                           "meldung": fehlertext(e)})
 
         # Ein gesperrter/verlorener Chip bekommt keine neuen Türen – sonst führte
         # er wieder, während er in der Liste als gesperrt steht. Entzogen wird
@@ -499,7 +525,7 @@ class ZutrittService:
                 except (ValueError, TTLockError) as e:
                     _fehler(schloss_id, e)
         elif soll - (set(ist) - nachzuholen):
-            fehler.append({"schloss_id": None, "schloss": "—",
+            fehler.append({"schloss_id": None, "schloss": "—", "dauerhaft": False,
                            "meldung": f'Chip ist als "{chip.status}" markiert – '
                                       f'neue Türen werden erst nach dem Entsperren erteilt'})
 
