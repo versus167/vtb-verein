@@ -81,6 +81,42 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Content-Security-Policy. Tiefenverteidigung: Das Frontend benutzt kein einziges
+# `v-html`, es gibt also heute keine bekannte XSS-Fläche — die Richtlinie soll die
+# Folgen begrenzen, falls doch einmal eine entsteht.
+#
+# Der Build macht das leicht: Die ausgelieferte index.html enthält kein Inline-Script
+# und keinen Fremd-Host, Schriften und Icons liegen unter /assets. `script-src 'self'`
+# kostet hier also nichts und ist der eigentliche Gewinn — eingeschleuster Code
+# könnte weder von außen nachladen noch inline ausgeführt werden.
+#
+# Zwei bewusste Zugeständnisse:
+#   * `style-src` erlaubt 'unsafe-inline'. Vue und Quasar setzen Stil-Attribute,
+#     ohne Nonce/Hash je Response ginge das nicht. Der Hebel für einen Angreifer
+#     ist dort ungleich kleiner als bei Skripten.
+#   * `img-src`/`frame-src` erlauben blob:. Die Anhang-Vorschau baut ihre Bilder
+#     und PDFs aus Blob-URLs (s. AnhangPanel.vue) — ohne das bliebe sie leer.
+_CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "frame-src blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+
+# Swagger/ReDoc laden ihr JavaScript von einem CDN — unter `script-src 'self'`
+# blieben beide Seiten weiß. Sie zeigen keine Nutzerdaten, sondern die eigene
+# API-Beschreibung; die Richtlinie entfällt dort deshalb, statt das CDN für die
+# ganze App freizugeben.
+_OHNE_CSP = ("/api/docs", "/api/redoc")
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -88,6 +124,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if not request.url.path.startswith(_OHNE_CSP):
+            response.headers["Content-Security-Policy"] = _CSP
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
