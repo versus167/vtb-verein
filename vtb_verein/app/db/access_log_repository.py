@@ -126,6 +126,67 @@ class AccessLogRepository:
             cur.execute(f"SELECT COUNT(*) AS n FROM access_log {where}", tuple(params))
             return cur.fetchone()["n"]
 
+    # ------------------------------------------------------------------
+    # Anmelde-Bremse (Brute-Force-Schutz)
+    # ------------------------------------------------------------------
+    #
+    # Bewusst NICHT über list()/count() mit `username`: Dort wird der Benutzername
+    # als *Teilstring* verglichen (ILIKE %…%), was den Protokollfilter bequem macht,
+    # hier aber gefährlich wäre. Fehlversuche gegen „maximilian" zählten dann auf das
+    # Konto „max" ein — ein Angreifer könnte fremde Konten gezielt aussperren, ohne
+    # sie überhaupt anzutippen. Deshalb hier exakter Vergleich, normalisiert wie beim
+    # Login selbst (getrimmt, klein geschrieben).
+
+    @staticmethod
+    def _norm(username: str) -> str:
+        return (username or "").strip().lower()
+
+    def count_login_failures(self, *, since: str, username: Optional[str] = None,
+                             ip: Optional[str] = None) -> int:
+        """Fehlgeschlagene Anmeldeversuche seit ``since`` – für die Anmelde-Bremse.
+
+        Gezählt wird über den *eingetippten* Benutzernamen, nicht über eine
+        aufgelöste user_id: Sonst blieben Versuche gegen nicht existierende Konten
+        ungezählt, und die Antwort verriete nebenbei, welche Konten es gibt.
+        """
+        clauses = ["event_type = 'login_failed'", "created_at >= %s"]
+        params: list = [since]
+        if username is not None:
+            clauses.append("lower(btrim(username)) = %s")
+            params.append(self._norm(username))
+        if ip:
+            clauses.append("ip = %s")
+            params.append(ip)
+        with self.db.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS n FROM access_log WHERE {' AND '.join(clauses)}",
+                tuple(params),
+            )
+            return cur.fetchone()["n"]
+
+    def last_login_success_at(self, username: str) -> Optional[str]:
+        """Zeitpunkt der letzten erfolgreichen Anmeldung dieses Kontos (ISO) oder None.
+
+        Setzt die Fehlversuchs-Zählung zurück: Wer sich zwischendurch erfolgreich
+        angemeldet hat, startet wieder bei null. Ohne das würde jemand, der sich
+        viermal vertippt, sich anmeldet und später noch einmal danebengreift,
+        grundlos ausgesperrt.
+        """
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT created_at FROM access_log
+                WHERE event_type = 'login_success' AND lower(btrim(username)) = %s
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (self._norm(username),),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            wert = row["created_at"]
+            return wert.isoformat() if hasattr(wert, "isoformat") else wert
+
     def distinct_usernames(self) -> List[str]:
         """Alle im Protokoll vorkommenden Benutzernamen (alphabetisch, ohne NULL/leer).
 

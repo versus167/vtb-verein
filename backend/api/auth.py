@@ -69,6 +69,71 @@ def _classify_login_failure(db, username: str) -> str:
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+# ---------------------------------------------------------------------------
+# Anmelde-Bremse (Brute-Force-Schutz)
+# ---------------------------------------------------------------------------
+# Gezählt wird wie beim Magic-Link über das Zugriffsprotokoll, das jeden
+# 'login_failed' ohnehin festhält – kein Extra-State, übersteht Neustarts.
+#
+# Zwei Dimensionen mit sehr unterschiedlichem Zuschnitt:
+#
+# * Pro Konto eng. Das ist der eigentliche Schutz – ein Angreifer, der EIN
+#   Passwort raten will. bcrypt bremst zwar, aber gegen ein schwaches Passwort
+#   reichen ein paar tausend Versuche, und die hat man in Stunden.
+# * Pro IP weit. Ein Verein sitzt zu großen Teilen hinter derselben Adresse
+#   (Vereinsheim-WLAN, Mobilfunk-NAT). Ein enges IP-Limit würde beim ersten
+#   Trainingsabend die halbe Mannschaft aussperren. Die Grenze zielt deshalb
+#   nur auf das maschinelle Durchprobieren vieler Konten von einer Quelle –
+#   was Menschen dort erzeugen, liegt weit darunter.
+#
+# Wer ausgesperrt ist, kommt weiterhin über den Login-Link herein (eigenes,
+# empfängerbezogenes Limit). Das nimmt der Sperre die Schärfe: Sie kann nicht
+# dazu benutzt werden, jemanden dauerhaft auszuschließen.
+LOGIN_FENSTER_MIN = 15        # Beobachtungsfenster für beide Grenzen
+LOGIN_MAX_PRO_KONTO = 10      # Fehlversuche je Benutzername im Fenster
+LOGIN_MAX_PRO_IP = 30         # Fehlversuche je Quell-IP im Fenster
+
+
+def _pruefe_login_bremse(db, request: Request, username: str, ip: str | None) -> None:
+    """429, wenn zu viele Fehlversuche im Fenster liegen – vor der Passwortprüfung.
+
+    Die Reihenfolge ist Absicht: Erst gar keine bcrypt-Runde ausführen, sonst
+    kostet jeder abgewiesene Versuch weiterhin Rechenzeit.
+
+    Gezählt wird über den eingetippten Benutzernamen, auch wenn es ihn gar nicht
+    gibt. Damit antwortet die Bremse für existierende und erfundene Konten gleich
+    und verrät nicht, welche existieren.
+    """
+    jetzt = datetime.now(timezone.utc)
+    fenster_start = (jetzt - timedelta(minutes=LOGIN_FENSTER_MIN)).isoformat()
+
+    # Ein erfolgreicher Login setzt die Zählung zurück – sonst summieren sich
+    # Vertipper über den Tag hinweg zu einer Sperre, obwohl zwischendurch alles
+    # in Ordnung war.
+    letzter_erfolg = db.access_log_repository.last_login_success_at(username)
+    seit_konto = max(fenster_start, letzter_erfolg) if letzter_erfolg else fenster_start
+
+    if db.access_log_repository.count_login_failures(
+        since=seit_konto, username=username
+    ) >= LOGIN_MAX_PRO_KONTO:
+        _log_access(db, request, "login_rate_limited", username=username, detail="konto")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Fehlversuche. Bitte in einigen Minuten erneut versuchen "
+                   "– oder melde dich mit einem Login-Link an.",
+        )
+
+    if ip and db.access_log_repository.count_login_failures(
+        since=fenster_start, ip=ip
+    ) >= LOGIN_MAX_PRO_IP:
+        _log_access(db, request, "login_rate_limited", username=username, detail="ip")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Fehlversuche von dieser Verbindung. Bitte in einigen "
+                   "Minuten erneut versuchen – oder melde dich mit einem Login-Link an.",
+        )
+
+
 class SessionUser(BaseModel):
     """Login-Antwort (Ticket #48): das JWT geht ins HttpOnly-Cookie, NICHT mehr in
     den Body. Hier stehen nur noch die unkritischen User-Infos fürs UI-Gating –
@@ -135,6 +200,7 @@ def login(
     remember_me: bool = False,
     db=Depends(get_db),
 ):
+    _pruefe_login_bremse(db, request, form_data.username, _client_ip(request))
     service = UserService(db)
     user = service.authenticate(form_data.username, form_data.password)
     if user is None:

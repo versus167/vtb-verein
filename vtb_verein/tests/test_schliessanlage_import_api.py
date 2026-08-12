@@ -109,9 +109,19 @@ class _Upload:
 
     def __init__(self, daten=CSV):
         self._daten = daten
+        self._pos = 0
 
-    async def read(self):
-        return self._daten
+    async def read(self, size: int = -1):
+        """Wie ``UploadFile.read``: liefert häppchenweise, wenn eine Größe kommt.
+
+        Der Import liest gestückelt ein (s. ``lese_upload``), damit ein riesiger
+        Upload nicht erst vollständig im Speicher landet – die Attrappe muss das
+        mitmachen, sonst prüft der Test eine Schnittstelle, die es nicht gibt.
+        """
+        rest = self._daten[self._pos:]
+        happen = rest if size < 0 else rest[:size]
+        self._pos += len(happen)
+        return happen
 
 
 def _request():

@@ -46,6 +46,12 @@ class AnhangService:
     def max_mb(self) -> int:
         return self._max_bytes // (1024 * 1024)
 
+    @property
+    def max_bytes(self) -> int:
+        """Obergrenze in Bytes – für das gestückelte Einlesen beim Upload, das
+        abbrechen muss, *bevor* die ganze Datei im Speicher liegt."""
+        return self._max_bytes
+
     def validiere(self, mime_type: str, dateigroesse: int) -> None:
         """Wirft DateitypNichtErlaubtError oder DateiZuGrossError."""
         if mime_type not in ERLAUBTE_MIME_TYPEN:

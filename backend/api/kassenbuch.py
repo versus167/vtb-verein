@@ -29,7 +29,7 @@ from app.services.kassenbuch_service import (
 )
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
 from app.services.kassenbuch_pdf_service import erstelle_kassenbuch_pdf
-from .uploads import anhang_antwort
+from .uploads import anhang_antwort, lese_upload
 
 router = APIRouter(prefix="/kassen", tags=["kassenbuch"])
 
@@ -757,8 +757,8 @@ async def upload_anhang(
     if buchung.kasse_id != kasse_id:
         raise HTTPException(status_code=404, detail="Buchung gehört nicht zu dieser Kasse.")
 
-    inhalt = await file.read()
     try:
+        inhalt = await lese_upload(file, db.anhang_service.max_bytes)
         anhang = db.kassenbuch.add_anhang(
             buchung_id=buchung_id,
             original_name=file.filename or "upload",

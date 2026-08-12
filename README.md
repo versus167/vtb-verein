@@ -14,6 +14,10 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
 - Persönliche Daten, Adresse, Vereinsdaten (Eintritt/Austritt/Status), Zahlungsdaten (IBAN/BIC)
 - Passwort-Hashing (bcrypt), Magic-Link-Login per E-Mail
+- Anmelde-Bremse gegen Passwort-Raten: 10 Fehlversuche je Konto bzw. 30 je
+  Verbindung in 15 Minuten, danach 429. Ein erfolgreicher Login setzt die
+  Zählung zurück; der Login-Link bleibt als Weg herein offen, damit die Sperre
+  niemanden dauerhaft aussperren kann.
 - Self-Service-Profil für die Rolle `mitglied`
 
 ✅ **Kontaktdaten (mehrfach)** *(Schema v24)*

@@ -37,7 +37,7 @@ from app.services.rechnung_export_service import (
     KeineRechnungenError,
     NichtJuengsterLaufError,
 )
-from .uploads import anhang_antwort
+from .uploads import anhang_antwort, lese_upload
 
 router = APIRouter(prefix="/rechnungen", tags=["rechnungen"])
 
@@ -358,8 +358,8 @@ def list_anhaenge(rechnung_id: int, user: CurrentUser, db: DB):
 @router.post("/{rechnung_id}/anhaenge", status_code=201)
 async def upload_anhang(rechnung_id: int, user: CurrentUser, db: DB,
                         file: UploadFile = File(...)):
-    inhalt = await file.read()
     try:
+        inhalt = await lese_upload(file, db.anhang_service.max_bytes)
         anhang = db.rechnungen.add_anhang(
             rechnung_id, user,
             original_name=file.filename or "upload",
