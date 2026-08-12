@@ -143,6 +143,13 @@ function isPdf(anhang) {
   return anhang.mime_type === 'application/pdf' || anhang.original_name?.endsWith('.pdf')
 }
 
+// Die Datei hängt am Fach-Endpunkt des Anhangs, nicht an einem allgemeinen
+// Upload-Pfad: Nur dort ist bekannt, wer das zugehörige Ticket bzw. den Beleg
+// lesen darf. Gleiche Ableitung wie beim Löschen — daher ohne eigenes Prop.
+function dateiUrl(anhang) {
+  return `${props.uploadUrl}/${anhang.id}/datei`
+}
+
 async function openPreview(anhang) {
   previewAnhang.value = anhang
   previewLoading.value = true
@@ -152,7 +159,7 @@ async function openPreview(anhang) {
     previewUrl.value = ''
   }
   try {
-    const response = await api.get(`/api/uploads/${anhang.stored_name}`, { responseType: 'blob' })
+    const response = await api.get(dateiUrl(anhang), { responseType: 'blob' })
     previewUrl.value = URL.createObjectURL(new Blob([response.data], { type: anhang.mime_type }))
   } catch {
     $q.notify({ type: 'negative', message: 'Vorschau fehlgeschlagen.' })
@@ -177,7 +184,7 @@ function openInTab() {
 async function downloadAnhang(anhang) {
   if (!anhang) return
   try {
-    const response = await api.get(`/api/uploads/${anhang.stored_name}`, { responseType: 'blob' })
+    const response = await api.get(dateiUrl(anhang), { responseType: 'blob' })
     const url = URL.createObjectURL(new Blob([response.data], { type: anhang.mime_type }))
     const a = document.createElement('a')
     a.href = url
