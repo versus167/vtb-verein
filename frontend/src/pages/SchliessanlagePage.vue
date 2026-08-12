@@ -704,6 +704,11 @@
             ({{ chipNichtAngekommen.map(b => b.schloss_name).join(', ') }}) –
             {{ status.darf_verwalten ? 'nach „Abgleichen" wird es erneut versucht.'
               : 'die Verwaltung muss den Abgleich wiederholen.' }}
+            <div v-if="chipOhneKartenleser.length" class="q-mt-xs">
+              Ausnahme: {{ chipOhneKartenleser.map(b => b.schloss_name).join(', ') }}
+              {{ chipOhneKartenleser.length === 1 ? 'kann' : 'können' }} grundsätzlich keine
+              Chips – diese Tür gehört nicht in eine Gruppe.
+            </div>
           </q-banner>
           <div class="q-gutter-xs q-mt-xs">
             <q-chip v-for="g in chipDetail.gruppen" :key="g.id" dense icon="workspaces"
@@ -1885,24 +1890,37 @@ async function loadGruppen() {
   catch { gruppen.value = [] }
 }
 
-// Was der Abgleich an den Türen bewirkt hat – inklusive der Schlösser, die er nicht
-// erreicht hat. Die bleiben stehen und werden beim nächsten Abgleich erneut versucht.
+// Beim Gruppen-Abgleich betrifft ein Fehler einen bestimmten Chip – ohne den Namen
+// wüsste man nicht, wessen Tür hängt.
+const fehlerZeile = (f) => `${f.chip ? f.chip + ' – ' : ''}${f.schloss}: ${f.meldung}`
+
+// Was der Abgleich an den Türen bewirkt hat. Zwei Sorten Fehler, die man auseinander-
+// halten muss: Ein offline Schloss holt der nächste Abgleich nach, ein Schloss ohne
+// Kartenleser nie – dort hilft nur, die Tür aus der Gruppe zu nehmen.
 function meldeAbgleich(abgleich) {
   if (!abgleich) return
+  const fehler = abgleich.fehler || []
+  const dauerhaft = fehler.filter((f) => f.dauerhaft)
+  const vorlaeufig = fehler.filter((f) => !f.dauerhaft)
+  if (dauerhaft.length) {
+    $q.notify({
+      type: 'negative', timeout: 12000,
+      message: `${dauerhaft.length === 1 ? 'Eine Tür kann' : dauerhaft.length + ' Türen können'} `
+        + 'keine Chips – erneutes Abgleichen hilft dort nicht',
+      caption: dauerhaft.map(fehlerZeile).join(' · '),
+    })
+  }
+  if (vorlaeufig.length) {
+    $q.notify({
+      type: 'warning', timeout: 8000,
+      message: `${vorlaeufig.length} Schloss/Schlösser nicht erreicht – „Abgleichen“ holt es nach`,
+      caption: vorlaeufig.map(fehlerZeile).join(' · '),
+    })
+  }
+  if (fehler.length) return
   const teile = []
   if (abgleich.erteilt) teile.push(`${abgleich.erteilt}× erteilt`)
   if (abgleich.entzogen) teile.push(`${abgleich.entzogen}× entzogen`)
-  if (abgleich.fehler?.length) {
-    $q.notify({
-      type: 'warning', timeout: 8000,
-      message: `${abgleich.fehler.length} Schloss/Schlösser nicht erreicht`,
-      // Beim Gruppen-Abgleich betrifft ein Fehler einen bestimmten Chip – ohne den
-      // Namen wüsste man nicht, wessen Tür hängt.
-      caption: abgleich.fehler
-        .map((f) => `${f.chip ? f.chip + ' – ' : ''}${f.schloss}: ${f.meldung}`).join(' · '),
-    })
-    return
-  }
   $q.notify({ type: 'positive', message: teile.join(' · ') || 'Nichts zu ändern' })
 }
 
@@ -2027,6 +2045,10 @@ function gruppeAufloesen() {
 // Karte fehlt an der Tür – erkennbar an der fehlenden cardId.
 const chipNichtAngekommen = computed(() => (chipDetail.value.berechtigungen || [])
   .filter((b) => !b.ttlock_card_id && b.sync_status === 'fehler'))
+// Absage statt Störung: Der Service schreibt die Ursache im Klartext vor die rohe
+// Cloud-Meldung, damit sie auch an der gespeicherten Zeile lesbar bleibt.
+const chipOhneKartenleser = computed(() => chipNichtAngekommen.value
+  .filter((b) => (b.sync_fehler || '').startsWith('Das Schloss unterstützt keine Chip-Karten')))
 
 async function chipAbgleichen() {
   const chipId = chipDetail.value.chip.id
