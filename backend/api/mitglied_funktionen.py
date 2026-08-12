@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 from app.models.permission import Permission
+from ..core.authz import authorize_permission_delegation
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_abteilung, require_mitglied
 from ..core.validation import zuordnungsbeginn_or_400
@@ -36,6 +37,21 @@ def _require_delete(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Löschberechtigung")
 
 
+def _pruefe_delegation(db, user, funktion_key: str, abteilung_id) -> None:
+    """Delegationsregel für die Zuordnung: Eine Funktion gibt ihre Rechte an den
+    Träger weiter — vergeben darf sie deshalb nur, wer diese Rechte selbst hat.
+
+    Funktionen ohne hinterlegte Rechte (rein beschreibende wie „Vorstand" oder
+    „Kampfrichter") bleiben davon unberührt: leere Menge, nichts zu prüfen.
+    """
+    funktion = db.funktionen.get_by_key(funktion_key)
+    if funktion is None:
+        return  # unbekannter Key – der Endpunkt weist ihn ohnehin mit 422 ab
+    rechte = db.funktion_permissions.get_permissions_for_funktion(funktion.id)
+    authorize_permission_delegation(user, rechte, abteilung_id=abteilung_id,
+                                    anlass="über eine Funktion vergeben")
+
+
 @router.get("/mitglieder/{mitglied_id}/funktionen")
 def list_funktionen(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -51,6 +67,7 @@ def create_funktion(mitglied_id: int, data: FunktionWrite, user: CurrentUser, db
     # tragen den Abteilungs-Scope: Wer sich selbst eine Funktion für eine fremde
     # Abteilung eintragen könnte, hätte sie beim nächsten Request im Scope.
     require_abteilung(user, data.abteilung_id, Permission.PERSONEN_WRITE)
+    _pruefe_delegation(db, user, data.funktion, data.abteilung_id)
     valid_keys = db.funktionen.list_keys()
     if data.funktion not in valid_keys:
         raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
@@ -70,6 +87,7 @@ def update_funktion(mitglied_id: int, funktion_id: int, data: FunktionUpdate,
     _require_write(user)
     require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     require_abteilung(user, data.abteilung_id, Permission.PERSONEN_WRITE)
+    _pruefe_delegation(db, user, data.funktion, data.abteilung_id)
     valid_keys = db.funktionen.list_keys()
     if data.funktion not in valid_keys:
         raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")

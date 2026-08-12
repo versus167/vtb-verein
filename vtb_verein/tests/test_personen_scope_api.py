@@ -197,9 +197,15 @@ def test_funktion_fuer_fremde_abteilung_ist_gesperrt():
 
 
 def test_funktion_fuer_die_eigene_abteilung_bleibt_moeglich():
+    """Hier geht es nur um den Abteilungsrand. Die Funktion trägt bewusst keine
+    Rechte – ob eine *rechtetragende* Funktion vergeben werden darf, entscheidet
+    die Delegationsregel und ist in test_delegation_api geprüft."""
     from backend.api import mitglied_funktionen as api
     db = _db()
-    db.funktionen = SimpleNamespace(list_keys=lambda: ['uebungsleiter'])
+    db.funktionen = SimpleNamespace(list_keys=lambda: ['uebungsleiter'],
+                                    get_by_key=lambda k: SimpleNamespace(id=5, key=k))
+    db.funktion_permissions = SimpleNamespace(
+        get_permissions_for_funktion=lambda fid: set())
     db.create_mitglied_funktion = lambda *a, **kw: MitgliedFunktion(
         id=1, mitglied_id=100, abteilung_id=FUSSBALL, funktion='uebungsleiter',
         von='2026-01-01')

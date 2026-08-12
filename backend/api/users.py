@@ -4,7 +4,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
-from ..core.authz import authorize_role_assignment
+from ..core.authz import authorize_permission_delegation, authorize_role_assignment
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -336,6 +336,17 @@ def _permissions_payload(target, db):
     }
 
 
+def _bestehende_grants(db, user_id: int) -> set[str]:
+    """Bereits gesetzte individuelle Grants des Ziel-Users.
+
+    Der Endpunkt setzt die Grants als Ganzes; geprüft wird deshalb nur, was
+    *hinzukommt*. Sonst könnte ein Bearbeiter einen User, der schon ein Recht
+    oberhalb seiner eigenen hat, überhaupt nicht mehr speichern – auch dann
+    nicht, wenn er an diesem Recht gar nichts ändert.
+    """
+    return set(db.permissions.get_overrides_for_user(user_id)['grants'])
+
+
 @router.get("/{user_id}/permissions")
 def get_permissions(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -361,6 +372,11 @@ def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db
             raise HTTPException(status_code=422, detail=f"Unbekannte Permission(s): {sorted(unbekannt)}")
         if grants & denies:
             raise HTTPException(status_code=422, detail=f"Permission gleichzeitig grant und deny: {sorted(grants & denies)}")
+        # Delegationsregel: nur weitergeben, was man selbst hat. Individuelle
+        # Grants wirken vereinsweit, also zählt hier auch nur das vereinsweite
+        # Recht des Handelnden. Denies bleiben frei – wer Rechte *entzieht*,
+        # verschafft sich keine.
+        authorize_permission_delegation(user, grants - _bestehende_grants(db, user_id))
         db.permissions.set_overrides_for_user(user_id, grants, denies, actor=user.username)
     elif data.permissions is not None:
         # Legacy: nur Grants setzen (keine Denies)
@@ -368,6 +384,7 @@ def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db
         unbekannt = perms - valid
         if unbekannt:
             raise HTTPException(status_code=422, detail=f"Unbekannte Permission(s): {sorted(unbekannt)}")
+        authorize_permission_delegation(user, perms - _bestehende_grants(db, user_id))
         db.permissions.set_permissions_for_user(user_id, perms, actor=user.username)
     else:
         raise HTTPException(status_code=422, detail="grants/denies oder permissions erforderlich")

@@ -60,6 +60,35 @@ Adresse, Geburtsdatum und Bankverbindung.
 Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 `allowed_abteilungen()` (alle in `app/models/user.py`).
 
+### Delegationsregel: Niemand vergibt, was er selbst nicht hat
+
+Vier Türen verändern die Rechte eines anderen Users. Zwei sind seit jeher
+Admin-only — die **Funktions-Berechtigungsmatrix**
+(`PUT /funktionen/{id}/permissions`) und die **Admin-Rolle**
+(`authorize_role_assignment`). Die beiden übrigen bewacht
+`backend/core/authz.py::authorize_permission_delegation`:
+
+- **Individuelle Grants** (`PUT /users/{id}/permissions`, Gate
+  `personen.permissions`): Ein Grant wirkt vereinsweit, also muss der Handelnde
+  das Recht **vereinsweit** besitzen. Geprüft wird nur, was *hinzukommt* — sonst
+  wäre ein User mit einem höheren Bestands-Grant für jeden Bearbeiter
+  unspeicherbar, auch bei einer ganz anderen Änderung. **Denies** fallen nicht
+  unter die Regel: Wer Rechte entzieht, verschafft sich keine.
+- **Funktionszuordnung** (`POST/PUT /mitglieder/{id}/funktionen`, Gate
+  `personen.write`): Eine Funktion reicht ihre Rechte an den Träger weiter,
+  vergeben darf sie deshalb nur, wer sie selbst hat. Bei abteilungsgebundener
+  Zuordnung genügt das Recht für **diese** Abteilung, bei vereinsweiter braucht
+  es das vereinsweite.
+
+Zwei Eigenschaften fallen dabei von selbst ab: **Admins** bestehen die Prüfung
+ohne Sonderfall (sie haben jedes Recht), und **Funktionen ohne hinterlegte
+Rechte** bleiben frei zuordenbar (leere Menge). Rein beschreibende Funktionen —
+Vorstand, Kampfrichter, Platzwart — kosten also nichts.
+
+Der Preis: Wer Rechte verteilen soll, die er selbst nicht braucht, muss sie
+trotzdem haben oder Admin sein. Das ist bewusst so gewählt — die Alternative
+wäre eine Rolle, die unbegrenzt Rechte erzeugt, ohne selbst welche zu tragen.
+
 ### Was NICHT über dieses System läuft
 
 - **Kassen**: objektbezogen über `kasse_berechtigungen` (pro Kasse).
