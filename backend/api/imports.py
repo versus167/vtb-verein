@@ -1,4 +1,6 @@
+import logging
 from dataclasses import asdict
+from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
@@ -13,6 +15,8 @@ from app.services.dfbnet_import_service import (
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/import", tags=["import"])
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/spg")
@@ -80,6 +84,10 @@ async def import_dfbnet(
     file: UploadFile = File(...),
     commit: bool = Form(False),
     benachrichtigen: bool = Form(False),
+    # Änderungsdatum der hochgeladenen Datei (ISO). Der Upload selbst trägt keins –
+    # multipart überträgt nur den Namen –, deshalb reicht der Browser es aus
+    # `File.lastModified` mit. Fehlt es, bleibt der Stand ohne Dateidatum (#171).
+    datei_datum: Optional[str] = Form(None),
 ):
     """DFBnet-Vereinsspielplan einlesen. Ohne `commit` = Vorschau (schreibt nichts).
 
@@ -127,6 +135,38 @@ async def import_dfbnet(
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Spielplan nicht lesbar: {e}")
 
+    # Stand festhalten – erst NACH dem geglückten Lauf: Ein abgebrochener Import
+    # darf den Kalender nicht als frisch ausweisen (#171).
+    try:
+        db.dfbnet_import_stand.set(
+            dateiname=file.filename, datei_datum=(datei_datum or None),
+            anzahl_spiele=len(lauf.bericht.befunde),
+            by=user.username)
+    except Exception:  # noqa: BLE001
+        logger.warning("Import-Stand konnte nicht festgehalten werden.", exc_info=True)
+
     antwort = asdict(lauf)
     antwort['zusammenfassung'] = lauf.bericht.zusammenfassung
     return {'commit': True, **antwort}
+
+
+@router.get("/dfbnet/stand")
+def dfbnet_stand(user: CurrentUser, db: DB):
+    """Von wann ist der Spielplan? Für die Kopfzeile des Terminkalenders (#171).
+
+    Bewusst ohne eigenes Recht: Die Auskunft besteht aus einem Dateinamen und
+    zwei Zeitpunkten – wer die Termine sehen darf, darf auch wissen, wie alt sie
+    sind. Ohne bisherigen Import ist die Antwort leer."""
+    return db.dfbnet_import_stand.get() or {}
+
+
+@router.get("/dfbnet/verlauf")
+def dfbnet_verlauf(user: CurrentUser, db: DB, limit: int = 20):
+    """Die letzten Spielplan-Importe (wer, wann, welche Datei).
+
+    Anders als der Stand nennt der Verlauf Namen und ist damit eine Auskunft über
+    Personen – deshalb hinter demselben Recht wie das Importieren selbst."""
+    if not user.has_permission(Permission.TERMINE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung, den Import-Verlauf zu sehen")
+    return db.dfbnet_import_stand.verlauf(limit=max(1, min(limit, 100)))

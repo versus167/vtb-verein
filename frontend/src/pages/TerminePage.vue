@@ -2,6 +2,12 @@
   <q-page class="q-pa-md">
     <div class="row items-center q-mb-md">
       <div class="text-h5">Termine</div>
+      <!-- Von wann ist der Spielplan? Steht klein neben der Überschrift, weil es
+           die Termine als Ganzes einordnet – nicht einen einzelnen davon (#171). -->
+      <div v-if="dfbnetStand" class="text-caption text-grey-7 q-ml-sm">
+        DFBnet-Stand {{ dfbnetStand }}
+        <q-tooltip>{{ dfbnetStandDetail }}</q-tooltip>
+      </div>
       <q-space />
       <q-btn v-if="darfVerwalten && tab !== 'meine'" flat color="primary"
         icon="repeat" label="Serien" class="q-mr-sm" @click="serienOffen = true" />
@@ -153,7 +159,48 @@ async function zeigeTerminAusQuery() {
 
 watch(() => route.query.termin, (v) => { if (v) zeigeTerminAusQuery() })
 
+// ── Stand des Spielplan-Imports (#171) ──
+// Angezeigt wird das Dateidatum – der Stand, den der Anwender meint. Fehlt es
+// (Import von vor dieser Anzeige oder Browser ohne lastModified), tritt der
+// Zeitpunkt des Einlesens ein; ganz ohne Import bleibt die Zeile weg.
+const importStand = ref(null)
+const dfbnetStand = computed(() => {
+  const s = importStand.value
+  const wann = s?.datei_datum || s?.importiert_am
+  return wann ? fmtDatum(wann) : ''
+})
+const dfbnetStandDetail = computed(() => {
+  const s = importStand.value
+  if (!s) return ''
+  const teile = []
+  if (s.datei_datum) teile.push(`Datei vom ${fmtDatumZeit(s.datei_datum)}`)
+  if (s.dateiname) teile.push(s.dateiname)
+  if (s.importiert_am) {
+    teile.push(`eingelesen ${fmtDatumZeit(s.importiert_am)}`
+      + (s.importiert_von ? ` von ${s.importiert_von}` : ''))
+  }
+  return teile.join(' · ')
+})
+
+function fmtDatum(iso) {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE')
+}
+function fmtDatumZeit(iso) {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('de-DE',
+    { dateStyle: 'short', timeStyle: 'short' })
+}
+
+async function loadImportStand() {
+  try {
+    const { data } = await api.get('/api/import/dfbnet/stand')
+    importStand.value = (data && (data.datei_datum || data.importiert_am)) ? data : null
+  } catch { importStand.value = null }
+}
+
 async function load() {
+  await loadImportStand()
   try {
     const { data } = await api.get('/api/termine/mannschaften')
     teams.value = data

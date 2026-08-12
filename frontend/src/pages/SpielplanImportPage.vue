@@ -28,6 +28,27 @@
       <div v-if="fehler" class="text-negative q-mt-sm">{{ fehler }}</div>
     </q-card>
 
+    <!-- Bisherige Läufe (#171). Der Verlauf fällt als History des Import-Stands
+         nebenbei an und beantwortet die Frage „wurde das schon eingelesen?". -->
+    <q-expansion-item v-if="verlauf.length" dense icon="history" class="q-mb-md"
+      :label="`Bisherige Importe (${verlauf.length})`">
+      <q-list dense separator class="q-mt-xs">
+        <q-item v-for="v in verlauf" :key="v.version">
+          <q-item-section>
+            <q-item-label>{{ v.dateiname || 'ohne Dateinamen' }}</q-item-label>
+            <q-item-label caption>
+              Datei vom {{ v.datei_datum ? fmtDatumZeit(v.datei_datum) : '–' }}
+              · eingelesen {{ fmtDatumZeit(v.importiert_am) }}
+              <span v-if="v.importiert_von">von {{ v.importiert_von }}</span>
+            </q-item-label>
+          </q-item-section>
+          <q-item-section side v-if="v.anzahl_spiele != null">
+            <q-badge outline color="primary">{{ v.anzahl_spiele }} Zeilen</q-badge>
+          </q-item-section>
+        </q-item>
+      </q-list>
+    </q-expansion-item>
+
     <template v-if="bericht">
       <div class="row q-col-gutter-sm q-mb-md">
         <div v-for="k in kacheln" :key="k.schluessel" class="col-6 col-sm-4 col-md-2">
@@ -318,6 +339,21 @@ const $q = useQuasar()
 const auth = useAuthStore()
 
 const datei = ref(null)
+
+// Bisherige Läufe (#171): fällt als History des Import-Stands an, beantwortet
+// „wurde diese Datei schon eingelesen?" ohne Blick in die Termine.
+const verlauf = ref([])
+const fmtDatumZeit = (iso) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? '–' : d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
+}
+async function ladeVerlauf() {
+  try {
+    const { data } = await api.get('/api/import/dfbnet/verlauf')
+    verlauf.value = data
+  } catch { verlauf.value = [] }
+}
 const bericht = ref(null)
 const ergebnis = ref(null)
 const busy = ref(false)
@@ -370,11 +406,18 @@ async function senden(commit) {
   form.append('file', datei.value)
   form.append('commit', commit ? 'true' : 'false')
   form.append('benachrichtigen', benachrichtigen.value ? 'true' : 'false')
+  // Änderungsdatum der Datei mitschicken: Der Upload selbst trägt keins, und der
+  // Stand im Terminkalender soll sagen, von wann der SPIELPLAN ist – nicht, wann
+  // jemand Zeit zum Einlesen hatte (#171).
+  if (datei.value?.lastModified) {
+    form.append('datei_datum', new Date(datei.value.lastModified).toISOString())
+  }
   try {
     const { data } = await api.post('/api/import/dfbnet', form)
     if (commit) {
       ergebnis.value = data
       bericht.value = data.bericht
+      await ladeVerlauf()          // der eigene Lauf gehört sofort in die Liste
       $q.notify({ type: 'positive',
         message: `${data.angelegt} angelegt, ${data.aktualisiert} aktualisiert` })
     } else {
@@ -619,11 +662,14 @@ async function zuordnungSpeichern() {
 
 onMounted(() => {
   if (darfZuordnen.value) ladeMannschaften()
+  ladeVerlauf()
 })
 
 // Refresh-Button/Rückkehr zum Fenster zieht die Stammdaten nach – die Vorschau
 // selbst hängt an der hochgeladenen Datei und bleibt bewusst stehen.
-usePageRefresh(() => (darfZuordnen.value ? ladeMannschaften() : undefined))
+usePageRefresh(() => Promise.all([
+  darfZuordnen.value ? ladeMannschaften() : undefined, ladeVerlauf(),
+]))
 
 function uebernehmen() {
   const z = bericht.value?.zusammenfassung ?? {}
