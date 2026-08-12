@@ -22,8 +22,12 @@ from pydantic import ValidationError  # noqa: E402
 from app.models.mitglied import Mitglied  # noqa: E402
 from backend.api import mitglieder as api  # noqa: E402
 
+# allowed_abteilungen gehört zum User-Vertrag, den die Scope-Prüfung der
+# ID-Endpunkte abfragt; None = vereinsweit, also keine Einschränkung.
 _ADMIN = SimpleNamespace(role='admin', username='chef', id=1,
-                         has_permission=lambda p: True)
+                         has_permission=lambda p: True,
+                         has_permission_global=lambda p: True,
+                         allowed_abteilungen=lambda p: None)
 
 
 def _db(existing: Mitglied | None = None, next_nummer: int = 42):

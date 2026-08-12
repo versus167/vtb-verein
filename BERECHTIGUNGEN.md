@@ -48,11 +48,15 @@ Berechnung (`EffectivePermissions.scoped`).
 **Semantik „lenient" vs. „strict":** Die globale Prüfung `has_permission()`
 ist weiterhin lenient – auch ein nur abteilungsgebunden geerbtes Recht erfüllt
 sie (kein Sicherheitsverlust, Funktionsrechte sind bewusste Admin-Vergabe).
-**Durchgesetzt wird der Scope seit Stufe E am Pilot Personen-/Mitgliederliste**
-(`GET /api/personen`, `GET /api/mitglieder`): Wer `personen.read` nur scoped
-besitzt, sieht dort ausschließlich Mitglieder der erlaubten Abteilungen
-(`backend/core/scope.py::visible_mitglied_ids`). Andere Endpunkte (Detail-/
-Schreibzugriffe) bleiben vorerst lenient – schrittweise Ausweitung möglich.
+**Durchgesetzt wird der Scope seit Stufe E im gesamten Personenbereich** – erst
+nur auf den Listen (`GET /api/personen`, `GET /api/mitglieder`), seit dem Ausbau
+auch auf **jedem ID-adressierten Endpunkt** der fünf Personen-Router (Personen,
+Mitglieder, Kontakte, Abteilungs- und Funktionszuordnungen). Wer `personen.read`
+nur scoped besitzt, sieht ausschließlich Mitglieder der erlaubten Abteilungen –
+und kommt an die übrigen auch nicht mehr über deren ID heran. Ohne diesen zweiten
+Schritt wäre die Listenfilterung bloß Kosmetik gewesen: Die ausgeblendeten
+Datensätze blieben einzeln abrufbar und änderbar, samt Änderungshistorie mit
+Adresse, Geburtsdatum und Bankverbindung.
 Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 `allowed_abteilungen()` (alle in `app/models/user.py`).
 
@@ -159,9 +163,25 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
   liest `user.allowed_abteilungen(perm)` → `None` (vereinsweit/Admin → keine
   Einschränkung) oder eine Abteilungsmenge; im scoped Fall eine Query auf
   `mitglied_abteilung` (aktive Zuordnungen) → Menge sichtbarer `mitglied_id`s.
-- **Eingehängt** in `GET /api/mitglieder` und `GET /api/personen`. In der
-  Personenliste werden auch reine Benutzerkonten ohne Mitglied (keine Abteilung)
-  für scoped Leser verborgen.
+- **Eingehängt** in `GET /api/mitglieder`, `GET /api/personen` und den Papierkorb
+  `GET /api/personen/deleted`. In der Personenliste werden auch reine
+  Benutzerkonten ohne Mitglied (keine Abteilung) für scoped Leser verborgen.
+- **Wächter für ID-adressierte Endpunkte** (gleiche Datei):
+  `require_mitglied(user, db, mitglied_id, perm)` und `require_person(…, user_id, …)`
+  werfen 403, wenn das Ziel außerhalb des Scope liegt; `darf_mitglied` ist die
+  Prädikat-Variante mit gezielter EXISTS-Abfrage statt voller ID-Menge. Jeder
+  ID-Endpunkt der fünf Personen-Router trägt einen davon, jeweils mit *dem*
+  Recht, das er ohnehin verlangt (read/write/delete/permissions) — ein Test
+  wacht darüber, dass kein neuer Endpunkt ohne Prüfung dazukommt.
+- **Zuordnungen prüfen die Abteilung, nicht das Mitglied**
+  (`require_abteilung`, eingehängt in `POST/PUT/DELETE
+  /mitglieder/{id}/abteilungen`): Ein Neuzugang hängt noch an keiner Abteilung
+  und wäre sonst für jeden Abteilungsleiter unerreichbar — auch für den, der ihn
+  aufnehmen soll. Umgekehrt verhindert die Prüfung das Verschieben in fremde
+  Abteilungen.
+- **Der Soft-Delete ändert den Scope nicht**: Abteilungs-Zuordnungen überleben
+  das Löschen (s. `PersonService.delete_person`), deshalb greift derselbe Filter
+  auch für Papierkorb und Wiederherstellen.
 - **Sichtbarkeit knüpft an die Abteilungs-Mitgliedschaft des Ziels**, nicht an
   die des Lesers: Ein Abteilungsleiter Fußball sieht die Fußball-Mitglieder,
   unabhängig davon, ob er selbst Fußball-Mitglied ist.

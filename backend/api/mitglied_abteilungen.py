@@ -5,6 +5,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.db.mitglied_abteilung_repository import VALID_STATUS
 from ..core.deps import CurrentUser, DB
+from ..core.scope import require_abteilung, require_mitglied
 from ..core.validation import zuordnungsbeginn_or_400
 
 router = APIRouter(tags=["mitglied-abteilungen"])
@@ -42,12 +43,16 @@ def _require_delete(user):
 @router.get("/mitglieder/{mitglied_id}/abteilungen")
 def list_zuordnungen(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
+    require_mitglied(user, db, mitglied_id)
     return [asdict(z) for z in db.list_mitglied_abteilungen(mitglied_id)]
 
 
 @router.post("/mitglieder/{mitglied_id}/abteilungen", status_code=status.HTTP_201_CREATED)
 def create_zuordnung(mitglied_id: int, data: ZuordnungWrite, user: CurrentUser, db: DB):
     _require_write(user)
+    # Bewusst die Ziel-Abteilung, nicht das Mitglied: Ein Neuzugang hängt noch an
+    # keiner Abteilung und muss trotzdem aufgenommen werden können.
+    require_abteilung(user, data.abteilung_id, Permission.PERSONEN_WRITE)
     if data.status not in VALID_STATUS:
         raise HTTPException(status_code=422, detail=f"Ungültiger Status. Erlaubt: {VALID_STATUS}")
     if db.mitglied_abteilung_exists_active(mitglied_id, data.abteilung_id):
@@ -69,6 +74,7 @@ def update_zuordnung(mitglied_id: int, zuordnung_id: int, data: ZuordnungUpdate,
     zuordnung = db.get_mitglied_abteilung(zuordnung_id)
     if zuordnung is None or zuordnung.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Zuordnung nicht gefunden")
+    require_abteilung(user, zuordnung.abteilung_id, Permission.PERSONEN_WRITE)
     zuordnungsbeginn_or_400(db, mitglied_id, data.von)
     success = db.update_mitglied_abteilung(
         zuordnung_id, data.status, data.von, data.bis,
@@ -85,4 +91,5 @@ def delete_zuordnung(mitglied_id: int, zuordnung_id: int, user: CurrentUser, db:
     zuordnung = db.get_mitglied_abteilung(zuordnung_id)
     if zuordnung is None or zuordnung.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Zuordnung nicht gefunden")
+    require_abteilung(user, zuordnung.abteilung_id, Permission.PERSONEN_DELETE)
     db.mark_mitglied_abteilung_deleted(zuordnung_id, deleted_by=user.username)

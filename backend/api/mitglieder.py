@@ -4,7 +4,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
-from ..core.scope import visible_mitglied_ids
+from ..core.scope import require_mitglied, visible_mitglied_ids
 from ..core.validation import iban_or_422
 
 router = APIRouter(prefix="/mitglieder", tags=["mitglieder"])
@@ -102,6 +102,7 @@ def list_mitglieder(user: CurrentUser, db: DB):
 @router.get("/{mitglied_id}")
 def get_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
+    require_mitglied(user, db, mitglied_id)
     m = db.get_mitglied(mitglied_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
@@ -128,6 +129,7 @@ def create_mitglied(data: MitgliedCreate, user: CurrentUser, db: DB):
 @router.put("/{mitglied_id}")
 def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     existing = db.get_mitglied(mitglied_id)
@@ -148,6 +150,7 @@ def update_mitglied(mitglied_id: int, data: MitgliedCreate, user: CurrentUser, d
 @router.delete("/{mitglied_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     _require_delete(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_DELETE)
     existing = db.get_mitglied(mitglied_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
