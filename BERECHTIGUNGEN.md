@@ -2,8 +2,9 @@
 
 > Zielbild und Stufenplan für den Umbau des Berechtigungssystems.
 > Stand: Stufen A–E umgesetzt (Schema v36, funktionsbasierte Rechte, Funktions-
-> und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung am Pilot
-> Personen-/Mitgliederliste). Der Umbau aus Ticket #22 ist damit abgeschlossen.
+> und persönliche Matrix, Rollen-Ablösung, Scope-Durchsetzung im gesamten
+> Personenbereich). Der Umbau aus Ticket #22 ist damit abgeschlossen; später
+> ergänzt um die Delegationsregel (niemand vergibt, was er selbst nicht hat).
 
 ## Zielbild
 
@@ -48,13 +49,46 @@ Berechnung (`EffectivePermissions.scoped`).
 **Semantik „lenient" vs. „strict":** Die globale Prüfung `has_permission()`
 ist weiterhin lenient – auch ein nur abteilungsgebunden geerbtes Recht erfüllt
 sie (kein Sicherheitsverlust, Funktionsrechte sind bewusste Admin-Vergabe).
-**Durchgesetzt wird der Scope seit Stufe E am Pilot Personen-/Mitgliederliste**
-(`GET /api/personen`, `GET /api/mitglieder`): Wer `personen.read` nur scoped
-besitzt, sieht dort ausschließlich Mitglieder der erlaubten Abteilungen
-(`backend/core/scope.py::visible_mitglied_ids`). Andere Endpunkte (Detail-/
-Schreibzugriffe) bleiben vorerst lenient – schrittweise Ausweitung möglich.
+**Durchgesetzt wird der Scope seit Stufe E im gesamten Personenbereich** – erst
+nur auf den Listen (`GET /api/personen`, `GET /api/mitglieder`), seit dem Ausbau
+auch auf **jedem ID-adressierten Endpunkt** der fünf Personen-Router (Personen,
+Mitglieder, Kontakte, Abteilungs- und Funktionszuordnungen). Wer `personen.read`
+nur scoped besitzt, sieht ausschließlich Mitglieder der erlaubten Abteilungen –
+und kommt an die übrigen auch nicht mehr über deren ID heran. Ohne diesen zweiten
+Schritt wäre die Listenfilterung bloß Kosmetik gewesen: Die ausgeblendeten
+Datensätze blieben einzeln abrufbar und änderbar, samt Änderungshistorie mit
+Adresse, Geburtsdatum und Bankverbindung.
 Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 `allowed_abteilungen()` (alle in `app/models/user.py`).
+
+### Delegationsregel: Niemand vergibt, was er selbst nicht hat
+
+Vier Türen verändern die Rechte eines anderen Users. Zwei sind seit jeher
+Admin-only — die **Funktions-Berechtigungsmatrix**
+(`PUT /funktionen/{id}/permissions`) und die **Admin-Rolle**
+(`authorize_role_assignment`). Die beiden übrigen bewacht
+`backend/core/authz.py::authorize_permission_delegation`:
+
+- **Individuelle Grants** (`PUT /users/{id}/permissions`, Gate
+  `personen.permissions`): Ein Grant wirkt vereinsweit, also muss der Handelnde
+  das Recht **vereinsweit** besitzen. Geprüft wird nur, was *hinzukommt* — sonst
+  wäre ein User mit einem höheren Bestands-Grant für jeden Bearbeiter
+  unspeicherbar, auch bei einer ganz anderen Änderung. **Denies** fallen nicht
+  unter die Regel: Wer Rechte entzieht, verschafft sich keine.
+- **Funktionszuordnung** (`POST/PUT /mitglieder/{id}/funktionen`, Gate
+  `personen.write`): Eine Funktion reicht ihre Rechte an den Träger weiter,
+  vergeben darf sie deshalb nur, wer sie selbst hat. Bei abteilungsgebundener
+  Zuordnung genügt das Recht für **diese** Abteilung, bei vereinsweiter braucht
+  es das vereinsweite.
+
+Zwei Eigenschaften fallen dabei von selbst ab: **Admins** bestehen die Prüfung
+ohne Sonderfall (sie haben jedes Recht), und **Funktionen ohne hinterlegte
+Rechte** bleiben frei zuordenbar (leere Menge). Rein beschreibende Funktionen —
+Vorstand, Kampfrichter, Platzwart — kosten also nichts.
+
+Der Preis: Wer Rechte verteilen soll, die er selbst nicht braucht, muss sie
+trotzdem haben oder Admin sein. Das ist bewusst so gewählt — die Alternative
+wäre eine Rolle, die unbegrenzt Rechte erzeugt, ohne selbst welche zu tragen.
 
 ### Was NICHT über dieses System läuft
 
@@ -79,11 +113,11 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 
 ### Bekannte, akzeptierte Punkte
 
-- **Selbst-Eskalation über Funktions-Zuweisung**: Wer `personen.write` hat,
-  kann Mitgliedern (auch sich selbst) Funktionen zuweisen und erbt deren
-  Rechte. Bewusst akzeptiert; die Funktions-Matrix selbst pflegt nur der
-  Admin. Gegenmaßnahme bei Bedarf: Zuweisung rechte-tragender Funktionen an
-  `personen.permissions` knüpfen.
+- **Selbst-Eskalation über Funktions-Zuweisung** (behoben, s. Delegationsregel
+  oben): War lange bewusst akzeptiert — wer `personen.write` hatte, konnte
+  Mitgliedern und sich selbst Funktionen zuweisen und deren Rechte erben. Seit
+  `authorize_permission_delegation` geht das nur noch für Rechte, die der
+  Handelnde selbst besitzt; Funktionen ohne Rechte bleiben frei zuordenbar.
 - **Admin-Vergabe** (umgesetzt, Stufe D): Das Admin-Flag darf nur noch von
   Admins gesetzt oder entzogen werden (`backend/core/authz.py::authorize_role_assignment`,
   eingehängt in alle User-Create/Update-Endpoints). Reine Daten-Änderungen an
@@ -107,7 +141,7 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
 | **B** | Funktions-Matrix-UI: GET/PUT `/api/funktionen/{id}/permissions` (PUT hart Admin), Matrix-Komponente aus UserPermissionsPage extrahieren, Dialog im Einstellungen-Tab „Funktionen". | ✅ umgesetzt |
 | **C** | Persönlicher Berechtigungsscreen mit Herkunftsanzeige („geerbt von Funktion X (Abteilung Y)" / „Sockel") und Tri-State-Bedienung (Grant/Deny); PUT-Format `{grants, denies}`. | ✅ umgesetzt |
 | **D** | Rollen-Ablösung (v36): nur noch `admin`/`mitglied`; `defaults_for_role` entfällt (Bestand bleibt als Grants erhalten – Permissions wurden schon immer beim Anlegen materialisiert, es gibt keinen Rollen-Fallback zur Laufzeit). Harte `role=='admin'`-Checks ersetzt: `funktionen.verwalten`, `kassen.verwalten`, Ticket-Bereiche/Kategorien → `tickets.bereiche_verwalten`, Fremdkommentar-Delete → `tickets.delete`. Admin-Flag-Vergabe nur durch Admins. | ✅ umgesetzt |
-| **E** | Scoping-Durchsetzung, Pilot Personen-/Mitgliederliste: bei nur-scoped `personen.read` Filterung auf Mitglieder der erlaubten Abteilungen via `allowed_abteilungen()`. | ✅ umgesetzt |
+| **E** | Scoping-Durchsetzung: erst Pilot Personen-/Mitgliederliste (Filterung via `allowed_abteilungen()`), dann Ausbau auf **alle ID-adressierten Endpunkte** der fünf Personen-Router (`require_mitglied`/`require_person`/`require_abteilung`) — ohne den zweiten Schritt war die Listenfilterung über die ID umgehbar. | ✅ umgesetzt |
 
 ## Technische Referenz (Stufe A)
 
@@ -159,9 +193,25 @@ Bausteine: `has_permission_global()`, `has_permission_for_abteilung()`,
   liest `user.allowed_abteilungen(perm)` → `None` (vereinsweit/Admin → keine
   Einschränkung) oder eine Abteilungsmenge; im scoped Fall eine Query auf
   `mitglied_abteilung` (aktive Zuordnungen) → Menge sichtbarer `mitglied_id`s.
-- **Eingehängt** in `GET /api/mitglieder` und `GET /api/personen`. In der
-  Personenliste werden auch reine Benutzerkonten ohne Mitglied (keine Abteilung)
-  für scoped Leser verborgen.
+- **Eingehängt** in `GET /api/mitglieder`, `GET /api/personen` und den Papierkorb
+  `GET /api/personen/deleted`. In der Personenliste werden auch reine
+  Benutzerkonten ohne Mitglied (keine Abteilung) für scoped Leser verborgen.
+- **Wächter für ID-adressierte Endpunkte** (gleiche Datei):
+  `require_mitglied(user, db, mitglied_id, perm)` und `require_person(…, user_id, …)`
+  werfen 403, wenn das Ziel außerhalb des Scope liegt; `darf_mitglied` ist die
+  Prädikat-Variante mit gezielter EXISTS-Abfrage statt voller ID-Menge. Jeder
+  ID-Endpunkt der fünf Personen-Router trägt einen davon, jeweils mit *dem*
+  Recht, das er ohnehin verlangt (read/write/delete/permissions) — ein Test
+  wacht darüber, dass kein neuer Endpunkt ohne Prüfung dazukommt.
+- **Zuordnungen prüfen die Abteilung, nicht das Mitglied**
+  (`require_abteilung`, eingehängt in `POST/PUT/DELETE
+  /mitglieder/{id}/abteilungen`): Ein Neuzugang hängt noch an keiner Abteilung
+  und wäre sonst für jeden Abteilungsleiter unerreichbar — auch für den, der ihn
+  aufnehmen soll. Umgekehrt verhindert die Prüfung das Verschieben in fremde
+  Abteilungen.
+- **Der Soft-Delete ändert den Scope nicht**: Abteilungs-Zuordnungen überleben
+  das Löschen (s. `PersonService.delete_person`), deshalb greift derselbe Filter
+  auch für Papierkorb und Wiederherstellen.
 - **Sichtbarkeit knüpft an die Abteilungs-Mitgliedschaft des Ziels**, nicht an
   die des Lesers: Ein Abteilungsleiter Fußball sieht die Fußball-Mitglieder,
   unabhängig davon, ob er selbst Fußball-Mitglied ist.

@@ -6,6 +6,7 @@ from typing import Optional
 from app.models.permission import Permission
 from app.db.mitglied_kontakt_repository import VALID_TYPEN, KontaktPrimaerRegelError
 from ..core.deps import CurrentUser, DB
+from ..core.scope import require_mitglied
 
 router = APIRouter(tags=["mitglied-kontakte"])
 
@@ -44,12 +45,14 @@ def _validate_typ(typ: str):
 @router.get("/mitglieder/{mitglied_id}/kontakte")
 def list_kontakte(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
+    require_mitglied(user, db, mitglied_id)
     return [asdict(k) for k in db.list_mitglied_kontakte(mitglied_id)]
 
 
 @router.post("/mitglieder/{mitglied_id}/kontakte", status_code=status.HTTP_201_CREATED)
 def create_kontakt(mitglied_id: int, data: KontaktWrite, user: CurrentUser, db: DB):
     _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     _validate_typ(data.typ)
     if not data.wert.strip():
         raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
@@ -68,6 +71,7 @@ def create_kontakt(mitglied_id: int, data: KontaktWrite, user: CurrentUser, db: 
 def update_kontakt(mitglied_id: int, kontakt_id: int, data: KontaktUpdate,
                    user: CurrentUser, db: DB):
     _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     _validate_typ(data.typ)
     if not data.wert.strip():
         raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
@@ -89,6 +93,7 @@ def update_kontakt(mitglied_id: int, kontakt_id: int, data: KontaktUpdate,
 @router.put("/mitglieder/{mitglied_id}/kontakte/{kontakt_id}/primaer")
 def set_kontakt_primaer(mitglied_id: int, kontakt_id: int, user: CurrentUser, db: DB):
     _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     eintrag = db.get_mitglied_kontakt(kontakt_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Kontakt nicht gefunden")
@@ -104,6 +109,7 @@ def set_kontakt_primaer(mitglied_id: int, kontakt_id: int, user: CurrentUser, db
 @router.delete("/mitglieder/{mitglied_id}/kontakte/{kontakt_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_kontakt(mitglied_id: int, kontakt_id: int, user: CurrentUser, db: DB):
     _require_delete(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_DELETE)
     eintrag = db.get_mitglied_kontakt(kontakt_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Kontakt nicht gefunden")

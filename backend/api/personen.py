@@ -11,7 +11,7 @@ from app.services.person_service import PersonService
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_role_assignment
-from ..core.scope import visible_mitglied_ids
+from ..core.scope import require_mitglied, require_person, visible_mitglied_ids
 from ..core.validation import iban_or_422
 from .auth import _client_ip, _ts_iso
 
@@ -483,6 +483,10 @@ def list_deleted_personen(user: CurrentUser, db: DB):
     """Papierkorb: soft-gelöschte Personen (User inkl. Mitglied) sowie gelöschte
     Mitglieder ohne Login-Account. Erfordert Löschberechtigung (Papierkorb-Verwaltung)."""
     _require_delete(user)
+    # Gleicher Abteilungs-Scope wie die lebende Liste: Der Papierkorb zeigt
+    # dieselben Stammdaten, nur mit Löschvermerk. Die Zuordnungen überleben den
+    # Soft-Delete (s. PersonService.delete_person), der Filter greift also auch hier.
+    visible = visible_mitglied_ids(user, db, Permission.PERSONEN_DELETE)
     with db.conn.cursor() as cur:
         cur.execute("""
             SELECT * FROM (
@@ -543,6 +547,8 @@ def list_deleted_personen(user: CurrentUser, db: DB):
                 created_by=r['m_created_by'], updated_at=r['m_updated_at'],
                 updated_by=r['m_updated_by'],
             )
+        if visible is not None and (m_obj is None or m_obj.id not in visible):
+            continue  # außerhalb des erlaubten Abteilungs-Scopes
         # Abteilungen/Funktionen im Papierkorb nicht nötig → leere Listen
         person = _person_row(u_obj, m_obj, [], [])
         person['deleted_at'] = r['del_at']
@@ -819,6 +825,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
     # Account-Daten (Benutzername/E-Mail/aktiv) ändern: nur mit dem Recht,
     # Berechtigungen zu vergeben – wie das Anlegen von Login-Accounts.
     _require_permissions(user)
+    require_person(user, db, user_id, Permission.PERSONEN_PERMISSIONS)
     target = db.get_user_by_id(user_id)
     if target is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
@@ -848,6 +855,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
 @router.put("/{user_id}/mitglied")
 def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     _require_write(user)
+    require_person(user, db, user_id, Permission.PERSONEN_WRITE)
     _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     m = db.get_mitglied_by_user_id(user_id)
@@ -894,6 +902,9 @@ def update_person_mitglied(user_id: int, data: PersonMitgliedUpdate, user: Curre
 def create_mitglied_fuer_user(user_id: int, data: PersonMitgliedUpdate, user: CurrentUser, db: DB):
     """Verknüpft einen bestehenden User nachträglich mit einem Mitglied-Datensatz."""
     _require_write(user)
+    # Ein Konto ohne Mitglied hat keine Abteilung – für abteilungsgebundene
+    # Bearbeiter ist es unsichtbar und bleibt es auch hier.
+    require_person(user, db, user_id, Permission.PERSONEN_WRITE)
     _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     u = db.get_user_by_id(user_id)
@@ -935,6 +946,7 @@ def update_mitglied_direkt(mitglied_id: int, data: PersonMitgliedUpdate, user: C
     den user_id-basierten Endpoint /{user_id}/mitglied erreichbar sind.
     """
     _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
     _require_eintrittsdatum(data)
     data.iban = iban_or_422(data.iban)
     try:
@@ -981,6 +993,7 @@ def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate
                                 user: CurrentUser, db: DB):
     """Legt einen Login-Account für ein bestehendes Mitglied ohne User-Konto an."""
     _require_permissions(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_PERMISSIONS)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:
@@ -1018,6 +1031,7 @@ def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_person(user_id: int, user: CurrentUser, db: DB):
     _require_delete(user)
+    require_person(user, db, user_id, Permission.PERSONEN_DELETE)
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="Eigener Account kann nicht gelöscht werden")
     try:
@@ -1029,6 +1043,7 @@ def delete_person(user_id: int, user: CurrentUser, db: DB):
 @router.delete("/mitglied/{mitglied_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
     _require_delete(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_DELETE)
     m = db.get_mitglied(mitglied_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
@@ -1041,6 +1056,7 @@ def delete_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
 def restore_person(user_id: int, user: CurrentUser, db: DB):
     """Papierkorb: gelöschte Person (User + verknüpftes Mitglied) wiederherstellen."""
     _require_delete(user)
+    require_person(user, db, user_id, Permission.PERSONEN_DELETE)
     PersonService(db).restore_person(user_id, restored_by=user.username)
     u = db.get_user_by_id(user_id)
     if u is None:
@@ -1055,6 +1071,7 @@ def restore_person(user_id: int, user: CurrentUser, db: DB):
 def restore_mitglied_ohne_user(mitglied_id: int, user: CurrentUser, db: DB):
     """Papierkorb: gelöschtes Mitglied ohne Login-Account wiederherstellen."""
     _require_delete(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_DELETE)
     ok = PersonService(db).restore_mitglied_ohne_user(mitglied_id, restored_by=user.username)
     if not ok:
         raise HTTPException(status_code=409, detail="Mitglied ist nicht gelöscht oder bereits wiederhergestellt")
@@ -1142,6 +1159,7 @@ def _mitglied_mannschaft_history(db, mitglied_id: int) -> list[dict]:
 @router.get("/{user_id}/history")
 def get_person_history(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)
+    require_person(user, db, user_id)
     u = db.get_user_by_id(user_id)
     if u is None:
         raise HTTPException(status_code=404, detail="Person nicht gefunden")
@@ -1188,6 +1206,7 @@ def get_mitglied_history_direkt(mitglied_id: int, user: CurrentUser, db: DB):
     so können auch Mitglieder ohne Login-Konto einen Verlauf bekommen.
     """
     _require_read(user)
+    require_mitglied(user, db, mitglied_id)
     try:
         m = db.get_mitglied(mitglied_id)
     except KeyError:
