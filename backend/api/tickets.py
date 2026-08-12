@@ -24,7 +24,7 @@ from app.models.ticket import (
 )
 from app.services.ticket_service import TicketNichtGefundenError, UngueltigerStatusWechselError
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
-from .uploads import anhang_antwort
+from .uploads import anhang_antwort, lese_upload
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -590,8 +590,8 @@ async def upload_anhang(
     if not _can_write(ticket, user, db):
         raise HTTPException(status_code=403, detail="Kein Schreibzugriff auf dieses Ticket.")
 
-    inhalt = await file.read()
     try:
+        inhalt = await lese_upload(file, db.anhang_service.max_bytes)
         anhang = db.tickets.add_anhang(
             ticket_id=ticket_id,
             kommentar_id=None,

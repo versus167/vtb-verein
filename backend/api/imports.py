@@ -12,11 +12,28 @@ from app.services.dfbnet_import_service import (
     dry_run as dfbnet_dry_run,
     uebernehmen as dfbnet_uebernehmen,
 )
+from app.services.anhang_service import DateiZuGrossError
+from ..core.config import settings
 from ..core.deps import CurrentUser, DB
+from .uploads import lese_upload
 
 router = APIRouter(prefix="/import", tags=["import"])
 
 logger = logging.getLogger(__name__)
+
+
+async def _lese_import(file: UploadFile) -> bytes:
+    """Import-Datei begrenzt einlesen (s. lese_upload) und die Grenze als 422 melden.
+
+    Eigene, großzügigere Grenze als bei den Anhängen: Ein Jahresexport des
+    Zutrittslogs oder eine Mitgliederliste ist größer als ein Belegfoto. Sie soll
+    den Alltag nicht begrenzen, sondern verhindern, dass ein einzelner Upload den
+    Prozess über sein Speicherlimit drückt.
+    """
+    try:
+        return await lese_upload(file, settings.MAX_IMPORT_MB * 1024 * 1024)
+    except DateiZuGrossError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.post("/spg")
@@ -32,7 +49,7 @@ async def import_spg(
     if not user.has_permission(Permission.SYSTEM_CONFIG):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Nur Administratoren dürfen importieren")
-    data = await file.read()
+    data = await _lese_import(file)
     if not data:
         raise HTTPException(status_code=422, detail="Leere Datei")
     try:
@@ -62,7 +79,7 @@ async def import_linear(
     if not user.has_permission(Permission.SYSTEM_CONFIG):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Nur Administratoren dürfen importieren")
-    data = await file.read()
+    data = await _lese_import(file)
     if not data:
         raise HTTPException(status_code=422, detail="Leere Datei")
     try:
@@ -97,7 +114,7 @@ async def import_dfbnet(
     if not user.has_permission(Permission.TERMINE_VERWALTEN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Keine Berechtigung, Spielpläne zu importieren")
-    daten = await file.read()
+    daten = await _lese_import(file)
     if not daten:
         raise HTTPException(status_code=422, detail="Leere Datei")
 

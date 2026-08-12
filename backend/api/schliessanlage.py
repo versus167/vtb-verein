@@ -23,16 +23,34 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 
+from app.services.anhang_service import DateiZuGrossError
+
 from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.zutritt_import_service import ImportFehler, run_import
 from app.services import zutritt_auswertung_service
 from app.services.ttlock_client import TTLockError
+from ..core.config import settings
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_schloss_ids, darf_schloss
 from .auth import _client_ip
+from .uploads import lese_upload
 
 router = APIRouter(prefix="/schliessanlage", tags=["schliessanlage"])
+
+
+async def _lese_import(file: UploadFile) -> bytes:
+    """Import-Datei begrenzt einlesen (s. lese_upload) und die Grenze als 422 melden.
+
+    Eigene, großzügigere Grenze als bei den Anhängen: Ein Jahresexport des
+    Zutrittslogs oder eine Mitgliederliste ist größer als ein Belegfoto. Sie soll
+    den Alltag nicht begrenzen, sondern verhindern, dass ein einzelner Upload den
+    Prozess über sein Speicherlimit drückt.
+    """
+    try:
+        return await lese_upload(file, settings.MAX_IMPORT_MB * 1024 * 1024)
+    except DateiZuGrossError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 def _require(user, perm: str, was: str) -> None:
@@ -340,7 +358,7 @@ async def log_import(request: Request, user: CurrentUser, db: DB,
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Keine Berechtigung: Der Import-Bericht zeigt die Nutzung – dafür ist "
                    "das Zutrittsprotokoll-Recht (vereinsweit) nötig")
-    daten = await file.read()
+    daten = await _lese_import(file)
     if not daten:
         raise HTTPException(status_code=422, detail="Leere Datei")
     try:

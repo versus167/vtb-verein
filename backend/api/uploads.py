@@ -1,4 +1,4 @@
-"""Ausliefern von Anhang-Dateien — die gemeinsame Antwort für alle Anhang-Arten.
+"""Anhang-Dateien entgegennehmen und ausliefern — gemeinsam für alle Anhang-Arten.
 
 Hier liegt **kein Endpunkt** mehr. Der frühere `/api/uploads/{stored_name}` prüfte
 nur die Anmeldung, nicht die Berechtigung am zugehörigen Ticket/Beleg — und die
@@ -12,10 +12,48 @@ Anhang-Liste daneben — es gibt also keine zweite Rechtelogik, die auseinanderl
 kann. Diese Datei steuert nur noch die Datei-Antwort selbst bei.
 """
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.services.anhang_service import ERLAUBTE_MIME_TYPEN
+from app.services.anhang_service import ERLAUBTE_MIME_TYPEN, DateiZuGrossError
+
+# Lesehäppchen beim Entgegennehmen. Klein genug, dass die Grenze früh greift,
+# groß genug, dass ein 10-MB-Beleg nicht in tausenden Einzelschritten ankommt.
+_HAPPEN = 64 * 1024
+
+
+async def lese_upload(file: UploadFile, max_bytes: int) -> bytes:
+    """Upload gestückelt einlesen und bei Überschreitung sofort abbrechen.
+
+    ``await file.read()`` ohne Argument zieht die komplette Datei in einem Zug in
+    den Speicher — und zwar *bevor* irgendeine Größenprüfung laufen kann. Starlette
+    hilft dabei nicht: Sein ``max_part_size`` gilt nur für Textfelder, Datei-Parts
+    wandern unbegrenzt in eine Temp-Datei. Ohne Grenze im Reverse-Proxy gäbe es
+    also gar keine, und ein einzelner großer Upload könnte den Container über sein
+    Speicherlimit drücken.
+
+    Hier wird deshalb häppchenweise gelesen und beim ersten Byte über der Grenze
+    abgebrochen. Der Speicherbedarf bleibt damit auf ``max_bytes`` plus ein Häppchen
+    beschränkt, unabhängig davon, was vor der App steht.
+
+    Wirft :class:`DateiZuGrossError` — die Upload-Endpunkte übersetzen den bereits
+    in ein 422. Die Meldung nennt nur die Grenze, nicht die tatsächliche Größe: Die
+    ist an dieser Stelle bewusst unbekannt, weil nicht zu Ende gelesen wird.
+
+    Hinweis: Das Zwischenpuffern **auf Platte** beim Multipart-Parsen passiert
+    vorher und bleibt davon unberührt — dagegen hilft nur die Grenze im Proxy
+    (`client_max_body_size` o. ä.). Beides zusammen, nicht eins statt des anderen.
+    """
+    stuecke: list[bytes] = []
+    gesamt = 0
+    while happen := await file.read(_HAPPEN):
+        gesamt += len(happen)
+        if gesamt > max_bytes:
+            raise DateiZuGrossError(
+                f"Datei ist zu groß (mehr als {max_bytes // (1024 * 1024)} MB)."
+            )
+        stuecke.append(happen)
+    return b"".join(stuecke)
 
 # Nur Bilder gehen inline raus (Vorschau im Browser). Alles andere — auch PDF —
 # als Download: Ein PDF im Browser-Kontext zu rendern bringt hier keinen Gewinn,

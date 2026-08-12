@@ -11,6 +11,14 @@ class Settings:
     DATABASE_URL: str = os.getenv("VTB_DATABASE_URL", "")
     UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", str(_ROOT / "vtb_verein" / "uploads"))
 
+    # Obergrenze für Import-Dateien (CSV/Excel: Mitglieder, Spielplan, Zutrittslog).
+    # Bewusst getrennt von VTB_MAX_UPLOAD_MB (Anhänge, 10 MB) und deutlich
+    # großzügiger: Ein Jahresexport des Zutrittslogs ist größer als ein Belegfoto,
+    # und ein zu enges Limit fällt erst beim Import auf, wenn man es eilig hat.
+    # Sie soll nicht den Alltag begrenzen, sondern verhindern, dass ein einzelner
+    # Upload den Prozess über sein Speicherlimit drückt.
+    MAX_IMPORT_MB: int = int(os.getenv("VTB_MAX_IMPORT_MB", "25"))
+
     # Branding-Ordner: überlagert die ausgelieferten Icons je Datei (s. main.py).
     # Ein Image für alle Instanzen — was ein Verein selbst mitbringt, legt er hier
     # ab; alles Übrige kommt weiter aus dem Build. Der VTB zeigt auf den im Image
