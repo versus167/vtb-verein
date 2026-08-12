@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 93
+SCHEMA_VERSION = 94
 
 
 # ---------------------------------------------------------------------------
@@ -2983,6 +2983,62 @@ _MANNSCHAFT_DFBNET_TRIGGERS = (
      'fn_mannschaft_dfbnet_alias_audit_update'),
 )
 
+# ============================================================================
+# Stand des Spielplan-Imports (Schema v94, #171)
+# ----------------------------------------------------------------------------
+# Einzeiliger Laufzeitstatus (Muster ttlock_konto): Wer den Terminkalender ansieht,
+# soll erkennen, von wann der Spielplan ist. `datei_datum` ist das Änderungsdatum
+# der eingelesenen CSV — das ist der Stand, den der Anwender meint; der Zeitpunkt
+# des Einlesens sagt nur, wann jemand Zeit hatte. Der Server sieht beim Upload kein
+# Dateidatum (multipart trägt keins), deshalb reicht es der Browser mit.
+#
+# Die Live-Zeile trägt den aktuellen Stand; jeder Import bumpt `version` und schreibt
+# damit über den Audit-Trigger einen History-Eintrag. So entsteht nebenbei das
+# Import-Protokoll — wer wie oft eingelesen hat, ist im Zweifel nachvollziehbar.
+# Kein Soft-Delete (die eine Zeile wird nie gelöscht, nur überschrieben), deshalb
+# keine PruneEntity; die wachsende History läuft als Protokoll über die LOG_REGISTRY.
+_DFBNET_IMPORT_STAND_COLS = (
+    "id, version, dateiname, datei_datum, importiert_am, importiert_von, anzahl_spiele, "
+    "created_at, created_by, updated_at, updated_by"
+)
+_DFBNET_IMPORT_STAND_VALS = ", ".join(
+    "NEW." + c.strip() for c in _DFBNET_IMPORT_STAND_COLS.split(","))
+
+_DDL_DFBNET_IMPORT_STAND = """
+    CREATE TABLE IF NOT EXISTS dfbnet_import_stand (
+      id             SERIAL PRIMARY KEY,
+      dateiname      TEXT,
+      datei_datum    TIMESTAMPTZ,
+      importiert_am  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      importiert_von TEXT,
+      anzahl_spiele  INTEGER,
+      version        INTEGER NOT NULL DEFAULT 1,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by     TEXT,
+      updated_at     TIMESTAMPTZ,
+      updated_by     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS dfbnet_import_stand_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      dateiname TEXT, datei_datum TIMESTAMPTZ,
+      importiert_am TIMESTAMPTZ, importiert_von TEXT, anzahl_spiele INTEGER,
+      created_at TIMESTAMPTZ, created_by TEXT, updated_at TIMESTAMPTZ, updated_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfbnet_import_stand_history_zeit
+      ON dfbnet_import_stand_history(importiert_am DESC);
+"""
+
+_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT, _FN_DFBNET_IMPORT_STAND_AUDIT_UPDATE = _audit_fns(
+    "dfbnet_import_stand", _DFBNET_IMPORT_STAND_COLS, _DFBNET_IMPORT_STAND_VALS)
+
+_DFBNET_IMPORT_STAND_TRIGGERS = (
+    ('trig_dfbnet_import_stand_audit_insert', 'INSERT', 'dfbnet_import_stand',
+     'fn_dfbnet_import_stand_audit_insert'),
+    ('trig_dfbnet_import_stand_audit_update', 'UPDATE', 'dfbnet_import_stand',
+     'fn_dfbnet_import_stand_audit_update'),
+)
+
 
 # ============================================================================
 # Termin-Abweichungen (Schema v84, Ticket #95, Etappe 4)
@@ -3342,6 +3398,7 @@ class Database:
             91: self._migrate_v90_to_v91,
             92: self._migrate_v91_to_v92,
             93: self._migrate_v92_to_v93,
+            94: self._migrate_v93_to_v94,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7016,6 +7073,36 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 93 WHERE id = 1")
 
+    def _migrate_v93_to_v94(self) -> None:
+        """Stand des Spielplan-Imports festhalten (#171).
+
+        Im Terminkalender war nicht zu erkennen, von wann der Spielplan stammt –
+        ob eine Verlegung schon drin ist oder der letzte Import zwei Monate alt
+        ist, wusste nur, wer ihn selbst gemacht hat. Die Tabelle hält genau eine
+        Zeile: Name und Änderungsdatum der zuletzt eingelesenen Datei plus wer
+        sie wann übernommen hat.
+
+        Wie fast überall im Haus hängt eine History daran: Jeder Import bumpt
+        `version`, der Audit-Trigger schreibt den vorigen Stand fort. Damit ist
+        die eine Zeile zugleich ein Import-Protokoll – wer wie oft eingelesen
+        hat, lässt sich im Zweifel nachsehen.
+
+        Bestandsdaten gibt es nicht nachzutragen – für frühere Importe wurde
+        nichts festgehalten, und ein geratener Zeitpunkt wäre schlechter als
+        keiner. Bis zum nächsten Import bleibt die Anzeige deshalb leer.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_DFBNET_IMPORT_STAND)
+            cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
+            cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_UPDATE)
+            for name, event, table, fn in _DFBNET_IMPORT_STAND_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 94 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8372,6 +8459,8 @@ class Database:
         for sql in _MANNSCHAFT_DFBNET_SQL:
             cur.execute(sql)
         cur.execute(_DDL_MANNSCHAFT_DFBNET_ALIAS)
+        # Stand des letzten Spielplan-Imports (Schema v94, #171) – geteilt mit v93→v94.
+        cur.execute(_DDL_DFBNET_IMPORT_STAND)
         # Schnappschuss des Importstands (Schema v83) – geteilt mit v82→v83
         for sql in _TERMINE_EXTERN_STAND_SQL:
             cur.execute(sql)
@@ -8577,6 +8666,8 @@ class Database:
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
         for fn_sql in _CHIP_GRUPPE_FNS:
             cur.execute(fn_sql)
+        cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
+        cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_UPDATE)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_AUDIT_INSERT)
@@ -9221,6 +9312,7 @@ class Database:
             *_TERMIN_SERIE_TRIGGERS,
             *_SPIELSTAETTE_TRIGGERS,
             *_MANNSCHAFT_DFBNET_TRIGGERS,
+            *_DFBNET_IMPORT_STAND_TRIGGERS,
             *_TERMIN_ABWEICHUNG_TRIGGERS,
             *_KALENDER_ABO_TRIGGERS,
         ]:

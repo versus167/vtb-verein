@@ -50,24 +50,38 @@
       </div>
     </div>
 
+    <!-- Sonst wirkt die Liste unvollständig: Ohne diesen Hinweis sähe es aus, als
+         kenne die App nur eine Handvoll Bereiche (#170). -->
+    <div v-if="ausgeblendeteBereiche" class="text-caption text-grey-7 text-right q-mb-xs">
+      {{ ausgeblendeteBereiche === 1 ? '1 Bereich ohne Löschbares ausgeblendet'
+        : ausgeblendeteBereiche + ' Bereiche ohne Löschbares ausgeblendet' }}
+    </div>
+
     <q-table
       flat bordered
-      :rows="rows"
+      :rows="sichtbareRows"
       :columns="columns"
       row-key="name"
       :loading="loading"
       :filter="filter"
       :pagination="{ rowsPerPage: 0, sortBy: 'gruppe' }"
       hide-bottom
-      no-data-label="Keine Bereiche konfiguriert"
+      :no-data-label="nurLoeschbares && !filter
+        ? 'In keinem Bereich ist derzeit etwas zu löschen'
+        : 'Keine Bereiche konfiguriert'"
     >
       <template #top-right>
-        <q-input
-          v-model="filter" dense outlined clearable debounce="200"
-          placeholder="Bereich suchen"
-        >
-          <template #prepend><q-icon name="search" /></template>
-        </q-input>
+        <div class="row items-center q-gutter-md">
+          <!-- Die Tabelle listet jeden Bereich, auch wenn dort seit Monaten nichts
+               anfällt – bei ~90 Zeilen sucht man das Wenige mit der Lupe (#170). -->
+          <q-toggle v-model="nurLoeschbares" dense label="Nur mit Löschbarem" />
+          <q-input
+            v-model="filter" dense outlined clearable debounce="200"
+            placeholder="Bereich suchen"
+          >
+            <template #prepend><q-icon name="search" /></template>
+          </q-input>
+        </div>
       </template>
 
       <template #body-cell-gruppe="props">
@@ -207,6 +221,17 @@ const nothingToDelete = computed(() =>
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
 
 const filter = ref('')
+
+// #170: Standardmäßig nur Bereiche zeigen, in denen tatsächlich etwas anfällt.
+// Wer die Aufbewahrungsfristen pflegen will, schaltet um oder sucht den Bereich –
+// deshalb hebt eine Sucheingabe den Filter auf: Wer tippt, meint genau diese Zeile.
+const nurLoeschbares = ref(true)
+const hatLoeschbares = (r) => (r.loeschbar || 0) > 0
+  || (r.archivierbar || 0) > 0
+  || (r.history_loeschbar || 0) > 0
+const sichtbareRows = computed(() => (
+  !nurLoeschbares.value || filter.value ? rows.value : rows.value.filter(hatLoeschbares)))
+const ausgeblendeteBereiche = computed(() => rows.value.length - sichtbareRows.value.length)
 
 const columns = [
   { name: 'gruppe', label: 'Gruppe', field: 'gruppe', align: 'left', sortable: true },

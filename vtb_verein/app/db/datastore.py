@@ -94,6 +94,7 @@ from app.db.termin_zusage_repository import TerminZusageRepository
 from app.db.termin_serie_repository import TerminSerieRepository
 from app.db.spielstaette_repository import SpielstaetteRepository
 from app.db.termin_abweichung_repository import TerminAbweichungRepository
+from app.db.dfbnet_import_stand_repository import DfbnetImportStandRepository
 from app.services.zutritt_service import ZutrittService
 from app.models.gebuehr import Gebuehr, GebuehrForderung
 from app.models.mitglied import Mitglied
@@ -269,6 +270,7 @@ class VereinsDB:
         self._spielstaette_repo = SpielstaetteRepository(self.conn)
         # Offene Fragen des Spielplan-Imports (#95, Etappe 4)
         self._termin_abweichung_repo = TerminAbweichungRepository(self.conn)
+        self._dfbnet_import_stand_repo = DfbnetImportStandRepository(self.conn)
 
     @property
     def push(self) -> PushService:
@@ -497,6 +499,11 @@ class VereinsDB:
     @property
     def termin_abweichungen(self) -> TerminAbweichungRepository:
         return self._termin_abweichung_repo
+
+    # --- Stand des Spielplan-Imports (#171) ---
+    @property
+    def dfbnet_import_stand(self) -> DfbnetImportStandRepository:
+        return self._dfbnet_import_stand_repo
 
     # --- Mannschaften (Repository-Zugriff für DFBnet-Zuordnung und Import) ---
     @property

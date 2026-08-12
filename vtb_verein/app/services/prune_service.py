@@ -672,6 +672,11 @@ LOG_REGISTRY: tuple[LogRule, ...] = (
     LogRule("tresor_zugriff_log", "Tresor-Zugriffe (Protokoll)", "tresor_zugriff_log"),
     LogRule("tuer_schloss_status_log", "Schloss-Status (Technik)", "tuer_schloss_status_log",
             default_days=DEFAULT_TECHNIK_LOG_RETENTION_DAYS),
+    # Die History des Spielplan-Imports ist faktisch ein Protokoll: je Import eine
+    # Zeile, nie ein Soft-Delete. Frist läuft ab `importiert_am` – `created_at` trägt
+    # in jeder Version den Zeitpunkt der ERSTEN Zeile und wäre als Alter untauglich.
+    LogRule("dfbnet_import_stand_history", "Spielplan-Importe (Protokoll)",
+            "dfbnet_import_stand_history", ts_expr="importiert_am"),
 
     # --- Gerätebindungen: Frist läuft ab dem Tod der Zeile, nicht ab Anlage ---
     # Für diese drei gab es die Cleanup-Methoden schon lange (cleanup_expired /
