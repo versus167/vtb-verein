@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 92
+SCHEMA_VERSION = 93
 
 
 # ---------------------------------------------------------------------------
@@ -1139,7 +1139,7 @@ _FN_SCHLUESSEL_CHIP_AUDIT_UPDATE = f"""
 
 _TUER_BERECHTIGUNG_COLS = (
     "id, version, chip_id, schloss_id, ttlock_card_id, gueltig_von, gueltig_bis, "
-    "sync_status, sync_fehler, erteilt_von, "
+    "sync_status, sync_fehler, erteilt_von, gruppe_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TUER_BERECHTIGUNG_VALS = ", ".join("NEW." + c.strip() for c in _TUER_BERECHTIGUNG_COLS.split(","))
@@ -1414,6 +1414,189 @@ _ZUTRITT_TRIGGERS = (
     ('trig_schluessel_chip_audit_update',   'UPDATE', 'schluessel_chip',   'fn_schluessel_chip_audit_update'),
     ('trig_tuer_berechtigung_audit_insert', 'INSERT', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_insert'),
     ('trig_tuer_berechtigung_audit_update', 'UPDATE', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_update'),
+)
+
+# ============================================================================
+# Chip-Rechtegruppen (Schema v93, #169)
+# ----------------------------------------------------------------------------
+# Eine Gruppe („Übungsleiter") bündelt Schlösser und wird Chips dauerhaft
+# zugeordnet. Am Schloss selbst gibt es keine Gruppen – TTLock kennt nur die
+# einzelne IC-Karte –, deshalb bleibt `tuer_berechtigung` die Wahrheit über das,
+# was tatsächlich an einer Tür hängt. Die Gruppe ist der SOLL-Zustand, aus dem
+# der Abgleich (`ZutrittService.chip_gruppen_abgleichen`) die Einzelberechtigungen
+# anlegt und entzieht:
+#
+#   chip_gruppe             – die Gruppe (Name, Beschreibung)
+#   chip_gruppe_schloss     – welche Türen gehören dazu       (n:m Gruppe↔Schloss)
+#   chip_gruppe_zuordnung   – welche Chips tragen die Gruppe  (n:m Gruppe↔Chip)
+#   tuer_berechtigung.gruppe_id – Herkunft einer Berechtigung
+#
+# `gruppe_id` ist der Grund, warum der Abgleich ohne Buchführung auskommt: Was
+# aus einer Gruppe stammt, darf er wieder entziehen; was ein Mensch einzeln
+# erteilt hat (NULL), fasst er nie an. Bleibt beim Entziehen eine Karte hängen
+# (Schloss offline), steht die Zeile weiter mit gesetzter `gruppe_id` da, ohne
+# dass eine Gruppe sie noch fordert – der nächste Abgleich räumt sie auf.
+_CHIP_GRUPPE_COLS = (
+    "id, version, name, beschreibung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CHIP_GRUPPE_VALS = ", ".join("NEW." + c.strip() for c in _CHIP_GRUPPE_COLS.split(","))
+
+_CHIP_GRUPPE_SCHLOSS_COLS = (
+    "id, version, gruppe_id, schloss_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CHIP_GRUPPE_SCHLOSS_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CHIP_GRUPPE_SCHLOSS_COLS.split(","))
+
+_CHIP_GRUPPE_ZUORDNUNG_COLS = (
+    "id, version, gruppe_id, chip_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CHIP_GRUPPE_ZUORDNUNG_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CHIP_GRUPPE_ZUORDNUNG_COLS.split(","))
+
+
+def _audit_fns(tabelle: str, cols: str, vals: str) -> tuple[str, str]:
+    """(INSERT-, UPDATE-Audit-Funktion) für eine Tabelle mit `*_history`-Spiegel.
+
+    Die drei Gruppen-Tabellen unterscheiden sich nur in Name und Spaltenliste;
+    sie einzeln auszuschreiben brächte drei Gelegenheiten für denselben Tippfehler."""
+    return (
+        f"""
+    CREATE OR REPLACE FUNCTION fn_{tabelle}_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO {tabelle}_history ({cols}) VALUES ({vals});
+        RETURN NEW;
+    END; $$;
+""",
+        f"""
+    CREATE OR REPLACE FUNCTION fn_{tabelle}_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO {tabelle}_history ({cols}) VALUES ({vals});
+        END IF;
+        RETURN NEW;
+    END; $$;
+""",
+    )
+
+
+_FN_CHIP_GRUPPE_AUDIT_INSERT, _FN_CHIP_GRUPPE_AUDIT_UPDATE = _audit_fns(
+    "chip_gruppe", _CHIP_GRUPPE_COLS, _CHIP_GRUPPE_VALS)
+_FN_CHIP_GRUPPE_SCHLOSS_AUDIT_INSERT, _FN_CHIP_GRUPPE_SCHLOSS_AUDIT_UPDATE = _audit_fns(
+    "chip_gruppe_schloss", _CHIP_GRUPPE_SCHLOSS_COLS, _CHIP_GRUPPE_SCHLOSS_VALS)
+_FN_CHIP_GRUPPE_ZUORDNUNG_AUDIT_INSERT, _FN_CHIP_GRUPPE_ZUORDNUNG_AUDIT_UPDATE = _audit_fns(
+    "chip_gruppe_zuordnung", _CHIP_GRUPPE_ZUORDNUNG_COLS, _CHIP_GRUPPE_ZUORDNUNG_VALS)
+
+_CHIP_GRUPPE_FNS = (
+    _FN_CHIP_GRUPPE_AUDIT_INSERT, _FN_CHIP_GRUPPE_AUDIT_UPDATE,
+    _FN_CHIP_GRUPPE_SCHLOSS_AUDIT_INSERT, _FN_CHIP_GRUPPE_SCHLOSS_AUDIT_UPDATE,
+    _FN_CHIP_GRUPPE_ZUORDNUNG_AUDIT_INSERT, _FN_CHIP_GRUPPE_ZUORDNUNG_AUDIT_UPDATE,
+)
+
+_DDL_CHIP_GRUPPE = """
+    CREATE TABLE IF NOT EXISTS chip_gruppe (
+      id           SERIAL PRIMARY KEY,
+      name         TEXT NOT NULL,
+      beschreibung TEXT,
+      version      INTEGER NOT NULL DEFAULT 1,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by   TEXT,
+      updated_at   TIMESTAMPTZ,
+      updated_by   TEXT,
+      deleted_at   TIMESTAMPTZ,
+      deleted_by   TEXT
+    );
+    CREATE TABLE IF NOT EXISTS chip_gruppe_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      name TEXT, beschreibung TEXT,
+      created_at TIMESTAMPTZ, created_by TEXT, updated_at TIMESTAMPTZ, updated_by TEXT,
+      deleted_at TIMESTAMPTZ, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS chip_gruppe_schloss (
+      id         SERIAL PRIMARY KEY,
+      gruppe_id  INTEGER NOT NULL REFERENCES chip_gruppe(id),
+      schloss_id INTEGER NOT NULL REFERENCES tuer_schloss(id),
+      version    INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT,
+      updated_at TIMESTAMPTZ,
+      updated_by TEXT,
+      deleted_at TIMESTAMPTZ,
+      deleted_by TEXT
+    );
+    CREATE TABLE IF NOT EXISTS chip_gruppe_schloss_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      gruppe_id INTEGER, schloss_id INTEGER,
+      created_at TIMESTAMPTZ, created_by TEXT, updated_at TIMESTAMPTZ, updated_by TEXT,
+      deleted_at TIMESTAMPTZ, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS chip_gruppe_zuordnung (
+      id         SERIAL PRIMARY KEY,
+      gruppe_id  INTEGER NOT NULL REFERENCES chip_gruppe(id),
+      chip_id    INTEGER NOT NULL REFERENCES schluessel_chip(id),
+      version    INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT,
+      updated_at TIMESTAMPTZ,
+      updated_by TEXT,
+      deleted_at TIMESTAMPTZ,
+      deleted_by TEXT
+    );
+    CREATE TABLE IF NOT EXISTS chip_gruppe_zuordnung_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      gruppe_id INTEGER, chip_id INTEGER,
+      created_at TIMESTAMPTZ, created_by TEXT, updated_at TIMESTAMPTZ, updated_by TEXT,
+      deleted_at TIMESTAMPTZ, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    ALTER TABLE tuer_berechtigung ADD COLUMN IF NOT EXISTS gruppe_id INTEGER
+      REFERENCES chip_gruppe(id);
+    ALTER TABLE tuer_berechtigung_history ADD COLUMN IF NOT EXISTS gruppe_id INTEGER;
+"""
+
+_CHIP_GRUPPE_TRIGGERS = (
+    ('trig_chip_gruppe_audit_insert', 'INSERT', 'chip_gruppe',
+     'fn_chip_gruppe_audit_insert'),
+    ('trig_chip_gruppe_audit_update', 'UPDATE', 'chip_gruppe',
+     'fn_chip_gruppe_audit_update'),
+    ('trig_chip_gruppe_schloss_audit_insert', 'INSERT', 'chip_gruppe_schloss',
+     'fn_chip_gruppe_schloss_audit_insert'),
+    ('trig_chip_gruppe_schloss_audit_update', 'UPDATE', 'chip_gruppe_schloss',
+     'fn_chip_gruppe_schloss_audit_update'),
+    ('trig_chip_gruppe_zuordnung_audit_insert', 'INSERT', 'chip_gruppe_zuordnung',
+     'fn_chip_gruppe_zuordnung_audit_insert'),
+    ('trig_chip_gruppe_zuordnung_audit_update', 'UPDATE', 'chip_gruppe_zuordnung',
+     'fn_chip_gruppe_zuordnung_audit_update'),
+)
+
+_CHIP_GRUPPE_INDEXES = (
+    ("idx_chip_gruppe_deleted_at",            "chip_gruppe(deleted_at)"),
+    ("idx_chip_gruppe_history_id",            "chip_gruppe_history(id)"),
+    ("idx_chip_gruppe_schloss_gruppe_id",     "chip_gruppe_schloss(gruppe_id)"),
+    ("idx_chip_gruppe_schloss_schloss_id",    "chip_gruppe_schloss(schloss_id)"),
+    ("idx_chip_gruppe_schloss_deleted_at",    "chip_gruppe_schloss(deleted_at)"),
+    ("idx_chip_gruppe_schloss_history_id",    "chip_gruppe_schloss_history(id)"),
+    ("idx_chip_gruppe_zuordnung_gruppe_id",   "chip_gruppe_zuordnung(gruppe_id)"),
+    ("idx_chip_gruppe_zuordnung_chip_id",     "chip_gruppe_zuordnung(chip_id)"),
+    ("idx_chip_gruppe_zuordnung_deleted_at",  "chip_gruppe_zuordnung(deleted_at)"),
+    ("idx_chip_gruppe_zuordnung_history_id",  "chip_gruppe_zuordnung_history(id)"),
+    ("idx_tuer_berechtigung_gruppe_id",       "tuer_berechtigung(gruppe_id)"),
+)
+
+_CHIP_GRUPPE_UNIQUE_INDEXES = (
+    # Ein Name je lebender Gruppe – „Übungsleiter" zweimal wäre beim Zuordnen nicht
+    # unterscheidbar. LOWER(), damit sich die Dubletten nicht per Groß-/Kleinschreibung
+    # durchmogeln.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_chip_gruppe_name_active "
+    "ON chip_gruppe (LOWER(name)) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_chip_gruppe_schloss_active "
+    "ON chip_gruppe_schloss (gruppe_id, schloss_id) WHERE deleted_at IS NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_chip_gruppe_zuordnung_active "
+    "ON chip_gruppe_zuordnung (gruppe_id, chip_id) WHERE deleted_at IS NULL",
 )
 
 # Spielstätten-Pflege als eigenes Recht (Schema v86) – vorher an system.config
@@ -3158,6 +3341,7 @@ class Database:
             90: self._migrate_v89_to_v90,
             91: self._migrate_v90_to_v91,
             92: self._migrate_v91_to_v92,
+            93: self._migrate_v92_to_v93,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6794,6 +6978,44 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 92 WHERE id = 1")
 
+    def _migrate_v92_to_v93(self) -> None:
+        """Chip-Rechtegruppen (#169): eine Gruppe bündelt Türen und wird Chips
+        dauerhaft zugeordnet.
+
+        Bisher war jede Zutrittsberechtigung ein einzelner Vorgang – Chip an Schloss
+        anlernen, für jede Tür erneut. Wer neu dazukommt, braucht damit so viele
+        Handgriffe, wie die Rolle Türen hat, und eine neue Tür für „alle
+        Übungsleiter" heißt: jeden Chip einzeln nachziehen. Die Gruppe hält den
+        SOLL-Zustand fest, aus dem der Abgleich die Einzelberechtigungen ableitet.
+
+        `tuer_berechtigung.gruppe_id` sagt, woher eine Berechtigung stammt. Bestand
+        bleibt NULL und damit ausdrücklich „von Hand erteilt": Der Abgleich fasst
+        nur an, was er selbst angelegt hat – sonst nähme die erste Gruppe einem
+        Chip die Türen weg, die jemand bewusst einzeln vergeben hat.
+
+        Die Audit-Funktion von tuer_berechtigung wird neu erzeugt, weil ihre
+        Spaltenliste die neue Spalte mitführen muss; sonst bliebe sie in der
+        History still leer. DDL, Trigger und Indizes kommen aus denselben
+        Konstanten wie der Frischaufbau.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_CHIP_GRUPPE)
+            for fn_sql in _CHIP_GRUPPE_FNS:
+                cur.execute(fn_sql)
+            cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_INSERT)
+            cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
+            for name, event, table, fn in _CHIP_GRUPPE_TRIGGERS:
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}();"
+                )
+            for name, target in _CHIP_GRUPPE_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _CHIP_GRUPPE_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 93 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8108,6 +8330,9 @@ class Database:
             cur.execute(sql)
         # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
         cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
+        # Chip-Rechtegruppen (Schema v93, #169) – setzt tuer_schloss/schluessel_chip
+        # voraus und ergänzt tuer_berechtigung.gruppe_id. Geteilt mit v92→v93.
+        cur.execute(_DDL_CHIP_GRUPPE)
         # Kurzzeitige App-Betätigungs-Berechtigung (Schema v58). DDL geteilt mit v57→v58.
         cur.execute(_DDL_TUER_APP_BERECHTIGUNG)
         # Read-only Credential-Mirror je Schloss (Schema v59). DDL geteilt mit v58→v59.
@@ -8350,6 +8575,8 @@ class Database:
         cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
+        for fn_sql in _CHIP_GRUPPE_FNS:
+            cur.execute(fn_sql)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_APP_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_AUDIT_INSERT)
@@ -8983,6 +9210,7 @@ class Database:
             *_RECHNUNG_TRIGGERS,
             *_SEPA_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
+            *_CHIP_GRUPPE_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
             *_TRESOR_KONTAKT_TRIGGERS,
@@ -9112,6 +9340,7 @@ class Database:
             ("idx_fibu_exporte_history_id",                         "fibu_exporte_history(id)"),
             *_ZUTRITT_INDEXES,
             *_ZUTRITT_EXTERN_INDEXES,
+            *_CHIP_GRUPPE_INDEXES,
             *_ZUTRITT_CHIP_USER_INDEXES,
             *_ZUTRITT_LOG_USER_INDEXES,
             *_TUER_APP_BERECHTIGUNG_INDEXES,
@@ -9139,6 +9368,8 @@ class Database:
         for sql in _ZUTRITT_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _ZUTRITT_EXTERN_UNIQUE_INDEXES:
+            cur.execute(sql)
+        for sql in _CHIP_GRUPPE_UNIQUE_INDEXES:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)

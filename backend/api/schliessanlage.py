@@ -163,6 +163,26 @@ class BerechtigungUpdateIn(BaseModel):
     gueltig_bis: Optional[str] = None
 
 
+class GruppeIn(BaseModel):
+    name: str
+    beschreibung: Optional[str] = None
+    schloss_ids: list[int] = []
+
+
+class GruppeUpdateIn(BaseModel):
+    name: str
+    beschreibung: Optional[str] = None
+    expected_version: int
+
+
+class GruppeSchloesserIn(BaseModel):
+    schloss_ids: list[int]
+
+
+class GruppeChipIn(BaseModel):
+    chip_id: int
+
+
 # --- Status / Sync ----------------------------------------------------------
 @router.get("/status")
 def status_info(user: CurrentUser, db: DB):
@@ -657,6 +677,207 @@ def berechtigung_entziehen(berechtigung_id: int, request: Request, user: Current
         pass
 
 
+# --- Rechtegruppen (#169) ----------------------------------------------------
+def _gruppe_oder_404(db, gruppe_id: int):
+    gruppe = db.chip_gruppen.get(gruppe_id)
+    if not gruppe:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Rechtegruppe nicht gefunden")
+    return gruppe
+
+
+def _schloesser_pruefen(user, db, schloss_ids) -> None:
+    """Jede betroffene Tür einzeln gegen den Abteilungs-Scope prüfen.
+
+    Eine Gruppe darf Türen mehrerer Abteilungen bündeln; wer sie pflegt, muss sie
+    aber alle verwalten dürfen – sonst öffnete eine Gruppe den Weg, sich über die
+    eigene Abteilung hinaus Rechte zu erteilen. Externe Schlösser hängen nicht an
+    der Cloud und lassen sich gar nicht anlernen (siehe `chip_anlernen`); sie
+    gehören deshalb nicht in eine Gruppe."""
+    for schloss_id in schloss_ids:
+        schloss = db.tuer_schloesser.get(schloss_id)
+        if not schloss:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail=f"Schloss {schloss_id} nicht gefunden")
+        if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Keine Berechtigung, „{schloss.name}“ zu verwalten")
+        if not schloss.ttlock_lock_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"„{schloss.name}“ ist eine Fremdanlage – dort lassen sich "
+                       f"Chips nicht per Gruppe anlernen")
+
+
+def _gruppe_antwort(db, gruppe, ergebnis: Optional[dict] = None) -> dict:
+    """Gruppe + (bei Änderungen) was der Abgleich an den Türen bewirkt hat."""
+    antwort = {"gruppe": db.chip_gruppen.get(gruppe.id) if gruppe else None,
+               "chip_ids": db.chip_gruppen.chip_ids(gruppe.id) if gruppe else []}
+    if ergebnis is not None:
+        antwort["abgleich"] = ergebnis
+    return antwort
+
+
+def _abgleich_ausfuehren(fn, **kw) -> dict:
+    """Ruft eine Abgleich-Operation und bildet ihre Fehler auf HTTP ab."""
+    try:
+        return fn(**kw)
+    except ZutrittNichtKonfiguriertError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TTLockError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"TTLock-Cloud: {e}")
+
+
+@router.get("/gruppen")
+def gruppen_liste(user: CurrentUser, db: DB):
+    _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")
+    return db.chip_gruppen.list_all()
+
+
+@router.get("/gruppen/{gruppe_id}")
+def gruppe_detail(gruppe_id: int, user: CurrentUser, db: DB):
+    _require(user, Permission.SCHLIESSANLAGE_READ, "Schließanlage lesen")
+    return _gruppe_antwort(db, _gruppe_oder_404(db, gruppe_id))
+
+
+@router.post("/gruppen", status_code=status.HTTP_201_CREATED)
+def gruppe_anlegen(data: GruppeIn, user: CurrentUser, db: DB):
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    from app.models.schliessanlage import ChipGruppe
+    name = (data.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Die Gruppe braucht einen Namen")
+    if db.chip_gruppen.find_by_name(name):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Es gibt bereits eine Gruppe „{name}“")
+    gruppe = db.chip_gruppen.create(
+        ChipGruppe(name=name, beschreibung=(data.beschreibung or None)), user.username)
+    if data.schloss_ids:
+        _schloesser_pruefen(user, db, data.schloss_ids)
+        db.chip_gruppen.set_schloesser(gruppe.id, data.schloss_ids, user.username)
+    return _gruppe_antwort(db, gruppe)
+
+
+@router.put("/gruppen/{gruppe_id}")
+def gruppe_aendern(gruppe_id: int, data: GruppeUpdateIn, user: CurrentUser, db: DB):
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    name = (data.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Die Gruppe braucht einen Namen")
+    doppelt = db.chip_gruppen.find_by_name(name)
+    if doppelt and doppelt.id != gruppe_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Es gibt bereits eine Gruppe „{name}“")
+    gruppe.name = name
+    gruppe.beschreibung = (data.beschreibung or None)
+    gruppe.version = data.expected_version
+    if not db.chip_gruppen.update(gruppe, user.username):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Versionskonflikt – bitte neu laden")
+    return _gruppe_antwort(db, gruppe)
+
+
+@router.put("/gruppen/{gruppe_id}/schloesser")
+def gruppe_schloesser_setzen(gruppe_id: int, data: GruppeSchloesserIn,
+                             request: Request, user: CurrentUser, db: DB):
+    """Türliste der Gruppe setzen – wirkt sofort auf alle Chips der Gruppe."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    # Auch die WEGGENOMMENEN Türen prüfen: Sie zu entziehen ist derselbe Eingriff.
+    _schloesser_pruefen(user, db, set(data.schloss_ids) | set(gruppe.schloss_ids or []))
+    ergebnis = _abgleich_ausfuehren(
+        db.zutritt.gruppe_schloesser_setzen, gruppe_id=gruppe_id,
+        schloss_ids=data.schloss_ids, erteilt_von=user.id, actor=user.username)
+    _log_gruppe(db, request, user, gruppe_id,
+                f"Türen der Gruppe {gruppe_id} gesetzt ({len(data.schloss_ids)} Schlösser)")
+    return _gruppe_antwort(db, gruppe, ergebnis)
+
+
+@router.delete("/gruppen/{gruppe_id}")
+def gruppe_loeschen(gruppe_id: int, request: Request, user: CurrentUser, db: DB):
+    """Gruppe auflösen: alle Chips heraus (Türen werden entzogen), dann die Gruppe."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    _schloesser_pruefen(user, db, gruppe.schloss_ids or [])
+    ergebnis = _abgleich_ausfuehren(db.zutritt.gruppe_loeschen, gruppe_id=gruppe_id,
+                                    actor=user.username)
+    _log_gruppe(db, request, user, gruppe_id, f"Rechtegruppe {gruppe_id} aufgelöst")
+    return ergebnis
+
+
+@router.post("/gruppen/{gruppe_id}/abgleich")
+def gruppe_abgleich(gruppe_id: int, request: Request, user: CurrentUser, db: DB):
+    """Nachfassen für alle Chips der Gruppe – für Türen, die beim ersten Versuch
+    nicht erreichbar waren."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    _schloesser_pruefen(user, db, gruppe.schloss_ids or [])
+    ergebnis = _abgleich_ausfuehren(db.zutritt.gruppe_abgleichen, gruppe_id=gruppe_id,
+                                    erteilt_von=user.id, actor=user.username)
+    _log_gruppe(db, request, user, gruppe_id, f"Gruppe {gruppe_id} abgeglichen")
+    return ergebnis
+
+
+@router.post("/gruppen/{gruppe_id}/chips", status_code=status.HTTP_201_CREATED)
+def gruppe_chip_zuordnen(gruppe_id: int, data: GruppeChipIn, request: Request,
+                         user: CurrentUser, db: DB):
+    """Chip in die Gruppe aufnehmen; ihre Türen werden ihm sofort erteilt."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    _schloesser_pruefen(user, db, gruppe.schloss_ids or [])
+    ergebnis = _abgleich_ausfuehren(
+        db.zutritt.gruppe_chip_zuordnen, gruppe_id=gruppe_id, chip_id=data.chip_id,
+        erteilt_von=user.id, actor=user.username)
+    _log_gruppe(db, request, user, gruppe_id,
+                f"Chip {data.chip_id} zu Gruppe {gruppe_id} hinzugefügt")
+    return _gruppe_antwort(db, gruppe, ergebnis)
+
+
+@router.delete("/gruppen/{gruppe_id}/chips/{chip_id}")
+def gruppe_chip_entfernen(gruppe_id: int, chip_id: int, request: Request,
+                          user: CurrentUser, db: DB):
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    gruppe = _gruppe_oder_404(db, gruppe_id)
+    _schloesser_pruefen(user, db, gruppe.schloss_ids or [])
+    ergebnis = _abgleich_ausfuehren(
+        db.zutritt.gruppe_chip_entfernen, gruppe_id=gruppe_id, chip_id=chip_id,
+        actor=user.username)
+    _log_gruppe(db, request, user, gruppe_id,
+                f"Chip {chip_id} aus Gruppe {gruppe_id} entfernt")
+    return _gruppe_antwort(db, gruppe, ergebnis)
+
+
+@router.post("/chips/{chip_id}/gruppen-abgleich")
+def chip_gruppen_abgleich(chip_id: int, request: Request, user: CurrentUser, db: DB):
+    """Nachfassen: die Gruppen-Türen eines Chips erneut abgleichen.
+
+    Für den Fall, dass beim ersten Versuch ein Schloss offline war – der Abgleich
+    ist zustandsbasiert, ein zweiter Lauf holt genau das Fehlende nach."""
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    ergebnis = _abgleich_ausfuehren(db.zutritt.chip_gruppen_abgleichen, chip_id=chip_id,
+                                    erteilt_von=user.id, actor=user.username)
+    _log_gruppe(db, request, user, None, f"Chip {chip_id}: Gruppen abgeglichen")
+    return ergebnis
+
+
+def _log_gruppe(db, request, user, gruppe_id: Optional[int], detail: str) -> None:
+    try:
+        db.access_log_repository.log(
+            "schliessanlage_gruppe", category="schliessanlage",
+            user_id=user.id, username=user.username, ip=_client_ip(request),
+            detail=detail,
+        )
+    except Exception:
+        pass
+
+
 # --- Chips -------------------------------------------------------------------
 @router.get("/chips")
 def chips_liste(user: CurrentUser, db: DB):
@@ -684,6 +905,7 @@ def chip_detail(chip_id: int, user: CurrentUser, db: DB):
     return {
         "chip": chip,
         "berechtigungen": berechtigungen,
+        "gruppen": db.chip_gruppen.gruppen_fuer_chip(chip_id),
         "logs": logs,
         "darf_protokoll": darf_protokoll,
     }

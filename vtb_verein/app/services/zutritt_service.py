@@ -133,13 +133,14 @@ def notify_alarme(db, alarme: list[dict]) -> int:
 class ZutrittService:
 
     def __init__(self, *, konto_repo, schloss_repo, chip_repo, berechtigung_repo,
-                 log_repo, credential_repo=None,
+                 log_repo, credential_repo=None, gruppe_repo=None,
                  access_log_repo=None, mitglied_repo=None,
                  client_factory: Optional[Callable[[], TTLockClient]] = None):
         self.konto_repo = konto_repo
         self.schloss_repo = schloss_repo
         self.chip_repo = chip_repo
         self.berechtigung_repo = berechtigung_repo
+        self.gruppe_repo = gruppe_repo
         self.log_repo = log_repo
         self.credential_repo = credential_repo
         # Für die Log-Auflösung von App-/Gateway-Öffnungen (#66, Phase-5-Teil B):
@@ -245,7 +246,8 @@ class ZutrittService:
     # --- Chip-Anlernen / Berechtigungen (Phase 2, Cloud-Writes) ------------
     def chip_anlernen(self, *, chip_id: int, schloss_id: int,
                       gueltig_von: Optional[str] = None, gueltig_bis: Optional[str] = None,
-                      erteilt_von: Optional[int] = None, actor: str = "SYSTEM") -> TuerBerechtigung:
+                      erteilt_von: Optional[int] = None, gruppe_id: Optional[int] = None,
+                      actor: str = "SYSTEM") -> TuerBerechtigung:
         """Chip an einem Schloss anlernen: lokale Berechtigung (pending) anlegen, dann per
         Gateway `identityCard/add` → `cardId` + `sync_status` festschreiben. Bei Cloud-Fehler
         bleibt die Zeile als `fehler` stehen (mit Meldung) und der Fehler wird geworfen."""
@@ -269,12 +271,22 @@ class ZutrittService:
         ber = self.berechtigung_repo.create(TuerBerechtigung(
             chip_id=chip_id, schloss_id=schloss_id, gueltig_von=gueltig_von,
             gueltig_bis=gueltig_bis, sync_status=SYNC_PENDING, erteilt_von=erteilt_von,
+            gruppe_id=gruppe_id,
         ), actor)
+        return self._karte_aufspielen(ber, chip, schloss, actor)
+
+    def _karte_aufspielen(self, ber: TuerBerechtigung, chip, schloss,
+                          actor: str) -> TuerBerechtigung:
+        """IC-Karte für eine bestehende Berechtigungszeile ans Schloss schreiben.
+
+        Getrennt vom Anlegen der Zeile, weil der Gruppen-Abgleich denselben Schritt
+        WIEDERHOLT: Eine Zeile ohne `ttlock_card_id` ist am Schloss nie angekommen
+        und braucht keinen zweiten Datensatz, sondern einen zweiten Versuch."""
         card_name = chip.bezeichnung or f"Chip {chip.kartennummer}"
         try:
             resp = self._client().ic_card_add(
                 schloss.ttlock_lock_id, chip.kartennummer, card_name,
-                _iso_to_ms(gueltig_von), _iso_to_ms(gueltig_bis),
+                _iso_to_ms(ber.gueltig_von), _iso_to_ms(ber.gueltig_bis),
             )
         except TTLockError as e:
             self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
@@ -405,10 +417,189 @@ class ZutrittService:
             self.berechtigung_entziehen(berechtigung_id=ber.id, actor=actor)
             entzogen += 1
 
+        # Gruppen-Zuordnungen mitnehmen: Ein gelöschter Chip, der weiter in
+        # „Übungsleiter" steht, tauchte in jeder Gruppenzählung als Mitglied auf.
+        if self.gruppe_repo is not None:
+            for gruppe in self.gruppe_repo.gruppen_fuer_chip(chip_id):
+                self.gruppe_repo.chip_entfernen(gruppe.id, chip_id, actor)
+
         self.chip_repo.soft_delete(chip_id, actor)
         logger.info("Chip %s gelöscht (%d Berechtigungen zuvor entzogen).",
                     chip.kartennummer, entzogen)
         return {"ok": True, "berechtigungen_entzogen": entzogen}
+
+    # --- Rechtegruppen (#169) ---------------------------------------------
+    def chip_gruppen_abgleichen(self, *, chip_id: int, erteilt_von: Optional[int] = None,
+                                actor: str = "SYSTEM") -> dict:
+        """Bringt die Berechtigungen eines Chips auf den SOLL-Zustand seiner Gruppen.
+
+        Der einzige Weg, auf dem Gruppen an den Türen wirksam werden — jede
+        Änderung (Gruppe zuordnen, Tür zur Gruppe legen, Gruppe löschen) ändert
+        nur den SOLL-Zustand und ruft dann hier durch. Deshalb ist der Abgleich
+        rein zustandsbasiert und beliebig wiederholbar; es gibt keine Warteschlange,
+        die auseinanderlaufen könnte.
+
+        Vier Regeln:
+        * Fehlt eine Tür, die eine Gruppe fordert → anlernen, mit der Gruppe als
+          Herkunft.
+        * Steht die Zeile zwar da, ist die Karte aber nie am Schloss angekommen
+          (keine `ttlock_card_id`, z. B. weil es beim ersten Versuch offline war)
+          → erneut aufspielen. Maßstab ist die Karte am Schloss, nicht die Zeile in
+          der Tabelle: Sonst behauptete die Liste eine Tür, die sich nicht öffnen
+          lässt, und niemand versuchte es je wieder.
+        * Trägt eine Berechtigung eine Herkunft, fordert sie aber keine Gruppe mehr
+          → entziehen. Das räumt auch Karten weg, die beim letzten Mal am offline
+          gegangenen Schloss hängen geblieben sind.
+        * Von Hand erteilte Berechtigungen (`gruppe_id IS NULL`) bleiben unangetastet
+          – auch die gescheiterten. Sonst nähme die erste Gruppenzuordnung einem Chip
+          die Türen weg, die jemand bewusst einzeln vergeben hat.
+
+        Bewusst „so weit wie möglich" statt alles-oder-nichts: Jede Tür ist ein
+        eigener Cloud-Vorgang, und ein einzelnes offline Schloss darf nicht die
+        übrigen neun blockieren. Was scheitert, steht als `fehler` an der
+        Berechtigung und in der Rückgabe – und der nächste Abgleich versucht es
+        erneut.
+        """
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        chip = self.chip_repo.get(chip_id)
+        if not chip:
+            raise ValueError("Chip nicht gefunden")
+
+        soll = set(self.gruppe_repo.soll_schloss_ids_fuer_chip(chip_id))
+        ist = {b.schloss_id: b for b in self.berechtigung_repo.list_for_chip(chip_id)}
+        erteilt = entzogen = 0
+        fehler: list[dict] = []
+
+        def _fehler(schloss_id: int, e: Exception) -> None:
+            schloss = self.schloss_repo.get(schloss_id)
+            fehler.append({"schloss_id": schloss_id,
+                           "schloss": schloss.name if schloss else f"#{schloss_id}",
+                           "meldung": str(e)})
+
+        # Ein gesperrter/verlorener Chip bekommt keine neuen Türen – sonst führte
+        # er wieder, während er in der Liste als gesperrt steht. Entzogen wird
+        # trotzdem: Weniger Rechte sind bei einem gesperrten Chip nie das Problem.
+        # Nie am Schloss angekommene Gruppen-Zeilen zählen als NICHT erteilt und
+        # werden erneut versucht – an ihnen hängt keine Karte, nur ein Fehlversuch.
+        nachzuholen = {sid for sid, b in ist.items()
+                       if b.gruppe_id is not None and not b.ttlock_card_id}
+        if chip.status == CHIP_AKTIV:
+            for schloss_id in sorted(soll - (set(ist) - nachzuholen)):
+                try:
+                    if schloss_id in nachzuholen:
+                        self._karte_aufspielen(ist[schloss_id], chip,
+                                               self.schloss_repo.get(schloss_id), actor)
+                    else:
+                        self.chip_anlernen(
+                            chip_id=chip_id, schloss_id=schloss_id, erteilt_von=erteilt_von,
+                            gruppe_id=self.gruppe_repo.quelle_gruppe(chip_id, schloss_id),
+                            actor=actor)
+                    erteilt += 1
+                except (ValueError, TTLockError) as e:
+                    _fehler(schloss_id, e)
+        elif soll - (set(ist) - nachzuholen):
+            fehler.append({"schloss_id": None, "schloss": "—",
+                           "meldung": f'Chip ist als "{chip.status}" markiert – '
+                                      f'neue Türen werden erst nach dem Entsperren erteilt'})
+
+        for schloss_id, ber in sorted(ist.items()):
+            if ber.gruppe_id is None or schloss_id in soll:
+                continue
+            try:
+                self.berechtigung_entziehen(berechtigung_id=ber.id, actor=actor)
+                entzogen += 1
+            except (ValueError, TTLockError) as e:
+                _fehler(schloss_id, e)
+
+        if erteilt or entzogen or fehler:
+            logger.info("Chip %s abgeglichen: %d erteilt, %d entzogen, %d Fehler.",
+                        chip.kartennummer, erteilt, entzogen, len(fehler))
+        return {"chip_id": chip_id, "erteilt": erteilt, "entzogen": entzogen,
+                "fehler": fehler}
+
+    def _gruppe_abgleichen(self, gruppe_id: int, chip_ids: list[int], *,
+                           erteilt_von: Optional[int] = None, actor: str) -> dict:
+        """Abgleich für mehrere Chips einer Gruppe; sammelt die Ergebnisse."""
+        erteilt = entzogen = 0
+        fehler: list[dict] = []
+        for chip_id in chip_ids:
+            ergebnis = self.chip_gruppen_abgleichen(
+                chip_id=chip_id, erteilt_von=erteilt_von, actor=actor)
+            erteilt += ergebnis["erteilt"]
+            entzogen += ergebnis["entzogen"]
+            for f in ergebnis["fehler"]:
+                chip = self.chip_repo.get(chip_id)
+                fehler.append({**f, "chip": (chip.bezeichnung or chip.kartennummer)
+                               if chip else f"#{chip_id}"})
+        return {"gruppe_id": gruppe_id, "chips": len(chip_ids),
+                "erteilt": erteilt, "entzogen": entzogen, "fehler": fehler}
+
+    def gruppe_schloesser_setzen(self, *, gruppe_id: int, schloss_ids: list[int],
+                                 erteilt_von: Optional[int] = None,
+                                 actor: str = "SYSTEM") -> dict:
+        """Türliste einer Gruppe setzen und alle Chips der Gruppe nachziehen."""
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        if not self.gruppe_repo.get(gruppe_id):
+            raise ValueError("Gruppe nicht gefunden")
+        self.gruppe_repo.set_schloesser(gruppe_id, schloss_ids, actor)
+        return self._gruppe_abgleichen(gruppe_id, self.gruppe_repo.chip_ids(gruppe_id),
+                                       erteilt_von=erteilt_von, actor=actor)
+
+    def gruppe_abgleichen(self, *, gruppe_id: int, erteilt_von: Optional[int] = None,
+                          actor: str = "SYSTEM") -> dict:
+        """Nachfassen für alle Chips einer Gruppe.
+
+        Der Weg, auf dem ein offline gewesenes Schloss wieder eingefangen wird, ohne
+        jeden Chip einzeln aufzusuchen – bei einer Gruppe mit zwanzig Trägern ist das
+        der Unterschied zwischen einem Klick und zwanzig."""
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        if not self.gruppe_repo.get(gruppe_id):
+            raise ValueError("Gruppe nicht gefunden")
+        return self._gruppe_abgleichen(gruppe_id, self.gruppe_repo.chip_ids(gruppe_id),
+                                       erteilt_von=erteilt_von, actor=actor)
+
+    def gruppe_chip_zuordnen(self, *, gruppe_id: int, chip_id: int,
+                             erteilt_von: Optional[int] = None,
+                             actor: str = "SYSTEM") -> dict:
+        """Chip in eine Gruppe aufnehmen und ihm deren Türen erteilen."""
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        if not self.gruppe_repo.get(gruppe_id):
+            raise ValueError("Gruppe nicht gefunden")
+        if not self.chip_repo.get(chip_id):
+            raise ValueError("Chip nicht gefunden")
+        self.gruppe_repo.chip_zuordnen(gruppe_id, chip_id, actor)
+        return self.chip_gruppen_abgleichen(chip_id=chip_id, erteilt_von=erteilt_von,
+                                            actor=actor)
+
+    def gruppe_chip_entfernen(self, *, gruppe_id: int, chip_id: int,
+                              actor: str = "SYSTEM") -> dict:
+        """Chip aus einer Gruppe nehmen; deren Türen werden ihm entzogen.
+
+        Türen, die eine ANDERE Gruppe des Chips ebenfalls fordert, bleiben – der
+        Abgleich rechnet mit der Vereinigung aller Gruppen, nicht mit dieser einen."""
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        self.gruppe_repo.chip_entfernen(gruppe_id, chip_id, actor)
+        return self.chip_gruppen_abgleichen(chip_id=chip_id, actor=actor)
+
+    def gruppe_loeschen(self, *, gruppe_id: int, actor: str = "SYSTEM") -> dict:
+        """Gruppe auflösen: erst alle Chips herausnehmen (und ihre Türen entziehen),
+        dann die Gruppe selbst soft-löschen."""
+        if self.gruppe_repo is None:
+            raise ValueError("Rechtegruppen sind in dieser Instanz nicht verfügbar")
+        if not self.gruppe_repo.get(gruppe_id):
+            raise ValueError("Gruppe nicht gefunden")
+        chips = self.gruppe_repo.alle_chips_entfernen(gruppe_id, actor)
+        ergebnis = self._gruppe_abgleichen(gruppe_id, chips, actor=actor)
+        self.gruppe_repo.set_schloesser(gruppe_id, [], actor)
+        self.gruppe_repo.soft_delete(gruppe_id, actor)
+        logger.info("Rechtegruppe %s gelöscht (%d Chips zuvor herausgenommen).",
+                    gruppe_id, len(chips))
+        return {**ergebnis, "geloescht": True}
 
     def ic_cards_sync(self) -> dict:
         """Bereits am Schloss (per BLE) angelernte IC-Karten aus der Cloud spiegeln:

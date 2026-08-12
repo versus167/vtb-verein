@@ -218,11 +218,26 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="tuer_app_berechtigung_history"),
     PruneEntity("tuer_berechtigung", "Chip-Türberechtigungen", "tuer_berechtigung",
                 history_table="tuer_berechtigung_history"),
+    # Rechtegruppen (#169): die beiden Paar-Tabellen sind Blätter, die Gruppe ihre
+    # Wurzel. tuer_berechtigung hängt über gruppe_id ebenfalls an der Gruppe und muss
+    # als Child-Guard mit, sonst blockiert der FK das echte Löschen.
+    PruneEntity("chip_gruppe_schloss", "Gruppen-Türen", "chip_gruppe_schloss",
+                history_table="chip_gruppe_schloss_history"),
+    PruneEntity("chip_gruppe_zuordnung", "Gruppen-Zuordnungen", "chip_gruppe_zuordnung",
+                history_table="chip_gruppe_zuordnung_history"),
+    PruneEntity("chip_gruppe", "Chip-Rechtegruppen", "chip_gruppe",
+                history_table="chip_gruppe_history",
+                children=(
+                    ChildRef("chip_gruppe_schloss", "gruppe_id"),
+                    ChildRef("chip_gruppe_zuordnung", "gruppe_id"),
+                    ChildRef("tuer_berechtigung", "gruppe_id"),
+                )),
     PruneEntity("tuer_schloss", "Schlösser", "tuer_schloss",
                 history_table="tuer_schloss_history",
                 children=(
                     ChildRef("tuer_app_berechtigung", "schloss_id"),
                     ChildRef("tuer_berechtigung", "schloss_id"),
+                    ChildRef("chip_gruppe_schloss", "schloss_id"),
                     ChildRef("tuer_credential", "schloss_id"),
                     ChildRef("tuer_schloss_status_log", "schloss_id"),
                     ChildRef("tuer_zutritt_log", "schloss_id"),
@@ -231,6 +246,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="schluessel_chip_history",
                 children=(
                     ChildRef("tuer_berechtigung", "chip_id"),
+                    ChildRef("chip_gruppe_zuordnung", "chip_id"),
                     ChildRef("tuer_zutritt_log", "chip_id"),
                 )),
     # --- Übungsleiter-Abrechnung (Blatt → Wurzel) ---
