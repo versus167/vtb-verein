@@ -36,6 +36,9 @@
         <q-item v-for="v in verlauf" :key="v.version">
           <q-item-section>
             <q-item-label>{{ v.dateiname || 'ohne Dateinamen' }}</q-item-label>
+            <q-item-label v-if="zeitraumText(v)" caption class="text-weight-medium">
+              <q-icon name="date_range" size="14px" class="q-mr-xs" />{{ zeitraumText(v) }}
+            </q-item-label>
             <q-item-label caption>
               Datei vom {{ v.datei_datum ? fmtDatumZeit(v.datei_datum) : '–' }}
               · eingelesen {{ fmtDatumZeit(v.importiert_am) }}
@@ -332,6 +335,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { datumLabel, uhrzeit } from 'src/composables/useTermine'
+import { formatDate } from 'src/utils/datetime'
 
 defineOptions({ name: 'SpielplanImportPage' })
 
@@ -348,6 +352,15 @@ const fmtDatumZeit = (iso) => {
   return Number.isNaN(d.getTime())
     ? '–' : d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
 }
+// Erster bis letzter Spieltag der Datei. Beantwortet die Frage vor dem Import
+// („ist der November schon drin?"), die weder Dateiname noch Zeilenzahl klären –
+// zwei gleich große Auszüge können verschiedene Quartale abdecken. Läufe von vor
+// Schema v95 haben die Angabe nicht; dann bleibt die Zeile weg.
+function zeitraumText(v) {
+  if (!v?.zeitraum_von || !v?.zeitraum_bis) return ''
+  return `${formatDate(v.zeitraum_von)} – ${formatDate(v.zeitraum_bis)}`
+}
+
 async function ladeVerlauf() {
   try {
     const { data } = await api.get('/api/import/dfbnet/verlauf')

@@ -155,9 +155,14 @@ async def import_dfbnet(
     # Stand festhalten – erst NACH dem geglückten Lauf: Ein abgebrochener Import
     # darf den Kalender nicht als frisch ausweisen (#171).
     try:
+        # Der Zeitraum kommt aus derselben Quelle wie das Prüffenster für
+        # „nicht mehr angesetzt" – angezeigt wird damit genau der Bereich, für
+        # den die Aussage des Laufs gilt.
+        zeitraum_von, zeitraum_bis = lauf.bericht.zeitraum
         db.dfbnet_import_stand.set(
             dateiname=file.filename, datei_datum=(datei_datum or None),
             anzahl_spiele=len(lauf.bericht.befunde),
+            zeitraum_von=zeitraum_von, zeitraum_bis=zeitraum_bis,
             by=user.username)
     except Exception:  # noqa: BLE001
         logger.warning("Import-Stand konnte nicht festgehalten werden.", exc_info=True)

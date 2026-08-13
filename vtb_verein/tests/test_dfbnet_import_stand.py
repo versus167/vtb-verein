@@ -205,3 +205,137 @@ class TestMigration:
         `OHNE_PFAD` in test_prune_integration.test_jede_tabelle_hat_einen_loeschpfad."""
         from app.services.prune_service import PRUNE_REGISTRY
         assert not any(e.table == "dfbnet_import_stand" for e in PRUNE_REGISTRY)
+
+
+# ------------------------------------------------------- Zeitraum (Schema v95)
+
+class TestZeitraumBericht:
+    """Der Zeitraum kommt aus dem Bericht, nicht aus einer zweiten Rechnung."""
+
+    @staticmethod
+    def _bericht(*tage):
+        from app.services.dfbnet_import_service import ImportBericht, Spiel, ZeilenBefund
+
+        def spiel(nr, tag):
+            # Alle Pflichtfelder, für den Zeitraum zählt nur `beginn`.
+            return Spiel(zeile=nr, spielkennung=f"S{nr}", mannschaftsart='Herren',
+                         staffel='', liga='', spieltyp='', spieltag='',
+                         beginn=f"{tag}T14:00" if tag else None,
+                         heim='A', gast='B', spielstaette='', spielstaetten_nr='',
+                         strasse='', plz='', ort='')
+
+        b = ImportBericht()
+        b.befunde = [ZeilenBefund(spiel=spiel(i, t), einordnung='neu')
+                     for i, t in enumerate(tage)]
+        return b
+
+    def test_erster_und_letzter_spieltag(self):
+        b = self._bericht("2026-09-13", "2026-08-07", "2026-10-30")
+        assert b.zeitraum == ("2026-08-07", "2026-10-30")
+
+    def test_ohne_spiele_kein_zeitraum(self):
+        assert self._bericht().zeitraum == (None, None)
+
+    def test_zeilen_ohne_datum_stoeren_nicht(self):
+        assert self._bericht("2026-09-13", None).zeitraum == ("2026-09-13", "2026-09-13")
+
+    def test_fremdspiele_spannen_das_fenster_mit(self):
+        """Absicht: Es geht um den Zeitraum der *Datei*. Dieselbe Spanne benutzt
+        die Prüfung auf „nicht mehr angesetzt" – angezeigt wird also genau der
+        Bereich, für den die Aussage des Laufs gilt."""
+        from app.services.dfbnet_import_service import FREMD
+        b = self._bericht("2026-09-13", "2026-11-02")
+        b.befunde[1].einordnung = FREMD
+        assert b.zeitraum[1] == "2026-11-02"
+
+
+@pg
+class TestZeitraumGespeichert:
+    def test_zeitraum_wird_festgehalten_und_ausgelesen(self, leer):
+        stand = leer.dfbnet_import_stand.set(
+            dateiname="spielplan.csv", datei_datum=None, anzahl_spiele=129,
+            zeitraum_von="2026-08-07", zeitraum_bis="2026-10-30", by="vsuess")
+        assert str(stand['zeitraum_von']) == "2026-08-07"
+        assert str(stand['zeitraum_bis']) == "2026-10-30"
+
+    def test_zeitraum_steht_auch_im_verlauf(self, leer):
+        """Der Audit-Trigger trägt die Spaltenliste fest im Rumpf – ohne
+        Neuanlage in der Migration fehlten die neuen Spalten in der History."""
+        leer.dfbnet_import_stand.set(dateiname="a.csv", datei_datum=None,
+                                     anzahl_spiele=1, zeitraum_von="2026-08-01",
+                                     zeitraum_bis="2026-10-31", by="a")
+        eintrag = leer.dfbnet_import_stand.verlauf()[0]
+        assert str(eintrag['zeitraum_von']) == "2026-08-01"
+        assert str(eintrag['zeitraum_bis']) == "2026-10-31"
+
+    def test_ohne_zeitraum_bleibt_die_spalte_leer(self, leer):
+        """Läufe von vor v95 haben die Angabe nicht – das darf nichts brechen."""
+        stand = leer.dfbnet_import_stand.set(dateiname="alt.csv", datei_datum=None,
+                                             anzahl_spiele=5, by="a")
+        assert stand['zeitraum_von'] is None and stand['zeitraum_bis'] is None
+
+
+@pg
+class TestZeitraumMigration:
+    """Fresh == Migriert für Schema v95.
+
+    Der heikle Teil ist nicht die Spalte, sondern der Audit-Trigger: Seine
+    Funktion trägt die Spaltenliste fest im Rumpf. Wer nur ALTER TABLE macht und
+    die Funktionen stehen lässt, bekommt eine Tabelle mit Zeitraum und eine
+    History ohne — und merkt es erst, wenn jemand in den Verlauf schaut.
+    """
+
+    @staticmethod
+    def _auf_v94_zuruecksetzen(db):
+        """Vorzustand herstellen: Spalten weg, alte Trigger-Funktionen zurück."""
+        from app.db.database import _audit_fns
+        alt_cols = ("id, version, dateiname, datei_datum, importiert_am, "
+                    "importiert_von, anzahl_spiele, created_at, created_by, "
+                    "updated_at, updated_by")
+        alt_vals = ", ".join("NEW." + c.strip() for c in alt_cols.split(","))
+        fn_insert, fn_update = _audit_fns("dfbnet_import_stand", alt_cols, alt_vals)
+        with db.cursor() as cur:
+            # Erst die Funktionen, sonst scheitert das DROP am abhängigen Rumpf.
+            cur.execute(fn_insert)
+            cur.execute(fn_update)
+            for tbl in ("dfbnet_import_stand", "dfbnet_import_stand_history"):
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS zeitraum_von")
+                cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS zeitraum_bis")
+            cur.execute("UPDATE schema_version SET version = 94 WHERE id = 1")
+
+    @staticmethod
+    def _spalten(db, tabelle):
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = %s", (tabelle,))
+            return {r['column_name'] for r in cur.fetchall()}
+
+    def test_migration_ergaenzt_beide_tabellen(self, leer):
+        self._auf_v94_zuruecksetzen(leer)
+        assert 'zeitraum_von' not in self._spalten(leer, 'dfbnet_import_stand')
+
+        leer._database._migrate_v94_to_v95()
+
+        for tabelle in ('dfbnet_import_stand', 'dfbnet_import_stand_history'):
+            spalten = self._spalten(leer, tabelle)
+            assert {'zeitraum_von', 'zeitraum_bis'} <= spalten, tabelle
+
+    def test_nach_der_migration_schreibt_der_trigger_den_zeitraum_fort(self, leer):
+        """Der eigentliche Prüfstein: ohne neu angelegte Audit-Funktionen bliebe
+        die History stumm, obwohl die Tabelle die Werte hat."""
+        self._auf_v94_zuruecksetzen(leer)
+        leer._database._migrate_v94_to_v95()
+
+        leer.dfbnet_import_stand.set(dateiname="a.csv", datei_datum=None,
+                                     anzahl_spiele=1, zeitraum_von="2026-08-07",
+                                     zeitraum_bis="2026-10-30", by="a")
+        eintrag = leer.dfbnet_import_stand.verlauf()[0]
+        assert str(eintrag['zeitraum_von']) == "2026-08-07"
+        assert str(eintrag['zeitraum_bis']) == "2026-10-30"
+
+    def test_migration_ist_idempotent(self, leer):
+        self._auf_v94_zuruecksetzen(leer)
+        leer._database._migrate_v94_to_v95()
+        leer._database._migrate_v94_to_v95()   # darf nicht scheitern
+        assert {'zeitraum_von', 'zeitraum_bis'} <= self._spalten(leer, 'dfbnet_import_stand')

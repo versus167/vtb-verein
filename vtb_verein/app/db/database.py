@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 94
+SCHEMA_VERSION = 95
 
 
 # ---------------------------------------------------------------------------
@@ -2999,6 +2999,7 @@ _MANNSCHAFT_DFBNET_TRIGGERS = (
 # keine PruneEntity; die wachsende History läuft als Protokoll über die LOG_REGISTRY.
 _DFBNET_IMPORT_STAND_COLS = (
     "id, version, dateiname, datei_datum, importiert_am, importiert_von, anzahl_spiele, "
+    "zeitraum_von, zeitraum_bis, "
     "created_at, created_by, updated_at, updated_by"
 )
 _DFBNET_IMPORT_STAND_VALS = ", ".join(
@@ -3012,6 +3013,11 @@ _DDL_DFBNET_IMPORT_STAND = """
       importiert_am  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       importiert_von TEXT,
       anzahl_spiele  INTEGER,
+      -- Erster und letzter Spieltag der Datei. Genau das Fenster, in dem der
+      -- Import nach fehlenden Spielen sucht (s. ImportBericht.zeitraum) – der
+      -- DFBnet-Export liefert höchstens ein Quartal auf einmal.
+      zeitraum_von   DATE,
+      zeitraum_bis   DATE,
       version        INTEGER NOT NULL DEFAULT 1,
       created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by     TEXT,
@@ -3022,6 +3028,7 @@ _DDL_DFBNET_IMPORT_STAND = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       dateiname TEXT, datei_datum TIMESTAMPTZ,
       importiert_am TIMESTAMPTZ, importiert_von TEXT, anzahl_spiele INTEGER,
+      zeitraum_von DATE, zeitraum_bis DATE,
       created_at TIMESTAMPTZ, created_by TEXT, updated_at TIMESTAMPTZ, updated_by TEXT,
       PRIMARY KEY (id, version)
     );
@@ -3399,6 +3406,7 @@ class Database:
             92: self._migrate_v91_to_v92,
             93: self._migrate_v92_to_v93,
             94: self._migrate_v93_to_v94,
+            95: self._migrate_v94_to_v95,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7102,6 +7110,36 @@ class Database:
                 )
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 94 WHERE id = 1")
+
+    def _migrate_v94_to_v95(self) -> None:
+        """Zeitraum der importierten Spielplan-Datei festhalten.
+
+        Der Verlauf nannte Dateinamen, Zeitpunkt und Zeilenzahl – aber nicht, für
+        welche Wochen die Datei überhaupt galt. Genau das ist die Frage, die man
+        vor einem Import stellt: „Ist der November schon drin?" Zwei gleich große
+        Dateien können völlig verschiedene Quartale abdecken, der Dateiname sagt
+        dazu nichts (er heißt immer spielplan.csv).
+
+        Die Spanne ist zugleich das Fenster, in dem der Import nach fehlenden
+        Spielen sucht (`ImportBericht.zeitraum`): Der DFBnet-Export liefert
+        höchstens ein Quartal, „nicht mehr angesetzt" kann also nur innerhalb
+        dieser Grenzen etwas heißen. Angezeigt wird damit genau der Bereich, für
+        den die Aussage gilt.
+
+        Für frühere Läufe bleibt die Spanne leer – aus den gespeicherten Daten
+        lässt sie sich nicht rekonstruieren, und ein geratener Zeitraum wäre
+        schlechter als keiner (vgl. v93→v94).
+        """
+        with self.cursor() as cur:
+            for tbl in ("dfbnet_import_stand", "dfbnet_import_stand_history"):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS zeitraum_von DATE")
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS zeitraum_bis DATE")
+            # Die Audit-Funktionen tragen die Spaltenliste fest im Rumpf – ohne
+            # Neuanlage schriebe der Trigger die neuen Spalten nie in die History.
+            cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
+            cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 95 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

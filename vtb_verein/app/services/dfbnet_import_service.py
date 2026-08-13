@@ -142,6 +142,22 @@ class ImportBericht:
         return {k: z.get(k, 0) for k in
                 (NEU, AENDERUNG, UNVERAENDERT, PLATZBELEGUNG, FREMD)}
 
+    @property
+    def zeitraum(self) -> tuple[Optional[str], Optional[str]]:
+        """Erster und letzter Spieltag der Datei als ISO-Datum, sonst (None, None).
+
+        Das ist nicht bloß Anzeige-Beiwerk, sondern **das** Fenster, in dem
+        :func:`_entfallene_melden` überhaupt nach fehlenden Spielen sucht — der
+        DFBnet-Export liefert höchstens ein Quartal, „fehlt" kann also immer nur
+        innerhalb dieser Grenzen etwas heißen. Beide lesen deshalb hier, damit die
+        angezeigte Spanne genau die geprüfte ist.
+
+        Gezählt werden alle Zeilen, auch Fremdspiele und Platzbelegungen: Es geht
+        um den Zeitraum der *Datei*, nicht um den der eigenen Spiele.
+        """
+        tage = sorted(b.spiel.beginn[:10] for b in self.befunde if b.spiel.beginn)
+        return (tage[0], tage[-1]) if tage else (None, None)
+
 
 # --------------------------------------------------------------------- Parser
 
@@ -529,8 +545,8 @@ def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis,
     eigene = [b for b in bericht.befunde if b.mannschaft_id]
     if not eigene:
         return
-    tage = [b.spiel.beginn[:10] for b in bericht.befunde if b.spiel.beginn]
-    if not tage:
+    von, bis = bericht.zeitraum
+    if von is None:
         return
     vorhanden = {(b.mannschaft_id, b.spiel.spielkennung) for b in eigene}
 
@@ -539,7 +555,7 @@ def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis,
         [b.termin_id for b in eigene if b.termin_id], actor)
 
     teams = sorted({b.mannschaft_id for b in eigene})
-    for termin in db.termine.list_importierte(teams, min(tage), max(tage)):
+    for termin in db.termine.list_importierte(teams, von, bis):
         if (termin.mannschaft_id, termin.extern_ref) in vorhanden:
             continue
         if db.termin_abweichungen.hat_unerledigte(termin.id, FELD_ENTFALLEN):
