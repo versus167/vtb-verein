@@ -11,8 +11,8 @@ class User:
     """Benutzer-Entität."""
     id: int
     username: str
-    email: str
-    password_hash: str
+    email: str | None          # None = Konto ohne Zugang (kein Magic-Link möglich)
+    password_hash: str         # '' = kein Passwort gesetzt (kein Passwort-Login möglich)
     role: str  # 'admin' | 'mitglied' (seit Stufe D, siehe BERECHTIGUNGEN.md)
     active: bool
     last_login: str | None

@@ -104,13 +104,18 @@ class PersonService:
     def create_user_only(
         self,
         username: str,
-        email: str,
+        email: Optional[str],
         role: str,
         active: bool,
         created_by: str,
         password: Optional[str] = None,
     ) -> User:
-        """Legt nur einen User an (Admin/Benutzer ohne Vereinsmitglied-Datensatz)."""
+        """Legt nur einen User an (Admin/Benutzer ohne Vereinsmitglied-Datensatz).
+
+        Ohne E-Mail und Passwort entsteht ein Konto ohne Zugang: ein Name, an dem
+        etwas hängen kann (z. B. ein Schlüssel-Chip), aber keine Anmeldung. Ein
+        solches Konto muss inaktiv sein, siehe UserService._pruefe_anmeldeweg.
+        """
         return self.user_service.create(
             username=username,
             email=email,

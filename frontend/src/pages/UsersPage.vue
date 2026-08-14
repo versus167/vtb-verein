@@ -57,11 +57,13 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="createForm.username" label="Benutzername *" outlined autofocus
             :rules="[(v) => !!v || 'Pflichtfeld']" />
-          <q-input v-model="createForm.email" label="E-Mail *" outlined type="email"
-            :rules="[(v) => !!v || 'Pflichtfeld']" />
+          <q-input v-model="createForm.email" label="E-Mail" outlined type="email"
+            hint="Leer lassen für ein Konto ohne Zugang (nur ein Name)" />
           <q-select v-model="createForm.role" label="Rolle" outlined :options="roleOptions"
             emit-value map-options />
-          <q-checkbox v-model="createForm.active" label="Aktiv" />
+          <q-checkbox :model-value="createForm.active && !createOhneZugang"
+            @update:model-value="v => createForm.active = v"
+            label="Aktiv" :disable="createOhneZugang" />
           <q-input v-model="createForm.password" label="Passwort (optional)" outlined
             :type="showPw ? 'text' : 'password'">
             <template #append>
@@ -69,8 +71,13 @@
                 class="cursor-pointer" @click="showPw = !showPw" />
             </template>
           </q-input>
-          <div class="text-caption text-grey-7">
+          <div v-if="!createOhneZugang" class="text-caption text-grey-7">
             Ohne Passwort kann sich der Benutzer nur per Magic-Link anmelden.
+          </div>
+          <div v-else class="text-caption text-grey-7">
+            <q-icon name="vpn_key_off" size="xs" class="q-mr-xs" />Konto ohne Zugang: Ohne
+            E-Mail und Passwort entsteht nur ein Name (z. B. ein Schlüsselträger ohne
+            App-Konto). Anmelden kann sich damit niemand, deshalb bleibt es inaktiv.
           </div>
           <div v-if="createError" class="text-negative">{{ createError }}</div>
         </q-card-section>
@@ -90,8 +97,7 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="editForm.username" label="Benutzername *" outlined
             :rules="[(v) => !!v || 'Pflichtfeld']" />
-          <q-input v-model="editForm.email" label="E-Mail *" outlined type="email"
-            :rules="[(v) => !!v || 'Pflichtfeld']" />
+          <q-input v-model="editForm.email" label="E-Mail" outlined type="email" />
           <q-select v-model="editForm.role" label="Rolle" outlined :options="roleOptions"
             emit-value map-options />
           <q-checkbox v-model="editForm.active" label="Aktiv" />
@@ -194,6 +200,12 @@ const saving = ref(false)
 const showPw = ref(false)
 const createForm = ref({ username: '', email: '', role: 'user', active: true, password: '' })
 
+// Ohne E-Mail und Passwort gibt es keinen Anmeldeweg – ein solches Konto ist ein
+// reiner Namensträger (z. B. Schlüsselträger) und muss inaktiv bleiben; das Backend
+// lehnt alles andere ab (UserService._pruefe_anmeldeweg).
+const createOhneZugang = computed(() =>
+  !(createForm.value.email || '').trim() && !(createForm.value.password || ''))
+
 function openCreateDialog() {
   createForm.value = { username: '', email: '', role: 'user', active: true, password: '' }
   createError.value = ''
@@ -207,6 +219,8 @@ async function onCreate() {
     await api.post('/api/users/', {
       ...createForm.value,
       password: createForm.value.password || null,
+      // Ohne Anmeldeweg kann das Konto nicht aktiv sein (s. createOhneZugang).
+      active: createForm.value.active && !createOhneZugang.value,
     })
     $q.notify({ type: 'positive', message: 'Benutzer angelegt' })
     createOpen.value = false

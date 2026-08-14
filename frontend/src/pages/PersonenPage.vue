@@ -69,7 +69,10 @@
                 {{ mitgliedStatusLabel(p.mitglied) }}
                 <q-tooltip>{{ p.mitglied.art === 'gastspieler' ? 'Gastspieler – kein Vereinsmitglied' : 'Vereinsstatus' }}</q-tooltip>
               </q-chip>
-              <q-icon v-if="p.user_id && p.active" name="check_circle" color="positive" size="sm">
+              <q-icon v-if="ohneZugang(p)" name="vpn_key_off" color="grey-6" size="sm">
+                <q-tooltip>Konto ohne Zugang – nur ein Name (z. B. Schlüsselträger)</q-tooltip>
+              </q-icon>
+              <q-icon v-else-if="p.user_id && p.active" name="check_circle" color="positive" size="sm">
                 <q-tooltip>Login aktiv</q-tooltip>
               </q-icon>
               <q-icon v-else-if="p.user_id" name="cancel" color="negative" size="sm">
@@ -238,8 +241,13 @@
       <template #body-cell-status="props">
         <q-td :props="props" class="text-center">
           <div class="row items-center justify-center no-wrap" style="gap: 4px">
+            <!-- Konten ohne Anmeldeweg sind kein kaputter Login, sondern ein reiner
+                 Namensträger (z. B. Schlüsselträger) – eigenes, ruhiges Zeichen. -->
+            <q-icon v-if="ohneZugang(props.row)" name="vpn_key_off" color="grey-6" size="sm">
+              <q-tooltip>Konto ohne Zugang – nur ein Name (z. B. Schlüsselträger)</q-tooltip>
+            </q-icon>
             <!-- Login-Account-Status: nur bei Benutzer-Zeilen (sonst kein Login) -->
-            <q-icon v-if="props.row.user_id" :name="props.row.active ? 'check_circle' : 'cancel'"
+            <q-icon v-else-if="props.row.user_id" :name="props.row.active ? 'check_circle' : 'cancel'"
               :color="props.row.active ? 'positive' : 'negative'" size="sm">
               <q-tooltip>Login {{ props.row.active ? 'aktiv' : 'inaktiv' }}</q-tooltip>
             </q-icon>
@@ -426,14 +434,17 @@
             <!-- Tab: Benutzer/Admin -->
             <q-tab-panel name="user" class="q-gutter-sm q-pa-none">
               <q-input v-model="createForm.username" label="Benutzername *" outlined dense />
-              <q-input v-model="createForm.email" label="E-Mail *" outlined dense type="email" />
+              <q-input v-model="createForm.email" label="E-Mail" outlined dense type="email"
+                hint="Leer lassen für ein Konto ohne Zugang (nur ein Name)" />
               <div class="row items-center q-gutter-sm">
                 <q-toggle v-if="canAssignAdmin" class="self-center"
                   :model-value="createForm.role === 'admin'"
                   @update:model-value="v => createForm.role = v ? 'admin' : 'mitglied'"
                   label="Administrator" />
                 <q-space />
-                <q-toggle v-model="createForm.active" label="Aktiv" class="self-center" />
+                <q-toggle :model-value="createForm.active && !createOhneZugang"
+                  @update:model-value="v => createForm.active = v"
+                  label="Aktiv" class="self-center" :disable="createOhneZugang" />
               </div>
               <q-input v-model="createForm.password" label="Passwort (optional)" outlined dense
                 :type="showCreatePw ? 'text' : 'password'"
@@ -443,10 +454,18 @@
                     class="cursor-pointer" @click="showCreatePw = !showCreatePw" />
                 </template>
               </q-input>
-              <div class="text-caption text-grey-6">
+              <div v-if="!createOhneZugang" class="text-caption text-grey-6">
                 <q-icon name="info" size="xs" /> Zusätzlich zum Magic-Link: Ohne Passwort kann
                 sich der Benutzer nur per Magic-Link anmelden.
               </div>
+              <q-banner v-else dense rounded class="bg-blue-1 text-blue-10">
+                <template #avatar><q-icon name="vpn_key_off" /></template>
+                <span class="text-weight-medium">Konto ohne Zugang</span> – ohne E-Mail und
+                Passwort entsteht nur ein Name, an dem etwas hängen kann: gedacht für
+                Schlüsselträger ohne App-Konto (Platzwart, Hausmeister, Betreuer eines
+                Gastvereins). Anmelden kann sich damit niemand, deshalb bleibt das Konto
+                inaktiv. E-Mail später nachtragen macht daraus jederzeit einen echten Zugang.
+              </q-banner>
             </q-tab-panel>
           </q-tab-panels>
           <div v-if="createError" class="text-negative text-caption">{{ createError }}</div>
@@ -476,7 +495,14 @@
           <div v-else-if="editUserForm.role === 'admin'" class="text-caption text-grey-7">
             <q-icon name="shield" size="xs" class="q-mr-xs" />Administrator – nur ein Administrator kann dieses Recht ändern
           </div>
-          <q-toggle v-model="editUserForm.active" label="Aktiv" />
+          <q-toggle :model-value="editUserForm.active && !editOhneZugang"
+            @update:model-value="v => editUserForm.active = v"
+            label="Aktiv" :disable="editOhneZugang" />
+          <div v-if="editOhneZugang" class="text-caption text-grey-7">
+            <q-icon name="vpn_key_off" size="xs" class="q-mr-xs" />Konto ohne Zugang: weder
+            E-Mail noch Passwort hinterlegt – anmelden kann sich damit niemand. Für einen
+            echten Zugang eine E-Mail eintragen oder unten ein Passwort setzen.
+          </div>
           <div v-if="editUserError" class="text-negative text-caption">{{ editUserError }}</div>
         </q-card-section>
 
@@ -1024,6 +1050,13 @@ function formatLastLogin(iso) {
   return `vor ${y} Jahr${y === 1 ? '' : 'en'}`
 }
 
+// Konto ohne Zugang: existiert als Benutzer, hat aber keinen Anmeldeweg – weder
+// E-Mail (Magic-Link) noch Passwort. So werden Schlüsselträger ohne App-Konto
+// geführt; ein Chip kann ihnen zugeordnet werden, anmelden kann sich niemand.
+function ohneZugang(p) {
+  return !!p.user_id && !p.email && !p.hat_passwort
+}
+
 function rolleLabel(role) {
   return { admin: 'Admin', mitglied: 'Mitglied' }[role] ?? role
 }
@@ -1116,6 +1149,15 @@ const createError  = ref('')
 const showCreatePw = ref(false)
 const createForm   = ref({})
 
+// Konto ohne Zugang: weder E-Mail noch Passwort → kein Anmeldeweg. Das Backend lehnt
+// ein solches Konto als „aktiv" ab (UserService._pruefe_anmeldeweg), deshalb hier gar
+// nicht erst anbieten. Der Haken zeigt in diesem Fall „aus" und ist gesperrt, ohne die
+// Wahl im Formular zu überschreiben: Wer die E-Mail nachträgt, findet seinen Haken wieder.
+const createOhneZugang = computed(() =>
+  createTab.value === 'user'
+  && !(createForm.value.email || '').trim()
+  && !(createForm.value.password || ''))
+
 function openCreateDialog() {
   createTab.value = 'mitglied'
   createError.value = ''
@@ -1153,6 +1195,8 @@ async function onCreate() {
     const payload = { ...createForm.value, status: createForm.value.mitglied_status }
     if (createTab.value === 'user') {
       delete payload.vorname; delete payload.nachname
+      // Ohne Anmeldeweg kann das Konto nicht aktiv sein (s. createOhneZugang).
+      if (createOhneZugang.value) payload.active = false
     } else {
       // Vereinsmitglied: nur Mitglied-Datensatz, kein Login/Benutzer – Login-Felder nicht senden
       delete payload.username
@@ -1197,12 +1241,18 @@ const pwShow   = ref(false)
 const pwSaving = ref(false)
 const pwError  = ref('')
 
+// Wie createOhneZugang, nur für den Bearbeiten-Dialog: Ein hier gesetztes Passwort
+// (Abschnitt „Passwort setzen") zählt sofort mit, danach ist das Konto aktivierbar.
+const editOhneZugang = computed(() =>
+  !(editUserForm.value.email || '').trim() && !editUserForm.value.hat_passwort)
+
 function openEditUserDialog(row) {
   editingUserId.value = row.user_id
   editUserError.value = ''
   editUserForm.value = {
     username: row.username, email: row.email,
     role: row.role, active: row.active,
+    hat_passwort: row.hat_passwort,
     expected_version: row.user_version,
   }
   pwForm.value = { pw1: '', pw2: '' }
@@ -1222,6 +1272,8 @@ async function onSetPassword() {
     // Passwort setzen erhöht die User-version: neue Version übernehmen, sonst läuft
     // ein anschließendes Speichern im Dialog in den Versionskonflikt.
     if (data?.version != null) editUserForm.value.expected_version = data.version
+    // Ab jetzt gibt es einen Anmeldeweg – der Aktiv-Haken ist nicht mehr gesperrt.
+    editUserForm.value.hat_passwort = true
     $q.notify({ type: 'positive', message: `Passwort für „${editUserForm.value.username}" gesetzt` })
     pwForm.value = { pw1: '', pw2: '' }
     await loadPersonen()
@@ -1236,7 +1288,12 @@ async function onSaveUser() {
   editUserSaving.value = true
   editUserError.value = ''
   try {
-    await api.put(`/api/personen/${editingUserId.value}/user`, editUserForm.value)
+    // Ohne Anmeldeweg ist „aktiv" nicht möglich (und wird oben auch gar nicht
+    // angeboten) – dann das senden, was der Dialog zeigt, statt in den 400 zu laufen.
+    await api.put(`/api/personen/${editingUserId.value}/user`, {
+      ...editUserForm.value,
+      active: editUserForm.value.active && !editOhneZugang.value,
+    })
     $q.notify({ type: 'positive', message: 'Gespeichert' })
     editUserOpen.value = false
     await loadPersonen()

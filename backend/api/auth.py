@@ -182,7 +182,9 @@ class UserInfo(BaseModel):
     id: int
     username: str
     display_name: str
-    email: str
+    # Kein Pflichtfeld mehr: Wer sich per Passwort anmeldet, muss keine Adresse haben
+    # (und Konten ohne Zugang haben grundsätzlich keine).
+    email: str | None = None
     role: str
     permissions: list[str]
     last_login: str | None = None

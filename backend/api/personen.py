@@ -67,7 +67,9 @@ class PersonCreate(BaseModel):
 
 class PersonUserUpdate(BaseModel):
     username: str
-    email: str
+    # Leer erlaubt: Konto ohne Zugang (z. B. reiner Schlüsselträger). Bei einem Konto
+    # mit Mitgliedsdatensatz bleibt die Adresse in der Praxis gesetzt.
+    email: Optional[str] = None
     role: str
     active: bool
     expected_version: int
@@ -322,6 +324,16 @@ def _last_edited_sql(mitglied_alias: str, user_alias: Optional[str]) -> str:
     return "GREATEST(" + ", ".join(terms) + ")"
 
 
+def _hat_passwort(user) -> bool:
+    """Ob für dieses Konto ein Passwort gesetzt ist – ohne den Hash anzufassen."""
+    if user is None:
+        return False
+    fertig = getattr(user, 'hat_passwort', None)
+    if fertig is not None:
+        return bool(fertig)
+    return bool(getattr(user, 'password_hash', ''))
+
+
 def _person_row(user, mitglied, abteilungen: list, funktionen: list,
                 last_edited: Optional[str] = None,
                 lizenz_aktuell_gueltig: Optional[bool] = None) -> dict:
@@ -347,6 +359,12 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list,
         'user_id': user.id if user else None,
         'username': user.username if user else None,
         'email': user.email if user else None,
+        # Nie der Hash selbst, nur: „kann sich dieses Konto anmelden?". Ohne E-Mail
+        # UND ohne Passwort ist es ein Konto ohne Zugang (reiner Namensträger, etwa
+        # ein Schlüsselträger) – die Liste zeigt das an, statt es als kaputten Login
+        # aussehen zu lassen. Die Personenliste liefert das Flag fertig aus SQL
+        # (sie holt die Hashes gar nicht erst), Einzel-Endpoints haben den User.
+        'hat_passwort': _hat_passwort(user),
         'role': user.role if user else None,
         'active': bool(user.active) if user else True,
         'last_login': user.last_login if user else None,
@@ -397,6 +415,7 @@ def list_personen(user: CurrentUser, db: DB):
         cur.execute(f"""
             SELECT * FROM (
                 SELECT u.id, u.username, u.email, u.role, u.active, u.last_login, u.last_seen, u.version, u.updated_at,
+                       (u.password_hash <> '') AS hat_passwort,
                        m.id AS m_id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1) AS m_email,
@@ -416,7 +435,7 @@ def list_personen(user: CurrentUser, db: DB):
                 LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
                 WHERE u.deleted_at IS NULL
                 UNION ALL
-                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, FALSE,
                        m.id, m.mitgliedsnummer, m.vorname, m.nachname, m.geburtsdatum,
                        m.strasse, m.plz, m.ort, m.land,
                        (SELECT k.wert FROM mitglied_kontakt k WHERE k.mitglied_id = m.id AND k.typ='email'   AND k.ist_primaer AND k.deleted_at IS NULL LIMIT 1),
@@ -449,6 +468,7 @@ def list_personen(user: CurrentUser, db: DB):
                 'last_seen': r['last_seen'],
                 'version': r['version'],
                 'updated_at': r['updated_at'],
+                'hat_passwort': r['hat_passwort'],
             })()
         m_obj = None
         if r['m_id'] is not None:
@@ -719,6 +739,11 @@ def zugang_einladung_senden(mitglied_id: int, request: Request, user: CurrentUse
         raise HTTPException(status_code=404, detail="Zugang nicht gefunden")
     if not ziel.active:
         raise HTTPException(status_code=409, detail="Der Zugang ist deaktiviert")
+    if not ziel.email:
+        # Konto ohne hinterlegte Adresse – dann gibt es nichts zu verschicken, und
+        # „Versand fehlgeschlagen" wäre die falsche Auskunft.
+        raise HTTPException(status_code=409,
+                            detail="Für diesen Zugang ist keine E-Mail hinterlegt")
 
     if not UserService(db).send_magic_link(ziel.email):
         raise HTTPException(status_code=502, detail="E-Mail-Versand fehlgeschlagen")
@@ -843,8 +868,10 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
     u = db.get_user_by_id(user_id)
     m = db.get_mitglied_by_user_id(user_id)
-    # Primären E-Mail-Kontakt des Mitglieds mit der Login-E-Mail synchron halten
-    if m:
+    # Primären E-Mail-Kontakt des Mitglieds mit der Login-E-Mail synchron halten.
+    # Ohne Login-Adresse gibt es nichts zu spiegeln – der bestehende Kontakt des
+    # Mitglieds bleibt dann stehen, statt gelöscht zu werden.
+    if m and data.email:
         db.set_mitglied_primaer_kontakt(m.id, 'email', data.email, user.username)
         m = db.get_mitglied_by_user_id(user_id)
     abteilungen = db.list_mitglied_abteilungen(m.id) if m else []
