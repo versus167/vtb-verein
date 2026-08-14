@@ -60,7 +60,13 @@ class UserRepository(BaseRepository):
             return self._load_permissions(self._row_to_user(row))
     
     def get_by_email(self, email: str) -> Optional[User]:
-        """Find User by email (only non-deleted). Used for Magic-Link authentication."""
+        """Find User by email (only non-deleted). Used for Magic-Link authentication.
+
+        Ohne Adresse gibt es nichts zu suchen: Konten ohne Zugang haben email IS NULL,
+        und eine leer abgeschickte Anmeldung darf niemanden treffen.
+        """
+        if not (email or '').strip():
+            return None
         with self.cursor() as cur:
             cur.execute(
                 """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
@@ -119,13 +125,13 @@ class UserRepository(BaseRepository):
             )
             return cur.fetchone()['count']
     
-    def create(self, username: str, email: str, password_hash: str, role: str,
+    def create(self, username: str, email: Optional[str], password_hash: str, role: str,
                created_by: str, active: bool = True) -> User:
         """Create a new user.
-        
+
         Args:
             username: Unique username
-            email: Email address
+            email: Email address (None = Konto ohne Zugang, siehe UserService.create)
             password_hash: Already hashed password (hashing done in service layer)
             role: Role ('admin', 'user', 'special', 'readonly')
             created_by: Username of creator
@@ -157,14 +163,14 @@ class UserRepository(BaseRepository):
         
         return self.get_by_id(user_id)
     
-    def update(self, user_id: int, username: str, email: str, role: str,
+    def update(self, user_id: int, username: str, email: Optional[str], role: str,
                active: bool, updated_by: str, expected_version: int) -> bool:
         """Update user data (without password).
-        
+
         Args:
             user_id: ID of user to update
             username: New username
-            email: New email
+            email: New email (None = Zugang per Magic-Link entfällt)
             role: New role
             active: New active status
             updated_by: Username of updater

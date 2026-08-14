@@ -57,6 +57,10 @@ class NotificationService:
                 logger.error(f"Fehler beim push-Versand an {user.username}: {str(e)}")
 
         def send_email() -> bool:
+            # Konten ohne Zugang (Schlüsselträger) haben keine Adresse – für sie ist
+            # der E-Mail-Kanal schlicht nicht vorhanden, nicht fehlgeschlagen.
+            if not user.email:
+                return False
             try:
                 ok = EmailService.send_text_email(
                     recipient_email=user.email,

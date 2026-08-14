@@ -181,6 +181,10 @@ def _user_to_dict(u):
         'last_login': u.last_login,
         'last_seen':  u.last_seen,
         'version':    u.version,
+        # Der Hash selbst geht nie raus – nur die Antwort auf „kann sich dieses Konto
+        # überhaupt anmelden?". Ohne Mail UND ohne Passwort ist es ein Konto ohne
+        # Zugang, das die Liste als solches kennzeichnet.
+        'hat_passwort': bool(u.password_hash),
     }
 
 
@@ -188,7 +192,9 @@ def _user_to_dict(u):
 
 class UserCreate(BaseModel):
     username: str
-    email: str
+    # Leer erlaubt: Konto ohne Zugang (Schlüsselträger ohne App-Konto). Ein solches
+    # Konto muss inaktiv sein – der UserService lehnt aktiv ohne Anmeldeweg ab.
+    email: Optional[str] = None
     role: str
     active: bool = True
     password: Optional[str] = None
@@ -196,7 +202,7 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     username: str
-    email: str
+    email: Optional[str] = None
     role: str
     active: bool
     expected_version: int

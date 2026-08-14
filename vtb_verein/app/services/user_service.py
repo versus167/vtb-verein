@@ -9,6 +9,11 @@ from app.db.datastore import VereinsDB
 from app.services.email_service import EmailService
 from app.config.email_config import EmailConfig
 
+# Historischer Platzhalter: Konten ohne Passwort bekamen bis Schema v96 einen bcrypt-Hash
+# über genau diesen Text. Er wird nur noch gebraucht, um ihn beim Anmelden auszuschließen.
+_PLATZHALTER_PASSWORT = '__NO_PASSWORD_SET__'
+
+
 class UserService:
     """Service für User-Verwaltung und Authentifizierung"""
     
@@ -33,13 +38,21 @@ class UserService:
             User-Objekt wenn erfolgreich, sonst None
         """
         user = self.user_repo.get_by_username(username.lower().strip())
-        
+
         if not user:
             return None
-        
+
         if not user.active:
             return None
-        
+
+        # Konten, die vor dieser Änderung ohne Passwort angelegt wurden, tragen den
+        # bcrypt-Hash über einen festen Platzhalter-Text. Der stand im Quelltext –
+        # wer ihn kennt, käme damit in jedes dieser Konten. Neue Konten ohne Passwort
+        # bekommen einen leeren Hash (siehe create); für den Altbestand wird der
+        # Platzhalter hier als Passwort ausgeschlossen.
+        if password == _PLATZHALTER_PASSWORT:
+            return None
+
         # Passwort prüfen (nur wenn Passwort gesetzt ist)
         if user.password_hash:
             if bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
@@ -154,43 +167,63 @@ class UserService:
         """Zähle aktive Administratoren"""
         return self.user_repo.count_active_admins()
     
-    def create(self, username: str, email: str, role: str, 
+    @staticmethod
+    def _pruefe_anmeldeweg(active: bool, email: Optional[str], password_hash: str) -> None:
+        """Ein aktives Konto braucht mindestens einen Anmeldeweg: E-Mail oder Passwort.
+
+        Ohne beides gäbe es ein Konto, das aktiv aussieht, an dem sich aber niemand
+        anmelden kann – eine Karteileiche, die im Zweifel für „der Zugang klemmt"
+        gehalten wird. Konten ohne Zugang (Schlüsselträger) sind deshalb inaktiv;
+        das ist zugleich die Anzeige dafür, dass hier nur ein Name verwaltet wird.
+        """
+        if active and not email and not password_hash:
+            raise ValueError("Ein aktives Konto braucht eine E-Mail oder ein Passwort. "
+                             "Ohne beides bitte inaktiv anlegen (Konto ohne Zugang).")
+
+    def create(self, username: str, email: Optional[str], role: str,
                active: bool, created_by: str, password: Optional[str] = None,
                send_magic_link: bool = True) -> User:
         """
         Erstellt neuen User
-        
+
         Args:
             username: Benutzername
-            email: E-Mail-Adresse
+            email: E-Mail-Adresse – leer/None erlaubt: dann ein Konto OHNE Zugang
+                (reiner Namensträger, z. B. ein Schlüsselträger ohne App-Konto).
+                Ein solches Konto muss inaktiv sein, siehe _pruefe_anmeldeweg.
             role: Rolle ('admin' | 'mitglied')
             active: Aktiv-Status
             created_by: Username des Erstellers
-            password: Optionales Passwort (Klartext, wird gehasht). Falls None, wird Dummy-Hash gesetzt.
-                Ein Passwort ist die *zusätzliche* Login-Alternative – die Willkommens-Mail
-                mit Magic-Link geht trotzdem raus.
+            password: Optionales Passwort (Klartext, wird gehasht). Falls None, bleibt der
+                Hash leer – Anmeldung dann nur per Magic-Link. Ein Passwort ist die
+                *zusätzliche* Login-Alternative, die Willkommens-Mail geht trotzdem raus.
             send_magic_link: Wenn True, wird automatisch Magic-Link versendet (Standard: True)
-            
+
         Returns:
             Erstellter User
-            
+
         Raises:
             ValueError: Bei ungültigen Daten oder Duplikaten
         """
         # Validierung
         username = username.lower().strip()
-        if not username or not email:
-            raise ValueError("Username und E-Mail dürfen nicht leer sein")
-        
+        email = (email or '').strip() or None
+        if not username:
+            raise ValueError("Username darf nicht leer sein")
+
         # Passwort-Handling
         if password:
             if len(password) < 6:
                 raise ValueError("Passwort muss mindestens 6 Zeichen lang sein")
             password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         else:
-            # Dummy-Hash für User ohne Passwort (können nur per Magic-Link einloggen)
-            password_hash = bcrypt.hashpw(b'__NO_PASSWORD_SET__', bcrypt.gensalt()).decode('utf-8')
-        
+            # Leerer Hash = kein Passwort gesetzt. Bewusst KEIN Hash über einen festen
+            # Platzhalter-Text: der wäre ein im Quelltext nachlesbares Passwort, mit dem
+            # sich jedes solche Konto anmelden ließe (siehe authenticate).
+            password_hash = ''
+
+        self._pruefe_anmeldeweg(active, email, password_hash)
+
         # User erstellen
         user = self.user_repo.create(
             username=username,
@@ -206,7 +239,7 @@ class UserService:
         # Neue User starten ohne materialisierte Permissions (Admins brauchen keine).
 
         # Willkommens-Mail mit Magic-Link senden (falls E-Mail konfiguriert)
-        if send_magic_link and active and EmailConfig.is_configured():
+        if send_magic_link and active and email and EmailConfig.is_configured():
             token = self.token_repo.create_token(
                 user_id=user.id,
                 token_type='magic_link',
@@ -220,15 +253,15 @@ class UserService:
 
         return user
     
-    def update(self, user_id: int, username: str, email: str, role: str,
+    def update(self, user_id: int, username: str, email: Optional[str], role: str,
                active: bool, updated_by: str, expected_version: int) -> bool:
         """
         Aktualisiert User-Daten (ohne Passwort)
-        
+
         Args:
             user_id: ID des Users
             username: Neuer Username
-            email: Neue E-Mail
+            email: Neue E-Mail (leer/None = Konto ohne Magic-Link-Zugang)
             role: Neue Rolle
             active: Neuer Aktiv-Status
             updated_by: Username des Updaters
@@ -241,11 +274,17 @@ class UserService:
             ValueError: Bei Validierungsfehlern oder Versionskonflikten
         """
         username = username.lower().strip()
+        email = (email or '').strip() or None
         # Prüfe "letzter Admin" Constraint
         user = self.user_repo.get_by_id(user_id)
         if not user:
             raise ValueError("User nicht gefunden")
-        
+
+        # Ein Konto darf nicht aktiv werden (oder bleiben), wenn ihm mit dieser
+        # Änderung der letzte Anmeldeweg genommen wird – z. B. E-Mail gelöscht,
+        # ohne dass je ein Passwort gesetzt wurde.
+        self._pruefe_anmeldeweg(active, email, user.password_hash)
+
         # Wenn aktuell ein aktiver Admin -> inaktiv oder herabgestuft wird
         if user.role == 'admin' and user.active:
             will_be_deactivated = (role == 'admin' and not active)

@@ -183,7 +183,8 @@ def _users_db(bestehende_grants=()):
     return SimpleNamespace(
         get_user_by_id=lambda uid: SimpleNamespace(
             id=uid, username='ziel', email='ziel@example.org', role='mitglied',
-            active=True, last_login=None, last_seen=None, version=1),
+            active=True, last_login=None, last_seen=None, version=1,
+            password_hash='$2b$12$hash'),
         permissions=SimpleNamespace(
             get_overrides_for_user=lambda uid: {'grants': set(bestehende_grants),
                                                 'denies': set()},

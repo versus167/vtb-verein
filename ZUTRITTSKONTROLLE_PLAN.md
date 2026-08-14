@@ -551,6 +551,31 @@ ausgeblendet. `schluessel_chip.user_id` ist deshalb die zweite mögliche Inhaber
 - Kein `PRUNE_REGISTRY`-Eintrag nötig: `users` wird bewusst nicht geprunt, der neue FK
   kann also nichts blockieren.
 
+### Konten ohne Zugang: Schlüsselträger ohne App-Konto (Schema v96)
+
+Der Absatz oben setzte voraus, dass der Platzwart wenigstens ein App-Konto hat. Viele
+haben keins und sollen keins bekommen — sie tragen nur einen Schlüssel. Weil
+`users.email` NOT NULL war, musste man für den Hausmeister eine Adresse erfinden, damit
+sein Name an einem Chip stehen kann. Seit v96 geht das ehrlich:
+
+- **Konto ohne Zugang** = `email IS NULL` UND `password_hash = ''`. Kein Anmeldeweg,
+  weder Magic-Link noch Passwort. Angelegt wird es wie jedes Benutzerkonto
+  (`personen.permissions`), nur ohne E-Mail und Passwort.
+- **Solche Konten sind inaktiv** (`UserService._pruefe_anmeldeweg`): Ein aktives Konto
+  ohne jeden Anmeldeweg wäre eine Karteileiche, die man für einen kaputten Zugang hält.
+  Wer später eine E-Mail nachträgt oder ein Passwort setzt, kann es aktivieren.
+- **Unique-Index mit Bedingung**: `uix_users_email_active` gilt nur noch
+  `WHERE email IS NOT NULL` — sonst wäre schon der zweite Hausmeister ein Duplikat.
+  NULL statt Leerstring auch deshalb, weil `WHERE email = %s` mit leer abgeschickter
+  Adresse sonst ein fremdes Konto fände.
+- **Der Chip-Picker zeigt sie** (`/schliessanlage/users` filtert nicht mehr auf `active`),
+  die befristete **App-Öffnung nicht** — dort wäre die Berechtigung wirkungslos, der
+  Endpunkt weist inaktive Konten mit 400 ab.
+- **Anmeldung**: Konten ohne Passwort tragen jetzt einen leeren Hash statt eines
+  bcrypt-Hashes über einen festen Platzhalter-Text. Der Text stand im Quelltext und war
+  damit ein gültiges Passwort für jedes so angelegte Konto; für den Altbestand schließt
+  `authenticate` ihn ausdrücklich aus.
+
 ### „Wer war es" gehört in die Log-Zeile, nicht an den heutigen Chip (Schema v92)
 
 `tuer_zutritt_log.mitglied_id` ist seit jeher eine **Momentaufnahme**: beim Einfügen aus

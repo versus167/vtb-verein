@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 95
+SCHEMA_VERSION = 96
 
 
 # ---------------------------------------------------------------------------
@@ -1315,6 +1315,14 @@ _ZUTRITT_INDEXES = (
     ("idx_tuer_zutritt_log_mitglied_id",  "tuer_zutritt_log(mitglied_id)"),
     ("idx_tuer_zutritt_log_lock_date",    "tuer_zutritt_log(lock_date)"),
     ("idx_tuer_zutritt_log_server_date",  "tuer_zutritt_log(schloss_id, server_date)"),
+)
+
+# E-Mail eindeutig – aber nur dort, wo eine steht: Konten ohne Zugang (Schlüsselträger
+# ohne App-Konto) haben email IS NULL, und davon gibt es beliebig viele. Der Index-Rumpf
+# steht als Konstante, weil Frischaufbau und Migration v96 dieselbe Definition brauchen.
+_UIX_USERS_EMAIL_ACTIVE = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active "
+    "ON users (email) WHERE deleted_at IS NULL AND email IS NOT NULL"
 )
 
 # Partielle Unique-Indizes (Soft-Delete-tauglich), explizit ausgeführt.
@@ -3407,6 +3415,7 @@ class Database:
             93: self._migrate_v92_to_v93,
             94: self._migrate_v93_to_v94,
             95: self._migrate_v94_to_v95,
+            96: self._migrate_v95_to_v96,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7141,6 +7150,39 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 95 WHERE id = 1")
 
+    def _migrate_v95_to_v96(self) -> None:
+        """Benutzer ohne Zugang: E-Mail wird optional.
+
+        Anlass ist die Schlüsselzuordnung. Ein Chip gehört einem Mitglied ODER einem
+        Benutzer ohne Mitgliedsdatensatz (Platzwart, Hausmeister, Betreuer eines
+        Gastvereins) – solche Leute tragen einen Schlüssel, aber sie bekommen kein
+        App-Konto. Bisher zwang `email NOT NULL` dazu, für den Hausmeister eine
+        Adresse zu erfinden, nur damit sein Name an einem Chip stehen kann.
+
+        NULL statt Leerstring, aus zwei Gründen: Der Unique-Index würde zwei
+        Leerstrings kollidieren lassen (mehrere Konten ohne Mail sind der Normalfall),
+        und die Magic-Link-Suche `WHERE email = %s` fände mit einer leer abgeschickten
+        Adresse sonst ein fremdes Konto – NULL ist nie gleich irgendetwas.
+
+        Kein Anmeldeweg heißt: `email IS NULL` UND `password_hash = ''`. Beides prüft
+        der UserService beim Aktivieren; ein aktives Konto ohne beides gäbe es sonst
+        als Karteileiche, die nie jemand benutzen kann.
+        """
+        with self.cursor() as cur:
+            for tbl in ("users", "users_history"):
+                cur.execute(f"ALTER TABLE {tbl} ALTER COLUMN email DROP NOT NULL")
+            # Altbestand: eine leer gespeicherte Adresse meint dasselbe wie „keine".
+            # Ohne version-Bump, der Audit-Trigger schreibt hier also keine History –
+            # gewollt, das ist eine Schreibweisen-Korrektur, keine fachliche Änderung.
+            cur.execute("UPDATE users         SET email = NULL WHERE email = ''")
+            cur.execute("UPDATE users_history SET email = NULL WHERE email = ''")
+            # Index neu: alt galt er für ALLE nicht gelöschten Zeilen und ließe damit
+            # nur ein einziges Konto ohne Mail zu.
+            cur.execute("DROP INDEX IF EXISTS uix_users_email_active")
+            cur.execute(_UIX_USERS_EMAIL_ACTIVE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 96 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7601,7 +7643,10 @@ class Database:
             CREATE TABLE IF NOT EXISTS users (
               id                SERIAL PRIMARY KEY,
               username          TEXT NOT NULL,
-              email             TEXT NOT NULL,
+              -- NULL = Konto ohne Zugang (reiner Namensträger, z. B. Schlüsselträger
+              -- ohne App-Konto). password_hash ist dann '' – beides zusammen heißt:
+              -- kein Anmeldeweg, weder Magic-Link noch Passwort.
+              email             TEXT,
               password_hash     TEXT NOT NULL,
               role              TEXT NOT NULL CHECK(role IN ('admin', 'mitglied')),
               active            INTEGER NOT NULL DEFAULT 1,
@@ -7624,7 +7669,7 @@ class Database:
               id                INTEGER NOT NULL,
               version           INTEGER NOT NULL,
               username          TEXT NOT NULL,
-              email             TEXT NOT NULL,
+              email             TEXT,
               password_hash     TEXT NOT NULL,
               role              TEXT NOT NULL,
               active            INTEGER NOT NULL,
@@ -9490,7 +9535,7 @@ class Database:
 
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_user_id       ON mitglied (user_id)  WHERE user_id IS NOT NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_mitglied_kontakt_primaer ON mitglied_kontakt (mitglied_id, typ) WHERE ist_primaer AND deleted_at IS NULL")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_active    ON users (email)       WHERE deleted_at IS NULL")
+        cur.execute(_UIX_USERS_EMAIL_ACTIVE)
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_username_active ON users (username)    WHERE deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_telegram_id     ON users (telegram_id) WHERE telegram_id IS NOT NULL AND deleted_at IS NULL")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_matrix_id       ON users (matrix_id)   WHERE matrix_id   IS NOT NULL AND deleted_at IS NULL")

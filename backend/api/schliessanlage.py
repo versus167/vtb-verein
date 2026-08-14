@@ -232,7 +232,13 @@ def user_lookup(user: CurrentUser, db: DB):
 
     `mitglied_id` sagt, ob hinter dem Konto ein Mitgliedsdatensatz steht: Solche
     Benutzer gehören in den Chip-Picker nicht noch einmal als „Benutzer" – sie stehen
-    schon in der Mitgliederliste, und dort landet die Zuordnung ohnehin."""
+    schon in der Mitgliederliste, und dort landet die Zuordnung ohnehin.
+
+    Bewusst OHNE Aktiv-Filter: Ein Schlüsselträger ohne App-Konto (Platzwart,
+    Hausmeister, Betreuer eines Gastvereins) ist genau ein inaktives Konto ohne
+    E-Mail – wer einen Chip zuordnen will, braucht ihn hier. Wo ein Konto stattdessen
+    jemanden bezeichnen muss, der sich anmeldet (befristete App-Öffnung), filtert
+    der Aufrufer über `active`."""
     _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
     from app.services.user_service import UserService
     mitglied_je_user = {m.user_id: m.id for m in db.list_mitglieder() if m.user_id}
@@ -240,7 +246,6 @@ def user_lookup(user: CurrentUser, db: DB):
         {"id": u.id, "username": u.username, "active": u.active,
          "mitglied_id": mitglied_je_user.get(u.id)}
         for u in UserService(db).list_all()
-        if u.active
     ]
 
 
@@ -566,6 +571,16 @@ def app_berechtigung_vergeben(schloss_id: int, data: AppBerechtigungIn, request:
     if not darf_schloss(user, schloss, Permission.SCHLIESSANLAGE_VERWALTEN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Keine Berechtigung, dieses Schloss zu verwalten")
+    # App-Öffnen setzt ein Konto voraus, mit dem sich jemand anmelden kann. Seit die
+    # User-Liste auch Konten ohne Zugang enthält (Schlüsselträger), ist ein Griff
+    # daneben möglich – die Berechtigung wäre stillschweigend wirkungslos.
+    ziel = db.get_user_by_id(data.user_id)
+    if ziel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Benutzer nicht gefunden")
+    if not ziel.active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Dieses Konto hat keinen App-Zugang – App-Öffnen "
+                                   "wäre wirkungslos.")
     from app.models.schliessanlage import TuerAppBerechtigung
     erteilt = db.tuer_app_berechtigungen.create(
         TuerAppBerechtigung(

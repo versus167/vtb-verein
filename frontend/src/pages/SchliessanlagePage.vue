@@ -1713,13 +1713,19 @@ async function loadUsers() {
   if (users.value.length) return
   try {
     const { data } = await api.get('/api/schliessanlage/users')
-    users.value = data; userOptions.value = data
+    users.value = data; userOptions.value = appUsers.value
   } catch { users.value = []; userOptions.value = [] }
 }
+// App-Öffnen setzt voraus, dass sich jemand anmelden kann: Konten ohne Zugang
+// (Schlüsselträger ohne App-Konto) stehen zwar in der Liste – für den Chip-Picker –,
+// gehören hier aber nicht hin, die Berechtigung bliebe wirkungslos.
+const appUsers = computed(() => users.value.filter(u => u.active))
 function filterUsers(val, update) {
   const n = (val || '').toLowerCase()
   update(() => {
-    userOptions.value = n ? users.value.filter(u => u.username.toLowerCase().includes(n)) : users.value
+    userOptions.value = n
+      ? appUsers.value.filter(u => u.username.toLowerCase().includes(n))
+      : appUsers.value
   })
 }
 async function openAppGrant() {
@@ -2117,11 +2123,16 @@ async function loadMitglieder() {
 // Mitgliedsdatensatz. Wer beides ist, steht nur oben – der Chip hängt dann am
 // Mitglied, weil dort Log-Auflösung und Mitglieder-Ansicht hängen (das Backend
 // schreibt eine solche Auswahl ohnehin auf das Mitglied um).
+//
+// Bewusst inklusive der inaktiven Konten: Ein Schlüsselträger ohne App-Konto
+// (Platzwart, Hausmeister, Betreuer eines Gastvereins) wird genau so geführt –
+// als Konto ohne Zugang. Für den Schlüssel zählt der Name, nicht die Anmeldung.
 const inhaberAlle = computed(() => [
   ...mitglieder.value.map(m => ({ typ: 'mitglied', id: m.id, label: mitgliedLabel(m),
     caption: 'Mitglied' })),
   ...users.value.filter(u => !u.mitglied_id).map(u => ({ typ: 'user', id: u.id,
-    label: u.username, caption: 'Benutzer (kein Mitglied)' })),
+    label: u.username,
+    caption: u.active ? 'Benutzer (kein Mitglied)' : 'Benutzer ohne Zugang' })),
 ])
 const inhaberOptionen = ref([])
 function filterInhaber(val, update) {

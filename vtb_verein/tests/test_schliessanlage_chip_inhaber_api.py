@@ -111,6 +111,16 @@ def test_benutzer_mit_mitgliedsdatensatz_wird_aufs_mitglied_umgeschrieben():
     assert (repo.geschrieben[0].mitglied_id, repo.geschrieben[0].user_id) == (3, None)
 
 
+def test_chip_an_konto_ohne_zugang():
+    """Der Regelfall beim Schlüssel: ein Name ohne App-Konto (inaktiv, keine
+    E-Mail). Ein Aktiv-Zwang wäre hier falsch – Schlüssel und Anmeldung haben
+    nichts miteinander zu tun."""
+    repo = _ChipRepo()
+    db = _db(repo, users=[{"id": 12, "username": "hausmeister", "active": False}])
+    api.chip_anlegen(_chip_in(user_id=12), _user(VERWALTER), db)
+    assert (repo.geschrieben[0].mitglied_id, repo.geschrieben[0].user_id) == (None, 12)
+
+
 def test_zwei_inhaber_gleichzeitig_sind_ein_fehler():
     db = _db(_ChipRepo(), users=[{"id": 9, "username": "platzwart"}])
     with pytest.raises(HTTPException) as e:
@@ -166,7 +176,13 @@ def test_update_prueft_den_inhaber_bevor_es_schreibt():
 
 # --------------------------------------------------------------- User-Picker
 def test_user_lookup_meldet_wer_schon_mitglied_ist(monkeypatch):
-    """Der Picker soll dieselbe Person nicht zweimal anbieten."""
+    """Der Picker soll dieselbe Person nicht zweimal anbieten.
+
+    Inaktive Konten bleiben dabei in der Liste: Ein Schlüsselträger ohne App-Konto
+    (Konto ohne Zugang) ist genau das – wer ihm einen Chip zuordnen will, braucht
+    ihn hier. Ob sich jemand anmelden kann, sagt `active`; danach filtert nur der
+    Aufrufer, der ein anmeldefähiges Konto braucht (befristete App-Öffnung).
+    """
     class _UserService:
         def __init__(self, db):
             pass
@@ -174,11 +190,62 @@ def test_user_lookup_meldet_wer_schon_mitglied_ist(monkeypatch):
         def list_all(self):
             return [SimpleNamespace(id=9, username='platzwart', active=True),
                     SimpleNamespace(id=10, username='marko', active=True),
-                    SimpleNamespace(id=11, username='alt', active=False)]
+                    SimpleNamespace(id=11, username='hausmeister', active=False)]
 
     monkeypatch.setattr('app.services.user_service.UserService', _UserService)
     db = _db(_ChipRepo(), mitglieder=[SimpleNamespace(id=3, user_id=10),
                                       SimpleNamespace(id=4, user_id=None)])
     liste = api.user_lookup(_user(VERWALTER), db)
     assert liste == [{"id": 9, "username": "platzwart", "active": True, "mitglied_id": None},
-                     {"id": 10, "username": "marko", "active": True, "mitglied_id": 3}]
+                     {"id": 10, "username": "marko", "active": True, "mitglied_id": 3},
+                     {"id": 11, "username": "hausmeister", "active": False, "mitglied_id": None}]
+
+
+# ------------------------------------------------------- Befristete App-Öffnung
+def _request():
+    """Nur was _client_ip anfasst (der Endpunkt protokolliert die Vergabe)."""
+    return SimpleNamespace(headers={}, client=SimpleNamespace(host='127.0.0.1'))
+
+
+def _app_grant_db(ziel):
+    """Nur was app_berechtigung_vergeben anfasst – Schloss, Ziel-Konto, Schreiben."""
+    geschrieben = []
+    db = SimpleNamespace(
+        tuer_schloesser=SimpleNamespace(
+            get=lambda sid: SimpleNamespace(id=sid, abteilung_id=None)),
+        get_user_by_id=lambda uid: ziel if ziel and ziel.id == uid else None,
+        tuer_app_berechtigungen=SimpleNamespace(
+            create=lambda ber, created_by: geschrieben.append(ber) or ber),
+        access_log_repository=SimpleNamespace(log=lambda *a, **kw: None),
+    )
+    return db, geschrieben
+
+
+def _app_grant_in(user_id):
+    return api.AppBerechtigungIn(user_id=user_id, gueltig_von=None, gueltig_bis=None,
+                                 grund=None)
+
+
+def test_app_oeffnen_nur_fuer_konten_mit_zugang():
+    """Seit die User-Liste auch Konten ohne Zugang enthält, ist der Fehlgriff
+    möglich – und die Berechtigung wäre stillschweigend wirkungslos."""
+    db, geschrieben = _app_grant_db(SimpleNamespace(id=11, username='hausmeister',
+                                                    active=False))
+    with pytest.raises(HTTPException) as e:
+        api.app_berechtigung_vergeben(1, _app_grant_in(11), _request(), _user(VERWALTER), db)
+    assert e.value.status_code == 400 and 'kein' in e.value.detail.lower()
+    assert geschrieben == []
+
+
+def test_app_oeffnen_fuer_unbekanntes_konto_ist_ein_404():
+    db, geschrieben = _app_grant_db(None)
+    with pytest.raises(HTTPException) as e:
+        api.app_berechtigung_vergeben(1, _app_grant_in(99), _request(), _user(VERWALTER), db)
+    assert e.value.status_code == 404
+    assert geschrieben == []
+
+
+def test_app_oeffnen_fuer_aktives_konto_wird_erteilt():
+    db, geschrieben = _app_grant_db(SimpleNamespace(id=9, username='marko', active=True))
+    api.app_berechtigung_vergeben(1, _app_grant_in(9), _request(), _user(VERWALTER), db)
+    assert [b.user_id for b in geschrieben] == [9]
