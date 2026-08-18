@@ -12,6 +12,7 @@ from ..core.db import get_db, get_db as _get_db
 from ..core.security import create_access_token
 from ..core.deps import CurrentUser, CurrentSessionId, DB
 from ..core.config import settings
+from ..core.validation import mailadresse_or_422
 
 
 def _client_ip(request: Request) -> str | None:
@@ -471,6 +472,12 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
     """
     if not _smtp_configured():
         raise HTTPException(status_code=503, detail="E-Mail-Versand nicht konfiguriert")
+
+    # Aufbau prüfen, bevor irgendetwas passiert: Ein Vertipper bekommt so sofort einen
+    # Hinweis statt der beruhigenden 200, und offensichtlicher Unsinn landet nicht im
+    # Protokoll. Über vorhandene Adressen verrät die Antwort nichts – geprüft wird nur
+    # die Form der Eingabe, nicht der Bestand.
+    mailadresse_or_422(data.email, pflicht=True)
 
     ip = _client_ip(request)
     now = datetime.now(timezone.utc)

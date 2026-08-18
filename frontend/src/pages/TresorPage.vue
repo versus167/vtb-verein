@@ -277,7 +277,8 @@
           <q-input v-model="kontaktForm.name" label="Firma / Bezeichnung *" outlined dense autofocus />
           <q-input v-model="kontaktForm.ansprechpartner" label="Ansprechpartner" outlined dense />
           <q-input v-model="kontaktForm.telefon" label="Telefon" outlined dense type="tel" />
-          <q-input v-model="kontaktForm.email" label="E-Mail" outlined dense type="email" />
+          <q-input v-model="kontaktForm.email" label="E-Mail" outlined dense type="email"
+            :rules="[mailRule]" />
           <q-input v-model="kontaktForm.notiz" label="Notiz" outlined dense type="textarea" autogrow />
           <div class="text-caption text-grey-6">
             Kontakte sind für alle mit Zugriff auf diesen Tresor sichtbar (unverschlüsselt).
@@ -437,6 +438,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useQuasar, copyToClipboard } from 'quasar'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { api } from 'src/boot/axios'
+import { mailRule } from 'src/utils/email'
 
 defineOptions({ name: 'TresorPage' })
 

@@ -14,7 +14,13 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
   Weitere regelt die feingranulare Permission-Matrix
 - **Zugänge**: Mitglieder werden einzeln für den Login freigeschaltet
   (`personen.freischalten`, v88); Konten ohne E-Mail sind zulässig *(v96)*, etwa für
-  Schlüsselträger ohne App-Zugang
+  Schlüsselträger ohne App-Zugang. Die Übersicht zeigt je Konto, ob die letzte
+  Einladung abgeschickt werden konnte *(v97)*; solange sich noch nie jemand
+  angemeldet hat, lässt sich die Login-Adresse dort korrigieren und neu einladen —
+  der bis dahin verschickte Anmeldelink wird damit ungültig
+- E-Mail-Adressen werden beim Speichern auf ihren Aufbau geprüft (Login-Adresse,
+  Kontakte, Tresor-Kontakte) — ein Vertipper legte sonst klaglos ein Konto an, an
+  das nie eine Mail gehen kann
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
 - Persönliche Daten, Adresse, Vereinsdaten (Eintritt/Austritt/Status), Zahlungsdaten (IBAN/BIC)
 - Passwort-Hashing (bcrypt), Magic-Link-Login per E-Mail

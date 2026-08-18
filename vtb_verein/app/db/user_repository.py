@@ -245,6 +245,31 @@ class UserRepository(BaseRepository):
             )
             return cur.rowcount == 1
     
+    def setze_einladung_status(self, user_id: int, versendet: bool) -> bool:
+        """Ergebnis der zuletzt versendeten Einladung am Konto festhalten (Schema v97).
+
+        Wie `update_last_login` ohne version-Bump: Das ist Betriebszustand, keine
+        fachliche Änderung – die History soll davon nicht volllaufen.
+
+        `versendet` bezieht sich auf die Übergabe an den Mailserver. Ob die Mail
+        ankommt, weiß danach niemand mehr: Ein Bounce läuft an die Absenderadresse
+        zurück, nicht in die App.
+
+        Args:
+            user_id: Konto, an das die Einladung ging
+            versendet: True, wenn der Mailserver sie angenommen hat
+
+        Returns:
+            bool: True, wenn das Konto existiert und aktualisiert wurde
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET einladung_zuletzt = CURRENT_TIMESTAMP, "
+                "einladung_status = %s WHERE id = %s AND deleted_at IS NULL",
+                ('ok' if versendet else 'fehler', user_id),
+            )
+            return cur.rowcount == 1
+
     def update_last_login(self, user_id: int) -> bool:
         """Update last login timestamp (without incrementing version).
         

@@ -5,6 +5,7 @@ from app.models.permission import Permission
 from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_permission_delegation, authorize_role_assignment
+from ..core.validation import mailadresse_or_422
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -249,11 +250,12 @@ def create_user(data: UserCreate, user: CurrentUser, db: DB):
     # Login-Account anlegen: nur mit dem Recht, Berechtigungen zu vergeben.
     _require_permissions(user)
     role = authorize_role_assignment(user, data.role)
+    email = mailadresse_or_422(data.email)
     service = UserService(db)
     try:
         created = service.create(
             username=data.username,
-            email=data.email,
+            email=email,
             role=role,
             active=data.active,
             created_by=user.username,
@@ -273,12 +275,13 @@ def update_user(user_id: int, data: UserUpdate, user: CurrentUser, db: DB):
     if target is None:
         raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
     role = authorize_role_assignment(user, data.role, current_role=target.role)
+    email = mailadresse_or_422(data.email)
     service = UserService(db)
     try:
         service.update(
             user_id=user_id,
             username=data.username,
-            email=data.email,
+            email=email,
             role=role,
             active=data.active,
             updated_by=user.username,

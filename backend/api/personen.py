@@ -12,7 +12,7 @@ from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_role_assignment
 from ..core.scope import require_mitglied, require_person, visible_mitglied_ids
-from ..core.validation import iban_or_422
+from ..core.validation import iban_or_422, mailadresse_or_422
 from .auth import _client_ip, _ts_iso
 
 router = APIRouter(prefix="/personen", tags=["personen"])
@@ -91,6 +91,11 @@ class ZugangFreischalten(BaseModel):
     Anlage eines Admin-Kontos über diesen Weg strukturell ausgeschlossen und nicht
     bloß per Prüfung untersagt.
     """
+    email: str
+
+
+class ZugangMailadresse(BaseModel):
+    """Neue Login-Adresse für einen noch nie benutzten Zugang."""
     email: str
 
 
@@ -215,6 +220,28 @@ def _require_freischalt_zugriff(user, db, mitglied_id: int) -> None:
     if erlaubt is not None and mitglied_id not in erlaubt:
         raise HTTPException(status_code=403,
                             detail="Dieses Mitglied liegt außerhalb deines Bereichs")
+
+
+def _nur_mitgliedskonto(user, db, ziel) -> None:
+    """Riegelt Eingriffe an Konten ab, die mehr sind als ein Mitgliedszugang.
+
+    Wer Rechte vergeben darf, darf ohnehin alles hier. Alle anderen sollen weder
+    einem Administrator noch jemandem mit weitergehenden Rechten (per Funktion oder
+    Grant) den Zugang entziehen oder ihn über eine neue Login-Adresse übernehmen –
+    das ist Sache der Rechteverwaltung.
+    """
+    if user.has_permission(Permission.PERSONEN_PERMISSIONS):
+        return
+    if ziel.role == 'admin':
+        raise HTTPException(status_code=403,
+                            detail="Administratoren-Zugänge kann nur die Rechteverwaltung ändern")
+    weitergehend = db.permissions.get_effective_permissions(ziel.id).keys() - BASE_PERMISSIONS
+    if weitergehend:
+        raise HTTPException(
+            status_code=403,
+            detail="Dieser Zugang trägt weitergehende Rechte – bitte über die "
+                   "Rechteverwaltung ändern.",
+        )
 
 
 def _log_zugang(db, request, event_type: str, actor, *, detail: str) -> None:
@@ -616,10 +643,11 @@ def list_freischaltung(user: CurrentUser, db: DB):
                       FROM mitglied_kontakt k
                      WHERE k.mitglied_id = m.id AND k.typ = 'email'
                        AND k.deleted_at IS NULL AND COALESCE(k.wert, '') <> '') AS mails,
-                   (SELECT max(al.created_at) FROM access_log al
-                     WHERE al.user_id IS NOT NULL AND al.user_id = u.id
-                       AND al.event_type IN ('zugang_freigeschaltet', 'zugang_einladung')
-                   ) AS einladung_zuletzt
+                   -- Versandstand der letzten Einladung direkt vom Konto (v97).
+                   -- Vorher stand hier ein max() über das Zugriffsprotokoll – das
+                   -- aber den *Handelnden* in user_id führt, nicht den Eingeladenen,
+                   -- und deshalb praktisch nie etwas fand.
+                   u.einladung_zuletzt, u.einladung_status
               FROM mitglied m
               LEFT JOIN users u ON u.id = m.user_id
              WHERE m.deleted_at IS NULL
@@ -660,9 +688,10 @@ def zugang_freischalten(mitglied_id: int, data: ZugangFreischalten, request: Req
     if m.user_id is not None:
         raise HTTPException(status_code=409, detail="Dieses Mitglied hat bereits einen Zugang")
 
-    email = (data.email or '').strip()
-    if not email:
-        raise HTTPException(status_code=422, detail="E-Mail-Adresse ist erforderlich")
+    # Aufbau prüfen, bevor daraus ein Konto entsteht: Ein Vertipper legte bisher
+    # klaglos einen Zugang an, an den nie eine Mail gehen kann – gemerkt hätte man
+    # das erst, wenn sich jemand wundert, warum nichts ankommt.
+    email = mailadresse_or_422(data.email, pflicht=True)
     # Eine Adresse trägt genau ein Konto (uix_users_email_active). Den Fall vorher
     # abfangen, damit statt eines rohen DB-Fehlers klar wird, wem sie schon gehört –
     # bei Familienadressen entscheiden die Beteiligten dann selbst, wer den Zugang nutzt.
@@ -745,12 +774,124 @@ def zugang_einladung_senden(mitglied_id: int, request: Request, user: CurrentUse
         raise HTTPException(status_code=409,
                             detail="Für diesen Zugang ist keine E-Mail hinterlegt")
 
-    if not UserService(db).send_magic_link(ziel.email):
+    # Erfolg wie Misserfolg werden protokolliert und am Konto vermerkt (im
+    # UserService) – die Zugänge-Liste zeigt daran, ob die letzte Mail rausging.
+    versendet = UserService(db).send_magic_link(ziel.email)
+    _log_zugang(db, request, "zugang_einladung" if versendet else "zugang_einladung_fehler",
+                user,
+                detail=f"{m.vorname} {m.nachname} (Mitglied {mitglied_id}) → "
+                       f"{ziel.username} <{ziel.email}>")
+    if not versendet:
         raise HTTPException(status_code=502, detail="E-Mail-Versand fehlgeschlagen")
-
-    _log_zugang(db, request, "zugang_einladung", user,
-                detail=f"{m.vorname} {m.nachname} (Mitglied {mitglied_id}) → {ziel.username} <{ziel.email}>")
     return {"ok": True}
+
+
+@router.put("/mitglied/{mitglied_id}/zugang/mailadresse")
+def zugang_mailadresse_aendern(mitglied_id: int, data: ZugangMailadresse, request: Request,
+                               user: CurrentUser, db: DB):
+    """Login-Adresse eines noch nie benutzten Zugangs korrigieren – und neu einladen.
+
+    Der Normalfall nach dem Freischalten: Es kommt nichts an, weil die Adresse einen
+    Vertipper hat oder gar nicht mehr gelesen wird. Ohne diesen Weg müsste der
+    Freischalter in die Benutzerverwaltung – für die er kein Recht hat.
+
+    Bewusst eng, denn eine fremde Login-Adresse zu setzen heißt, das Konto zu
+    übernehmen:
+      * nur solange sich niemand damit angemeldet hat (`last_login IS NULL`) – ab
+        der ersten Anmeldung ist das Konto in Benutzung und die Adresse Sache der
+        Benutzerverwaltung,
+      * nur bei reinen Mitgliedskonten (dieselbe Grenze wie beim Deaktivieren),
+      * nicht am eigenen Konto,
+      * die Adresse darf keinem anderen Konto gehören.
+
+    Offene Magic-Links des Kontos werden dabei entwertet: Der Link, der an die alte
+    Adresse ging, darf danach nicht mehr hineinführen – er landet in derselben
+    Antwort wie ein bereits benutzter.
+    """
+    _require_freischalten(user)
+    try:
+        m = db.get_mitglied(mitglied_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
+    _require_freischalt_zugriff(user, db, mitglied_id)
+    if m.user_id is None:
+        raise HTTPException(status_code=404, detail="Dieses Mitglied hat noch keinen Zugang")
+    ziel = db.get_user_by_id(m.user_id)
+    if ziel is None:
+        raise HTTPException(status_code=404, detail="Zugang nicht gefunden")
+    if ziel.id == user.id:
+        raise HTTPException(status_code=400,
+                            detail="Die eigene Login-Adresse ändert man im Profil")
+    _nur_mitgliedskonto(user, db, ziel)
+    if ziel.last_login is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Dieser Zugang war bereits in Benutzung – die Login-Adresse ändert "
+                   "nur die Benutzerverwaltung.",
+        )
+    if not ziel.active:
+        raise HTTPException(status_code=409, detail="Der Zugang ist deaktiviert")
+
+    email = mailadresse_or_422(data.email, pflicht=True)
+    alt = (ziel.email or '').strip()
+    # Fremde Adresse? Wie beim Freischalten case-insensitiv geprüft (der Unique-Index
+    # ist es nicht) – das eigene Konto dabei ausgenommen, sonst blockierte es sich selbst.
+    with db.conn.cursor() as cur:
+        cur.execute(
+            "SELECT username FROM users WHERE lower(email) = lower(%s) "
+            "AND deleted_at IS NULL AND id <> %s",
+            (email, ziel.id),
+        )
+        belegt = cur.fetchone()
+    if belegt is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Diese E-Mail-Adresse gehört bereits zum Zugang von „{belegt['username']}“. "
+                   f"Pro Adresse ist ein Zugang möglich.",
+        )
+
+    geaendert = email.lower() != alt.lower()
+    if geaendert:
+        try:
+            UserService(db).update(
+                user_id=ziel.id, username=ziel.username, email=email,
+                role=ziel.role, active=ziel.active,
+                updated_by=user.username, expected_version=ziel.version,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        # Der Kontakt, den das Freischalten angelegt hat, trägt dieselbe (falsche)
+        # Adresse. Ihn zu korrigieren ist Teil desselben Vorgangs – neu anlegen und
+        # den Vertipper stehen lassen hieße, Karteileichen zu produzieren. Andere
+        # Kontakte des Mitglieds bleiben unangetastet.
+        kontakte = db.list_mitglied_kontakte(m.id)
+        login_kontakt = next(
+            (k for k in kontakte
+             if k.typ == 'email' and k.label == 'Login'
+             and (k.wert or '').strip().lower() == alt.lower()), None)
+        bekannt = any(
+            k.typ == 'email' and (k.wert or '').strip().lower() == email.lower()
+            for k in kontakte)
+        if login_kontakt is not None and not bekannt:
+            db.update_mitglied_kontakt(login_kontakt.id, 'email', email, 'Login',
+                                       login_kontakt.ist_primaer, user.username,
+                                       login_kontakt.version)
+        elif not bekannt:
+            db.create_mitglied_kontakt(m.id, 'email', email, 'Login', False, user.username)
+        db.auth_token_repository.entwerte_offene_tokens(ziel.id, 'magic_link')
+
+    versendet = UserService(db).send_magic_link(email)
+    _log_zugang(db, request, "zugang_mailadresse" if geaendert else "zugang_einladung", user,
+                detail=f"{m.vorname} {m.nachname} (Mitglied {mitglied_id}) → "
+                       f"{ziel.username} <{alt or '–'}> ⇒ <{email}>"
+                       f"{'' if versendet else ' · Versand fehlgeschlagen'}")
+    if not versendet:
+        raise HTTPException(
+            status_code=502,
+            detail=("Adresse geändert, aber der E-Mail-Versand ist fehlgeschlagen."
+                    if geaendert else "E-Mail-Versand fehlgeschlagen"),
+        )
+    return {"ok": True, "email": email}
 
 
 @router.post("/mitglied/{mitglied_id}/zugang/deaktivieren")
@@ -775,17 +916,7 @@ def zugang_deaktivieren(mitglied_id: int, request: Request, user: CurrentUser, d
         raise HTTPException(status_code=404, detail="Zugang nicht gefunden")
     if ziel.id == user.id:
         raise HTTPException(status_code=400, detail="Eigenen Zugang nicht deaktivierbar")
-    if not user.has_permission(Permission.PERSONEN_PERMISSIONS):
-        if ziel.role == 'admin':
-            raise HTTPException(status_code=403,
-                                detail="Administratoren-Zugänge kann nur die Rechteverwaltung abschalten")
-        weitergehend = db.permissions.get_effective_permissions(ziel.id).keys() - BASE_PERMISSIONS
-        if weitergehend:
-            raise HTTPException(
-                status_code=403,
-                detail="Dieser Zugang trägt weitergehende Rechte – bitte über die "
-                       "Rechteverwaltung abschalten.",
-            )
+    _nur_mitgliedskonto(user, db, ziel)
     if not ziel.active:
         return {"ok": True, "already": True}
 
@@ -806,6 +937,7 @@ def zugang_deaktivieren(mitglied_id: int, request: Request, user: CurrentUser, d
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_person(data: PersonCreate, user: CurrentUser, db: DB):
     data.iban = iban_or_422(data.iban)
+    data.email = mailadresse_or_422(data.email)
     role = authorize_role_assignment(user, data.role)
     service = PersonService(db)
     try:
@@ -855,6 +987,7 @@ def update_person_user(user_id: int, data: PersonUserUpdate, user: CurrentUser, 
     if target is None:
         raise HTTPException(status_code=404, detail="User nicht gefunden")
     role = authorize_role_assignment(user, data.role, current_role=target.role)
+    data.email = mailadresse_or_422(data.email)
     svc = UserService(db)
     try:
         ok = svc.update(
@@ -1029,6 +1162,7 @@ def create_nutzer_fuer_mitglied(mitglied_id: int, data: NutzerFuerMitgliedCreate
         raise HTTPException(status_code=409, detail="Dieses Mitglied hat bereits einen Login-Account")
 
     role = authorize_role_assignment(user, data.role)
+    data.email = mailadresse_or_422(data.email, pflicht=True)
     service = PersonService(db)
     try:
         u = service.create_user_only(

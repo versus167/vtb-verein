@@ -106,11 +106,16 @@ class UserService:
             username=user.username
         )
         
+        # Ergebnis am Konto festhalten – die Zugänge-Übersicht zeigt daran, ob die
+        # letzte Einladung überhaupt rausging (Schema v97). Gemeint ist die Übergabe
+        # an den Mailserver; ein späterer Bounce ist von hier aus nicht sichtbar.
+        self.user_repo.setze_einladung_status(user.id, success)
+
         if success:
             print(f"✅ Magic-Link gesendet an {email} für User {user.username}")
         else:
             print(f"❌ E-Mail-Versand fehlgeschlagen an {email}")
-        
+
         return success
     
     def validate_magic_link(self, token: str) -> Optional[User]:
@@ -245,10 +250,16 @@ class UserService:
                 token_type='magic_link',
                 expires_days=7
             )
-            EmailService.send_welcome_email(
-                recipient_email=email,
-                token=token,
-                username=username
+            # Das Ergebnis wandert ans Konto (Schema v97): Bisher fiel ein
+            # fehlgeschlagener Versand niemandem auf – die Anlage meldete Erfolg,
+            # und der Eingeladene wartete auf eine Mail, die nie losgeflogen ist.
+            self.user_repo.setze_einladung_status(
+                user.id,
+                EmailService.send_welcome_email(
+                    recipient_email=email,
+                    token=token,
+                    username=username
+                ),
             )
 
         return user

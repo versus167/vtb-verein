@@ -54,7 +54,8 @@
             </div>
             <!-- E-Mail nur im Mitglieder-Kontext direkt; im Personen-Kontext werden
                  E-Mail wie Telefon über den Kontakte-Tab gepflegt -->
-            <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email" :readonly="!canWrite" />
+            <q-input v-if="!personMode" v-model="form.email" label="E-Mail" outlined dense type="email"
+              :rules="[mailRule]" :readonly="!canWrite" />
             <!-- Auch Gastspieler haben Ein-/Austritt: Zeitraum der Gastspielgenehmigung -->
             <div class="row q-gutter-sm">
               <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
@@ -479,7 +480,8 @@
           <q-select v-model="kontaktForm.typ" label="Typ *" outlined dense
             :options="kontaktTypOptionen" emit-value map-options />
           <q-input v-model="kontaktForm.wert" label="Wert *" outlined dense
-            :type="kontaktForm.typ === 'email' ? 'email' : 'text'" />
+            :type="kontaktForm.typ === 'email' ? 'email' : 'text'"
+            :rules="kontaktForm.typ === 'email' ? [mailRulePflicht] : []" />
           <q-input v-model="kontaktForm.label" label="Bezeichnung (optional, z. B. privat)" outlined dense />
           <q-toggle v-model="kontaktForm.ist_primaer" label="Primärer Kontakt dieses Typs" color="cyan-8" />
         </q-card-section>
@@ -557,6 +559,7 @@
 import { ref, computed, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { mailRule, mailRulePflicht, pruefeMailadresse } from 'src/utils/email'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
@@ -1306,6 +1309,12 @@ function openKontaktForm(k) {
 async function saveKontakt() {
   if (!kontaktForm.value.typ || !kontaktForm.value.wert.trim()) {
     $q.notify({ type: 'negative', message: 'Typ und Wert sind erforderlich.' })
+    return
+  }
+  const mailFehler = kontaktForm.value.typ === 'email'
+    && pruefeMailadresse(kontaktForm.value.wert.trim())
+  if (mailFehler) {
+    $q.notify({ type: 'negative', message: mailFehler })
     return
   }
   kontaktSaving.value = true

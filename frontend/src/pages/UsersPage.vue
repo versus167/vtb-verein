@@ -58,7 +58,7 @@
           <q-input v-model="createForm.username" label="Benutzername *" outlined autofocus
             :rules="[(v) => !!v || 'Pflichtfeld']" />
           <q-input v-model="createForm.email" label="E-Mail" outlined type="email"
-            hint="Leer lassen für ein Konto ohne Zugang (nur ein Name)" />
+            :rules="[mailRule]" hint="Leer lassen für ein Konto ohne Zugang (nur ein Name)" />
           <q-select v-model="createForm.role" label="Rolle" outlined :options="roleOptions"
             emit-value map-options />
           <q-checkbox :model-value="createForm.active && !createOhneZugang"
@@ -97,7 +97,8 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="editForm.username" label="Benutzername *" outlined
             :rules="[(v) => !!v || 'Pflichtfeld']" />
-          <q-input v-model="editForm.email" label="E-Mail" outlined type="email" />
+          <q-input v-model="editForm.email" label="E-Mail" outlined type="email"
+            :rules="[mailRule]" />
           <q-select v-model="editForm.role" label="Rolle" outlined :options="roleOptions"
             emit-value map-options />
           <q-checkbox v-model="editForm.active" label="Aktiv" />
@@ -151,6 +152,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { mailRule } from 'src/utils/email'
 
 const $q = useQuasar()
 const router = useRouter()

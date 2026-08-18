@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
+from ..core.validation import mailadresse_or_422
 from ..core import vault_crypto
 
 router = APIRouter(prefix="/tresor", tags=["tresor"])
@@ -350,7 +351,7 @@ def create_kontakt(tresor_id: int, data: KontaktCreate, user: CurrentUser, db: D
         tresor_id, data.name.strip(),
         (data.ansprechpartner or '').strip() or None,
         (data.telefon or '').strip() or None,
-        (data.email or '').strip() or None,
+        mailadresse_or_422(data.email),
         (data.notiz or '').strip() or None,
         user.username,
     )
@@ -369,7 +370,7 @@ def update_kontakt(kontakt_id: int, data: KontaktUpdate, user: CurrentUser, db: 
         kontakt_id, data.name.strip(),
         (data.ansprechpartner or '').strip() or None,
         (data.telefon or '').strip() or None,
-        (data.email or '').strip() or None,
+        mailadresse_or_422(data.email),
         (data.notiz or '').strip() or None,
         user.username, data.expected_version,
     )

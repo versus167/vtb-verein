@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 96
+SCHEMA_VERSION = 97
 
 
 # ---------------------------------------------------------------------------
@@ -3416,6 +3416,7 @@ class Database:
             94: self._migrate_v93_to_v94,
             95: self._migrate_v94_to_v95,
             96: self._migrate_v95_to_v96,
+            97: self._migrate_v96_to_v97,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7183,6 +7184,38 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 96 WHERE id = 1")
 
+    def _migrate_v96_to_v97(self) -> None:
+        """Ergebnis der letzten Einladungs-Mail am Konto festhalten.
+
+        Bisher verschwand der Versand im Nichts: `UserService.create` warf das
+        Ergebnis von `send_welcome_email` weg, und die Zugänge-Liste versuchte den
+        Zeitpunkt aus dem Zugriffsprotokoll zu holen – über `access_log.user_id`,
+        wo aber der *Handelnde* steht, nicht der Eingeladene. Die Anzeige „Einladung
+        zuletzt …" blieb deshalb praktisch immer leer, und ob überhaupt etwas
+        rausging, war nirgends zu sehen.
+
+        Zwei Spalten am Konto, geschrieben ohne version-Bump (wie last_login): der
+        Zeitpunkt und das Ergebnis ('ok' | 'fehler'). Bewusst nicht in
+        users_history – ohne version-Bump gäbe es dort nichts fortzuschreiben, und
+        ein Versandprotokoll ist die History nicht.
+
+        `einladung_status` bleibt absichtlich ohne CHECK: Käme später ein dritter
+        Zustand dazu (etwa ein Bounce-Rücklauf), wäre eine Migration nötig, nur um
+        einen Wert zuzulassen.
+
+        Für den Bestand bleiben beide Spalten leer. Wann an wen zuletzt eine Mail
+        ging, ließe sich aus den Magic-Link-Tokens nur raten (dort stehen auch
+        selbst angeforderte Links), und ein geratener Wert wäre schlechter als
+        keiner – die Anzeige füllt sich ab der nächsten Einladung.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                        "einladung_zuletzt TIMESTAMPTZ")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                        "einladung_status TEXT")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 97 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7652,6 +7685,13 @@ class Database:
               active            INTEGER NOT NULL DEFAULT 1,
               last_login        TEXT,
               last_seen         TEXT,
+              -- Ergebnis der zuletzt an dieses Konto gesendeten Einladung
+              -- (Willkommens-/Anmelde-Mail): wann und ob der Mailserver sie
+              -- angenommen hat ('ok' | 'fehler'). Rein betrieblich, wird ohne
+              -- version-Bump geschrieben – wie last_login und daher auch nicht
+              -- in users_history gespiegelt.
+              einladung_zuletzt TIMESTAMPTZ,
+              einladung_status  TEXT,
               telegram_id       TEXT,
               matrix_id         TEXT,
               preferred_contact TEXT DEFAULT 'email',

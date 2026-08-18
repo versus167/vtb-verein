@@ -51,7 +51,8 @@
           <q-select v-model="form.typ" label="Typ *" outlined dense
             :options="typOptionen" emit-value map-options />
           <q-input v-model="form.wert" label="Wert *" outlined dense
-            :type="form.typ === 'email' ? 'email' : 'text'" />
+            :type="form.typ === 'email' ? 'email' : 'text'"
+            :rules="form.typ === 'email' ? [mailRulePflicht] : []" />
           <q-input v-model="form.label" label="Bezeichnung (optional, z. B. privat)" outlined dense />
           <q-toggle v-model="form.ist_primaer" label="Primärer Kontakt dieses Typs" />
         </q-card-section>
@@ -72,6 +73,7 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { mailRulePflicht, pruefeMailadresse } from 'src/utils/email'
 
 const props = defineProps({
   // Basis-Pfad, unter dem .../kontakte erreichbar ist
@@ -128,6 +130,13 @@ function openForm(k) {
 async function save() {
   if (!form.value.typ || !form.value.wert.trim()) {
     $q.notify({ type: 'negative', message: 'Typ und Wert sind erforderlich.' })
+    return
+  }
+  // E-Mail-Kontakte speisen Serienmails und die Login-Adresse beim Freischalten –
+  // ein Vertipper fällt sonst erst auf, wenn eine Mail nicht ankommt.
+  const mailFehler = form.value.typ === 'email' && pruefeMailadresse(form.value.wert.trim())
+  if (mailFehler) {
+    $q.notify({ type: 'negative', message: mailFehler })
     return
   }
   saving.value = true

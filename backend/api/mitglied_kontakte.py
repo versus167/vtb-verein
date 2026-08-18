@@ -7,6 +7,7 @@ from app.models.permission import Permission
 from app.db.mitglied_kontakt_repository import VALID_TYPEN, KontaktPrimaerRegelError
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_mitglied
+from ..core.validation import mailadresse_or_422
 
 router = APIRouter(tags=["mitglied-kontakte"])
 
@@ -42,6 +43,21 @@ def _validate_typ(typ: str):
         raise HTTPException(status_code=422, detail=f"Ungültiger Typ. Erlaubt: {VALID_TYPEN}")
 
 
+def _geprueft(data) -> str:
+    """Typ prüfen und den Wert getrimmt zurückgeben.
+
+    Bei `typ == 'email'` zusätzlich der Aufbau: Aus diesen Kontakten werden
+    Serienmails und die Login-Adresse beim Freischalten gespeist – ein Vertipper
+    hier fällt sonst erst auf, wenn eine Mail nicht ankommt.
+    """
+    _validate_typ(data.typ)
+    if not data.wert.strip():
+        raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
+    if data.typ == 'email':
+        return mailadresse_or_422(data.wert, pflicht=True)
+    return data.wert.strip()
+
+
 @router.get("/mitglieder/{mitglied_id}/kontakte")
 def list_kontakte(mitglied_id: int, user: CurrentUser, db: DB):
     _require_read(user)
@@ -53,15 +69,13 @@ def list_kontakte(mitglied_id: int, user: CurrentUser, db: DB):
 def create_kontakt(mitglied_id: int, data: KontaktWrite, user: CurrentUser, db: DB):
     _require_write(user)
     require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
-    _validate_typ(data.typ)
-    if not data.wert.strip():
-        raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
+    wert = _geprueft(data)
     try:
         db.get_mitglied(mitglied_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
     kontakt = db.create_mitglied_kontakt(
-        mitglied_id, data.typ, data.wert.strip(), data.label, data.ist_primaer,
+        mitglied_id, data.typ, wert, data.label, data.ist_primaer,
         created_by=user.username,
     )
     return asdict(kontakt)
@@ -72,15 +86,13 @@ def update_kontakt(mitglied_id: int, kontakt_id: int, data: KontaktUpdate,
                    user: CurrentUser, db: DB):
     _require_write(user)
     require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
-    _validate_typ(data.typ)
-    if not data.wert.strip():
-        raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
+    wert = _geprueft(data)
     eintrag = db.get_mitglied_kontakt(kontakt_id)
     if eintrag is None or eintrag.mitglied_id != mitglied_id:
         raise HTTPException(status_code=404, detail="Kontakt nicht gefunden")
     try:
         ok = db.update_mitglied_kontakt(
-            kontakt_id, data.typ, data.wert.strip(), data.label, data.ist_primaer,
+            kontakt_id, data.typ, wert, data.label, data.ist_primaer,
             updated_by=user.username, expected_version=data.expected_version,
         )
     except KontaktPrimaerRegelError as exc:
@@ -150,11 +162,9 @@ def list_meine_kontakte(user: CurrentUser, db: DB):
 @router.post("/personen/mein-mitglied/kontakte", status_code=status.HTTP_201_CREATED)
 def create_mein_kontakt(data: KontaktWrite, user: CurrentUser, db: DB):
     m = _mein_mitglied_or_404(user, db)
-    _validate_typ(data.typ)
-    if not data.wert.strip():
-        raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
+    wert = _geprueft(data)
     kontakt = db.create_mitglied_kontakt(
-        m.id, data.typ, data.wert.strip(), data.label, data.ist_primaer,
+        m.id, data.typ, wert, data.label, data.ist_primaer,
         created_by=user.username,
     )
     return asdict(kontakt)
@@ -163,13 +173,11 @@ def create_mein_kontakt(data: KontaktWrite, user: CurrentUser, db: DB):
 @router.put("/personen/mein-mitglied/kontakte/{kontakt_id}")
 def update_mein_kontakt(kontakt_id: int, data: KontaktUpdate, user: CurrentUser, db: DB):
     m = _mein_mitglied_or_404(user, db)
-    _validate_typ(data.typ)
-    if not data.wert.strip():
-        raise HTTPException(status_code=422, detail="Wert darf nicht leer sein")
+    wert = _geprueft(data)
     _eigener_kontakt_or_404(kontakt_id, m.id, db)
     try:
         ok = db.update_mitglied_kontakt(
-            kontakt_id, data.typ, data.wert.strip(), data.label, data.ist_primaer,
+            kontakt_id, data.typ, wert, data.label, data.ist_primaer,
             updated_by=user.username, expected_version=data.expected_version,
         )
     except KontaktPrimaerRegelError as exc:

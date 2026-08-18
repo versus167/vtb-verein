@@ -52,6 +52,8 @@
               · {{ z.email }}
               <span v-if="!z.active"> · deaktiviert</span>
               <span v-else-if="z.last_login"> · zuletzt angemeldet {{ fmtDatum(z.last_login) }}</span>
+              <span v-else-if="z.einladung_status === 'fehler'" class="text-negative">
+                · Einladung nicht versendet</span>
               <span v-else> · noch nicht angemeldet</span>
             </template>
             <template v-else-if="z.zugang_geloescht">
@@ -93,7 +95,7 @@
               v-model="mail" outlined dense clearable
               label="Mailadresse für den Zugang"
               :options="mailOptionen" use-input new-value-mode="add-unique"
-              hide-dropdown-icon input-debounce="0"
+              hide-dropdown-icon input-debounce="0" :rules="[mailRulePflicht]"
               hint="Hinterlegte Adressen stehen zur Auswahl – eine neue kann direkt eingetippt werden."
               @new-value="(wert, done) => done(wert.trim(), 'add-unique')"
             />
@@ -134,25 +136,81 @@
                 <template v-else-if="aktuell.last_login">
                   Zuletzt angemeldet {{ fmtDatum(aktuell.last_login) }}.
                 </template>
-                <template v-else>
-                  Noch nie angemeldet<template v-if="aktuell.einladung_zuletzt">
-                    – Einladung zuletzt {{ fmtDatum(aktuell.einladung_zuletzt) }}</template>.
-                </template>
+                <template v-else>Noch nie angemeldet.</template>
+              </div>
+
+              <!-- Versandstand der letzten Einladung: „abgeschickt" ist alles, was
+                   die App wissen kann – ein Bounce landet beim Absender, nicht hier. -->
+              <div v-if="aktuell.einladung_status === 'fehler'"
+                class="text-caption text-negative q-mt-sm">
+                <q-icon name="error_outline" size="16px" class="q-mr-xs" />
+                Die Einladung vom {{ fmtDatum(aktuell.einladung_zuletzt) }} konnte nicht
+                versendet werden. Adresse prüfen und neu einladen.
+              </div>
+              <div v-else-if="aktuell.einladung_status === 'ok'"
+                class="text-caption text-grey q-mt-sm">
+                <q-icon name="mark_email_read" size="16px" class="q-mr-xs" />
+                Einladung am {{ fmtDatum(aktuell.einladung_zuletzt) }} abgeschickt
+                (ob sie ankam, sieht die App nicht).
+              </div>
+              <div v-else-if="!aktuell.last_login" class="text-caption text-grey q-mt-sm">
+                <q-icon name="help_outline" size="16px" class="q-mr-xs" />
+                Zum letzten Versand liegt nichts vor.
+              </div>
+
+              <!-- Adresswechsel: nur bei einem Zugang, den noch nie jemand benutzt hat.
+                   Ab der ersten Anmeldung hieße eine neue Login-Adresse, das Konto zu
+                   übernehmen – das bleibt der Benutzerverwaltung vorbehalten. -->
+              <div v-if="darfMailWechseln" class="q-mt-md">
+                <q-btn
+                  v-if="!mailWechsel" flat dense no-caps size="sm" color="primary"
+                  icon="edit" label="Andere Mailadresse"
+                  @click="starteMailWechsel"
+                />
+                <div v-else class="q-gutter-sm">
+                  <q-select
+                    v-model="mail" outlined dense clearable
+                    label="Neue Mailadresse"
+                    :options="mailOptionen" use-input new-value-mode="add-unique"
+                    hide-dropdown-icon input-debounce="0" :rules="[mailRulePflicht]"
+                    @new-value="(wert, done) => done(wert.trim(), 'add-unique')"
+                  />
+                  <q-banner v-if="belegtVon" dense class="bg-orange-1 text-orange-10 rounded-borders">
+                    <template #avatar><q-icon name="warning" color="orange-9" /></template>
+                    Diese Adresse gehört bereits zum Zugang von „{{ belegtVon }}“.
+                    Pro Adresse ist ein Zugang möglich.
+                  </q-banner>
+                  <div class="text-caption text-grey">
+                    An die neue Adresse geht sofort eine Einladung. Der bisher
+                    verschickte Anmeldelink wird damit ungültig.
+                  </div>
+                </div>
               </div>
               <div v-if="error" class="text-negative text-caption q-mt-sm">{{ error }}</div>
             </template>
           </q-card-section>
           <q-card-actions v-if="!aktuell.zugang_geloescht" align="right">
-            <q-btn
-              v-if="aktuell.active" flat color="negative" label="Deaktivieren"
-              :loading="busy" @click="deaktivieren"
-            />
-            <q-space />
-            <q-btn flat label="Schließen" v-close-popup />
-            <q-btn
-              v-if="aktuell.active" unelevated color="primary" icon="mail"
-              label="Einladung senden" :loading="busy" @click="einladen"
-            />
+            <template v-if="mailWechsel">
+              <q-btn flat label="Abbrechen" :disable="busy" @click="mailWechsel = false" />
+              <q-space />
+              <q-btn
+                unelevated color="primary" icon="forward_to_inbox"
+                label="Ändern & einladen" :loading="busy"
+                :disable="!mail || !!belegtVon" @click="mailAendern"
+              />
+            </template>
+            <template v-else>
+              <q-btn
+                v-if="aktuell.active" flat color="negative" label="Deaktivieren"
+                :loading="busy" @click="deaktivieren"
+              />
+              <q-space />
+              <q-btn flat label="Schließen" v-close-popup />
+              <q-btn
+                v-if="aktuell.active" unelevated color="primary" icon="mail"
+                label="Einladung senden" :loading="busy" @click="einladen"
+              />
+            </template>
           </q-card-actions>
         </template>
       </q-card>
@@ -165,6 +223,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { mailRulePflicht } from 'src/utils/email'
 
 defineOptions({ name: 'ZugaengePage' })
 
@@ -179,6 +238,7 @@ const filter = ref('ohne')
 const dialogOpen = ref(false)
 const aktuell = ref(null)
 const mail = ref(null)
+const mailWechsel = ref(false)
 const busy = ref(false)
 const error = ref('')
 
@@ -213,16 +273,26 @@ const belegtVon = computed(() => {
   return treffer?.belegt_von || null
 })
 
+// Adresswechsel nur, solange der Zugang unbenutzt ist: Ab der ersten Anmeldung
+// gehört das Konto jemandem, und eine neue Login-Adresse wäre eine Übernahme.
+// Das Backend prüft dieselbe Bedingung – hier geht es nur um die Anzeige.
+const darfMailWechseln = computed(() => !!aktuell.value?.user_id
+  && !aktuell.value.zugang_geloescht
+  && aktuell.value.active
+  && !aktuell.value.last_login)
+
 function statusIcon(z) {
   if (z.zugang_geloescht) return 'delete_outline'
   if (!z.user_id) return z.mails.length ? 'person_outline' : 'no_accounts'
   if (!z.active) return 'block'
+  if (!z.last_login && z.einladung_status === 'fehler') return 'unsubscribe'
   return z.last_login ? 'how_to_reg' : 'mark_email_read'
 }
 
 function statusFarbe(z) {
   if (z.zugang_geloescht || !z.user_id) return 'grey-6'
   if (!z.active) return 'negative'
+  if (!z.last_login && z.einladung_status === 'fehler') return 'negative'
   return z.last_login ? 'positive' : 'primary'
 }
 
@@ -238,9 +308,18 @@ async function load() {
   }
 }
 
+// Nach einem Neuladen zeigt der offene Dialog sonst den Stand von vorhin – nach
+// einem fehlgeschlagenen Versand wäre das genau die Auskunft, die man nicht braucht.
+function aktualisiereAktuell() {
+  if (!aktuell.value) return
+  const frisch = zeilen.value.find((z) => z.mitglied_id === aktuell.value.mitglied_id)
+  if (frisch) aktuell.value = frisch
+}
+
 function oeffne(z) {
   aktuell.value = z
   error.value = ''
+  mailWechsel.value = false
   // Primäre Adresse vorbelegen, aber nur wenn sie noch frei ist.
   const frei = (z.mails || []).find((m) => !m.belegt_von)
   mail.value = z.user_id ? null : (frei?.wert || null)
@@ -273,6 +352,41 @@ async function einladen() {
     await load()
   } catch (e) {
     error.value = e.response?.data?.detail || 'Versand fehlgeschlagen'
+    // Der gescheiterte Versand steht jetzt am Konto – im offenen Dialog zeigen.
+    await load()
+    aktualisiereAktuell()
+  } finally {
+    busy.value = false
+  }
+}
+
+function starteMailWechsel() {
+  // Nicht mit der bisherigen Adresse vorbelegen: Die ist ja gerade der Grund für den
+  // Wechsel. Eine andere hinterlegte Adresse, die noch frei ist, ist der bessere Start.
+  const frei = (aktuell.value.mails || [])
+    .find((m) => !m.belegt_von && m.wert.toLowerCase() !== (aktuell.value.email || '').toLowerCase())
+  mail.value = frei?.wert || null
+  error.value = ''
+  mailWechsel.value = true
+}
+
+async function mailAendern() {
+  busy.value = true
+  error.value = ''
+  try {
+    await api.put(`/api/personen/mitglied/${aktuell.value.mitglied_id}/zugang/mailadresse`,
+      { email: String(mail.value).trim() })
+    dialogOpen.value = false
+    mailWechsel.value = false
+    $q.notify({ type: 'positive',
+      message: 'Adresse geändert, neue Einladung ist unterwegs. Der alte Link gilt nicht mehr.' })
+    await load()
+  } catch (e) {
+    error.value = e.response?.data?.detail || 'Ändern fehlgeschlagen'
+    // Bei 502 ist die Adresse geändert, nur der Versand hat gehakt – die Liste
+    // und der offene Dialog müssen den neuen Stand trotzdem zeigen.
+    await load()
+    aktualisiereAktuell()
   } finally {
     busy.value = false
   }
