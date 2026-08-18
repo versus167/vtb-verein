@@ -1,8 +1,17 @@
 # Plan: Spielplan-Import aus dem DFBnet (Ticket #95)
 
-> Status (2026-08-03): **Etappen 1–4 umgesetzt** (Schema v80–v84). Offen ist nur
-> noch der Platzwart-Zugriff samt echter Platzbelegung (Etappe 5). Grundlage ist
-> ein Muster-Export des Vereinsspielplans für die Saison 26/27.
+> Status (2026-08-18): **Etappen 1–4 umgesetzt** (Schema v80–v84), dazu der
+> Import-Verlauf (v94: Stand des letzten Imports am Termin, v95: Zeitraum der
+> importierten Datei). Grundlage ist ein Muster-Export des Vereinsspielplans für
+> die Saison 26/27.
+>
+> **Etappe 5 ist angefangen**, entgegen dem früheren Kopf hier: Der eigene
+> Permission-Key `spielstaetten.verwalten` steht (v86, vorher hing die Pflege an
+> `system.config`), die Spielstätten-Stammdaten samt Untergrund ebenfalls
+> (v80/v85, `SpielstaettenPage.vue`), und `termine.spielstaette_id` gibt es an
+> Terminen *und* Serien — Trainings stehen also bereits im Plan. **Es fehlt genau
+> ein Stück: die Belegungsansicht**, die eigene Termine und die fremden Spiele
+> aus der Platzbelegung in einer Sicht zusammenführt.
 >
 > **Keine Echtdaten im Repo:** Der Export enthält Namen und Ausweisnummern von
 > Schiedsrichtern. Alle Beispiele hier sind gekürzt oder erfunden.
@@ -289,9 +298,11 @@ dem Freitext ein Katalog wird.
 4. ✅ **Abweichungen**: Tabelle (v84), Badge an der Termin-Karte,
    Entscheidungs-Dialog je Feld — dazu „im Export nicht mehr enthalten" als
    eigene Abweichungsart.
-5. **Platzwart-Zugriff** (späterer Schritt): Permission-Key, Belegungsansicht
-   aus beiden Quellen, optionale `spielstaette_id` an Terminen, damit auch
-   Trainings im Plan stehen.
+5. **Platzwart-Zugriff** (teils umgesetzt): Permission-Key ✅
+   (`spielstaetten.verwalten`, v86), `spielstaette_id` an Terminen und Serien ✅
+   (v80) — **offen: die Belegungsansicht aus beiden Quellen** (eigene Termine +
+   fremde Spiele aus der Platzbelegung in einer Sicht, gefiltert nach Platz und
+   Zeitraum).
 
 ## Offene Fragen
 

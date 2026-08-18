@@ -1,8 +1,21 @@
 # Plan: Trainings- & Spielbeteiligungsplanung (SpielerPlus-ähnlich)
 
-> Status (2026-07-13): **Konzept, noch keine Umsetzung.** Grober Plan aus einer
-> Diskussionsrunde; Zuschnitt und offene Fragen s. u. Prio niedrig (Ticket im
-> Bereich VTB-App).
+> Status (2026-08-18): **Etappen 1–3 umgesetzt und auf `master`.** Der Kopf sagte
+> bis heute „Konzept, noch keine Umsetzung" — das war seit Juli falsch.
+>
+> * **Etappe 1** — Termine je Mannschaft über die Kader-ACL (Schema v68),
+>   Terminserien rollierend materialisiert (v70), `backend/api/termine.py`,
+>   `frontend/src/pages/TerminePage.vue`.
+> * **Etappe 2** — Zu-/Absagen (`termin_zusage`, v69), „Meine Termine",
+>   Benachrichtigungen über den bestehenden Kanal-Stack; dazu Kalender-Abo als
+>   ICS-Feed (v89, #153) — im Plan nicht vorgesehen, aber derselbe Zweck.
+> * **Etappe 3** — DFBnet-Spielplan-Import mit Verlegungs-Diff (v80–v86, v94/v95).
+>   Eigener Plan: [`DFBNET_IMPORT_PLAN.md`](../../DFBNET_IMPORT_PLAN.md), dort
+>   ist auch die letzte Etappe (Platzwart/Belegungsansicht) noch offen.
+>
+> **Offen:** nur Etappe 4 (fussball.de-Sync, Fahrdienst/Trikotwäsche,
+> Aufstellungen) — als Backlog-Punkte ins `TODO.md` übernommen. Deshalb liegt der
+> Plan im Archiv: Er ist Chronik, kein Vorhaben mehr.
 
 ## Kernidee
 

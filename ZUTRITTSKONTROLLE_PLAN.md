@@ -1,12 +1,21 @@
 # Plan: Zutrittskontrolle / Schließsystem (TT-Lock)
 
-> Status (2026-06-30): **Phasen 1–4 umgesetzt + getestet** auf Branch
-> `feature/zutrittskontrolle`, Schema **v58**: Read-only (Inventar/Logs), Fernöffnen/
-> -verriegeln, Chip-Verwaltung über die Cloud (anlernen/ändern/entziehen + IC-Card-Import),
-> Abteilungs-Scoping + DSGVO-Hinweis, kurzzeitige App-Betätigungs-Berechtigung, Self-Service-
-> Sicht und Alarm-Benachrichtigungen. **Offen:** Log-Retention im allgemeinen Prune
-> (TODO.md), feineres Alarm-Empfänger-Scoping, Auswertungen/Reports; Cloud-Writes noch nicht
-> live an einem Schloss verifiziert (gerätegenaue Freigabe nötig).
+> Status (2026-08-18): **Phasen 1–4 umgesetzt und auf `master`** (ursprünglich
+> Schema v58): Read-only (Inventar/Logs), Fernöffnen/-verriegeln, Chip-Verwaltung über
+> die Cloud (anlernen/ändern/entziehen + IC-Card-Import), Abteilungs-Scoping +
+> DSGVO-Hinweis, kurzzeitige App-Betätigungs-Berechtigung, Self-Service-Sicht und
+> Alarm-Benachrichtigungen. Seither ausgebaut bis Schema **v96** — die Abschnitte
+> weiter unten sind die jeweils aktuelle Beschreibung (externes Schloss v90,
+> Chip-Inhaber ohne Mitgliedschaft v91, Verursacher in der Log-Zeile v92,
+> Rechtegruppen v93, Konten ohne Zugang v96).
+>
+> **Erledigt seit dem letzten Kopf:** die Log-Retention. `tuer_zutritt_log`,
+> `tuer_schloss_status_log` und das Zugriffsprotokoll laufen über das
+> `LOG_REGISTRY` in `app/services/prune_service.py`, Frist je Regel auf der
+> Datenbereinigungs-Seite einstellbar. Kein Protokoll wird unbegrenzt aufbewahrt.
+>
+> **Offen:** Phase 5 (Zutrittslog vollständig auf Mitglieder auflösen) nur teils,
+> s. u.; feineres Alarm-Empfänger-Scoping; Auswertungen/Reports.
 >
 > **Nachtrag v59 (2026-06-30, #62):** read-only **Credential-Übersicht je Schloss**
 > (`tuer_credential`: Fingerprint/Passcode/eKey/IC am Schloss, 1:1 aus der Cloud gespiegelt,

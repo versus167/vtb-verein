@@ -1,7 +1,17 @@
 # Plan: Teamkasse (Clubdeckel) — mannschaftsinterne Strichliste
 
-> Status (2026-07-20): **Umgesetzt auf Branch `feature/teamtresor`** (Schema v75,
-> Fachmodell nach Abgleich mit dem Original korrigiert, s. „Buchungsmodell").
+> Status (2026-08-18): **Umgesetzt und auf `master`** — Schema v75 (Tabellen,
+> ACL, Ledger) und v76 (Batch-Löschung mit Wiederherstellung, #125). Code:
+> `backend/api/clubdeckel.py`, `app/db/clubdeckel_*_repository.py`,
+> `frontend/src/pages/TeamkassePage.vue`.
+>
+> **Dieses Dokument ist Chronik, keine Ansage.** Es wird nicht mehr gepflegt; was
+> die Teamkasse heute tut, steht im Code. Aufgehoben ist es wegen der
+> Entscheidungen weiter unten — Buchungsmodell, Namensgebung „Teamkasse" vs.
+> `clubdeckel_*`, Rechte-Logik ohne globalen Permission-Key —, die sich aus dem
+> Code nicht rekonstruieren lassen. Offen geblieben sind nur die beiden Punkte
+> unter „Offene Fragen" (Warnschwellen, Events/Push); sie stehen im `TODO.md`.
+>
 > Vorbild: privates Repo `okram0815/Clubtresor` (PHP-Getränke-Strichliste).
 
 ## Kernidee

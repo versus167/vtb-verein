@@ -7,11 +7,19 @@
 > Code, sondern **Datenlage**: Die offenen Fragen unten brauchen einen Blick in
 > den Echt-Export, und der eigentliche Übernahmelauf steht noch aus.
 >
-> **Terminlage:** Instanz B wird am **20.08.2026** aufgesetzt, der Import gehört
-> dazu. Vorliegen tut bisher nur der **Muster-Auszug** — der Parser ist gegen
-> ihn gebaut, muss aber spätestens am **17.08.** echte Daten gesehen haben,
-> sonst geht ein ungeprüfter Import in Betrieb. Das ist das größte Terminrisiko des
-> Vorhabens, weil die Bereitstellung nicht in unserer Hand liegt.
+> **Terminlage (Stand 2026-08-18): Die Frist ist verstrichen.** Der Plan nannte
+> den **17.08.** als spätesten Termin, an dem der Parser echte Daten gesehen
+> haben muss; sie liegen weiterhin **nicht** vor, es gibt nach wie vor nur den
+> Muster-Auszug. Instanz B ist für den **20.08.2026** vorgesehen.
+>
+> Damit ist die Lage nicht mehr „Risiko", sondern eingetreten: Wer den Import am
+> 20.08. fährt, fährt ihn ungeprüft gegen ein Format, das nur aus einem Muster
+> bekannt ist. Der eingebaute Ausweg ist der **Dry-Run** (`commit=False` schreibt
+> nichts) — er ist ab jetzt nicht optional, sondern der erste Schritt jedes
+> Laufs, und sein Ergebnis will Zeile für Zeile angesehen werden, besonders bei
+> Status-Werten und Spalten, die der Muster-Auszug nicht kennt (s. „Offene
+> Fragen"). Notfalls startet Instanz B ohne Bestandsdaten und bekommt sie
+> nachgereicht; ein zweiter Lauf ist billiger als ein verdorbener Datenbestand.
 >
 > **Keine Echtdaten im Repo:** Der Muster-Export enthält Namen, Adressen und
 > Bankverbindungen realer Mitglieder. Alle Beispiele hier sind erfunden.
