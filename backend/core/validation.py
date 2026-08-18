@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.services.iban import validate_iban
+from app.services.mailadresse import validate_mailadresse
 from app.services.mitgliedschaft import pruefe_von_in_mitgliedschaft
 
 
@@ -15,6 +16,19 @@ def iban_or_422(value: Optional[str]) -> Optional[str]:
     zurück und wirft bei ungültiger Eingabe HTTP 422."""
     try:
         return validate_iban(value)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+def mailadresse_or_422(value: Optional[str], *, pflicht: bool = False) -> Optional[str]:
+    """Prüft den Aufbau einer E-Mail-Adresse und gibt sie getrimmt zurück.
+
+    Leer/None ergibt None (Konten ohne Zugang haben keine Adresse) – es sei denn,
+    `pflicht` ist gesetzt. Ungültiger Aufbau → HTTP 422. Geprüft wird nur die Form:
+    ob dahinter ein Postfach steht, zeigt erst der Versand.
+    """
+    try:
+        return validate_mailadresse(value, pflicht=pflicht)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

@@ -174,6 +174,8 @@ const EVENT_META = {
   page_view: { label: 'Seitenaufruf', color: 'primary' },
   zugang_freigeschaltet: { label: 'Zugang freigeschaltet', color: 'positive' },
   zugang_einladung: { label: 'Einladung erneut gesendet', color: 'info' },
+  zugang_einladung_fehler: { label: 'Einladung: Versand fehlgeschlagen', color: 'negative' },
+  zugang_mailadresse: { label: 'Login-Adresse geändert', color: 'warning' },
   zugang_deaktiviert: { label: 'Zugang deaktiviert', color: 'warning' },
   prune_executed: { label: 'Bereinigung ausgeführt', color: 'negative' },
   prune_config_changed: { label: 'Bereinigung: Einstellung geändert', color: 'warning' },

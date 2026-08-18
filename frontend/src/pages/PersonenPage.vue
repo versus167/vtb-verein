@@ -435,6 +435,7 @@
             <q-tab-panel name="user" class="q-gutter-sm q-pa-none">
               <q-input v-model="createForm.username" label="Benutzername *" outlined dense />
               <q-input v-model="createForm.email" label="E-Mail" outlined dense type="email"
+                :rules="[mailRule]"
                 hint="Leer lassen für ein Konto ohne Zugang (nur ein Name)" />
               <div class="row items-center q-gutter-sm">
                 <q-toggle v-if="canAssignAdmin" class="self-center"
@@ -487,7 +488,8 @@
         <q-separator />
         <q-card-section class="q-gutter-sm">
           <q-input v-model="editUserForm.username" label="Benutzername" outlined dense />
-          <q-input v-model="editUserForm.email" label="E-Mail" outlined dense type="email" />
+          <q-input v-model="editUserForm.email" label="E-Mail" outlined dense type="email"
+            :rules="[mailRule]" />
           <q-toggle v-if="canAssignAdmin"
             :model-value="editUserForm.role === 'admin'"
             @update:model-value="v => editUserForm.role = v ? 'admin' : 'mitglied'"
@@ -550,6 +552,7 @@
         <q-separator />
         <q-card-section class="q-gutter-sm">
           <q-input v-model="nutzerForm.email" label="E-Mail *" outlined dense type="email"
+            :rules="[mailRulePflicht]"
             hint="Adresse für Login- und Benachrichtigungs-Mails" />
           <q-toggle v-if="canAssignAdmin"
             :model-value="nutzerForm.role === 'admin'"
@@ -698,6 +701,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
+import { mailRule, mailRulePflicht } from 'src/utils/email'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
 import { formatDateTime } from 'src/utils/datetime'
 import { aktivesTheme } from 'src/composables/useTheme'

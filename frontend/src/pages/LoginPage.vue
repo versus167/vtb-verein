@@ -107,7 +107,7 @@
                     no-error-icon
                     lazy-rules="ondemand"
                     :disable="loading"
-                    :rules="[(v) => !!v || 'Pflichtfeld']"
+                    :rules="[mailRulePflicht]"
                   >
                     <template #prepend>
                       <q-icon name="email" />
@@ -169,6 +169,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
 import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInfo'
 import { zurUebersicht } from 'src/router/nach-login'
+import { mailRulePflicht } from 'src/utils/email'
 
 const router = useRouter()
 const auth = useAuthStore()

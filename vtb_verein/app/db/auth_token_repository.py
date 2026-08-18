@@ -111,6 +111,32 @@ class AuthTokenRepository:
             )
             return cur.rowcount
     
+    def entwerte_offene_tokens(self, user_id: int, token_type: Optional[str] = None) -> int:
+        """Entwertet alle noch offenen Tokens eines Users – ohne sie zu löschen.
+
+        Gesetzt wird `used_at`, genau wie beim Einlösen: Ein damit entwerteter Link
+        läuft danach in denselben Zweig wie ein bereits benutzter ("invalid_or_used"),
+        und die Zeile bleibt als Spur erhalten (vgl. `revoke_user_tokens`, das hart
+        löscht und deshalb hier nicht in Frage kommt).
+
+        Gebraucht beim Wechsel der Login-Adresse: Der Link, der an die alte Adresse
+        ging, darf danach nicht mehr in das Konto führen.
+
+        Returns:
+            Anzahl der entwerteten Tokens
+        """
+        with self.db.cursor() as cur:
+            sql = """
+                UPDATE auth_tokens SET used_at = CURRENT_TIMESTAMP
+                 WHERE user_id = %s AND used_at IS NULL
+            """
+            params = [user_id]
+            if token_type:
+                sql += " AND token_type = %s"
+                params.append(token_type)
+            cur.execute(sql, tuple(params))
+            return cur.rowcount
+
     def revoke_user_tokens(self, user_id: int, token_type: Optional[str] = None):
         """
         Widerruft alle Tokens eines Users (optional nach Typ gefiltert)

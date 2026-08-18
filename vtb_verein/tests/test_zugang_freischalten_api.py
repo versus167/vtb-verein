@@ -109,6 +109,9 @@ def _db(mitglied=None, mail_belegt_von=None, ziel_user=None,
         get_user_by_id=lambda uid: ziel_user,
         list_mitglied_kontakte=lambda mid: list(kontakte),
         create_mitglied_kontakt=lambda *a: calls.append(('kontakt', a)),
+        update_mitglied_kontakt=lambda *a: calls.append(('kontakt_update', a)) or True,
+        auth_token_repository=SimpleNamespace(
+            entwerte_offene_tokens=lambda uid, typ=None: calls.append(('entwertet', uid, typ))),
         set_mitglied_primaer_kontakt=lambda *a: calls.append(('primaer', a)),
         list_mitglied_abteilungen=lambda mid: [],
         list_mitglied_funktionen=lambda mid: [],
@@ -310,6 +313,146 @@ def test_einladung_bei_deaktiviertem_zugang_409():
     with pytest.raises(HTTPException) as e:
         api.zugang_einladung_senden(5, _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
     assert e.value.status_code == 409
+
+
+# ------------------------------------------------------- Aufbau der Adresse
+
+@pytest.mark.parametrize("adresse", ['max.mustermannweb.de', 'max@web', 'max @web.de'])
+def test_freischalten_lehnt_kaputte_adresse_ab(adresse, _person_service):
+    """Ohne Prüfung entstünde ein Zugang, an den nie eine Mail gehen kann."""
+    db = _db(_mitglied())
+    with pytest.raises(HTTPException) as e:
+        api.zugang_freischalten(5, api.ZugangFreischalten(email=adresse), _REQUEST,
+                                _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 422
+    assert _person_service.letzte_anlage is None
+
+
+# ------------------------------------------------------- Login-Adresse ändern
+
+class _UserServiceStub:
+    """UserService-Ersatz: hält die Änderung fest und spielt den Mailversand."""
+
+    letzte_aenderung = None
+    gesendet_an = None
+    versand_klappt = True
+
+    def __init__(self, db):
+        pass
+
+    def update(self, **kwargs):
+        _UserServiceStub.letzte_aenderung = kwargs
+        return True
+
+    def send_magic_link(self, email):
+        _UserServiceStub.gesendet_an = email
+        return _UserServiceStub.versand_klappt
+
+
+@pytest.fixture
+def _user_service(monkeypatch):
+    _UserServiceStub.letzte_aenderung = None
+    _UserServiceStub.gesendet_an = None
+    _UserServiceStub.versand_klappt = True
+    monkeypatch.setattr(api, 'UserService', _UserServiceStub)
+    return _UserServiceStub
+
+
+def _wechsel_db(*, last_login=None, role='mitglied', permissions=BASE_PERMISSIONS,
+                belegt_von=None, kontakte=(), uid=42):
+    ziel = SimpleNamespace(id=uid, username='erika.muster', email='alt@web.de',
+                           role=role, active=True, version=3, last_login=last_login)
+    return _db(_mitglied(user_id=uid), ziel_user=ziel, ziel_permissions=permissions,
+               mail_belegt_von=belegt_von, kontakte=kontakte)
+
+
+def test_mailwechsel_setzt_adresse_und_laedt_neu_ein(_user_service):
+    db = _wechsel_db()
+    antwort = api.zugang_mailadresse_aendern(
+        5, api.ZugangMailadresse(email='neu@web.de'), _REQUEST,
+        _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert antwort['email'] == 'neu@web.de'
+    assert _user_service.letzte_aenderung['email'] == 'neu@web.de'
+    assert _user_service.gesendet_an == 'neu@web.de'
+    # Der alte Link darf nach dem Wechsel nicht mehr ins Konto führen.
+    assert ('entwertet', 42, 'magic_link') in db.calls
+
+
+def test_mailwechsel_nur_vor_der_ersten_anmeldung(_user_service):
+    """Ab der ersten Anmeldung wäre eine neue Login-Adresse eine Kontoübernahme."""
+    db = _wechsel_db(last_login='2026-08-01T10:00:00+00:00')
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 409
+    assert _user_service.letzte_aenderung is None
+
+
+def test_mailwechsel_prueft_den_aufbau(_user_service):
+    db = _wechsel_db()
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu.web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 422
+    assert _user_service.letzte_aenderung is None
+
+
+def test_mailwechsel_auf_fremde_adresse_abgelehnt(_user_service):
+    db = _wechsel_db(belegt_von='anderer.nutzer')
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='belegt@web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 409
+    assert _user_service.letzte_aenderung is None
+
+
+def test_mailwechsel_schont_admin_konten(_user_service):
+    db = _wechsel_db(role='admin')
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 403
+
+
+def test_mailwechsel_schont_konten_mit_weiteren_rechten(_user_service):
+    db = _wechsel_db(permissions=BASE_PERMISSIONS | {Permission.BEITRAEGE_WRITE})
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 403
+
+
+def test_mailwechsel_am_eigenen_zugang_abgelehnt(_user_service):
+    db = _wechsel_db(uid=1)
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                       _REQUEST,
+                                       _user(Permission.PERSONEN_FREISCHALTEN, uid=1), db)
+    assert e.value.status_code == 400
+
+
+def test_mailwechsel_meldet_versandfehler_trotz_geaenderter_adresse(_user_service):
+    """502, aber die Adresse steht schon – die Oberfläche muss den neuen Stand zeigen."""
+    _user_service.versand_klappt = False
+    db = _wechsel_db()
+    with pytest.raises(HTTPException) as e:
+        api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                       _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    assert e.value.status_code == 502
+    assert _user_service.letzte_aenderung['email'] == 'neu@web.de'
+
+
+def test_mailwechsel_korrigiert_den_login_kontakt(_user_service):
+    """Der beim Freischalten angelegte Kontakt trägt die falsche Adresse – er wird
+    korrigiert statt einen zweiten daneben zu stellen."""
+    alt = SimpleNamespace(id=7, typ='email', wert='alt@web.de', label='Login',
+                          ist_primaer=True, version=1)
+    db = _wechsel_db(kontakte=(alt,))
+    api.zugang_mailadresse_aendern(5, api.ZugangMailadresse(email='neu@web.de'),
+                                   _REQUEST, _user(Permission.PERSONEN_FREISCHALTEN), db)
+    updates = [c for c in db.calls if c[0] == 'kontakt_update']
+    assert updates and updates[0][1][2] == 'neu@web.de'
+    assert not [c for c in db.calls if c[0] == 'kontakt']
 
 
 # --------------------------------------------------------------- Deaktivieren
