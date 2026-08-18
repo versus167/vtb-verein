@@ -9,13 +9,29 @@ termine.verwalten – Admins umgehen die ACL ohnehin (das entscheidet die API-Sc
 Die Aktiv-Definition (von <= Stichtag <= bis) deckt sich mit der Kader-Semantik in
 mitglied_mannschaft (von ist dort NOT NULL, bis optional).
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from psycopg.types.json import Jsonb
 
 from app.models.termin import Termin
 from app.db.base_repository import BaseRepository
+
+
+# Vorlauf der automatischen Termin-Zuordnung (#167, s. get_laufenden): So lange
+# vor dem Anpfiff gehören Buchungen schon zum Termin – Getränke werden beim
+# Aufbau geholt, nicht erst nach dem Anpfiff.
+TERMIN_FENSTER_VORLAUF = '60 minutes'
+
+
+def _TERMIN_TS(spalte: str) -> str:
+    """Lokale Wandzeit ('YYYY-MM-DDTHH:MM') als timestamp für Zeitvergleiche."""
+    return f"to_timestamp({spalte}, 'YYYY-MM-DD\"T\"HH24:MI')::timestamp"
+
+
+def _jetzt_lokal() -> str:
+    """Jetzt als lokale Wandzeit im Termin-Format – dieselbe Zeitbasis wie beginn/ende."""
+    return datetime.now().strftime('%Y-%m-%dT%H:%M')
 
 
 VALID_TYPEN = ('training', 'spiel', 'sonstiges')
@@ -119,6 +135,94 @@ class TerminRepository(BaseRepository):
                 f"SELECT {_COLS} FROM termine "
                 "WHERE extern_ref = %s AND mannschaft_id = %s AND deleted_at IS NULL",
                 (extern_ref, mannschaft_id),
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
+    def get_laufenden(self, mannschaft_id: int,
+                      jetzt: Optional[str] = None) -> Optional[Termin]:
+        """Der aktuelle Termin der Mannschaft — Grundlage der automatischen
+        Termin-Zuordnung von Teamkassen-Buchungen (#167).
+
+        Die Termine einer Mannschaft teilen die Zeitachse LÜCKENLOS unter sich
+        auf: Ein Termin ist ab VORLAUF vor seinem `beginn` zuständig und bleibt
+        es, bis der Vorlauf des nächsten anfängt. Sein `ende` spielt bewusst
+        keine Rolle — nach dem Abpfiff wird weitergetrunken, und dieses Bier
+        gehört noch zum Spiel, nicht ins Nichts.
+
+        Daraus folgt die ganze Abfrage: gesucht ist schlicht der JÜNGSTE Termin,
+        dessen Vorlauf schon begonnen hat. Ein Vergleich mit dem Folgetermin
+        erübrigt sich, weil dessen Vorlauf ihn automatisch ablöst, sobald er
+        selbst der jüngste ist.
+
+        Der letzte Termin einer Mannschaft hat damit kein Ende: Solange kein
+        neuer angelegt ist, hängen auch späte Buchungen an ihm. Das ist so
+        gewollt (bewusste Entscheidung zu #167) — die Alternative wäre ein
+        willkürliches Zeitlimit, nach dem Buchungen unzugeordnet lägen.
+
+        Abgesagte Termine zählen gar nicht mit: Sie sind nicht zuständig und
+        lösen den vorherigen auch nicht ab — dort findet nichts statt.
+
+        `beginn` ist lokale Wandzeit als TEXT ('YYYY-MM-DDTHH:MM'), der Vergleich
+        läuft deshalb über to_timestamp, nicht über die Audit-TZ-Zeiten.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
+                  AND t.status <> 'abgesagt'
+                  AND {_TERMIN_TS('t.beginn')} - %(vorlauf)s::interval
+                      <= %(jetzt)s::timestamp
+                ORDER BY t.beginn DESC, t.id DESC
+                LIMIT 1
+                """,
+                {"mid": mannschaft_id,
+                 "jetzt": jetzt or _jetzt_lokal(),
+                 "vorlauf": TERMIN_FENSTER_VORLAUF},
+            )
+            row = cur.fetchone()
+            return _map(row) if row else None
+
+    def get_naechsten(self, mannschaft_id: int,
+                      jetzt: Optional[str] = None) -> Optional[Termin]:
+        """Der Termin, auf den man sich gerade VORBEREITET (#167, v100).
+
+        Bewusst eine andere Frage als get_laufenden: Dort geht es darum, wohin
+        eine Buchung gehört (nach dem Abpfiff gehört das Bier noch zum Spiel).
+        Hier geht es darum, welche Speisekarte man gerade pflegt — und das ist
+        das nächste Ereignis, das noch nicht vorbei ist. Am Morgen des Spieltags
+        ist das das Spiel am Abend, nicht das Training von letzter Woche.
+
+        Gesucht ist deshalb der FRÜHESTE Termin, dessen Ende noch nicht erreicht
+        ist; ohne `ende` zählt der Beginn. Während des Termins bleibt er es also,
+        danach rückt der nächste nach.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.mannschaft_id = %(mid)s AND t.deleted_at IS NULL
+                  AND t.status <> 'abgesagt'
+                  AND COALESCE(NULLIF(t.ende, ''), t.beginn) >= %(jetzt)s
+                ORDER BY t.beginn, t.id
+                LIMIT 1
+                """,
+                {"mid": mannschaft_id, "jetzt": jetzt or _jetzt_lokal()},
             )
             row = cur.fetchone()
             return _map(row) if row else None

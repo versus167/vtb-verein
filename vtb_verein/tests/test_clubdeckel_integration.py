@@ -12,7 +12,7 @@ VereinsDB legt das Schema beim Connect an (Muster wie test_termine_integration).
 """
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -64,6 +64,11 @@ def clean(db):
                 "clubdeckel_beitrag_befreiung, clubdeckel_beitrag_befreiung_history, "
                 "clubdeckel_berechtigung, clubdeckel_berechtigung_history, "
                 "clubdeckel, clubdeckel_history, "
+                # Termine hängen seit v97 an den Buchungen (#167). Das CASCADE
+                # über mannschaft räumt zwar termine mit ab, nicht aber deren
+                # History – die kollidierte sonst nach RESTART IDENTITY mit der
+                # wiederverwendeten id.
+                "termine, termine_history, "
                 "mitglied_mannschaft, mitglied_mannschaft_history, "
                 "mannschaft, mannschaft_history RESTART IDENTITY CASCADE"
             )
@@ -840,3 +845,473 @@ def test_loesch_ref_spalten_existieren(db):
     assert tabellen == {"clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
                         "clubdeckel_gruppe", "clubdeckel_berechtigung",
                         "clubdeckel_beitrag_befreiung"}
+
+
+# ------------------------------------------- Termin-Bezug & Matrix (#167, v98)
+def _make_termin(db, mannschaft_id, beginn, ende=None, typ='training',
+                 status='geplant'):
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM spielstaette WHERE deleted_at IS NULL "
+                    "ORDER BY id LIMIT 1")
+        spielstaette_id = cur.fetchone()['id']
+        cur.execute(
+            "INSERT INTO termine (mannschaft_id,typ,beginn,ende,spielstaette_id,"
+            " status,created_by,updated_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,'t','t') RETURNING id",
+            (mannschaft_id, typ, beginn, ende, spielstaette_id, status))
+        return cur.fetchone()['id']
+
+
+def _wandzeit(minuten_offset: int) -> str:
+    """Lokale Wandzeit relativ zu jetzt – dieselbe Zeitbasis wie termine.beginn."""
+    return (datetime.now() + timedelta(minutes=minuten_offset)).strftime('%Y-%m-%dT%H:%M')
+
+
+def test_get_laufenden_findet_termin_im_fenster(db):
+    man = _make_mannschaft(db)
+    laeuft = _make_termin(db, man, _wandzeit(-30), _wandzeit(60))
+
+    gefunden = db.termine.get_laufenden(man)
+    assert gefunden is not None and gefunden.id == laeuft
+
+
+def test_get_laufenden_greift_schon_im_vorlauf(db):
+    """Getränke werden beim Aufbau geholt — eine Stunde vor Anpfiff zählt schon."""
+    man = _make_mannschaft(db)
+    gleich = _make_termin(db, man, _wandzeit(30), _wandzeit(120))
+    assert db.termine.get_laufenden(man).id == gleich
+
+
+def test_get_laufenden_ignoriert_termine_vor_ihrem_vorlauf(db):
+    man = _make_mannschaft(db)
+    _make_termin(db, man, _wandzeit(61), _wandzeit(120))   # Vorlauf noch nicht erreicht
+
+    assert db.termine.get_laufenden(man) is None
+
+
+def test_get_laufenden_gilt_nach_dem_ende_weiter(db):
+    """Kernregel: Ein Termin bleibt zuständig, bis der nächste seinen Vorlauf
+    erreicht — auch lange nach dem Abpfiff. Das dritte Bier gehört zum Spiel."""
+    man = _make_mannschaft(db)
+    vorbei = _make_termin(db, man, _wandzeit(-600), _wandzeit(-500))
+
+    assert db.termine.get_laufenden(man).id == vorbei
+
+
+def test_get_laufenden_ohne_ende_gilt_ebenfalls_weiter(db):
+    """Ein fehlendes `ende` ändert nichts — das Ende zählt für die Zuordnung nie."""
+    man = _make_mannschaft(db)
+    offen = _make_termin(db, man, _wandzeit(-500), None, typ='sonstiges')
+
+    assert db.termine.get_laufenden(man).id == offen
+
+
+def test_get_laufenden_wechselt_mit_dem_vorlauf_des_naechsten(db):
+    """Die Ablösung: Solange der Vorlauf des Spiels nicht begonnen hat, gilt das
+    Training; danach das Spiel — auch wenn das Training noch läuft."""
+    man = _make_mannschaft(db)
+    training = _make_termin(db, man, _wandzeit(-100), _wandzeit(60), typ='training')
+    spiel = _make_termin(db, man, _wandzeit(61), _wandzeit(180), typ='spiel')
+    assert db.termine.get_laufenden(man).id == training
+
+    with db.cursor() as cur:
+        cur.execute("UPDATE termine SET beginn = %s WHERE id = %s",
+                    (_wandzeit(59), spiel))
+    assert db.termine.get_laufenden(man).id == spiel
+
+
+def test_get_laufenden_abgesagter_loest_den_vorherigen_nicht_ab(db):
+    """Ein abgesagter Termin ist nicht zuständig UND beendet den vorherigen nicht
+    — sonst fiele der Abend in ein Loch, an dem nichts stattgefunden hat."""
+    man = _make_mannschaft(db)
+    training = _make_termin(db, man, _wandzeit(-200), _wandzeit(-100), typ='training')
+    _make_termin(db, man, _wandzeit(-30), _wandzeit(60), status='abgesagt')
+
+    assert db.termine.get_laufenden(man).id == training
+
+
+def test_get_laufenden_trennt_die_mannschaften(db):
+    erste = _make_mannschaft(db, "Erste")
+    zweite = _make_mannschaft(db, "Zweite")
+    _make_termin(db, erste, _wandzeit(-30), _wandzeit(60))
+
+    assert db.termine.get_laufenden(zweite) is None
+
+
+def test_konsum_paar_traegt_denselben_termin(db):
+    """Käufer- und Verkäufer-Zeile eines Mitglieds-Verkaufs gehören zum selben
+    Termin – sonst fehlte die Gegenzeile in der Termin-Auswertung."""
+    man = _make_mannschaft(db)
+    _, kaeufer = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, verkaeufer = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    termin = _make_termin(db, man, _wandzeit(-30), _wandzeit(60))
+
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, kaeufer, None, 'Roster', 1, Decimal('2.50'), verkaeufer, 't',
+        termin_id=termin)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT typ, termin_id FROM clubdeckel_buchung "
+                    "WHERE deckel_id = %s ORDER BY typ", (deckel.id,))
+        zeilen = [(r['typ'], r['termin_id']) for r in cur.fetchall()]
+    assert zeilen == [('konsum', termin), ('verkauf', termin)]
+
+
+def _matrix_aufbau(db):
+    """Deckel mit zwei Mitgliedern, zwei Artikeln und einem Termin."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, None, 'Bier', Decimal('1.50'), 1, 0, 't')
+    wasser = db.clubdeckel_artikel.create(deckel.id, None, 'Wasser', Decimal('1.00'), 1, 0, 't')
+    termin = _make_termin(db, man, _wandzeit(-30), _wandzeit(60))
+    return man, deckel, anna, bernd, bier, wasser, termin
+
+
+def test_matrix_zaehlt_zellen_und_randsummen(db):
+    man, deckel, anna, bernd, bier, wasser, termin = _matrix_aufbau(db)
+    for _ in range(3):
+        db.clubdeckel_buchungen.create_konsum(
+            deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+            termin_id=termin)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, bernd, wasser.id, 'Wasser', 2, Decimal('1.00'), None, 't',
+        termin_id=termin)
+
+    m = db.clubdeckel_buchungen.matrix(deckel.id, termin_id=termin)
+
+    assert m['zellen'][f"{anna}:{bier.id}"] == {"anzahl": 3, "betrag": Decimal('4.50')}
+    assert m['zellen'][f"{bernd}:{wasser.id}"] == {"anzahl": 2, "betrag": Decimal('2.00')}
+    assert m['je_artikel'][bier.id]['anzahl'] == 3
+    assert m['je_artikel'][wasser.id]['betrag'] == Decimal('2.00')
+    assert m['gesamt'] == Decimal('6.50')
+
+
+def test_matrix_zaehlt_nur_konsum_und_ignoriert_storniertes(db):
+    """Die Gegenzeile 'verkauf' und Zahlungen sind kein Tresenverbrauch; ein
+    zurückgenommener Strich verschwindet aus dem Gitter."""
+    man, deckel, anna, bernd, bier, _, termin = _matrix_aufbau(db)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), bernd, 't',
+        termin_id=termin)
+    weg = db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=termin)
+    db.clubdeckel_buchungen.create_zahlung(
+        deckel.id, anna, bernd, Decimal('5.00'), None, 't')
+    db.clubdeckel_buchungen.storno(weg.id, 't')
+
+    m = db.clubdeckel_buchungen.matrix(deckel.id, termin_id=termin)
+
+    assert m['gesamt'] == Decimal('1.50')
+    assert [e['mitglied_id'] for e in m['je_mitglied']] == [anna]
+
+
+def test_matrix_trennt_termine_und_zeitraeume(db):
+    man, deckel, anna, _, bier, _, termin = _matrix_aufbau(db)
+    anderer = _make_termin(db, man, _wandzeit(-2000), _wandzeit(-1900))
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=termin)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 4, Decimal('1.50'), None, 't',
+        termin_id=anderer)
+
+    assert db.clubdeckel_buchungen.matrix(deckel.id, termin_id=termin)['gesamt'] \
+        == Decimal('1.50')
+    assert db.clubdeckel_buchungen.matrix(deckel.id, termin_id=anderer)['gesamt'] \
+        == Decimal('6.00')
+    # Ohne Termin-Filter zählt das Zeitfenster – beide Buchungen sind eben erst
+    # entstanden, also stecken beide drin.
+    assert db.clubdeckel_buchungen.matrix(deckel.id)['gesamt'] == Decimal('7.50')
+
+
+def test_letzte_konsum_id_trifft_nur_den_gewaehlten_termin(db):
+    """Das „−" der Matrix darf nicht den Strich eines anderen Abends erwischen."""
+    man, deckel, anna, _, bier, _, termin = _matrix_aufbau(db)
+    anderer = _make_termin(db, man, _wandzeit(-2000), _wandzeit(-1900))
+    alt = db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=anderer)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=termin)
+
+    treffer = db.clubdeckel_buchungen.letzte_konsum_id(
+        deckel.id, anna, bier.id, termin_id=anderer)
+    assert treffer == alt.id
+
+
+def test_buchungsliste_filtert_auf_termin_und_liefert_label(db):
+    man, deckel, anna, _, bier, _, termin = _matrix_aufbau(db)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=termin)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't')
+
+    gefiltert = db.clubdeckel_buchungen.list_for_deckel(deckel.id, termin_id=termin)
+    assert len(gefiltert) == 1
+    assert gefiltert[0].termin_id == termin
+    assert gefiltert[0].termin_label.startswith('Training ')
+    assert len(db.clubdeckel_buchungen.list_for_deckel(deckel.id)) == 2
+
+
+def test_matrix_behaelt_spalte_fuer_abgeschalteten_artikel(db):
+    """Summen müssen aufgehen: Ein deaktivierter Artikel mit Umsatz im Ausschnitt
+    behält seine Spalte, sonst fehlte er in der Aufschlüsselung, steckte aber in
+    der Gesamtsumme."""
+    man, deckel, anna, _, bier, _, termin = _matrix_aufbau(db)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 2, Decimal('1.50'), None, 't',
+        termin_id=termin)
+    db.clubdeckel_artikel.update(bier.id, None, 'Bier', Decimal('1.50'), 0, 0,
+                                 't', bier.version)
+
+    ids = [a['id'] for a in db.clubdeckel_artikel.list_fuer_ids(deckel.id, [bier.id])]
+    assert ids == [bier.id]
+
+    m = db.clubdeckel_buchungen.matrix(deckel.id, termin_id=termin)
+    assert m['je_artikel'][bier.id]['anzahl'] == 2
+    assert m['gesamt'] == Decimal('3.00')
+
+
+def test_list_fuer_ids_findet_auch_geloeschte_artikel(db):
+    """Auch ein soft-gelöschter Artikel muss auffindbar bleiben — die Zahlen von
+    damals ändern sich nicht, weil jemand den Katalog aufgeräumt hat."""
+    man, deckel, _, _, bier, _, _ = _matrix_aufbau(db)
+    db.clubdeckel_artikel.mark_deleted(bier.id, 't')
+
+    treffer = db.clubdeckel_artikel.list_fuer_ids(deckel.id, [bier.id])
+    assert [a['id'] for a in treffer] == [bier.id]
+    assert db.clubdeckel_artikel.list_fuer_ids(deckel.id, []) == []
+
+
+# --------------------------- Sortiments-Stände je Gruppe (#167, v100) -----------
+def test_neue_gruppe_ist_ihre_erste_generation(db):
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+
+    assert g.stamm_id == g.id           # zeigt auf sich selbst
+    assert g.gilt_ab_termin_id is None  # gilt von Anfang an
+
+
+def test_stand_gilt_ab_seinem_spieltag(db):
+    """Kernregel: Ein Stand ab Spieltag B gilt für B und alles danach; für den
+    früheren Spieltag A bleibt der alte Stand — samt Verkäufer und Preisen."""
+    man = _make_mannschaft(db)
+    _, trompete = _make_kader_user(db, man, 'spieler', 'Trompete')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    frueher = _make_termin(db, man, _wandzeit(-3000))
+    spaeter = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    db.clubdeckel_artikel.create(deckel.id, g.id, 'Bier', Decimal('1.50'), 1, 0, 't')
+
+    db.clubdeckel_gruppen.neue_generation(
+        g.id, spaeter, 'Getränke', trompete, 1, 0, 't')
+
+    alt = db.clubdeckel_gruppen.list_stand(deckel.id, frueher)
+    neu = db.clubdeckel_gruppen.list_stand(deckel.id, spaeter)
+    assert [x.verkaeufer_mitglied_id for x in alt] == [None]
+    assert [x.verkaeufer_mitglied_id for x in neu] == [trompete]
+    # Je Stamm genau ein Stand — nicht beide Generationen nebeneinander.
+    assert len(alt) == 1 and len(neu) == 1
+
+
+def test_neue_generation_kopiert_die_artikel(db):
+    """Die Artikel gehören zum Stand — ohne Kopie stünde die neue Generation
+    vor einem leeren Regal."""
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spaeter = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, g.id, 'Bier', Decimal('1.50'), 1, 0, 't')
+
+    neue_id, abbildung = db.clubdeckel_gruppen.neue_generation(
+        g.id, spaeter, 'Getränke', None, 1, 0, 't')
+
+    kopien = db.clubdeckel_artikel.list_fuer_gruppen([neue_id])
+    assert [(k['name'], k['preis']) for k in kopien] == [('Bier', Decimal('1.50'))]
+    assert abbildung[bier.id] == kopien[0]['id']     # alt → neu abgebildet
+    assert kopien[0]['id'] != bier.id                # eigene Zeile, kein Verweis
+
+
+def test_zweite_aenderung_am_selben_spieltag_bleibt_ein_stand(db):
+    """Sonst sammelte jedes Nachjustieren am selben Abend eine Generation an."""
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spieltag = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+
+    erste, _ = db.clubdeckel_gruppen.neue_generation(
+        g.id, spieltag, 'Getränke', None, 1, 0, 't')
+    zweite, _ = db.clubdeckel_gruppen.neue_generation(
+        g.id, spieltag, 'Kaltgetränke', None, 1, 0, 't')
+
+    assert erste == zweite
+    staende = db.clubdeckel_gruppen.list_generationen(g.id)
+    assert len(staende) == 2                          # Basis + dieser Spieltag
+    assert staende[0]['name'] == 'Kaltgetränke'       # überschrieben, nicht ergänzt
+
+
+def test_stand_ohne_passende_generation_faellt_auf_die_basis(db):
+    """Ein Termin VOR der ersten datierten Generation sieht den Basisstand."""
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    frueh = _make_termin(db, man, _wandzeit(-5000))
+    spaet = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    db.clubdeckel_gruppen.neue_generation(g.id, spaet, 'Neu', None, 1, 0, 't')
+
+    assert [x.name for x in db.clubdeckel_gruppen.list_stand(deckel.id, frueh)] == ['Getränke']
+    assert [x.name for x in db.clubdeckel_gruppen.list_stand(deckel.id, spaet)] == ['Neu']
+
+
+def test_kuenftiger_stand_gilt_heute_noch_nicht(db):
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    kuenftig = _make_termin(db, man, _wandzeit(5000))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    db.clubdeckel_gruppen.neue_generation(g.id, kuenftig, 'Später', None, 1, 0, 't')
+
+    assert [x.name for x in db.clubdeckel_gruppen.list_stand(deckel.id)] == ['Getränke']
+    assert [x.name for x in db.clubdeckel_gruppen.list_stand(deckel.id, kuenftig)] == ['Später']
+
+
+def test_artikel_folgen_dem_stand_mit_preis_und_verkaeufer(db):
+    """Der Prüfstein des ganzen Umbaus: Preis, Bezeichnung UND Verkäufer kommen
+    aus derselben Generation."""
+    man = _make_mannschaft(db)
+    _, trompete = _make_kader_user(db, man, 'spieler', 'Trompete')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spaeter = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    db.clubdeckel_artikel.create(deckel.id, g.id, 'Bier', Decimal('1.50'), 1, 0, 't')
+
+    neue_id, abbildung = db.clubdeckel_gruppen.neue_generation(
+        g.id, spaeter, 'Getränke', trompete, 1, 0, 't')
+    kopie = list(abbildung.values())[0]
+    db.clubdeckel_artikel.update(kopie, neue_id, 'Bier 0,5', Decimal('2.00'), 1, 0,
+                                 't', db.clubdeckel_artikel.get(kopie).version)
+
+    alt = db.clubdeckel_artikel.list_fuer_gruppen(
+        [x.id for x in db.clubdeckel_gruppen.list_stand(deckel.id, None,
+                                                        jetzt='2020-01-01T00:00')])
+    neu = db.clubdeckel_artikel.list_fuer_gruppen(
+        [x.id for x in db.clubdeckel_gruppen.list_stand(deckel.id, spaeter)])
+    assert [(a['name'], a['preis'], a['verkaeufer_mitglied_id']) for a in alt] == \
+        [('Bier', Decimal('1.50'), None)]
+    assert [(a['name'], a['preis'], a['verkaeufer_mitglied_id']) for a in neu] == \
+        [('Bier 0,5', Decimal('2.00'), trompete)]
+
+
+# ----------------- Nächster Termin: Vorgabe des Katalogs (#167, v100) ----------
+def test_naechster_ist_das_ereignis_am_abend_nicht_das_alte_training(db):
+    """Der Prüfstein: Morgens am Spieltag pflegt man die Karte fürs Spiel am
+    Abend — get_laufenden zeigt dann noch aufs alte Training."""
+    man = _make_mannschaft(db)
+    training = _make_termin(db, man, _wandzeit(-6000), _wandzeit(-5900), typ='training')
+    spiel = _make_termin(db, man, _wandzeit(600), _wandzeit(720), typ='spiel')
+
+    assert db.termine.get_laufenden(man).id == training     # für Buchungen
+    assert db.termine.get_naechsten(man).id == spiel        # für die Speisekarte
+
+
+def test_naechster_bleibt_waehrend_des_termins_stehen(db):
+    man = _make_mannschaft(db)
+    laeuft = _make_termin(db, man, _wandzeit(-30), _wandzeit(60))
+    _make_termin(db, man, _wandzeit(3000), _wandzeit(3100))
+
+    assert db.termine.get_naechsten(man).id == laeuft
+
+
+def test_naechster_rueckt_nach_dem_ende_weiter(db):
+    man = _make_mannschaft(db)
+    _make_termin(db, man, _wandzeit(-300), _wandzeit(-200))
+    danach = _make_termin(db, man, _wandzeit(3000), _wandzeit(3100))
+
+    assert db.termine.get_naechsten(man).id == danach
+
+
+def test_naechster_ohne_ende_zaehlt_ueber_den_beginn(db):
+    man = _make_mannschaft(db)
+    _make_termin(db, man, _wandzeit(-300), None, typ='sonstiges')
+    kuenftig = _make_termin(db, man, _wandzeit(300), None, typ='sonstiges')
+
+    assert db.termine.get_naechsten(man).id == kuenftig
+
+
+def test_naechster_ignoriert_abgesagte_und_liefert_sonst_nichts(db):
+    man = _make_mannschaft(db)
+    _make_termin(db, man, _wandzeit(300), _wandzeit(400), status='abgesagt')
+    _make_termin(db, man, _wandzeit(-3000), _wandzeit(-2900))
+
+    assert db.termine.get_naechsten(man) is None
+
+
+# ------------- Bestehende Buchungen auf einen neuen Stand umstellen (#167) ----
+def _uebernahme_aufbau(db):
+    """Deckel mit Gruppe, Bier zu 1,50 und drei Strichen bei einem Spiel."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spiel = _make_termin(db, man, _wandzeit(-30), _wandzeit(60), typ='spiel')
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Getränke', None, 1, 0, 't')
+    bier = db.clubdeckel_artikel.create(deckel.id, g.id, 'Bier', Decimal('1.50'), 1, 0, 't')
+    for mid in (anna, anna, bernd):
+        db.clubdeckel_buchungen.create_konsum(
+            deckel.id, mid, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+            termin_id=spiel)
+    return man, deckel, g, bier, spiel, anna, bernd
+
+
+def test_zaehlt_gebuchtes_des_termins(db):
+    _, deckel, _, _, spiel, _, _ = _uebernahme_aufbau(db)
+
+    stand = db.clubdeckel_buchungen.zaehle_konsum_fuer_termin(deckel.id, spiel)
+
+    assert stand['anzahl'] == 3 and stand['betrag'] == Decimal('4.50')
+
+
+def test_konsum_je_artikel_liefert_nur_den_termin(db):
+    man, deckel, g, bier, spiel, anna, _ = _uebernahme_aufbau(db)
+    # Ein Strich bei einem ANDEREN Termin darf nicht mitkommen.
+    anderer = _make_termin(db, man, _wandzeit(-3000))
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=anderer)
+
+    treffer = db.clubdeckel_buchungen.konsum_je_artikel(deckel.id, spiel, [bier.id])
+
+    assert len(treffer) == 3
+    assert {t['artikel_id'] for t in treffer} == {bier.id}
+
+
+def test_konsum_je_artikel_ignoriert_stornierte_und_fremde_artikel(db):
+    _, deckel, g, bier, spiel, anna, _ = _uebernahme_aufbau(db)
+    weg = db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('1.50'), None, 't',
+        termin_id=spiel)
+    db.clubdeckel_buchungen.storno(weg.id, 't')
+
+    assert len(db.clubdeckel_buchungen.konsum_je_artikel(
+        deckel.id, spiel, [bier.id])) == 3
+    assert db.clubdeckel_buchungen.konsum_je_artikel(deckel.id, spiel, []) == []
+
+
+def test_ersatzbuchung_behaelt_die_uhrzeit(db):
+    """Beim Umstellen darf der Strich in der Tagesansicht nicht nach vorn
+    rutschen — sonst stünde er plötzlich nach dem Abpfiff."""
+    _, deckel, g, bier, spiel, anna, _ = _uebernahme_aufbau(db)
+    alt = db.clubdeckel_buchungen.konsum_je_artikel(deckel.id, spiel, [bier.id])[0]
+
+    neu = db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, bier.id, 'Bier', 1, Decimal('2.00'), None, 't',
+        termin_id=spiel, wert_datum=str(alt['created_at']))
+
+    assert str(neu.created_at) == str(alt['created_at'])
