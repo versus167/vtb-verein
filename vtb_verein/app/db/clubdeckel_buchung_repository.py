@@ -488,11 +488,22 @@ class ClubdeckelBuchungRepository(BaseRepository):
             )
             return cur.fetchone()['saldo']
 
-    # ------------------------------------------------------ 24h-Strichliste
-    def konsum_24h(self, deckel_id: int, mitglied_id: int) -> dict:
-        """Eigene Konsum-Buchungen der letzten 24 Stunden — für die Strichliste
-        je Artikel (Menge) und die „24h-Deckel"-Kachel (verbrauchte Summe,
-        positiv). Liefert {'summe': Decimal, 'anzahl': {artikel_id: int}}."""
+    # ------------------------------------------------- Strichliste am Termin
+    def konsum_fuer_termin(self, deckel_id: int, mitglied_id: int,
+                           termin_id: Optional[int]) -> dict:
+        """Eigener Konsum BEI DIESEM TERMIN — für die Strichliste je Artikel
+        (Menge) und die Deckel-Kachel am Tresen (verbrauchte Summe, positiv).
+
+        Löst das frühere 24-Stunden-Fenster ab (#167): Der Deckel eines Abends
+        ist das, was beim Training oder Spiel zusammenkam, nicht was zufällig in
+        die letzten 24 Stunden fiel — ein Zeitfenster schnitt lange Abende
+        auseinander und zog den Vortag mit hinein. Ohne Termin gibt es folglich
+        auch keine Strichliste.
+
+        Liefert {'summe': Decimal, 'anzahl': {artikel_id: int}}.
+        """
+        if termin_id is None:
+            return {'summe': Decimal('0'), 'anzahl': {}}
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -501,11 +512,10 @@ class ClubdeckelBuchungRepository(BaseRepository):
                        COALESCE(SUM(-betrag), 0) AS summe
                 FROM clubdeckel_buchung
                 WHERE deckel_id = %s AND mitglied_id = %s AND typ = 'konsum'
-                  AND deleted_at IS NULL
-                  AND created_at >= now() - interval '24 hours'
+                  AND deleted_at IS NULL AND termin_id = %s
                 GROUP BY artikel_id
                 """,
-                (deckel_id, mitglied_id),
+                (deckel_id, mitglied_id, termin_id),
             )
             rows = cur.fetchall()
         anzahl: dict[int, int] = {}

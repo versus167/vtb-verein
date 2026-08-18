@@ -694,21 +694,30 @@ def test_katalog_filtert_inaktive_gruppen(db):
     assert {a['name'] for a in nur_aktive} == {'Bier', 'Wasser'}
 
 
-def test_konsum_24h_striche_und_letzte_konsum(db):
+def test_konsum_striche_am_termin_und_letzte_konsum(db):
+    """Die Strichliste am Tresen zählt den Konsum DIESES Termins (#167) — das
+    frühere 24-Stunden-Fenster schnitt lange Abende auseinander und zog den
+    Vortag mit hinein."""
     man = _make_mannschaft(db)
     _, mid = _make_kader_user(db, man, 'spieler', 'Anna')
     deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    spiel = _make_termin(db, man, _wandzeit(-30), _wandzeit(60), typ='spiel')
+    frueher = _make_termin(db, man, _wandzeit(-3000))
     gruppe = db.clubdeckel_gruppen.create(deckel.id, "Getränke", None, 1, 0, 't')
     bier = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Bier", Decimal('1.50'), 1, 0, 't')
     wasser = db.clubdeckel_artikel.create(deckel.id, gruppe.id, "Wasser", Decimal('1.00'), 1, 0, 't')
 
     for _ in range(5):
         db.clubdeckel_buchungen.create_konsum(deckel.id, mid, bier.id, bier.name, 1,
-                                              bier.preis, None, 't')
+                                              bier.preis, None, 't', termin_id=spiel)
     db.clubdeckel_buchungen.create_konsum(deckel.id, mid, wasser.id, wasser.name, 1,
-                                          wasser.preis, None, 't')
+                                          wasser.preis, None, 't', termin_id=spiel)
+    # Ein Strich beim FRÜHEREN Termin darf nicht mitzählen, obwohl er zeitlich
+    # gerade erst entstanden ist.
+    db.clubdeckel_buchungen.create_konsum(deckel.id, mid, wasser.id, wasser.name, 3,
+                                          wasser.preis, None, 't', termin_id=frueher)
 
-    stats = db.clubdeckel_buchungen.konsum_24h(deckel.id, mid)
+    stats = db.clubdeckel_buchungen.konsum_fuer_termin(deckel.id, mid, spiel)
     assert stats['anzahl'][bier.id] == 5
     assert stats['anzahl'][wasser.id] == 1
     assert stats['summe'] == Decimal('8.50')  # 5×1,50 + 1×1,00, positiv
@@ -717,14 +726,15 @@ def test_konsum_24h_striche_und_letzte_konsum(db):
     letzte = db.clubdeckel_buchungen.letzte_konsum_id(deckel.id, mid, bier.id)
     assert letzte is not None
     assert db.clubdeckel_buchungen.storno(letzte, 't')
-    stats2 = db.clubdeckel_buchungen.konsum_24h(deckel.id, mid)
+    stats2 = db.clubdeckel_buchungen.konsum_fuer_termin(deckel.id, mid, spiel)
     assert stats2['anzahl'][bier.id] == 4
-    # Buchung außerhalb des 24h-Fensters zählt nicht mit
-    with db.cursor() as cur:
-        cur.execute("UPDATE clubdeckel_buchung SET created_at = now() - interval '2 days' "
-                    "WHERE deckel_id=%s AND artikel_id=%s AND deleted_at IS NULL",
-                    (deckel.id, wasser.id))
-    assert wasser.id not in db.clubdeckel_buchungen.konsum_24h(deckel.id, mid)['anzahl']
+
+    # Der frühere Termin führt seine eigene Strichliste …
+    assert db.clubdeckel_buchungen.konsum_fuer_termin(
+        deckel.id, mid, frueher)['anzahl'] == {wasser.id: 3}
+    # … und ohne Termin gibt es gar keine.
+    assert db.clubdeckel_buchungen.konsum_fuer_termin(deckel.id, mid, None) == {
+        'summe': Decimal('0'), 'anzahl': {}}
 
 
 def test_get_kader_mitglied_id(db):

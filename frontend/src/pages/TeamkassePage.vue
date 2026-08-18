@@ -80,7 +80,7 @@
           <q-tabs v-model="tab" align="left" class="vtb-tabs" no-caps
             :inline-label="$q.screen.gt.xs">
             <q-tab name="tresen" icon="sports_bar" label="Tresen" />
-            <!-- Fremdbuchung + Tagesüberblick am Tresen (#167) -->
+            <!-- Fremdbuchung + Termin-Auswertung am Tresen (#167) -->
             <q-tab v-if="istWart" name="buchen" icon="grid_on" label="Buchen" />
             <q-tab v-if="istWart" name="termin" icon="event_note" label="Termin" />
             <!-- intern weiter 'salden'; Nutzer-Label „Tabelle" (#128) -->
@@ -119,15 +119,15 @@
           </div>
           <div v-for="a in g.artikel" :key="a.id"
             class="tt-tresen-row row no-wrap items-stretch q-mb-sm">
-            <!-- Tap = 1× buchen; darunter die 24h-Strichliste -->
+            <!-- Tap = 1× buchen; darunter die Strichliste DIESES Termins -->
             <q-btn class="tt-tresen-btn col" unelevated no-caps color="primary" align="left"
               :disable="!deckel.aktiv || deckel.mein_mitglied_id == null || saving"
               @click="bucheKonsum(a)">
               <div class="full-width row items-center no-wrap">
                 <div class="col text-left">
                   <div class="text-weight-bold tt-tresen-name">{{ a.name }}</div>
-                  <div v-if="a.mein_24h_anzahl" class="tt-tally row items-center no-wrap q-mt-xs">
-                    <svg v-for="(k, i) in tallyBundles(a.mein_24h_anzahl)" :key="i"
+                  <div v-if="a.mein_termin_anzahl" class="tt-tally row items-center no-wrap q-mt-xs">
+                    <svg v-for="(k, i) in tallyBundles(a.mein_termin_anzahl)" :key="i"
                       class="tt-tally-svg" width="24" height="20" viewBox="0 0 24 20">
                       <line v-for="s in Math.min(k, 4)" :key="s"
                         :x1="s * 4" y1="2" :x2="s * 4" y2="18" />
@@ -139,9 +139,9 @@
               </div>
             </q-btn>
             <!-- Undo-Zone: letzten eigenen Strich dieses Artikels zurücknehmen -->
-            <q-btn class="tt-tresen-del" flat :disable="!a.mein_24h_anzahl || saving"
+            <q-btn class="tt-tresen-del" flat :disable="!a.mein_termin_anzahl || saving"
               @click.stop="undoArtikel(a)">
-              <q-icon name="delete" :color="a.mein_24h_anzahl ? 'negative' : 'grey-5'" />
+              <q-icon name="delete" :color="a.mein_termin_anzahl ? 'negative' : 'grey-5'" />
               <q-tooltip>Letzten Strich zurücknehmen</q-tooltip>
             </q-btn>
           </div>
@@ -151,15 +151,19 @@
           „Katalog" an</template>.
         </div>
 
-        <!-- Kacheln: 24h-Deckel + mein Gesamtsaldo -->
+        <!-- Kacheln: mein Deckel BEI DIESEM TERMIN + mein Gesamtsaldo. Ohne
+             laufenden Termin gibt es keinen Termin-Deckel — dann steht der
+             Gesamtsaldo allein. -->
         <div v-if="deckel.mein_mitglied_id != null" class="row q-col-gutter-sm q-mt-md">
-          <div class="col-6">
+          <div v-if="deckel.laufender_termin" class="col-6">
             <q-card flat bordered class="text-center q-pa-sm">
-              <div class="text-overline text-grey">24h Deckel</div>
-              <div class="text-h6 text-positive">{{ fmtEuro(deckel.mein_24h_summe) }}</div>
+              <div class="text-overline text-grey ellipsis">
+                {{ deckel.laufender_termin.label }}
+              </div>
+              <div class="text-h6 text-positive">{{ fmtEuro(deckel.mein_termin_summe) }}</div>
             </q-card>
           </div>
-          <div class="col-6">
+          <div :class="deckel.laufender_termin ? 'col-6' : 'col-12'">
             <q-card flat bordered class="text-center q-pa-sm">
               <div class="text-overline text-grey">Gesamtsaldo</div>
               <div class="text-h6"
@@ -236,16 +240,16 @@
 
       <!-- ============== Buchen: Matrix Mitglied × Artikel (Wart) ============== -->
       <div v-if="tab === 'buchen' && istWart">
-        <AusschnittWahl v-model="buchenAusschnitt" :termine="termine"
-          :laufend-id="laufendTerminId" />
+        <!-- Nur Termin-Auswahl: Jede Buchung hängt an einem Termin, ein
+             Tages-Ausschnitt hätte hier nichts zu bestimmen. -->
+        <TerminWahl v-model="buchenTermin" :termine="termine"
+          :laufend-id="laufendTerminId" label="Buchen auf" />
 
-        <q-banner v-if="!buchenBuchbar" class="vtb-warnung q-mt-sm" rounded dense>
-          <template #avatar><q-icon name="history" size="22px" /></template>
-          Für einen vergangenen Tag lässt sich nicht nachbuchen — eine neue Buchung
-          entsteht immer jetzt. Wähle den Termin des Abends, dann landet sie dort.
-        </q-banner>
-
-        <div v-if="!matrix" class="text-grey q-mt-md">Wird geladen …</div>
+        <div v-if="!termine.length" class="text-grey q-mt-md">
+          Diese Mannschaft hat noch keine Termine — lege im Bereich „Termine"
+          einen an, dann kann hier gebucht werden.
+        </div>
+        <div v-else-if="!matrix" class="text-grey q-mt-md">Wird geladen …</div>
         <template v-else-if="!matrix.artikel.length">
           <div class="text-grey q-mt-md">
             Noch keine Artikel im Katalog — lege sie im Tab „Katalog" an.
@@ -314,10 +318,10 @@
         </template>
       </div>
 
-      <!-- ============== Termin/Tag: Auswertung (Wart) ============== -->
+      <!-- ============== Termin: Auswertung (Wart) ============== -->
       <div v-if="tab === 'termin' && istWart">
-        <AusschnittWahl v-model="auswAusschnitt" :termine="termine"
-          :laufend-id="laufendTerminId" />
+        <TerminWahl v-model="auswTermin" :termine="termine"
+          :laufend-id="laufendTerminId" label="Auswertung für" />
 
         <template v-if="auswMatrix">
           <div class="row q-col-gutter-sm q-mt-md">
@@ -894,7 +898,7 @@ import { useQuasar, copyToClipboard } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
-import AusschnittWahl from 'components/TeamkasseAusschnittWahl.vue'
+import TerminWahl from 'components/TeamkasseTerminWahl.vue'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -918,12 +922,13 @@ const gruppen = ref([])
 const alleBuchungen = ref([])
 const stornosZeigen = ref(false)  // History: stornierte Buchungen einblenden (#127)
 
-// Termin-Zuordnung, Matrix und Auswertung (#167). „Ausschnitt" ist der
-// gemeinsame Zeitbezug beider Tabs: ein Termin ODER ein Tag.
+// Termin-Zuordnung, Matrix und Auswertung (#167). Beide Reiter beziehen sich
+// auf einen TERMIN — einen Tages-Ausschnitt gibt es nicht mehr, weil jede
+// Buchung ohnehin an einem Termin hängt.
 const termine = ref([])
 const laufendTerminId = ref(null)
-const buchenAusschnitt = ref(neuerAusschnitt())
-const auswAusschnitt = ref(neuerAusschnitt())
+const buchenTermin = ref(null)
+const auswTermin = ref(null)
 const matrix = ref(null)       // Tab „Buchen"
 const auswMatrix = ref(null)   // Tab „Termin"
 const auswBuchungen = ref([])
@@ -1301,74 +1306,19 @@ async function loadKader() {
   } catch { kader.value = [] }
 }
 
-// ------------------------------------------- Ausschnitt, Matrix, Auswertung (#167)
-function heuteIso() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-` +
-    `${String(d.getDate()).padStart(2, '0')}`
+// ------------------------------------------- Termin, Matrix, Auswertung (#167)
+/** Query-Parameter des gewählten Ausschnitts. Ohne Termin gibt es nichts zu
+ *  zeigen — die Aufrufer laden dann gar nicht erst. */
+function terminParams(terminId) {
+  return terminId != null ? { termin_id: terminId } : null
 }
 
-function neuerAusschnitt() {
-  return { modus: 'termin', termin: null, tag: heuteIso() }
-}
-
-/** Query-Parameter des Ausschnitts. Im Tag-Modus ist `bis` der Folgetag um 00:00,
- *  weil die API oben exklusiv filtert (sonst fehlte die letzte Minute). */
-function ausschnittParams(a) {
-  if (a.modus === 'termin') {
-    return a.termin != null ? { termin_id: a.termin } : null
-  }
-  if (!a.tag) return null
-  const naechster = new Date(`${a.tag}T00:00`)
-  naechster.setDate(naechster.getDate() + 1)
-  const bis = `${naechster.getFullYear()}-` +
-    `${String(naechster.getMonth() + 1).padStart(2, '0')}-` +
-    `${String(naechster.getDate()).padStart(2, '0')}`
-  return { von: `${a.tag}T00:00`, bis: `${bis}T00:00` }
-}
-
-/** Buchen geht nur dort, wo die neue Zeile auch sichtbar würde: an einem Termin
- *  (die Buchung wird ihm zugeordnet) oder am heutigen Tag. Für einen vergangenen
- *  Tag wäre der Klick wirkungslos — created_at ist immer „jetzt". */
-const buchenBuchbar = computed(() => {
-  const a = buchenAusschnitt.value
-  return a.modus === 'termin' ? a.termin != null : a.tag === heuteIso()
-})
+/** Gebucht wird immer auf einen Termin — ohne gewählten Termin gibt es nichts,
+ *  dem der Strich zugeordnet werden könnte. */
+const buchenBuchbar = computed(() => buchenTermin.value != null)
 
 function zelle(mitgliedId, artikelId) {
   return matrix.value?.zellen?.[`${mitgliedId}:${artikelId}`] || { anzahl: 0 }
-}
-
-// Zeitraum-Auswahl des Katalogs: „Aktuell" plus die Spieltage. Ein Punkt
-// markiert die Spieltage, für die schon ein eigener Stand hinterlegt ist.
-const katalogTerminOptionen = computed(() => {
-  const gepflegt = new Set(gruppen.value.flatMap(g => g.stand_termine || []))
-  return [
-    { label: 'Aktuell (Tresen)', value: null },
-    ...termine.value.map(t => ({
-      // ● = für diesen Spieltag ist schon ein eigener Stand hinterlegt
-      label: (gepflegt.has(t.id) ? `● ${t.label}` : t.label)
-        + (t.id === naechsterTerminId.value ? ' · nächstes' : ''),
-      value: t.id,
-    })),
-  ]
-})
-
-function waehleKatalogTermin(wert) {
-  katalogTermin.value = wert
-  loadKatalog()
-}
-
-const katalogTerminLabel = computed(() => {
-  if (!katalogTermin.value) return 'jetzt'
-  return termine.value.find(t => t.id === katalogTermin.value)?.label ?? 'dem Spieltag'
-})
-
-/** Zeigt diese Gruppe einen geerbten Stand? Dann ist für den gewählten Zeitraum
- *  noch nichts Eigenes hinterlegt und eine Änderung legt hier einen neuen an. */
-function standUebernommen(gruppe) {
-  return !!katalogTermin.value
-    && gruppe.gilt_ab_termin_id !== katalogTermin.value
 }
 
 const auswArtikel = computed(() =>
@@ -1388,23 +1338,20 @@ async function loadTermine() {
     if (katalogTermin.value === undefined) {
       katalogTermin.value = data.naechster_id ?? null
     }
-    // Vorbelegung ist IMMER der aktuelle Termin — derselbe, auf den auch der
-    // Tresen bucht. Ein Rückfall auf „den jüngsten aus der Liste" wäre falsch:
-    // Die Liste reicht in die Zukunft, und ein Strich landete dann auf einem
-    // Spiel, das noch gar nicht stattgefunden hat. Gibt es keinen aktuellen
-    // Termin, ist der Tag-Modus die ehrliche Antwort.
-    for (const a of [buchenAusschnitt, auswAusschnitt]) {
-      if (a.value.termin == null) {
-        if (data.laufend_id == null) a.value = { ...a.value, modus: 'tag' }
-        else a.value = { ...a.value, termin: data.laufend_id }
-      }
-    }
+    // Vorbelegung ist der aktuelle Termin — derselbe, auf den auch der Tresen
+    // bucht. Ein Rückfall auf „den jüngsten aus der Liste" wäre falsch: Die
+    // Liste reicht in die Zukunft, und ein Strich landete dann auf einem Spiel,
+    // das noch gar nicht stattgefunden hat. Ohne laufenden Termin ist das
+    // nächste Ereignis die sinnvollste Vorgabe.
+    const vorgabe = data.laufend_id ?? data.naechster_id ?? data.termine[0]?.id ?? null
+    if (buchenTermin.value == null) buchenTermin.value = vorgabe
+    if (auswTermin.value == null) auswTermin.value = vorgabe
   } catch { termine.value = []; laufendTerminId.value = null }
 }
 
 async function loadMatrix() {
   if (!deckel.value || !istWart.value) return
-  const params = ausschnittParams(buchenAusschnitt.value)
+  const params = terminParams(buchenTermin.value)
   if (!params) { matrix.value = null; return }
   try {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/matrix`, { params })
@@ -1414,7 +1361,7 @@ async function loadMatrix() {
 
 async function loadAuswertung() {
   if (!deckel.value || !istWart.value) return
-  const params = ausschnittParams(auswAusschnitt.value)
+  const params = terminParams(auswTermin.value)
   if (!params) { auswMatrix.value = null; auswBuchungen.value = []; return }
   try {
     const [m, b] = await Promise.all([
@@ -1430,12 +1377,11 @@ async function loadAuswertung() {
 async function matrixBuchen(mitglied, artikel) {
   saving.value = true
   try {
-    const a = buchenAusschnitt.value
     await api.post(`${BASE}/${deckel.value.id}/konsum`, {
       artikel_id: artikel.id, menge: 1, mitglied_id: mitglied.mitglied_id,
-      // Am Termin ausdrücklich dorthin buchen; am heutigen Tag die Automatik
-      // entscheiden lassen (läuft gerade ein Termin, gehört die Buchung dazu).
-      termin_id: a.modus === 'termin' ? a.termin : null,
+      // Immer ausdrücklich auf den gewählten Termin — im Buchen-Gitter gibt es
+      // keinen anderen Bezug.
+      termin_id: buchenTermin.value,
     })
     await Promise.all([loadMatrix(), loadDeckel()])
   } catch (e) {
@@ -1450,7 +1396,7 @@ async function matrixZurueck(mitglied, artikel) {
   try {
     await api.delete(`${BASE}/${deckel.value.id}/konsum/${artikel.id}`,
       { params: { mitglied_id: mitglied.mitglied_id,
-                  ...ausschnittParams(buchenAusschnitt.value) } })
+                  ...terminParams(buchenTermin.value) } })
     await Promise.all([loadMatrix(), loadDeckel()])
   } catch (e) {
     fehler(e, 'Zurücknehmen fehlgeschlagen')
@@ -1528,8 +1474,8 @@ watch(selectedTeamId, async (id) => {
   termine.value = []
   laufendTerminId.value = null
   katalogTermin.value = undefined
-  buchenAusschnitt.value = neuerAusschnitt()
-  auswAusschnitt.value = neuerAusschnitt()
+  buchenTermin.value = null
+  auswTermin.value = null
   matrix.value = null
   auswMatrix.value = null
   await loadDeckel()
@@ -1540,8 +1486,8 @@ watch(tab, loadTabDaten)
 watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
 watch(historyMitglied, loadAlleBuchungen)  // #129: Mitglieder-Filter neu laden
 watch(historySuche, loadAlleBuchungen)     // #129: Volltextsuche (Input debounced)
-watch(buchenAusschnitt, loadMatrix, { deep: true })       // #167
-watch(auswAusschnitt, loadAuswertung, { deep: true })     // #167
+watch(buchenTermin, loadMatrix)                            // #167
+watch(auswTermin, loadAuswertung)                          // #167
 
 // #129: Klick auf ein Mitglied in der Mannschaftsliste → gefilterte History
 function openHistoryFuer(m) {
@@ -1622,10 +1568,13 @@ async function restoreBuchung(buchung) {
 }
 
 async function undoArtikel(a) {
-  if (!a.mein_24h_anzahl) return
+  if (!a.mein_termin_anzahl) return
   saving.value = true
   try {
-    await api.delete(`${BASE}/${deckel.value.id}/konsum/${a.id}`)
+    // Auf den laufenden Termin eingegrenzt — die Strichliste zeigt genau ihn,
+    // also muss auch das Zurücknehmen dort greifen.
+    await api.delete(`${BASE}/${deckel.value.id}/konsum/${a.id}`,
+      { params: { termin_id: deckel.value.laufender_termin?.id } })
     $q.notify({ type: 'positive', message: `${a.name}: letzter Strich zurückgenommen`,
       timeout: 1200 })
     await Promise.all([loadDeckel(), loadMeineBuchungen()])

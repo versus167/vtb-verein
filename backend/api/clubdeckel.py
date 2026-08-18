@@ -308,22 +308,26 @@ def get_deckel(deckel_id: int, user: CurrentUser, db: DB):
     mein_mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
     mein_saldo = (db.clubdeckel_buchungen.saldo_for_mitglied(deckel_id, mein_mitglied_id)
                   if mein_mitglied_id else Decimal("0.00"))
-    stats = (db.clubdeckel_buchungen.konsum_24h(deckel_id, mein_mitglied_id)
-             if mein_mitglied_id else {'summe': Decimal("0.00"), 'anzahl': {}})
     salden = db.clubdeckel_buchungen.salden(deckel_id)
     # Laufender Termin: der Tresen zeigt ihn an, damit sichtbar ist, worauf der
     # nächste Strich landet (#167) — und er bestimmt zugleich, welcher Stand des
-    # Sortiments angeboten wird.
+    # Sortiments angeboten wird UND worauf sich die Strichliste bezieht.
     laufend = db.termine.get_laufenden(deckel.mannschaft_id)
-    _, artikel = _sortiment(db, deckel_id, laufend.id if laufend else None)
+    termin_id = laufend.id if laufend else None
+    # Deckel des Termins statt eines 24-Stunden-Fensters: Was beim Training oder
+    # Spiel zusammenkam, ist die Frage — nicht, was in die letzten 24 Stunden fiel.
+    stats = (db.clubdeckel_buchungen.konsum_fuer_termin(
+                deckel_id, mein_mitglied_id, termin_id)
+             if mein_mitglied_id else {'summe': Decimal("0.00"), 'anzahl': {}})
+    _, artikel = _sortiment(db, deckel_id, termin_id)
     for a in artikel:
-        a['mein_24h_anzahl'] = stats['anzahl'].get(a['id'], 0)
+        a['mein_termin_anzahl'] = stats['anzahl'].get(a['id'], 0)
     return {
         **asdict(deckel),
         "zugriff": stufe,
         "mein_mitglied_id": mein_mitglied_id,
         "mein_saldo": mein_saldo,
-        "mein_24h_summe": stats['summe'],
+        "mein_termin_summe": stats['summe'],
         "team_saldo": -sum((s['saldo'] for s in salden), Decimal("0.00")),
         "artikel": artikel,
         "laufender_termin": ({"id": laufend.id, "label": _termin_label(laufend)}

@@ -155,7 +155,8 @@ def _db(kader='mitglied', wart=False):
             restore=lambda *a, **k: True,
             salden=lambda did: [],
             saldo_for_mitglied=lambda did, mid: Decimal('-3.00'),
-            konsum_24h=lambda did, mid: {'summe': Decimal('3.00'), 'anzahl': {21: 2}},
+            konsum_fuer_termin=lambda did, mid, tid: {
+                'summe': Decimal('3.00'), 'anzahl': {21: 2}},
             letzte_konsum_id=lambda did, mid, aid, von=None, bis=None,
             termin_id=None: 100,
             matrix=lambda did, von=None, bis=None, termin_id=None: {
@@ -201,10 +202,10 @@ def test_spieler_liest_deckel_mit_stufe_mitglied():
     assert result['artikel'][0]['name'] == 'Bier'
 
 
-def test_get_deckel_liefert_24h_striche():
+def test_get_deckel_liefert_striche_des_termins():
     result = api.get_deckel(7, _USER, _db())
-    assert result['mein_24h_summe'] == Decimal('3.00')
-    assert result['artikel'][0]['mein_24h_anzahl'] == 2
+    assert result['mein_termin_summe'] == Decimal('3.00')
+    assert result['artikel'][0]['mein_termin_anzahl'] == 2
 
 
 def test_spieler_darf_keinen_artikel_anlegen_403():
@@ -1216,3 +1217,36 @@ def test_umstellen_laesst_geloeschte_artikel_in_ruhe():
 
     assert storniert == []
     assert ergebnis['umgestellt'] == 0
+
+
+def test_get_deckel_ohne_termin_hat_keinen_termin_deckel():
+    """Ohne laufenden Termin gibt es keine Strichliste — die Kachel blendet die
+    Oberfläche dann aus, der Gesamtsaldo bleibt."""
+    db = _db()
+    gesehen = {}
+    db.clubdeckel_buchungen.konsum_fuer_termin = (
+        lambda did, mid, tid: gesehen.update(tid=tid) or
+        {'summe': Decimal('0'), 'anzahl': {}})
+
+    result = api.get_deckel(7, _USER, db)
+
+    assert gesehen == {"tid": None}          # kein Termin -> keine Einschränkung nötig
+    assert result['laufender_termin'] is None
+    assert result['mein_termin_summe'] == Decimal('0')
+    assert result['artikel'][0]['mein_termin_anzahl'] == 0
+
+
+def test_get_deckel_zaehlt_die_striche_des_laufenden_termins():
+    db = _db()
+    db.termine.get_laufenden = lambda mid, jetzt=None: _termin(id=55)
+    gesehen = {}
+    db.clubdeckel_buchungen.konsum_fuer_termin = (
+        lambda did, mid, tid: gesehen.update(tid=tid) or
+        {'summe': Decimal('4.50'), 'anzahl': {21: 3}})
+
+    result = api.get_deckel(7, _USER, db)
+
+    assert gesehen == {"tid": 55}
+    assert result['mein_termin_summe'] == Decimal('4.50')
+    assert result['artikel'][0]['mein_termin_anzahl'] == 3
+    assert result['laufender_termin']['label'] == 'Spiel 16.08. 15:00 · SV X'
