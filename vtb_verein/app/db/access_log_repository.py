@@ -1,10 +1,16 @@
 """
 Repository für das Zugriffsprotokoll (`access_log`).
 
-Append-only Log für Anmelde- und Aktivitätsereignisse:
-- Auth-Events (login_success, login_failed, logout, magic_link_*) – category 'auth',
-  dauerhaft aufbewahrt.
-- Seitenaufrufe (page_view) – category 'page', wird nach 90 Tagen geprunt.
+Append-only Log für Anmelde- und Aktivitätsereignisse, getrennt nach `category`:
+'auth' (login_success, login_failed, logout, magic_link_*), 'page' (Seitenaufrufe),
+'schliessanlage' und Übriges.
+
+**Aufbewahrung steht NICHT hier.** Sie läuft für alle Kategorien über das
+`LOG_REGISTRY` in `app/services/prune_service.py` – je Kategorie eine `LogRule`,
+einstellbar auf der Datenbereinigungs-Seite. Kein Protokoll wird unbegrenzt
+aufbewahrt, auch das Anmelde-Protokoll nicht (Default 365 Tage, Seitenaufrufe 90).
+Dieser Docstring behauptete früher das Gegenteil; wer hier nach Fristen sucht,
+findet sie in `prune_service.py`.
 
 Das Log IST der Audit-Datensatz: kein Soft-Delete, keine *_history, keine Trigger.
 Schreibzugriffe sind best-effort gedacht – die Aufrufer fangen Fehler ab, damit das
@@ -235,8 +241,20 @@ class AccessLogRepository:
             row = cur.fetchone()
             return dict(row) if row else None
 
+    # ------------------------------------------------------------------
+    # Altlast: die beiden folgenden Methoden ruft niemand mehr auf. Sie stammen
+    # aus der Zeit, als nur die Seitenaufrufe eine Frist hatten; seit dem
+    # LOG_REGISTRY läuft die Bereinigung generisch über prune_service und deckt
+    # alle Kategorien ab. Sie stehen hier nur noch, weil ihr Wortlaut („Auth-Events
+    # bleiben unberührt") die irrige Annahme genährt hat, Anmelde-Ereignisse würden
+    # dauerhaft aufbewahrt — sie tun es nicht.
+    # ------------------------------------------------------------------
+
     def count_page_views_older_than(self, days: int = 90) -> int:
-        """Zahl der Seitenaufrufe (category 'page') älter als `days` Tage – für die Vorschau."""
+        """Zahl der Seitenaufrufe (category 'page') älter als `days` Tage.
+
+        UNBENUTZT – die Vorschau der Datenbereinigung rechnet über LOG_REGISTRY.
+        """
         with self.db.cursor() as cur:
             cur.execute(
                 """
@@ -248,9 +266,10 @@ class AccessLogRepository:
             return cur.fetchone()["n"]
 
     def cleanup_page_views(self, days: int = 90) -> int:
-        """Hard-Delete von Seitenaufrufen älter als `days` Tage (Prune-Job).
+        """Hard-Delete von Seitenaufrufen älter als `days` Tage.
 
-        Betrifft nur category 'page'; sicherheitsrelevante Auth-Events bleiben unberührt.
+        UNBENUTZT – der Prune-Lauf löscht über LOG_REGISTRY, und zwar in allen
+        Kategorien, nicht nur bei den Seitenaufrufen.
         """
         with self.db.cursor() as cur:
             cur.execute(

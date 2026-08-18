@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from ..core.db import get_db, get_db as _get_db
@@ -391,7 +391,10 @@ def revoke_my_session(session_id: int, user: CurrentUser, db: DB):
 # ---------------------------------------------------------------------------
 
 class MagicLinkRequest(BaseModel):
-    email: str
+    # Obergrenze nach RFC 5321. Nicht der Form wegen — die Adresse landet im
+    # Zugriffsprotokoll, und das wird für Auth-Ereignisse dauerhaft aufbewahrt.
+    # Ohne Grenze könnte man es mit beliebig langen Zeichenketten vollschreiben.
+    email: str = Field(..., max_length=254)
 
 
 class MagicLinkValidate(BaseModel):
@@ -480,7 +483,8 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
         ip=ip,
         since=(now - timedelta(minutes=MAGIC_LINK_IP_WINDOW_MIN)).isoformat(),
     ) >= MAGIC_LINK_MAX_PER_IP:
-        _log_access(db, request, "magic_link_rate_limited", detail="ip")
+        _log_access(db, request, "magic_link_rate_limited",
+                    detail=f"ip · {data.email}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Zu viele Anfragen. Bitte versuche es später erneut.",
@@ -489,11 +493,18 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
     user = db.get_user_by_email(data.email)
     # Protokoll: ob eine passende (aktive) Adresse existierte, nur im detail-Feld –
     # nach außen bleibt die Antwort einheitlich 200 (kein User-Enumeration-Leak).
+    #
+    # Die angefragte Adresse steht dabei, und zwar **wie eingetippt**: Bei no_match
+    # ist sie die einzige Spur — ohne sie sieht man, dass jemand Adressen durchprobiert,
+    # aber nicht welche. Und weil der Abgleich exakt erfolgt (users.email = %s), ist
+    # ein no_match auf eine scheinbar richtige Adresse oft ein Groß-/Kleinschreib- oder
+    # Leerzeichen-Problem — das erkennt man nur am Original, nicht an einer
+    # normalisierten Fassung.
     _log_access(
         db, request, "magic_link_request",
         user_id=user.id if user else None,
         username=user.username if user else None,
-        detail="match" if (user and user.active) else "no_match",
+        detail=f"{'match' if (user and user.active) else 'no_match'} · {data.email}",
     )
     should_send = bool(user and user.active)
 
@@ -508,7 +519,8 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
     ) > MAGIC_LINK_MAX_PER_USER:
         _log_access(
             db, request, "magic_link_rate_limited",
-            user_id=user.id, username=user.username, detail="user",
+            user_id=user.id, username=user.username,
+            detail=f"user · {data.email}",
         )
         should_send = False
 
