@@ -167,6 +167,10 @@ def _db(kader='mitglied', wart=False):
             zaehle_konsum_fuer_termin=lambda did, tid: {
                 'anzahl': 0, 'betrag': Decimal('0')},
         ),
+        # Zusagen zum Termin bestimmen die Reihenfolge der Matrix-Zeilen (#167).
+        termin_zusagen=SimpleNamespace(
+            list_kader_with_zusage=lambda tid: [],
+        ),
         # Termin-Zuordnung der Buchungen (#167): Standard-Stub kennt keinen
         # laufenden Termin – Tests, die einen brauchen, setzen ihn selbst.
         termine=SimpleNamespace(
@@ -1250,3 +1254,56 @@ def test_get_deckel_zaehlt_die_striche_des_laufenden_termins():
     assert result['mein_termin_summe'] == Decimal('4.50')
     assert result['artikel'][0]['mein_termin_anzahl'] == 3
     assert result['laufender_termin']['label'] == 'Spiel 16.08. 15:00 · SV X'
+
+
+# ------------- Reihenfolge der Matrix nach Zusage zum Termin (#167) ----------
+def test_matrix_stellt_zusagen_nach_oben():
+    """Der Wart sucht am Tresen die Leute, die da sind — zugesagt zuerst,
+    abgesagt zuletzt, alphabetisch innerhalb der Gruppen."""
+    db = _db(wart=True)
+    db.termin_zusagen.list_kader_with_zusage = lambda tid: [
+        {"mitglied_id": 1, "name": 'Anna Abgesagt', "antwort": 'ab'},
+        {"mitglied_id": 2, "name": 'Bernd Offen', "antwort": None},
+        {"mitglied_id": 3, "name": 'Clara Dabei', "antwort": 'zu'},
+        {"mitglied_id": 4, "name": 'Dora Dabei', "antwort": 'zu'},
+        {"mitglied_id": 5, "name": 'Emil Vielleicht', "antwort": 'vielleicht'},
+    ]
+
+    result = api.get_matrix(7, _USER, db, termin_id=55)
+
+    assert [m['name'] for m in result['mitglieder']] == [
+        'Clara Dabei', 'Dora Dabei',            # zugesagt
+        'Bernd Offen', 'Emil Vielleicht',       # offen/vielleicht
+        'Anna Abgesagt',                        # abgesagt
+    ]
+    assert result['mitglieder'][0]['antwort'] == 'zu'
+
+
+def test_matrix_nutzt_den_kader_des_termins():
+    """Mit Termin zählt der Kader vom Termin-Datum, nicht der von heute — bei
+    einem alten Spiel stand eine andere Mannschaft auf dem Platz."""
+    db = _db(wart=True)
+    gesehen = {}
+    db.termin_zusagen.list_kader_with_zusage = (
+        lambda tid: gesehen.update(tid=tid) or
+        [{"mitglied_id": 11, "name": 'Anna A', "antwort": 'zu'}])
+    db.list_mannschaft_kader = lambda mid: (_ for _ in ()).throw(
+        AssertionError('heutiger Kader darf hier nicht gefragt werden'))
+
+    result = api.get_matrix(7, _USER, db, termin_id=55)
+
+    assert gesehen == {"tid": 55}
+    assert [m['mitglied_id'] for m in result['mitglieder']] == [11]
+
+
+def test_matrix_ohne_termin_nimmt_den_heutigen_kader():
+    """Ohne Termin (reiner Zeitraum über die API) gibt es keine Zusagen."""
+    db = _db(wart=True)
+    db.list_mannschaft_kader = lambda mid: [
+        SimpleNamespace(mitglied_id=11, mitglied_vorname='Anna',
+                        mitglied_nachname='A', rolle='spieler',
+                        von='2020-01-01', bis=None)]
+
+    result = api.get_matrix(7, _USER, db)
+
+    assert [(m['mitglied_id'], m['antwort']) for m in result['mitglieder']] == [(11, None)]

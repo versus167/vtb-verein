@@ -284,12 +284,23 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="m in matrix.mitglieder" :key="m.mitglied_id">
+                <!-- Zugesagte stehen oben (#167): So findet der Wart die Leute,
+                     die da sind, und sieht, wer von ihnen noch nichts gebucht
+                     hat. Abgesagte sind gedämpft und stehen unten. -->
+                <tr v-for="m in matrix.mitglieder" :key="m.mitglied_id"
+                  :class="{ 'tt-matrix__abgesagt': m.antwort === 'ab' }">
                   <th class="tt-matrix__name">
-                    <div class="ellipsis">{{ m.name }}</div>
+                    <div class="row items-center no-wrap">
+                      <q-icon v-if="m.antwort === 'zu'" name="check_circle"
+                        color="positive" size="14px" class="q-mr-xs">
+                        <q-tooltip>Hat für diesen Termin zugesagt</q-tooltip>
+                      </q-icon>
+                      <div class="ellipsis">{{ m.name }}</div>
+                    </div>
                     <div class="text-caption text-grey">
                       {{ fmtEuro(m.betrag) }}
                       <span v-if="!m.im_kader"> · nicht im Kader</span>
+                      <span v-else-if="m.antwort === 'ab'"> · abgesagt</span>
                     </div>
                   </th>
                   <td v-for="a in matrix.artikel" :key="a.id">
@@ -2227,6 +2238,10 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
 }
 .tt-matrix__artikel {
   font-weight: 600;
+}
+// Abgesagte bleiben bedienbar (jemand kommt doch), treten aber zurück.
+.tt-matrix__abgesagt {
+  opacity: 0.55;
 }
 .tt-matrix__add {
   min-width: 40px;

@@ -574,6 +574,24 @@ def _eigene_abbildung(db: DB, gruppe_id: int) -> dict:
             for a in db.clubdeckel_artikel.list_fuer_gruppen([gruppe_id])}
 
 
+# Reihenfolge der Matrix-Zeilen nach Zusage: zugesagt zuerst, abgesagt zuletzt.
+# `sort` ist stabil, die alphabetische Sortierung bleibt innerhalb der Gruppen
+# also erhalten.
+_ZUSAGE_RANG = {'zu': 0, 'vielleicht': 1, None: 1, 'ab': 2}
+
+
+def _matrix_kader(db: DB, deckel, termin_id: Optional[int]) -> list[dict]:
+    """Zeilen der Buchen-Matrix: der Kader samt Zusage zum Termin (#167).
+
+    Mit Termin kommt der Kader vom TERMIN-Datum statt von heute — bei einem
+    länger zurückliegenden Spiel stand eine andere Mannschaft auf dem Platz.
+    Ohne Termin (reiner Zeitraum über die API) bleibt es beim heutigen Kader.
+    """
+    if termin_id is None:
+        return _kader_liste(db, deckel)
+    return db.termin_zusagen.list_kader_with_zusage(termin_id)
+
+
 def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
                          abbildung: dict, benutzer: str) -> int:
     """Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen (#167).
@@ -958,15 +976,20 @@ def get_matrix(deckel_id: int, user: CurrentUser, db: DB,
         termin_id=termin_id)
     gebucht = {m['mitglied_id']: m for m in daten['je_mitglied']}
     zeilen = []
-    for k in _kader_liste(db, deckel):
+    for k in _matrix_kader(db, deckel, termin_id):
         eintrag = gebucht.pop(k['mitglied_id'], None)
         zeilen.append({"mitglied_id": k['mitglied_id'], "name": k['name'],
-                       "im_kader": True,
+                       "im_kader": True, "antwort": k.get('antwort'),
                        "anzahl": eintrag['anzahl'] if eintrag else 0,
                        "betrag": eintrag['betrag'] if eintrag else Decimal("0.00")})
+    # Zusagen zuerst: Der Wart sucht am Tresen die Leute, die da sind — und
+    # sieht auf einen Blick, wer von ihnen noch nichts gebucht hat. Abgesagte
+    # rutschen ans Ende, offene dazwischen.
+    zeilen.sort(key=lambda z: _ZUSAGE_RANG.get(z['antwort'], 1))
     for rest in sorted(gebucht.values(), key=lambda x: x['mitglied_name'].lower()):
         zeilen.append({"mitglied_id": rest['mitglied_id'],
                        "name": rest['mitglied_name'], "im_kader": False,
+                       "antwort": None,
                        "anzahl": rest['anzahl'], "betrag": rest['betrag']})
     # Spalten: das Sortiment des Ausschnitts (Preis, Bezeichnung und Verkäufer
     # also aus dem Stand dieses Spieltags) PLUS jeder Artikel, der im Ausschnitt
