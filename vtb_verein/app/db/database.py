@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 101
+SCHEMA_VERSION = 102
 
 
 # ---------------------------------------------------------------------------
@@ -1616,6 +1616,7 @@ _PERM_SYSTEM_CONFIG = 'system.config'
 # personen.permissions möglich, das zusätzlich Rechtevergabe und fremde
 # Passwörter öffnet und deshalb für den App-Rollout zu groß ist.
 _PERM_PERSONEN_FREISCHALTEN = 'personen.freischalten'
+_PERM_TERMINE_GAESTE_VEREINSWEIT = 'termine.gaeste_vereinsweit'
 
 # Neue Permission-Keys (Seed Admin + Migration für Bestands-Admins).
 _ZUTRITT_PERMISSIONS = (
@@ -2720,7 +2721,9 @@ _DDL_TERMIN_ZUSAGE = """
       id           SERIAL PRIMARY KEY,
       termin_id    INTEGER NOT NULL REFERENCES termine(id),
       mitglied_id  INTEGER NOT NULL REFERENCES mitglied(id),
-      antwort      TEXT NOT NULL,
+      -- NULL = eingeladen, aber noch nicht geantwortet (v102). Die Zeile selbst
+      -- macht das Mitglied zum Gast des Termins; die Antwort kommt später.
+      antwort      TEXT,
       kommentar    TEXT,
       version      INTEGER NOT NULL DEFAULT 1,
       created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2729,7 +2732,7 @@ _DDL_TERMIN_ZUSAGE = """
       updated_by   TEXT NOT NULL,
       deleted_at   TEXT,
       deleted_by   TEXT,
-      CHECK (antwort IN ('zu', 'vielleicht', 'ab'))
+      CHECK (antwort IS NULL OR antwort IN ('zu', 'vielleicht', 'ab'))
     );
     CREATE TABLE IF NOT EXISTS termin_zusage_history (
       id INTEGER NOT NULL, version INTEGER NOT NULL,
@@ -3532,6 +3535,7 @@ class Database:
             99: self._migrate_v98_to_v99,
             100: self._migrate_v99_to_v100,
             101: self._migrate_v100_to_v101,
+            102: self._migrate_v101_to_v102,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7527,6 +7531,45 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 101 WHERE id = 1")
 
+    def _migrate_v101_to_v102(self) -> None:
+        """Gäste einladen statt für sie zuzusagen – und das Recht dazu.
+
+        Zwei Dinge für denselben Anlass: die gelegentliche abteilungsübergreifende
+        Runde (Vorstand, einmal im Jahr die Abteilungsleiter).
+
+        1. `termin_zusage.antwort` wird nullable: NULL heißt „eingeladen, noch nicht
+           geantwortet". Bisher entstand ein Gast nur dadurch, dass jemand FÜR ihn
+           zusagte – einladen ließ sich niemand, weil der Gast-Status an der
+           Antwortzeile hängt. NULL statt eines vierten Werts 'offen', weil der
+           Rest des Hauses „keine Antwort" schon als NULL kennt (answer_for, die
+           Gruppe „Offen" im Kader-Dialog) und jeder Vergleich gegen 'zu'/'ab' so
+           von selbst richtig bleibt.
+        2. Recht 'termine.gaeste_vereinsweit' für Bestands-Admins (Muster v87→v88):
+           Wer es hat, darf über die Abteilung der Mannschaft hinaus einladen.
+           Admins haben ohnehin implizit alles (User.has_permission) – die Zeile
+           hält nur Frischaufbau (_seed_data) und gewachsene DBs deckungsgleich.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE termin_zusage ALTER COLUMN antwort DROP NOT NULL")
+            # Der Constraint hieß bisher automatisch nach Tabelle+Spalte; die neue
+            # Fassung trägt denselben Namen, damit frisch und migriert gleich aussehen.
+            cur.execute("ALTER TABLE termin_zusage "
+                        "DROP CONSTRAINT IF EXISTS termin_zusage_antwort_check")
+            cur.execute("ALTER TABLE termin_zusage ADD CONSTRAINT termin_zusage_antwort_check "
+                        "CHECK (antwort IS NULL OR antwort IN ('zu', 'vielleicht', 'ab'))")
+            cur.execute("ALTER TABLE termin_zusage_history ALTER COLUMN antwort DROP NOT NULL")
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, %s, 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role='admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_TERMINE_GAESTE_VEREINSWEIT,),
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 102 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9948,6 +9991,7 @@ class Database:
             'termine.verwalten',
             'spielstaetten.verwalten',
             _PERM_PERSONEN_FREISCHALTEN,
+            _PERM_TERMINE_GAESTE_VEREINSWEIT,
         }
 
         pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()

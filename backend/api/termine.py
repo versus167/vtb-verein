@@ -18,11 +18,14 @@ fachlich etwas geändert hat). extern_ref ist noch nicht per API setzbar
 
 Gäste: Verwalter können Mitglieder derselben ABTEILUNG (unabhängig von einer
 eigenen Kader-Zugehörigkeit) als Gäste zu einem Termin eintragen (z. B.
-AH-Spieler hilft in der Ersten aus).
-Gast = aktive Zu-/Absage ohne Kader-Zugehörigkeit am Termin-Datum, keine eigene
-Tabelle. Gäste sehen genau diesen Termin unter „Meine Termine", dürfen ihre
-Antwort selbst ändern und werden mitbenachrichtigt; Zurücknehmen der Antwort
-beendet den Gast-Status.
+AH-Spieler hilft in der Ersten aus). Mit dem Recht `termine.gaeste_vereinsweit`
+fällt die Abteilungsgrenze weg – für die gelegentliche abteilungsübergreifende
+Runde (Vorstand, einmal im Jahr die Abteilungsleiter).
+Gast = aktive Zeile ohne Kader-Zugehörigkeit am Termin-Datum, keine eigene
+Tabelle. Zwei Wege dorthin: eintragen (Verwalter sagt FÜR jemanden zu) oder
+einladen (Zeile mit antwort NULL, Antwort steht aus – /einladungen). Gäste sehen
+genau diesen Termin unter „Meine Termine", dürfen ihre Antwort selbst ändern und
+werden mitbenachrichtigt; Zurücknehmen der Antwort beendet den Gast-Status.
 """
 from dataclasses import asdict
 from datetime import date, datetime
@@ -75,6 +78,12 @@ class ZusageSet(BaseModel):
     kommentar: Optional[str] = None
 
 
+class EinladungCreate(BaseModel):
+    """Einladung mehrerer Mitglieder zu einem Termin (Schnappschuss der Auswahl)."""
+    mitglied_ids: list[int]
+    benachrichtigen: bool = True
+
+
 class AbweichungEntscheidung(BaseModel):
     """Entscheidung über eine offene Abweichung aus dem Spielplan-Import (#95)."""
     entscheidung: str                        # 'uebernommen' | 'verworfen'
@@ -121,6 +130,16 @@ def _darf_alle_verwalten(user) -> bool:
     return user.role == 'admin' or user.has_permission(Permission.TERMINE_VERWALTEN)
 
 
+def _darf_vereinsweit_einladen(user) -> bool:
+    """Gäste über die Abteilung der Mannschaft hinaus auswählen dürfen.
+
+    Erweitert NUR den Kreis der Auswählbaren – wer den Termin verwalten darf,
+    entscheidet weiterhin die Kader-ACL bzw. termine.verwalten.
+    """
+    return user.role == 'admin' or user.has_permission(
+        Permission.TERMINE_GAESTE_VEREINSWEIT)
+
+
 def _zugriff(db: DB, user, mannschaft_id: int) -> Optional[str]:
     """Effektive Stufe auf die Termine einer Mannschaft: 'verwalten' | 'lesen' | None.
     termine.verwalten/Admin => 'verwalten', sonst entscheidet der Kader."""
@@ -141,6 +160,25 @@ def _require_verwalten(db: DB, user, mannschaft_id: int) -> None:
     if _zugriff(db, user, mannschaft_id) != 'verwalten':
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Keine Berechtigung, Termine dieser Mannschaft zu verwalten")
+
+
+def _require_gast_erlaubt(db: DB, user, t, mitglied_id: int, tag: str) -> None:
+    """Darf dieses Mitglied an diesem Termin hängen (Kader, Abteilung – oder alle)?
+
+    Gemeinsame Prüfung für das Eintragen einer Antwort und für die Einladung:
+    Beide erzeugen dieselbe Zeile und dürfen sich deshalb nicht unterscheiden.
+    """
+    if db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, tag):
+        return
+    if _darf_vereinsweit_einladen(user):
+        try:
+            db.get_mitglied(mitglied_id)
+        except KeyError:
+            raise HTTPException(422, "Mitglied nicht gefunden")
+        return
+    if not db.termine.is_mitglied_in_abteilung(mitglied_id, t.mannschaft_id, tag):
+        raise HTTPException(422, "Mitglied ist am Termin-Datum weder im Kader noch "
+                                 "Mitglied der Abteilung")
 
 
 def _require_lesen_termin(db: DB, user, t) -> str:
@@ -485,16 +523,14 @@ def set_eigene_zusage(termin_id: int, data: ZusageSet, user: CurrentUser, db: DB
 def set_fremde_zusage(termin_id: int, mitglied_id: int, data: ZusageSet,
                       user: CurrentUser, db: DB):
     """Zu-/Absage für ein anderes Mitglied setzen (nur Verwalter). Erlaubt für
-    Kader-Mitglieder sowie – als Gast-Eintrag – für Mitglieder der Abteilung."""
+    Kader-Mitglieder sowie – als Gast-Eintrag – für Mitglieder der Abteilung bzw.
+    mit `termine.gaeste_vereinsweit` für jedes Mitglied."""
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
     _require_nicht_abgesagt(t)
     _validate_antwort(data.antwort)
     tag = t.beginn[:10]
-    if not (db.termine.is_mitglied_in_kader(mitglied_id, t.mannschaft_id, tag)
-            or db.termine.is_mitglied_in_abteilung(mitglied_id, t.mannschaft_id, tag)):
-        raise HTTPException(422, "Mitglied ist am Termin-Datum weder im Kader noch "
-                                 "Mitglied der Abteilung")
+    _require_gast_erlaubt(db, user, t, mitglied_id, tag)
     z = db.termin_zusagen.set_antwort(termin_id, mitglied_id, data.antwort,
                                       _clean(data.kommentar), user.username)
     return asdict(z)
@@ -536,11 +572,49 @@ def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
 
 @router.get("/{termin_id}/gast-kandidaten")
 def gast_kandidaten(termin_id: int, user: CurrentUser, db: DB):
-    """Gast-Kandidaten fürs Eintragen durch Verwalter: Mitglieder der Abteilung
-    außerhalb des eigenen Kaders (Stichtag = Termin-Datum)."""
+    """Kandidaten fürs Eintragen/Einladen durch Verwalter: Mitglieder außerhalb des
+    eigenen Kaders (Stichtag = Termin-Datum), je Person mit Mannschaften und
+    aktiven Funktionen als Label.
+
+    Ohne `termine.gaeste_vereinsweit` auf die Abteilung der Mannschaft begrenzt;
+    mit dem Recht der ganze Verein. Das Flag kommt mit zurück, damit die Oberfläche
+    sagen kann, worin gerade gesucht wird.
+    """
     t = _lade_termin(db, termin_id)
     _require_verwalten(db, user, t.mannschaft_id)
-    return db.termine.list_gast_kandidaten(t.mannschaft_id, t.beginn[:10])
+    vereinsweit = _darf_vereinsweit_einladen(user)
+    return {
+        "vereinsweit": vereinsweit,
+        "kandidaten": db.termine.list_gast_kandidaten(
+            t.mannschaft_id, t.beginn[:10], vereinsweit=vereinsweit),
+    }
+
+
+@router.post("/{termin_id}/einladungen")
+def lade_gaeste_ein(termin_id: int, data: EinladungCreate, user: CurrentUser, db: DB):
+    """Mitglieder zu einem Termin einladen – ohne für sie zu antworten.
+
+    Der Unterschied zum Eintragen (`PUT /zusage/{mitglied_id}`): Dort sagt der
+    Verwalter FÜR jemanden zu, hier entsteht nur die Einladung (Zeile mit
+    `antwort IS NULL`), und der Eingeladene antwortet selbst. Wer schon geantwortet
+    hat, bleibt unangetastet.
+
+    Ein Schnappschuss: Eingeladen wird, wer JETZT ausgewählt ist. Wechselt später
+    jemand die Funktion, ändert das an dieser Einladungsliste nichts – für die
+    einmalige Runde ist genau das gewollt.
+    """
+    t = _lade_termin(db, termin_id)
+    _require_verwalten(db, user, t.mannschaft_id)
+    _require_nicht_abgesagt(t)
+    tag = t.beginn[:10]
+    neu = []
+    for mitglied_id in dict.fromkeys(data.mitglied_ids):
+        _require_gast_erlaubt(db, user, t, mitglied_id, tag)
+        if db.termin_zusagen.lade_ein(termin_id, mitglied_id, user.username):
+            neu.append(mitglied_id)
+    if neu and data.benachrichtigen:
+        terminmeldung.notify_einladung(db, t, neu, user.id)
+    return {"eingeladen": len(neu), "schon_dabei": len(set(data.mitglied_ids)) - len(neu)}
 
 
 # ------------------------------------------- Abweichungen aus dem Spielplan (#95)

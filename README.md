@@ -47,6 +47,11 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
 ✅ **Mannschafts-Termine & Spielbetrieb** *(Schema v68–v72)*
 - Training/Spiel/Sonstiges je Mannschaft, wöchentliche Serien (rollierend materialisiert)
 - Zu-/Absagen der Spieler (`termin_zusage`), stellvertretendes Eintragen durch Trainer/Betreuer
+- **Gäste**: Mitglieder außerhalb des Kaders eintragen (sagen zu) oder **einladen**
+  *(v102: `antwort` darf NULL sein = eingeladen, Antwort steht aus)*. Der Kreis ist die
+  Abteilung; mit `termine.gaeste_vereinsweit` der ganze Verein — samt Filter „alle mit
+  Funktion X" für die gelegentliche Runde (Vorstand, Abteilungsleiter). Die Auswahl ist
+  ein Schnappschuss, keine dauerhafte Verknüpfung zur Funktion
 - Zugriff über die **Kader-ACL** (`mitglied_mannschaft`); `termine.verwalten` nur vereinsweit
 - Gastspieler als eigene Personenart *(v72)* — ohne Mitgliedsnummer, Beiträge und Statistik
 
@@ -386,7 +391,9 @@ Schnappschuss, Abweichungen) · v85 Untergrund der Spielstätte · v86 eigenes R
 v88 Recht `personen.freischalten` · v89 Kalender-Abos (ICS) · v90 externes Schloss ohne
 Cloud · v91 Chip-Inhaber ohne Mitgliedschaft · v92 Verursacher in der Zutritts-Log-Zeile ·
 v93 Chip-Rechtegruppen · v94/v95 Stand und Zeitraum des Spielplan-Imports ·
-v96 Konten ohne Zugang (E-Mail optional).
+v96 Konten ohne Zugang (E-Mail optional) · v97 Versandstand der Einladung am Konto ·
+v98–v101 Teamkasse am Termin (Fremdbuchung, Sortiments-Stände, Wart-Artikel) ·
+v102 Gäste einladen statt für sie zuzusagen + Recht `termine.gaeste_vereinsweit`.
 
 ## Permissions
 

@@ -101,6 +101,13 @@ class Permission:
     # (mitglied_mannschaft): betreuer/uebungsleiter verwalten die Termine
     # ihrer Mannschaft, alle aktiven Kader-Mitglieder lesen sie.
     TERMINE_VERWALTEN    = 'termine.verwalten'
+    # Beliebige Mitglieder als Gäste zu einem Termin eintragen – über die Abteilung
+    # der Mannschaft hinaus. Gedacht für Ad-hoc-Fälle (Kassierer zur Vorstands-
+    # sitzung, Obmann zur Abteilungsleiter-Runde); wiederkehrende Runden sind als
+    # eigene Mannschaft besser aufgehoben. Das Recht erweitert NUR die Auswahl:
+    # Termine verwalten darf damit niemand, das bleibt Kader-ACL bzw.
+    # termine.verwalten (siehe backend/api/termine.py::set_fremde_zusage).
+    TERMINE_GAESTE_VEREINSWEIT = 'termine.gaeste_vereinsweit'
     # Spielstätten-Stammdaten pflegen (Plätze, Hallen: Anschrift, Belag, Kapazität).
     # Bewusst getrennt von SYSTEM_CONFIG: Wer die Plätze pflegt (Platzwart), soll
     # nicht zwangsläufig auch die Datenbereinigung und den Mitglieder-Import

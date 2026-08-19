@@ -386,29 +386,45 @@ class TerminRepository(BaseRepository):
             return cur.fetchone() is not None
 
     def list_gast_kandidaten(self, mannschaft_id: int,
-                             stichtag: Optional[str] = None) -> list[dict]:
-        """Gast-Kandidaten für Termine der Mannschaft: Mitglieder, die am Stichtag
-        der Abteilung der Mannschaft angehören (mitglied_abteilung) und NICHT im
-        Kader der Mannschaft selbst stehen – eine eigene Kader-Zugehörigkeit ist
-        keine Voraussetzung. Ihre Mannschaften (falls vorhanden) kommen als
-        Auswahl-Label mit."""
+                             stichtag: Optional[str] = None,
+                             vereinsweit: bool = False) -> list[dict]:
+        """Gast-Kandidaten für Termine der Mannschaft: Mitglieder, die NICHT im Kader
+        der Mannschaft selbst stehen – eine eigene Kader-Zugehörigkeit ist keine
+        Voraussetzung. Ihre Mannschaften und ihre am Stichtag aktiven Funktionen
+        (Klarname aus `funktion`) kommen als Auswahl-Label mit.
+
+        Standardmäßig auf die Abteilung der Mannschaft begrenzt (mitglied_abteilung
+        am Stichtag). `vereinsweit=True` – für Aufrufer mit dem Recht
+        `termine.gaeste_vereinsweit` – lässt diese Schranke weg: für die
+        gelegentliche abteilungsübergreifende Runde, in der Praxis über den
+        Funktions-Filter der Oberfläche („alle Abteilungsleiter").
+        """
         tag = stichtag or date.today().isoformat()
-        with self.cursor() as cur:
-            cur.execute(
-                """
-                SELECT m.id AS mitglied_id, m.vorname, m.nachname,
-                       string_agg(DISTINCT ma.name, ', ' ORDER BY ma.name) AS mannschaften
-                FROM mitglied m
+        abteilungs_join = """
                 JOIN mitglied_abteilung mab ON mab.mitglied_id = m.id
                     AND mab.deleted_at IS NULL
                     AND (mab.von IS NULL OR mab.von <= %(tag)s)
                     AND (mab.bis IS NULL OR mab.bis >= %(tag)s)
                     AND mab.abteilung_id = (SELECT abteilung_id FROM mannschaft
                                             WHERE id = %(man)s)
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT m.id AS mitglied_id, m.vorname, m.nachname,
+                       string_agg(DISTINCT ma.name, ', ' ORDER BY ma.name) AS mannschaften,
+                       string_agg(DISTINCT f.name, ', ' ORDER BY f.name) AS funktionen
+                FROM mitglied m
+                {abteilungs_join if not vereinsweit else ''}
                 LEFT JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
                     AND mm.deleted_at IS NULL
                     AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
                 LEFT JOIN mannschaft ma ON ma.id = mm.mannschaft_id AND ma.deleted_at IS NULL
+                LEFT JOIN mitglied_funktion mf ON mf.mitglied_id = m.id
+                    AND mf.deleted_at IS NULL
+                    AND (mf.von IS NULL OR mf.von <= %(tag)s)
+                    AND (mf.bis IS NULL OR mf.bis >= %(tag)s)
+                LEFT JOIN funktion f ON f.key = mf.funktion AND f.deleted_at IS NULL
                 WHERE m.deleted_at IS NULL
                   AND NOT EXISTS (
                       SELECT 1 FROM mitglied_mannschaft k
@@ -424,7 +440,8 @@ class TerminRepository(BaseRepository):
             return [
                 {"mitglied_id": r['mitglied_id'],
                  "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
-                 "mannschaften": r['mannschaften']}
+                 "mannschaften": r['mannschaften'],
+                 "funktionen": r['funktionen']}
                 for r in cur.fetchall()
             ]
 

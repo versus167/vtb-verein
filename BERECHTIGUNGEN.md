@@ -102,7 +102,11 @@ wäre eine Rolle, die unbegrenzt Rechte erzeugt, ohne selbst welche zu tragen.
   (Schema v86): Die Spielstätten-Pflege hing vorher an `system.config` und kam
   damit nur zusammen mit Datenbereinigung und Mitglieder-Import — für einen
   Platzwart deutlich zu viel. `system.config` bleibt als Obermenge zulässig,
-  damit beim Aufteilen niemand Zugriff verliert.
+  damit beim Aufteilen niemand Zugriff verliert. Ebenfalls dort:
+  `termine.gaeste_vereinsweit` (Schema v102) — es erlaubt, Gäste über die
+  Abteilung der Mannschaft hinaus einzuladen, **nicht** Termine zu verwalten.
+  Wer den Termin verwalten darf, entscheidet weiterhin die Kader-ACL bzw.
+  `termine.verwalten`.
 - **Ticket-Bereiche**: objektbezogen über `ticket_bereich_berechtigungen`.
   Beide bleiben bewusst eigenständig.
   Daraus abgeleitet der Aufgaben-Hinweis (#133,

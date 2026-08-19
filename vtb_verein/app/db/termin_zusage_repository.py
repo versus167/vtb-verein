@@ -7,10 +7,12 @@ UPDATE fortgeschrieben (version+1 → History-Trigger); sonst eine neue angelegt
 Zurücknehmen = Soft-Delete. Zugriff/ACL (wer für wen setzen darf) entscheidet die
 API-Schicht über die Kader-Zugehörigkeit (siehe TerminRepository).
 
-Gäste: eine aktive Antwort eines Mitglieds, das am Termin-Datum NICHT im Kader
+Gäste: eine aktive ZEILE eines Mitglieds, das am Termin-Datum NICHT im Kader
 der Termin-Mannschaft steht, macht dieses Mitglied zum Gast des Termins –
-es gibt keine eigene Gast-Tabelle. Verwalter tragen Gäste aus der Abteilung
-per set_antwort ein; Zurücknehmen beendet den Gast-Status."""
+es gibt keine eigene Gast-Tabelle. Verwalter tragen Gäste per set_antwort ein
+(sie sagen für jemanden zu) oder laden sie per lade_ein ein (Zeile mit
+`antwort IS NULL` – eingeladen, Antwort steht aus). Zurücknehmen beendet den
+Gast-Status."""
 from app.models.termin_zusage import TerminZusage
 from app.db.base_repository import BaseRepository
 
@@ -34,7 +36,7 @@ def _map(row) -> TerminZusage:
 class TerminZusageRepository(BaseRepository):
 
     # ---------------------------------------------------------------- schreiben
-    def set_antwort(self, termin_id: int, mitglied_id: int, antwort: str,
+    def set_antwort(self, termin_id: int, mitglied_id: int, antwort: str | None,
                     kommentar: str | None, gesetzt_von: str) -> TerminZusage:
         """Setzt/ändert die Antwort eines Mitglieds zu einem Termin (Upsert).
 
@@ -57,6 +59,30 @@ class TerminZusageRepository(BaseRepository):
                  "k": kommentar, "u": gesetzt_von},
             )
             return _map(cur.fetchone())
+
+    def lade_ein(self, termin_id: int, mitglied_id: int, von: str) -> bool:
+        """Lädt ein Mitglied zu einem Termin ein: Zeile mit `antwort IS NULL`.
+
+        Anders als set_antwort ein reines INSERT: Eine vorhandene aktive Zeile
+        bleibt unangetastet. Wer schon zugesagt hat, darf durch eine zweite
+        Einladungsrunde nicht auf „offen" zurückfallen – und aus demselben Grund
+        gibt es hier auch kein Update.
+
+        Returns:
+            True, wenn die Einladung neu entstanden ist (False = stand schon drin)
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO termin_zusage (termin_id, mitglied_id, antwort, kommentar,
+                                           created_by, updated_by)
+                VALUES (%(t)s, %(m)s, NULL, NULL, %(u)s, %(u)s)
+                ON CONFLICT (termin_id, mitglied_id) WHERE deleted_at IS NULL
+                DO NOTHING
+                """,
+                {"t": termin_id, "m": mitglied_id, "u": von},
+            )
+            return cur.rowcount > 0
 
     def remove_antwort(self, termin_id: int, mitglied_id: int, deleted_by: str) -> bool:
         """Nimmt die (aktive) Antwort eines Mitglieds zurück (Soft-Delete)."""
@@ -81,6 +107,7 @@ class TerminZusageRepository(BaseRepository):
                 SELECT termin_id, antwort, COUNT(*) AS n
                 FROM termin_zusage
                 WHERE termin_id = ANY(%s) AND deleted_at IS NULL
+                  AND antwort IS NOT NULL   -- eingeladen ≠ geantwortet (v102)
                 GROUP BY termin_id, antwort
                 """,
                 (list(termin_ids),),

@@ -12,13 +12,49 @@
         <q-btn flat round dense icon="close" v-close-popup />
       </q-card-section>
 
-      <!-- Gast eintragen: feststehend unter dem Titel, nur mit Verwalter-Recht -->
+      <!-- Einladen und Gast eintragen: feststehend unter dem Titel, nur für Verwalter.
+           Zwei verschiedene Dinge – einladen heißt „bitte antworten", eintragen heißt
+           „sagt zu" (etwa für den Aushilfsspieler, der schon zugesagt hat). -->
       <q-card-section v-if="darfVerwalten" class="q-pb-none"
         :class="$q.screen.lt.md ? 'col-auto' : ''">
+        <q-select v-model="einladungAuswahl" :options="kandidatenGefiltert"
+          multiple use-chips use-input input-debounce="0" outlined dense
+          :label="vereinsweit ? 'Einladen (ganzer Verein)' : 'Einladen (aus der Abteilung)'"
+          :option-label="kandidatLabel"
+          :disable="busy" @filter="filterKandidaten">
+          <template #no-option>
+            <q-item><q-item-section class="text-grey">Keine Kandidaten gefunden</q-item-section></q-item>
+          </template>
+        </q-select>
+
+        <!-- Ein Klick statt zehn: alle mit dieser Funktion in die Auswahl.
+             Schnappschuss – wer die Funktion später bekommt, ist nicht dabei. -->
+        <div v-if="funktionOptionen.length" class="row items-center q-gutter-xs q-mt-sm">
+          <span class="text-caption text-grey-7">Nach Funktion:</span>
+          <q-chip v-for="f in funktionOptionen" :key="f" clickable outline dense
+            color="primary" :disable="busy" @click="funktionUebernehmen(f)">
+            {{ f }}
+          </q-chip>
+        </div>
+
+        <div class="row items-center q-gutter-sm q-mt-sm">
+          <q-btn color="primary" unelevated no-caps icon="mail"
+            :label="einladungAuswahl.length ? `${einladungAuswahl.length} einladen` : 'Einladen'"
+            :disable="!einladungAuswahl.length || busy" :loading="busy" @click="einladen" />
+          <q-btn v-if="einladungAuswahl.length" flat dense no-caps label="Auswahl leeren"
+            :disable="busy" @click="einladungAuswahl = []" />
+        </div>
+        <div class="text-caption text-grey-7 q-mt-xs">
+          Eingeladene bekommen eine Nachricht und antworten selbst – sie stehen
+          bis dahin unter „Offen".
+        </div>
+
+        <q-separator class="q-my-md" />
+
         <q-select v-model="gastAuswahl" :options="kandidatenGefiltert"
           use-input input-debounce="0" outlined dense clearable
-          label="Gast aus der Abteilung eintragen"
-          :option-label="k => k.mannschaften ? `${k.name} (${k.mannschaften})` : k.name"
+          :label="vereinsweit ? 'Gast eintragen (sagt zu)' : 'Gast aus der Abteilung eintragen'"
+          :option-label="kandidatLabel"
           :disable="busy" @filter="filterKandidaten" @update:model-value="gastEintragen">
           <template #no-option>
             <q-item><q-item-section class="text-grey">Keine Kandidaten gefunden</q-item-section></q-item>
@@ -127,22 +163,78 @@ async function load() {
   }
 }
 
-// ── Gäste eintragen (nur Verwalter) ───────────────────────────
+// ── Gäste einladen/eintragen (nur Verwalter) ──────────────────
 const kandidaten = ref([])
 const kandidatenGefiltert = ref([])
 const gastAuswahl = ref(null)
+const einladungAuswahl = ref([])
+// Sucht der Server im ganzen Verein? Entscheidet nur die Beschriftung – die
+// Grenze zieht das Backend (Recht termine.gaeste_vereinsweit).
+const vereinsweit = ref(false)
+
+const kandidatLabel = (k) => {
+  const zusatz = [k.funktionen, k.mannschaften].filter(Boolean).join(' · ')
+  return zusatz ? `${k.name} (${zusatz})` : k.name
+}
+
+// Funktionen, die unter den Kandidaten tatsächlich vorkommen – mehr Auswahl
+// würde nur ins Leere führen.
+const funktionOptionen = computed(() => {
+  const alle = new Set()
+  kandidaten.value.forEach(k => (k.funktionen || '').split(', ')
+    .filter(Boolean).forEach(f => alle.add(f)))
+  return [...alle].sort((a, b) => a.localeCompare(b, 'de'))
+})
 
 async function loadKandidaten() {
   if (!props.darfVerwalten) return
   try {
     const { data } = await api.get(`/api/termine/${props.terminId}/gast-kandidaten`)
-    kandidaten.value = data
+    kandidaten.value = data.kandidaten ?? []
+    vereinsweit.value = !!data.vereinsweit
   } catch {
     kandidaten.value = []
+    vereinsweit.value = false
+  }
+}
+
+function funktionUebernehmen(f) {
+  const drin = new Set(kader.value.map(p => p.mitglied_id))
+  const schonGewaehlt = new Set(einladungAuswahl.value.map(k => k.mitglied_id))
+  const treffer = kandidaten.value.filter(k =>
+    !drin.has(k.mitglied_id) && !schonGewaehlt.has(k.mitglied_id)
+    && (k.funktionen || '').split(', ').includes(f))
+  if (!treffer.length) {
+    $q.notify({ type: 'info', message: `Niemand mehr offen mit „${f}"`, timeout: 1500 })
+    return
+  }
+  einladungAuswahl.value = [...einladungAuswahl.value, ...treffer]
+}
+
+async function einladen() {
+  if (!einladungAuswahl.value.length) return
+  busy.value = true
+  try {
+    const { data } = await api.post(`/api/termine/${props.terminId}/einladungen`,
+      { mitglied_ids: einladungAuswahl.value.map(k => k.mitglied_id) })
+    einladungAuswahl.value = []
+    await load()
+    emit('geaendert')
+    $q.notify({
+      type: 'positive',
+      message: data.eingeladen === 1 ? 'Einladung verschickt'
+        : `${data.eingeladen} Einladungen verschickt`,
+    })
+  } catch (e) {
+    $q.notify({ type: 'negative',
+      message: e.response?.data?.detail || 'Einladen fehlgeschlagen' })
+  } finally {
+    busy.value = false
   }
 }
 
 function onShow() {
+  einladungAuswahl.value = []
   load()
   loadKandidaten()
 }
@@ -154,7 +246,7 @@ function filterKandidaten(val, update) {
     const s = val.toLowerCase()
     kandidatenGefiltert.value = kandidaten.value.filter(k =>
       !drin.has(k.mitglied_id)
-      && (!s || `${k.name} ${k.mannschaften}`.toLowerCase().includes(s)))
+      && (!s || `${k.name} ${k.mannschaften} ${k.funktionen}`.toLowerCase().includes(s)))
   })
 }
 

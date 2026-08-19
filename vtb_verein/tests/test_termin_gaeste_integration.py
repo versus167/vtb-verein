@@ -47,7 +47,12 @@ def _aufraeumen(db):
         )
         cur.execute("DELETE FROM mitglied_abteilung WHERE mitglied_id IN "
                     "(SELECT id FROM mitglied WHERE vorname='Gast')")
+        cur.execute("DELETE FROM mitglied_funktion WHERE mitglied_id IN "
+                    "(SELECT id FROM mitglied WHERE vorname='Gast')")
         cur.execute("DELETE FROM mitglied WHERE vorname='Gast'")
+        cur.execute("DELETE FROM funktion WHERE key LIKE 'gast-%'")
+        cur.execute("DELETE FROM user_permissions WHERE user_id IN "
+                    "(SELECT id FROM users WHERE username LIKE 'gasttester%')")
         cur.execute("DELETE FROM users WHERE username LIKE 'gasttester%'")
         cur.execute("DELETE FROM abteilung WHERE name LIKE 'Gast-Abt%'")
 
@@ -223,3 +228,137 @@ def test_kader_mitglied_ist_kein_gast(db):
     assert db.termin_zusagen.list_gaeste_with_zusage(t.id) == []
     meine = db.termine.list_for_user(uid, von=date.today().isoformat())
     assert meine[0]['gast'] is False
+
+
+# ------------------------------------------------ vereinsweite Gast-Kandidaten
+
+def _make_funktion(db, key='gast-abtleiter', name='Abteilungsleiter'):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO funktion (key,name,created_by,updated_by) "
+                    "VALUES (%s,%s,'t','t') RETURNING id", (key, name))
+        return cur.fetchone()['id']
+
+
+def _add_funktion(db, mitglied_id, key='gast-abtleiter', von=LASTWEEK, bis=None):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mitglied_funktion (mitglied_id,funktion,von,bis,created_by,updated_by) "
+                    "VALUES (%s,%s,%s,%s,'t','t')", (mitglied_id, key, von, bis))
+
+
+def test_gast_kandidaten_bleiben_ohne_recht_in_der_abteilung(db):
+    """Die Abteilungsgrenze ist der Normalfall – nur das Recht hebt sie auf."""
+    erste = _make_mannschaft(db, "Erste")
+    handball = _make_mannschaft(db, "Handball1", abteilung="Gast-Abt-Handball")
+    _, hb_mid = _make_kader_mitglied(db, handball, username="gasttester2")
+    _, eigen_mid = _make_mitglied(db, username="gasttester1")
+    _add_abteilung(db, eigen_mid, erste)
+
+    ids = {k['mitglied_id'] for k in db.termine.list_gast_kandidaten(erste)}
+    assert eigen_mid in ids
+    assert hb_mid not in ids
+
+
+def test_gast_kandidaten_vereinsweit_holen_die_ganze_liste(db):
+    erste = _make_mannschaft(db, "Erste")
+    handball = _make_mannschaft(db, "Handball1", abteilung="Gast-Abt-Handball")
+    _, hb_mid = _make_kader_mitglied(db, handball, username="gasttester2")
+    # Eigener Kader bleibt auch vereinsweit außen vor – er steht schon im Dialog.
+    _, kader_mid = _make_kader_mitglied(db, erste, username="gasttester3")
+
+    ids = {k['mitglied_id'] for k in db.termine.list_gast_kandidaten(erste, vereinsweit=True)}
+    assert hb_mid in ids
+    assert kader_mid not in ids
+
+
+def test_gast_kandidaten_nennen_die_funktionen(db):
+    """Grundlage des „alle Abteilungsleiter"-Klicks in der Oberfläche."""
+    erste = _make_mannschaft(db, "Erste")
+    handball = _make_mannschaft(db, "Handball1", abteilung="Gast-Abt-Handball")
+    _, hb_mid = _make_kader_mitglied(db, handball, username="gasttester2")
+    _make_funktion(db)
+    _add_funktion(db, hb_mid)
+    # Abgelaufene Funktion zählt nicht mehr mit.
+    _, alt_mid = _make_kader_mitglied(db, handball, username="gasttester4", nachname="Alt")
+    _add_funktion(db, alt_mid, bis=YESTERDAY)
+
+    kandidaten = {k['mitglied_id']: k
+                  for k in db.termine.list_gast_kandidaten(erste, vereinsweit=True)}
+    assert kandidaten[hb_mid]['funktionen'] == 'Abteilungsleiter'
+    assert kandidaten[alt_mid]['funktionen'] is None
+
+
+# ------------------------------------------------------------------ Einladen
+
+def test_einladung_ist_ein_gast_ohne_antwort(db):
+    """Eingeladen heißt: Zeile da, Antwort offen – der Termin ist sichtbar, die
+    Zusage steht aus."""
+    erste = _make_mannschaft(db, "Erste")
+    t = _termin(db, erste)
+    uid, mid = _make_mitglied(db, username="gasttester1")
+
+    assert db.termin_zusagen.lade_ein(t.id, mid, 't') is True
+    gaeste = db.termin_zusagen.list_gaeste_with_zusage(t.id)
+    assert [g['mitglied_id'] for g in gaeste] == [mid]
+    assert gaeste[0]['antwort'] is None
+    # Lese-Zugriff und Benachrichtigung hängen an der Zeile, nicht an der Antwort.
+    assert db.termin_zusagen.has_active_zusage(t.id, uid) is True
+    assert uid in db.termin_zusagen.list_user_ids_mit_zusage(t.id)
+    # Aber gezählt wird sie nicht: eingeladen ist keine Zusage.
+    assert db.termin_zusagen.counts_for_termine([t.id])[t.id] == {
+        'zu': 0, 'vielleicht': 0, 'ab': 0}
+
+
+def test_zweite_einladung_setzt_eine_antwort_nicht_zurueck(db):
+    erste = _make_mannschaft(db, "Erste")
+    t = _termin(db, erste)
+    _, mid = _make_mitglied(db, username="gasttester1")
+    db.termin_zusagen.set_antwort(t.id, mid, 'zu', None, 't')
+
+    assert db.termin_zusagen.lade_ein(t.id, mid, 't') is False
+    gaeste = db.termin_zusagen.list_gaeste_with_zusage(t.id)
+    assert gaeste[0]['antwort'] == 'zu'
+
+
+def test_eingeladener_antwortet_selbst(db):
+    erste = _make_mannschaft(db, "Erste")
+    t = _termin(db, erste)
+    _, mid = _make_mitglied(db, username="gasttester1")
+    db.termin_zusagen.lade_ein(t.id, mid, 't')
+
+    db.termin_zusagen.set_antwort(t.id, mid, 'ab', 'keine Zeit', 't')
+    gaeste = db.termin_zusagen.list_gaeste_with_zusage(t.id)
+    assert gaeste[0]['antwort'] == 'ab' and gaeste[0]['kommentar'] == 'keine Zeit'
+    assert db.termin_zusagen.counts_for_termine([t.id])[t.id]['ab'] == 1
+
+
+# ----------------------------------------------------------------- Migration
+
+def test_migration_v101_v102(db):
+    """v101-Stand nachbauen (antwort NOT NULL, Recht weg) und migrieren."""
+    with db.cursor() as cur:
+        cur.execute("ALTER TABLE termin_zusage DROP CONSTRAINT IF EXISTS termin_zusage_antwort_check")
+        cur.execute("ALTER TABLE termin_zusage ADD CONSTRAINT termin_zusage_antwort_check "
+                    "CHECK (antwort IN ('zu','vielleicht','ab'))")
+        cur.execute("ALTER TABLE termin_zusage ALTER COLUMN antwort SET NOT NULL")
+        cur.execute("DELETE FROM user_permissions WHERE permission = 'termine.gaeste_vereinsweit'")
+        cur.execute("INSERT INTO users (username,email,password_hash,role,active,created_by,updated_by) "
+                    "VALUES ('gasttester-admin','gasttester-admin@x.de','x','admin',1,'t','t')")
+        cur.execute("UPDATE schema_version SET version = 101 WHERE id = 1")
+
+    db._database._migrate_v101_to_v102()
+
+    with db.cursor() as cur:
+        cur.execute("SELECT is_nullable FROM information_schema.columns "
+                    "WHERE table_name='termin_zusage' AND column_name='antwort'")
+        assert cur.fetchone()['is_nullable'] == 'YES'
+        cur.execute("SELECT version FROM schema_version WHERE id = 1")
+        assert cur.fetchone()['version'] == 102
+        cur.execute("SELECT count(*) AS n FROM user_permissions up JOIN users u ON u.id = up.user_id "
+                    "WHERE up.permission = 'termine.gaeste_vereinsweit' AND u.username = 'gasttester-admin'")
+        assert cur.fetchone()['n'] == 1
+
+    # Und danach greift die Einladung auch auf dem migrierten Stand.
+    erste = _make_mannschaft(db, "Erste")
+    t = _termin(db, erste)
+    _, mid = _make_mitglied(db, username="gasttester1")
+    assert db.termin_zusagen.lade_ein(t.id, mid, 't') is True

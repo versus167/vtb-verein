@@ -19,12 +19,14 @@ AKTION_NEU = 'neu'
 AKTION_GEAENDERT = 'geaendert'
 AKTION_ABGESAGT = 'abgesagt'
 AKTION_REAKTIVIERT = 'reaktiviert'
+AKTION_EINGELADEN = 'eingeladen'
 
 _TITEL = {
     AKTION_NEU: 'Neuer Termin',
     AKTION_GEAENDERT: 'Termin geändert',
     AKTION_ABGESAGT: 'Termin abgesagt',
     AKTION_REAKTIVIERT: 'Termin findet statt',
+    AKTION_EINGELADEN: 'Einladung',
 }
 
 _WOCHENTAGE_KURZ = ('Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.', 'So.')
@@ -203,6 +205,34 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
     user_ids += db.termin_zusagen.list_user_ids_mit_zusage(termin.id)   # Gäste
     _send(db, user_ids, actor_user_id, title, "\n".join(zeilen),
           url=termin_url(termin.id))
+
+
+def notify_einladung(db, termin, mitglied_ids: list[int],
+                     actor_user_id: Optional[int]) -> None:
+    """Lädt die genannten Mitglieder zu einem Termin ein (Nachricht an ihr Konto).
+
+    Eigener Anlass statt AKTION_NEU: Für die Eingeladenen ist der Termin nicht
+    „neu", sondern eine Bitte um Antwort – und die Nachricht geht bewusst NUR an
+    sie, nicht an den Kader, der den Termin längst kennt. Wer kein Benutzerkonto
+    hat, bleibt hier still übrig; eingetragen ist er trotzdem.
+    """
+    m_name = _mannschaft_name(db, termin.mannschaft_id)
+    zeilen = [f"Du bist eingeladen: {termin_titel(termin, m_name)} am "
+              f"{format_wandzeit(termin.beginn)} ({m_name})"]
+    zeilen += _detail_zeilen(termin)
+    zeilen += ["", "Bitte in der App zu- oder absagen."]
+    user_ids = []
+    for mid in mitglied_ids:
+        try:
+            mitglied = db.get_mitglied(mid)
+        except KeyError:
+            continue
+        if mitglied.user_id:
+            user_ids.append(mitglied.user_id)
+    if not user_ids:
+        return
+    _send(db, user_ids, actor_user_id, f"{_TITEL[AKTION_EINGELADEN]} – {m_name}",
+          "\n".join(zeilen), url=termin_url(termin.id))
 
 
 def notify_abweichungen(db, mannschaft_id: int, fragen: list[tuple],
