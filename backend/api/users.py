@@ -108,6 +108,8 @@ PERMISSION_GROUPS = [
             # schaltet zusätzlich den DFBnet-Spielplan-Import frei.
             (Permission.TERMINE_VERWALTEN,
              'Alle Termine verwalten (inkl. Spielplan-Import)'),
+            (Permission.TERMINE_GAESTE_VEREINSWEIT,
+             'Gäste aus dem ganzen Verein zu Terminen einladen'),
             (Permission.SPIELSTAETTEN_VERWALTEN,
              'Spielstätten pflegen (Plätze, Hallen)'),
         ],
