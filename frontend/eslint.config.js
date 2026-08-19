@@ -14,6 +14,11 @@ export default [
       ecmaVersion: 'latest',
       sourceType: 'module',
     },
-    rules: {},
+    rules: {
+      // Ein im Template benutzter, im <script setup> fehlender Name bricht erst
+      // zur Laufzeit (der Build bleibt grün) — und dann still: Vue bricht das
+      // Rendern ab und lässt den alten DOM stehen. Deshalb hier hart als Fehler.
+      'vue/no-undef-properties': 'error',
+    },
   },
 ]

@@ -1332,6 +1332,39 @@ function zelle(mitgliedId, artikelId) {
   return matrix.value?.zellen?.[`${mitgliedId}:${artikelId}`] || { anzahl: 0 }
 }
 
+// ------------------------------------------------ Zeitraum des Katalogs (#167)
+// Auswahl: „Aktuell" plus die Spieltage. Ein Punkt markiert die Spieltage, für
+// die schon ein eigener Stand hinterlegt ist.
+const katalogTerminOptionen = computed(() => {
+  const gepflegt = new Set(gruppen.value.flatMap(g => g.stand_termine || []))
+  return [
+    { label: 'Aktuell (Tresen)', value: null },
+    ...termine.value.map(t => ({
+      // ● = für diesen Spieltag ist schon ein eigener Stand hinterlegt
+      label: (gepflegt.has(t.id) ? `● ${t.label}` : t.label)
+        + (t.id === naechsterTerminId.value ? ' · nächstes' : ''),
+      value: t.id,
+    })),
+  ]
+})
+
+function waehleKatalogTermin(wert) {
+  katalogTermin.value = wert
+  loadKatalog()
+}
+
+const katalogTerminLabel = computed(() => {
+  if (!katalogTermin.value) return 'jetzt'
+  return termine.value.find(t => t.id === katalogTermin.value)?.label ?? 'dem Spieltag'
+})
+
+/** Zeigt diese Gruppe einen geerbten Stand? Dann ist für den gewählten Zeitraum
+ *  noch nichts Eigenes hinterlegt und eine Änderung legt hier einen neuen an. */
+function standUebernommen(gruppe) {
+  return !!katalogTermin.value
+    && gruppe.gilt_ab_termin_id !== katalogTermin.value
+}
+
 const auswArtikel = computed(() =>
   (auswMatrix.value?.artikel || []).filter(a => a.summe_anzahl > 0))
 const auswMitglieder = computed(() =>
