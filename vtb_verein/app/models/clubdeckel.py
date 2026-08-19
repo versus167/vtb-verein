@@ -48,12 +48,22 @@ class Clubdeckel:
 
 @dataclass
 class ClubdeckelGruppe:
+    """Ein STAND des Sortiments (#167, v100).
+
+    Eine Gruppe ist nicht dauerhaft, sondern gilt ab einem Spieltag. Ändert der
+    Wart Preis, Bezeichnung oder Verkäufer, entsteht eine neue Generation samt
+    Artikelkopien; ältere Termine behalten ihre. `stamm_id` bündelt die
+    Generationen (die erste zeigt auf sich selbst), `gilt_ab_termin_id` sagt, ab
+    wann eine gilt — NULL heißt „von Anfang an".
+    """
     id: int
     deckel_id: int
     name: str
     verkaeufer_mitglied_id: Optional[int]  # None = das Team verkauft
     aktiv: int
     sortierung: int
+    stamm_id: Optional[int]
+    gilt_ab_termin_id: Optional[int]
     version: int
     created_at: str
     created_by: str
@@ -63,6 +73,7 @@ class ClubdeckelGruppe:
     deleted_by: Optional[str] = None
     # Nur für die Anzeige:
     verkaeufer_name: Optional[str] = None
+    gilt_ab_label: Optional[str] = None
 
 
 @dataclass
@@ -74,6 +85,8 @@ class ClubdeckelArtikel:
     preis: Decimal
     aktiv: int
     sortierung: int
+    # 1 = nicht am Tresen, nur der Wart bucht ihn (#167, z. B. „Wäsche")
+    nur_wart: int
     version: int
     created_at: str
     created_by: str
@@ -97,6 +110,7 @@ class ClubdeckelBuchung:
     notiz: Optional[str]
     artikel_name: Optional[str]   # Snapshot der Bezeichnung zum Buchungszeitpunkt
     gegen_name: Optional[str]     # Snapshot des Gegenkontos ('Team' | Mitgliedsname)
+    termin_id: Optional[int]      # Termin, bei dem gebucht wurde (#167); None = keiner
     version: int
     created_at: str
     created_by: str
@@ -106,3 +120,4 @@ class ClubdeckelBuchung:
     deleted_by: Optional[str] = None
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalten:
     mitglied_name: Optional[str] = None
+    termin_label: Optional[str] = None   # z. B. „Spiel 16.08. 15:00"

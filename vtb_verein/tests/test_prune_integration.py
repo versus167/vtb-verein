@@ -826,3 +826,86 @@ def test_archiv_kinder_kennen_ihre_version_spalte(db):
         "has_version stimmt nicht mit dem Schema überein: "
         + ", ".join(f"{r}/{t} steht auf {v}" for r, t, v in falsch)
     )
+
+
+# --- Teamkassen-Buchung hält ihren Termin fest (#167) -----------------------------
+def _termin_mit_buchung(db):
+    """Soft-gelöschter, längst abgelaufener Termin mit einer AKTIVEN Buchung darauf.
+    Gibt (termin_id, buchung_id) zurück."""
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO abteilung (name,created_by,updated_by) "
+                    "VALUES ('Deckel-Prune-Abt','t','t') RETURNING id")
+        aid = cur.fetchone()["id"]
+        cur.execute("INSERT INTO mannschaft (abteilung_id,name,saison,created_by,updated_by) "
+                    "VALUES (%s,'M','2020/21','t','t') RETURNING id", (aid,))
+        man = cur.fetchone()["id"]
+        cur.execute("SELECT id FROM spielstaette WHERE platzhalter='auswaerts'")
+        platz = cur.fetchone()["id"]
+        cur.execute("INSERT INTO termine (mannschaft_id,typ,beginn,spielstaette_id,"
+                    "created_by,updated_by) VALUES (%s,'training',"
+                    "(now()-make_interval(days=>900))::date::text||'T19:00',%s,'t','t') "
+                    "RETURNING id", (man, platz))
+        termin = cur.fetchone()["id"]
+    mid = _ins_mitglied(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO clubdeckel_buchung (deckel_id,mitglied_id,typ,betrag,"
+                    "termin_id,created_by,updated_by) "
+                    "VALUES (%s,%s,'kauf',-1.50,%s,'t','t') RETURNING id",
+                    (deckel.id, mid, termin))
+        buchung = cur.fetchone()["id"]
+    return termin, buchung
+
+
+def _termin_entity():
+    """Termin-Entität mit abgeschalteter Mindestanzahl – sonst hielte keep_min=10
+    den einzelnen Testtermin ohnehin fest und der Test bewiese nichts."""
+    from dataclasses import replace
+    from app.services.prune_service import PRUNE_REGISTRY
+    entity = {e.name: e for e in PRUNE_REGISTRY}["termin"]
+    return replace(entity, retention_days=30, keep_min=0)
+
+
+def test_termin_mit_teamkassen_buchung_wird_nicht_hart_geloescht(db):
+    """Tor 4: Solange eine Buchung auf den Termin zeigt, bleibt er im Papierkorb.
+    Ohne den ChildRef liefe das DELETE in den FK-RESTRICT und risse den Lauf um."""
+    from app.services.prune_service import PruneService
+    termin, _ = _termin_mit_buchung(db)
+    _soft_delete(db, "termine", termin, 900)
+    _age_history(db, "termine_history", termin, 900)
+    db.prune_einstellungen.upsert("termin", 30, 0, 0, updated_by="t")
+
+    assert _candidates(db, _termin_entity(), 0) == 0
+
+    PruneService(db).prune(dry_run=False)
+    assert _row_exists(db, "termine", termin)
+
+
+def test_termin_wird_loeschbar_sobald_die_buchung_weg_ist(db):
+    """Gegenprobe: Die Sperre ist an die Buchung geknüpft, nicht dauerhaft."""
+    termin, buchung = _termin_mit_buchung(db)
+    _soft_delete(db, "termine", termin, 900)
+    _age_history(db, "termine_history", termin, 900)
+    entity = _termin_entity()
+    assert _candidates(db, entity, 0) == 0
+
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM clubdeckel_buchung WHERE id=%s", (buchung,))
+    assert _candidates(db, entity, 0) == 1
+
+
+def test_alters_archivierung_laesst_die_buchung_aktiv(db):
+    """Ein Getränk verschwindet nicht aus dem Ledger, weil der Termin alt wird –
+    deshalb steht clubdeckel_buchung bewusst NICHT in der ArchiveRule."""
+    from app.services.prune_service import PruneService, TERMIN_ALTER
+    termin, buchung = _termin_mit_buchung(db)
+    db.prune_einstellungen.upsert(TERMIN_ALTER, 30, 0, 1, updated_by="t")
+
+    PruneService(db).prune(dry_run=False)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at IS NOT NULL AS d FROM termine WHERE id=%s", (termin,))
+        assert cur.fetchone()["d"] is True            # Termin archiviert …
+        cur.execute("SELECT deleted_at IS NOT NULL AS d FROM clubdeckel_buchung WHERE id=%s",
+                    (buchung,))
+        assert cur.fetchone()["d"] is False           # … die Buchung bleibt aktiv

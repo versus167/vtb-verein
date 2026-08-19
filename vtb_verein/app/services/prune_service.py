@@ -281,7 +281,14 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 children=(ChildRef("clubdeckel_buchung", "artikel_id"),)),
     PruneEntity("clubdeckel_gruppe", "Teamkassen-Artikelgruppen", "clubdeckel_gruppe",
                 history_table="clubdeckel_gruppe_history",
-                children=(ChildRef("clubdeckel_artikel", "gruppe_id"),)),
+                children=(
+                    ChildRef("clubdeckel_artikel", "gruppe_id"),
+                    # Selbstbezug der Generationen (#167, v100): Die erste
+                    # Generation trägt die stamm_id aller späteren, darf also
+                    # nicht vor ihnen verschwinden. Löst sich über mehrere Läufe
+                    # auf — genau wie andere Selbstbezüge in dieser Registry.
+                    ChildRef("clubdeckel_gruppe", "stamm_id"),
+                )),
     PruneEntity("clubdeckel_berechtigung", "Teamkassen-Warte", "clubdeckel_berechtigung",
                 history_table="clubdeckel_berechtigung_history"),
     PruneEntity("clubdeckel_beitrag_befreiung", "Teamkassen-Beitragsbefreiungen",
@@ -306,6 +313,16 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 children=(
                     ChildRef("termin_zusage", "termin_id"),
                     ChildRef("termin_abweichung", "termin_id"),
+                    # Teamkassen-Buchungen (#167) zeigen auf den Termin, an dem sie
+                    # entstanden. Sie sind KEIN Kind im Lösch-Sinn – die Referenz hält
+                    # den Termin nur über Tor 4 im Papierkorb fest, solange noch eine
+                    # Buchung auf ihn zeigt. Deshalb steht sie hier, aber bewusst NICHT
+                    # in der ArchiveRule weiter unten.
+                    ChildRef("clubdeckel_buchung", "termin_id"),
+                    # Ebenso der Sortiments-Stand „gilt ab diesem Spieltag"
+                    # (#167): Er begründet Preis, Bezeichnung und Verkäufer
+                    # alter Buchungen und darf nicht mit dem Termin verschwinden.
+                    ChildRef("clubdeckel_gruppe", "gilt_ab_termin_id"),
                 )),
     PruneEntity("termin_serie", "Terminserien", "termin_serie",
                 history_table="termin_serie_history",
@@ -549,6 +566,11 @@ def _ab_jahresende(spalte: str) -> str:
 # danach der reguläre Prune (PRUNE_REGISTRY). Die passenden PruneEntity-Einträge (termin,
 # termin_zusage) existieren bereits – hier wird nur der Eintritt in den Papierkorb datiert.
 ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
+    # clubdeckel_buchung steht hier bewusst NICHT als Kind: Archivieren heißt
+    # Mit-Soft-Löschen, und eine Getränkebuchung darf nicht verschwinden, weil der
+    # Termin alt geworden ist – sie gehört ins Ledger, nicht zum Terminkalender. Der
+    # Termin bleibt dann eben im Papierkorb liegen (ChildRef in PRUNE_REGISTRY), bis
+    # auch die Buchung regulär geprunt ist.
     ArchiveRule(
         TERMIN_ALTER, "Vergangene Termine", "termine",
         date_expr="COALESCE(NULLIF(ende, ''), beginn)",

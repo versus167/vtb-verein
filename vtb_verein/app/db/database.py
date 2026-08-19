@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 97
+SCHEMA_VERSION = 101
 
 
 # ---------------------------------------------------------------------------
@@ -2006,6 +2006,18 @@ _TRESOR_KONTAKT_TRIGGERS = (
 #            Zugriff nachgebucht (einmal je Mitglied+Monat, auch storniert zählt
 #            als erledigt), Befreiungen in clubdeckel_beitrag_befreiung.
 # Zahlungsempfänger + Zahlwege (IBAN/WERO/PayPal) sind Stammdaten des Deckels.
+#
+# termin_id (v98, #167) hängt eine Buchung an das Ereignis, bei dem sie entstand
+# (Training/Spiel derselben Mannschaft) — gestempelt wird automatisch der gerade
+# laufende Termin, der Wart kann beim Nachbuchen einen anderen wählen. NULL heißt
+# „zu keinem Termin", nicht „unbekannt".
+#
+# clubdeckel_artikel_preis (v100, #167) bindet PREISSTÄNDE an Termine: „ab dem
+# Heimspiel am 23.08. kostet das Bier 2,00". Nötig fürs Nachbuchen — sonst würde
+# ein nachgetragener Strich für ein altes Spiel mit dem heutigen Preis verbucht.
+# termin_id IS NULL ist der Basisstand („von Anfang an"), clubdeckel_artikel.preis
+# bleibt der Anzeige-/Startwert. Aufgelöst wird immer über den jüngsten Stand,
+# dessen Termin nicht nach dem Ziel-Termin beginnt (s. artikel_preis_repository).
 
 _CLUBDECKEL_COLS = (
     "id, version, mannschaft_id, name, aktiv, beitrag, beitrag_ab, "
@@ -2023,13 +2035,14 @@ _CLUBDECKEL_BERECHTIGUNG_VALS = ", ".join(
 
 _CLUBDECKEL_GRUPPE_COLS = (
     "id, version, deckel_id, name, verkaeufer_mitglied_id, aktiv, sortierung, "
+    "stamm_id, gilt_ab_termin_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_GRUPPE_VALS = ", ".join(
     "NEW." + c.strip() for c in _CLUBDECKEL_GRUPPE_COLS.split(","))
 
 _CLUBDECKEL_ARTIKEL_COLS = (
-    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_ARTIKEL_VALS = ", ".join(
@@ -2044,7 +2057,7 @@ _CLUBDECKEL_BEFREIUNG_VALS = ", ".join(
 
 _CLUBDECKEL_BUCHUNG_COLS = (
     "id, version, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-    "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, "
+    "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, termin_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_BUCHUNG_VALS = ", ".join(
@@ -2138,6 +2151,32 @@ _FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE = f"""
         RETURN NEW;
     END; $$;
 """
+_CLUBDECKEL_ARTIKEL_PREIS_COLS = (
+    "id, version, deckel_id, artikel_id, termin_id, preis, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_ARTIKEL_PREIS_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_ARTIKEL_PREIS_COLS.split(","))
+
+_FN_CLUBDECKEL_ARTIKEL_PREIS_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_artikel_preis_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_artikel_preis_history ({_CLUBDECKEL_ARTIKEL_PREIS_COLS})
+        VALUES ({_CLUBDECKEL_ARTIKEL_PREIS_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_CLUBDECKEL_ARTIKEL_PREIS_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_artikel_preis_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO clubdeckel_artikel_preis_history ({_CLUBDECKEL_ARTIKEL_PREIS_COLS})
+            VALUES ({_CLUBDECKEL_ARTIKEL_PREIS_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
 _FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT = f"""
     CREATE OR REPLACE FUNCTION fn_clubdeckel_buchung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
     BEGIN
@@ -2215,6 +2254,13 @@ _DDL_CLUBDECKEL = """
       verkaeufer_mitglied_id INTEGER REFERENCES mitglied(id),
       aktiv                  INTEGER NOT NULL DEFAULT 1,
       sortierung             INTEGER NOT NULL DEFAULT 0,
+      -- Generationen (v100, #167): Eine Gruppe ist ein STAND des Sortiments, der
+      -- ab einem Spieltag gilt. stamm_id bündelt alle Stände derselben Gruppe
+      -- (die erste Generation zeigt auf sich selbst), gilt_ab_termin_id sagt, ab
+      -- wann dieser Stand greift (NULL = von Anfang an). FKs separat, s.
+      -- _CLUBDECKEL_GRUPPE_STAND_FKS.
+      stamm_id               INTEGER,
+      gilt_ab_termin_id      INTEGER,
       loesch_ref             TEXT,
       version                INTEGER NOT NULL DEFAULT 1,
       created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2228,6 +2274,7 @@ _DDL_CLUBDECKEL = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       deckel_id INTEGER, name TEXT, verkaeufer_mitglied_id INTEGER,
       aktiv INTEGER, sortierung INTEGER,
+      stamm_id INTEGER, gilt_ab_termin_id INTEGER,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -2240,6 +2287,9 @@ _DDL_CLUBDECKEL = """
       preis       NUMERIC(10,2) NOT NULL,
       aktiv       INTEGER NOT NULL DEFAULT 1,
       sortierung  INTEGER NOT NULL DEFAULT 0,
+      -- 1 = nicht am Tresen, nur der Wart bucht ihn (#167): Posten wie „Wäsche",
+      -- die nach dem Spiel für die Beteiligten eingetragen werden.
+      nur_wart    INTEGER NOT NULL DEFAULT 0,
       loesch_ref  TEXT,
       version     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2252,7 +2302,7 @@ _DDL_CLUBDECKEL = """
     CREATE TABLE IF NOT EXISTS clubdeckel_artikel_history (
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       deckel_id INTEGER, gruppe_id INTEGER, name TEXT, preis NUMERIC(10,2),
-      aktiv INTEGER, sortierung INTEGER,
+      aktiv INTEGER, sortierung INTEGER, nur_wart INTEGER,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -2290,6 +2340,7 @@ _DDL_CLUBDECKEL = """
       notiz         TEXT,
       artikel_name  TEXT,
       gegen_name    TEXT,
+      termin_id     INTEGER,
       loesch_ref    TEXT,
       version       INTEGER NOT NULL DEFAULT 1,
       created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2304,7 +2355,39 @@ _DDL_CLUBDECKEL = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       deckel_id INTEGER, mitglied_id INTEGER, artikel_id INTEGER, typ TEXT,
       menge INTEGER, betrag NUMERIC(10,2), paar_ref TEXT, beitrag_monat TEXT,
-      notiz TEXT, artikel_name TEXT, gegen_name TEXT,
+      notiz TEXT, artikel_name TEXT, gegen_name TEXT, termin_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+# Eigene Konstante statt Teil von _DDL_CLUBDECKEL: Die Tabelle kam erst mit v98,
+# die historische Migration v74→v75 darf sie also NICHT anlegen. Geteilt zwischen
+# Frischaufbau und Migration v98→v99 (Fresh == Migriert).
+_DDL_CLUBDECKEL_ARTIKEL_PREIS = """
+    CREATE TABLE IF NOT EXISTS clubdeckel_artikel_preis (
+      id          SERIAL PRIMARY KEY,
+      -- deckel_id ist aus artikel_id ableitbar, steht aber wie bei allen
+      -- Geschwistertabellen direkt daran: Der komplette Soft-Delete einer
+      -- Teamkasse läuft als ein Batch über genau diese Spalte (loesch_ref).
+      -- FK setzt die Migration v98→v99 selbst (Tabelle entfällt mit v99).
+      deckel_id   INTEGER NOT NULL,
+      artikel_id  INTEGER NOT NULL REFERENCES clubdeckel_artikel(id),
+      termin_id   INTEGER,
+      preis       NUMERIC(10,2) NOT NULL,
+      loesch_ref  TEXT,
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_artikel_preis_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, artikel_id INTEGER, termin_id INTEGER, preis NUMERIC(10,2),
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -2323,6 +2406,8 @@ _CLUBDECKEL_INDEXES = (
     ("idx_clubdeckel_gruppe_verkaeufer",         "clubdeckel_gruppe(verkaeufer_mitglied_id)"),
     ("idx_clubdeckel_gruppe_deleted_at",         "clubdeckel_gruppe(deleted_at)"),
     ("idx_clubdeckel_gruppe_history_id",         "clubdeckel_gruppe_history(id)"),
+    ("idx_clubdeckel_gruppe_stamm_id",           "clubdeckel_gruppe(stamm_id)"),
+    ("idx_clubdeckel_gruppe_gilt_ab",            "clubdeckel_gruppe(gilt_ab_termin_id)"),
     ("idx_clubdeckel_artikel_deckel_id",         "clubdeckel_artikel(deckel_id)"),
     ("idx_clubdeckel_artikel_gruppe_id",         "clubdeckel_artikel(gruppe_id)"),
     ("idx_clubdeckel_artikel_deleted_at",        "clubdeckel_artikel(deleted_at)"),
@@ -2337,8 +2422,34 @@ _CLUBDECKEL_INDEXES = (
     ("idx_clubdeckel_buchung_paar_ref",          "clubdeckel_buchung(paar_ref)"),
     ("idx_clubdeckel_buchung_loesch_ref",        "clubdeckel_buchung(loesch_ref)"),
     ("idx_clubdeckel_buchung_beitrag_monat",     "clubdeckel_buchung(deckel_id, beitrag_monat)"),
+    ("idx_clubdeckel_buchung_termin_id",         "clubdeckel_buchung(termin_id)"),
     ("idx_clubdeckel_buchung_deleted_at",        "clubdeckel_buchung(deleted_at)"),
     ("idx_clubdeckel_buchung_history_id",        "clubdeckel_buchung_history(id)"),
+)
+
+# FK der Buchung auf den Termin (Schema v98, #167) — bewusst NICHT inline in
+# _DDL_CLUBDECKEL: der Frischaufbau legt clubdeckel VOR termine an, ein inline
+# REFERENCES würde dort auf eine noch nicht existierende Tabelle zeigen. Gleiches
+# Muster wie _TERMIN_SERIE_FK; ausgeführt, sobald beide Tabellen stehen.
+_CLUBDECKEL_BUCHUNG_TERMIN_FK = (
+    "ALTER TABLE clubdeckel_buchung DROP CONSTRAINT IF EXISTS fk_clubdeckel_buchung_termin",
+    "ALTER TABLE clubdeckel_buchung ADD CONSTRAINT fk_clubdeckel_buchung_termin "
+    "FOREIGN KEY (termin_id) REFERENCES termine(id)",
+)
+
+# Fremdschlüssel der Gruppen-Generationen (v100, #167). STRIKT getrennt von der
+# v97-Konstante oben: Jede dieser Konstanten läuft in genau der Migration, die
+# ihre Spalten einführt — eine gemeinsame Konstante würde in einer früheren
+# Migration über noch nicht existierende Spalten stolpern. Die Schlüssel stehen
+# hier statt inline in der DDL, damit Frischaufbau und Migration dieselben
+# Constraint-Namen erzeugen.
+_CLUBDECKEL_GRUPPE_STAND_FKS = (
+    "ALTER TABLE clubdeckel_gruppe DROP CONSTRAINT IF EXISTS fk_clubdeckel_gruppe_stamm",
+    "ALTER TABLE clubdeckel_gruppe ADD CONSTRAINT fk_clubdeckel_gruppe_stamm "
+    "FOREIGN KEY (stamm_id) REFERENCES clubdeckel_gruppe(id)",
+    "ALTER TABLE clubdeckel_gruppe DROP CONSTRAINT IF EXISTS fk_clubdeckel_gruppe_gilt_ab",
+    "ALTER TABLE clubdeckel_gruppe ADD CONSTRAINT fk_clubdeckel_gruppe_gilt_ab "
+    "FOREIGN KEY (gilt_ab_termin_id) REFERENCES termine(id)",
 )
 
 _CLUBDECKEL_UNIQUE_INDEXES = (
@@ -3417,6 +3528,10 @@ class Database:
             95: self._migrate_v94_to_v95,
             96: self._migrate_v95_to_v96,
             97: self._migrate_v96_to_v97,
+            98: self._migrate_v97_to_v98,
+            99: self._migrate_v98_to_v99,
+            100: self._migrate_v99_to_v100,
+            101: self._migrate_v100_to_v101,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7216,6 +7331,202 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 97 WHERE id = 1")
 
+    def _migrate_v97_to_v98(self) -> None:
+        """Teamkassen-Buchung kennt ihren Termin (#167).
+
+        Am Tresen wird während eines Trainings oder Spiels gebucht. Bisher blieb von
+        diesem Zusammenhang nichts übrig: eine Buchung trug nur ihren Zeitstempel, und
+        „was lief eigentlich beim Heimspiel am Samstag?" ließ sich nur über Uhrzeiten
+        zusammenraten. Mit `termin_id` hängt der Strich am Ereignis, womit sich der
+        Abend im Nachhinein aufrufen, prüfen und korrigieren lässt.
+
+        Bewusst NULL-bar: Bestandsbuchungen bekommen rückwirkend keinen Termin
+        angedichtet, und Buchungen außerhalb jedes Termins (jemand holt sich Freitag
+        früh ein Wasser) sollen auch keinen bekommen.
+
+        Der FK kommt aus der geteilten Konstante, die im Frischaufbau erst nach
+        `termine` läuft (dort steht clubdeckel vorher) — hier existieren beide
+        Tabellen längst, die Reihenfolge ist also unkritisch.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE clubdeckel_buchung "
+                        "ADD COLUMN IF NOT EXISTS termin_id INTEGER")
+            cur.execute("ALTER TABLE clubdeckel_buchung_history "
+                        "ADD COLUMN IF NOT EXISTS termin_id INTEGER")
+            for sql in _CLUBDECKEL_BUCHUNG_TERMIN_FK:
+                cur.execute(sql)
+            # Audit-Funktionen neu bauen: sie sind f-Strings über
+            # _CLUBDECKEL_BUCHUNG_COLS und kennen die neue Spalte sonst nicht.
+            for fn_sql in (_FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_BUCHUNG_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_clubdeckel_buchung_termin_id "
+                        "ON clubdeckel_buchung(termin_id)")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 97 WHERE id = 1")
+
+    def _migrate_v98_to_v99(self) -> None:
+        """Preisstände der Teamkassen-Artikel hängen an Terminen (#167).
+
+        Mit dem Nachbuchen (v97) entstand ein stiller Fehler: Ein Strich, den der
+        Wart für das Spiel vor drei Wochen nachträgt, wurde mit dem HEUTIGEN Preis
+        eingefroren. Wer zwischendurch das Bier verteuert hat, buchte damit
+        rückwirkend falsche Beträge — und niemand sah es, weil der Betrag ja
+        plausibel aussieht.
+
+        Ein reiner Zeitstempel würde das nicht sauber lösen: Preise ändert der
+        Wart „ab dem nächsten Heimspiel", nicht „ab 14:37 Uhr". Deshalb hängt ein
+        Preisstand ausdrücklich an einem Termin; `termin_id IS NULL` ist der
+        Basisstand, der von Anfang an gilt.
+
+        Der Altbestand bekommt genau diesen Basisstand aus dem aktuellen Preis:
+        Rückwirkend gab es keine Preisänderungen, die wir kennen würden — die
+        Artikel-History führt zwar alte Preise, aber ohne Termin-Bezug, und ein
+        geratener Bezug wäre schlechter als der ehrliche eine Stand.
+
+        HINWEIS: v100 verwirft diese Tabelle wieder — die Termin-Bindung sitzt
+        seitdem an der GRUPPE, nicht am einzelnen Artikel (s. _migrate_v99_to_v100).
+        Die Migration bleibt trotzdem stehen und funktionsfähig: Eine Datenbank auf
+        v98 läuft über sie hinweg nach v100. Sie ist deshalb bewusst SELBSTTRAGEND
+        und greift nicht mehr auf die geteilten Index-/Trigger-Tupel zu — die
+        beschreiben den heutigen Stand, in dem es diese Tabelle nicht mehr gibt.
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_CLUBDECKEL_ARTIKEL_PREIS)
+            for fn_sql in (_FN_CLUBDECKEL_ARTIKEL_PREIS_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_ARTIKEL_PREIS_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            for ereignis in ('INSERT', 'UPDATE'):
+                cur.execute(
+                    f"CREATE OR REPLACE TRIGGER "
+                    f"trig_clubdeckel_artikel_preis_audit_{ereignis.lower()} "
+                    f"AFTER {ereignis} ON clubdeckel_artikel_preis "
+                    f"FOR EACH ROW EXECUTE FUNCTION "
+                    f"fn_clubdeckel_artikel_preis_audit_{ereignis.lower()}();")
+            # deckel_id kam erst NACH der ersten Fassung dieser Migration dazu;
+            # idempotent nachziehen, damit eine Datenbank mit der alten Fassung
+            # nicht dauerhaft ohne die Spalte dasteht.
+            for tbl in ("clubdeckel_artikel_preis", "clubdeckel_artikel_preis_history"):
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS deckel_id INTEGER")
+                cur.execute(
+                    f"UPDATE {tbl} s SET deckel_id = a.deckel_id "
+                    "FROM clubdeckel_artikel a "
+                    "WHERE a.id = s.artikel_id AND s.deckel_id IS NULL")
+            cur.execute("ALTER TABLE clubdeckel_artikel_preis "
+                        "ALTER COLUMN deckel_id SET NOT NULL")
+            for name, spalten in (
+                    ("idx_clubdeckel_artikel_preis_deckel_id", "deckel_id"),
+                    ("idx_clubdeckel_artikel_preis_artikel_id", "artikel_id"),
+                    ("idx_clubdeckel_artikel_preis_termin_id", "termin_id"),
+                    ("idx_clubdeckel_artikel_preis_deleted_at", "deleted_at")):
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} "
+                            f"ON clubdeckel_artikel_preis({spalten})")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_clubdeckel_artikel_preis_history_id "
+                        "ON clubdeckel_artikel_preis_history(id)")
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_artikel_preis_termin "
+                "ON clubdeckel_artikel_preis (artikel_id, termin_id) "
+                "WHERE termin_id IS NOT NULL AND deleted_at IS NULL")
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_artikel_preis_basis "
+                "ON clubdeckel_artikel_preis (artikel_id) "
+                "WHERE termin_id IS NULL AND deleted_at IS NULL")
+            for spalte, ziel in (("deckel_id", "clubdeckel(id)"),
+                                 ("termin_id", "termine(id)")):
+                name = f"fk_clubdeckel_artikel_preis_{spalte.split('_')[0]}"
+                cur.execute(f"ALTER TABLE clubdeckel_artikel_preis "
+                            f"DROP CONSTRAINT IF EXISTS {name}")
+                cur.execute(f"ALTER TABLE clubdeckel_artikel_preis ADD CONSTRAINT {name} "
+                            f"FOREIGN KEY ({spalte}) REFERENCES {ziel}")
+            # Basisstand je Artikel aus dem heutigen Preis (idempotent über den
+            # partiellen Unique-Index auf termin_id IS NULL).
+            cur.execute(
+                """
+                INSERT INTO clubdeckel_artikel_preis
+                    (deckel_id, artikel_id, termin_id, preis, created_by, updated_by)
+                SELECT a.deckel_id, a.id, NULL, a.preis, 'migration_v98', 'migration_v98'
+                FROM clubdeckel_artikel a
+                WHERE a.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clubdeckel_artikel_preis p
+                      WHERE p.artikel_id = a.id AND p.termin_id IS NULL
+                        AND p.deleted_at IS NULL)
+                """
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 99 WHERE id = 1")
+
+    def _migrate_v99_to_v100(self) -> None:
+        """Sortiments-Stände hängen an der GRUPPE, nicht am einzelnen Artikel (#167).
+
+        v98 band Preise je Artikel an einen Termin. Das griff zu kurz: Zwischen
+        zwei Spieltagen ändert sich nicht nur der Preis, sondern auch die
+        Bezeichnung und vor allem der VERKÄUFER — und der hängt an der Gruppe,
+        nicht am Artikel. Ein Artikel-Preisstand konnte davon nichts wissen.
+
+        Deshalb wird die Gruppe zum Stand: `stamm_id` bündelt alle Generationen
+        derselben Gruppe, `gilt_ab_termin_id` sagt, ab welchem Spieltag eine
+        Generation gilt (NULL = von Anfang an). Eine Änderung am Sortiment legt
+        eine neue Generation samt Artikelkopien an; ältere Termine sehen weiter
+        ihren Stand. Damit stimmen Nachbuchungen bei Preis, Bezeichnung UND
+        Verkäufer, statt nur beim Preis.
+
+        clubdeckel_artikel_preis entfällt ersatzlos. Ihr Inhalt war nach v98 genau
+        ein Basisstand je Artikel mit dem aktuellen Preis — dieselbe Aussage, die
+        `clubdeckel_artikel.preis` ohnehin trägt. Es geht also nichts verloren.
+        """
+        with self.cursor() as cur:
+            for spalte in ("stamm_id", "gilt_ab_termin_id"):
+                for tbl in ("clubdeckel_gruppe", "clubdeckel_gruppe_history"):
+                    cur.execute(f"ALTER TABLE {tbl} "
+                                f"ADD COLUMN IF NOT EXISTS {spalte} INTEGER")
+            # Jede vorhandene Gruppe ist ihre eigene erste Generation und gilt
+            # von Anfang an — rückwirkend gab es keine Stände, die wir kennen.
+            cur.execute("UPDATE clubdeckel_gruppe SET stamm_id = id WHERE stamm_id IS NULL")
+            cur.execute("UPDATE clubdeckel_gruppe_history SET stamm_id = id "
+                        "WHERE stamm_id IS NULL")
+            for fn_sql in (_FN_CLUBDECKEL_GRUPPE_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_GRUPPE_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            for name, target in _CLUBDECKEL_INDEXES:
+                if name in ("idx_clubdeckel_gruppe_stamm_id",
+                            "idx_clubdeckel_gruppe_gilt_ab"):
+                    cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            for sql in _CLUBDECKEL_GRUPPE_STAND_FKS:
+                cur.execute(sql)
+            # Die Artikel-Preisstände aus v99 sind damit gegenstandslos.
+            cur.execute("DROP TABLE IF EXISTS clubdeckel_artikel_preis")
+            cur.execute("DROP TABLE IF EXISTS clubdeckel_artikel_preis_history")
+            for fn in ("fn_clubdeckel_artikel_preis_audit_insert",
+                       "fn_clubdeckel_artikel_preis_audit_update"):
+                cur.execute(f"DROP FUNCTION IF EXISTS {fn}()")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 100 WHERE id = 1")
+
+    def _migrate_v100_to_v101(self) -> None:
+        """Artikel, die nur der Wart bucht (#167): clubdeckel_artikel.nur_wart.
+
+        Nicht alles im Katalog gehört an den Tresen. „Wäsche" trägt nach dem
+        Spiel der Wart für die ein, die mitgemacht haben — als Selbstbedienung
+        stünde der Posten dort nur im Weg und wäre falsch klickbar. Solche
+        Artikel bleiben im Sortiment (Preis, Stand, Verkäufer wie immer), sind
+        aber am Tresen unsichtbar und tauchen nur in der Buchen-Matrix auf.
+
+        Bestand bekommt 0: Was bisher im Katalog stand, stand auch am Tresen.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE clubdeckel_artikel "
+                        "ADD COLUMN IF NOT EXISTS nur_wart INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE clubdeckel_artikel_history "
+                        "ADD COLUMN IF NOT EXISTS nur_wart INTEGER")
+            # Audit-Funktionen kennen die Spaltenliste als f-String — ohne das
+            # Neuanlegen schriebe der Trigger weiter ohne nur_wart.
+            for fn_sql in (_FN_CLUBDECKEL_ARTIKEL_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 101 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8568,6 +8879,14 @@ class Database:
         # DDL + FK auf termine.serie_id geteilt mit v69→v70.
         cur.execute(_DDL_TERMIN_SERIE)
         for sql in _TERMIN_SERIE_FK:
+            cur.execute(sql)
+        # Termin-Bezug der Teamkassen-Buchung (Schema v98, #167). Steht hier und
+        # nicht bei _DDL_CLUBDECKEL, weil erst jetzt beide Tabellen existieren.
+        # Geteilt mit Migration v97→v98.
+        for sql in _CLUBDECKEL_BUCHUNG_TERMIN_FK:
+            cur.execute(sql)
+        # Generationen der Artikel-Gruppen (Schema v100) — dito, geteilt mit v98→v99.
+        for sql in _CLUBDECKEL_GRUPPE_STAND_FKS:
             cur.execute(sql)
         # Spielstätten (Schema v80) + Pflichtfeld am Termin/an der Serie.
         # Die Platzhalter müssen VOR der ALTER-Sequenz stehen, die den Altbestand

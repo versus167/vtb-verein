@@ -13,7 +13,12 @@ Vorstands-Einblick): Stufen je Deckel sind mitglied < wart < verwalten.
                Beitragsbefreiungen; impliziert Wart-Rechte.
 
 Einzige Ausnahme ist der app-weite Admin-Durchgriff (role == 'admin') als
-Notfall-Fallback. Konsum bucht immer für das EIGENE Kader-Mitglied.
+Notfall-Fallback. Konsum bucht standardmäßig für das EIGENE Kader-Mitglied; ein
+Wart bucht mit `mitglied_id` auch für andere (Tresendienst, #167).
+
+Jede Konsum-Buchung wird dem gerade laufenden Termin der Mannschaft zugeordnet
+(#167). Darüber laufen die Matrix (Gitter Mitglied × Artikel, Vorbild
+consumptions.php des Club-Tresors) und die Tages-/Termin-Auswertung.
 
 Buchungsmodell: Saldo je Mitglied = SUM(betrag), Team-Saldo = −Σ Mitglieder.
 Konsum negativ (bei Mitglieds-Verkäufer mit 'verkauf'-Gegenzeile als Nullsummen-
@@ -22,8 +27,9 @@ Nullsummen-Paar, Monatsbeitrag automatisch beim Zugriff nachgebucht (Befreiungen
 pro Mitglied; Storno eines Beitrags heißt „erlassen").
 """
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -62,6 +68,11 @@ class GruppeWrite(BaseModel):
     verkaeufer_mitglied_id: Optional[int] = None   # None = das Team verkauft
     aktiv: bool = True
     sortierung: int = 0
+    # Ab welchem Spieltag der Stand gilt (#167, v100). None = ab dem aktuellen
+    # Termin (bzw. von Anfang an, wenn die Mannschaft noch keinen hat).
+    ab_termin_id: Optional[int] = None
+    # Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen.
+    bestand_uebernehmen: bool = False
 
 
 class GruppeUpdate(GruppeWrite):
@@ -74,6 +85,12 @@ class ArtikelWrite(BaseModel):
     gruppe_id: Optional[int] = None
     aktiv: bool = True
     sortierung: int = 0
+    # Nicht am Tresen, nur in der Buchen-Matrix des Warts (#167) — z. B. „Wäsche".
+    nur_wart: bool = False
+    # Ab welchem Spieltag der Stand gilt (#167, v100). None = ab dem aktuellen.
+    ab_termin_id: Optional[int] = None
+    # Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen.
+    bestand_uebernehmen: bool = False
 
 
 class ArtikelUpdate(ArtikelWrite):
@@ -83,6 +100,9 @@ class ArtikelUpdate(ArtikelWrite):
 class KonsumCreate(BaseModel):
     artikel_id: int
     menge: int = 1
+    mitglied_id: Optional[int] = None    # Fremdbuchung durch den Wart (#167)
+    termin_id: Optional[int] = None      # explizit statt automatisch
+    ohne_termin: bool = False            # bewusst keinem Termin zuordnen
 
 
 class ZahlungCreate(BaseModel):
@@ -179,6 +199,45 @@ def _mitglied_am_deckel(db: DB, deckel, mitglied_id: int) -> bool:
     return db.clubdeckel_buchungen.saldo_for_mitglied(deckel.id, mitglied_id) != 0
 
 
+_TYP_LABEL = {'training': 'Training', 'spiel': 'Spiel', 'sonstiges': 'Termin'}
+
+
+def _termin_label(termin) -> str:
+    """Kurzer Anzeigename („Spiel 16.08. 15:00 · SV X"). Beim Spiel steht der
+    Gegner dabei — daran erkennt man den Abend wieder, nicht an der Uhrzeit."""
+    kopf = _TYP_LABEL.get(termin.typ, 'Termin')
+    try:
+        wann = datetime.fromisoformat(termin.beginn).strftime('%d.%m. %H:%M')
+    except ValueError:
+        wann = termin.beginn
+    teile = [f"{kopf} {wann}"]
+    if termin.typ == 'spiel' and termin.gegner:
+        teile.append(termin.gegner)
+    return ' · '.join(teile)
+
+
+def _termin_fuer_buchung(db: DB, deckel, termin_id: Optional[int],
+                         ohne_termin: bool) -> Optional[int]:
+    """Welchem Termin gehört diese Buchung (#167)?
+
+    Rangfolge: explizite Wahl > ausdrückliches „ohne" > der gerade laufende
+    Termin. Die Automatik ist der Normalfall — am Tresen tippt niemand erst einen
+    Kalender durch —, das Nachbuchen für einen vergangenen Abend braucht die
+    explizite Wahl, und „ohne_termin" bleibt für den Fall, dass sich jemand
+    außerhalb des Betriebs bedient und das nicht dem Training angehängt haben will.
+    """
+    if termin_id is not None:
+        termin = db.termine.get(termin_id)
+        if termin is None or termin.mannschaft_id != deckel.mannschaft_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Termin gehört nicht zu dieser Mannschaft")
+        return termin.id
+    if ohne_termin:
+        return None
+    laufend = db.termine.get_laufenden(deckel.mannschaft_id)
+    return laufend.id if laufend else None
+
+
 def _beitragslauf(db: DB, deckel) -> None:
     """Lazy-Nachbuchung offener Monatsbeiträge beim Zugriff (nur aktiver Deckel
     mit konfiguriertem Beitrag)."""
@@ -251,20 +310,30 @@ def get_deckel(deckel_id: int, user: CurrentUser, db: DB):
     mein_mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
     mein_saldo = (db.clubdeckel_buchungen.saldo_for_mitglied(deckel_id, mein_mitglied_id)
                   if mein_mitglied_id else Decimal("0.00"))
-    stats = (db.clubdeckel_buchungen.konsum_24h(deckel_id, mein_mitglied_id)
-             if mein_mitglied_id else {'summe': Decimal("0.00"), 'anzahl': {}})
     salden = db.clubdeckel_buchungen.salden(deckel_id)
-    artikel = db.clubdeckel_artikel.list_for_deckel(deckel_id, nur_aktive=True)
+    # Laufender Termin: der Tresen zeigt ihn an, damit sichtbar ist, worauf der
+    # nächste Strich landet (#167) — und er bestimmt zugleich, welcher Stand des
+    # Sortiments angeboten wird UND worauf sich die Strichliste bezieht.
+    laufend = db.termine.get_laufenden(deckel.mannschaft_id)
+    termin_id = laufend.id if laufend else None
+    # Deckel des Termins statt eines 24-Stunden-Fensters: Was beim Training oder
+    # Spiel zusammenkam, ist die Frage — nicht, was in die letzten 24 Stunden fiel.
+    stats = (db.clubdeckel_buchungen.konsum_fuer_termin(
+                deckel_id, mein_mitglied_id, termin_id)
+             if mein_mitglied_id else {'summe': Decimal("0.00"), 'anzahl': {}})
+    _, artikel = _sortiment(db, deckel_id, termin_id, nur_tresen=True)
     for a in artikel:
-        a['mein_24h_anzahl'] = stats['anzahl'].get(a['id'], 0)
+        a['mein_termin_anzahl'] = stats['anzahl'].get(a['id'], 0)
     return {
         **asdict(deckel),
         "zugriff": stufe,
         "mein_mitglied_id": mein_mitglied_id,
         "mein_saldo": mein_saldo,
-        "mein_24h_summe": stats['summe'],
+        "mein_termin_summe": stats['summe'],
         "team_saldo": -sum((s['saldo'] for s in salden), Decimal("0.00")),
         "artikel": artikel,
+        "laufender_termin": ({"id": laufend.id, "label": _termin_label(laufend)}
+                             if laufend else None),
     }
 
 
@@ -322,9 +391,26 @@ def delete_deckel(deckel_id: int, user: CurrentUser, db: DB):
 
 # -------------------------------------------------------------------- Gruppen
 @router.get("/{deckel_id}/gruppen")
-def list_gruppen(deckel_id: int, user: CurrentUser, db: DB):
+def list_gruppen(deckel_id: int, user: CurrentUser, db: DB,
+                 termin_id: Optional[int] = None):
+    """Die gültigen Gruppen-Stände (#167, v100) — je Gruppe genau einer, nicht
+    alle Generationen. Ohne `termin_id` der heute gültige Stand. `gilt_ab_label`
+    macht im Katalog sichtbar, seit wann er greift."""
     _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    return [asdict(g) for g in db.clubdeckel_gruppen.list_for_deckel(deckel_id)]
+    gruppen = db.clubdeckel_gruppen.list_stand(deckel_id, termin_id)
+    # Welche Spieltage haben schon einen eigenen Stand? Der Katalog markiert sie
+    # im Zeitraum-Umschalter, damit sichtbar ist, wo etwas hinterlegt ist.
+    bekannt = db.clubdeckel_gruppen.stand_termine_je_stamm(deckel_id)
+    ergebnis = []
+    for g in gruppen:
+        d = asdict(g)
+        d['gilt_ab_label'] = (
+            'von Anfang an' if g.gilt_ab_termin_id is None
+            else _termin_label(db.termine.get(g.gilt_ab_termin_id)))
+        d['stand_termine'] = [t for t in bekannt.get(g.stamm_id or g.id, [])
+                              if t is not None]
+        ergebnis.append(d)
+    return ergebnis
 
 
 def _validate_gruppe(db: DB, deckel, data: GruppeWrite) -> str:
@@ -359,16 +445,52 @@ def _gruppe_im_deckel(db: DB, deckel_id: int, gruppe_id: int):
 @router.put("/{deckel_id}/gruppen/{gruppe_id}")
 def update_gruppe(deckel_id: int, gruppe_id: int, data: GruppeUpdate,
                   user: CurrentUser, db: DB):
+    """Sortiment ändern (#167, v100): Name, Verkäufer oder Aktiv-Status werden als
+    NEUER STAND ab einem Spieltag festgehalten (`ab_termin_id`; ohne Angabe ab dem
+    aktuellen Termin). Ältere Termine behalten ihren Stand, damit Nachbuchungen
+    den Verkäufer und die Preise von damals treffen."""
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    _gruppe_im_deckel(db, deckel_id, gruppe_id)
+    alt = _gruppe_im_deckel(db, deckel_id, gruppe_id)
     name = _validate_gruppe(db, deckel, data)
-    if not db.clubdeckel_gruppen.update(gruppe_id, name,
-                                        data.verkaeufer_mitglied_id,
-                                        1 if data.aktiv else 0, data.sortierung,
-                                        user.username, data.expected_version):
-        raise HTTPException(status.HTTP_409_CONFLICT,
-                            "Die Gruppe wurde zwischenzeitlich geändert")
-    return asdict(db.clubdeckel_gruppen.get(gruppe_id))
+    ab_termin = _stand_termin(db, deckel, data.ab_termin_id)
+    if ab_termin == alt.gilt_ab_termin_id:
+        # Derselbe Spieltag: den vorhandenen Stand bearbeiten, keine Generation.
+        if not db.clubdeckel_gruppen.update(gruppe_id, name,
+                                            data.verkaeufer_mitglied_id,
+                                            1 if data.aktiv else 0, data.sortierung,
+                                            user.username, data.expected_version):
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Die Gruppe wurde zwischenzeitlich geändert")
+        # Auch hier kann es etwas umzustellen geben: Ein geänderter VERKÄUFER
+        # verschiebt die Gegenbuchung, und die hängt an jedem einzelnen Strich.
+        umgestellt = (_bestand_uebernehmen(
+            db, deckel_id, ab_termin, _eigene_abbildung(db, gruppe_id),
+            user.username) if data.bestand_uebernehmen else 0)
+        return {**asdict(db.clubdeckel_gruppen.get(gruppe_id)),
+                "umgestellt": umgestellt}
+    ergebnis = db.clubdeckel_gruppen.neue_generation(
+        gruppe_id, ab_termin, name, data.verkaeufer_mitglied_id,
+        1 if data.aktiv else 0, data.sortierung, user.username)
+    if ergebnis is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Gruppe nicht gefunden")
+    neue_gruppe_id, abbildung = ergebnis
+    umgestellt = (_bestand_uebernehmen(db, deckel_id, ab_termin, abbildung,
+                                       user.username)
+                  if data.bestand_uebernehmen else 0)
+    return {**asdict(db.clubdeckel_gruppen.get(neue_gruppe_id)),
+            "umgestellt": umgestellt}
+
+
+@router.get("/{deckel_id}/gruppen/{gruppe_id}/staende")
+def list_gruppen_staende(deckel_id: int, gruppe_id: int,
+                         user: CurrentUser, db: DB):
+    """Die Stände einer Gruppe („ab welchem Spieltag galt was", #167)."""
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    gruppe = _gruppe_im_deckel(db, deckel_id, gruppe_id)
+    staende = db.clubdeckel_gruppen.list_generationen(gruppe.stamm_id or gruppe.id)
+    for s in staende:
+        s['gilt_ab_label'] = _stand_label(s)
+    return staende
 
 
 @router.delete("/{deckel_id}/gruppen/{gruppe_id}")
@@ -385,11 +507,48 @@ def delete_gruppe(deckel_id: int, gruppe_id: int, user: CurrentUser, db: DB):
 
 
 # -------------------------------------------------------------------- Artikel
+def _stand_label(stand: dict) -> str:
+    """„gilt ab"-Text eines Sortiments-Standes (#167): der Spieltag, ab dem er
+    greift. Ohne Termin gilt der Stand von Anfang an."""
+    if stand.get('gilt_ab_termin_id') is None:
+        return 'von Anfang an'
+    return _termin_label(SimpleNamespace(
+        typ=stand['termin_typ'], beginn=stand['termin_beginn'],
+        gegner=stand['termin_gegner']))
+
+
+def _sortiment(db: DB, deckel_id: int, termin_id: Optional[int] = None,
+               nur_aktive: bool = True,
+               nur_tresen: bool = False) -> tuple[list, list[dict]]:
+    """Das Sortiment zu einem Ziel-Termin (#167, v100): die gültigen
+    Gruppen-Stände und deren Artikel. Einzige Quelle für Tresen, Katalog,
+    Matrix und Buchung — damit können Anzeige und Buchung nicht auseinanderlaufen.
+
+    `nur_tresen` blendet die Wart-Artikel aus (#167): Posten wie „Wäsche" trägt
+    nach dem Spiel der Wart für die Beteiligten ein; in der Selbstbedienung
+    stünden sie nur im Weg. Sie bleiben Teil des Sortiments — Matrix, Katalog
+    und die Gültigkeitsprüfung beim Buchen sehen sie weiterhin.
+    """
+    gruppen = db.clubdeckel_gruppen.list_stand(deckel_id, termin_id)
+    if nur_aktive:
+        gruppen = [g for g in gruppen if g.aktiv]
+    artikel = db.clubdeckel_artikel.list_fuer_gruppen(
+        [g.id for g in gruppen], nur_aktive=nur_aktive)
+    if nur_tresen:
+        artikel = [a for a in artikel if not a['nur_wart']]
+    return gruppen, artikel
+
+
 @router.get("/{deckel_id}/artikel")
-def list_artikel(deckel_id: int, user: CurrentUser, db: DB, alle: bool = False):
-    """Katalog: standardmäßig nur aktive Artikel (aktive Gruppen); alle ab Wart."""
+def list_artikel(deckel_id: int, user: CurrentUser, db: DB, alle: bool = False,
+                 termin_id: Optional[int] = None):
+    """Katalog: standardmäßig nur aktive Artikel (aktive Gruppen); alle ab Wart.
+    Geliefert wird das Sortiment des Ziel-Termins (#167) — ohne Angabe der heute
+    gültige Stand."""
     _deckel_mit_stufe(db, user, deckel_id, 'wart' if alle else 'mitglied')
-    return db.clubdeckel_artikel.list_for_deckel(deckel_id, nur_aktive=not alle)
+    _, artikel = _sortiment(db, deckel_id, termin_id, nur_aktive=not alle,
+                            nur_tresen=not alle)
+    return artikel
 
 
 def _validate_artikel(db: DB, deckel_id: int, data: ArtikelWrite) -> tuple[str, Decimal]:
@@ -405,13 +564,110 @@ def _validate_artikel(db: DB, deckel_id: int, data: ArtikelWrite) -> tuple[str, 
     return name, preis
 
 
+def _stand_termin(db: DB, deckel, ab_termin_id: Optional[int]) -> Optional[int]:
+    """Ab welchem Spieltag ein Sortiments-Stand gilt (#167). Ohne Angabe ab dem
+    aktuellen Termin; hat die Mannschaft noch gar keinen, gilt der Stand von
+    Anfang an (None) — eine andere Lesart gäbe es dann nicht."""
+    if ab_termin_id is None:
+        laufend = db.termine.get_laufenden(deckel.mannschaft_id)
+        return laufend.id if laufend else None
+    termin = db.termine.get(ab_termin_id)
+    if termin is None or termin.mannschaft_id != deckel.mannschaft_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Termin gehört nicht zu dieser Mannschaft")
+    return termin.id
+
+
+def _eigene_abbildung(db: DB, gruppe_id: int) -> dict:
+    """Artikel einer Gruppe auf sich selbst abgebildet — für das Umstellen an
+    einem BESTEHENDEN Stand, wo keine Kopien entstehen."""
+    return {a['id']: a['id']
+            for a in db.clubdeckel_artikel.list_fuer_gruppen([gruppe_id])}
+
+
+# Reihenfolge der Matrix-Zeilen nach Zusage: zugesagt zuerst, abgesagt zuletzt.
+# `sort` ist stabil, die alphabetische Sortierung bleibt innerhalb der Gruppen
+# also erhalten.
+_ZUSAGE_RANG = {'zu': 0, 'vielleicht': 1, None: 1, 'ab': 2}
+
+
+def _matrix_kader(db: DB, deckel, termin_id: Optional[int]) -> list[dict]:
+    """Zeilen der Buchen-Matrix: der Kader samt Zusage zum Termin (#167).
+
+    Mit Termin kommt der Kader vom TERMIN-Datum statt von heute — bei einem
+    länger zurückliegenden Spiel stand eine andere Mannschaft auf dem Platz.
+    Ohne Termin (reiner Zeitraum über die API) bleibt es beim heutigen Kader.
+    """
+    if termin_id is None:
+        return _kader_liste(db, deckel)
+    return db.termin_zusagen.list_kader_with_zusage(termin_id)
+
+
+def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
+                         abbildung: dict, benutzer: str) -> int:
+    """Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen (#167).
+
+    Umgesetzt als STORNO + Neubuchung gegen den neuen Artikel, nicht als
+    Betrags-Korrektur. Grund: Am Stand hängt nicht nur der Preis, sondern auch
+    die Bezeichnung und der VERKÄUFER — und der entscheidet, ob eine
+    'verkauf'-Gegenzeile existiert und bei wem. Diese Paarung von Hand
+    umzuschreiben hieße, die Buchungslogik ein zweites Mal zu bauen; über
+    create_konsum entsteht sie garantiert richtig. Der Vorgang bleibt über die
+    stornierten Zeilen nachvollziehbar, und die Ersatzbuchung übernimmt die
+    Uhrzeit der ursprünglichen.
+
+    Artikel, die es im neuen Stand nicht mehr gibt (gelöscht), stehen NICHT in
+    der Abbildung — ihre Buchungen bleiben unangetastet. Etwas anderes ginge
+    auch nicht: Man kann einen Strich nicht auf ein Produkt umbuchen, das es
+    nicht mehr gibt.
+    """
+    if termin_id is None or not abbildung:
+        return 0
+    alte = db.clubdeckel_buchungen.konsum_je_artikel(
+        deckel_id, termin_id, list(abbildung.keys()))
+    umgestellt = 0
+    for b in alte:
+        neu_id = abbildung.get(b['artikel_id'])
+        if neu_id is None:
+            continue
+        # Kein Überspringen bei neu_id == alt: Wird ein BESTEHENDER Stand
+        # geändert (z. B. nur der Verkäufer), bleibt die Artikel-id dieselbe —
+        # die Buchung muss trotzdem neu entstehen, damit Gegenkonto und Paarung
+        # stimmen.
+        ziel = db.clubdeckel_artikel.get_mit_verkaeufer(neu_id)
+        if ziel is None:
+            continue
+        db.clubdeckel_buchungen.storno(b['id'], benutzer)
+        db.clubdeckel_buchungen.create_konsum(
+            deckel_id, b['mitglied_id'], ziel['id'], ziel['name'], b['menge'],
+            ziel['preis'], ziel['verkaeufer_mitglied_id'], benutzer,
+            termin_id=termin_id, wert_datum=str(b['created_at']))
+        umgestellt += 1
+    return umgestellt
+
+
+@router.get("/{deckel_id}/sortiment-status")
+def sortiment_status(deckel_id: int, user: CurrentUser, db: DB,
+                     termin_id: Optional[int] = None):
+    """Wurde bei diesem Spieltag schon gebucht (#167)? Der Katalog fragt das,
+    bevor er einen Stand ändert — die Rückfrage „bestehende Striche umstellen?"
+    soll nur kommen, wenn es wirklich etwas umzustellen gibt."""
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    if termin_id is None:
+        return {"buchungen": 0, "betrag": Decimal("0.00")}
+    return db.clubdeckel_buchungen.zaehle_konsum_fuer_termin(deckel_id, termin_id)
+
+
 @router.post("/{deckel_id}/artikel", status_code=status.HTTP_201_CREATED)
 def create_artikel(deckel_id: int, data: ArtikelWrite, user: CurrentUser, db: DB):
+    """Neuer Artikel — er entsteht im Stand seiner Gruppe. Ältere Stände bleiben
+    unberührt, der Artikel taucht dort also gar nicht auf; das ist richtig, denn
+    es gab ihn damals nicht."""
     _deckel_mit_stufe(db, user, deckel_id, 'wart')
     name, preis = _validate_artikel(db, deckel_id, data)
     artikel = db.clubdeckel_artikel.create(
         deckel_id, data.gruppe_id, name, preis, 1 if data.aktiv else 0,
-        data.sortierung, user.username)
+        data.sortierung, user.username, nur_wart=1 if data.nur_wart else 0)
     return asdict(artikel)
 
 
@@ -426,15 +682,45 @@ def _artikel_im_deckel(db: DB, deckel_id: int, artikel_id: int):
 @router.put("/{deckel_id}/artikel/{artikel_id}")
 def update_artikel(deckel_id: int, artikel_id: int, data: ArtikelUpdate,
                    user: CurrentUser, db: DB):
-    _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    _artikel_im_deckel(db, deckel_id, artikel_id)
+    """Artikel ändern (#167, v100). Preis und Bezeichnung gehören zum STAND der
+    Gruppe: Zielt die Änderung auf einen anderen Spieltag als den, ab dem der
+    aktuelle Stand gilt, entsteht eine neue Generation der Gruppe (Kopie samt
+    Artikeln), und geändert wird die Kopie. Ältere Termine behalten damit Preis,
+    Bezeichnung UND Verkäufer von damals."""
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    alt = _artikel_im_deckel(db, deckel_id, artikel_id)
     name, preis = _validate_artikel(db, deckel_id, data)
-    if not db.clubdeckel_artikel.update(artikel_id, data.gruppe_id, name, preis,
+    gruppe = _gruppe_im_deckel(db, deckel_id, alt.gruppe_id) if alt.gruppe_id else None
+    ab_termin = _stand_termin(db, deckel, data.ab_termin_id)
+    ziel_id, erwartete_version = artikel_id, data.expected_version
+    abbildung: dict = {}
+    if gruppe is not None and ab_termin != gruppe.gilt_ab_termin_id:
+        ergebnis = db.clubdeckel_gruppen.neue_generation(
+            gruppe.id, ab_termin, gruppe.name, gruppe.verkaeufer_mitglied_id,
+            gruppe.aktiv, gruppe.sortierung, user.username)
+        if ergebnis is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Gruppe nicht gefunden")
+        neue_gruppe_id, abbildung = ergebnis
+        ziel_id = abbildung.get(artikel_id, artikel_id)
+        # Die Kopie ist frisch (version 1) — die Version des Originals passt nicht.
+        erwartete_version = db.clubdeckel_artikel.get(ziel_id).version
+        data = data.model_copy(update={"gruppe_id": neue_gruppe_id})
+    if not db.clubdeckel_artikel.update(ziel_id, data.gruppe_id, name, preis,
                                         1 if data.aktiv else 0, data.sortierung,
-                                        user.username, data.expected_version):
+                                        user.username, erwartete_version,
+                                        nur_wart=1 if data.nur_wart else 0):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Der Artikel wurde zwischenzeitlich geändert")
-    return asdict(db.clubdeckel_artikel.get(artikel_id))
+    # Ohne neue Generation (Änderung an einem bestehenden Stand) betrifft das
+    # Umstellen nur diesen einen Artikel — auf sich selbst abgebildet.
+    if not abbildung:
+        abbildung = {artikel_id: artikel_id}
+    # Erst NACH dem Ändern umstellen: Sonst würden die Striche auf den noch
+    # unveränderten Artikel umgebucht und trügen weiter den alten Preis.
+    umgestellt = (_bestand_uebernehmen(db, deckel_id, ab_termin, abbildung,
+                                       user.username)
+                  if data.bestand_uebernehmen else 0)
+    return {**asdict(db.clubdeckel_artikel.get(ziel_id)), "umgestellt": umgestellt}
 
 
 @router.delete("/{deckel_id}/artikel/{artikel_id}")
@@ -453,13 +739,9 @@ def list_warte(deckel_id: int, user: CurrentUser, db: DB):
     return db.clubdeckel_berechtigungen.list_for_deckel(deckel_id)
 
 
-@router.get("/{deckel_id}/kader")
-def list_kader_kandidaten(deckel_id: int, user: CurrentUser, db: DB):
-    """Aktiver Kader als Kandidaten für Wart-Ernennung, Verkäufer-Auswahl,
-    Zahlungs-/Einkaufsziele und Zahlungsempfänger."""
-    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    warte = {w['mitglied_id'] for w in
-             db.clubdeckel_berechtigungen.list_for_deckel(deckel_id)}
+def _kader_liste(db: DB, deckel, warte: Optional[set] = None) -> list[dict]:
+    """Aktiver Kader der Mannschaft als Namensliste — gemeinsame Grundlage der
+    Kandidaten-Auswahl und der Matrix-Zeilen (#167)."""
     heute = date.today().isoformat()
     kandidaten: dict[int, dict] = {}
     for zuordnung in db.list_mannschaft_kader(deckel.mannschaft_id):
@@ -471,11 +753,21 @@ def list_kader_kandidaten(deckel_id: int, user: CurrentUser, db: DB):
             "mitglied_id": zuordnung.mitglied_id,
             "name": f"{zuordnung.mitglied_vorname} {zuordnung.mitglied_nachname}",
             "rollen": [],
-            "ist_wart": zuordnung.mitglied_id in warte,
+            "ist_wart": zuordnung.mitglied_id in (warte or set()),
         })
         if zuordnung.rolle not in eintrag["rollen"]:
             eintrag["rollen"].append(zuordnung.rolle)
     return sorted(kandidaten.values(), key=lambda k: k["name"].lower())
+
+
+@router.get("/{deckel_id}/kader")
+def list_kader_kandidaten(deckel_id: int, user: CurrentUser, db: DB):
+    """Aktiver Kader als Kandidaten für Wart-Ernennung, Verkäufer-Auswahl,
+    Zahlungs-/Einkaufsziele und Zahlungsempfänger."""
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    warte = {w['mitglied_id'] for w in
+             db.clubdeckel_berechtigungen.list_for_deckel(deckel_id)}
+    return _kader_liste(db, deckel, warte)
 
 
 @router.put("/{deckel_id}/warte/{mitglied_id}")
@@ -522,12 +814,38 @@ def revoke_befreiung(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB
 
 
 # ------------------------------------------------------------------ Buchungen
+def _ziel_mitglied(db: DB, user, deckel, stufe: str,
+                   ziel_mitglied_id: Optional[int]) -> int:
+    """Auf wen wird gebucht bzw. storniert (#167)?
+
+    Ohne Angabe auf das eigene Kader-Mitglied — der Selbstbedienungs-Fall, der
+    ohne Wart-Rechte auskommt. Mit Angabe auf ein anderes Mitglied; das ist der
+    Tresendienst und deshalb ab Wart. Die eigene id ausdrücklich mitzuschicken
+    (die Matrix tut das für jede Zeile) bleibt erlaubt, auch ohne Wart-Rechte.
+    """
+    eigenes = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
+    if ziel_mitglied_id is None or ziel_mitglied_id == eigenes:
+        if eigenes is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "Du stehst nicht im aktiven Kader dieser Mannschaft")
+        return eigenes
+    if _STUFEN_RANG[stufe] < _STUFEN_RANG['wart']:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Nur Warte dürfen für andere Mitglieder buchen")
+    if not _mitglied_am_deckel(db, deckel, ziel_mitglied_id):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Mitglied gehört nicht zu dieser Teamkasse")
+    return ziel_mitglied_id
+
+
 @router.post("/{deckel_id}/konsum", status_code=status.HTTP_201_CREATED)
 def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
-    """Tap-Buchung: bucht IMMER für das eigene Kader-Mitglied (auch Admins
-    brauchen dafür eine aktive Kader-Zugehörigkeit). Verkauft die Artikel-Gruppe
-    über ein Mitglied, bekommt dieses die 'verkauf'-Gegenzeile."""
-    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
+    """Tap-Buchung. Ohne `mitglied_id` bucht sie für das eigene Kader-Mitglied
+    (auch Admins brauchen dafür eine aktive Kader-Zugehörigkeit); mit
+    `mitglied_id` bucht ein WART für ein anderes Mitglied (#167, Tresendienst).
+    Verkauft die Artikel-Gruppe über ein Mitglied, bekommt dieses die
+    'verkauf'-Gegenzeile. Die Buchung wird dem laufenden Termin zugeordnet."""
+    deckel, stufe = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
     _require_aktiv(deckel)
     if not 1 <= data.menge <= 99:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -540,30 +858,50 @@ def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
                                     artikel['gruppe_aktiv'] is not None else 1):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Dieser Artikel ist nicht mehr im Angebot")
-    mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
-    if mitglied_id is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Du stehst nicht im aktiven Kader dieser Mannschaft")
+    # Wart-Artikel steht nicht am Tresen (#167) — die Schranke hängt deshalb an
+    # der STUFE, nicht am Ziel: Auch für sich selbst darf ihn nur ein Wart
+    # buchen, sonst käme man über die eigene id doch an den Posten heran.
+    if artikel['nur_wart'] and _STUFEN_RANG[stufe] < _STUFEN_RANG['wart']:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Diesen Artikel bucht nur der Wart")
+    mitglied_id = _ziel_mitglied(db, user, deckel, stufe, data.mitglied_id)
+    termin_id = _termin_fuer_buchung(db, deckel, data.termin_id, data.ohne_termin)
+    # Der Artikel MUSS aus dem Sortiments-Stand des Ziel-Termins stammen (#167,
+    # v99). Sonst bekäme ein für ein altes Spiel nachgetragener Strich Preis,
+    # Bezeichnung und Verkäufer von heute. Statt still den passenden Artikel zu
+    # raten, sagen wir es: Die Oberfläche zeigt immer den Stand des gewählten
+    # Ausschnitts und schickt damit ohnehin die richtige id — ein Treffer hier
+    # heißt, dass die Seite veraltet ist.
+    gueltige = {a['id'] for a in _sortiment(db, deckel_id, termin_id)[1]}
+    if artikel['id'] not in gueltige:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Das Sortiment dieses Termins sieht anders aus — "
+                            "bitte die Ansicht neu laden")
     buchung = db.clubdeckel_buchungen.create_konsum(
         deckel_id, mitglied_id, artikel['id'], artikel['name'], data.menge,
-        artikel['preis'], artikel['verkaeufer_mitglied_id'], user.username)
+        artikel['preis'], artikel['verkaeufer_mitglied_id'], user.username,
+        termin_id=termin_id)
     return asdict(buchung)
 
 
 @router.delete("/{deckel_id}/konsum/{artikel_id}")
-def undo_konsum(deckel_id: int, artikel_id: int, user: CurrentUser, db: DB):
-    """Nimmt den letzten eigenen Konsum-Strich dieses Artikels zurück
-    (Undo-Zone am Tresen-Button). Storniert die jüngste eigene Konsum-Buchung."""
-    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
-    mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
-    if mitglied_id is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Du stehst nicht im aktiven Kader dieser Mannschaft")
+def undo_konsum(deckel_id: int, artikel_id: int, user: CurrentUser, db: DB,
+                mitglied_id: Optional[int] = None,
+                von: Optional[str] = None, bis: Optional[str] = None,
+                termin_id: Optional[int] = None):
+    """Nimmt den letzten Konsum-Strich dieses Artikels zurück (Undo-Zone am
+    Tresen-Button, „−" in der Matrix). Ohne `mitglied_id` trifft es die eigene
+    jüngste Buchung; mit `mitglied_id` die eines anderen Mitglieds — das darf
+    erst ab Wart. von/bis/termin_id grenzen auf den angezeigten Ausschnitt ein,
+    damit das „−" genau den Strich trifft, den die Zelle zählt (#167)."""
+    deckel, stufe = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
+    ziel = _ziel_mitglied(db, user, deckel, stufe, mitglied_id)
     buchung_id = db.clubdeckel_buchungen.letzte_konsum_id(
-        deckel_id, mitglied_id, artikel_id)
+        deckel_id, ziel, artikel_id,
+        von=_parse_datum(von), bis=_parse_datum(bis), termin_id=termin_id)
     if buchung_id is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            "Keine eigene Buchung dieses Artikels zum Zurücknehmen")
+                            "Keine Buchung dieses Artikels zum Zurücknehmen")
     db.clubdeckel_buchungen.storno(buchung_id, user.username)
     return {"status": "storniert"}
 
@@ -573,24 +911,128 @@ def list_buchungen(deckel_id: int, user: CurrentUser, db: DB,
                    alle: bool = False, limit: int = 50,
                    mit_storniert: bool = False,
                    mitglied_id: Optional[int] = None,
-                   suche: Optional[str] = None):
+                   suche: Optional[str] = None,
+                   von: Optional[str] = None, bis: Optional[str] = None,
+                   termin_id: Optional[int] = None):
     """Eigene Buchungen; mit ?alle=1 (ab Wart) alle Buchungen des Deckels.
     ?mit_storniert=1 blendet in der Wart-History auch stornierte Zeilen ein (#127),
     ?mitglied_id=N filtert die Wart-History auf ein Mitglied und ?suche=…
-    volltextig über den Buchungstext (#129)."""
+    volltextig über den Buchungstext (#129). ?von/?bis (ISO) bzw. ?termin_id
+    schneiden den Tag- oder Termin-Ausschnitt heraus (#167)."""
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart' if alle else 'mitglied')
     limit = max(1, min(limit, 500))
+    zeitraum = {"von": _parse_datum(von), "bis": _parse_datum(bis),
+                "termin_id": termin_id}
     if alle:
         buchungen = db.clubdeckel_buchungen.list_for_deckel(
             deckel_id, mitglied_id=mitglied_id, limit=limit,
-            mit_storniert=mit_storniert, suche=(suche or '').strip() or None)
+            mit_storniert=mit_storniert, suche=(suche or '').strip() or None,
+            **zeitraum)
     else:
         mitglied_id = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
         if mitglied_id is None:
             return []
         buchungen = db.clubdeckel_buchungen.list_for_deckel(
-            deckel_id, mitglied_id=mitglied_id, limit=limit)
+            deckel_id, mitglied_id=mitglied_id, limit=limit, **zeitraum)
     return [asdict(b) for b in buchungen]
+
+
+# ------------------------------------------------------- Termine & Matrix (#167)
+@router.get("/{deckel_id}/termine")
+def list_termine(deckel_id: int, user: CurrentUser, db: DB,
+                 tage_zurueck: int = 365, tage_voraus: int = 365):
+    """Termine der Mannschaft für die Auswahl in Matrix, Auswertung und
+    Preisstand, plus die Kennzeichnung des aktuellen.
+
+    Das Fenster reicht in BEIDE Richtungen: rückwärts fürs Nachbuchen („was war
+    beim Spiel letzte Woche?"), vorwärts für Preisstände — ein Wart setzt einen
+    Preis typischerweise „ab dem nächsten Heimspiel", und das liegt in der
+    Zukunft.
+    """
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
+    heute = date.today()
+    termine = db.termine.list_for_mannschaft(
+        deckel.mannschaft_id,
+        von=(heute - timedelta(days=max(1, min(tage_zurueck, 1095)))).isoformat(),
+        bis=(heute + timedelta(days=max(1, min(tage_voraus, 1095)))).isoformat())
+    laufend = db.termine.get_laufenden(deckel.mannschaft_id)
+    laufend_id = laufend.id if laufend else None
+    # Der Termin, auf den man sich vorbereitet — Vorgabe für den Katalog. Nicht
+    # derselbe wie `laufend`: Buchungen gehören nach dem Abpfiff noch zum Spiel,
+    # die Speisekarte pflegt man dagegen fürs nächste Ereignis.
+    naechster = db.termine.get_naechsten(deckel.mannschaft_id)
+    return {
+        "laufend_id": laufend_id,
+        "naechster_id": naechster.id if naechster else None,
+        "termine": [
+            {"id": t.id, "typ": t.typ, "beginn": t.beginn, "ende": t.ende,
+             "gegner": t.gegner, "status": t.status,
+             "label": _termin_label(t), "laufend": t.id == laufend_id}
+            for t in reversed(termine)
+        ],
+    }
+
+
+@router.get("/{deckel_id}/matrix")
+def get_matrix(deckel_id: int, user: CurrentUser, db: DB,
+               von: Optional[str] = None, bis: Optional[str] = None,
+               termin_id: Optional[int] = None):
+    """Konsum-Gitter Mitglied × Artikel für einen Zeitraum oder Termin (#167).
+
+    Zeilen sind der aktive Kader, ergänzt um alle, die im Ausschnitt gebucht
+    haben — sonst verschwände die Buchung eines inzwischen ausgetretenen
+    Spielers aus dem Gitter, obwohl sie in den Summen steckt.
+    """
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    if termin_id is not None:
+        termin = db.termine.get(termin_id)
+        if termin is None or termin.mannschaft_id != deckel.mannschaft_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                "Termin gehört nicht zu dieser Mannschaft")
+    daten = db.clubdeckel_buchungen.matrix(
+        deckel_id, von=_parse_datum(von), bis=_parse_datum(bis),
+        termin_id=termin_id)
+    gebucht = {m['mitglied_id']: m for m in daten['je_mitglied']}
+    zeilen = []
+    for k in _matrix_kader(db, deckel, termin_id):
+        eintrag = gebucht.pop(k['mitglied_id'], None)
+        zeilen.append({"mitglied_id": k['mitglied_id'], "name": k['name'],
+                       "im_kader": True, "antwort": k.get('antwort'),
+                       "anzahl": eintrag['anzahl'] if eintrag else 0,
+                       "betrag": eintrag['betrag'] if eintrag else Decimal("0.00")})
+    # Zusagen zuerst: Der Wart sucht am Tresen die Leute, die da sind — und
+    # sieht auf einen Blick, wer von ihnen noch nichts gebucht hat. Abgesagte
+    # rutschen ans Ende, offene dazwischen.
+    zeilen.sort(key=lambda z: _ZUSAGE_RANG.get(z['antwort'], 1))
+    for rest in sorted(gebucht.values(), key=lambda x: x['mitglied_name'].lower()):
+        zeilen.append({"mitglied_id": rest['mitglied_id'],
+                       "name": rest['mitglied_name'], "im_kader": False,
+                       "antwort": None,
+                       "anzahl": rest['anzahl'], "betrag": rest['betrag']})
+    # Spalten: das Sortiment des Ausschnitts (Preis, Bezeichnung und Verkäufer
+    # also aus dem Stand dieses Spieltags) PLUS jeder Artikel, der im Ausschnitt
+    # Umsatz hat. Ohne den Zusatz fiele ein Artikel aus einem anderen Stand aus
+    # der Aufschlüsselung, steckte aber weiter in der Gesamtsumme — die Summen
+    # gingen dann sichtbar nicht auf.
+    _, artikel = _sortiment(db, deckel_id, termin_id)
+    bekannt = {a['id'] for a in artikel}
+    for a in artikel:
+        a['ausser_dienst'] = False
+    for weiterer in db.clubdeckel_artikel.list_fuer_ids(
+            deckel_id, [aid for aid in daten['je_artikel'] if aid not in bekannt]):
+        weiterer['ausser_dienst'] = True
+        artikel.append(weiterer)
+    for a in artikel:
+        summe = daten['je_artikel'].get(a['id'])
+        a['summe_anzahl'] = summe['anzahl'] if summe else 0
+        a['summe_betrag'] = summe['betrag'] if summe else Decimal("0.00")
+    return {
+        "von": von, "bis": bis, "termin_id": termin_id,
+        "artikel": artikel,
+        "mitglieder": zeilen,
+        "zellen": daten['zellen'],
+        "gesamt": daten['gesamt'],
+    }
 
 
 @router.get("/{deckel_id}/salden")

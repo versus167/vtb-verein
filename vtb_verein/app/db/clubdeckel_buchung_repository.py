@@ -16,6 +16,10 @@ Zeilen, Team-Saldo = −Σ Mitgliedssalden. Konventionen:
             — Storno heißt „erlassen", nicht „bitte nochmal").
 
 Storno einer Paar-Zeile löscht immer das ganze Paar.
+
+termin_id (#167) hält fest, bei welchem Termin gebucht wurde. Sie ist rein
+beschreibend — auf Salden und Nullsummen wirkt sie nicht, dient aber als Filter
+für Matrix und Tages-/Termin-Auswertung.
 """
 import uuid
 from datetime import date
@@ -26,9 +30,18 @@ from app.models.clubdeckel import ClubdeckelBuchung
 from app.db.base_repository import BaseRepository
 
 _COLS = ("id, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-         "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, version, "
-         "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
+         "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, termin_id, "
+         "version, created_at, created_by, updated_at, updated_by, "
+         "deleted_at, deleted_by")
 _B_COLS = ", ".join("b." + c.strip() for c in _COLS.split(","))
+
+# Anzeigetext eines Termins („Spiel 16.08. 15:00") – als Snapshot NICHT nötig, der
+# Termin lebt weiter; deshalb per JOIN aufgelöst statt eingefroren wie artikel_name.
+_TERMIN_LABEL = (
+    "CASE WHEN t.id IS NULL THEN NULL ELSE "
+    "  initcap(t.typ) || ' ' || to_char("
+    "    to_timestamp(t.beginn, 'YYYY-MM-DD\"T\"HH24:MI'), 'DD.MM. HH24:MI') END"
+)
 
 
 def _map(row) -> ClubdeckelBuchung:
@@ -66,23 +79,35 @@ class ClubdeckelBuchungRepository(BaseRepository):
     def list_for_deckel(self, deckel_id: int, mitglied_id: Optional[int] = None,
                         limit: Optional[int] = None,
                         mit_storniert: bool = False,
-                        suche: Optional[str] = None) -> list[ClubdeckelBuchung]:
+                        suche: Optional[str] = None,
+                        von: Optional[str] = None, bis: Optional[str] = None,
+                        termin_id: Optional[int] = None) -> list[ClubdeckelBuchung]:
         """Buchungen, neueste zuerst — optional nur die eines Mitglieds.
         mit_storniert=True nimmt auch soft-gelöschte Zeilen mit (deleted_at
         gesetzt); die History kann sie dann optional einblenden (#127).
         suche filtert volltextig (ILIKE) über Mitgliedsname, Typ, die
         eingefrorenen Artikel-/Gegenkonto-Bezeichnungen, Notiz und
-        Beitragsmonat (#129)."""
+        Beitragsmonat (#129).
+        von/bis (ISO-Zeitstempel) und termin_id grenzen den Tag- bzw.
+        Termin-Ausschnitt ein (#167); termin_id sticht das Zeitfenster."""
         filt = "" if mit_storniert else " AND b.deleted_at IS NULL"
         with self.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT {_B_COLS},
-                       m.vorname || ' ' || m.nachname AS mitglied_name
+                       m.vorname || ' ' || m.nachname AS mitglied_name,
+                       {_TERMIN_LABEL} AS termin_label
                 FROM clubdeckel_buchung b
                 JOIN mitglied m ON m.id = b.mitglied_id
+                LEFT JOIN termine t ON t.id = b.termin_id
                 WHERE b.deckel_id = %(did)s{filt}
                   AND (%(mid)s::int IS NULL OR b.mitglied_id = %(mid)s)
+                  AND (%(tid)s::int IS NULL OR b.termin_id = %(tid)s)
+                  AND (%(tid)s::int IS NOT NULL
+                       OR ((%(von)s::timestamptz IS NULL
+                            OR b.created_at >= %(von)s::timestamptz)
+                       AND (%(bis)s::timestamptz IS NULL
+                            OR b.created_at < %(bis)s::timestamptz)))
                   AND (%(q)s::text IS NULL OR concat_ws(' ',
                        m.vorname, m.nachname, b.typ, b.artikel_name,
                        b.gegen_name, b.notiz, b.beitrag_monat)
@@ -90,17 +115,96 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 ORDER BY b.created_at DESC, b.id DESC
                 LIMIT %(lim)s
                 """,
-                {"did": deckel_id, "mid": mitglied_id, "lim": limit, "q": suche},
+                {"did": deckel_id, "mid": mitglied_id, "lim": limit, "q": suche,
+                 "von": von, "bis": bis, "tid": termin_id},
             )
             return [_map(r) for r in cur.fetchall()]
+
+    def matrix(self, deckel_id: int, von: Optional[str] = None,
+               bis: Optional[str] = None,
+               termin_id: Optional[int] = None) -> dict:
+        """Konsum-Gitter Mitglied × Artikel für einen Zeitraum oder einen Termin
+        (#167, Vorbild consumptions.php des Club-Tresors).
+
+        Liefert die Zellen (Menge + Betrag je Paar) sowie die Randsummen je
+        Artikel und je Mitglied und die Gesamtsumme — alles aus EINEM Aggregat,
+        damit Matrix und Tages-/Termin-Auswertung nie auseinanderlaufen können.
+        Beträge sind hier positive Verbrauchswerte (−betrag), weil das Gitter
+        „was wurde konsumiert" zeigt und kein Saldo ist.
+
+        Gezählt wird nur typ='konsum': 'verkauf' ist die Gegenzeile desselben
+        Vorgangs (sonst stünde jedes Bier doppelt im Gitter), und Zahlungen,
+        Ein-/Verkäufe und Beiträge sind kein Tresenverbrauch.
+
+        termin_id sticht das Zeitfenster: „was lief beim Spiel" ist eine andere
+        Frage als „was lief zwischen 14 und 18 Uhr".
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT b.mitglied_id, b.artikel_id,
+                       m.vorname || ' ' || m.nachname AS mitglied_name,
+                       COALESCE(SUM(b.menge), 0) AS anzahl,
+                       COALESCE(SUM(-b.betrag), 0) AS betrag
+                FROM clubdeckel_buchung b
+                JOIN mitglied m ON m.id = b.mitglied_id
+                WHERE b.deckel_id = %(did)s AND b.deleted_at IS NULL
+                  AND b.typ = 'konsum'
+                  AND (%(tid)s::int IS NULL OR b.termin_id = %(tid)s)
+                  AND (%(tid)s::int IS NOT NULL
+                       OR ((%(von)s::timestamptz IS NULL
+                            OR b.created_at >= %(von)s::timestamptz)
+                       AND (%(bis)s::timestamptz IS NULL
+                            OR b.created_at < %(bis)s::timestamptz)))
+                GROUP BY b.mitglied_id, b.artikel_id, m.vorname, m.nachname
+                """,
+                {"did": deckel_id, "von": von, "bis": bis, "tid": termin_id},
+            )
+            rows = cur.fetchall()
+        zellen: dict[str, dict] = {}
+        je_artikel: dict[int, dict] = {}
+        je_mitglied: dict[int, dict] = {}
+        gesamt = Decimal('0')
+        for r in rows:
+            anzahl, betrag = int(r['anzahl']), r['betrag']
+            gesamt += betrag
+            mid, aid = r['mitglied_id'], r['artikel_id']
+            m = je_mitglied.setdefault(mid, {
+                "mitglied_id": mid, "mitglied_name": r['mitglied_name'],
+                "anzahl": 0, "betrag": Decimal('0')})
+            m['anzahl'] += anzahl
+            m['betrag'] += betrag
+            if aid is None:
+                # Artikel hart gelöscht (Prune) – zählt in die Mitglieds- und
+                # Gesamtsumme, hat aber keine Spalte mehr.
+                continue
+            zellen[f"{mid}:{aid}"] = {"anzahl": anzahl, "betrag": betrag}
+            a = je_artikel.setdefault(aid, {
+                "artikel_id": aid, "anzahl": 0, "betrag": Decimal('0')})
+            a['anzahl'] += anzahl
+            a['betrag'] += betrag
+        return {
+            "zellen": zellen,
+            "je_artikel": je_artikel,
+            "je_mitglied": sorted(je_mitglied.values(),
+                                  key=lambda x: x['mitglied_name'].lower()),
+            "gesamt": gesamt,
+        }
 
     # ---------------------------------------------------------------- buchen
     def create_konsum(self, deckel_id: int, mitglied_id: int, artikel_id: int,
                       artikel_name: str, menge: int, preis: Decimal,
                       verkaeufer_mitglied_id: Optional[int],
-                      created_by: str) -> ClubdeckelBuchung:
+                      created_by: str,
+                      termin_id: Optional[int] = None,
+                      wert_datum: Optional[str] = None) -> ClubdeckelBuchung:
         """Kauf eines Artikels durch ein Mitglied. Verkauft ein MITGLIED
-        (Gruppen-Verkäufer), wird die 'verkauf'-Gegenzeile mitgebucht."""
+        (Gruppen-Verkäufer), wird die 'verkauf'-Gegenzeile mitgebucht.
+        termin_id landet auf BEIDEN Zeilen des Paares (#167) — sonst hinge die
+        Gegenzeile an keinem Termin und die Termin-Auswertung wäre unvollständig.
+        wert_datum (ISO) setzt bei Bedarf den Buchungszeitpunkt: Beim Umstellen
+        auf einen neuen Sortiments-Stand behält die Ersatzbuchung die Uhrzeit der
+        ursprünglichen, sonst rutschte der Strich in der Tagesansicht nach vorn."""
         betrag = preis * menge
         paar_ref = uuid.uuid4().hex if verkaeufer_mitglied_id else None
         with self.cursor() as cur:
@@ -108,12 +212,14 @@ class ClubdeckelBuchungRepository(BaseRepository):
             cur.execute(
                 "INSERT INTO clubdeckel_buchung "
                 "(deckel_id, mitglied_id, artikel_id, typ, menge, betrag, paar_ref, "
-                " artikel_name, gegen_name, created_by, updated_by) "
+                " artikel_name, gegen_name, termin_id, created_at, created_by, updated_by) "
                 "VALUES (%s,%s,%s,'konsum',%s,%s,%s,%s,"
                 " COALESCE((SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
-                "          'Team'), %s,%s) RETURNING id",
+                "          'Team'), %s,"
+                " COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s,%s) RETURNING id",
                 (deckel_id, mitglied_id, artikel_id, menge, -betrag, paar_ref,
-                 artikel_name, verkaeufer_mitglied_id, created_by, created_by),
+                 artikel_name, verkaeufer_mitglied_id, termin_id, wert_datum,
+                 created_by, created_by),
             )
             new_id = cur.fetchone()['id']
             if verkaeufer_mitglied_id:
@@ -121,14 +227,51 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 cur.execute(
                     "INSERT INTO clubdeckel_buchung "
                     "(deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
-                    " paar_ref, artikel_name, gegen_name, created_by, updated_by) "
+                    " paar_ref, artikel_name, gegen_name, termin_id, "
+                    " created_at, created_by, updated_by) "
                     "VALUES (%s,%s,%s,'verkauf',%s,%s,%s,%s,"
                     " (SELECT vorname||' '||nachname FROM mitglied WHERE id=%s),"
-                    " %s,%s)",
+                    " %s, COALESCE(%s::timestamptz, CURRENT_TIMESTAMP), %s,%s)",
                     (deckel_id, verkaeufer_mitglied_id, artikel_id, menge, betrag,
-                     paar_ref, artikel_name, mitglied_id, created_by, created_by),
+                     paar_ref, artikel_name, mitglied_id, termin_id, wert_datum,
+                     created_by, created_by),
                 )
         return self.get(new_id)
+
+    def konsum_je_artikel(self, deckel_id: int, termin_id: int,
+                          artikel_ids: list[int]) -> list[dict]:
+        """Aktive Konsum-Buchungen eines Termins zu bestimmten Artikeln — die
+        Grundlage fürs Umstellen auf einen neuen Sortiments-Stand (#167).
+
+        Nur die 'konsum'-Zeilen: Die 'verkauf'-Gegenzeilen hängen über paar_ref
+        daran und werden vom Storno ohnehin mitgenommen.
+        """
+        if not artikel_ids:
+            return []
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT id, mitglied_id, artikel_id, menge, created_at "
+                "FROM clubdeckel_buchung "
+                "WHERE deckel_id = %s AND termin_id = %s AND typ = 'konsum' "
+                "  AND deleted_at IS NULL AND artikel_id = ANY(%s) "
+                "ORDER BY created_at, id",
+                (deckel_id, termin_id, list(artikel_ids)),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def zaehle_konsum_fuer_termin(self, deckel_id: int, termin_id: int) -> dict:
+        """Wie viel wurde bei diesem Termin schon gebucht? Der Katalog fragt das,
+        bevor er einen Stand ändert — sonst wüsste niemand, dass es überhaupt
+        etwas umzustellen gibt."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS anzahl, COALESCE(SUM(-betrag), 0) AS betrag "
+                "FROM clubdeckel_buchung "
+                "WHERE deckel_id = %s AND termin_id = %s AND typ = 'konsum' "
+                "  AND deleted_at IS NULL",
+                (deckel_id, termin_id),
+            )
+            return dict(cur.fetchone())
 
     def create_einkauf(self, deckel_id: int, mitglied_id: int, betrag: Decimal,
                        notiz: Optional[str], created_by: str) -> ClubdeckelBuchung:
@@ -345,11 +488,22 @@ class ClubdeckelBuchungRepository(BaseRepository):
             )
             return cur.fetchone()['saldo']
 
-    # ------------------------------------------------------ 24h-Strichliste
-    def konsum_24h(self, deckel_id: int, mitglied_id: int) -> dict:
-        """Eigene Konsum-Buchungen der letzten 24 Stunden — für die Strichliste
-        je Artikel (Menge) und die „24h-Deckel"-Kachel (verbrauchte Summe,
-        positiv). Liefert {'summe': Decimal, 'anzahl': {artikel_id: int}}."""
+    # ------------------------------------------------- Strichliste am Termin
+    def konsum_fuer_termin(self, deckel_id: int, mitglied_id: int,
+                           termin_id: Optional[int]) -> dict:
+        """Eigener Konsum BEI DIESEM TERMIN — für die Strichliste je Artikel
+        (Menge) und die Deckel-Kachel am Tresen (verbrauchte Summe, positiv).
+
+        Löst das frühere 24-Stunden-Fenster ab (#167): Der Deckel eines Abends
+        ist das, was beim Training oder Spiel zusammenkam, nicht was zufällig in
+        die letzten 24 Stunden fiel — ein Zeitfenster schnitt lange Abende
+        auseinander und zog den Vortag mit hinein. Ohne Termin gibt es folglich
+        auch keine Strichliste.
+
+        Liefert {'summe': Decimal, 'anzahl': {artikel_id: int}}.
+        """
+        if termin_id is None:
+            return {'summe': Decimal('0'), 'anzahl': {}}
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -358,11 +512,10 @@ class ClubdeckelBuchungRepository(BaseRepository):
                        COALESCE(SUM(-betrag), 0) AS summe
                 FROM clubdeckel_buchung
                 WHERE deckel_id = %s AND mitglied_id = %s AND typ = 'konsum'
-                  AND deleted_at IS NULL
-                  AND created_at >= now() - interval '24 hours'
+                  AND deleted_at IS NULL AND termin_id = %s
                 GROUP BY artikel_id
                 """,
-                (deckel_id, mitglied_id),
+                (deckel_id, mitglied_id, termin_id),
             )
             rows = cur.fetchall()
         anzahl: dict[int, int] = {}
@@ -373,19 +526,33 @@ class ClubdeckelBuchungRepository(BaseRepository):
             summe += r['summe']
         return {'summe': summe, 'anzahl': anzahl}
 
-    def letzte_konsum_id(self, deckel_id: int, mitglied_id: int,
-                         artikel_id: int) -> Optional[int]:
-        """id der jüngsten eigenen aktiven Konsum-Buchung dieses Artikels
-        (für „letzten Strich zurücknehmen")."""
+    def letzte_konsum_id(self, deckel_id: int, mitglied_id: int, artikel_id: int,
+                         von: Optional[str] = None, bis: Optional[str] = None,
+                         termin_id: Optional[int] = None) -> Optional[int]:
+        """id der jüngsten aktiven Konsum-Buchung dieses Mitglieds für diesen
+        Artikel (für „letzten Strich zurücknehmen").
+
+        von/bis/termin_id grenzen auf den gerade angezeigten Ausschnitt ein
+        (#167): Das „−" in einer Matrix-Zelle muss genau den Strich treffen, den
+        die Zelle zählt — sonst nähme man beim Nachbuchen für ein altes Spiel
+        versehentlich den Strich von heute Abend zurück."""
         with self.cursor() as cur:
             cur.execute(
                 """
                 SELECT id FROM clubdeckel_buchung
-                WHERE deckel_id = %s AND mitglied_id = %s AND artikel_id = %s
+                WHERE deckel_id = %(did)s AND mitglied_id = %(mid)s
+                  AND artikel_id = %(aid)s
                   AND typ = 'konsum' AND deleted_at IS NULL
+                  AND (%(tid)s::int IS NULL OR termin_id = %(tid)s)
+                  AND (%(tid)s::int IS NOT NULL
+                       OR ((%(von)s::timestamptz IS NULL
+                            OR created_at >= %(von)s::timestamptz)
+                       AND (%(bis)s::timestamptz IS NULL
+                            OR created_at < %(bis)s::timestamptz)))
                 ORDER BY created_at DESC, id DESC LIMIT 1
                 """,
-                (deckel_id, mitglied_id, artikel_id),
+                {"did": deckel_id, "mid": mitglied_id, "aid": artikel_id,
+                 "von": von, "bis": bis, "tid": termin_id},
             )
             row = cur.fetchone()
             return row['id'] if row else None

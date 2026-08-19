@@ -73,18 +73,25 @@
       <!-- Tab-Reihe: nur Tresen/Salden/Katalog in der Pille; die Verwaltung liegt
            hinter dem Zahnrad rechts — spart Platz und passt am Handy (#126). -->
       <div class="row items-center no-wrap q-mb-md">
-        <q-tabs v-model="tab" align="left" class="vtb-tabs" no-caps
-          :inline-label="$q.screen.gt.xs">
-          <q-tab name="tresen" icon="sports_bar" label="Tresen" />
-          <!-- intern weiter 'salden'; Nutzer-Label „Tabelle" (#128) -->
-          <q-tab name="salden" icon="leaderboard" label="Tabelle" />
-          <q-tab v-if="istWart" name="katalog" icon="menu_book" label="Katalog" />
-        </q-tabs>
-        <q-space />
+        <!-- Mit den Wart-Reitern wird die Pille am Handy breiter als der Schirm.
+             Sie scrollt deshalb in ihrem eigenen Behälter (#167) — die q-page
+             selbst darf nie waagerecht scrollen. -->
+        <div class="tt-tabs-scroll col">
+          <q-tabs v-model="tab" align="left" class="vtb-tabs" no-caps
+            :inline-label="$q.screen.gt.xs">
+            <q-tab name="tresen" icon="sports_bar" label="Tresen" />
+            <!-- Fremdbuchung + Termin-Auswertung am Tresen (#167) -->
+            <q-tab v-if="istWart" name="buchen" icon="grid_on" label="Buchen" />
+            <q-tab v-if="istWart" name="termin" icon="event_note" label="Termin" />
+            <!-- intern weiter 'salden'; Nutzer-Label „Tabelle" (#128) -->
+            <q-tab name="salden" icon="leaderboard" label="Tabelle" />
+            <q-tab v-if="istWart" name="katalog" icon="menu_book" label="Katalog" />
+          </q-tabs>
+        </div>
         <q-btn v-if="istWart" round :flat="tab !== 'verwalten'"
           :unelevated="tab === 'verwalten'"
           :color="tab === 'verwalten' ? 'primary' : undefined"
-          icon="settings" @click="tab = 'verwalten'">
+          icon="settings" class="q-ml-sm" @click="tab = 'verwalten'">
           <q-tooltip>Verwaltung</q-tooltip>
         </q-btn>
       </div>
@@ -96,6 +103,14 @@
           selbst buchen.
         </div>
 
+        <!-- Worauf der nächste Strich landet (#167). Ohne laufenden Termin steht
+             hier nichts — eine Zeile „kein Termin" wäre nur Rauschen. -->
+        <div v-if="deckel.laufender_termin" class="row items-center q-gutter-xs q-mb-sm
+          text-caption text-grey">
+          <q-icon name="event_available" size="16px" />
+          <span>gebucht auf: {{ deckel.laufender_termin.label }}</span>
+        </div>
+
         <template v-for="g in tresenGruppen" :key="g.name">
           <div class="text-subtitle2 q-mt-sm q-mb-xs">
             {{ g.name }}
@@ -104,15 +119,15 @@
           </div>
           <div v-for="a in g.artikel" :key="a.id"
             class="tt-tresen-row row no-wrap items-stretch q-mb-sm">
-            <!-- Tap = 1× buchen; darunter die 24h-Strichliste -->
+            <!-- Tap = 1× buchen; darunter die Strichliste DIESES Termins -->
             <q-btn class="tt-tresen-btn col" unelevated no-caps color="primary" align="left"
               :disable="!deckel.aktiv || deckel.mein_mitglied_id == null || saving"
               @click="bucheKonsum(a)">
               <div class="full-width row items-center no-wrap">
                 <div class="col text-left">
                   <div class="text-weight-bold tt-tresen-name">{{ a.name }}</div>
-                  <div v-if="a.mein_24h_anzahl" class="tt-tally row items-center no-wrap q-mt-xs">
-                    <svg v-for="(k, i) in tallyBundles(a.mein_24h_anzahl)" :key="i"
+                  <div v-if="a.mein_termin_anzahl" class="tt-tally row items-center no-wrap q-mt-xs">
+                    <svg v-for="(k, i) in tallyBundles(a.mein_termin_anzahl)" :key="i"
                       class="tt-tally-svg" width="24" height="20" viewBox="0 0 24 20">
                       <line v-for="s in Math.min(k, 4)" :key="s"
                         :x1="s * 4" y1="2" :x2="s * 4" y2="18" />
@@ -124,9 +139,9 @@
               </div>
             </q-btn>
             <!-- Undo-Zone: letzten eigenen Strich dieses Artikels zurücknehmen -->
-            <q-btn class="tt-tresen-del" flat :disable="!a.mein_24h_anzahl || saving"
+            <q-btn class="tt-tresen-del" flat :disable="!a.mein_termin_anzahl || saving"
               @click.stop="undoArtikel(a)">
-              <q-icon name="delete" :color="a.mein_24h_anzahl ? 'negative' : 'grey-5'" />
+              <q-icon name="delete" :color="a.mein_termin_anzahl ? 'negative' : 'grey-5'" />
               <q-tooltip>Letzten Strich zurücknehmen</q-tooltip>
             </q-btn>
           </div>
@@ -136,15 +151,19 @@
           „Katalog" an</template>.
         </div>
 
-        <!-- Kacheln: 24h-Deckel + mein Gesamtsaldo -->
+        <!-- Kacheln: mein Deckel BEI DIESEM TERMIN + mein Gesamtsaldo. Ohne
+             laufenden Termin gibt es keinen Termin-Deckel — dann steht der
+             Gesamtsaldo allein. -->
         <div v-if="deckel.mein_mitglied_id != null" class="row q-col-gutter-sm q-mt-md">
-          <div class="col-6">
+          <div v-if="deckel.laufender_termin" class="col-6">
             <q-card flat bordered class="text-center q-pa-sm">
-              <div class="text-overline text-grey">24h Deckel</div>
-              <div class="text-h6 text-positive">{{ fmtEuro(deckel.mein_24h_summe) }}</div>
+              <div class="text-overline text-grey ellipsis">
+                {{ deckel.laufender_termin.label }}
+              </div>
+              <div class="text-h6 text-positive">{{ fmtEuro(deckel.mein_termin_summe) }}</div>
             </q-card>
           </div>
-          <div class="col-6">
+          <div :class="deckel.laufender_termin ? 'col-6' : 'col-12'">
             <q-card flat bordered class="text-center q-pa-sm">
               <div class="text-overline text-grey">Gesamtsaldo</div>
               <div class="text-h6"
@@ -219,6 +238,193 @@
         </template>
       </div>
 
+      <!-- ============== Buchen: Matrix Mitglied × Artikel (Wart) ============== -->
+      <div v-if="tab === 'buchen' && istWart">
+        <!-- Nur Termin-Auswahl: Jede Buchung hängt an einem Termin, ein
+             Tages-Ausschnitt hätte hier nichts zu bestimmen. -->
+        <TerminWahl v-model="buchenTermin" :termine="termine"
+          :laufend-id="laufendTerminId" label="Buchen auf" />
+
+        <div v-if="!termine.length" class="text-grey q-mt-md">
+          Diese Mannschaft hat noch keine Termine — lege im Bereich „Termine"
+          einen an, dann kann hier gebucht werden.
+        </div>
+        <div v-else-if="!matrix" class="text-grey q-mt-md">Wird geladen …</div>
+        <template v-else-if="!matrix.artikel.length">
+          <div class="text-grey q-mt-md">
+            Noch keine Artikel im Katalog — lege sie im Tab „Katalog" an.
+          </div>
+        </template>
+        <template v-else>
+          <!-- Gitter scrollt in sich selbst; die erste Spalte bleibt stehen,
+               sonst weiß am Handy niemand mehr, wessen Zeile er antippt.
+               Die q-card gibt die Fläche vor — die klebende Spalte erbt sie und
+               ist damit in allen drei Themes richtig gefärbt. -->
+          <q-card flat bordered class="tt-matrix-karte q-mt-md">
+            <table class="tt-matrix">
+              <thead>
+                <tr>
+                  <th class="tt-matrix__name">Mitglied</th>
+                  <th v-for="a in matrix.artikel" :key="a.id">
+                    <div class="tt-matrix__artikel">
+                      <q-icon v-if="a.nur_wart" name="visibility_off" size="14px"
+                        class="q-mr-xs">
+                        <q-tooltip>Steht nicht am Tresen — nur hier buchbar</q-tooltip>
+                      </q-icon>{{ a.name }}
+                    </div>
+                    <div class="text-caption text-grey">
+                      {{ fmtEuro(a.preis) }}
+                      <q-icon v-if="a.ausser_dienst" name="history_toggle_off" size="14px">
+                        <q-tooltip>Nicht mehr im Angebot — nur noch alte Buchungen</q-tooltip>
+                      </q-icon>
+                    </div>
+                  </th>
+                </tr>
+                <tr class="tt-matrix__summen">
+                  <th class="tt-matrix__name">Σ Team</th>
+                  <th v-for="a in matrix.artikel" :key="a.id">
+                    <div class="text-weight-bold">{{ a.summe_anzahl }}</div>
+                    <div class="text-caption">{{ fmtEuro(a.summe_betrag) }}</div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Zugesagte stehen oben (#167): So findet der Wart die Leute,
+                     die da sind, und sieht, wer von ihnen noch nichts gebucht
+                     hat. Abgesagte sind gedämpft und stehen unten. -->
+                <tr v-for="m in matrix.mitglieder" :key="m.mitglied_id"
+                  :class="{ 'tt-matrix__abgesagt': m.antwort === 'ab' }">
+                  <th class="tt-matrix__name">
+                    <div class="row items-center no-wrap">
+                      <q-icon v-if="m.antwort === 'zu'" name="check_circle"
+                        color="positive" size="14px" class="q-mr-xs">
+                        <q-tooltip>Hat für diesen Termin zugesagt</q-tooltip>
+                      </q-icon>
+                      <div class="ellipsis">{{ m.name }}</div>
+                    </div>
+                    <div class="text-caption text-grey">
+                      {{ fmtEuro(m.betrag) }}
+                      <span v-if="!m.im_kader"> · nicht im Kader</span>
+                      <span v-else-if="m.antwort === 'ab'"> · abgesagt</span>
+                    </div>
+                  </th>
+                  <td v-for="a in matrix.artikel" :key="a.id">
+                    <div class="row no-wrap items-center justify-center q-gutter-xs">
+                      <q-btn dense unelevated no-caps color="primary"
+                        class="tt-matrix__add"
+                        :disable="!buchenBuchbar || !deckel.aktiv || saving
+                                  || a.ausser_dienst"
+                        :label="String(zelle(m.mitglied_id, a.id).anzahl || 0)"
+                        @click="matrixBuchen(m, a)" />
+                      <q-btn dense flat round size="sm" icon="remove"
+                        :color="zelle(m.mitglied_id, a.id).anzahl ? 'negative' : 'grey-5'"
+                        :disable="!zelle(m.mitglied_id, a.id).anzahl || saving"
+                        @click="matrixZurueck(m, a)" />
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </q-card>
+
+          <q-card flat bordered class="text-center q-pa-sm q-mt-md">
+            <div class="text-overline text-grey">Summe im Ausschnitt</div>
+            <div class="text-h6">{{ fmtEuro(matrix.gesamt) }}</div>
+          </q-card>
+        </template>
+      </div>
+
+      <!-- ============== Termin: Auswertung (Wart) ============== -->
+      <div v-if="tab === 'termin' && istWart">
+        <TerminWahl v-model="auswTermin" :termine="termine"
+          :laufend-id="laufendTerminId" label="Auswertung für" />
+
+        <template v-if="auswMatrix">
+          <div class="row q-col-gutter-sm q-mt-md">
+            <div class="col-6">
+              <q-card flat bordered class="text-center q-pa-sm">
+                <div class="text-overline text-grey">Umsatz</div>
+                <div class="text-h6">{{ fmtEuro(auswMatrix.gesamt) }}</div>
+              </q-card>
+            </div>
+            <div class="col-6">
+              <q-card flat bordered class="text-center q-pa-sm">
+                <div class="text-overline text-grey">Buchungen</div>
+                <div class="text-h6">{{ auswBuchungen.length }}</div>
+              </q-card>
+            </div>
+          </div>
+
+          <div class="text-subtitle2 q-mt-lg q-mb-sm">Nach Artikel</div>
+          <q-list bordered separator class="rounded-borders">
+            <q-item v-for="a in auswArtikel" :key="a.id">
+              <q-item-section>
+                <q-item-label>
+                  {{ a.name }}
+                  <q-badge v-if="a.ausser_dienst" outline color="grey"
+                    label="nicht mehr im Angebot" class="q-ml-xs" />
+                </q-item-label>
+                <q-item-label caption>{{ a.summe_anzahl }}× à {{ fmtEuro(a.preis) }}</q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <span class="text-weight-bold">{{ fmtEuro(a.summe_betrag) }}</span>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="!auswArtikel.length" class="text-grey q-mt-sm">
+            In diesem Ausschnitt wurde nichts konsumiert.
+          </div>
+
+          <div class="text-subtitle2 q-mt-lg q-mb-sm">Nach Mitglied</div>
+          <q-list bordered separator class="rounded-borders">
+            <q-item v-for="m in auswMitglieder" :key="m.mitglied_id">
+              <q-item-section>
+                <q-item-label>{{ m.name }}</q-item-label>
+                <q-item-label caption>{{ m.anzahl }} Artikel</q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <span class="text-weight-bold">{{ fmtEuro(m.betrag) }}</span>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="!auswMitglieder.length" class="text-grey q-mt-sm">
+            Noch niemand hat hier gebucht.
+          </div>
+
+          <div class="text-subtitle2 q-mt-lg q-mb-sm">
+            Buchungen — zum Korrigieren
+          </div>
+          <q-list bordered separator class="rounded-borders">
+            <q-item v-for="b in auswBuchungen" :key="b.id"
+              :class="{ 'tt-storniert': b.deleted_at }">
+              <q-item-section>
+                <q-item-label>{{ b.mitglied_name }}: {{ buchungText(b) }}</q-item-label>
+                <q-item-label caption>{{ fmtDateTime(b.created_at) }}</q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row items-center q-gutter-sm">
+                  <span :class="[Number(b.betrag) < 0 ? 'text-negative' : 'text-positive',
+                                 b.deleted_at ? 'tt-durchgestrichen' : '']">
+                    {{ fmtEuro(b.betrag) }}
+                  </span>
+                  <q-btn v-if="!b.deleted_at" flat round dense size="sm" icon="undo"
+                    :disable="saving" @click="stornoImAusschnitt(b)">
+                    <q-tooltip>Buchung stornieren</q-tooltip>
+                  </q-btn>
+                  <q-btn v-else flat round dense size="sm" icon="restore"
+                    :disable="saving" @click="restoreImAusschnitt(b)">
+                    <q-tooltip>Storno zurücknehmen</q-tooltip>
+                  </q-btn>
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="!auswBuchungen.length" class="text-grey q-mt-sm">
+            Keine Buchungen in diesem Ausschnitt.
+          </div>
+        </template>
+      </div>
+
       <!-- ====================== Salden ====================== -->
       <div v-if="tab === 'salden'">
         <!-- Bestand der Teamkasse prominent — das ist der Kassenstand der
@@ -275,10 +481,37 @@
 
       <!-- ====================== Katalog (Wart) ====================== -->
       <div v-if="tab === 'katalog' && istWart">
-        <div class="row q-mb-md justify-end">
+        <!-- Zeitraum des KATALOGS (#167, v100): Er bestimmt, welche Speisekarte
+             hier steht — und worauf sich jede Änderung bezieht. Ein Umschalter
+             für alle Gruppen, damit man das Sortiment eines Events als Ganzes
+             vor sich hat. -->
+        <div class="row items-center q-gutter-sm q-mb-md">
+          <div class="row items-center no-wrap" style="min-width: 260px; max-width: 400px">
+            <q-btn flat round dense icon="chevron_left"
+              :disable="katalogZielId(-1) === null"
+              @click="waehleKatalogTermin(katalogZielId(-1))">
+              <q-tooltip>Vorheriger Spieltag</q-tooltip>
+            </q-btn>
+            <q-select :model-value="katalogTermin ?? null" :options="katalogTerminOptionen"
+              emit-value map-options dense outlined options-dense class="col"
+              label="Speisekarte für"
+              @update:model-value="waehleKatalogTermin" />
+            <q-btn flat round dense icon="chevron_right"
+              :disable="katalogZielId(1) === null"
+              @click="waehleKatalogTermin(katalogZielId(1))">
+              <q-tooltip>Nächster Spieltag</q-tooltip>
+            </q-btn>
+          </div>
+          <q-space />
           <q-btn outline color="primary" no-caps rounded icon="create_new_folder"
             label="Neue Gruppe" @click="openGruppeDialog()" />
         </div>
+        <q-banner v-if="katalogTermin" class="vtb-warnung q-mb-md" rounded dense>
+          <template #avatar><q-icon name="edit_calendar" size="22px" /></template>
+          Änderungen an Gruppen und Artikeln gelten
+          <b>ab {{ katalogTerminLabel }}</b> und für alle späteren Spieltage.
+          Frühere behalten ihren Stand.
+        </q-banner>
 
         <q-card v-for="g in katalogGruppen" :key="g.key" flat bordered
           class="tt-gruppe q-mb-md">
@@ -291,13 +524,19 @@
             <div v-else class="tt-gruppe__spacer" />
             <div class="text-weight-bold text-white ellipsis q-ml-xs">{{ g.name }}</div>
             <q-space />
-            <q-select v-if="g.gruppe" :model-value="g.gruppe.verkaeufer_mitglied_id"
-              :options="verkaeuferOptionen" emit-value map-options dense dark outlined
-              options-dense hide-bottom-space class="tt-verkaeufer" :disable="saving"
-              @update:model-value="v => setGruppeVerkaeufer(g.gruppe, v)" />
+            <div v-if="g.gruppe" class="text-caption text-white q-mr-sm ellipsis">
+              verkauft {{ g.gruppe.verkaeufer_name || 'das Team' }}
+              <span v-if="standUebernommen(g.gruppe)" class="tt-gruppe__erbe">
+                · Stand von {{ g.gruppe.gilt_ab_label }}
+                <q-tooltip>
+                  Für diesen Spieltag ist nichts Eigenes hinterlegt — es gilt der
+                  letzte frühere Stand. Eine Änderung legt hier einen neuen an.
+                </q-tooltip>
+              </span>
+            </div>
             <q-btn v-if="g.gruppe" flat round dense color="white" icon="edit"
-              @click="openGruppeDialog(g.gruppe)">
-              <q-tooltip>Gruppe umbenennen / Sortierung</q-tooltip>
+              @click="openGruppenStand(g.gruppe)">
+              <q-tooltip>Name/Verkäufer ab einem Spieltag ändern</q-tooltip>
             </q-btn>
             <q-btn v-if="g.gruppe" flat round dense color="white" icon="delete"
               @click="deleteGruppe(g.gruppe)">
@@ -310,19 +549,32 @@
           </div>
 
           <!-- Artikelzeilen: Schalter, Name (inline), Preis (inline), löschen -->
-          <div v-for="a in g.artikel" :key="a.id"
-            class="tt-artikel-row row items-center no-wrap q-px-sm q-py-xs q-gutter-sm">
-            <q-toggle :model-value="!!a.aktiv" color="primary" dense :disable="saving"
-              @update:model-value="v => toggleArtikelAktiv(a, v)">
-              <q-tooltip>{{ a.aktiv ? 'aktiv' : 'inaktiv' }}</q-tooltip>
-            </q-toggle>
-            <q-input :model-value="a.name" dense outlined class="col" :disable="saving"
-              @change="v => renameArtikel(a, v)" />
-            <q-input :model-value="fmtPreisInput(a.preis)" dense outlined
-              inputmode="decimal" class="tt-preis" input-class="text-right"
-              :disable="saving" @change="v => repriceArtikel(a, v)" />
-            <q-btn flat round dense color="negative" icon="delete"
-              :disable="saving" @click="deleteArtikel(a)" />
+          <div v-for="a in g.artikel" :key="a.id" class="tt-artikel">
+            <div class="tt-artikel-row row items-center no-wrap q-px-sm q-py-xs q-gutter-sm">
+              <q-toggle :model-value="!!a.aktiv" color="primary" dense :disable="saving"
+                @update:model-value="v => toggleArtikelAktivStand(a, v)">
+                <q-tooltip>{{ a.aktiv ? 'aktiv' : 'inaktiv' }}</q-tooltip>
+              </q-toggle>
+              <q-input :model-value="a.name" dense outlined class="col" :disable="saving"
+                @change="v => renameArtikelStand(a, v)" />
+              <q-input :model-value="fmtPreisInput(a.preis)" dense outlined
+                inputmode="decimal" class="tt-preis" input-class="text-right"
+                :disable="saving" @change="v => repriceArtikel(a, v)" />
+              <!-- Am Tresen sichtbar oder nur in der Buchen-Matrix des Warts?
+                   (#167) Posten wie „Wäsche" trägt der Wart nach dem Spiel für
+                   die Beteiligten ein — in der Selbstbedienung stünden sie im Weg. -->
+              <q-btn flat round dense :disable="saving"
+                :color="a.nur_wart ? 'primary' : 'grey-6'"
+                :icon="a.nur_wart ? 'visibility_off' : 'storefront'"
+                @click="toggleArtikelNurWart(a, !a.nur_wart)">
+                <q-tooltip>
+                  {{ a.nur_wart ? 'Nur der Wart bucht ihn — nicht am Tresen'
+                                : 'Am Tresen sichtbar' }}
+                </q-tooltip>
+              </q-btn>
+              <q-btn flat round dense color="negative" icon="delete"
+                :disable="saving" @click="deleteArtikel(a)" />
+            </div>
           </div>
           <div v-if="!g.artikel.length" class="q-px-sm q-py-sm text-caption text-grey">
             keine Artikel — über das <q-icon name="add" size="14px" /> oben hinzufügen
@@ -557,7 +809,9 @@
             map-options dense outlined label="Gruppe" />
           <q-input v-model.number="artikelForm.sortierung" label="Sortierung" dense outlined
             type="number" />
-          <q-toggle v-model="artikelForm.aktiv" label="Aktiv (am Tresen sichtbar)" />
+          <q-toggle v-model="artikelForm.aktiv" label="Aktiv (im Angebot)" />
+          <q-toggle v-model="artikelForm.nurWart"
+            label="Nur der Wart bucht ihn (nicht am Tresen)" />
           <div v-if="dialogError" class="text-negative text-caption">{{ dialogError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -635,6 +889,46 @@
       </q-card>
     </q-dialog>
 
+    <!-- Gruppe bearbeiten (#167, v100): Name und Verkäufer. Ab wann das gilt,
+         steht NICHT hier — das kommt aus dem Katalog-Zeitraum oben, damit es
+         für diese Angabe nur einen Ort gibt. -->
+    <q-dialog v-model="standDialog">
+      <q-card style="min-width: 340px; max-width: 480px">
+        <q-card-section class="text-subtitle1 text-weight-bold">
+          Gruppe „{{ standGruppe?.name }}"
+        </q-card-section>
+        <q-card-section class="column q-gutter-sm">
+          <q-input v-model="standForm.gruppeName" label="Name der Gruppe *" dense outlined />
+          <q-select v-model="standForm.verkaeufer" :options="verkaeuferOptionen"
+            emit-value map-options dense outlined options-dense label="Verkäufer" />
+          <div class="text-caption text-grey">
+            Gilt ab <b>{{ katalogTerminLabel }}</b> und für alle späteren Spieltage.
+          </div>
+          <div v-if="dialogError" class="text-negative text-caption">{{ dialogError }}</div>
+
+          <template v-if="standListe.length > 1">
+            <div class="text-subtitle2 q-mt-sm">Stände dieser Gruppe</div>
+            <q-list bordered separator class="rounded-borders">
+              <q-item v-for="st in standListe" :key="st.id">
+                <q-item-section>
+                  <q-item-label>{{ st.name }}</q-item-label>
+                  <q-item-label caption>
+                    gilt ab {{ st.gilt_ab_label }}
+                    · verkauft {{ st.verkaeufer_name || 'das Team' }}
+                  </q-item-label>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </template>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat no-caps label="Abbrechen" v-close-popup />
+          <q-btn color="primary" unelevated no-caps label="Speichern"
+            :loading="saving" @click="saveStand" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
   </q-page>
 </template>
 
@@ -646,6 +940,7 @@ import { useQuasar, copyToClipboard } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import TerminWahl from 'components/TeamkasseTerminWahl.vue'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -668,6 +963,26 @@ const katalog = ref([])
 const gruppen = ref([])
 const alleBuchungen = ref([])
 const stornosZeigen = ref(false)  // History: stornierte Buchungen einblenden (#127)
+
+// Termin-Zuordnung, Matrix und Auswertung (#167). Beide Reiter beziehen sich
+// auf einen TERMIN — einen Tages-Ausschnitt gibt es nicht mehr, weil jede
+// Buchung ohnehin an einem Termin hängt.
+const termine = ref([])
+const laufendTerminId = ref(null)
+const buchenTermin = ref(null)
+const auswTermin = ref(null)
+const matrix = ref(null)       // Tab „Buchen"
+const auswMatrix = ref(null)   // Tab „Termin"
+const auswBuchungen = ref([])
+// Sortiments-Stände je Gruppe (#167, v100)
+// Zeitraum des Katalogs. undefined = „noch nicht gewählt" (dann setzt
+// loadTermine die Vorgabe), null = „Aktuell", sonst die Termin-id.
+const katalogTermin = ref(undefined)
+const naechsterTerminId = ref(null)
+const standDialog = ref(false)
+const standGruppe = ref(null)
+const standForm = ref({ gruppeName: '', verkaeufer: null })
+const standListe = ref([])
 const historyMitglied = ref(null)  // History: auf ein Mitglied gefiltert (#129)
 const historySuche = ref('')       // History: Volltextsuche im Buchungstext (#129)
 const warte = ref([])
@@ -987,9 +1302,11 @@ async function loadSalden() {
 async function loadKatalog() {
   if (!deckel.value || !istWart.value) return
   try {
+    const params = { termin_id: katalogTermin.value || undefined }
     const [a, g] = await Promise.all([
-      api.get(`${BASE}/${deckel.value.id}/artikel`, { params: { alle: true } }),
-      api.get(`${BASE}/${deckel.value.id}/gruppen`),
+      api.get(`${BASE}/${deckel.value.id}/artikel`,
+        { params: { ...params, alle: true } }),
+      api.get(`${BASE}/${deckel.value.id}/gruppen`, { params }),
     ])
     katalog.value = a.data
     gruppen.value = g.data
@@ -1031,12 +1348,198 @@ async function loadKader() {
   } catch { kader.value = [] }
 }
 
+// ------------------------------------------- Termin, Matrix, Auswertung (#167)
+/** Query-Parameter des gewählten Ausschnitts. Ohne Termin gibt es nichts zu
+ *  zeigen — die Aufrufer laden dann gar nicht erst. */
+function terminParams(terminId) {
+  return terminId != null ? { termin_id: terminId } : null
+}
+
+/** Gebucht wird immer auf einen Termin — ohne gewählten Termin gibt es nichts,
+ *  dem der Strich zugeordnet werden könnte. */
+const buchenBuchbar = computed(() => buchenTermin.value != null)
+
+function zelle(mitgliedId, artikelId) {
+  return matrix.value?.zellen?.[`${mitgliedId}:${artikelId}`] || { anzahl: 0 }
+}
+
+// ------------------------------------------------ Zeitraum des Katalogs (#167)
+// Auswahl: „Aktuell" plus die Spieltage. Ein Punkt markiert die Spieltage, für
+// die schon ein eigener Stand hinterlegt ist.
+const katalogTerminOptionen = computed(() => {
+  const gepflegt = new Set(gruppen.value.flatMap(g => g.stand_termine || []))
+  return [
+    { label: 'Aktuell (Tresen)', value: null },
+    ...termine.value.map(t => ({
+      // ● = für diesen Spieltag ist schon ein eigener Stand hinterlegt
+      label: (gepflegt.has(t.id) ? `● ${t.label}` : t.label)
+        + (t.id === naechsterTerminId.value ? ' · nächstes' : ''),
+      value: t.id,
+    })),
+  ]
+})
+
+function waehleKatalogTermin(wert) {
+  katalogTermin.value = wert
+  loadKatalog()
+}
+
+/** Spieltage entlang der ZEITACHSE. Die Liste vom Backend kommt jüngste zuerst;
+ *  geblättert wird aber vorwärts/rückwärts in der Zeit. */
+const katalogIdsChrono = computed(() => [...termine.value]
+  .sort((a, b) => (a.beginn || '').localeCompare(b.beginn || ''))
+  .map(t => t.id))
+
+/** Ziel eines Schritts (−1 = vorheriger, +1 = nächster) oder null am Rand.
+ *  „Aktuell (Tresen)" ist kein Spieltag und liegt deshalb nirgends in der
+ *  Reihe: Von dort aus landet ein Schritt vorwärts auf dem nächsten Ereignis
+ *  — derselbe Bezugspunkt, mit dem der Katalog aufmacht — und einer zurück auf
+ *  dem davor. */
+function katalogZielId(schritt) {
+  const ids = katalogIdsChrono.value
+  const jetzt = ids.indexOf(katalogTermin.value ?? null)
+  const anker = ids.indexOf(naechsterTerminId.value)
+  const ziel = jetzt >= 0 ? jetzt + schritt
+    : anker >= 0 ? anker + (schritt > 0 ? 0 : -1)
+      : (schritt > 0 ? 0 : ids.length - 1)
+  return ziel >= 0 && ziel < ids.length ? ids[ziel] : null
+}
+
+const katalogTerminLabel = computed(() => {
+  if (!katalogTermin.value) return 'jetzt'
+  return termine.value.find(t => t.id === katalogTermin.value)?.label ?? 'dem Spieltag'
+})
+
+/** Zeigt diese Gruppe einen geerbten Stand? Dann ist für den gewählten Zeitraum
+ *  noch nichts Eigenes hinterlegt und eine Änderung legt hier einen neuen an. */
+function standUebernommen(gruppe) {
+  return !!katalogTermin.value
+    && gruppe.gilt_ab_termin_id !== katalogTermin.value
+}
+
+const auswArtikel = computed(() =>
+  (auswMatrix.value?.artikel || []).filter(a => a.summe_anzahl > 0))
+const auswMitglieder = computed(() =>
+  (auswMatrix.value?.mitglieder || []).filter(m => m.anzahl > 0))
+
+async function loadTermine() {
+  if (!deckel.value) return
+  try {
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/termine`)
+    termine.value = data.termine
+    laufendTerminId.value = data.laufend_id
+    naechsterTerminId.value = data.naechster_id
+    // Vorgabe des Katalogs: das nächste Ereignis. Geändert wird die Speisekarte
+    // in aller Regel kurz vor oder zu Beginn des Events — nicht rückwirkend.
+    if (katalogTermin.value === undefined) {
+      katalogTermin.value = data.naechster_id ?? null
+    }
+    // Vorbelegung ist der aktuelle Termin — derselbe, auf den auch der Tresen
+    // bucht. Ein Rückfall auf „den jüngsten aus der Liste" wäre falsch: Die
+    // Liste reicht in die Zukunft, und ein Strich landete dann auf einem Spiel,
+    // das noch gar nicht stattgefunden hat. Ohne laufenden Termin ist das
+    // nächste Ereignis die sinnvollste Vorgabe.
+    const vorgabe = data.laufend_id ?? data.naechster_id ?? data.termine[0]?.id ?? null
+    if (buchenTermin.value == null) buchenTermin.value = vorgabe
+    if (auswTermin.value == null) auswTermin.value = vorgabe
+  } catch { termine.value = []; laufendTerminId.value = null }
+}
+
+async function loadMatrix() {
+  if (!deckel.value || !istWart.value) return
+  const params = terminParams(buchenTermin.value)
+  if (!params) { matrix.value = null; return }
+  try {
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/matrix`, { params })
+    matrix.value = data
+  } catch { matrix.value = null }
+}
+
+async function loadAuswertung() {
+  if (!deckel.value || !istWart.value) return
+  const params = terminParams(auswTermin.value)
+  if (!params) { auswMatrix.value = null; auswBuchungen.value = []; return }
+  try {
+    const [m, b] = await Promise.all([
+      api.get(`${BASE}/${deckel.value.id}/matrix`, { params }),
+      api.get(`${BASE}/${deckel.value.id}/buchungen`,
+        { params: { ...params, alle: true, limit: 200, mit_storniert: true } }),
+    ])
+    auswMatrix.value = m.data
+    auswBuchungen.value = b.data
+  } catch { auswMatrix.value = null; auswBuchungen.value = [] }
+}
+
+async function matrixBuchen(mitglied, artikel) {
+  saving.value = true
+  try {
+    await api.post(`${BASE}/${deckel.value.id}/konsum`, {
+      artikel_id: artikel.id, menge: 1, mitglied_id: mitglied.mitglied_id,
+      // Immer ausdrücklich auf den gewählten Termin — im Buchen-Gitter gibt es
+      // keinen anderen Bezug.
+      termin_id: buchenTermin.value,
+    })
+    await Promise.all([loadMatrix(), loadDeckel()])
+  } catch (e) {
+    fehler(e, 'Buchung fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function matrixZurueck(mitglied, artikel) {
+  saving.value = true
+  try {
+    await api.delete(`${BASE}/${deckel.value.id}/konsum/${artikel.id}`,
+      { params: { mitglied_id: mitglied.mitglied_id,
+                  ...terminParams(buchenTermin.value) } })
+    await Promise.all([loadMatrix(), loadDeckel()])
+  } catch (e) {
+    fehler(e, 'Zurücknehmen fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function stornoImAusschnitt(buchung) {
+  saving.value = true
+  try {
+    await api.delete(`${BASE}/${deckel.value.id}/buchungen/${buchung.id}`)
+    await loadAuswertung()
+  } catch (e) {
+    fehler(e, 'Stornieren fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function restoreImAusschnitt(buchung) {
+  saving.value = true
+  try {
+    await api.post(`${BASE}/${deckel.value.id}/buchungen/${buchung.id}/restore`)
+    await loadAuswertung()
+  } catch (e) {
+    fehler(e, 'Wiederherstellen fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function loadTabDaten() {
   if (!deckel.value) return
   if (tab.value === 'tresen') await loadMeineBuchungen()
   else if (tab.value === 'salden') await loadSalden()
-  else if (tab.value === 'katalog') await Promise.all([loadKatalog(), loadKader()])
-  else if (tab.value === 'verwalten') {
+  else if (tab.value === 'katalog') {
+    await Promise.all([loadTermine(), loadKader()])
+    await loadKatalog()
+  }
+  else if (tab.value === 'buchen') {
+    await loadTermine()
+    await loadMatrix()
+  } else if (tab.value === 'termin') {
+    await loadTermine()
+    await loadAuswertung()
+  } else if (tab.value === 'verwalten') {
     await Promise.all([loadAlleBuchungen(), loadSalden(), loadKader(), loadWarte(),
       loadBefreiungen()])
   }
@@ -1063,6 +1566,14 @@ watch(selectedTeamId, async (id) => {
   verwaltenTab.value = 'mannschaft'
   historyMitglied.value = null
   historySuche.value = ''
+  // Termine gehören zur Mannschaft — der Ausschnitt des alten Teams passt nicht.
+  termine.value = []
+  laufendTerminId.value = null
+  katalogTermin.value = undefined
+  buchenTermin.value = null
+  auswTermin.value = null
+  matrix.value = null
+  auswMatrix.value = null
   await loadDeckel()
   await loadTabDaten()
 })
@@ -1071,6 +1582,8 @@ watch(tab, loadTabDaten)
 watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
 watch(historyMitglied, loadAlleBuchungen)  // #129: Mitglieder-Filter neu laden
 watch(historySuche, loadAlleBuchungen)     // #129: Volltextsuche (Input debounced)
+watch(buchenTermin, loadMatrix)                            // #167
+watch(auswTermin, loadAuswertung)                          // #167
 
 // #129: Klick auf ein Mitglied in der Mannschaftsliste → gefilterte History
 function openHistoryFuer(m) {
@@ -1151,10 +1664,13 @@ async function restoreBuchung(buchung) {
 }
 
 async function undoArtikel(a) {
-  if (!a.mein_24h_anzahl) return
+  if (!a.mein_termin_anzahl) return
   saving.value = true
   try {
-    await api.delete(`${BASE}/${deckel.value.id}/konsum/${a.id}`)
+    // Auf den laufenden Termin eingegrenzt — die Strichliste zeigt genau ihn,
+    // also muss auch das Zurücknehmen dort greifen.
+    await api.delete(`${BASE}/${deckel.value.id}/konsum/${a.id}`,
+      { params: { termin_id: deckel.value.laufender_termin?.id } })
     $q.notify({ type: 'positive', message: `${a.name}: letzter Strich zurückgenommen`,
       timeout: 1200 })
     await Promise.all([loadDeckel(), loadMeineBuchungen()])
@@ -1222,47 +1738,19 @@ function openArtikelDialog(artikel = null, preselectGruppe = undefined) {
   artikelForm.value = artikel
     ? { id: artikel.id, name: artikel.name, preis: Number(artikel.preis),
         gruppe: artikel.gruppe_id, sortierung: artikel.sortierung,
-        aktiv: !!artikel.aktiv, version: artikel.version }
+        aktiv: !!artikel.aktiv, nurWart: !!artikel.nur_wart,
+        version: artikel.version }
     : { id: null, name: '', preis: null,
         gruppe: preselectGruppe !== undefined ? preselectGruppe
           : (gruppen.value[0]?.id ?? null),
-        sortierung: 0, aktiv: true }
+        sortierung: 0, aktiv: true, nurWart: false }
   artikelDialog.value = true
 }
 
-// --- Inline-Sofortspeicher im Katalog (Toggle/Name/Preis/Verkäufer) ---
-function _artikelPayload(a, patch) {
-  return {
-    name: a.name, preis: Number(a.preis), gruppe_id: a.gruppe_id,
-    aktiv: !!a.aktiv, sortierung: a.sortierung || 0,
-    expected_version: a.version, ...patch,
-  }
-}
-
-async function _saveArtikelInline(a, patch) {
-  saving.value = true
-  try {
-    await api.put(`${BASE}/${deckel.value.id}/artikel/${a.id}`, _artikelPayload(a, patch))
-    await Promise.all([loadKatalog(), loadDeckel()])
-  } catch (e) {
-    fehler(e, 'Speichern fehlgeschlagen')
-    await loadKatalog()
-  } finally {
-    saving.value = false
-  }
-}
-
-function toggleArtikelAktiv(a, v) {
-  if (!!a.aktiv === v) return
-  return _saveArtikelInline(a, { aktiv: v })
-}
-
-function renameArtikel(a, name) {
-  const n = (name || '').trim()
-  if (!n || n === a.name) { loadKatalog(); return }
-  return _saveArtikelInline(a, { name: n })
-}
-
+// --- Inline-Sofortspeicher im Katalog (Toggle/Name/Preis) ---
+// Änderungen am Sortiment beziehen sich IMMER auf den Katalog-Zeitraum oben
+// (#167, v100). Dadurch bleibt das Bearbeiten inline und schnell: Der Wart stellt
+// einmal ein, welche Speisekarte er vor sich hat, und ändert dann frei darin.
 function repriceArtikel(a, preis) {
   const p = parsePreis(preis)
   if (!(p > 0)) {
@@ -1271,7 +1759,137 @@ function repriceArtikel(a, preis) {
     return
   }
   if (p === Number(a.preis)) return
-  return _saveArtikelInline(a, { preis: p })
+  return _saveArtikelStand(a, { preis: p })
+}
+
+function renameArtikelStand(a, name) {
+  const n = (name || '').trim()
+  if (!n || n === a.name) { loadKatalog(); return }
+  return _saveArtikelStand(a, { name: n })
+}
+
+/** Am Tresen sichtbar ⇄ nur in der Buchen-Matrix (#167). Gehört wie Preis und
+ *  Bezeichnung zum Stand des gewählten Spieltags. */
+function toggleArtikelNurWart(a, v) {
+  return _saveArtikelStand(a, { nur_wart: v })
+}
+
+function toggleArtikelAktivStand(a, v) {
+  if (!!a.aktiv === v) return
+  return _saveArtikelStand(a, { aktiv: v })
+}
+
+/** Wurde beim gewählten Spieltag schon gebucht? Dann fragen, ob die vorhandenen
+ *  Striche mit umgestellt werden sollen (#167) — der klassische Fall „zu spät
+ *  eingetragen, es wurde schon getippt". Ohne Buchungen keine Rückfrage.
+ *  Liefert `null`, wenn der Nutzer abbricht. */
+async function _uebernahmeFrage() {
+  if (!katalogTermin.value) return false
+  let stand
+  try {
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/sortiment-status`,
+      { params: { termin_id: katalogTermin.value } })
+    stand = data
+  } catch { return false }
+  if (!stand.buchungen) return false
+  return new Promise(resolve => {
+    $q.dialog({
+      title: 'Es wurde hier schon gebucht',
+      message: `Bei ${katalogTerminLabel.value} sind bereits ` +
+        `${stand.buchungen} Strich(e) über ${fmtEuro(stand.betrag)} gebucht. ` +
+        'Sollen die auf den neuen Stand umgestellt werden — also mit neuem ' +
+        'Preis, neuer Bezeichnung und neuem Verkäufer?',
+      options: {
+        type: 'radio',
+        model: 'ja',
+        items: [
+          { label: 'Ja, bestehende Striche umstellen', value: 'ja' },
+          { label: 'Nein, erst ab jetzt gelten lassen', value: 'nein' },
+        ],
+      },
+      cancel: { label: 'Abbrechen', flat: true, noCaps: true },
+      ok: { label: 'Weiter', color: 'primary', unelevated: true, noCaps: true },
+    }).onOk(wahl => resolve(wahl === 'ja')).onCancel(() => resolve(null))
+  })
+}
+
+async function _saveArtikelStand(a, patch) {
+  const uebernehmen = await _uebernahmeFrage()
+  if (uebernehmen === null) { loadKatalog(); return }
+  saving.value = true
+  try {
+    const { data } = await api.put(`${BASE}/${deckel.value.id}/artikel/${a.id}`, {
+      name: a.name, preis: Number(a.preis), gruppe_id: a.gruppe_id,
+      aktiv: !!a.aktiv, nur_wart: !!a.nur_wart, sortierung: a.sortierung || 0,
+      ab_termin_id: katalogTermin.value ?? null, expected_version: a.version,
+      bestand_uebernehmen: uebernehmen,
+      ...patch,
+    })
+    _meldeUmstellung(data)
+    await Promise.all([loadKatalog(), loadDeckel()])
+  } catch (e) {
+    fehler(e, 'Speichern fehlgeschlagen')
+    loadKatalog()   // Eingabefeld auf den gespeicherten Stand zurücksetzen
+  } finally {
+    saving.value = false
+  }
+}
+
+function _meldeUmstellung(data) {
+  if (data?.umgestellt) {
+    $q.notify({ type: 'positive', timeout: 2500,
+      message: `${data.umgestellt} bestehende Buchung(en) umgestellt` })
+  }
+}
+
+/** Gruppen-Dialog: Name und Verkäufer. Der Spieltag steht NICHT hier — er kommt
+ *  aus dem Katalog-Zeitraum, damit es nur einen Ort für diese Angabe gibt. */
+async function openGruppenStand(gruppe) {
+  standGruppe.value = gruppe
+  standForm.value = {
+    gruppeName: gruppe.name,
+    verkaeufer: gruppe.verkaeufer_mitglied_id ?? null,
+  }
+  dialogError.value = ''
+  standListe.value = []
+  standDialog.value = true
+  await ladeStaende(gruppe.id)
+}
+
+async function ladeStaende(gruppeId) {
+  try {
+    const { data } = await api.get(
+      `${BASE}/${deckel.value.id}/gruppen/${gruppeId}/staende`)
+    standListe.value = data
+  } catch { standListe.value = [] }
+}
+
+async function saveStand() {
+  const f = standForm.value
+  const g = standGruppe.value
+  if (!f.gruppeName.trim()) {
+    dialogError.value = 'Name ist erforderlich.'
+    return
+  }
+  const uebernehmen = await _uebernahmeFrage()
+  if (uebernehmen === null) return
+  saving.value = true
+  dialogError.value = ''
+  try {
+    const { data } = await api.put(`${BASE}/${deckel.value.id}/gruppen/${g.id}`, {
+      name: f.gruppeName.trim(), verkaeufer_mitglied_id: f.verkaeufer,
+      aktiv: !!g.aktiv, sortierung: g.sortierung || 0,
+      ab_termin_id: katalogTermin.value ?? null, expected_version: g.version,
+      bestand_uebernehmen: uebernehmen,
+    })
+    _meldeUmstellung(data)
+    standDialog.value = false
+    await Promise.all([loadKatalog(), loadDeckel()])
+  } catch (e) {
+    dialogError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
+  } finally {
+    saving.value = false
+  }
 }
 
 async function _saveGruppeInline(g, patch) {
@@ -1293,12 +1911,8 @@ async function _saveGruppeInline(g, patch) {
 
 function toggleGruppeAktiv(g, v) {
   if (!!g.aktiv === v) return
-  return _saveGruppeInline(g, { aktiv: v })
-}
-
-function setGruppeVerkaeufer(g, v) {
-  if (g.verkaeufer_mitglied_id === v) return
-  return _saveGruppeInline(g, { verkaeufer_mitglied_id: v })
+  // Auch das Ein-/Ausschalten gehört zum Stand des gewählten Zeitraums.
+  return _saveGruppeInline(g, { aktiv: v, ab_termin_id: katalogTermin.value ?? null })
 }
 
 async function saveArtikel() {
@@ -1311,7 +1925,7 @@ async function saveArtikel() {
   dialogError.value = ''
   try {
     const payload = { name: f.name.trim(), preis: f.preis, gruppe_id: f.gruppe,
-      aktiv: f.aktiv, sortierung: f.sortierung || 0 }
+      aktiv: f.aktiv, nur_wart: !!f.nurWart, sortierung: f.sortierung || 0 }
     if (f.id) {
       await api.put(`${BASE}/${deckel.value.id}/artikel/${f.id}`,
         { ...payload, expected_version: f.version })
@@ -1586,6 +2200,11 @@ function wiederherstellen(eintrag) {
 .tt-gruppe__spacer {
   width: 40px;
 }
+// Hinweis in der Gruppen-Kopfzeile, dass der gezeigte Stand von einem früheren
+// Spieltag geerbt ist — gedämpft, weil es der Normalfall ist.
+.tt-gruppe__erbe {
+  opacity: 0.65;
+}
 .tt-verkaeufer {
   min-width: 130px;
   max-width: 170px;
@@ -1635,5 +2254,103 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
 // Bank-Karte (Zahlungsempfänger) in den Salden mit gelbem Akzent abgesetzt (#127)
 .tt-bank-card {
   border-left: 4px solid $akzent;
+}
+
+// ── Buchungsmatrix (#167) ────────────────────────────────────────────────────
+// Die Tab-Pille wird mit den Wart-Reitern breiter als ein Handy-Schirm. Sie
+// scrollt in sich; die Scrollbar selbst bleibt unsichtbar, sonst frisst sie
+// Höhe unter den Tabs.
+.tt-tabs-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+.tt-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+// Gitter Mitglied × Artikel: scrollt waagerecht in seinem eigenen Behälter,
+// damit die q-page das nie tut. Die Namensspalte bleibt beim Scrollen stehen —
+// ohne sie weiß niemand mehr, wessen Zeile er antippt.
+//
+// Die Kopf- und Summenzeile heben sich über Linien und Fettschrift ab, NICHT
+// über eine Hintergrundtönung: Eine klebende Zelle muss deckend sein, und eine
+// Tönung ließe sich mit dem geerbten Kartenhintergrund nicht sauber überlagern.
+// Linien tragen den Unterschied in allen drei Themes ohne Sonderregeln.
+// WICHTIG: Die Karte behält ihren eigenen (themengefärbten) Hintergrund. Ein
+// `background: inherit` HIER würde vom Seitengrund erben — im Theme „VTB" also
+// Gelb statt Wappenblau. Erben dürfen nur die Nachfahren, damit die Kette bis
+// zur klebenden Zelle die Kartenfläche transportiert.
+.tt-matrix-karte {
+  overflow-x: auto;
+}
+.tt-matrix {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  background: inherit;
+
+  tr {
+    background: inherit;
+  }
+  th,
+  td {
+    padding: 6px 8px;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  }
+  thead th {
+    font-weight: 600;
+  }
+  .tt-matrix__summen th {
+    border-bottom-width: 2px;
+    border-bottom-color: rgba(0, 0, 0, 0.24);
+  }
+  tbody tr:last-child th,
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+.tt-matrix__name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  text-align: left !important;
+  min-width: 130px;
+  max-width: 170px;
+  overflow: hidden;
+  // Deckend über den durchscrollenden Spalten – erbt die Fläche der q-card und
+  // stimmt damit in „Hell" (weiß), „VTB" (Wappenblau) und „Dunkel" (Navy).
+  background: inherit;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+.tt-matrix thead .tt-matrix__name {
+  z-index: 2;
+}
+.tt-matrix__artikel {
+  font-weight: 600;
+}
+// Abgesagte bleiben bedienbar (jemand kommt doch), treten aber zurück.
+.tt-matrix__abgesagt {
+  opacity: 0.55;
+}
+.tt-matrix__add {
+  min-width: 40px;
+}
+
+// Auf dunklen Flächen (Theme „Dunkel" und „VTB") tragen helle Linien.
+body.body--dark,
+body.vtb-theme--vtb {
+  .tt-matrix th,
+  .tt-matrix td {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+  .tt-matrix .tt-matrix__summen th {
+    border-bottom-color: rgba(255, 255, 255, 0.34);
+  }
+  .tt-matrix__name {
+    border-right-color: rgba(255, 255, 255, 0.12);
+  }
 }
 </style>
