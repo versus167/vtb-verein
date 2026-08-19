@@ -1,4 +1,4 @@
-"""Termin-Bezug der Teamkassen-Buchung (Schema v98, #167) – Fresh == Migriert.
+"""Teamkassen-Schema v98–v101 (#167) – Fresh == Migriert.
 
 Der Frischaufbau wird von den übrigen Integrationstests mitgeprüft (VereinsDB legt
 das Schema beim Connect an). Hier geht es um den *Upgrade*-Pfad: Eine v97-Datenbank
@@ -358,6 +358,87 @@ def test_v100_zieht_die_audit_funktion_der_gruppe_nach(db, auf_v99, buchungsdate
         cur.execute("SELECT gilt_ab_termin_id FROM clubdeckel_gruppe_history "
                     "WHERE id = %s AND version = 1", (gid,))
         assert cur.fetchone()['gilt_ab_termin_id'] == termin_id
+
+
+# --- v100 → v101: Artikel, die nur der Wart bucht ------------------------------
+
+# Spaltenstand des Artikels vor v101 – Grundlage der zurückgedrehten Audit-Funktionen.
+_V100_ARTIKEL_COLS = (
+    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+
+
+@pytest.fixture()
+def auf_v100(db):
+    """Den Artikel auf den Stand vor v101 zurückdrehen: Spalte weg, Audit-
+    Funktionen auf die alte Spaltenliste."""
+    vals = ", ".join("NEW." + c.strip() for c in _V100_ARTIKEL_COLS.split(","))
+    with db.cursor() as cur:
+        for ereignis in ("insert", "update"):
+            wache = ("IF NEW.version != OLD.version THEN" if ereignis == "update"
+                     else "IF true THEN")
+            cur.execute(f"""
+                CREATE OR REPLACE FUNCTION fn_clubdeckel_artikel_audit_{ereignis}()
+                RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    {wache}
+                        INSERT INTO clubdeckel_artikel_history ({_V100_ARTIKEL_COLS})
+                        VALUES ({vals});
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+        for tbl in ("clubdeckel_artikel", "clubdeckel_artikel_history"):
+            cur.execute(f"ALTER TABLE {tbl} DROP COLUMN IF EXISTS nur_wart")
+    yield
+    db._database._migrate_v100_to_v101()
+
+
+def test_v100_ausgangslage_kennt_keinen_wart_artikel(db, auf_v100):
+    """Absicherung des Testaufbaus — sonst prüfte alles Weitere nichts."""
+    assert 'nur_wart' not in _spalten(db, 'clubdeckel_artikel')
+    assert 'nur_wart' not in _spalten(db, 'clubdeckel_artikel_history')
+
+
+def test_v101_ergaenzt_die_spalte_und_laesst_bestand_am_tresen(db, auf_v100,
+                                                               buchungsdaten):
+    """Was bisher im Katalog stand, stand auch am Tresen — Bestand bekommt 0."""
+    deckel_id, _, _ = buchungsdaten
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO clubdeckel_artikel "
+                    "(deckel_id, name, preis, aktiv, sortierung, created_by, updated_by) "
+                    "VALUES (%s,'Bier',1.50,1,0,'migtest','migtest') RETURNING id",
+                    (deckel_id,))
+        artikel_id = cur.fetchone()['id']
+
+    db._database._migrate_v100_to_v101()
+
+    assert 'nur_wart' in _spalten(db, 'clubdeckel_artikel')
+    assert 'nur_wart' in _spalten(db, 'clubdeckel_artikel_history')
+    assert db.clubdeckel_artikel.get(artikel_id).nur_wart == 0
+
+
+def test_v101_zieht_die_audit_funktion_des_artikels_nach(db, auf_v100, buchungsdaten):
+    """Prüfstein wie bei v98/v100: Die Audit-Funktion ist ein f-String über die
+    Spaltenliste und schriebe sonst eine History ohne das neue Feld."""
+    deckel_id, _, _ = buchungsdaten
+    db._database._migrate_v100_to_v101()
+
+    artikel = db.clubdeckel_artikel.create(
+        deckel_id, None, 'Wäsche', Decimal('3.00'), 1, 0, 'migtest', nur_wart=1)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT nur_wart FROM clubdeckel_artikel_history "
+                    "WHERE id = %s AND version = 1", (artikel.id,))
+        assert cur.fetchone()['nur_wart'] == 1
+
+
+def test_v101_ist_wiederholbar(db, auf_v100):
+    db._database._migrate_v100_to_v101()
+    db._database._migrate_v100_to_v101()
+
+    assert 'nur_wart' in _spalten(db, 'clubdeckel_artikel')
 
 
 @pytest.fixture()

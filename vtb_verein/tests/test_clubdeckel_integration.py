@@ -1219,6 +1219,23 @@ def test_artikel_folgen_dem_stand_mit_preis_und_verkaeufer(db):
         [('Bier 0,5', Decimal('2.00'), trompete)]
 
 
+def test_neue_generation_kopiert_den_wart_artikel_als_solchen(db):
+    """„Wäsche" gehört zum Stand wie Preis und Bezeichnung: Die Kopie darf nicht
+    plötzlich am Tresen stehen."""
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spaeter = _make_termin(db, man, _wandzeit(-100))
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Service', None, 1, 0, 't')
+    db.clubdeckel_artikel.create(deckel.id, g.id, 'Wäsche', Decimal('3.00'), 1, 0,
+                                 't', nur_wart=1)
+
+    neue_id, _ = db.clubdeckel_gruppen.neue_generation(
+        g.id, spaeter, 'Service', None, 1, 0, 't')
+
+    kopien = db.clubdeckel_artikel.list_fuer_gruppen([neue_id])
+    assert [(k['name'], k['nur_wart']) for k in kopien] == [('Wäsche', 1)]
+
+
 # ----------------- Nächster Termin: Vorgabe des Katalogs (#167, v100) ----------
 def test_naechster_ist_das_ereignis_am_abend_nicht_das_alte_training(db):
     """Der Prüfstein: Morgens am Spieltag pflegt man die Karte fürs Spiel am

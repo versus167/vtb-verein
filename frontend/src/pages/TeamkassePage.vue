@@ -266,7 +266,12 @@
                 <tr>
                   <th class="tt-matrix__name">Mitglied</th>
                   <th v-for="a in matrix.artikel" :key="a.id">
-                    <div class="tt-matrix__artikel">{{ a.name }}</div>
+                    <div class="tt-matrix__artikel">
+                      <q-icon v-if="a.nur_wart" name="visibility_off" size="14px"
+                        class="q-mr-xs">
+                        <q-tooltip>Steht nicht am Tresen — nur hier buchbar</q-tooltip>
+                      </q-icon>{{ a.name }}
+                    </div>
                     <div class="text-caption text-grey">
                       {{ fmtEuro(a.preis) }}
                       <q-icon v-if="a.ausser_dienst" name="history_toggle_off" size="14px">
@@ -543,6 +548,18 @@
               <q-input :model-value="fmtPreisInput(a.preis)" dense outlined
                 inputmode="decimal" class="tt-preis" input-class="text-right"
                 :disable="saving" @change="v => repriceArtikel(a, v)" />
+              <!-- Am Tresen sichtbar oder nur in der Buchen-Matrix des Warts?
+                   (#167) Posten wie „Wäsche" trägt der Wart nach dem Spiel für
+                   die Beteiligten ein — in der Selbstbedienung stünden sie im Weg. -->
+              <q-btn flat round dense :disable="saving"
+                :color="a.nur_wart ? 'primary' : 'grey-6'"
+                :icon="a.nur_wart ? 'visibility_off' : 'storefront'"
+                @click="toggleArtikelNurWart(a, !a.nur_wart)">
+                <q-tooltip>
+                  {{ a.nur_wart ? 'Nur der Wart bucht ihn — nicht am Tresen'
+                                : 'Am Tresen sichtbar' }}
+                </q-tooltip>
+              </q-btn>
               <q-btn flat round dense color="negative" icon="delete"
                 :disable="saving" @click="deleteArtikel(a)" />
             </div>
@@ -780,7 +797,9 @@
             map-options dense outlined label="Gruppe" />
           <q-input v-model.number="artikelForm.sortierung" label="Sortierung" dense outlined
             type="number" />
-          <q-toggle v-model="artikelForm.aktiv" label="Aktiv (am Tresen sichtbar)" />
+          <q-toggle v-model="artikelForm.aktiv" label="Aktiv (im Angebot)" />
+          <q-toggle v-model="artikelForm.nurWart"
+            label="Nur der Wart bucht ihn (nicht am Tresen)" />
           <div v-if="dialogError" class="text-negative text-caption">{{ dialogError }}</div>
         </q-card-section>
         <q-card-actions align="right">
@@ -1686,11 +1705,12 @@ function openArtikelDialog(artikel = null, preselectGruppe = undefined) {
   artikelForm.value = artikel
     ? { id: artikel.id, name: artikel.name, preis: Number(artikel.preis),
         gruppe: artikel.gruppe_id, sortierung: artikel.sortierung,
-        aktiv: !!artikel.aktiv, version: artikel.version }
+        aktiv: !!artikel.aktiv, nurWart: !!artikel.nur_wart,
+        version: artikel.version }
     : { id: null, name: '', preis: null,
         gruppe: preselectGruppe !== undefined ? preselectGruppe
           : (gruppen.value[0]?.id ?? null),
-        sortierung: 0, aktiv: true }
+        sortierung: 0, aktiv: true, nurWart: false }
   artikelDialog.value = true
 }
 
@@ -1713,6 +1733,12 @@ function renameArtikelStand(a, name) {
   const n = (name || '').trim()
   if (!n || n === a.name) { loadKatalog(); return }
   return _saveArtikelStand(a, { name: n })
+}
+
+/** Am Tresen sichtbar ⇄ nur in der Buchen-Matrix (#167). Gehört wie Preis und
+ *  Bezeichnung zum Stand des gewählten Spieltags. */
+function toggleArtikelNurWart(a, v) {
+  return _saveArtikelStand(a, { nur_wart: v })
 }
 
 function toggleArtikelAktivStand(a, v) {
@@ -1761,7 +1787,7 @@ async function _saveArtikelStand(a, patch) {
   try {
     const { data } = await api.put(`${BASE}/${deckel.value.id}/artikel/${a.id}`, {
       name: a.name, preis: Number(a.preis), gruppe_id: a.gruppe_id,
-      aktiv: !!a.aktiv, sortierung: a.sortierung || 0,
+      aktiv: !!a.aktiv, nur_wart: !!a.nur_wart, sortierung: a.sortierung || 0,
       ab_termin_id: katalogTermin.value ?? null, expected_version: a.version,
       bestand_uebernehmen: uebernehmen,
       ...patch,
@@ -1866,7 +1892,7 @@ async function saveArtikel() {
   dialogError.value = ''
   try {
     const payload = { name: f.name.trim(), preis: f.preis, gruppe_id: f.gruppe,
-      aktiv: f.aktiv, sortierung: f.sortierung || 0 }
+      aktiv: f.aktiv, nur_wart: !!f.nurWart, sortierung: f.sortierung || 0 }
     if (f.id) {
       await api.put(`${BASE}/${deckel.value.id}/artikel/${f.id}`,
         { ...payload, expected_version: f.version })

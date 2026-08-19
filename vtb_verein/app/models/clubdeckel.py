@@ -85,6 +85,8 @@ class ClubdeckelArtikel:
     preis: Decimal
     aktiv: int
     sortierung: int
+    # 1 = nicht am Tresen, nur der Wart bucht ihn (#167, z. B. „Wäsche")
+    nur_wart: int
     version: int
     created_at: str
     created_by: str

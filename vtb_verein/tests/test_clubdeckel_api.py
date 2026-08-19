@@ -51,7 +51,7 @@ def _gruppe(**kw):
 
 def _artikel(**kw):
     base = dict(id=21, deckel_id=7, gruppe_id=31, name='Bier', preis=Decimal('1.50'),
-                aktiv=1, sortierung=0, **_AUDIT)
+                aktiv=1, sortierung=0, nur_wart=0, **_AUDIT)
     base.update(kw)
     return ClubdeckelArtikel(**base)
 
@@ -59,8 +59,8 @@ def _artikel(**kw):
 def _artikel_mv(**kw):
     """Artikel-Dict wie aus get_mit_verkaeufer (inkl. Gruppen-/Verkäufer-Infos)."""
     base = dict(id=21, deckel_id=7, gruppe_id=31, name='Bier', preis=Decimal('1.50'),
-                aktiv=1, sortierung=0, gruppe_aktiv=1, verkaeufer_mitglied_id=None,
-                **_AUDIT)
+                aktiv=1, sortierung=0, nur_wart=0, gruppe_aktiv=1,
+                verkaeufer_mitglied_id=None, **_AUDIT)
     base.update(kw)
     return base
 
@@ -131,8 +131,8 @@ def _db(kader='mitglied', wart=False):
                 _artikel_mv(), gruppe_name='Getränke', verkaeufer_name=None)],
             # Nachschlag für Artikel außer Dienst (#167) – Standard: keine.
             list_fuer_ids=lambda did, ids: [],
-            create=lambda *a: _artikel(),
-            update=lambda *a: True,
+            create=lambda *a, **k: _artikel(),
+            update=lambda *a, **k: True,
             mark_deleted=lambda *a: True,
         ),
         clubdeckel_befreiungen=SimpleNamespace(
@@ -485,7 +485,7 @@ def test_gruppe_verkaeufer_ausserhalb_422():
 
 def test_artikel_update_versionskonflikt_409():
     db = _db(wart=True)
-    db.clubdeckel_artikel.update = lambda *a: False
+    db.clubdeckel_artikel.update = lambda *a, **k: False
     data = api.ArtikelUpdate(name='Bier', preis=1.5, expected_version=1)
     with pytest.raises(HTTPException) as exc:
         api.update_artikel(7, 21, data, _USER, db)
@@ -1019,7 +1019,7 @@ def test_artikel_aendern_erzeugt_generation_und_trifft_die_kopie():
     db.clubdeckel_artikel.get = lambda aid: _artikel(id=aid)
     geaendert = []
     db.clubdeckel_artikel.update = (
-        lambda aid, gid, name, preis, aktiv, sort, by, version:
+        lambda aid, gid, name, preis, aktiv, sort, by, version, nur_wart=0:
         geaendert.append((aid, gid, preis)) or True)
 
     api.update_artikel(7, 21, api.ArtikelUpdate(name='Bier', preis=2.0,
@@ -1035,7 +1035,7 @@ def test_artikel_aendern_ohne_generationswechsel_trifft_das_original():
     db.clubdeckel_gruppen.get = lambda gid: _gruppe(id=gid, gilt_ab_termin_id=55)
     geaendert = []
     db.clubdeckel_artikel.update = (
-        lambda aid, gid, name, preis, aktiv, sort, by, version:
+        lambda aid, gid, name, preis, aktiv, sort, by, version, nur_wart=0:
         geaendert.append(aid) or True)
 
     api.update_artikel(7, 21, api.ArtikelUpdate(name='Bier', preis=2.0,
@@ -1081,6 +1081,79 @@ def test_katalog_liefert_das_sortiment_des_termins():
     api.list_artikel(7, _USER, db, alle=True, termin_id=61)
 
     assert gesehen == {"termin_id": 61}
+
+
+# ---------------- Artikel nur für den Wart (#167): „Wäsche" & Co. -------------
+def _mit_wart_artikel(db):
+    """Sortiment aus einem Tresen-Artikel und einem, den nur der Wart bucht."""
+    db.clubdeckel_artikel.list_fuer_gruppen = lambda gids, nur_aktive=False: [
+        dict(_artikel_mv(), gruppe_name='Getränke', verkaeufer_name=None),
+        dict(_artikel_mv(id=22, name='Wäsche', nur_wart=1),
+             gruppe_name='Getränke', verkaeufer_name=None),
+    ]
+    return db
+
+
+def test_tresen_zeigt_wart_artikel_nicht():
+    """Selbstbedienung: „Wäsche" trägt der Wart ein, am Tresen stünde sie im Weg."""
+    result = api.get_deckel(7, _USER, _mit_wart_artikel(_db()))
+
+    assert [a['name'] for a in result['artikel']] == ['Bier']
+
+
+def test_artikelliste_fuer_mitglieder_ohne_wart_artikel():
+    result = api.list_artikel(7, _USER, _mit_wart_artikel(_db()))
+
+    assert [a['name'] for a in result] == ['Bier']
+
+
+def test_katalog_zeigt_wart_artikel():
+    """Im Katalog muss er stehen — sonst ließe er sich nie pflegen."""
+    result = api.list_artikel(7, _USER, _mit_wart_artikel(_db(wart=True)), alle=True)
+
+    assert [a['name'] for a in result] == ['Bier', 'Wäsche']
+
+
+def test_matrix_zeigt_wart_artikel_als_spalte():
+    result = api.get_matrix(7, _USER, _mit_wart_artikel(_db(wart=True)))
+
+    assert [a['name'] for a in result['artikel']] == ['Bier', 'Wäsche']
+
+
+def test_konsum_wart_artikel_als_spieler_403():
+    """Die Schranke hängt an der Stufe, nicht am Ziel: Auch für sich selbst darf
+    ein einfaches Kader-Mitglied den Posten nicht buchen."""
+    db = _mit_wart_artikel(_db())
+    db.clubdeckel_artikel.get_mit_verkaeufer = lambda aid: _artikel_mv(
+        id=22, name='Wäsche', nur_wart=1)
+
+    with pytest.raises(HTTPException) as exc:
+        api.buche_konsum(7, api.KonsumCreate(artikel_id=22), _USER, db)
+
+    assert exc.value.status_code == 403
+
+
+def test_konsum_wart_artikel_als_wart_ok():
+    db = _mit_wart_artikel(_db(wart=True))
+    db.clubdeckel_artikel.get_mit_verkaeufer = lambda aid: _artikel_mv(
+        id=22, name='Wäsche', nur_wart=1)
+    calls = _konsum_spion(db)
+
+    api.buche_konsum(7, api.KonsumCreate(artikel_id=22, mitglied_id=42), _USER, db)
+
+    assert calls[0]["mitglied_id"] == 42
+
+
+def test_wart_artikel_wird_beim_anlegen_durchgereicht():
+    db = _db(wart=True)
+    gesehen = {}
+    db.clubdeckel_artikel.create = (
+        lambda *a, **k: gesehen.update(k) or _artikel())
+
+    api.create_artikel(7, api.ArtikelWrite(name='Wäsche', preis=3.0, gruppe_id=31,
+                                           nur_wart=True), _USER, db)
+
+    assert gesehen == {"nur_wart": 1}
 
 
 def test_gruppen_staende_beschriften_die_basis():

@@ -203,18 +203,18 @@ class ClubdeckelGruppeRepository(BaseRepository):
             # Zeilenweise statt INSERT..SELECT, weil nur so die Zuordnung
             # alt→neu entsteht, die der Aufrufer zurückbekommt.
             cur.execute(
-                "SELECT id, deckel_id, name, preis, aktiv, sortierung "
+                "SELECT id, deckel_id, name, preis, aktiv, sortierung, nur_wart "
                 "FROM clubdeckel_artikel WHERE gruppe_id = %s AND deleted_at IS NULL "
                 "ORDER BY id", (gruppe_id,))
             abbildung: dict[int, int] = {}
             for a in cur.fetchall():
                 cur.execute(
                     "INSERT INTO clubdeckel_artikel "
-                    "(deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+                    "(deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart, "
                     " created_by, updated_by) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                     (a['deckel_id'], neue_id, a['name'], a['preis'], a['aktiv'],
-                     a['sortierung'], benutzer, benutzer),
+                     a['sortierung'], a['nur_wart'], benutzer, benutzer),
                 )
                 abbildung[a['id']] = cur.fetchone()['id']
         return neue_id, abbildung

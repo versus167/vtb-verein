@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 100
+SCHEMA_VERSION = 101
 
 
 # ---------------------------------------------------------------------------
@@ -2042,7 +2042,7 @@ _CLUBDECKEL_GRUPPE_VALS = ", ".join(
     "NEW." + c.strip() for c in _CLUBDECKEL_GRUPPE_COLS.split(","))
 
 _CLUBDECKEL_ARTIKEL_COLS = (
-    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+    "id, version, deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_ARTIKEL_VALS = ", ".join(
@@ -2287,6 +2287,9 @@ _DDL_CLUBDECKEL = """
       preis       NUMERIC(10,2) NOT NULL,
       aktiv       INTEGER NOT NULL DEFAULT 1,
       sortierung  INTEGER NOT NULL DEFAULT 0,
+      -- 1 = nicht am Tresen, nur der Wart bucht ihn (#167): Posten wie „Wäsche",
+      -- die nach dem Spiel für die Beteiligten eingetragen werden.
+      nur_wart    INTEGER NOT NULL DEFAULT 0,
       loesch_ref  TEXT,
       version     INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2299,7 +2302,7 @@ _DDL_CLUBDECKEL = """
     CREATE TABLE IF NOT EXISTS clubdeckel_artikel_history (
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       deckel_id INTEGER, gruppe_id INTEGER, name TEXT, preis NUMERIC(10,2),
-      aktiv INTEGER, sortierung INTEGER,
+      aktiv INTEGER, sortierung INTEGER, nur_wart INTEGER,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -3528,6 +3531,7 @@ class Database:
             98: self._migrate_v97_to_v98,
             99: self._migrate_v98_to_v99,
             100: self._migrate_v99_to_v100,
+            101: self._migrate_v100_to_v101,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7498,6 +7502,30 @@ class Database:
                 cur.execute(f"DROP FUNCTION IF EXISTS {fn}()")
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 100 WHERE id = 1")
+
+    def _migrate_v100_to_v101(self) -> None:
+        """Artikel, die nur der Wart bucht (#167): clubdeckel_artikel.nur_wart.
+
+        Nicht alles im Katalog gehört an den Tresen. „Wäsche" trägt nach dem
+        Spiel der Wart für die ein, die mitgemacht haben — als Selbstbedienung
+        stünde der Posten dort nur im Weg und wäre falsch klickbar. Solche
+        Artikel bleiben im Sortiment (Preis, Stand, Verkäufer wie immer), sind
+        aber am Tresen unsichtbar und tauchen nur in der Buchen-Matrix auf.
+
+        Bestand bekommt 0: Was bisher im Katalog stand, stand auch am Tresen.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE clubdeckel_artikel "
+                        "ADD COLUMN IF NOT EXISTS nur_wart INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE clubdeckel_artikel_history "
+                        "ADD COLUMN IF NOT EXISTS nur_wart INTEGER")
+            # Audit-Funktionen kennen die Spaltenliste als f-String — ohne das
+            # Neuanlegen schriebe der Trigger weiter ohne nur_wart.
+            for fn_sql in (_FN_CLUBDECKEL_ARTIKEL_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 101 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

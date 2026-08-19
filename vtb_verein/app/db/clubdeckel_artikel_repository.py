@@ -11,7 +11,7 @@ from typing import Optional
 from app.models.clubdeckel import ClubdeckelArtikel
 from app.db.base_repository import BaseRepository
 
-_COLS = ("id, deckel_id, gruppe_id, name, preis, aktiv, sortierung, version, "
+_COLS = ("id, deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart, version, "
          "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
 _A_COLS = ", ".join("a." + s.strip() for s in _COLS.split(","))
 
@@ -133,14 +133,14 @@ class ClubdeckelArtikelRepository(BaseRepository):
 
     def create(self, deckel_id: int, gruppe_id: Optional[int], name: str,
                preis: Decimal, aktiv: int, sortierung: int,
-               created_by: str) -> ClubdeckelArtikel:
+               created_by: str, nur_wart: int = 0) -> ClubdeckelArtikel:
         with self.cursor() as cur:
             cur.execute(
                 "INSERT INTO clubdeckel_artikel "
-                "(deckel_id, gruppe_id, name, preis, aktiv, sortierung, "
+                "(deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart, "
                 " created_by, updated_by) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
-                (deckel_id, gruppe_id, name, preis, aktiv, sortierung,
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (deckel_id, gruppe_id, name, preis, aktiv, sortierung, nur_wart,
                  created_by, created_by),
             )
             new_id = cur.fetchone()['id']
@@ -148,14 +148,16 @@ class ClubdeckelArtikelRepository(BaseRepository):
 
     def update(self, artikel_id: int, gruppe_id: Optional[int], name: str,
                preis: Decimal, aktiv: int, sortierung: int,
-               updated_by: str, expected_version: int) -> bool:
+               updated_by: str, expected_version: int,
+               nur_wart: int = 0) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 "UPDATE clubdeckel_artikel SET gruppe_id=%s, name=%s, preis=%s, "
-                "aktiv=%s, sortierung=%s, updated_at=CURRENT_TIMESTAMP, updated_by=%s, "
+                "aktiv=%s, sortierung=%s, nur_wart=%s, "
+                "updated_at=CURRENT_TIMESTAMP, updated_by=%s, "
                 "version=version+1 "
                 "WHERE id=%s AND deleted_at IS NULL AND version=%s",
-                (gruppe_id, name, preis, aktiv, sortierung, updated_by,
+                (gruppe_id, name, preis, aktiv, sortierung, nur_wart, updated_by,
                  artikel_id, expected_version),
             )
             return cur.rowcount > 0

@@ -85,6 +85,8 @@ class ArtikelWrite(BaseModel):
     gruppe_id: Optional[int] = None
     aktiv: bool = True
     sortierung: int = 0
+    # Nicht am Tresen, nur in der Buchen-Matrix des Warts (#167) — z. B. „Wäsche".
+    nur_wart: bool = False
     # Ab welchem Spieltag der Stand gilt (#167, v100). None = ab dem aktuellen.
     ab_termin_id: Optional[int] = None
     # Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen.
@@ -319,7 +321,7 @@ def get_deckel(deckel_id: int, user: CurrentUser, db: DB):
     stats = (db.clubdeckel_buchungen.konsum_fuer_termin(
                 deckel_id, mein_mitglied_id, termin_id)
              if mein_mitglied_id else {'summe': Decimal("0.00"), 'anzahl': {}})
-    _, artikel = _sortiment(db, deckel_id, termin_id)
+    _, artikel = _sortiment(db, deckel_id, termin_id, nur_tresen=True)
     for a in artikel:
         a['mein_termin_anzahl'] = stats['anzahl'].get(a['id'], 0)
     return {
@@ -516,16 +518,24 @@ def _stand_label(stand: dict) -> str:
 
 
 def _sortiment(db: DB, deckel_id: int, termin_id: Optional[int] = None,
-               nur_aktive: bool = True) -> tuple[list, list[dict]]:
+               nur_aktive: bool = True,
+               nur_tresen: bool = False) -> tuple[list, list[dict]]:
     """Das Sortiment zu einem Ziel-Termin (#167, v100): die gültigen
     Gruppen-Stände und deren Artikel. Einzige Quelle für Tresen, Katalog,
     Matrix und Buchung — damit können Anzeige und Buchung nicht auseinanderlaufen.
+
+    `nur_tresen` blendet die Wart-Artikel aus (#167): Posten wie „Wäsche" trägt
+    nach dem Spiel der Wart für die Beteiligten ein; in der Selbstbedienung
+    stünden sie nur im Weg. Sie bleiben Teil des Sortiments — Matrix, Katalog
+    und die Gültigkeitsprüfung beim Buchen sehen sie weiterhin.
     """
     gruppen = db.clubdeckel_gruppen.list_stand(deckel_id, termin_id)
     if nur_aktive:
         gruppen = [g for g in gruppen if g.aktiv]
     artikel = db.clubdeckel_artikel.list_fuer_gruppen(
         [g.id for g in gruppen], nur_aktive=nur_aktive)
+    if nur_tresen:
+        artikel = [a for a in artikel if not a['nur_wart']]
     return gruppen, artikel
 
 
@@ -536,7 +546,8 @@ def list_artikel(deckel_id: int, user: CurrentUser, db: DB, alle: bool = False,
     Geliefert wird das Sortiment des Ziel-Termins (#167) — ohne Angabe der heute
     gültige Stand."""
     _deckel_mit_stufe(db, user, deckel_id, 'wart' if alle else 'mitglied')
-    _, artikel = _sortiment(db, deckel_id, termin_id, nur_aktive=not alle)
+    _, artikel = _sortiment(db, deckel_id, termin_id, nur_aktive=not alle,
+                            nur_tresen=not alle)
     return artikel
 
 
@@ -656,7 +667,7 @@ def create_artikel(deckel_id: int, data: ArtikelWrite, user: CurrentUser, db: DB
     name, preis = _validate_artikel(db, deckel_id, data)
     artikel = db.clubdeckel_artikel.create(
         deckel_id, data.gruppe_id, name, preis, 1 if data.aktiv else 0,
-        data.sortierung, user.username)
+        data.sortierung, user.username, nur_wart=1 if data.nur_wart else 0)
     return asdict(artikel)
 
 
@@ -696,7 +707,8 @@ def update_artikel(deckel_id: int, artikel_id: int, data: ArtikelUpdate,
         data = data.model_copy(update={"gruppe_id": neue_gruppe_id})
     if not db.clubdeckel_artikel.update(ziel_id, data.gruppe_id, name, preis,
                                         1 if data.aktiv else 0, data.sortierung,
-                                        user.username, erwartete_version):
+                                        user.username, erwartete_version,
+                                        nur_wart=1 if data.nur_wart else 0):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Der Artikel wurde zwischenzeitlich geändert")
     # Ohne neue Generation (Änderung an einem bestehenden Stand) betrifft das
@@ -846,6 +858,12 @@ def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
                                     artikel['gruppe_aktiv'] is not None else 1):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             "Dieser Artikel ist nicht mehr im Angebot")
+    # Wart-Artikel steht nicht am Tresen (#167) — die Schranke hängt deshalb an
+    # der STUFE, nicht am Ziel: Auch für sich selbst darf ihn nur ein Wart
+    # buchen, sonst käme man über die eigene id doch an den Posten heran.
+    if artikel['nur_wart'] and _STUFEN_RANG[stufe] < _STUFEN_RANG['wart']:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Diesen Artikel bucht nur der Wart")
     mitglied_id = _ziel_mitglied(db, user, deckel, stufe, data.mitglied_id)
     termin_id = _termin_fuer_buchung(db, deckel, data.termin_id, data.ohne_termin)
     # Der Artikel MUSS aus dem Sortiments-Stand des Ziel-Termins stammen (#167,
