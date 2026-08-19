@@ -486,10 +486,22 @@
              für alle Gruppen, damit man das Sortiment eines Events als Ganzes
              vor sich hat. -->
         <div class="row items-center q-gutter-sm q-mb-md">
-          <q-select :model-value="katalogTermin ?? null" :options="katalogTerminOptionen"
-            emit-value map-options dense outlined options-dense
-            label="Speisekarte für" style="min-width: 240px; max-width: 340px"
-            @update:model-value="waehleKatalogTermin" />
+          <div class="row items-center no-wrap" style="min-width: 260px; max-width: 400px">
+            <q-btn flat round dense icon="chevron_left"
+              :disable="katalogZielId(-1) === null"
+              @click="waehleKatalogTermin(katalogZielId(-1))">
+              <q-tooltip>Vorheriger Spieltag</q-tooltip>
+            </q-btn>
+            <q-select :model-value="katalogTermin ?? null" :options="katalogTerminOptionen"
+              emit-value map-options dense outlined options-dense class="col"
+              label="Speisekarte für"
+              @update:model-value="waehleKatalogTermin" />
+            <q-btn flat round dense icon="chevron_right"
+              :disable="katalogZielId(1) === null"
+              @click="waehleKatalogTermin(katalogZielId(1))">
+              <q-tooltip>Nächster Spieltag</q-tooltip>
+            </q-btn>
+          </div>
           <q-space />
           <q-btn outline color="primary" no-caps rounded icon="create_new_folder"
             label="Neue Gruppe" @click="openGruppeDialog()" />
@@ -1370,6 +1382,27 @@ const katalogTerminOptionen = computed(() => {
 function waehleKatalogTermin(wert) {
   katalogTermin.value = wert
   loadKatalog()
+}
+
+/** Spieltage entlang der ZEITACHSE. Die Liste vom Backend kommt jüngste zuerst;
+ *  geblättert wird aber vorwärts/rückwärts in der Zeit. */
+const katalogIdsChrono = computed(() => [...termine.value]
+  .sort((a, b) => (a.beginn || '').localeCompare(b.beginn || ''))
+  .map(t => t.id))
+
+/** Ziel eines Schritts (−1 = vorheriger, +1 = nächster) oder null am Rand.
+ *  „Aktuell (Tresen)" ist kein Spieltag und liegt deshalb nirgends in der
+ *  Reihe: Von dort aus landet ein Schritt vorwärts auf dem nächsten Ereignis
+ *  — derselbe Bezugspunkt, mit dem der Katalog aufmacht — und einer zurück auf
+ *  dem davor. */
+function katalogZielId(schritt) {
+  const ids = katalogIdsChrono.value
+  const jetzt = ids.indexOf(katalogTermin.value ?? null)
+  const anker = ids.indexOf(naechsterTerminId.value)
+  const ziel = jetzt >= 0 ? jetzt + schritt
+    : anker >= 0 ? anker + (schritt > 0 ? 0 : -1)
+      : (schritt > 0 ? 0 : ids.length - 1)
+  return ziel >= 0 && ziel < ids.length ? ids[ziel] : null
 }
 
 const katalogTerminLabel = computed(() => {
