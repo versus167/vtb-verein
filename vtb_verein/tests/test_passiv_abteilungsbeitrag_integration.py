@@ -1,20 +1,20 @@
-"""Passive Abteilungsmitglieder zahlen keinen Abteilungsbeitrag (echtes PostgreSQL).
+"""Passive zahlen keinen Abteilungsbeitrag – jetzt über die Funktion (echtes PostgreSQL).
 
-Grundregel: Wer in einer Abteilung den Status ``passiv`` hat, gehört ihr an, trainiert
-aber nicht mit – ein Abteilungsbeitrag entsteht nicht. Die Regel greift ohne Zutun, also
-auch für alle Bestandsregeln, die zur Status-Bedingung nichts sagen.
+Seit Schema v105 ist „passiv" eine **Funktion** und kein Kennzeichen mehr an der
+Abteilungs-Zuordnung. Der Gewinn: Sie hat einen Zeitraum. „Ab August passiv" wird
+damit monatsgenau gerechnet, ohne dass man die Zuordnung aufteilen muss – das
+Kennzeichen kannte kein Datum und wirkte deshalb immer rückwirkend auf die ganze
+Laufzeit.
 
-Ausdrücklich genannte Status schlagen die Grundregel: Eine Regel, die ``passiv`` nennt,
-rechnet Passive ab (reduzierter Passiv-Beitrag). Sonst gäbe es keinen Weg, sie je
-abzurechnen.
-
-Der Vereinsbeitrag bleibt unberührt – der kennt den Abteilungs-Status nicht.
+Ausgedrückt wird es über die Regel selbst: **Ausnahme** `passiv` (Normalfall) oder
+**Bedingung** `passiv` (reduzierter Passiv-Beitrag). Die Wirkung ergibt sich aus dem
+Abteilungsbezug – passiv für eine Abteilung trifft genau deren Beitrag, passiv ohne
+Abteilung alle; der Vereinsbeitrag bleibt in beiden Fällen unberührt.
 
 Läuft nur mit ``VTB_TEST_DATABASE_URL`` (leere Wegwerf-DB).
 """
 import os
 import sys
-from datetime import date
 from pathlib import Path
 
 import pytest
@@ -27,8 +27,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 MARKE = "passivtest"
-Q3_START, Q3_ENDE = date(2026, 7, 1), date(2026, 9, 30)
-STICHTAG = "2026-07-01"
+STICHTAG = "2026-07-01"          # Q3 2026: Juli, August, September
 
 
 @pytest.fixture(scope="module")
@@ -44,16 +43,13 @@ def _aufraeumen(db):
     RESTART IDENTITY: der Wegwerf-Postgres ist geteilt, und ein Sequenz-Reset
     lässt den Audit-Trigger fremder Module auf (id, version) kollidieren."""
     with db.cursor() as cur:
-        cur.execute("DELETE FROM beitrag_sollstellung WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM beitrag_sollstellung_history WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM beitragsregel_history WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM beitragsregel WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM mitglied_abteilung_history WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM mitglied_abteilung WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM mitglied_history WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM mitglied WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM abteilung_history WHERE created_by = %s", (MARKE,))
-        cur.execute("DELETE FROM abteilung WHERE created_by = %s", (MARKE,))
+        for tabelle in ('beitrag_sollstellung', 'beitrag_sollstellung_history',
+                        'beitragsregel_history', 'beitragsregel',
+                        'mitglied_funktion_history', 'mitglied_funktion',
+                        'mitglied_abteilung_history', 'mitglied_abteilung',
+                        'mitglied_history', 'mitglied',
+                        'abteilung_history', 'abteilung'):
+            cur.execute(f"DELETE FROM {tabelle} WHERE created_by = %s", (MARKE,))
 
 
 @pytest.fixture(autouse=True)
@@ -65,10 +61,13 @@ def clean(db):
 
 @pytest.fixture
 def abteilung(db):
+    return _abteilung(db, "PT-Turnen")
+
+
+def _abteilung(db, name):
     with db.cursor() as cur:
         cur.execute("INSERT INTO abteilung (name, created_by, updated_by) "
-                    "VALUES (%s, %s, %s) RETURNING id",
-                    ("PT-Turnen", MARKE, MARKE))
+                    "VALUES (%s, %s, %s) RETURNING id", (name, MARKE, MARKE))
         return cur.fetchone()["id"]
 
 
@@ -80,89 +79,150 @@ def _mitglied(db, nachname):
         created_by=MARKE)
 
 
-def _zuordnen(db, mitglied_id, abteilung_id, status):
+def _zuordnen(db, mitglied_id, abteilung_id):
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO mitglied_abteilung (mitglied_id, abteilung_id, status, von, "
-            "created_by, updated_by) VALUES (%s, %s, %s, '2020-01-01', %s, %s)",
-            (mitglied_id, abteilung_id, status, MARKE, MARKE))
+            "INSERT INTO mitglied_abteilung (mitglied_id, abteilung_id, von, "
+            "created_by, updated_by) VALUES (%s, %s, '2020-01-01', %s, %s)",
+            (mitglied_id, abteilung_id, MARKE, MARKE))
 
 
-def _betroffene(db, regel):
-    from app.services.beitrags_service import BeitragsService
-    return {m["id"] for m in BeitragsService(db)._betroffene_mitglieder(
-        regel, STICHTAG, Q3_START, Q3_ENDE)}
+def _passiv(db, mitglied_id, abteilung_id=None, von="2020-01-01", bis=None):
+    """Funktion `passiv` – ohne Abteilung heißt „im ganzen Verein passiv"."""
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO mitglied_funktion (mitglied_id, abteilung_id, funktion, von, bis, "
+            "created_by, updated_by) VALUES (%s, %s, 'passiv', %s, %s, %s, %s)",
+            (mitglied_id, abteilung_id, von, bis, MARKE, MARKE))
 
 
-def _abteilungsregel(abteilung_id, **kwargs):
+def _abteilungsregel(db, abteilung_id, *, passiv='ausnahme'):
+    """Abteilungsbeitrag 6 €/Monat. `passiv`: 'ausnahme' (Normalfall),
+    'bedingung' (reduzierter Passiv-Beitrag) oder None (trifft alle)."""
     from app.models.beitrag import Beitragsregel
-    return Beitragsregel(name="PT-Abteilungsbeitrag", abteilung_id=abteilung_id,
-                         betrag_pro_monat=6.0, einzug_turnus="quartal",
-                         gueltig_ab="2020-01-01", **kwargs)
+    felder = {}
+    if passiv == 'ausnahme':
+        felder = dict(ausnahme_funktionen=['passiv'], ausnahme_abteilung_ids=[abteilung_id])
+    elif passiv == 'bedingung':
+        felder = dict(bedingung_funktionen=['passiv'], bedingung_abteilung_ids=[abteilung_id])
+    return db.beitragsregeln.create(
+        Beitragsregel(name=f"PT-Abteilungsbeitrag {abteilung_id}", abteilung_id=abteilung_id,
+                      betrag_pro_monat=6.0, einzug_turnus="quartal",
+                      gueltig_ab="2020-01-01", **felder),
+        created_by=MARKE)
+
+
+def _monate(db, mitglied_id, regel_id=None):
+    """Berechnete Monate je Regel für dieses Mitglied im Quartal des Stichtags."""
+    from app.services.beitrags_service import BeitragsService
+    treffer = {p.beitragsregel_id: p.anzahl_monate
+               for p in BeitragsService(db).vorschau(STICHTAG, mitglied_id)}
+    return treffer if regel_id is None else treffer.get(regel_id, 0)
 
 
 # --------------------------------------------------------------- Grundregel
 
 def test_passives_mitglied_zahlt_keinen_abteilungsbeitrag(db, abteilung):
-    aktiv = _mitglied(db, "Aktiv")
-    passiv = _mitglied(db, "Passiv")
-    _zuordnen(db, aktiv.id, abteilung, "aktiv")
-    _zuordnen(db, passiv.id, abteilung, "passiv")
+    aktiv, passiv = _mitglied(db, "Aktiv"), _mitglied(db, "Passiv")
+    _zuordnen(db, aktiv.id, abteilung)
+    _zuordnen(db, passiv.id, abteilung)
+    _passiv(db, passiv.id, abteilung)
+    regel = _abteilungsregel(db, abteilung)
 
-    betroffen = _betroffene(db, _abteilungsregel(abteilung))
-    assert aktiv.id in betroffen
-    assert passiv.id not in betroffen
+    assert _monate(db, aktiv.id, regel.id) == 3
+    assert _monate(db, passiv.id, regel.id) == 0
 
 
-def test_uebrige_status_zahlen_weiter(db, abteilung):
-    """Die Grundregel schließt genau einen Status aus – nicht alle außer 'aktiv'."""
-    ids = {}
-    for status in ("aktiv", "trainer", "vorstand", "ehrenmitglied", "passiv"):
-        m = _mitglied(db, f"Status-{status}")
-        _zuordnen(db, m.id, abteilung, status)
-        ids[status] = m.id
+def test_ab_august_passiv_kostet_nur_den_juli(db, abteilung):
+    """Der eigentliche Gewinn: Die Funktion hat einen Zeitraum, also rechnet der
+    Lauf den Monatswechsel anteilig – ohne dass die Zuordnung geteilt werden muss."""
+    mid = _mitglied(db, "AbAugust")
+    _zuordnen(db, mid.id, abteilung)
+    _passiv(db, mid.id, abteilung, von="2026-08-01")
+    regel = _abteilungsregel(db, abteilung)
 
-    betroffen = _betroffene(db, _abteilungsregel(abteilung))
-    assert {s for s, i in ids.items() if i in betroffen} == {
-        "aktiv", "trainer", "vorstand", "ehrenmitglied"}
+    assert _monate(db, mid.id, regel.id) == 1
+
+
+def test_passiv_endet_wieder(db, abteilung):
+    """Und rückwärts genauso: Wer im September wieder mitmacht, zahlt den September."""
+    mid = _mitglied(db, "Rueckkehr")
+    _zuordnen(db, mid.id, abteilung)
+    _passiv(db, mid.id, abteilung, von="2026-07-01", bis="2026-08-31")
+    regel = _abteilungsregel(db, abteilung)
+
+    assert _monate(db, mid.id, regel.id) == 1
+
+
+# ------------------------------------------------------- Wirkung je Abteilung
+
+def test_passiv_in_einer_abteilung_laesst_die_andere_zahlen(db, abteilung):
+    """Der Fall, an dem die alte Paarung scheiterte: Die Abteilung der
+    Funktions-Zeile entscheidet, nicht die Mitgliedschaft."""
+    zweite = _abteilung(db, "PT-Volleyball")
+    mid = _mitglied(db, "Beides")
+    _zuordnen(db, mid.id, abteilung)
+    _zuordnen(db, mid.id, zweite)
+    _passiv(db, mid.id, abteilung)
+    eine, andere = _abteilungsregel(db, abteilung), _abteilungsregel(db, zweite)
+
+    monate = _monate(db, mid.id)
+    assert monate.get(eine.id, 0) == 0
+    assert monate.get(andere.id, 0) == 3
+
+
+def test_passiv_ohne_abteilung_trifft_alle_abteilungsbeitraege(db, abteilung):
+    zweite = _abteilung(db, "PT-Volleyball")
+    mid = _mitglied(db, "Ganz")
+    _zuordnen(db, mid.id, abteilung)
+    _zuordnen(db, mid.id, zweite)
+    _passiv(db, mid.id, abteilung_id=None)
+    eine, andere = _abteilungsregel(db, abteilung), _abteilungsregel(db, zweite)
+
+    monate = _monate(db, mid.id)
+    assert monate.get(eine.id, 0) == 0
+    assert monate.get(andere.id, 0) == 0
 
 
 def test_vereinsbeitrag_gilt_auch_fuer_passive(db, abteilung):
-    """Passiv in der Abteilung heißt nicht passiv im Verein – der Vereinsbeitrag bleibt."""
+    """Passiv in der Abteilung heißt nicht passiv im Verein – und auch ein
+    vereinsweites „passiv" nimmt nur die Abteilungsbeiträge, nicht den
+    Vereinsbeitrag: Ausgeschlossen wird nur, was einen Abteilungsbezug hat."""
     from app.models.beitrag import Beitragsregel
-    passiv = _mitglied(db, "Passiv")
-    _zuordnen(db, passiv.id, abteilung, "passiv")
+    mid = _mitglied(db, "Passiv")
+    _zuordnen(db, mid.id, abteilung)
+    _passiv(db, mid.id, abteilung_id=None)
+    vereinsregel = db.beitragsregeln.create(
+        Beitragsregel(name="PT-Vereinsbeitrag", abteilung_id=None, betrag_pro_monat=9.0,
+                      einzug_turnus="quartal", gueltig_ab="2020-01-01"),
+        created_by=MARKE)
 
-    vereinsregel = Beitragsregel(name="PT-Vereinsbeitrag", abteilung_id=None,
-                                 betrag_pro_monat=9.0, gueltig_ab="2020-01-01")
-    assert passiv.id in _betroffene(db, vereinsregel)
+    assert _monate(db, mid.id, vereinsregel.id) == 3
 
 
-# ------------------------------------------------- ausdrückliche Status-Angabe
+# --------------------------------------------- ausdrücklich genannt = Passiv-Beitrag
 
-def test_genannte_status_schlagen_die_grundregel(db, abteilung):
+def test_bedingung_passiv_rechnet_genau_die_passiven_ab(db, abteilung):
     """Reduzierter Passiv-Beitrag: ohne diesen Weg wären Passive nie abrechenbar."""
-    aktiv = _mitglied(db, "Aktiv")
+    aktiv, passiv = _mitglied(db, "Aktiv"), _mitglied(db, "Passiv")
+    _zuordnen(db, aktiv.id, abteilung)
+    _zuordnen(db, passiv.id, abteilung)
+    _passiv(db, passiv.id, abteilung)
+    regel = _abteilungsregel(db, abteilung, passiv='bedingung')
+
+    assert _monate(db, passiv.id, regel.id) == 3
+    assert _monate(db, aktiv.id, regel.id) == 0
+
+
+def test_ohne_bedingung_und_ohne_ausnahme_zahlen_alle(db, abteilung):
+    """Nichts gesetzt heißt: Die Regel trifft alle – auch die Passiven. Genau davor
+    warnt die Oberfläche, wenn ein Abteilungsbeitrag `passiv` nirgends nennt."""
     passiv = _mitglied(db, "Passiv")
-    _zuordnen(db, aktiv.id, abteilung, "aktiv")
-    _zuordnen(db, passiv.id, abteilung, "passiv")
+    _zuordnen(db, passiv.id, abteilung)
+    _passiv(db, passiv.id, abteilung)
+    regel = _abteilungsregel(db, abteilung, passiv=None)
 
-    regel = _abteilungsregel(abteilung, bedingung_abteilung_status="passiv")
-    betroffen = _betroffene(db, regel)
-    assert passiv.id in betroffen
-    assert aktiv.id not in betroffen
-
-
-def test_auswahl_gilt_woertlich(db, abteilung):
-    aktiv = _mitglied(db, "Aktiv")
-    trainer = _mitglied(db, "Trainer")
-    passiv = _mitglied(db, "Passiv")
-    _zuordnen(db, aktiv.id, abteilung, "aktiv")
-    _zuordnen(db, trainer.id, abteilung, "trainer")
-    _zuordnen(db, passiv.id, abteilung, "passiv")
-
-    regel = _abteilungsregel(abteilung, bedingung_abteilung_status="aktiv,trainer")
-    assert _betroffene(db, regel) == {aktiv.id, trainer.id}
+    assert _monate(db, passiv.id, regel.id) == 3
 
 
 # ------------------------------------------------------------ ganze Abrechnung
@@ -170,31 +230,15 @@ def test_auswahl_gilt_woertlich(db, abteilung):
 def test_abrechnung_erzeugt_keine_sollstellung_fuer_passive(db, abteilung):
     """Ende zu Ende: nicht nur die Auswahl, auch die erzeugte Forderung fehlt."""
     from app.services.beitrags_service import BeitragsService
-    aktiv = _mitglied(db, "Aktiv")
-    passiv = _mitglied(db, "Passiv")
-    _zuordnen(db, aktiv.id, abteilung, "aktiv")
-    _zuordnen(db, passiv.id, abteilung, "passiv")
-    regel = db.beitragsregeln.create(_abteilungsregel(abteilung), created_by=MARKE)
+    aktiv, passiv = _mitglied(db, "Aktiv"), _mitglied(db, "Passiv")
+    _zuordnen(db, aktiv.id, abteilung)
+    _zuordnen(db, passiv.id, abteilung)
+    _passiv(db, passiv.id, abteilung)
+    regel = _abteilungsregel(db, abteilung)
 
-    positionen = [p for p in BeitragsService(db).vorschau("2026-07-01")
-                  if p.beitragsregel_id == regel.id]
-    assert {p.mitglied_id for p in positionen} == {aktiv.id}
-    assert positionen[0].betrag == 18.0          # 3 Monate à 6 €
-
-
-def test_wechsel_auf_passiv_beendet_kuenftige_forderungen(db, abteilung):
-    """Der Status wirkt ab dem nächsten Lauf; bereits erzeugte Sollstellungen
-    bleiben stehen (stornieren/löschen ist eine eigene Entscheidung)."""
-    from app.services.beitrags_service import BeitragsService
-    m = _mitglied(db, "Wechsler")
-    _zuordnen(db, m.id, abteilung, "aktiv")
-    regel = db.beitragsregeln.create(_abteilungsregel(abteilung), created_by=MARKE)
-    assert m.id in _betroffene(db, regel)
+    BeitragsService(db).abrechnen(STICHTAG, erstellt_von=MARKE, quartale_rueckschau=0)
 
     with db.cursor() as cur:
-        cur.execute("UPDATE mitglied_abteilung SET status = 'passiv', version = version + 1, "
-                    "updated_by = %s WHERE mitglied_id = %s", (MARKE, m.id))
-
-    assert m.id not in _betroffene(db, regel)
-    assert [p for p in BeitragsService(db).vorschau("2026-07-01")
-            if p.beitragsregel_id == regel.id] == []
+        cur.execute("SELECT mitglied_id FROM beitrag_sollstellung "
+                    "WHERE beitragsregel_id = %s AND deleted_at IS NULL", (regel.id,))
+        assert [r["mitglied_id"] for r in cur.fetchall()] == [aktiv.id]

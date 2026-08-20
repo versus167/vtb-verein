@@ -4,13 +4,6 @@ Datenmodelle für Beitragsregeln und Sollstellungen.
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Abteilungs-Status, der ohne ausdrückliche Nennung nie beitragspflichtig ist:
-# Passive gehören der Abteilung an, trainieren aber nicht mit. Wer sie doch
-# abrechnen will (reduzierter Passiv-Beitrag), nennt 'passiv' in
-# `bedingung_abteilung_status` — dann zählt die Liste wörtlich.
-ABTEILUNG_STATUS_BEITRAGSFREI = 'passiv'
-
-
 @dataclass
 class Beitragsregel:
     """Regel für die automatische Beitragsberechnung."""
@@ -23,7 +16,6 @@ class Beitragsregel:
     gueltig_ab: str = ""
     gueltig_bis: Optional[str] = None
     bedingung_raw: Optional[str] = None
-    bedingung_abteilung_status: Optional[str] = None  # kommagetrennt; leer = alle außer passiv
     bedingung_funktionen: list[str] = field(default_factory=list)  # nur Mitglieder mit (mind.) einer dieser Funktionen
     # Index-gleich zu bedingung_funktionen: je Einschluss ein optionaler Abteilungs-Bezug
     # (None = vereinsweit). Erlaubt mehrere, je eigen begrenzte Einschlüsse pro Regel.
@@ -50,17 +42,6 @@ class Beitragsregel:
         """Berechneter Einzugsbetrag je Turnus."""
         faktor = {'monat': 1, 'quartal': 3, 'halbjahr': 6, 'jahr': 12}
         return self.betrag_pro_monat * faktor.get(self.einzug_turnus, 1)
-
-    @property
-    def bedingung_status_liste(self) -> Optional[list[str]]:
-        """Ausdrücklich genannte Status als Liste; None = keine Angabe.
-
-        None heißt *nicht* „alle": ohne Angabe bleiben Passive draußen (siehe
-        `ABTEILUNG_STATUS_BEITRAGSFREI`). Wer wirklich alle abrechnen will,
-        nennt sie alle."""
-        if not self.bedingung_abteilung_status:
-            return None
-        return [s.strip() for s in self.bedingung_abteilung_status.split(',') if s.strip()]
 
 
 @dataclass

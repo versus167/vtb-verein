@@ -257,31 +257,49 @@ class TestFunktionsMonatsRestriktion:
         # Trainer-Funktion endet 10.11. → Einschluss-Monate = Okt + Nov (Austrittsmonat zählt)
         regel = Beitragsregel(id=1, bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
         rows = [{'mitglied_id': 1, 'funktion': 'Trainer', 'von': '2020-01-01', 'bis': '2026-11-10'}]
-        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows)
         assert res[1]['incl'] == {(2026, 10), (2026, 11)}
         assert res[1]['excl'] == set()
 
     def test_einschluss_ohne_funktion_leer_schliesst_aus(self):
         # Bedingung gesetzt, Mitglied hat die Funktion nie → incl leer (nicht None) → 0 Monate
         regel = Beitragsregel(id=1, bedingung_funktionen=['Trainer'], bedingung_abteilung_ids=[None])
-        res = funktions_monats_restriktion(regel, {7}, Q4, [], [])
+        res = funktions_monats_restriktion(regel, {7}, Q4, [])
         assert res[7]['incl'] == set()
 
     def test_keine_einschluss_funktion_incl_none(self):
         # Nur Ausnahme: incl None (= keine Einschränkung über Einschlüsse), excl zeitraumgenau
         regel = Beitragsregel(id=1, ausnahme_funktionen=['Ehrenmitglied'], ausnahme_abteilung_ids=[None])
         rows = [{'mitglied_id': 1, 'funktion': 'Ehrenmitglied', 'von': '2026-11-15', 'bis': None}]
-        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows)
         assert res[1]['incl'] is None
         assert res[1]['excl'] == {(2026, 11), (2026, 12)}
 
-    def test_einschluss_paar_mit_abteilung_schnittmenge(self):
-        # Funktion das ganze Quartal, Abteilung 5 aber erst ab Dez → Schnitt = nur Dez
+    def test_einschluss_paar_meint_die_abteilung_der_funktion(self):
+        # „Spieler in Abteilung 5" – die Funktions-Zeile trägt die Abteilung, und
+        # ihr Zeitraum entscheidet: ab Dez eingetragen → nur Dez.
         regel = Beitragsregel(id=1, bedingung_funktionen=['Spieler'], bedingung_abteilung_ids=[5])
-        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Spieler', 'von': '2020-01-01', 'bis': None}]
-        abteilung_rows = [{'mitglied_id': 1, 'abteilung_id': 5, 'von': '2026-12-01', 'bis': None}]
-        res = funktions_monats_restriktion(regel, {1}, Q4, funktion_rows, abteilung_rows)
-        assert res[1]['incl'] == {(2026, 12)}
+        funktion_rows = [{'mitglied_id': 1, 'funktion': 'Spieler', 'abteilung_id': 5,
+                          'von': '2026-12-01', 'bis': None}]
+        assert funktions_monats_restriktion(regel, {1}, Q4, funktion_rows)[1]['incl'] == {(2026, 12)}
+
+    def test_funktion_einer_anderen_abteilung_trifft_nicht(self):
+        """Bis v105 wurde die Abteilungs*mitgliedschaft* geprüft: Wer für Volleyball
+        Übungsleiter, aber in Tischtennis Mitglied war, erfüllte eine Bedingung
+        „ÜL + Tischtennis". Bei ÜL fiel das kaum auf – bei `passiv` ist es genau
+        der Unterschied."""
+        regel = Beitragsregel(id=1, bedingung_funktionen=['UEL'], bedingung_abteilung_ids=[5])
+        rows = [{'mitglied_id': 1, 'funktion': 'UEL', 'abteilung_id': 9,
+                 'von': '2020-01-01', 'bis': None}]
+        assert funktions_monats_restriktion(regel, {1}, Q4, rows)[1]['incl'] == set()
+
+    def test_vereinsweit_eingetragene_funktion_gilt_auch_fuer_eine_abteilung(self):
+        """Eine Funktion ohne Abteilung gilt überall – sonst könnte man „passiv im
+        ganzen Verein" nicht ausdrücken."""
+        regel = Beitragsregel(id=1, ausnahme_funktionen=['passiv'], ausnahme_abteilung_ids=[5])
+        rows = [{'mitglied_id': 1, 'funktion': 'passiv', 'abteilung_id': None,
+                 'von': '2020-01-01', 'bis': None}]
+        assert funktions_monats_restriktion(regel, {1}, Q4, rows)[1]['excl'] == set(Q4)
 
     def test_mehrere_einschluesse_vereinigt(self):
         # Funktion A nur Okt, Funktion B nur Dez → Vereinigung Okt + Dez
@@ -290,14 +308,14 @@ class TestFunktionsMonatsRestriktion:
             {'mitglied_id': 1, 'funktion': 'A', 'von': '2026-10-01', 'bis': '2026-10-31'},
             {'mitglied_id': 1, 'funktion': 'B', 'von': '2026-12-01', 'bis': None},
         ]
-        res = funktions_monats_restriktion(regel, {1}, Q4, rows, [])
+        res = funktions_monats_restriktion(regel, {1}, Q4, rows)
         assert res[1]['incl'] == {(2026, 10), (2026, 12)}
 
 
 class TestVorschauMitFunktionen:
     """Integration: vorschau() mit zeitraumgenauen Funktions-/Ausnahme-Bedingungen (Fake-DB)."""
 
-    def _service(self, regel, rows, funktion_rows, abteilung_rows=None):
+    def _service(self, regel, rows, funktion_rows):
         db = SimpleNamespace(
             beitragsregeln=SimpleNamespace(list_aktive=lambda s: [regel]),
             sollstellungen=SimpleNamespace(exists=lambda mid, rid, z: False),
@@ -307,8 +325,6 @@ class TestVorschauMitFunktionen:
         svc._mitglied_abteilungen = lambda ids: {}
         svc._funktion_intervalle = lambda ids, fn: [
             r for r in funktion_rows if r['mitglied_id'] in ids and r['funktion'] in fn]
-        svc._abteilung_intervalle = lambda ids, abt: [
-            r for r in (abteilung_rows or []) if r['mitglied_id'] in ids and r['abteilung_id'] in abt]
         return svc
 
     def test_einschluss_funktion_schraenkt_monate_ein(self):
@@ -579,11 +595,14 @@ class TestVorschauAufholen:
         assert len(schluessel) == len(set(schluessel))
 
 
-class TestAbteilungsStatusBedingung:
-    """Wer zahlt den Abteilungsbeitrag? (Grundregel: Passive nicht.)
+class TestAbteilungsbeitragUndPassive:
+    """Wer zahlt den Abteilungsbeitrag?
 
-    Geprüft wird die gebaute Abfrage statt des Ergebnisses – die Bedingung fiele
-    sonst erst bei einer echten Abrechnung auf, also frühestens ein Quartal später.
+    Seit v105 steht das nicht mehr als Kennzeichen an der Zuordnung, sondern als
+    Funktion `passiv` – ausgewertet über Bedingung/Ausnahme der Regel und damit
+    zeitraumgenau. Die gebaute Abfrage darf davon nichts mehr wissen; geprüft wird
+    sie statt des Ergebnisses, weil ein Fehler sonst erst bei einer echten
+    Abrechnung auffiele, also frühestens ein Quartal später.
     """
 
     START, ENDE = date(2026, 7, 1), date(2026, 9, 30)
@@ -593,29 +612,19 @@ class TestAbteilungsStatusBedingung:
                               betrag_pro_monat=10.0, **kwargs)
         return betroffene_mitglieder_sql(regel, '2026-07-01', self.START, self.ENDE)
 
-    def test_ohne_angabe_bleiben_passive_draussen(self):
+    def test_die_abfrage_kennt_keinen_status_mehr(self):
         sql, params = self._sql()
-        assert 'ma.status <> %s' in sql
-        assert 'passiv' in params
+        assert 'ma.status' not in sql
+        assert 'passiv' not in params
 
-    def test_genannte_status_gelten_woertlich(self):
-        sql, params = self._sql(bedingung_abteilung_status='aktiv,trainer')
-        assert 'ma.status IN (%s,%s)' in sql
-        assert 'ma.status <> %s' not in sql          # Grundregel tritt zurück
-        assert params[-2:] == ['aktiv', 'trainer']
+    def test_abteilungsregel_greift_weiter_ueber_die_zuordnung(self):
+        # Der Zeitraum der Zuordnung bleibt die Grundlage – nur das Kennzeichen ist weg.
+        sql, _ = self._sql()
+        assert 'JOIN mitglied_abteilung ma' in sql
+        assert 'ma.abteilung_id = %s' in sql
 
-    def test_passiv_kann_ausdruecklich_abgerechnet_werden(self):
-        # Reduzierter Passiv-Beitrag: die Nennung schlägt die Grundregel.
-        sql, params = self._sql(bedingung_abteilung_status='passiv')
-        assert 'ma.status IN (%s)' in sql
-        assert 'ma.status <> %s' not in sql
-        assert params[-1] == 'passiv'
-
-    def test_vereinsbeitrag_kennt_keinen_abteilungsstatus(self):
-        # Vereinsbeitrag (abteilung_id=None) joint mitglied_abteilung gar nicht –
-        # Passive bleiben dort beitragspflichtig.
-        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None,
-                              betrag_pro_monat=10.0)
+    def test_vereinsbeitrag_joint_die_zuordnung_gar_nicht(self):
+        regel = Beitragsregel(id=1, name='Verein', abteilung_id=None, betrag_pro_monat=10.0)
         sql, params = betroffene_mitglieder_sql(regel, '2026-07-01', self.START, self.ENDE)
         assert 'mitglied_abteilung' not in sql
         assert 'passiv' not in params
@@ -623,7 +632,6 @@ class TestAbteilungsStatusBedingung:
     def test_parameter_reihenfolge_passt_zu_den_platzhaltern(self):
         # %s-Zahl und Parameter-Zahl müssen übereinstimmen, sonst wirft psycopg
         # erst zur Laufzeit – und zwar mitten in der Abrechnung.
-        for kwargs in ({}, {'bedingung_abteilung_status': 'aktiv,vorstand'},
-                       {'bedingung_alter_min': 18, 'bedingung_alter_max': 65}):
+        for kwargs in ({}, {'bedingung_alter_min': 18, 'bedingung_alter_max': 65}):
             sql, params = self._sql(**kwargs)
             assert sql.count('%s') == len(params), kwargs

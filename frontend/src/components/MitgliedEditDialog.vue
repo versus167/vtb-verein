@@ -121,11 +121,13 @@
                 Keine Abteilungszuordnungen vorhanden
               </div>
               <q-list separator>
-                <q-item v-for="z in zuordnungen" :key="z.id">
+                <q-item v-for="z in zuordnungen" :key="z.id"
+                  :style="istBeendet(z) ? 'opacity: .6' : ''">
                   <q-item-section>
                     <q-item-label>
                       {{ z.abteilung_name }}
-                      <q-badge class="q-ml-sm" :color="abteilungStatusColor(z.status)" text-color="white">{{ z.status }}</q-badge>
+                      <q-badge v-if="istBeendet(z)" class="q-ml-sm" color="grey-7" text-color="white">beendet</q-badge>
+                      <q-badge v-else-if="istKuenftig(z)" class="q-ml-xs" color="deep-orange-7" text-color="white">künftig</q-badge>
                     </q-item-label>
                     <q-item-label caption>
                       <span v-if="z.von">ab {{ z.von }}</span>
@@ -158,11 +160,14 @@
                 Keine Funktionen zugeordnet
               </div>
               <q-list separator>
-                <q-item v-for="f in funktionen" :key="f.id">
+                <q-item v-for="f in funktionen" :key="f.id"
+                  :style="istBeendet(f) ? 'opacity: .6' : ''">
                   <q-item-section>
                     <q-item-label>
                       {{ funktionLabel(f.funktion) }}
                       <q-badge class="q-ml-sm" color="teal">{{ f.abteilung_name ?? 'Verein' }}</q-badge>
+                      <q-badge v-if="istBeendet(f)" class="q-ml-xs" color="grey-7" text-color="white">beendet</q-badge>
+                      <q-badge v-else-if="istKuenftig(f)" class="q-ml-xs" color="deep-orange-7" text-color="white">künftig</q-badge>
                     </q-item-label>
                     <q-item-label caption>
                       <span v-if="f.von">ab {{ f.von }}</span>
@@ -417,7 +422,8 @@
             :options="abteilungOptions" option-value="id" option-label="name"
             emit-value map-options :rules="[(v) => !!v || 'Pflichtfeld']"
           />
-          <q-select v-model="zuordnungForm.status" label="Status *" outlined dense :options="abteilungStatusOptions" />
+          <!-- Kein Status mehr: Die Zuordnung sagt nur, von wann bis wann jemand
+               dazugehört. Ob er aktiv mitmacht, ist die Funktion „Passiv". -->
           <div class="row q-gutter-sm">
             <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" clearable
               :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
@@ -450,6 +456,34 @@
             :options="abteilungOptions" option-value="id" option-label="name"
             emit-value map-options clearable
           />
+
+          <!-- „Bis Juli ÜL Tischtennis, ab August ÜL Volleyball" – auch hier darf
+               die Vergangenheit nicht mitwandern. -->
+          <div v-if="funktionWechselFrage" class="q-pa-sm rounded-borders"
+               style="border: 1px solid rgba(128, 128, 128, .35)">
+            <div class="text-caption text-weight-medium q-mb-xs">Was hat sich geändert?</div>
+            <q-option-group v-model="funktionModus" :options="wechselOptionen" dense />
+            <template v-if="funktionModus === 'wechsel'">
+              <q-select v-model="funktionAb" label="Gilt ab *" outlined dense class="q-mt-sm"
+                :options="funktionAbOptionen" emit-value map-options
+                hint="Nur Monatserste – ein Schnitt mitten im Monat zählt ihn doppelt" />
+              <div v-if="funktionAb" class="text-caption text-grey q-mt-xs">
+                Die bisherige Zeile endet am {{ datumLang(vortag(funktionAb)) }}.
+              </div>
+              <q-banner v-if="abrechnungZeitraeume.length" dense rounded class="vtb-warnung q-mt-sm">
+                <template #avatar><q-icon name="warning" /></template>
+                <div class="text-weight-medium">
+                  Bereits abgerechnet: {{ abrechnungZeitraeume.join(', ') }}
+                </div>
+                <div class="text-caption">
+                  Die Sollstellung muss <b>gelöscht</b> und der Lauf wiederholt werden.
+                  Nicht stornieren – Storno heißt „diesmal nicht abrechnen“, die
+                  korrigierte Forderung entstünde dann nie.
+                </div>
+              </q-banner>
+            </template>
+          </div>
+
           <div class="row q-gutter-sm">
             <q-input v-model="funktionForm.von" label="Von *" outlined dense type="date" class="col" clearable
               :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
@@ -558,6 +592,7 @@ import { mailRule, mailRulePflicht, pruefeMailadresse } from 'src/utils/email'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
+import { datumLang, istBeendet, istKuenftig, istLaufend, monatsErster, monatsErsteAuswahl, vortag } from 'src/utils/zeitraum'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -604,7 +639,7 @@ const artOptions = [
   { label: 'Vereinsmitglied', value: 'mitglied' },
   { label: 'Gastspieler', value: 'gastspieler' },
 ]
-const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+// Nur noch beitragsrelevant/nicht – Rollen sind Funktionen (Schema v104).
 const geschlechtOptions = [
   { label: 'männlich', value: 'm' },
   { label: 'weiblich', value: 'w' },
@@ -646,10 +681,6 @@ function snapshotForm() {
 // true, sobald sich ein Stammdaten-Feld gegenüber dem Snapshot unterscheidet.
 const stammDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(pristineForm.value))
 
-function abteilungStatusColor(s) {
-  return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber-8' }[s] ?? 'grey'
-}
-
 // ── Abteilungen ──────────────────────────────────────────────
 const zuordnungen = ref([])
 const abteilungOptions = ref([])
@@ -657,7 +688,38 @@ const zuordnungFormOpen = ref(false)
 const zuordnungSaving = ref(false)
 const editingZuordnungId = ref(null)
 const editingZuordnungVersion = ref(null)
-const zuordnungForm = ref({ abteilung_id: null, status: 'aktiv', von: null, bis: null })
+const zuordnungForm = ref({ abteilung_id: null, von: null, bis: null })
+
+// Korrektur oder Wechsel: Zwei Änderungen sehen im Formular gleich aus und meinen
+// das Gegenteil. „War von Anfang an ÜL Volleyball" gehört in die bestehende Zeile;
+// „ist ab August ÜL Volleyball" braucht einen Schnitt, sonst wandert die ganze
+// Vergangenheit mit — und der Beitragslauf rechnet rückwirkend falsch.
+const wechselOptionen = [
+  { label: 'Wechsel – gilt ab einem Stichtag, davor bleibt es beim Bisherigen', value: 'wechsel' },
+  { label: 'Korrektur – der Eintrag war von Anfang an falsch', value: 'korrektur' },
+]
+// Bereits abgerechnete Zeiträume, die ein rückwirkender Stichtag nachträglich
+// verändert. Bewusst ohne Beträge (s. Endpunkt): Wer Personen pflegt, muss
+// deshalb keine Beitragsdaten sehen.
+const abrechnungZeitraeume = ref([])
+
+async function ladeAbrechnungsWarnung(ab) {
+  abrechnungZeitraeume.value = []
+  if (!ab || !getMitgliedId()) return
+  try {
+    const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/abrechnung-betroffen`,
+      { params: { ab } })
+    abrechnungZeitraeume.value = data.zeitraeume ?? []
+  } catch {
+    // Die Warnung ist Beiwerk – wenn sie nicht kommt, darf das den Wechsel nicht aufhalten.
+  }
+}
+
+/** Vorschlag: der Erste des laufenden Monats, sonst der früheste zulässige. */
+function vorgeschlagenerStichtag(optionen) {
+  const dieserMonat = monatsErster()
+  return optionen.some(o => o.value === dieserMonat) ? dieserMonat : (optionen[0]?.value ?? null)
+}
 
 // ── Funktionen ───────────────────────────────────────────────
 const funktionen = ref([])
@@ -667,6 +729,9 @@ const funktionSaving = ref(false)
 const editingFunktionId = ref(null)
 const editingFunktionVersion = ref(null)
 const funktionForm = ref({ funktion: null, abteilung_id: null, von: null, bis: null })
+const editingFunktionOriginal = ref(null)
+const funktionModus = ref('wechsel')
+const funktionAb = ref(null)
 
 function funktionLabel(f) {
   if (!f) return ''
@@ -1154,15 +1219,36 @@ function defaultVon() {
 }
 
 // ── Abteilungs-Zuordnungen ───────────────────────────────────
+// Die Frage stellt sich nur an einer LAUFENDEN Zeile und nur, wenn sich das *Was*
+// ändert. Bei einer beendeten Zeile gibt es nichts zu schneiden, und eine reine
+// Datumsänderung ist immer eine Korrektur. An der Abteilungs-Zuordnung gibt es
+// seit v105 kein „Was" mehr — dort ist immer nur ein Datum zu korrigieren.
+const funktionWechselFrage = computed(() => {
+  const alt = editingFunktionOriginal.value
+  if (!editingFunktionId.value || !istLaufend(alt ?? {})) return false
+  return funktionForm.value.funktion !== alt?.funktion
+    || (funktionForm.value.abteilung_id || null) !== (alt?.abteilung_id || null)
+})
+
+const funktionAbOptionen = computed(() => monatsErsteAuswahl({
+  von: editingFunktionOriginal.value?.von,
+  bis: editingFunktionOriginal.value?.bis,
+  eintritt: form.value.eintrittsdatum,
+  austritt: form.value.austrittsdatum,
+}))
+
+watch([funktionAb, funktionModus, funktionWechselFrage],
+  ([ab, modus, frage]) => ladeAbrechnungsWarnung(frage && modus === 'wechsel' ? ab : null))
+
 function openZuordnungForm(z) {
   if (z) {
     editingZuordnungId.value = z.id
     editingZuordnungVersion.value = z.version
-    zuordnungForm.value = { abteilung_id: z.abteilung_id, status: z.status, von: z.von, bis: z.bis }
+    zuordnungForm.value = { abteilung_id: z.abteilung_id, von: z.von, bis: z.bis }
   } else {
     editingZuordnungId.value = null
     editingZuordnungVersion.value = null
-    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: defaultVon(), bis: null }
+    zuordnungForm.value = { abteilung_id: null, von: defaultVon(), bis: null }
   }
   zuordnungFormOpen.value = true
 }
@@ -1175,7 +1261,6 @@ async function saveZuordnung() {
   try {
     if (editingZuordnungId.value) {
       await api.put(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}`, {
-        status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
         bis: zuordnungForm.value.bis || null,
         expected_version: editingZuordnungVersion.value,
@@ -1183,7 +1268,6 @@ async function saveZuordnung() {
     } else {
       await api.post(`/api/mitglieder/${getMitgliedId()}/abteilungen`, {
         abteilung_id: zuordnungForm.value.abteilung_id,
-        status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
         bis: zuordnungForm.value.bis || null,
       })
@@ -1231,6 +1315,10 @@ function openFunktionForm(f) {
     editingFunktionVersion.value = null
     funktionForm.value = { funktion: null, abteilung_id: null, von: defaultVon(), bis: null }
   }
+  editingFunktionOriginal.value = f ? { ...f } : null
+  funktionModus.value = 'wechsel'
+  funktionAb.value = vorgeschlagenerStichtag(funktionAbOptionen.value)
+  abrechnungZeitraeume.value = []
   funktionFormOpen.value = true
 }
 
@@ -1243,9 +1331,21 @@ async function saveFunktion() {
     $q.notify({ type: 'negative', message: 'Bitte ein „Von"-Datum angeben (Zeitraum ist Pflicht).' })
     return
   }
+  const istWechsel = funktionWechselFrage.value && funktionModus.value === 'wechsel'
+  if (istWechsel && !funktionAb.value) {
+    $q.notify({ type: 'negative', message: 'Bitte einen Stichtag für den Wechsel wählen.' })
+    return
+  }
   funktionSaving.value = true
   try {
-    if (editingFunktionId.value) {
+    if (istWechsel) {
+      await api.post(`/api/mitglieder/${getMitgliedId()}/funktionen/${editingFunktionId.value}/wechsel`, {
+        ab: funktionAb.value,
+        funktion: funktionForm.value.funktion,
+        abteilung_id: funktionForm.value.abteilung_id || null,
+        expected_version: editingFunktionVersion.value,
+      })
+    } else if (editingFunktionId.value) {
       await api.put(`/api/mitglieder/${getMitgliedId()}/funktionen/${editingFunktionId.value}`, {
         funktion: funktionForm.value.funktion,
         abteilung_id: funktionForm.value.abteilung_id || null,

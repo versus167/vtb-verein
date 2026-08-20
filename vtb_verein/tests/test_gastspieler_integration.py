@@ -83,8 +83,8 @@ def _make_mitglied(db, nachname, art="mitglied", eintritt=LASTYEAR,
 def _add_abteilung(db, mitglied_id, abteilung_id, von=LASTYEAR):
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,status,von,"
-            "created_by,updated_by) VALUES (%s,%s,'aktiv',%s,'gasttest','gasttest')",
+            "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,von,"
+            "created_by,updated_by) VALUES (%s,%s,%s,'gasttest','gasttest')",
             (mitglied_id, abteilung_id, von))
 
 

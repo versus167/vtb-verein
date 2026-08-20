@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 103
+SCHEMA_VERSION = 105
 
 
 # ---------------------------------------------------------------------------
@@ -282,12 +282,58 @@ _FN_ABTEILUNG_AUDIT_UPDATE = """
     END; $$;
 """
 
+# Ohne `status`: Die Spalte ist seit v105 weg (aus „passiv" wurde eine Funktion).
+# Die History behält ihre Spalte – sie ist der Beleg, was einmal galt.
+_FN_MITGLIED_ABTEILUNG_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_mitglied_abteilung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO mitglied_abteilung_history (
+            id, version, mitglied_id, abteilung_id, von, bis,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.von, NEW.bis,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_MITGLIED_ABTEILUNG_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_mitglied_abteilung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO mitglied_abteilung_history (
+                id, version, mitglied_id, abteilung_id, von, bis,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.von, NEW.bis,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# „Passiv" als Funktion (v105). Aus beiden Pfaden gerufen — Frischaufbau und
+# Migration —, damit eine neue Instanz denselben Schlüssel kennt wie eine
+# gewachsene. Der Schlüssel folgt der Konvention des SPG-Imports.
+_SEED_FUNKTION_PASSIV = """
+    INSERT INTO funktion (key, name, beschreibung, created_by)
+    SELECT 'passiv', 'Passiv',
+           'Gehört der Abteilung an, macht aber nicht mit – zahlt keinen Abteilungsbeitrag. '
+           'Ohne Abteilung: passiv im ganzen Verein.',
+           'SYSTEM'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM funktion WHERE key = 'passiv' AND deleted_at IS NULL
+    )
+"""
+
 _FN_BEITRAGSREGEL_AUDIT_INSERT = """
     CREATE OR REPLACE FUNCTION fn_beitragsregel_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
     BEGIN
         INSERT INTO beitragsregel_history (
             id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
-            gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+            gueltig_ab, gueltig_bis, bedingung_raw,
             zahler_typ,
             bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
             ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
@@ -295,7 +341,7 @@ _FN_BEITRAGSREGEL_AUDIT_INSERT = """
             created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
         ) VALUES (
             NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
-            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+            NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw,
             NEW.zahler_typ,
             NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
             NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
@@ -312,7 +358,7 @@ _FN_BEITRAGSREGEL_AUDIT_UPDATE = """
         IF NEW.version != OLD.version THEN
             INSERT INTO beitragsregel_history (
                 id, version, name, abteilung_id, betrag_pro_monat, einzug_turnus,
-                gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                gueltig_ab, gueltig_bis, bedingung_raw,
                 zahler_typ,
                 bedingung_funktionen, bedingung_funktion_abteilung_id, bedingung_abteilung_ids,
                 ausnahme_funktionen, ausnahme_funktion_abteilung_id, ausnahme_abteilung_ids,
@@ -320,7 +366,7 @@ _FN_BEITRAGSREGEL_AUDIT_UPDATE = """
                 created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
             ) VALUES (
                 NEW.id, NEW.version, NEW.name, NEW.abteilung_id, NEW.betrag_pro_monat, NEW.einzug_turnus,
-                NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw, NEW.bedingung_abteilung_status,
+                NEW.gueltig_ab, NEW.gueltig_bis, NEW.bedingung_raw,
                 NEW.zahler_typ,
                 NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
                 NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
@@ -3444,6 +3490,21 @@ class Database:
         else:
             logger.info("Datenbank bereit. Schema v%d.", SCHEMA_VERSION)
 
+    @staticmethod
+    def _hat_spalte(cur, tabelle: str, spalte: str) -> bool:
+        """Gibt es die Spalte (noch)?
+
+        Migrationen müssen auf einem Schema replaybar bleiben, das längst weiter
+        ist: Wer `schema_version` zurückdreht — die Migrationstests tun das —,
+        lässt die ganze Kette erneut über eine Datenbank laufen, in der spätere
+        Schritte schon gegriffen haben. Eine Migration, deren Spalte inzwischen
+        entfernt wurde, hat dann schlicht nichts zu tun.
+        """
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = %s AND column_name = %s", (tabelle, spalte))
+        return cur.fetchone() is not None
+
     def _run_migrations(self, current_version: int) -> None:
         """Führt alle ausstehenden Migrationen sequenziell aus.
         Jede Migration läuft in einer eigenen Transaktion und aktualisiert
@@ -3537,6 +3598,8 @@ class Database:
             101: self._migrate_v100_to_v101,
             102: self._migrate_v101_to_v102,
             103: self._migrate_v102_to_v103,
+            104: self._migrate_v103_to_v104,
+            105: self._migrate_v104_to_v105,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7618,6 +7681,198 @@ class Database:
                 "%d davon hatten kein Austrittsdatum – sie zählen ab jetzt wieder zum "
                 "Bestand. Bitte das Austrittsdatum nachtragen, wo es fehlt.", ohne_datum)
 
+    # Rollen, die früher im Abteilungs-Status steckten. Sie werden zu 'aktiv' –
+    # siehe Begründung in _migrate_v103_to_v104.
+    _ABGESCHAFFTE_ABTEILUNG_STATUS = ('trainer', 'vorstand', 'ehrenmitglied')
+
+    def _migrate_v103_to_v104(self) -> None:
+        """Abteilungs-Status auf 'aktiv'/'passiv' eindampfen.
+
+        `mitglied_abteilung.status` trug zwei Dinge in einem Feld: ob die
+        Zuordnung beitragsrelevant ist (aktiv/passiv) und welche Rolle jemand dort
+        hat (trainer/vorstand/ehrenmitglied). Weil beides dieselbe Spalte belegte,
+        konnte ein „trainer" nicht passiv sein. Rollen gehören zu den Funktionen –
+        die kennen Zeitraum, Abteilung und Rechte und werden von den Beitragsregeln
+        zeitraumgenau ausgewertet. Der SPG-Import legt Vorstand und Ehrenmitglieder
+        ohnehin längst als Funktion an.
+
+        **Bestand wird zu 'aktiv', nicht zu 'passiv'** – das erhält die bisherige
+        Abrechnung unverändert: Beitragsfrei war bislang allein 'passiv'
+        (`ABTEILUNG_STATUS_BEITRAGSFREI`), jeder andere Wert war beitragspflichtig.
+        Auf 'passiv' abzubilden hieße, jemandem den Beitrag stillschweigend zu
+        erlassen. Wer wirklich beitragsfrei sein soll, wird danach einzeln
+        umgestellt – als Entscheidung, nicht als Nebenwirkung einer Migration.
+
+        Beitragsregeln, die einen wegfallenden Wert in `bedingung_abteilung_status`
+        nennen, werden mitgezogen (Wert → 'aktiv', entdoppelt). Ohne das würde die
+        Regel **still stumm**: keine Fehlermeldung, nur fehlende Beiträge im
+        nächsten Lauf.
+        """
+        weg = list(self._ABGESCHAFFTE_ABTEILUNG_STATUS)
+        with self.cursor() as cur:
+            if not self._hat_spalte(cur, 'mitglied_abteilung', 'status'):
+                # v105 hat die Spalte bereits entfernt (aus „passiv" wurde eine
+                # Funktion) – dann gibt es hier nichts mehr einzudampfen.
+                cur.execute("UPDATE schema_version SET version = 104 WHERE id = 1")
+                logger.info("Abteilungs-Status: Spalte existiert nicht mehr – übersprungen.")
+                return
+            cur.execute(
+                "SELECT status, COUNT(*) AS n FROM mitglied_abteilung "
+                "WHERE status = ANY(%s) AND deleted_at IS NULL GROUP BY status",
+                (weg,))
+            verteilung = {r["status"]: r["n"] for r in cur.fetchall()}
+            cur.execute(
+                "UPDATE mitglied_abteilung SET status = 'aktiv', version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM' "
+                "WHERE status = ANY(%s)", (weg,))
+            umgestellt = cur.rowcount
+
+            # Beitragsregeln nachziehen, bevor der CHECK steht.
+            cur.execute(
+                "SELECT id, bedingung_abteilung_status AS b FROM beitragsregel "
+                "WHERE COALESCE(bedingung_abteilung_status, '') <> ''")
+            regeln_geaendert = []
+            for zeile in cur.fetchall():
+                gewaehlt = [s.strip() for s in zeile["b"].split(',') if s.strip()]
+                neu = []
+                for status in gewaehlt:
+                    ersatz = 'aktiv' if status in weg else status
+                    if ersatz not in neu:
+                        neu.append(ersatz)
+                if neu != gewaehlt:
+                    regeln_geaendert.append((zeile["id"], zeile["b"], ','.join(neu)))
+            for regel_id, _alt, neu_wert in regeln_geaendert:
+                cur.execute(
+                    "UPDATE beitragsregel SET bedingung_abteilung_status = %s, "
+                    "version = version + 1, updated_at = CURRENT_TIMESTAMP, "
+                    "updated_by = 'SYSTEM' WHERE id = %s", (neu_wert, regel_id))
+
+            cur.execute("ALTER TABLE mitglied_abteilung "
+                        "DROP CONSTRAINT IF EXISTS mitglied_abteilung_status_check")
+            cur.execute("ALTER TABLE mitglied_abteilung ADD CONSTRAINT "
+                        "mitglied_abteilung_status_check CHECK (status IN ('aktiv', 'passiv'))")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 104 WHERE id = 1")
+        logger.info("Abteilungs-Status eingedampft: %d Zeilen auf 'aktiv' gesetzt%s.",
+                    umgestellt,
+                    (" (" + ", ".join(f"{k}: {v}" for k, v in sorted(verteilung.items())) + ")")
+                    if verteilung else "")
+        for regel_id, alt_wert, neu_wert in regeln_geaendert:
+            logger.warning("Beitragsregel %d: bedingung_abteilung_status '%s' → '%s' "
+                           "(sonst hätte die Regel stillschweigend nicht mehr gegriffen).",
+                           regel_id, alt_wert, neu_wert)
+
+    def _migrate_v104_to_v105(self) -> None:
+        """„Passiv" wird eine Funktion; der Abteilungs-Status fällt weg.
+
+        `mitglied_abteilung.status` war die letzte Aussage im Modell **ohne
+        eigenes Datum**. Im Beitragslauf war er ein reines Zeilen-Filter; monats-
+        genau wurde die Rechnung erst dadurch, dass man die Zuordnung aufteilte.
+        Funktionen dagegen werden längst monatsweise ausgewertet
+        (`funktions_monats_restriktion`) und haben einen Abteilungsbezug — „ab
+        August passiv in Tischtennis" ist damit direkt ausdrückbar. Für den
+        Erfasser ist es dieselbe Logik wie bei Übungsleiter oder Ehrenmitglied.
+
+        Die Wirkung ergibt sich aus dem Abteilungsbezug der **Regel**, nicht aus
+        einem Sonderfall: Ausgeschlossen werden nur Regeln mit Abteilung, der
+        Vereinsbeitrag läuft weiter. Passiv für eine Abteilung trifft genau deren
+        Beitrag; passiv ohne Abteilung alle Abteilungsbeiträge.
+
+        Was die Migration deshalb tut:
+
+        * Je Zuordnung mit `status = 'passiv'` eine Funktions-Zeile `passiv` mit
+          derselben Abteilung und demselben Zeitraum.
+        * Bestandsregeln umschreiben — und hier **kehrt sich die Bedeutung um**:
+          `bedingung_abteilung_status = 'passiv'` ist der reduzierte Passiv-Beitrag,
+          der Passive gerade *treffen* soll. Aus ihm wird ein Einschluss, aus dem
+          Normalfall eine Ausnahme. Wer das verwechselt, verliert Beiträge.
+        * Ein `version`-Bump auf allen Zuordnungen, damit der alte Status in
+          `mitglied_abteilung_history` steht, **bevor** die Spalte fällt.
+        """
+        umgestellt = angelegt = 0
+        regeln: list[tuple[int, str, str]] = []
+        with self.cursor() as cur:
+            cur.execute(_SEED_FUNKTION_PASSIV)
+            if not self._hat_spalte(cur, 'mitglied_abteilung', 'status'):
+                # Schon gelaufen (oder frisch aufgebaut): nichts zu übertragen.
+                cur.execute("UPDATE schema_version SET version = 105 WHERE id = 1")
+                return
+
+            # 1) Passiv-Zuordnungen → Funktions-Zeilen (idempotent).
+            cur.execute(
+                """
+                INSERT INTO mitglied_funktion
+                    (mitglied_id, abteilung_id, funktion, von, bis, created_by, updated_at, updated_by)
+                SELECT ma.mitglied_id, ma.abteilung_id, 'passiv', ma.von, ma.bis,
+                       'SYSTEM', CURRENT_TIMESTAMP, 'SYSTEM'
+                FROM mitglied_abteilung ma
+                WHERE ma.status = 'passiv' AND ma.deleted_at IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM mitglied_funktion mf
+                    WHERE mf.mitglied_id = ma.mitglied_id AND mf.funktion = 'passiv'
+                      AND mf.abteilung_id IS NOT DISTINCT FROM ma.abteilung_id
+                      AND mf.deleted_at IS NULL
+                  )
+                """)
+            angelegt = cur.rowcount
+
+            # 2) Alten Stand in die History heben, solange die Spalte noch da ist.
+            cur.execute(
+                "UPDATE mitglied_abteilung SET version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM' "
+                "WHERE deleted_at IS NULL")
+            umgestellt = cur.rowcount
+
+            # 3) Bestandsregeln auf Bedingung/Ausnahme umschreiben.
+            cur.execute(
+                "SELECT id, abteilung_id, COALESCE(bedingung_abteilung_status, '') AS b, "
+                "       COALESCE(bedingung_funktionen, '{}') AS bf, "
+                "       COALESCE(bedingung_abteilung_ids, '{}') AS ba, "
+                "       COALESCE(ausnahme_funktionen, '{}') AS af, "
+                "       COALESCE(ausnahme_abteilung_ids, '{}') AS aa "
+                "FROM beitragsregel WHERE abteilung_id IS NOT NULL AND deleted_at IS NULL")
+            for r in cur.fetchall():
+                genannt = {s.strip() for s in r['b'].split(',') if s.strip()}
+                if genannt == {'passiv'}:
+                    ziel, feld = 'Bedingung', 'bedingung'
+                    funktionen = list(r['bf']) + ['passiv']
+                    abteilungen = list(r['ba']) + [r['abteilung_id']]
+                    rest = (list(r['af']), list(r['aa']))
+                elif 'passiv' in genannt:
+                    continue                      # 'aktiv,passiv' = alle, nichts zu tun
+                else:
+                    ziel, feld = 'Ausnahme', 'ausnahme'
+                    funktionen = list(r['af']) + ['passiv']
+                    abteilungen = list(r['aa']) + [r['abteilung_id']]
+                    rest = (list(r['bf']), list(r['ba']))
+                if feld == 'bedingung':
+                    werte = (funktionen, abteilungen, rest[0], rest[1])
+                else:
+                    werte = (rest[0], rest[1], funktionen, abteilungen)
+                cur.execute(
+                    "UPDATE beitragsregel SET bedingung_funktionen = %s, "
+                    "bedingung_abteilung_ids = %s, ausnahme_funktionen = %s, "
+                    "ausnahme_abteilung_ids = %s, version = version + 1, "
+                    "updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM' WHERE id = %s",
+                    (*werte, r['id']))
+                regeln.append((r['id'], r['b'] or '(leer)', ziel))
+
+            # 4) Trigger ohne die Spalten, dann die Spalten selbst.
+            cur.execute(_FN_MITGLIED_ABTEILUNG_AUDIT_INSERT)
+            cur.execute(_FN_MITGLIED_ABTEILUNG_AUDIT_UPDATE)
+            cur.execute(_FN_BEITRAGSREGEL_AUDIT_INSERT)
+            cur.execute(_FN_BEITRAGSREGEL_AUDIT_UPDATE)
+            cur.execute("ALTER TABLE mitglied_abteilung DROP COLUMN IF EXISTS status")
+            cur.execute("ALTER TABLE beitragsregel DROP COLUMN IF EXISTS bedingung_abteilung_status")
+
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 105 WHERE id = 1")
+        logger.info("Passiv ist jetzt eine Funktion: %d Zuordnungen umgeschrieben, "
+                    "%d Passiv-Funktionen angelegt.", umgestellt, angelegt)
+        for regel_id, alt_wert, ziel in regeln:
+            logger.warning("Beitragsregel %d: Status '%s' → %s 'passiv'.",
+                           regel_id, alt_wert, ziel)
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7906,7 +8161,6 @@ class Database:
               id             SERIAL PRIMARY KEY,
               mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
               abteilung_id   INTEGER NOT NULL REFERENCES abteilung(id),
-              status         TEXT NOT NULL DEFAULT 'aktiv',
               von            TEXT,
               bis            TEXT,
               version        INTEGER NOT NULL DEFAULT 1,
@@ -7981,7 +8235,6 @@ class Database:
               gueltig_ab                   TEXT NOT NULL,
               gueltig_bis                  TEXT,
               bedingung_raw                TEXT,
-              bedingung_abteilung_status   TEXT,
               bedingung_funktionen         TEXT[],
               bedingung_funktion_abteilung_id INTEGER REFERENCES abteilung(id),
               bedingung_abteilung_ids      INTEGER[],
@@ -9236,34 +9489,8 @@ class Database:
         cur.execute(_FN_ALIAS_AUDIT_UPDATE)
         cur.execute(_FN_ABTEILUNG_AUDIT_INSERT)
         cur.execute(_FN_ABTEILUNG_AUDIT_UPDATE)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_abteilung_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO mitglied_abteilung_history (
-                    id, version, mitglied_id, abteilung_id, status, von, bis,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_abteilung_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO mitglied_abteilung_history (
-                        id, version, mitglied_id, abteilung_id, status, von, bis,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.mitglied_id, NEW.abteilung_id, NEW.status, NEW.von, NEW.bis,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_MITGLIED_ABTEILUNG_AUDIT_INSERT)
+        cur.execute(_FN_MITGLIED_ABTEILUNG_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_users_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN
@@ -10102,6 +10329,7 @@ class Database:
                 SELECT 1 FROM funktion WHERE key = 'vorstand' AND deleted_at IS NULL
             )
         """)
+        cur.execute(_SEED_FUNKTION_PASSIV)
 
         # Die folgenden beiden Blöcke hängen Rechte an 'uebungsleiter'/'abteilungsleiter'.
         # Frisch aufgesetzt greifen sie ins Leere (die Funktionen gibt es dann noch nicht) –

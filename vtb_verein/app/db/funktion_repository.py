@@ -2,6 +2,13 @@ from dataclasses import dataclass
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
+# „Passiv" ist seit Schema v105 eine Funktion und kein Abteilungs-Status mehr:
+# Damit hat die Aussage einen Zeitraum („ab August passiv") und einen optionalen
+# Abteilungsbezug – beides fehlte dem Status. Die Beitragsregeln arbeiten damit
+# über ihre Bedingungen/Ausnahmen; hier steht nur der Schlüssel, damit ihn Seed,
+# Migration und Statistik nicht je einzeln buchstabieren.
+FUNKTION_PASSIV = 'passiv'
+
 
 @dataclass
 class Funktion:

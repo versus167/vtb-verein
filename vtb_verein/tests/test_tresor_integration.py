@@ -78,8 +78,8 @@ def _make_user_with_membership(db):
         aid = cur.fetchone()['id']
         cur.execute("INSERT INTO funktion (key,name,created_by,updated_by) VALUES ('trainer','Trainer','t','t') RETURNING id")
         fid = cur.fetchone()['id']
-        cur.execute("INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,status,von,created_by,updated_by) "
-                    "VALUES (%s,%s,'aktiv',%s,'t','t')", (mid, aid, LASTWEEK))
+        cur.execute("INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,von,created_by,updated_by) "
+                    "VALUES (%s,%s,%s,'t','t')", (mid, aid, LASTWEEK))
         cur.execute("INSERT INTO mitglied_funktion (mitglied_id,funktion,von,created_by,updated_by) "
                     "VALUES (%s,'trainer',%s,'t','t')", (mid, LASTWEEK))
     return uid, aid, fid, mid

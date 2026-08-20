@@ -5,13 +5,12 @@ Ablauf:
 1. vorschau(zeitraum) → Liste der zu erzeugenden Sollstellungen (ohne DB-Schreibzugriff)
 2. abrechnen(zeitraum, erstellt_von) → Sollstellungen + Kassenbuchungen anlegen
 """
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
-from app.models.beitrag import (
-    ABTEILUNG_STATUS_BEITRAGSFREI, Beitragsregel, BeitragSollstellung,
-)
+from app.models.beitrag import Beitragsregel, BeitragSollstellung
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +128,47 @@ def zeitraum_monate(turnus: str, stichtag: date) -> list[tuple[int, int]]:
     return [(stichtag.year, m) for m in range(1, 13)]
 
 
+_ZEITRAUM_MUSTER = re.compile(r'^(\d{4})(?:-(?:Q([1-4])|H([12])|(\d{2})))?$')
+
+
+def zeitraum_ende(label: str) -> Optional[date]:
+    """Letzter Tag eines Zeitraum-Labels – die Umkehrung von `zeitraum_label`
+    ('2026-Q3' → 30.09.2026, '2026-08' → 31.08.2026, '2026' → 31.12.2026).
+
+    Unbekannte Schreibweisen ergeben None; der Aufrufer entscheidet, was das
+    heißt (die Warnung unten übergeht sie, statt zu raten).
+    """
+    m = _ZEITRAUM_MUSTER.match((label or '').strip())
+    if not m:
+        return None
+    jahr, quartal, halbjahr, monat = int(m.group(1)), m.group(2), m.group(3), m.group(4)
+    if quartal:
+        return _letzter_tag(jahr, int(quartal) * 3)
+    if halbjahr:
+        return _letzter_tag(jahr, int(halbjahr) * 6)
+    if monat:
+        return _letzter_tag(jahr, int(monat)) if 1 <= int(monat) <= 12 else None
+    return date(jahr, 12, 31)
+
+
+def betroffene_zeitraeume(labels, ab: date) -> list[str]:
+    """Zeitraum-Labels, die ein Wechsel zum Stichtag `ab` nachträglich verändert:
+    alle, deren letzter Tag nicht vor dem Stichtag liegt.
+
+    Warum der Aufwand: Wer rückwirkend schneidet, ändert die Monatsmengen eines
+    schon gelaufenen Zeitraums. Die bestehende Sollstellung bleibt davon
+    unberührt – sie muss **gelöscht** und der Lauf wiederholt werden. Ein Storno
+    hilft nicht: Der heißt „diesmal nicht abrechnen", und die korrigierte
+    Forderung entstünde nie.
+    """
+    treffer = set()
+    for label in labels:
+        ende = zeitraum_ende(label)
+        if ende is not None and ende >= ab:
+            treffer.add(label)
+    return sorted(treffer)
+
+
 # ---------------------------------------------------------------------------
 # Aufhol-Abrechnung: Quartals-Fenster mit harter Untergrenze
 # ---------------------------------------------------------------------------
@@ -211,31 +251,39 @@ def aktive_monate_menge(monate: list[tuple[int, int]],
     return treffer
 
 
-def _monate_je_schluessel(monate: list[tuple[int, int]], rows, schluessel: str
-                          ) -> dict[int, dict]:
-    """Aggregiert Intervall-Zeilen (`von`/`bis`) je Mitglied und `schluessel`-Wert zu
-    Monatsmengen.
+def _funktions_monate(monate: list[tuple[int, int]], rows) -> dict[int, dict]:
+    """Aggregiert Funktions-Intervalle zu Monatsmengen, getrennt nach der Abteilung
+    der **Funktions-Zeile**.
 
-    rows: Iterable von dicts mit 'mitglied_id', `schluessel`, 'von', 'bis'.
-    Returns {mitglied_id: {schluessel_wert: set[(jahr, monat)]}}.
+    rows: Iterable von dicts mit 'mitglied_id', 'funktion', 'abteilung_id',
+    'von', 'bis'. Returns {mitglied_id: {funktion: {abteilung_id|None: set(monate)}}}.
     """
     result: dict[int, dict] = {}
     for r in rows:
         menge = aktive_monate_menge(monate, parse_datum(r.get('von')), parse_datum(r.get('bis')))
         if not menge:
             continue
-        result.setdefault(r['mitglied_id'], {}).setdefault(r[schluessel], set()).update(menge)
+        (result.setdefault(r['mitglied_id'], {})
+               .setdefault(r['funktion'], {})
+               .setdefault(r.get('abteilung_id'), set())
+               .update(menge))
     return result
 
 
 def funktions_monats_restriktion(regel, mitglied_ids, monate: list[tuple[int, int]],
-                                 funktion_rows, abteilung_rows) -> dict[int, dict]:
+                                 funktion_rows) -> dict[int, dict]:
     """Bestimmt je Mitglied die Monats-Restriktion aus Funktions-Einschlüssen/-Ausnahmen.
 
     Funktions-/Ausnahme-Bedingungen wirken **zeitraumgenau**: ein Monat zählt für die
-    Beitragsauswirkung, wenn die Funktion – und, falls index-gleich eine Abteilung
-    gepaart ist, auch die Abteilungsmitgliedschaft – in diesem Monat mindestens einen
-    Tag bestand („angefangener Monat zählt voll", analog zu `aktive_monate_menge`).
+    Beitragsauswirkung, wenn die Funktion in diesem Monat mindestens einen Tag bestand
+    („angefangener Monat zählt voll", analog zu `aktive_monate_menge`).
+
+    Ist index-gleich eine Abteilung gepaart, meint sie die Abteilung der
+    **Funktions-Zeile** – „Übungsleiter für Tischtennis". Bis Schema v105 wurde
+    stattdessen die Abteilungs*mitgliedschaft* geprüft; „ÜL für Volleyball, Mitglied
+    in Tischtennis" erfüllte damit eine Bedingung „ÜL + Tischtennis". Bei ÜL fiel das
+    kaum auf, weil beides meist zusammenfällt – bei `passiv` ist es genau der
+    Unterschied.
 
     Mehrere Einschlüsse bzw. Ausnahmen werden je Mitglied **vereinigt** (ODER über die
     Paare). Ein Paar mit Abteilungsbezug zählt nur in Monaten, in denen Funktion **und**
@@ -246,14 +294,19 @@ def funktions_monats_restriktion(regel, mitglied_ids, monate: list[tuple[int, in
       - 'incl' set   → nur diese Monate dürfen verbleiben (Schnittmenge im Service).
       - 'excl' set   → diese Monate werden abgezogen.
     """
-    funktion_monate = _monate_je_schluessel(monate, funktion_rows, 'funktion')
-    abteilung_monate = _monate_je_schluessel(monate, abteilung_rows, 'abteilung_id')
+    funktion_monate = _funktions_monate(monate, funktion_rows)
 
     def _paar_monate(mid: int, funktion: str, abt_id) -> set:
-        fm = funktion_monate.get(mid, {}).get(funktion, set())
+        """Monate, in denen die Funktion für die verlangte Abteilung bestand.
+
+        `abt_id is None` im Paar heißt „egal wo" und nimmt alle Zeilen. Umgekehrt
+        zählt eine **vereinsweit** eingetragene Funktion (Zeile ohne Abteilung)
+        auch bei einem Paar mit Abteilung mit: Sie gilt überall.
+        """
+        je_abteilung = funktion_monate.get(mid, {}).get(funktion, {})
         if abt_id is None:
-            return set(fm)
-        return fm & abteilung_monate.get(mid, {}).get(abt_id, set())
+            return set().union(*je_abteilung.values()) if je_abteilung else set()
+        return je_abteilung.get(abt_id, set()) | je_abteilung.get(None, set())
 
     bed_abt = regel.bedingung_abteilung_ids or []
     aus_abt = regel.ausnahme_abteilung_ids or []
@@ -525,37 +578,20 @@ class BeitragsService:
             return []
         mid_ph = ','.join(['%s'] * len(mitglied_ids))
         fn_ph = ','.join(['%s'] * len(funktionen))
-        sql = (f"SELECT mitglied_id, funktion, von, bis FROM mitglied_funktion "
+        sql = (f"SELECT mitglied_id, funktion, abteilung_id, von, bis FROM mitglied_funktion "
                f"WHERE deleted_at IS NULL AND mitglied_id IN ({mid_ph}) "
                f"AND funktion IN ({fn_ph})")
         with self.db.conn.cursor() as cur:
             cur.execute(sql, list(mitglied_ids) + list(funktionen))
             return [dict(r) for r in cur.fetchall()]
 
-    def _abteilung_intervalle(self, mitglied_ids: set[int], abteilung_ids: set[int]) -> list[dict]:
-        """Abteilungs-Mitgliedschafts-Intervalle für die (in Funktions-Paaren) genannten Abteilungen."""
-        if not mitglied_ids or not abteilung_ids:
-            return []
-        mid_ph = ','.join(['%s'] * len(mitglied_ids))
-        abt_ph = ','.join(['%s'] * len(abteilung_ids))
-        sql = (f"SELECT mitglied_id, abteilung_id, von, bis FROM mitglied_abteilung "
-               f"WHERE deleted_at IS NULL AND mitglied_id IN ({mid_ph}) "
-               f"AND abteilung_id IN ({abt_ph})")
-        with self.db.conn.cursor() as cur:
-            cur.execute(sql, list(mitglied_ids) + list(abteilung_ids))
-            return [dict(r) for r in cur.fetchall()]
-
     def _funktions_restriktion(self, regel: Beitragsregel, mitglied_ids: set[int],
                                monate: list[tuple[int, int]]) -> dict[int, dict]:
-        """Lädt die nötigen Funktions-/Abteilungs-Intervalle und delegiert an die reine
-        Berechnung `funktions_monats_restriktion` (Einschluss-/Ausnahme-Monate je Mitglied)."""
+        """Lädt die Funktions-Intervalle und delegiert an die reine Berechnung
+        `funktions_monats_restriktion` (Einschluss-/Ausnahme-Monate je Mitglied)."""
         funktionen = set(regel.bedingung_funktionen or []) | set(regel.ausnahme_funktionen or [])
-        abteilung_ids = {a for a in
-                         (list(regel.bedingung_abteilung_ids or []) + list(regel.ausnahme_abteilung_ids or []))
-                         if a is not None}
         funktion_rows = self._funktion_intervalle(mitglied_ids, funktionen)
-        abteilung_rows = self._abteilung_intervalle(mitglied_ids, abteilung_ids)
-        return funktions_monats_restriktion(regel, mitglied_ids, monate, funktion_rows, abteilung_rows)
+        return funktions_monats_restriktion(regel, mitglied_ids, monate, funktion_rows)
 
     def _betroffene_mitglieder(self, regel: Beitragsregel, stichtag_str: str,
                                periode_start: date, periode_ende: date,
@@ -634,19 +670,10 @@ def betroffene_mitglieder_sql(regel: Beitragsregel, stichtag_str: str,
         params.extend([regel.abteilung_id, periode_ende.isoformat(),
                        periode_start.isoformat(), periode_start.isoformat()])
 
-        # Status-Bedingung: genannte Status gelten wörtlich, sonst greift die
-        # Grundregel „Passive zahlen keinen Abteilungsbeitrag". Bewusst als
-        # Ausschluss und nicht als Aufzählung der zahlenden Status – sonst
-        # müsste jede Regel jeden künftigen Status nachtragen, und wer das
-        # vergisst, merkt es erst am Einzug.
-        status_filter = regel.bedingung_status_liste
-        if status_filter:
-            placeholders = ','.join(['%s'] * len(status_filter))
-            where.append(f"ma.status IN ({placeholders})")
-            params.extend(status_filter)
-        else:
-            where.append("ma.status <> %s")
-            params.append(ABTEILUNG_STATUS_BEITRAGSFREI)
+        # Passive stehen hier nicht mehr im Weg: „passiv" ist eine Funktion
+        # (v105) und wird zeitraumgenau über Bedingung/Ausnahme der Regel
+        # ausgewertet – nicht über ein Kennzeichen an der Zuordnung, das kein
+        # Datum kannte.
 
     # Funktions-Einschlüsse/-Ausnahmen werden bewusst NICHT hier gefiltert (siehe
     # Docstring): der Service wertet sie zeitraumgenau über die Monate aus.

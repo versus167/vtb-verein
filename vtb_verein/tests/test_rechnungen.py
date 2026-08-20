@@ -147,8 +147,8 @@ def _user(db, username, *, perms=(), abteilung_perms=(), abteilungen=(), funktio
                 "VALUES (%s,%s,%s,'rtest','rtest')", (uid, p, aid))
         for aid in abteilungen:
             cur.execute(
-                "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,status,von,created_by,updated_by) "
-                "VALUES (%s,%s,'aktiv',%s,'rtest','rtest')", (mid, aid, LASTWEEK))
+                "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,von,created_by,updated_by) "
+                "VALUES (%s,%s,%s,'rtest','rtest')", (mid, aid, LASTWEEK))
         for fkey, aid in funktionen:
             cur.execute(
                 "INSERT INTO mitglied_funktion (mitglied_id,abteilung_id,funktion,von,created_by,updated_by) "

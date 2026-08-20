@@ -612,18 +612,18 @@ class VereinsDB:
     def get_mitglied_abteilung(self, id: int) -> Optional[MitgliedAbteilung]:
         return self._mitglied_abteilung_repo.get(id)
 
-    def create_mitglied_abteilung(self, mitglied_id: int, abteilung_id: int, status: str,
+    def create_mitglied_abteilung(self, mitglied_id: int, abteilung_id: int,
                                    von: Optional[str], bis: Optional[str],
                                    created_by: str) -> MitgliedAbteilung:
         return self._mitglied_abteilung_repo.create(
-            mitglied_id, abteilung_id, status, von, bis, created_by
+            mitglied_id, abteilung_id, von, bis, created_by
         )
 
-    def update_mitglied_abteilung(self, id: int, status: str, von: Optional[str],
+    def update_mitglied_abteilung(self, id: int, von: Optional[str],
                                    bis: Optional[str], updated_by: str,
                                    expected_version: int) -> bool:
         return self._mitglied_abteilung_repo.update(
-            id, status, von, bis, updated_by, expected_version
+            id, von, bis, updated_by, expected_version
         )
 
     def mark_mitglied_abteilung_deleted(self, id: int, deleted_by: str) -> bool:
@@ -660,6 +660,12 @@ class VereinsDB:
 
     def mark_mitglied_funktion_deleted(self, id: int, deleted_by: str) -> bool:
         return self._mitglied_funktion_repo.mark_deleted(id, deleted_by)
+
+    def wechsel_mitglied_funktion(self, id: int, ab: str, abteilung_id: Optional[int],
+                                  funktion: str, updated_by: str,
+                                  expected_version: int) -> Optional[MitgliedFunktion]:
+        return self._mitglied_funktion_repo.wechsel(
+            id, ab, abteilung_id, funktion, updated_by, expected_version)
 
     # -----------------------------------
     # Mitglied-Kontakt-Zuordnung (mehrere E-Mails/Telefonnummern)
