@@ -314,13 +314,25 @@ Ausgeschlossen werden also nur Regeln **mit** Abteilungsbezug; der Vereinsbeitra
 läuft weiter. Das ist keine neue Festlegung, sondern die heutige: „Passiv in der
 Abteilung heißt nicht passiv im Verein."
 
-#### Eingebaut, nicht je Regel konfiguriert
+#### Das Feld „Beitragspflichtiger Abteilungs-Status" fällt ersatzlos weg
 
-Der Ausschluss steckt im Service, so wie heute `ABTEILUNG_STATUS_BEITRAGSFREI` —
-**nicht** als `ausnahme_funktionen` in jeder einzelnen Regel. Sonst müsste jede
-neue Regel daran denken, und wer es vergisst, merkt es am Einzug. Umgekehrt gilt
-weiter „ausdrücklich genannt schlägt die Grundregel": Eine Regel, die `passiv`
-einschließt, rechnet Passive ab (reduzierter Passiv-Beitrag).
+Beides, was es heute ausdrückt, sagen Bedingung und Ausnahme ohnehin — und zwar
+mit Zeitraum, den das Feld nie hatte:
+
+| heute im Status-Feld | künftig |
+|---|---|
+| leer (= alle außer passiv) | **Ausnahme** `passiv` |
+| `passiv` (reduzierter Passiv-Beitrag) | **Bedingung** `passiv` |
+| `aktiv,passiv` (alle) | weder noch |
+
+Damit steht in der Regel, was sie tut, statt in einem zweiten Feld daneben.
+
+Der Preis: Der Ausschluss ist nicht mehr eingebaut, sondern muss je Regel gesetzt
+sein — wer ihn bei einer neuen Regel vergisst, rechnet Passiven den vollen Beitrag
+ab und merkt es beim Einzug. Die Bestandsregeln zieht die Migration nach (s. u.);
+für neue braucht das Formular einen sichtbaren Hinweis, sobald ein
+Abteilungsbeitrag `passiv` weder ein- noch ausschließt. Ein stiller Fehler wäre
+genau das, wogegen dieser Plan angeht — eine gezeigte Entscheidung ist in Ordnung.
 
 #### Migration (Schema v105)
 
@@ -328,11 +340,11 @@ einschließt, rechnet Passive ab (reduzierter Passiv-Beitrag).
 2. Je Zuordnung mit `status = 'passiv'` eine `mitglied_funktion`-Zeile anlegen —
    dieselbe Abteilung, dasselbe `von`/`bis`.
 3. Bestandsregeln umschreiben, jeweils mit dem Abteilungsbezug der Regel:
-   * `bedingung_abteilung_status = 'aktiv'` → nichts zu tun (Grundregel).
+   * leer oder `'aktiv'` → `ausnahme_funktionen += ['passiv']`.
    * `= 'passiv'` → `bedingung_funktionen += ['passiv']` (der Passiv-Beitrag muss
      Passive weiterhin *treffen* — hier kehrt sich die Bedeutung um, das ist die
      Stelle, an der eine schlampige Migration Beiträge verlöre).
-   * `= 'aktiv,passiv'` → wie oben, plus die Grundregel bleibt: trifft beide.
+   * `= 'aktiv,passiv'` → weder noch, die Regel trifft dann alle.
 4. `version`-Bump auf den Zuordnungen, damit der alte Status in
    `mitglied_abteilung_history` steht — **bevor** die Spalte fällt.
 5. `mitglied_abteilung.status` entfernen, ebenso `bedingung_abteilung_status`
@@ -349,6 +361,32 @@ einschließt, rechnet Passive ab (reduzierter Passiv-Beitrag).
   **Funktions**-Wechsel bleibt und wird die Stelle, an der „ab August passiv"
   entsteht. Teil A wird dadurch für Zuordnungen obsolet; das ist in Ordnung, er
   hat den Fehler erst sichtbar gemacht.
+
+#### Vorher zu lösen: die Abteilung im Paar meint heute etwas anderes
+
+`bedingung_abteilung_ids` / `ausnahme_abteilung_ids` koppeln eine Funktion an eine
+Abteilung — aber an die **Abteilungsmitgliedschaft**, nicht an die Abteilung der
+Funktions-Zeile. Gemessen an `funktions_monats_restriktion`:
+
+```
+Person ist Übungsleiter FÜR Volleyball, aber Mitglied in Tischtennis.
+Bedingung: Funktion 'uebungsleiter' + Abteilung Tischtennis
+  → trifft alle drei Monate   (gelesen als „ÜL irgendwo UND Mitglied in TT")
+  → gemeint wäre: leer        („ÜL für TT")
+```
+
+Der Grund steckt in `_monate_je_schluessel(..., 'funktion')`: Es gruppiert nur
+nach Funktion, die `abteilung_id` der Funktions-Zeile fällt dabei weg. Bei „ÜL
+Tischtennis" fällt das kaum auf, weil beides meist zusammenfällt. Bei `passiv` ist
+es genau der Unterschied: „passiv in TT" darf nicht den VB-Beitrag treffen, und
+umgekehrt.
+
+F braucht deshalb, dass das Paar die Abteilung der **Funktions-Zeile** prüft
+(zusätzlich oder statt der Mitgliedschaft). Das ist keine Zutat zu F, sondern
+Voraussetzung — und es ist unabhängig davon schon heute schief: Was das Formular
+verspricht („Je Zeile eine Funktion mit optionaler Abteilung") deckt sich nicht
+mit dem, was gerechnet wird. Vor F zu klären, ob bestehende Regeln von der
+Korrektur betroffen wären.
 
 #### Zu klären, bevor es losgeht
 
