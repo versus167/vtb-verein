@@ -120,7 +120,9 @@ def test_statistik_zaehlt_gastspieler_nicht(db):
 
     kpis = db.statistik.kpis()
     assert kpis["gesamt"] == 1
-    assert kpis["aktiv"] == 1
+    # Die Kennzahl hängt seit #173 an der Abteilungs-Zuordnung, nicht am Vereinsstatus –
+    # der Gastspieler hat zwar eine, zählt aber als Nicht-Mitglied trotzdem nicht mit.
+    assert kpis["aktiv_in_abteilung"] == 1
 
     geschlechter = {g["geschlecht"]: g["anzahl"] for g in db.statistik.geschlechterverteilung()}
     assert geschlechter.get("w", 0) == 0 and geschlechter["m"] == 1

@@ -300,7 +300,9 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             strasse=row.get('Strasse') or None, plz=row.get('PLZ') or None,
             ort=row.get('Ort') or None, land=row.get('Land') or None,
             eintrittsdatum=eintritt, austrittsdatum=austritt,
-            status='ausgetreten' if austritt else 'aktiv',
+            # Ausgetreten ist keine Status-Angabe mehr, sondern das Austrittsdatum
+            # eine Zeile höher (#173).
+            status='aktiv',
             zahlungsart=ZAHLART.get(row.get('Zahlart', ''), 'lastschrift'),
             iban=row.get('IBAN_Nr') or None, bic=row.get('BIC_Nr') or None,
             kontoinhaber=zahler or f"{vorname} {nachname}".strip(),

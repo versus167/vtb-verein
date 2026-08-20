@@ -23,6 +23,12 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
   das nie eine Mail gehen kann
 - Automatische Mitgliedsnummer-Vergabe (manuell überschreibbar)
 - Persönliche Daten, Adresse, Vereinsdaten (Eintritt/Austritt/Status), Zahlungsdaten (IBAN/BIC)
+- Der **Mitgliedsstatus** sagt nur, welche Form die Mitgliedschaft hat: `aktiv` oder
+  `passiv` *(v103)*. Ob jemand noch dabei ist, entscheidet allein das Austrittsdatum —
+  „ausgetreten"/„inaktiv" als Status waren eine zweite, konkurrierende Wahrheit.
+  Angezeigt und gepflegt wird der Status nicht (er bleibt für Vereine, die ihn
+  brauchen); die Berichte zeigen stattdessen **„davon in Abteilungen"** — Mitglieder
+  mit einer heute laufenden, aktiven Abteilungs-Zuordnung
 - Passwort-Hashing (bcrypt), Magic-Link-Login per E-Mail
 - Anmelde-Bremse gegen Passwort-Raten: 10 Fehlversuche je Konto bzw. 30 je
   Verbindung in 15 Minuten, danach 429. Ein erfolgreicher Login setzt die
@@ -393,7 +399,8 @@ Cloud · v91 Chip-Inhaber ohne Mitgliedschaft · v92 Verursacher in der Zutritts
 v93 Chip-Rechtegruppen · v94/v95 Stand und Zeitraum des Spielplan-Imports ·
 v96 Konten ohne Zugang (E-Mail optional) · v97 Versandstand der Einladung am Konto ·
 v98–v101 Teamkasse am Termin (Fremdbuchung, Sortiments-Stände, Wart-Artikel) ·
-v102 Gäste einladen statt für sie zuzusagen + Recht `termine.gaeste_vereinsweit`.
+v102 Gäste einladen statt für sie zuzusagen + Recht `termine.gaeste_vereinsweit` ·
+v103 Mitgliedsstatus nur noch aktiv/passiv (ausgetreten ist ein Datum).
 
 ## Permissions
 

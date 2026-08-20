@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 102
+SCHEMA_VERSION = 103
 
 
 # ---------------------------------------------------------------------------
@@ -3536,6 +3536,7 @@ class Database:
             100: self._migrate_v99_to_v100,
             101: self._migrate_v100_to_v101,
             102: self._migrate_v101_to_v102,
+            103: self._migrate_v102_to_v103,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7570,6 +7571,53 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 102 WHERE id = 1")
 
+    def _migrate_v102_to_v103(self) -> None:
+        """Mitgliedsstatus auf 'aktiv'/'passiv' eindampfen (#173).
+
+        `status` beschrieb zwei Dinge auf einmal: die Form der Mitgliedschaft
+        (aktiv/passiv) und ob jemand noch dabei ist ('ausgetreten', 'inaktiv').
+        Das Zweite steht schon in eintrittsdatum/austrittsdatum – und zwar
+        verlässlicher, weil es einen Zeitpunkt kennt. Zwei Quellen für dieselbe
+        Aussage gehen irgendwann auseinander; die Statistik trug den Konflikt
+        bereits als Kommentar ("wer als 'ausgetreten' geführt wird, aber erst
+        künftig geht, ist heute noch dabei"). Eine inaktive Mitgliedschaft gibt es
+        im Verein ohnehin nicht.
+
+        Bestand: 'ausgetreten'/'inaktiv' werden zu 'aktiv'. Das ist keine Aussage
+        über die Mitgliedschaft – die entscheidet ab jetzt allein das
+        Austrittsdatum. Für Zeilen OHNE Austrittsdatum steht danach niemand mehr
+        auf „ausgetreten": Sie zählen wieder zum Bestand. Ein Datum zu raten wäre
+        schlechter als keines, deshalb wird ihre Zahl nur protokolliert – wer sie
+        prüfen will, findet sie über den alten Stand in mitglied_history.
+
+        Der version-Bump ist Absicht: eine fachliche Änderung an der Zeile, die der
+        Audit-Trigger festhalten soll.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM mitglied "
+                "WHERE status IN ('ausgetreten', 'inaktiv') AND deleted_at IS NULL "
+                "AND COALESCE(austrittsdatum, '') = ''"
+            )
+            ohne_datum = cur.fetchone()["n"]
+            cur.execute(
+                "UPDATE mitglied SET status = 'aktiv', version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM' "
+                "WHERE status IN ('ausgetreten', 'inaktiv')"
+            )
+            umgestellt = cur.rowcount
+            cur.execute("ALTER TABLE mitglied DROP CONSTRAINT IF EXISTS mitglied_status_check")
+            cur.execute("ALTER TABLE mitglied ADD CONSTRAINT mitglied_status_check "
+                        "CHECK (status IN ('aktiv', 'passiv'))")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 103 WHERE id = 1")
+        logger.info("Mitgliedsstatus vereinheitlicht: %d Zeilen auf 'aktiv' gesetzt.",
+                    umgestellt)
+        if ohne_datum:
+            logger.warning(
+                "%d davon hatten kein Austrittsdatum – sie zählen ab jetzt wieder zum "
+                "Bestand. Bitte das Austrittsdatum nachtragen, wo es fehlt.", ohne_datum)
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7714,7 +7762,12 @@ class Database:
               land              TEXT,
               eintrittsdatum    TEXT,
               austrittsdatum    TEXT,
-              status            TEXT NOT NULL DEFAULT 'aktiv',
+              -- Nur die Form der Mitgliedschaft (v103). Ob jemand noch dabei ist,
+              -- sagen eintrittsdatum/austrittsdatum – 'ausgetreten' wäre eine zweite,
+              -- konkurrierende Wahrheit, und eine „inaktive" Mitgliedschaft gibt es
+              -- im Verein nicht.
+              status            TEXT NOT NULL DEFAULT 'aktiv'
+                                CHECK (status IN ('aktiv', 'passiv')),
               art               TEXT NOT NULL DEFAULT 'mitglied',
               zahlungsart       TEXT NOT NULL,
               iban              TEXT,

@@ -200,8 +200,10 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
         status = STATUS.get(status_roh)
         if status_roh and status is None:
             res.status_unbekannt += 1
-        # Ein gefülltes Austrittsdatum gewinnt gegen jeden Status-Text.
-        status = 'ausgetreten' if austritt else (status or 'aktiv')
+        # Der Status sagt nur, welche Form die Mitgliedschaft hat (aktiv/passiv).
+        # Ob jemand noch dabei ist, steht im Austrittsdatum – das wird unverändert
+        # übernommen und nicht mehr in den Status gespiegelt (#173).
+        status = status or 'aktiv'
 
         linear_tag = f'[LINEAR:{nr}]'
         m = Mitglied(

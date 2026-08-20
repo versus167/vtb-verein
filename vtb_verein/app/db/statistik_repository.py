@@ -20,19 +20,25 @@ from app.db.base_repository import BaseRepository
 # sollen sichtbar sein. Fenster damit: aktueller Monat -8 … +3 (weiterhin 12 Monate).
 _MONATS_VORLAUF = 3
 
-# "aktuell aktiv": Status aktiv UND Austritt nicht abgelaufen (am Austrittstag noch
-# Mitglied → >= CURRENT_DATE). Mitglieder mit künftigem Eintritt bleiben hier drin.
-_AKTIV = (
-    "m.status = 'aktiv' "
-    "AND (safe_to_date(m.austrittsdatum) IS NULL "
-    "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
+# "aktiv in einer Abteilung": mindestens eine heute laufende Zuordnung mit Status
+# 'aktiv'. Bewusst NICHT über m.status – der wird weder angezeigt noch gepflegt
+# (#173) und wäre damit eine Kennzahl über ein totes Feld. Die Abteilungs-
+# Zuordnung dagegen wird gepflegt, hat von/bis und trägt den Passiv-Status dort,
+# wo er hingehört.
+_IN_ABTEILUNG = (
+    "EXISTS (SELECT 1 FROM mitglied_abteilung ma_a "
+    "         WHERE ma_a.mitglied_id = m.id AND ma_a.deleted_at IS NULL "
+    "           AND ma_a.status = 'aktiv' "
+    "           AND (safe_to_date(ma_a.von) IS NULL "
+    "                OR safe_to_date(ma_a.von) <= CURRENT_DATE) "
+    "           AND (safe_to_date(ma_a.bis) IS NULL "
+    "                OR safe_to_date(ma_a.bis) >= CURRENT_DATE))"
 )
 # "zählt zum Bestand": aktueller Mitgliederstand zum Anzeigetag (heute) – wer HEUTE
 # Mitglied ist. Eintritt nicht in der Zukunft (am Eintrittstag schon dabei) UND Austritt
 # nicht in der Vergangenheit (am Austrittstag noch dabei → >= CURRENT_DATE). Fehlende/
-# ungültige Datumsfelder = dabei. Rein datumsbasiert (Status egal): wer laut Datum schon
-# ausgetreten ist, fällt raus – auch wenn der Status noch 'aktiv' steht; wer als
-# 'ausgetreten' geführt wird, aber erst künftig geht, ist heute noch dabei.
+# ungültige Datumsfelder = dabei. Rein datumsbasiert – der Status sagt seit v103 nur
+# noch, welche FORM die Mitgliedschaft hat (aktiv/passiv), nicht ob sie besteht (#173).
 _BESTAND = (
     "(safe_to_date(m.eintrittsdatum) IS NULL "
     " OR safe_to_date(m.eintrittsdatum) <= CURRENT_DATE) "
@@ -73,15 +79,19 @@ class StatistikRepository(BaseRepository):
         )
 
     def kpis(self, abteilung_id: int | None = None) -> dict:
-        """Eckdaten: Mitglieder nach Status, Zu-/Abgänge im laufenden Jahr, Ø-Alter.
+        """Eckdaten: Mitgliederstand, davon in Abteilungen aktiv, Zu-/Abgänge, Ø-Alter.
 
-        ``gesamt`` = aktueller Mitgliederstand heute (weder Zukunfts-Eintritte noch bereits
-        Ausgetretene, s. ``_BESTAND``), ``aktiv`` = aktuell aktiv (Status aktiv, Austritt
-        nicht abgelaufen, künftige Eintritte zählen mit, s. ``_AKTIV``). Damit kann ``gesamt``
-        ≥ ``aktiv`` sein (z. B. gekündigte Mitglieder, die erst künftig gehen), und in
-        seltenen Fällen ``aktiv`` > ``gesamt`` (künftiger Eintritt: schon aktiv, aber heute
-        noch kein Bestand). Mit ``abteilung_id`` auf diese Abteilung beschränkt;
-        Eintritte/Austritte zählen dann über das Abteilungsdatum (s. ``_scope``).
+        ``gesamt`` = aktueller Mitgliederstand heute (weder Zukunfts-Eintritte noch
+        bereits Ausgetretene, s. ``_BESTAND``). ``aktiv_in_abteilung`` = davon jene mit
+        mindestens einer heute laufenden, aktiven Abteilungs-Zuordnung – die Differenz
+        sind Mitglieder, die dem Verein angehören, aber in keiner Abteilung mitmachen
+        (oder dort passiv geführt werden).
+
+        Bewusst über die Zuordnung statt über ``m.status``: Der Vereinsstatus wird weder
+        angezeigt noch gepflegt (#173); eine Kennzahl darüber sagte nur, was zuletzt
+        importiert wurde. Mit ``abteilung_id`` ist die ganze Auswertung auf diese
+        Abteilung beschränkt (s. ``_scope``) – dort ist ``aktiv_in_abteilung`` gleich
+        ``gesamt``, weil der Scope-JOIN schon nur aktive Zuordnungen zulässt.
         """
         jahr = date.today().year
         join, ein, aus, params = self._scope(abteilung_id)
@@ -90,10 +100,7 @@ class StatistikRepository(BaseRepository):
                 f"""
                 SELECT
                     COUNT(*) FILTER (WHERE {_BESTAND})                    AS gesamt,
-                    COUNT(*) FILTER (WHERE {_AKTIV})                      AS aktiv,
-                    COUNT(*) FILTER (WHERE m.status = 'passiv')           AS passiv,
-                    COUNT(*) FILTER (WHERE m.status = 'inaktiv')          AS inaktiv,
-                    COUNT(*) FILTER (WHERE m.status = 'ausgetreten')      AS ausgetreten,
+                    COUNT(*) FILTER (WHERE {_BESTAND} AND {_IN_ABTEILUNG}) AS aktiv_in_abteilung,
                     COUNT(*) FILTER (
                         WHERE LEFT(({ein}), 4) = %(jahr)s
                     )                                                     AS eintritte_jahr,
@@ -112,10 +119,7 @@ class StatistikRepository(BaseRepository):
             row = cur.fetchone()
         return {
             "gesamt":             int(row["gesamt"] or 0),
-            "aktiv":              int(row["aktiv"] or 0),
-            "passiv":             int(row["passiv"] or 0),
-            "inaktiv":            int(row["inaktiv"] or 0),
-            "ausgetreten":        int(row["ausgetreten"] or 0),
+            "aktiv_in_abteilung":  int(row["aktiv_in_abteilung"] or 0),
             "eintritte_jahr":     int(row["eintritte_jahr"] or 0),
             "austritte_jahr":     int(row["austritte_jahr"] or 0),
             "durchschnittsalter": int(row["durchschnittsalter"]) if row["durchschnittsalter"] is not None else None,
@@ -204,7 +208,7 @@ class StatistikRepository(BaseRepository):
                     FROM mitglied m
                     {join}
                     WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
-                      AND {_AKTIV}
+                      AND {_BESTAND}
                       AND safe_to_date(m.geburtsdatum) IS NOT NULL
                 )
                 SELECT gruppe, COUNT(*) AS anzahl
@@ -236,7 +240,7 @@ class StatistikRepository(BaseRepository):
                 SELECT COALESCE(NULLIF(m.geschlecht, ''), '?') AS geschlecht, COUNT(*) AS anzahl
                 FROM mitglied m
                 {join}
-                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER} AND {_AKTIV}
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER} AND {_BESTAND}
                 GROUP BY COALESCE(NULLIF(m.geschlecht, ''), '?')
                 """,
                 params,
@@ -264,8 +268,12 @@ class StatistikRepository(BaseRepository):
                 LEFT JOIN mitglied m
                        ON m.id = ma.mitglied_id
                       AND m.deleted_at IS NULL
-                      AND m.status <> 'ausgetreten'
                       AND {_NUR_MITGLIEDER}
+                      -- Hier stand ein Ausschluss über den Status 'ausgetreten'.
+                      -- Gemeint war „wer heute dabei ist" – das sagt seit v103
+                      -- allein das Datum (#173), und zwar auch für Zeilen, deren
+                      -- Status damals nie nachgepflegt wurde.
+                      AND {_BESTAND}
                 WHERE a.deleted_at IS NULL
                 GROUP BY a.id, a.name
                 ORDER BY anzahl DESC, a.name

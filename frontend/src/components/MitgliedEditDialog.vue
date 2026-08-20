@@ -61,11 +61,6 @@
               <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-input v-model="form.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
             </div>
-            <q-select
-              v-if="!istGast"
-              v-model="form.status" label="Vereinsstatus" outlined dense
-              :options="statusOptions" :readonly="!canWrite"
-            />
             <q-expansion-item label="Adresse" dense icon="home">
               <div class="q-gutter-sm q-pt-sm">
                 <q-input v-model="form.strasse" label="Straße" outlined dense :readonly="!canWrite" />
@@ -609,7 +604,6 @@ const artOptions = [
   { label: 'Vereinsmitglied', value: 'mitglied' },
   { label: 'Gastspieler', value: 'gastspieler' },
 ]
-const statusOptions = ['aktiv', 'passiv', 'ausgetreten']
 const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
 const geschlechtOptions = [
   { label: 'männlich', value: 'm' },
@@ -627,6 +621,9 @@ const einzugErlaubt = computed({
 const emptyForm = () => ({
   vorname: '', nachname: '', mitgliedsnummer: null, geburtsdatum: null, geschlecht: null,
   email: null, telefon: null, strasse: null, plz: null, ort: null, land: null,
+  // status wird nicht mehr angeboten (#173): Ob jemand dabei ist, sagt das
+  // Austrittsdatum; aktiv/passiv pflegt der VTB nicht. Der geladene Wert wandert
+  // beim Speichern unverändert zurück, damit er niemandem verloren geht.
   eintrittsdatum: null, austrittsdatum: null, status: 'aktiv', art: 'mitglied',
   zahlungsart: 'lastschrift',
   iban: null, bic: null, kontoinhaber: null, abgerechnet_bis: null,
