@@ -666,7 +666,8 @@ const artOptions = [
   { label: 'Vereinsmitglied', value: 'mitglied' },
   { label: 'Gastspieler', value: 'gastspieler' },
 ]
-const abteilungStatusOptions = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+// Nur noch beitragsrelevant/nicht – Rollen sind Funktionen (Schema v104).
+const abteilungStatusOptions = ['aktiv', 'passiv']
 const geschlechtOptions = [
   { label: 'männlich', value: 'm' },
   { label: 'weiblich', value: 'w' },
@@ -709,7 +710,7 @@ function snapshotForm() {
 const stammDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(pristineForm.value))
 
 function abteilungStatusColor(s) {
-  return { aktiv: 'positive', passiv: 'grey', trainer: 'blue', vorstand: 'purple', ehrenmitglied: 'amber-8' }[s] ?? 'grey'
+  return { aktiv: 'positive', passiv: 'grey' }[s] ?? 'grey'
 }
 
 // ── Abteilungen ──────────────────────────────────────────────

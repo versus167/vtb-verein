@@ -27,14 +27,14 @@ def _regel(**kwargs):
 class TestStatusBedingung:
 
     def test_bekannte_status_bleiben_erhalten(self):
-        assert _regel(bedingung_abteilung_status="aktiv,trainer"
-                      ).bedingung_abteilung_status == "aktiv,trainer"
+        assert _regel(bedingung_abteilung_status="aktiv,passiv"
+                      ).bedingung_abteilung_status == "aktiv,passiv"
 
     def test_leerzeichen_werden_geraeumt(self):
         # Die Bedingung landet als Kommaliste in der DB und wird dort gesplittet –
-        # ' trainer' träfe sonst nichts.
-        assert _regel(bedingung_abteilung_status=" aktiv , trainer "
-                      ).bedingung_abteilung_status == "aktiv,trainer"
+        # ' passiv' träfe sonst nichts.
+        assert _regel(bedingung_abteilung_status=" aktiv , passiv "
+                      ).bedingung_abteilung_status == "aktiv,passiv"
 
     @pytest.mark.parametrize("wert", ["", "   ", ",,"])
     def test_leere_angabe_wird_zu_none(self, wert):
@@ -45,7 +45,8 @@ class TestStatusBedingung:
     def test_ohne_angabe_none(self):
         assert _regel().bedingung_abteilung_status is None
 
-    @pytest.mark.parametrize("wert", ["aktive", "Passiv", "aktiv,trainerin"])
+    # 'trainer' & Co. gehören seit v104 dazu: Rollen sind Funktionen, keine Status.
+    @pytest.mark.parametrize("wert", ["aktive", "Passiv", "aktiv,trainer", "ehrenmitglied"])
     def test_unbekannter_status_wird_abgewiesen(self, wert):
         with pytest.raises(ValidationError, match="Unbekannter Abteilungs-Status"):
             _regel(bedingung_abteilung_status=wert)

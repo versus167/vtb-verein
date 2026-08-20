@@ -604,7 +604,7 @@ function turnusLabel(t) {
 }
 // Status einer Abteilungszugehörigkeit – Quelle: VALID_STATUS in
 // mitglied_abteilung_repository.py (gleiche Liste wie im MitgliedEditDialog).
-const abteilungStatusOptionen = ['aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied']
+const abteilungStatusOptionen = ['aktiv', 'passiv']
 // Die VTB-App kennt zur Sollstellung nur: erzeugt (offen) und ob sie an die Fibu
 // übergeben wurde – kein „bezahlt". Zahlung/Ausgleich passiert in der Fibu.
 function fibuStatus(row) {

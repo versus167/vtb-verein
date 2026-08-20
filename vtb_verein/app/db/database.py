@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 103
+SCHEMA_VERSION = 104
 
 
 # ---------------------------------------------------------------------------
@@ -3537,6 +3537,7 @@ class Database:
             101: self._migrate_v100_to_v101,
             102: self._migrate_v101_to_v102,
             103: self._migrate_v102_to_v103,
+            104: self._migrate_v103_to_v104,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7618,6 +7619,81 @@ class Database:
                 "%d davon hatten kein Austrittsdatum – sie zählen ab jetzt wieder zum "
                 "Bestand. Bitte das Austrittsdatum nachtragen, wo es fehlt.", ohne_datum)
 
+    # Rollen, die früher im Abteilungs-Status steckten. Sie werden zu 'aktiv' –
+    # siehe Begründung in _migrate_v103_to_v104.
+    _ABGESCHAFFTE_ABTEILUNG_STATUS = ('trainer', 'vorstand', 'ehrenmitglied')
+
+    def _migrate_v103_to_v104(self) -> None:
+        """Abteilungs-Status auf 'aktiv'/'passiv' eindampfen.
+
+        `mitglied_abteilung.status` trug zwei Dinge in einem Feld: ob die
+        Zuordnung beitragsrelevant ist (aktiv/passiv) und welche Rolle jemand dort
+        hat (trainer/vorstand/ehrenmitglied). Weil beides dieselbe Spalte belegte,
+        konnte ein „trainer" nicht passiv sein. Rollen gehören zu den Funktionen –
+        die kennen Zeitraum, Abteilung und Rechte und werden von den Beitragsregeln
+        zeitraumgenau ausgewertet. Der SPG-Import legt Vorstand und Ehrenmitglieder
+        ohnehin längst als Funktion an.
+
+        **Bestand wird zu 'aktiv', nicht zu 'passiv'** – das erhält die bisherige
+        Abrechnung unverändert: Beitragsfrei war bislang allein 'passiv'
+        (`ABTEILUNG_STATUS_BEITRAGSFREI`), jeder andere Wert war beitragspflichtig.
+        Auf 'passiv' abzubilden hieße, jemandem den Beitrag stillschweigend zu
+        erlassen. Wer wirklich beitragsfrei sein soll, wird danach einzeln
+        umgestellt – als Entscheidung, nicht als Nebenwirkung einer Migration.
+
+        Beitragsregeln, die einen wegfallenden Wert in `bedingung_abteilung_status`
+        nennen, werden mitgezogen (Wert → 'aktiv', entdoppelt). Ohne das würde die
+        Regel **still stumm**: keine Fehlermeldung, nur fehlende Beiträge im
+        nächsten Lauf.
+        """
+        weg = list(self._ABGESCHAFFTE_ABTEILUNG_STATUS)
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT status, COUNT(*) AS n FROM mitglied_abteilung "
+                "WHERE status = ANY(%s) AND deleted_at IS NULL GROUP BY status",
+                (weg,))
+            verteilung = {r["status"]: r["n"] for r in cur.fetchall()}
+            cur.execute(
+                "UPDATE mitglied_abteilung SET status = 'aktiv', version = version + 1, "
+                "updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM' "
+                "WHERE status = ANY(%s)", (weg,))
+            umgestellt = cur.rowcount
+
+            # Beitragsregeln nachziehen, bevor der CHECK steht.
+            cur.execute(
+                "SELECT id, bedingung_abteilung_status AS b FROM beitragsregel "
+                "WHERE COALESCE(bedingung_abteilung_status, '') <> ''")
+            regeln_geaendert = []
+            for zeile in cur.fetchall():
+                gewaehlt = [s.strip() for s in zeile["b"].split(',') if s.strip()]
+                neu = []
+                for status in gewaehlt:
+                    ersatz = 'aktiv' if status in weg else status
+                    if ersatz not in neu:
+                        neu.append(ersatz)
+                if neu != gewaehlt:
+                    regeln_geaendert.append((zeile["id"], zeile["b"], ','.join(neu)))
+            for regel_id, _alt, neu_wert in regeln_geaendert:
+                cur.execute(
+                    "UPDATE beitragsregel SET bedingung_abteilung_status = %s, "
+                    "version = version + 1, updated_at = CURRENT_TIMESTAMP, "
+                    "updated_by = 'SYSTEM' WHERE id = %s", (neu_wert, regel_id))
+
+            cur.execute("ALTER TABLE mitglied_abteilung "
+                        "DROP CONSTRAINT IF EXISTS mitglied_abteilung_status_check")
+            cur.execute("ALTER TABLE mitglied_abteilung ADD CONSTRAINT "
+                        "mitglied_abteilung_status_check CHECK (status IN ('aktiv', 'passiv'))")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 104 WHERE id = 1")
+        logger.info("Abteilungs-Status eingedampft: %d Zeilen auf 'aktiv' gesetzt%s.",
+                    umgestellt,
+                    (" (" + ", ".join(f"{k}: {v}" for k, v in sorted(verteilung.items())) + ")")
+                    if verteilung else "")
+        for regel_id, alt_wert, neu_wert in regeln_geaendert:
+            logger.warning("Beitragsregel %d: bedingung_abteilung_status '%s' → '%s' "
+                           "(sonst hätte die Regel stillschweigend nicht mehr gegriffen).",
+                           regel_id, alt_wert, neu_wert)
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -7906,7 +7982,10 @@ class Database:
               id             SERIAL PRIMARY KEY,
               mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
               abteilung_id   INTEGER NOT NULL REFERENCES abteilung(id),
-              status         TEXT NOT NULL DEFAULT 'aktiv',
+              -- Nur beitragsrelevant/nicht. Rollen sind Funktionen (v104).
+              status         TEXT NOT NULL DEFAULT 'aktiv'
+                             CONSTRAINT mitglied_abteilung_status_check
+                             CHECK (status IN ('aktiv', 'passiv')),
               von            TEXT,
               bis            TEXT,
               version        INTEGER NOT NULL DEFAULT 1,

@@ -1,8 +1,7 @@
 # Plan: Zeiträume bei Abteilungs-Zuordnungen und Funktionen
 
-> Status (2026-08-20): **A–D umgesetzt** auf `feature/zuordnung-wechsel`, 1782 Tests
-> grün. **E steht aus** – es braucht vorher zwei Zahlen aus dem Echtbestand
-> (s. dort). Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
+> Status (2026-08-20): **A–E umgesetzt** auf `feature/zuordnung-wechsel`, 1792 Tests
+> grün. Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
 > abgerechnet wird — er wird es, wenn die Daten stimmen, und die Oberfläche sorgte
 > bis dahin dafür, dass sie es nicht tun.
 >
@@ -191,7 +190,7 @@ Beim Umbau kamen zwei weitere Stellen mit demselben Fehler dazu:
 Die Bedingung steht jetzt einmal als `_laeuft_heute(alias)` und wird an allen drei
 Stellen benutzt.
 
-### E) Danach: Abteilungs-Status eindampfen *(offen — braucht zwei Zahlen)*
+### E) Abteilungs-Status eindampfen *(umgesetzt, Schema v104)*
 
 `VALID_STATUS = ('aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied')`
 trägt zwei Dinge in einem Feld: Beitragsrelevanz (aktiv/passiv) und Rolle. Weil
@@ -199,28 +198,24 @@ beides dieselbe Spalte belegt, kann ein „trainer" nicht passiv sein — und za
 über die Grundregel „alle außer passiv" automatisch. Rollen gehören zu den
 Funktionen (Datum, Abteilung, Rechte, monatsgenaue Beitragsauswertung).
 
-Vor dem Entfernen zu klären — beides sind Fallen aus dem Bestand:
+Zwei Fallen steckten im Bestand. Beide löst die Migration, ohne vorher zählen zu
+müssen — weil es in beiden Fällen genau eine Abbildung gibt, die **nichts an der
+Abrechnung ändert**:
 
-1. **Was steht wirklich drin?** Zählen. Aus `trainer` würde `aktiv`, also
-   beitragspflichtig; aus `ehrenmitglied` ebenso, obwohl dort vermutlich das
-   Gegenteil gemeint war. Je vorgefundenem Wert eine Entscheidung
-   (aktiv/passiv), optional die Rolle als Funktion nachtragen.
+1. **Wohin mit den alten Werten?** Auf `aktiv`. Beitragsfrei war bisher allein
+   `passiv` (`ABTEILUNG_STATUS_BEITRAGSFREI`); `trainer`, `vorstand` und
+   `ehrenmitglied` waren also beitragspflichtig und bleiben es. Auf `passiv`
+   abzubilden — naheliegend bei „Ehrenmitglied" — hieße, jemandem den Beitrag
+   stillschweigend zu erlassen. Wer wirklich beitragsfrei sein soll, wird danach
+   einzeln umgestellt: eine Entscheidung, keine Nebenwirkung.
 2. **Zeigt eine Beitragsregel darauf?** `bedingung_abteilung_status` ist eine
-   kommagetrennte Liste und kann `trainer` enthalten. Fällt der Wert weg, wird
-   die Regel **still stumm** — keine Fehlermeldung, nur fehlende Beiträge.
+   kommagetrennte Liste und kann `trainer` enthalten. Fiele der Wert weg, würde
+   die Regel **still stumm** — keine Fehlermeldung, nur fehlende Beiträge. Die
+   Migration schreibt solche Regeln deshalb mit (Wert → `aktiv`, entdoppelt) und
+   protokolliert jede einzelne als Warnung.
 
-Beide Fragen beantwortet nur der Echtbestand, nicht die Testdaten:
-
-```sql
--- 1. Was steht drin?
-SELECT status, COUNT(*) FROM mitglied_abteilung
- WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC;
-
--- 2. Zeigt eine Beitragsregel darauf?
-SELECT id, name, bedingung_abteilung_status FROM beitragsregel
- WHERE deleted_at IS NULL AND bedingung_abteilung_status IS NOT NULL
-   AND bedingung_abteilung_status <> '';
-```
+Beides wird protokolliert, auch die Verteilung der vorgefundenen Werte — der
+Deploy-Log sagt also, was tatsächlich umgestellt wurde.
 
 Erst danach bleibt `status` zweiwertig, und das Modell lässt sich in einem Satz
 erklären: *Eine Abteilungs-Zuordnung gilt von…bis und ist entweder aktiv oder
@@ -256,9 +251,12 @@ passiv; alles andere ist eine Funktion.*
 | `backend/api/mitglieder.py` | `GET …/abrechnung-betroffen` (Warnung ohne Beträge) |
 | `vtb_verein/tests/test_wechsel_stichtag.py` | **neu** – Regeln + Endpunkte (36 Tests, ohne DB) |
 | `vtb_verein/tests/test_zuordnung_wechsel_integration.py` | **neu** – Schnitt, Transaktion, Beitragslauf (10 Tests) |
+| `vtb_verein/app/db/database.py` | Schema v104: CHECK + Migration (E) |
+| `frontend/src/pages/BeitragsverwaltungPage.vue` | Status-Auswahl der Beitragsregel (E) |
+| `vtb_verein/tests/test_abteilung_status_integration.py` | **neu** – Fresh == Migriert für v104 (9 Tests) |
 
-Kein Schema-Schritt: `von`/`bis` gibt es in beiden Tabellen bereits. Teil E
-bräuchte einen (CHECK auf zwei Werte plus Bestandsumstellung).
+A–D kamen ohne Schema-Schritt aus: `von`/`bis` gibt es in beiden Tabellen
+bereits. E bringt Schema **v104** (CHECK auf zwei Werte plus Bestandsumstellung).
 
 ## Tests
 

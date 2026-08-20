@@ -3,7 +3,12 @@ from datetime import date, timedelta
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
-VALID_STATUS = ('aktiv', 'passiv', 'trainer', 'vorstand', 'ehrenmitglied')
+# Der Status sagt nur noch, ob die Zuordnung beitragsrelevant ist. Rollen
+# ('trainer', 'vorstand', 'ehrenmitglied') standen früher hier und sind seit
+# Schema v104 raus: Sie gehören zu den Funktionen, die Zeitraum, Abteilung und
+# Rechte kennen und von den Beitragsregeln zeitraumgenau ausgewertet werden. Der
+# SPG-Import macht das ohnehin längst so (Vorstand/Ehrenmitglieder → Funktion).
+VALID_STATUS = ('aktiv', 'passiv')
 
 
 @dataclass

@@ -114,17 +114,24 @@ def test_passives_mitglied_zahlt_keinen_abteilungsbeitrag(db, abteilung):
     assert passiv.id not in betroffen
 
 
-def test_uebrige_status_zahlen_weiter(db, abteilung):
-    """Die Grundregel schließt genau einen Status aus – nicht alle außer 'aktiv'."""
-    ids = {}
-    for status in ("aktiv", "trainer", "vorstand", "ehrenmitglied", "passiv"):
-        m = _mitglied(db, f"Status-{status}")
-        _zuordnen(db, m.id, abteilung, status)
-        ids[status] = m.id
+def test_es_gibt_nur_noch_zwei_status(db, abteilung):
+    """Seit v104 kennt die Zuordnung nur 'aktiv' und 'passiv'.
 
-    betroffen = _betroffene(db, _abteilungsregel(abteilung))
-    assert {s for s, i in ids.items() if i in betroffen} == {
-        "aktiv", "trainer", "vorstand", "ehrenmitglied"}
+    Die Rollen, die früher hier standen ('trainer', 'vorstand', 'ehrenmitglied'),
+    waren allesamt beitragspflichtig – die Grundregel schloss nur 'passiv' aus.
+    Genau deshalb bildet die Migration sie auf 'aktiv' ab: Die Abrechnung bleibt,
+    wie sie war. Rollen führt jetzt die Funktion."""
+    from psycopg.errors import CheckViolation
+
+    aktiv = _mitglied(db, "Status-aktiv")
+    _zuordnen(db, aktiv.id, abteilung, "aktiv")
+    assert aktiv.id in _betroffene(db, _abteilungsregel(abteilung))
+
+    for weg in ("trainer", "vorstand", "ehrenmitglied"):
+        m = _mitglied(db, f"Status-{weg}")
+        with pytest.raises(CheckViolation):
+            _zuordnen(db, m.id, abteilung, weg)
+        db.conn.rollback()
 
 
 def test_vereinsbeitrag_gilt_auch_fuer_passive(db, abteilung):
@@ -154,15 +161,14 @@ def test_genannte_status_schlagen_die_grundregel(db, abteilung):
 
 
 def test_auswahl_gilt_woertlich(db, abteilung):
+    """Die Liste wird wörtlich genommen – wer wirklich alle meint, nennt alle."""
     aktiv = _mitglied(db, "Aktiv")
-    trainer = _mitglied(db, "Trainer")
     passiv = _mitglied(db, "Passiv")
     _zuordnen(db, aktiv.id, abteilung, "aktiv")
-    _zuordnen(db, trainer.id, abteilung, "trainer")
     _zuordnen(db, passiv.id, abteilung, "passiv")
 
-    regel = _abteilungsregel(abteilung, bedingung_abteilung_status="aktiv,trainer")
-    assert _betroffene(db, regel) == {aktiv.id, trainer.id}
+    regel = _abteilungsregel(abteilung, bedingung_abteilung_status="aktiv,passiv")
+    assert _betroffene(db, regel) == {aktiv.id, passiv.id}
 
 
 # ------------------------------------------------------------ ganze Abrechnung
