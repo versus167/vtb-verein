@@ -84,6 +84,16 @@ NICHT_UNTERSTUETZT_ERRCODES = frozenset({-4043})
 # Wieder-Aktivieren muss sie zurück aufs Schloss (siehe _karte_nicht_am_schloss).
 KARTE_UNBEKANNT_ERRCODES = frozenset({-1021})
 
+# Das Gateway hat den Auftrag nicht ans Schloss gebracht. −3003 sagt das direkt;
+# 1 ist TTLocks Sammelfehler ("failed or means no") und sagt nur, dass es nicht
+# geklappt hat – über die Karte selbst sagt er NICHTS. Beide bleiben deshalb harte
+# Fehler: Ein verlorener Chip, der als gesperrt in der Liste steht, aber weiter
+# öffnet, wäre schlimmer als eine sichtbare Fehlermeldung. Sie bekommen nur einen
+# Text, mit dem man etwas anfangen kann – die Rohmeldung der Cloud ist zweisprachig
+# und beantwortet die einzige Frage nicht, die der Anwender hat: nochmal versuchen?
+GATEWAY_ERRCODES = frozenset({-3003})
+UNBESTIMMT_ERRCODES = frozenset({1})
+
 
 def ist_dauerhaft(e: Exception) -> bool:
     """Ist der Fehler eine grundsätzliche Absage des Schlosses (kein Wiederholen)?"""
@@ -96,12 +106,19 @@ def karte_fehlt(e: Exception) -> bool:
 
 
 def fehlertext(e: Exception) -> str:
-    """Cloud-Fehler für Menschen. Bei einer Absage steht die Ursache im Klartext
-    vorn; die rohe Meldung bleibt für die Fehlersuche dahinter stehen."""
+    """Cloud-Fehler für Menschen. Die Ursache steht im Klartext vorn; die rohe
+    Meldung bleibt für die Fehlersuche dahinter stehen."""
     if ist_dauerhaft(e):
         return f"Das Schloss unterstützt keine Chip-Karten ({e})"
     if karte_fehlt(e):
         return f"Die Karte liegt an diesem Schloss nicht mehr vor ({e})"
+    errcode = getattr(e, 'errcode', None)
+    if errcode in GATEWAY_ERRCODES:
+        return f"Das Gateway ist nicht erreichbar – bitte später erneut versuchen ({e})"
+    if errcode in UNBESTIMMT_ERRCODES:
+        return (f"Das Schloss hat den Auftrag nicht bestätigt – meist bringt das "
+                f"Gateway ihn gerade nicht bis zum Schloss. Bitte erneut versuchen; "
+                f"bleibt es dabei, Gateway und Batterie am Schloss prüfen ({e})")
     return str(e)
 
 
