@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.models.mitglied import Mitglied
+from app.models.mitglied import Mitglied, validate_status
 from app.models.permission import BASE_PERMISSIONS, Permission
 from app.services.person_service import PersonService
 from app.services.user_service import UserService
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/personen", tags=["personen"])
 
 def _none_if_empty(v):
     return None if v == '' else v
+
 
 
 class PersonCreate(BaseModel):
@@ -56,6 +57,11 @@ class PersonCreate(BaseModel):
         if v not in ('mitglied', 'gastspieler'):
             raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
         return v
+
+    @field_validator('mitglied_status')
+    @classmethod
+    def _mitglied_status_gueltig(cls, v):
+        return validate_status(v)
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None
@@ -126,6 +132,11 @@ class PersonMitgliedUpdate(BaseModel):
         if v not in ('mitglied', 'gastspieler'):
             raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
         return v
+
+    @field_validator('status')
+    @classmethod
+    def _status_pruefen(cls, v):
+        return validate_status(v)
     zahlungsart: str = ''
     iban: Optional[str] = None
     bic: Optional[str] = None

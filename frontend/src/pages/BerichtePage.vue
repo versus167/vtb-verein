@@ -191,14 +191,17 @@ const kpiCards = computed(() => {
   return [
     {
       label: 'Mitglieder gesamt', value: k.gesamt, color: 'text-primary',
-      hint: 'Aktueller Mitgliederstand heute: alle, die heute Mitglied sind (auch passiv/inaktiv). '
+      hint: 'Aktueller Mitgliederstand heute: alle, die heute Mitglied sind (auch passive). '
         + 'Bereits Ausgetretene zählen nicht mehr, künftige Eintritte noch nicht.',
     },
-    {
-      label: 'Aktiv', value: k.aktiv, color: 'text-positive',
-      hint: 'Mitglieder mit Status „aktiv" und gültiger Mitgliedschaft; künftige Eintritte zählen mit, '
-        + 'abgelaufene Austritte nicht. Kann von „gesamt" abweichen (z. B. gekündigt, aber noch nicht ausgetreten).',
-    },
+    // Nur im Gesamtverein: In der Abteilungs-Sicht filtert der Bericht ohnehin auf
+    // aktive Zuordnungen – die Kachel zeigte dort zwangsläufig dieselbe Zahl.
+    ...(abteilungId.value ? [] : [{
+      label: 'Davon in Abteilungen', value: k.aktiv_in_abteilung, color: 'text-positive',
+      hint: 'Mitglieder mit mindestens einer heute laufenden, aktiven Abteilungs-Zuordnung. '
+        + 'Die Differenz zu „gesamt" sind Mitglieder ohne Abteilung oder solche, die dort '
+        + 'passiv geführt werden.',
+    }]),
     { label: `Eintritte ${k.jahr}`, value: k.eintritte_jahr, color: 'text-positive' },
     { label: `Austritte ${k.jahr}`, value: k.austritte_jahr, color: 'text-negative' },
     { label: 'Ø Alter', value: k.durchschnittsalter ?? '–', color: 'text-grey-8' },

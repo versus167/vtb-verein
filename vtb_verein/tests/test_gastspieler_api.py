@@ -128,3 +128,24 @@ def test_gastspieler_update_behaelt_null_nummer():
     updated = next(c[1] for c in db.calls if c[0] == 'update')
     assert updated.mitgliedsnummer is None
     assert ('next',) not in db.calls
+
+
+# --- Mitgliedsstatus (#173): nur noch die Form der Mitgliedschaft -----------
+
+@pytest.mark.parametrize("wert", ['ausgetreten', 'inaktiv', 'irgendwas'])
+def test_status_ausgetreten_wird_abgelehnt(wert):
+    """Ausgetreten steht im Austrittsdatum – ein zweiter Ort dafür ginge auseinander."""
+    with pytest.raises(ValidationError):
+        api.MitgliedCreate(vorname='a', nachname='b', status=wert)
+
+
+@pytest.mark.parametrize("wert", ['aktiv', 'passiv'])
+def test_status_aktiv_und_passiv_bleiben(wert):
+    assert api.MitgliedCreate(vorname='a', nachname='b', status=wert).status == wert
+
+
+def test_austritt_ohne_statuswechsel_ist_zulaessig():
+    """Der Normalfall nach der Umstellung: Datum gesetzt, Status bleibt 'aktiv'."""
+    data = api.MitgliedCreate(vorname='a', nachname='b', eintrittsdatum='2020-01-01',
+                              austrittsdatum='2026-06-30')
+    assert data.status == 'aktiv' and data.austrittsdatum == '2026-06-30'

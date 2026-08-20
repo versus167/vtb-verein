@@ -64,10 +64,10 @@
               <q-chip v-if="p.role" dense :color="rolleColor(p.role)" text-color="white" size="sm">
                 {{ rolleLabel(p.role) }}
               </q-chip>
-              <q-chip v-if="p.mitglied" dense size="sm"
-                :color="mitgliedStatusColor(p.mitglied)" :text-color="mitgliedStatusTextColor(p.mitglied)">
-                {{ mitgliedStatusLabel(p.mitglied) }}
-                <q-tooltip>{{ p.mitglied.art === 'gastspieler' ? 'Gastspieler – kein Vereinsmitglied' : 'Vereinsstatus' }}</q-tooltip>
+              <q-chip v-if="p.mitglied?.art === 'gastspieler'" dense size="sm"
+                color="vtb-gelb" text-color="primary">
+                Gastspieler
+                <q-tooltip>Gastspieler – kein Vereinsmitglied</q-tooltip>
               </q-chip>
               <q-icon v-if="ohneZugang(p)" name="vpn_key_off" color="grey-6" size="sm">
                 <q-tooltip>Konto ohne Zugang – nur ein Name (z. B. Schlüsselträger)</q-tooltip>
@@ -251,11 +251,12 @@
               :color="props.row.active ? 'positive' : 'negative'" size="sm">
               <q-tooltip>Login {{ props.row.active ? 'aktiv' : 'inaktiv' }}</q-tooltip>
             </q-icon>
-            <!-- Vereinsstatus: nur bei Mitglied-Zeilen (Gastspieler mit eigenem Chip) -->
-            <q-chip v-if="props.row.mitglied" dense size="sm" class="q-ma-none"
-              :color="mitgliedStatusColor(props.row.mitglied)" :text-color="mitgliedStatusTextColor(props.row.mitglied)">
-              {{ mitgliedStatusLabel(props.row.mitglied) }}
-              <q-tooltip>{{ props.row.mitglied.art === 'gastspieler' ? 'Gastspieler – kein Vereinsmitglied' : 'Vereinsstatus' }}</q-tooltip>
+            <!-- Gastspieler sind keine Vereinsmitglieder und bleiben markiert; der
+                 Vereinsstatus (aktiv/passiv) steht bewusst nicht mehr hier (#173). -->
+            <q-chip v-if="props.row.mitglied?.art === 'gastspieler'" dense size="sm"
+              class="q-ma-none" color="vtb-gelb" text-color="primary">
+              Gastspieler
+              <q-tooltip>Gastspieler – kein Vereinsmitglied</q-tooltip>
             </q-chip>
             <span v-if="!props.row.user_id && !props.row.mitglied" class="text-grey">—</span>
           </div>
@@ -404,8 +405,6 @@
                 <q-select v-model="createForm.geschlecht" :options="geschlechtOptions"
                   label="Geschlecht" outlined dense emit-value map-options clearable class="col" />
               </div>
-              <q-select v-if="createForm.art !== 'gastspieler'" v-model="createForm.mitglied_status"
-                :options="mitgliedStatusOptions" label="Vereinsstatus" outlined dense emit-value map-options />
               <div class="text-caption text-grey-6">
                 <q-icon name="info" size="xs" /> Es wird nur ein Mitglied-Datensatz angelegt – kein Benutzer/Login.
                 Kontaktdaten (E-Mail, Telefon) später über den Tab „Kontakte".
@@ -899,7 +898,7 @@ function spaltenFuerFilter() {
   }
   cols.push({ name: 'status', label: 'Status', align: 'center', sortable: true,
     field: r => (r.mitglied
-      ? (r.mitglied.art === 'gastspieler' ? 'gastspieler' : r.mitglied.status)
+      ? (r.mitglied.art === 'gastspieler' ? 'gastspieler' : 'mitglied')
       : (r.active ? 'aktiv' : 'inaktiv')) })
   if (istBenutzer) {
     cols.push({ name: 'last_seen', label: 'Zuletzt aktiv', field: 'last_seen', align: 'left', sortable: true })
@@ -1014,12 +1013,6 @@ function istZukuenftig(von) {
 const canAssignAdmin = computed(() => auth.user?.role === 'admin')
 // Login-Accounts darf nur anlegen, wer Berechtigungen vergeben darf.
 const canManageUsers = computed(() => auth.hasPermission('personen.permissions'))
-const mitgliedStatusOptions = [
-  { label: 'Aktiv',           value: 'aktiv' },
-  { label: 'Passiv',          value: 'passiv' },
-  { label: 'Ausgetreten',     value: 'ausgetreten' },
-]
-
 // Personenart bei der Neuanlage: Gastspieler (Gastspielgenehmigung) sind keine
 // Vereinsmitglieder – ohne Mitgliedsnummer/Eintritt/Zahlung, ohne Beiträge/Statistik.
 const artOptions = [
@@ -1068,22 +1061,11 @@ function rolleColor(role) {
   return { admin: 'negative', mitglied: 'teal' }[role] ?? 'grey'
 }
 
-// Vereinsstatus eines Mitglieds (aktiv/passiv/ausgetreten) – getrennt vom
-// Account-Aktiv-Flag (Login). 'aktiv' wird als "Vereinsmitglied" angezeigt.
-// Gastspieler (art='gastspieler') sind keine Vereinsmitglieder und bekommen
-// statt des Vereinsstatus einen eigenen Chip in Vereinsgelb.
-function mitgliedStatusLabel(m) {
-  if (m?.art === 'gastspieler') return 'Gastspieler'
-  return { aktiv: 'Vereinsmitglied', passiv: 'Passiv', ausgetreten: 'Ausgetreten' }[m?.status] ?? (m?.status || '—')
-}
-function mitgliedStatusColor(m) {
-  if (m?.art === 'gastspieler') return 'vtb-gelb'
-  return { aktiv: 'positive', passiv: 'grey', ausgetreten: 'negative' }[m?.status] ?? 'grey'
-}
+// Hinweis: Der Vereinsstatus (aktiv/passiv) wird weder angezeigt noch gepflegt
+// (#173) – er bleibt am Datensatz, weil andere Vereine ihn für den Beitrag
+// brauchen könnten (siehe MITGLIED_STATUS in app/models/mitglied.py). Sichtbar
+// bleibt allein der Gastspieler, denn der ist gar kein Vereinsmitglied.
 // Gelb nie mit weißem Text (Vereinsfarben-Konvention) → Gast-Chip in Blau auf Gelb.
-function mitgliedStatusTextColor(m) {
-  return m?.art === 'gastspieler' ? 'primary' : 'white'
-}
 
 // Farbpalette für Abteilungs-IDs (deterministisch pro Abteilung)
 const abteilungColors = ['primary', 'secondary', 'accent', 'positive', 'negative', 'info', 'warning', 'amber', 'purple', 'blue-8', 'cyan-8', 'teal-8', 'green-8', 'orange-8', 'red-8', 'pink-8']
@@ -1169,6 +1151,8 @@ function openCreateDialog() {
   createForm.value = {
     vorname: '', nachname: '', email: '', role: 'mitglied', active: true,
     password: '', username: '',
+    // mitglied_status wird nicht mehr abgefragt (#173) – die Neuanlage schickt den
+    // Vorgabewert mit, damit das Feld am Datensatz gesetzt ist.
     eintrittsdatum: '', geburtsdatum: '', mitglied_status: 'aktiv', art: 'mitglied', geschlecht: null,
     strasse: '', plz: '', ort: '', land: '',
     zahlungsart: 'lastschrift', iban: '', bic: '', kontoinhaber: '',

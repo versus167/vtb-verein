@@ -2,6 +2,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
+from app.models.mitglied import validate_status
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_mitglied, visible_mitglied_ids
@@ -24,6 +25,7 @@ class MitgliedCreate(BaseModel):
     telefon: Optional[str] = None
     eintrittsdatum: Optional[str] = None
     austrittsdatum: Optional[str] = None
+    # Nur die Form der Mitgliedschaft (#173): Ausgetreten steht im Austrittsdatum.
     status: str = "aktiv"
     art: str = "mitglied"                   # 'mitglied' | 'gastspieler' (#95 Teil 2)
     zahlungsart: str = ""
@@ -48,6 +50,11 @@ class MitgliedCreate(BaseModel):
         if v not in ('mitglied', 'gastspieler'):
             raise ValueError("art muss 'mitglied' oder 'gastspieler' sein")
         return v
+
+    @field_validator('status')
+    @classmethod
+    def _status_gueltig(cls, v):
+        return validate_status(v)
 
     @model_validator(mode='after')
     def _lizenz_gekoppelt(self):
