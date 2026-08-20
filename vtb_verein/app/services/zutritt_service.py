@@ -105,6 +105,24 @@ def karte_fehlt(e: Exception) -> bool:
     return isinstance(e, TTLockError) and e.errcode in KARTE_UNBEKANNT_ERRCODES
 
 
+def unbestimmt(e: Exception) -> bool:
+    """Sammelfehler ohne Aussage – erst ein Blick in die Kartenliste klärt ihn."""
+    return isinstance(e, TTLockError) and e.errcode in UNBESTIMMT_ERRCODES
+
+
+def karte_wirkungslos(card: dict, jetzt_ms: Optional[int] = None) -> bool:
+    """Liegt das Gültigkeitsfenster dieser Karte vollständig in der Vergangenheit?
+
+    Das ist die Form, die `sperr_fenster` erzeugt – und die einzige, an der sich ein
+    „ist schon gesperrt" ablesen lässt. Ein Vergleich auf Gleichheit ginge nicht:
+    `sperr_fenster` rechnet bei jedem Aufruf neue Zeitpunkte aus.
+    """
+    start, ende = card.get('startDate') or 0, card.get('endDate') or 0
+    jetzt = jetzt_ms if jetzt_ms is not None else int(
+        datetime.now(timezone.utc).timestamp() * 1000)
+    return 0 < start < ende < jetzt
+
+
 def fehlertext(e: Exception) -> str:
     """Cloud-Fehler für Menschen. Die Ursache steht im Klartext vorn; die rohe
     Meldung bleibt für die Fehlersuche dahinter stehen."""
@@ -116,9 +134,10 @@ def fehlertext(e: Exception) -> str:
     if errcode in GATEWAY_ERRCODES:
         return f"Das Gateway ist nicht erreichbar – bitte später erneut versuchen ({e})"
     if errcode in UNBESTIMMT_ERRCODES:
-        return (f"Das Schloss hat den Auftrag nicht bestätigt – meist bringt das "
-                f"Gateway ihn gerade nicht bis zum Schloss. Bitte erneut versuchen; "
-                f"bleibt es dabei, Gateway und Batterie am Schloss prüfen ({e})")
+        return (f"Das Schloss hat den Auftrag nicht bestätigt, obwohl die Karte dort "
+                f"geführt wird – meist bringt das Gateway ihn gerade nicht bis zum "
+                f"Schloss. Bitte erneut versuchen; bleibt es dabei, Gateway und "
+                f"Batterie am Schloss prüfen ({e})")
     return str(e)
 
 
@@ -352,6 +371,22 @@ class ZutrittService:
         return self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
                                                sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
 
+    def _karte_nachschlagen(self, schloss, card_id: int) -> Optional[dict]:
+        """Die Karte in der Kartenliste des Schlosses suchen (None = nicht dabei).
+
+        Der Sammelfehler `errcode=1` sagt nur „hat nicht geklappt". Die Liste sagt,
+        WAS gilt: ob die Karte dort überhaupt geführt wird und mit welchem
+        Gültigkeitsfenster. Damit wird aus der Vermutung eine Auskunft – ein
+        zusätzlicher Cloud-Aufruf, und zwar nur im Fehlerfall.
+
+        Scheitert auch die Liste, gibt es nichts zu entscheiden: None wäre gelogen
+        („Karte nicht da"), deshalb fliegt der Fehler zum Aufrufer zurück.
+        """
+        for card in self._fetch_all_pages(self._client().ic_cards, schloss.ttlock_lock_id):
+            if card.get('cardId') == card_id:
+                return card
+        return None
+
     def _karte_nicht_am_schloss(self, ber: TuerBerechtigung, chip, schloss,
                                 *, wiederherstellen: bool, actor: str) -> bool:
         """Aufräumen, wenn die Cloud die IC-Karte an diesem Schloss nicht kennt (−1021).
@@ -441,7 +476,18 @@ class ZutrittService:
                     self._client().ic_card_delete(schloss.ttlock_lock_id, ber.ttlock_card_id)
                 except TTLockError as e:
                     # Karte am Schloss schon weg (−1021)? Dann ist das Entziehen
-                    # erledigt – der Soft-Delete darunter darf laufen.
+                    # erledigt – der Soft-Delete darunter darf laufen. Beim
+                    # Sammelfehler klärt die Kartenliste, ob sie dort noch steht.
+                    if unbestimmt(e):
+                        try:
+                            if self._karte_nachschlagen(schloss, ber.ttlock_card_id) is None:
+                                logger.info("Berechtigung %s: Karte war an '%s' nicht mehr "
+                                            "gelistet – Entziehen ist erledigt.",
+                                            ber.id, schloss.name)
+                                self.berechtigung_repo.soft_delete(ber.id, actor)
+                                return {"ok": True}
+                        except TTLockError:
+                            pass          # Liste unerreichbar → unten der normale Fehler
                     if not karte_fehlt(e):
                         self.berechtigung_repo.set_sync(ber.id,
                                                         ttlock_card_id=ber.ttlock_card_id,
@@ -488,16 +534,37 @@ class ZutrittService:
                 self._client().ic_card_change_period(
                     schloss.ttlock_lock_id, ber.ttlock_card_id, von, bis)
             except TTLockError as e:
-                if not karte_fehlt(e):
+                weg = karte_fehlt(e)
+                if not weg and unbestimmt(e):
+                    # Sammelfehler: nachschlagen statt raten. Die Kartenliste sagt, ob
+                    # die Karte dort überhaupt geführt wird – und mit welchem Fenster.
+                    try:
+                        card = self._karte_nachschlagen(schloss, ber.ttlock_card_id)
+                    except TTLockError:
+                        card = {}          # Liste ebenfalls nicht erreichbar → unklar
+                    if card is None:
+                        weg = True
+                    elif gesperrt and karte_wirkungslos(card):
+                        # Ziel schon erreicht: Das Fenster liegt komplett in der
+                        # Vergangenheit, die Karte öffnet dort nichts mehr. Ein
+                        # früherer Versuch ist also durchgekommen.
+                        self.berechtigung_repo.set_sync(
+                            ber.id, ttlock_card_id=ber.ttlock_card_id,
+                            sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+                        logger.info("Chip %s an Schloss %s war dort schon gesperrt.",
+                                    chip.kartennummer, schloss.name)
+                        geaendert += 1
+                        continue
+                if not weg:
                     self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                                     sync_status=SYNC_FEHLER,
                                                     sync_fehler=fehlertext(e), by=actor)
                     fehler.append({"schloss": schloss.name, "meldung": fehlertext(e)})
                     continue
-                # Die Karte liegt an diesem Schloss nicht mehr vor. Beim Sperren ist
-                # damit erreicht, worum es geht – ohne Karte öffnet dort nichts mehr.
-                # Beim Entsperren muss sie zurück aufs Schloss, sonst stünde der Chip
-                # als „aktiv" in der Liste und die Tür bliebe stumm.
+                # Die Karte liegt an diesem Schloss nicht vor. Beim Sperren ist damit
+                # erreicht, worum es geht – ohne Karte öffnet dort nichts mehr. Beim
+                # Entsperren muss sie zurück aufs Schloss, sonst stünde der Chip als
+                # „aktiv" in der Liste und die Tür bliebe stumm.
                 try:
                     wieder_da = self._karte_nicht_am_schloss(
                         ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)

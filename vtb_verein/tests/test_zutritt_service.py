@@ -14,7 +14,7 @@ import requests
 
 from app.services.zutritt_service import (
     ZutrittService, build_alarm_digest, fehlertext, ist_dauerhaft, karte_fehlt,
-    _ms_to_iso, _iso_to_ms, sperr_fenster,
+    karte_wirkungslos, _ms_to_iso, _iso_to_ms, sperr_fenster,
 )
 from app.services.ttlock_client import TTLockError
 from app.models.schliessanlage import (
@@ -56,21 +56,32 @@ class FakeClient:
             # Wortlaut wie im echten Client (_request): Pfad + errcode + Cloud-Text.
             raise TTLockError(f"v3/identityCard/add: errcode={self.add_errcode} "
                               f"add fehlgeschlagen", errcode=self.add_errcode)
-        self.added.append((lock_id, card_number, start_ms, end_ms)); return {"errcode": 0, "cardId": 9001}
+        self.added.append((lock_id, card_number, start_ms, end_ms))
+        self.cards_by_lock.setdefault(lock_id, []).append(
+            {"cardId": 9001, "cardNumber": card_number, "cardName": card_name,
+             "startDate": start_ms, "endDate": end_ms})
+        return {"errcode": 0, "cardId": 9001}
 
     def ic_card_change_period(self, lock_id, card_id, start_ms=0, end_ms=0, *, change_type=2):
         if self.change_should_fail:
             raise TTLockError(
                 f"v3/identityCard/changePeriod: errcode={self.change_errcode} "
                 f"This IC Card does not exist", errcode=self.change_errcode)
-        self.changed.append((lock_id, card_id, start_ms, end_ms)); return {"errcode": 0}
+        self.changed.append((lock_id, card_id, start_ms, end_ms))
+        for card in self.cards_by_lock.get(lock_id, []):
+            if card.get("cardId") == card_id:
+                card["startDate"], card["endDate"] = start_ms, end_ms
+        return {"errcode": 0}
 
     def ic_card_delete(self, lock_id, card_id, *, delete_type=2):
         if self.delete_should_fail:
             raise TTLockError(
                 f"v3/identityCard/delete: errcode={self.delete_errcode} "
                 f"This IC Card does not exist", errcode=self.delete_errcode)
-        self.deleted.append((lock_id, card_id)); return {"errcode": 0}
+        self.deleted.append((lock_id, card_id))
+        self.cards_by_lock[lock_id] = [c for c in self.cards_by_lock.get(lock_id, [])
+                                       if c.get("cardId") != card_id]
+        return {"errcode": 0}
 
     def ic_cards(self, lock_id, page_no=1, page_size=100):
         return {"list": self.cards_by_lock.get(lock_id, [])}
@@ -978,8 +989,9 @@ def test_fehlertexte_sagen_was_zu_tun_ist():
 
 
 def test_sammelfehler_laesst_den_chip_status_stehen():
-    """Gegenprobe am Ablauf: Bei errcode=1 darf ein verlorener Chip nicht als
-    gesperrt in der Liste stehen, während er weiter öffnet."""
+    """Gegenprobe: Steht die Karte laut Cloud unverändert am Schloss, sagt errcode=1
+    nichts – dann darf ein verlorener Chip nicht als gesperrt gelten, während er
+    weiter öffnet."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
     fake.change_should_fail = True
@@ -993,6 +1005,84 @@ def test_sammelfehler_laesst_den_chip_status_stehen():
         assert r.sync_status == "fehler"
         assert "erneut versuchen" in r.sync_fehler
         assert r.ttlock_card_id is not None            # die Karte bleibt bekannt
+
+
+def test_sammelfehler_mit_karte_nicht_in_der_liste_gilt_als_gesperrt():
+    """errcode=1 sagt nur „hat nicht geklappt". Die Kartenliste sagt, was gilt: Ist
+    die Karte dort nicht geführt, öffnet sie auch nichts – Sperren erledigt."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.cards_by_lock = {}                    # Schlösser kennen die Karte nicht (mehr)
+    fake.change_should_fail = True
+    fake.change_errcode = 1
+
+    out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+
+    assert svc.chip_repo.get(7).status == "verloren"
+    assert out["ohne_karte"] == 2
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.ttlock_card_id is None and r.sync_status == "pending"
+
+
+def test_sammelfehler_bei_bereits_gesperrter_karte_zaehlt_als_erledigt():
+    """Der Fall aus der Praxis: Ein früherer Versuch kam durch, der zweite läuft in
+    den Sammelfehler. Das Fenster liegt längst in der Vergangenheit."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")   # Fenster gesetzt
+    fake.change_should_fail = True
+    fake.change_errcode = 1
+
+    out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+
+    assert svc.chip_repo.get(7).status == "verloren"
+    assert out["schloesser"] == 2 and out["ohne_karte"] == 0
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.sync_status == "aktiv" and r.ttlock_card_id is not None
+
+
+def test_sammelfehler_beim_entsperren_bleibt_ein_fehler():
+    """Ein abgelaufenes Fenster ist beim Aktivieren gerade NICHT das Ziel."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    fake.change_should_fail = True
+    fake.change_errcode = 1
+
+    with pytest.raises(TTLockError):
+        svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+    assert svc.chip_repo.get(7).status == "gesperrt"
+
+
+def test_entziehen_bei_sammelfehler_und_fehlender_karte_ist_erledigt():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    ber_id = next(iter(svc.berechtigung_repo.rows))
+    fake.cards_by_lock = {}
+    fake.delete_should_fail = True
+    fake.delete_errcode = 1
+
+    assert svc.berechtigung_entziehen(berechtigung_id=ber_id, actor="admin") == {"ok": True}
+    assert svc.berechtigung_repo.rows[ber_id].deleted is True
+
+
+def test_entziehen_bei_sammelfehler_mit_vorhandener_karte_bleibt_fehler():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    ber_id = next(iter(svc.berechtigung_repo.rows))
+    fake.delete_should_fail = True
+    fake.delete_errcode = 1
+
+    with pytest.raises(TTLockError):
+        svc.berechtigung_entziehen(berechtigung_id=ber_id, actor="admin")
+    assert svc.berechtigung_repo.rows[ber_id].deleted is False
+
+
+def test_karte_wirkungslos_erkennt_nur_abgelaufene_fenster():
+    jetzt = 1_000_000
+    assert karte_wirkungslos({"startDate": 10, "endDate": 20}, jetzt) is True
+    assert karte_wirkungslos({"startDate": 0, "endDate": 0}, jetzt) is False      # unbefristet
+    assert karte_wirkungslos({"startDate": 10, "endDate": 2_000_000}, jetzt) is False
 
 
 def test_karte_fehlt_erkennt_nur_den_passenden_errcode():
