@@ -76,10 +76,23 @@ def _iso_to_ms(iso: Optional[str]) -> int:
 # holt das offline Schloss nach, hier wird es nie klappen.
 NICHT_UNTERSTUETZT_ERRCODES = frozenset({-4043})
 
+# −1021 = "This IC Card does not exist": Die Cloud kennt die gespeicherte cardId an
+# diesem Schloss nicht (mehr) – gelöscht in der TTLock-App, Schloss zurückgesetzt,
+# oder ein früherer, halb durchgelaufener Versuch hat sie bereits entfernt. Das ist
+# kein Ausfall, sondern eine Aussage über den Ist-Zustand: Die Karte liegt dort
+# nicht. Fürs Sperren und Entziehen ist damit genau das Ziel erreicht; nur beim
+# Wieder-Aktivieren muss sie zurück aufs Schloss (siehe _karte_nicht_am_schloss).
+KARTE_UNBEKANNT_ERRCODES = frozenset({-1021})
+
 
 def ist_dauerhaft(e: Exception) -> bool:
     """Ist der Fehler eine grundsätzliche Absage des Schlosses (kein Wiederholen)?"""
     return isinstance(e, TTLockError) and e.errcode in NICHT_UNTERSTUETZT_ERRCODES
+
+
+def karte_fehlt(e: Exception) -> bool:
+    """Sagt die Cloud, dass es diese IC-Karte am Schloss gar nicht (mehr) gibt?"""
+    return isinstance(e, TTLockError) and e.errcode in KARTE_UNBEKANNT_ERRCODES
 
 
 def fehlertext(e: Exception) -> str:
@@ -87,6 +100,8 @@ def fehlertext(e: Exception) -> str:
     vorn; die rohe Meldung bleibt für die Fehlersuche dahinter stehen."""
     if ist_dauerhaft(e):
         return f"Das Schloss unterstützt keine Chip-Karten ({e})"
+    if karte_fehlt(e):
+        return f"Die Karte liegt an diesem Schloss nicht mehr vor ({e})"
     return str(e)
 
 
@@ -320,6 +335,35 @@ class ZutrittService:
         return self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
                                                sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
 
+    def _karte_nicht_am_schloss(self, ber: TuerBerechtigung, chip, schloss,
+                                *, wiederherstellen: bool, actor: str) -> bool:
+        """Aufräumen, wenn die Cloud die IC-Karte an diesem Schloss nicht kennt (−1021).
+
+        Die lokale Zeile behauptet eine cardId, die es dort nicht gibt. Die wird
+        gelöscht, damit die Zeile ehrlich „nicht am Schloss" sagt (`pending`) – und
+        damit ein erneutes Anlernen sie repariert, statt an derselben toten cardId
+        weiterzuarbeiten.
+
+        Beim Sperren ist damit alles erledigt: Eine Karte, die es nicht gibt, öffnet
+        auch nichts. Beim Wieder-Aktivieren dagegen wäre die Tür stumm – dort muss
+        die Karte mit ihrer hinterlegten Gültigkeit zurück aufs Schloss.
+
+        Returns:
+            True, wenn die Karte danach (wieder) am Schloss liegt
+        """
+        self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
+                                        sync_status=SYNC_PENDING, sync_fehler=None,
+                                        by=actor)
+        if not wiederherstellen:
+            logger.info("Chip %s: Karte lag an Schloss %s nicht mehr vor – "
+                        "nichts zu sperren.", chip.kartennummer, schloss.name)
+            return False
+        ber.ttlock_card_id = None
+        self._karte_aufspielen(ber, chip, schloss, actor)
+        logger.info("Chip %s: Karte an Schloss %s fehlte und wurde neu angelernt.",
+                    chip.kartennummer, schloss.name)
+        return True
+
     def berechtigung_aendern(self, *, berechtigung_id: int,
                              gueltig_von: Optional[str] = None,
                              gueltig_bis: Optional[str] = None,
@@ -339,9 +383,27 @@ class ZutrittService:
                 _iso_to_ms(gueltig_von), _iso_to_ms(gueltig_bis),
             )
         except TTLockError as e:
-            self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                            sync_status=SYNC_FEHLER, sync_fehler=str(e), by=actor)
-            raise
+            if not karte_fehlt(e):
+                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                sync_status=SYNC_FEHLER,
+                                                sync_fehler=fehlertext(e), by=actor)
+                raise
+            # Die Karte liegt am Schloss nicht mehr: Erst die neue Gültigkeit lokal
+            # festhalten, dann die Karte damit neu aufspielen – ein changePeriod auf
+            # eine nicht vorhandene Karte kann nie gelingen.
+            chip = self.chip_repo.get(ber.chip_id)
+            ber = self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
+                                                       gueltig_bis=gueltig_bis, by=actor)
+            if chip and chip.status == CHIP_AKTIV:
+                self._karte_nicht_am_schloss(ber, chip, schloss,
+                                             wiederherstellen=True, actor=actor)
+            else:
+                # Gesperrter/verlorener Chip: Die Gültigkeit wird gepflegt, aufs
+                # Schloss kommt er erst beim Entsperren wieder.
+                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
+                                                sync_status=SYNC_PENDING,
+                                                sync_fehler=None, by=actor)
+            return self.berechtigung_repo.get(ber.id)
         logger.info("Berechtigung %s: Gültigkeit geändert (%s–%s).",
                     berechtigung_id, gueltig_von or "sofort", gueltig_bis or "unbefristet")
         return self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
@@ -361,10 +423,16 @@ class ZutrittService:
                 try:
                     self._client().ic_card_delete(schloss.ttlock_lock_id, ber.ttlock_card_id)
                 except TTLockError as e:
-                    self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                                    sync_status=SYNC_FEHLER, sync_fehler=str(e),
-                                                    by=actor)
-                    raise
+                    # Karte am Schloss schon weg (−1021)? Dann ist das Entziehen
+                    # erledigt – der Soft-Delete darunter darf laufen.
+                    if not karte_fehlt(e):
+                        self.berechtigung_repo.set_sync(ber.id,
+                                                        ttlock_card_id=ber.ttlock_card_id,
+                                                        sync_status=SYNC_FEHLER,
+                                                        sync_fehler=fehlertext(e), by=actor)
+                        raise
+                    logger.info("Berechtigung %s: Karte lag an '%s' nicht mehr vor – "
+                                "Entziehen ist damit erledigt.", ber.id, schloss.name)
         self.berechtigung_repo.soft_delete(ber.id, actor)
         logger.info("Berechtigung %s entzogen (Chip von Schloss entfernt).", berechtigung_id)
         return {"ok": True}
@@ -390,6 +458,7 @@ class ZutrittService:
         gesperrt = status != CHIP_AKTIV
         fehler: list[dict] = []
         geaendert = 0
+        ohne_karte = 0
         for ber in self.berechtigung_repo.list_for_chip(chip_id):
             if not ber.ttlock_card_id:
                 continue          # nie angelernt → am Schloss gibt es nichts zu ändern
@@ -402,10 +471,27 @@ class ZutrittService:
                 self._client().ic_card_change_period(
                     schloss.ttlock_lock_id, ber.ttlock_card_id, von, bis)
             except TTLockError as e:
-                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                                sync_status=SYNC_FEHLER, sync_fehler=str(e),
-                                                by=actor)
-                fehler.append({"schloss": schloss.name, "meldung": str(e)})
+                if not karte_fehlt(e):
+                    self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                    sync_status=SYNC_FEHLER,
+                                                    sync_fehler=fehlertext(e), by=actor)
+                    fehler.append({"schloss": schloss.name, "meldung": fehlertext(e)})
+                    continue
+                # Die Karte liegt an diesem Schloss nicht mehr vor. Beim Sperren ist
+                # damit erreicht, worum es geht – ohne Karte öffnet dort nichts mehr.
+                # Beim Entsperren muss sie zurück aufs Schloss, sonst stünde der Chip
+                # als „aktiv" in der Liste und die Tür bliebe stumm.
+                try:
+                    wieder_da = self._karte_nicht_am_schloss(
+                        ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)
+                except TTLockError as anlern_fehler:
+                    fehler.append({"schloss": schloss.name,
+                                   "meldung": fehlertext(anlern_fehler)})
+                    continue
+                if wieder_da:
+                    geaendert += 1
+                else:
+                    ohne_karte += 1
                 continue
             self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                             sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
@@ -413,14 +499,16 @@ class ZutrittService:
 
         if fehler:
             raise TTLockError(
-                f"{len(fehler)} von {geaendert + len(fehler)} Schlössern nicht erreicht "
-                f"({', '.join(f['schloss'] for f in fehler)}) – Status nicht geändert")
+                f"{len(fehler)} von {geaendert + ohne_karte + len(fehler)} Schlössern "
+                f"nicht erreicht ({', '.join(f['schloss'] for f in fehler)}) – "
+                f"Status nicht geändert")
 
         chip.status = status
         aktualisiert = self.chip_repo.update(chip, actor)
-        logger.info("Chip %s auf Status '%s' gesetzt (%d Schlösser nachgezogen).",
-                    chip.kartennummer, status, geaendert)
-        return {"chip": aktualisiert, "schloesser": geaendert}
+        logger.info("Chip %s auf Status '%s' gesetzt (%d Schlösser nachgezogen, "
+                    "%d Karten lagen dort nicht mehr vor).",
+                    chip.kartennummer, status, geaendert, ohne_karte)
+        return {"chip": aktualisiert, "schloesser": geaendert, "ohne_karte": ohne_karte}
 
     def chip_loeschen(self, *, chip_id: int, actor: str = "SYSTEM") -> dict:
         """Chip entfernen: erst die IC-Karte an jedem Schloss löschen, dann den Chip

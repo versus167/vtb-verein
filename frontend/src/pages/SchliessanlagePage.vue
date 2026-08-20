@@ -526,7 +526,7 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
+                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ syncLabel(b) }}</q-chip>
                   <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
                   <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="link_off"
@@ -742,7 +742,7 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ b.sync_status }}</q-chip>
+                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ syncLabel(b) }}</q-chip>
                   <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
                   <!-- Aus einer Gruppe stammende Türen lassen sich hier nicht einzeln
@@ -1283,6 +1283,11 @@ const istExtern = (s) => !!s && s.quelle === 'extern'
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
+// „pending" heißt zweierlei: noch nie aufgespielt – oder am Schloss nicht mehr
+// vorhanden (die Cloud meldete −1021, der Dienst hat die tote cardId verworfen).
+// Für den Leser ist beides dasselbe: Die Karte liegt an dieser Tür nicht.
+const syncLabel = (b) => (b.sync_status === 'pending' && !b.ttlock_card_id
+  ? 'nicht am Schloss' : b.sync_status)
 // Kompakte Status-Helfer für Pills/Dots auf den Karten und im Kopfbereich
 const onlineKurz = (o) => (o === true ? 'online' : o === false ? 'offline' : 'unbekannt')
 const onlineDotClass = (o) => (o === true ? 'schl-dot--gruen' : o === false ? 'schl-dot--rot' : 'schl-dot--grau')

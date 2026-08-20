@@ -13,7 +13,8 @@ import pytest
 import requests
 
 from app.services.zutritt_service import (
-    ZutrittService, build_alarm_digest, _ms_to_iso, _iso_to_ms, sperr_fenster,
+    ZutrittService, build_alarm_digest, fehlertext, karte_fehlt,
+    _ms_to_iso, _iso_to_ms, sperr_fenster,
 )
 from app.services.ttlock_client import TTLockError
 from app.models.schliessanlage import (
@@ -33,7 +34,9 @@ class FakeClient:
         self.add_should_fail = False
         self.add_errcode = -3007       # Standard: Störung; -4043 = Absage des Modells
         self.change_should_fail = False
+        self.change_errcode = -3003    # Standard: Gateway offline; -1021 = Karte weg
         self.delete_should_fail = False
+        self.delete_errcode = -3003
         # Credential-Mirror (read-only): lock_id -> Liste typ-spezifischer Dicts
         self.fingerprints_by_lock = {}
         self.passcodes_by_lock = {}
@@ -57,12 +60,16 @@ class FakeClient:
 
     def ic_card_change_period(self, lock_id, card_id, start_ms=0, end_ms=0, *, change_type=2):
         if self.change_should_fail:
-            raise TTLockError("Gateway offline", errcode=-3003)
+            raise TTLockError(
+                f"v3/identityCard/changePeriod: errcode={self.change_errcode} "
+                f"This IC Card does not exist", errcode=self.change_errcode)
         self.changed.append((lock_id, card_id, start_ms, end_ms)); return {"errcode": 0}
 
     def ic_card_delete(self, lock_id, card_id, *, delete_type=2):
         if self.delete_should_fail:
-            raise TTLockError("Gateway offline", errcode=-3003)
+            raise TTLockError(
+                f"v3/identityCard/delete: errcode={self.delete_errcode} "
+                f"This IC Card does not exist", errcode=self.delete_errcode)
         self.deleted.append((lock_id, card_id)); return {"errcode": 0}
 
     def ic_cards(self, lock_id, page_no=1, page_size=100):
@@ -825,6 +832,139 @@ def test_chip_loeschen_bricht_ab_wenn_ein_schloss_nicht_erreichbar_ist():
 
     assert svc.chip_repo.get(7) is not None
     assert fake.deleted == []
+
+
+# --- Karte am Schloss nicht (mehr) vorhanden: errcode −1021 ----------------
+# Aus der Praxis: Ein verlorener Chip wurde gesperrt, ein Schloss lief auf einen
+# Fehler, beim zweiten Versuch meldete die Cloud dort „This IC Card does not
+# exist". Das ist keine Störung, sondern der Ist-Zustand – und fürs Sperren
+# genau das Ziel.
+
+def test_sperren_akzeptiert_eine_karte_die_es_am_schloss_nicht_mehr_gibt():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.change_should_fail = True
+    fake.change_errcode = -1021
+
+    out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+
+    assert svc.chip_repo.get(7).status == "verloren"       # Status wird gesetzt
+    assert out["ohne_karte"] == 2 and out["schloesser"] == 0
+    # Die Zeile behauptet keine tote cardId mehr und steht nicht auf „fehler".
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.ttlock_card_id is None
+        assert r.sync_status == "pending" and r.sync_fehler is None
+
+
+def test_sperren_bleibt_bei_einer_echten_stoerung_hart():
+    """Gegenprobe: −3003 (Gateway offline) ist weiterhin ein Fehler."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.change_should_fail = True
+
+    with pytest.raises(TTLockError):
+        svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+    assert svc.chip_repo.get(7).status == "aktiv"
+
+
+def test_entsperren_spielt_eine_fehlende_karte_neu_auf():
+    """Sonst stünde der Chip als „aktiv" in der Liste und die Tür bliebe stumm."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    fake.added.clear()
+    fake.change_should_fail = True
+    fake.change_errcode = -1021
+
+    out = svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+
+    assert out["schloesser"] == 2 and out["ohne_karte"] == 0
+    assert {a[0] for a in fake.added} == {30392116, 30392117}
+    # Neu angelernt wird mit der hinterlegten Gültigkeit, nicht mit dem Sperrfenster.
+    nach_schloss = {a[0]: (a[2], a[3]) for a in fake.added}
+    assert nach_schloss[30392116] == (0, 0)
+    assert nach_schloss[30392117] == (0, _iso_to_ms("2026-12-31T23:00:00+00:00"))
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.sync_status == "aktiv" and r.ttlock_card_id is not None
+
+
+def test_entsperren_meldet_wenn_das_neu_anlernen_scheitert():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    fake.change_should_fail = True
+    fake.change_errcode = -1021
+    fake.add_should_fail = True
+
+    with pytest.raises(TTLockError):
+        svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+    assert svc.chip_repo.get(7).status == "gesperrt"
+
+
+def test_entziehen_ist_erledigt_wenn_die_karte_schon_weg_ist():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    ber_id = next(iter(svc.berechtigung_repo.rows))
+    fake.delete_should_fail = True
+    fake.delete_errcode = -1021
+
+    out = svc.berechtigung_entziehen(berechtigung_id=ber_id, actor="admin")
+
+    assert out == {"ok": True}
+    assert svc.berechtigung_repo.rows[ber_id].deleted is True
+
+
+def test_chip_loeschen_laeuft_durch_wenn_karten_schon_weg_sind():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.delete_should_fail = True
+    fake.delete_errcode = -1021
+
+    out = svc.chip_loeschen(chip_id=7, actor="admin")
+
+    assert out["berechtigungen_entzogen"] == 2
+    assert svc.chip_repo.get(7) is None
+
+
+def test_gueltigkeit_aendern_spielt_eine_fehlende_karte_neu_auf():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    ber_id = next(iter(svc.berechtigung_repo.rows))
+    fake.added.clear()
+    fake.change_should_fail = True
+    fake.change_errcode = -1021
+
+    ber = svc.berechtigung_aendern(berechtigung_id=ber_id,
+                                   gueltig_bis="2027-06-30T22:00:00+00:00", actor="admin")
+
+    assert ber.gueltig_bis == "2027-06-30T22:00:00+00:00"
+    assert fake.added and fake.added[0][3] == _iso_to_ms("2027-06-30T22:00:00+00:00")
+    assert ber.sync_status == "aktiv"
+
+
+def test_gueltigkeit_aendern_holt_gesperrte_karten_nicht_zurueck_aufs_schloss():
+    """Bei einem gesperrten Chip wird die Gültigkeit gepflegt, mehr nicht."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+    ber_id = next(iter(svc.berechtigung_repo.rows))
+    svc.berechtigung_repo.rows[ber_id].ttlock_card_id = 9001   # tote cardId von früher
+    fake.added.clear()
+    fake.change_should_fail = True
+    fake.change_errcode = -1021
+
+    ber = svc.berechtigung_aendern(berechtigung_id=ber_id,
+                                   gueltig_bis="2027-06-30T22:00:00+00:00", actor="admin")
+
+    assert fake.added == []
+    assert ber.ttlock_card_id is None and ber.sync_status == "pending"
+
+
+def test_karte_fehlt_erkennt_nur_den_passenden_errcode():
+    assert karte_fehlt(TTLockError("weg", errcode=-1021)) is True
+    assert karte_fehlt(TTLockError("offline", errcode=-3003)) is False
+    assert karte_fehlt(ValueError("kein Cloud-Fehler")) is False
+    assert "nicht mehr vor" in fehlertext(TTLockError("weg", errcode=-1021))
 
 
 def test_sperr_fenster_liegt_vollstaendig_in_der_vergangenheit():
