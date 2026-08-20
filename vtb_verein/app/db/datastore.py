@@ -629,6 +629,11 @@ class VereinsDB:
     def mark_mitglied_abteilung_deleted(self, id: int, deleted_by: str) -> bool:
         return self._mitglied_abteilung_repo.mark_deleted(id, deleted_by)
 
+    def wechsel_mitglied_abteilung(self, id: int, ab: str, status: str,
+                                   updated_by: str, expected_version: int) -> Optional[MitgliedAbteilung]:
+        return self._mitglied_abteilung_repo.wechsel(
+            id, ab, status, updated_by, expected_version)
+
     def mitglied_abteilung_exists_active(self, mitglied_id: int, abteilung_id: int) -> bool:
         return self._mitglied_abteilung_repo.exists_active(mitglied_id, abteilung_id)
 
@@ -660,6 +665,12 @@ class VereinsDB:
 
     def mark_mitglied_funktion_deleted(self, id: int, deleted_by: str) -> bool:
         return self._mitglied_funktion_repo.mark_deleted(id, deleted_by)
+
+    def wechsel_mitglied_funktion(self, id: int, ab: str, abteilung_id: Optional[int],
+                                  funktion: str, updated_by: str,
+                                  expected_version: int) -> Optional[MitgliedFunktion]:
+        return self._mitglied_funktion_repo.wechsel(
+            id, ab, abteilung_id, funktion, updated_by, expected_version)
 
     # -----------------------------------
     # Mitglied-Kontakt-Zuordnung (mehrere E-Mails/Telefonnummern)

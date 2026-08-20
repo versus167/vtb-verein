@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
@@ -37,6 +38,17 @@ class MitgliedAbteilungRepository(BaseRepository):
         JOIN abteilung a ON a.id = ma.abteilung_id
     """
 
+    # Nach Zeit statt nach Abteilungsname: laufend, dann künftig, dann beendet
+    # (jüngstes Ende zuerst). Eine 2024 beendete Zeile stand sonst mitten unter
+    # den laufenden und sah aus wie eine.
+    _ORDER = """
+        ORDER BY CASE WHEN NULLIF(ma.bis, '') < CURRENT_DATE::text THEN 2
+                      WHEN NULLIF(ma.von, '') > CURRENT_DATE::text THEN 1
+                      ELSE 0 END,
+                 NULLIF(ma.bis, '') DESC NULLS FIRST,
+                 a.name
+    """
+
     def get(self, id: int) -> Optional[MitgliedAbteilung]:
         with self.cursor() as cur:
             cur.execute(self._SELECT + " WHERE ma.id = %s", (id,))
@@ -46,16 +58,24 @@ class MitgliedAbteilungRepository(BaseRepository):
     def list_for_mitglied(self, mitglied_id: int) -> list[MitgliedAbteilung]:
         with self.cursor() as cur:
             cur.execute(
-                self._SELECT + " WHERE ma.mitglied_id = %s AND ma.deleted_at IS NULL ORDER BY a.name",
+                self._SELECT + " WHERE ma.mitglied_id = %s AND ma.deleted_at IS NULL" + self._ORDER,
                 (mitglied_id,),
             )
             return [MitgliedAbteilung(**dict(row)) for row in cur.fetchall()]
 
     def exists_active(self, mitglied_id: int, abteilung_id: int) -> bool:
+        """Besteht (heute oder künftig) eine Zuordnung zu dieser Abteilung?
+
+        Abgelaufene zählen nicht: Wer die Abteilung verlassen hat, muss wieder
+        aufgenommen werden können – und seit es den Wechsel gibt, sind beendete
+        Zeilen der Normalfall statt der Ausnahme.
+        """
         with self.cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM mitglied_abteilung "
-                "WHERE mitglied_id = %s AND abteilung_id = %s AND deleted_at IS NULL LIMIT 1",
+                "WHERE mitglied_id = %s AND abteilung_id = %s AND deleted_at IS NULL "
+                "  AND (NULLIF(bis, '') IS NULL OR NULLIF(bis, '') >= CURRENT_DATE::text) "
+                "LIMIT 1",
                 (mitglied_id, abteilung_id),
             )
             return cur.fetchone() is not None
@@ -105,3 +125,45 @@ class MitgliedAbteilungRepository(BaseRepository):
                 (deleted_by, id),
             )
             return cur.rowcount == 1
+
+    def wechsel(self, id: int, ab: str, status: str, updated_by: str,
+                expected_version: int) -> Optional[MitgliedAbteilung]:
+        """Schneidet die Zuordnung zum Stichtag: Die bisherige Zeile endet am
+        Vortag, ab dem Stichtag gilt eine neue mit dem neuen Status.
+
+        Beides in **einem** cursor()-Block und damit in einer Transaktion. Bräche
+        der zweite Schritt weg, stünde eine beendete Zuordnung ohne Nachfolger da –
+        das Mitglied wäre lautlos aus der Abteilung verschwunden.
+
+        Die alte Zeile behält ihren Status: Sie beschreibt die Vergangenheit und
+        wird nicht umgeschrieben. None, wenn die Zeile nicht (mehr) in der
+        erwarteten Version vorliegt.
+        """
+        vortag = (date.fromisoformat(ab) - timedelta(days=1)).isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied_abteilung
+                SET bis = %s,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
+                RETURNING mitglied_id, abteilung_id
+                """,
+                (vortag, updated_by, id, expected_version),
+            )
+            alt = cur.fetchone()
+            if alt is None:
+                return None
+            cur.execute(
+                """
+                INSERT INTO mitglied_abteilung
+                    (mitglied_id, abteilung_id, status, von, created_by, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
+                """,
+                (alt['mitglied_id'], alt['abteilung_id'], status, ab, updated_by, updated_by),
+            )
+            cur.execute(self._SELECT + " WHERE ma.id = %s", (cur.fetchone()['id'],))
+            return MitgliedAbteilung(**dict(cur.fetchone()))

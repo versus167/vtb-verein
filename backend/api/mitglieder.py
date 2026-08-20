@@ -2,7 +2,10 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
+from datetime import date
+
 from app.models.mitglied import validate_status
+from app.services.beitrags_service import betroffene_zeitraeume
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_mitglied, visible_mitglied_ids
@@ -162,3 +165,24 @@ def delete_mitglied(mitglied_id: int, user: CurrentUser, db: DB):
     if existing is None:
         raise HTTPException(status_code=404, detail="Mitglied nicht gefunden")
     db.mark_mitglied_deleted(mitglied_id, deleted_by=user.username)
+
+
+@router.get("/{mitglied_id}/abrechnung-betroffen")
+def abrechnung_betroffen(mitglied_id: int, ab: str, user: CurrentUser, db: DB):
+    """Welche bereits abgerechneten Zeiträume ein Wechsel zum Stichtag `ab`
+    nachträglich verändert – Grundlage für die Warnung im Bearbeiten-Dialog.
+
+    Absichtlich **ohne Beträge**: Wer Personen pflegen darf, muss deshalb noch
+    keine Beitragsdaten sehen. Für die Warnung reicht, welcher Zeitraum betroffen
+    ist; die Sollstellungen selbst bearbeitet ohnehin nur, wer das Recht dazu hat.
+    Einen Bezahlt-Zustand gibt es hier nicht – Zahlung und Ausgleich führt die
+    Fibu, nicht diese App.
+    """
+    _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
+    try:
+        stichtag = date.fromisoformat(ab.strip()[:10])
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=422, detail=f"Stichtag ({ab}) ist kein gültiges Datum.")
+    labels = {s.zeitraum for s in db.sollstellungen.list_by_mitglied(mitglied_id)}
+    return {'zeitraeume': betroffene_zeitraeume(labels, stichtag)}

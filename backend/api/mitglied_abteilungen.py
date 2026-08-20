@@ -6,7 +6,9 @@ from app.models.permission import Permission
 from app.db.mitglied_abteilung_repository import VALID_STATUS
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_abteilung, require_mitglied
-from ..core.validation import zuordnungsbeginn_or_400
+from ..core.validation import (
+    nicht_beendet_or_409, wechselstichtag_or_422, zuordnungsbeginn_or_400,
+)
 
 router = APIRouter(tags=["mitglied-abteilungen"])
 
@@ -16,6 +18,14 @@ class ZuordnungWrite(BaseModel):
     status: str = 'aktiv'
     von: Optional[str] = None
     bis: Optional[str] = None
+
+
+class ZuordnungWechsel(BaseModel):
+    """Wechsel statt Korrektur: ab dem Stichtag gilt ein neuer Status, davor der
+    bisherige. `expected_version` ist die der *bisherigen* Zeile."""
+    ab: str
+    status: str
+    expected_version: int
 
 
 class ZuordnungUpdate(BaseModel):
@@ -93,3 +103,36 @@ def delete_zuordnung(mitglied_id: int, zuordnung_id: int, user: CurrentUser, db:
         raise HTTPException(status_code=404, detail="Zuordnung nicht gefunden")
     require_abteilung(user, zuordnung.abteilung_id, Permission.PERSONEN_DELETE)
     db.mark_mitglied_abteilung_deleted(zuordnung_id, deleted_by=user.username)
+
+
+@router.post("/mitglieder/{mitglied_id}/abteilungen/{zuordnung_id}/wechsel",
+             status_code=status.HTTP_201_CREATED)
+def wechsel_zuordnung(mitglied_id: int, zuordnung_id: int, data: ZuordnungWechsel,
+                      user: CurrentUser, db: DB):
+    """Schneidet eine laufende Zuordnung zum Stichtag und legt ab da eine neue an.
+
+    Abgegrenzt vom PUT: Das ist die *Korrektur* („war von Anfang an passiv") und
+    schreibt die ganze Laufzeit um. Der Wechsel („ist ab August passiv") lässt die
+    Vergangenheit stehen – nur so rechnet der Beitragslauf den Monatswechsel
+    richtig, statt das Quartal stillschweigend ausfallen zu lassen.
+
+    Ein Endpunkt statt PUT+POST vom Client, weil beide Schritte zusammen gelten
+    müssen (s. Repository).
+    """
+    _require_write(user)
+    if data.status not in VALID_STATUS:
+        raise HTTPException(status_code=422, detail=f"Ungültiger Status. Erlaubt: {VALID_STATUS}")
+    zuordnung = db.get_mitglied_abteilung(zuordnung_id)
+    if zuordnung is None or zuordnung.mitglied_id != mitglied_id:
+        raise HTTPException(status_code=404, detail="Zuordnung nicht gefunden")
+    require_abteilung(user, zuordnung.abteilung_id, Permission.PERSONEN_WRITE)
+    nicht_beendet_or_409(zuordnung.bis)
+    ab = wechselstichtag_or_422(zuordnung.von, zuordnung.bis, data.ab)
+    zuordnungsbeginn_or_400(db, mitglied_id, ab)
+    neu = db.wechsel_mitglied_abteilung(
+        zuordnung_id, ab, data.status,
+        updated_by=user.username, expected_version=data.expected_version,
+    )
+    if neu is None:
+        raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    return asdict(neu)

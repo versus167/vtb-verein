@@ -5,6 +5,7 @@ Ablauf:
 1. vorschau(zeitraum) → Liste der zu erzeugenden Sollstellungen (ohne DB-Schreibzugriff)
 2. abrechnen(zeitraum, erstellt_von) → Sollstellungen + Kassenbuchungen anlegen
 """
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
@@ -127,6 +128,47 @@ def zeitraum_monate(turnus: str, stichtag: date) -> list[tuple[int, int]]:
         return [(stichtag.year, start + i) for i in range(6)]
     # jahr
     return [(stichtag.year, m) for m in range(1, 13)]
+
+
+_ZEITRAUM_MUSTER = re.compile(r'^(\d{4})(?:-(?:Q([1-4])|H([12])|(\d{2})))?$')
+
+
+def zeitraum_ende(label: str) -> Optional[date]:
+    """Letzter Tag eines Zeitraum-Labels – die Umkehrung von `zeitraum_label`
+    ('2026-Q3' → 30.09.2026, '2026-08' → 31.08.2026, '2026' → 31.12.2026).
+
+    Unbekannte Schreibweisen ergeben None; der Aufrufer entscheidet, was das
+    heißt (die Warnung unten übergeht sie, statt zu raten).
+    """
+    m = _ZEITRAUM_MUSTER.match((label or '').strip())
+    if not m:
+        return None
+    jahr, quartal, halbjahr, monat = int(m.group(1)), m.group(2), m.group(3), m.group(4)
+    if quartal:
+        return _letzter_tag(jahr, int(quartal) * 3)
+    if halbjahr:
+        return _letzter_tag(jahr, int(halbjahr) * 6)
+    if monat:
+        return _letzter_tag(jahr, int(monat)) if 1 <= int(monat) <= 12 else None
+    return date(jahr, 12, 31)
+
+
+def betroffene_zeitraeume(labels, ab: date) -> list[str]:
+    """Zeitraum-Labels, die ein Wechsel zum Stichtag `ab` nachträglich verändert:
+    alle, deren letzter Tag nicht vor dem Stichtag liegt.
+
+    Warum der Aufwand: Wer rückwirkend schneidet, ändert die Monatsmengen eines
+    schon gelaufenen Zeitraums. Die bestehende Sollstellung bleibt davon
+    unberührt – sie muss **gelöscht** und der Lauf wiederholt werden. Ein Storno
+    hilft nicht: Der heißt „diesmal nicht abrechnen", und die korrigierte
+    Forderung entstünde nie.
+    """
+    treffer = set()
+    for label in labels:
+        ende = zeitraum_ende(label)
+        if ende is not None and ende >= ab:
+            treffer.add(label)
+    return sorted(treffer)
 
 
 # ---------------------------------------------------------------------------

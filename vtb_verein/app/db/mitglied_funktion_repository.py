@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Optional
 from app.db.base_repository import BaseRepository
 
@@ -32,6 +33,17 @@ class MitgliedFunktionRepository(BaseRepository):
                mf.deleted_at, mf.deleted_by
         FROM mitglied_funktion mf
         LEFT JOIN abteilung a ON a.id = mf.abteilung_id
+    """
+
+    # Nach Zeit statt nach Funktionsname: laufend, dann künftig, dann beendet
+    # (jüngstes Ende zuerst). „Bis 2024 ÜL Tischtennis, seither ÜL Volleyball"
+    # soll man in dieser Reihenfolge lesen können.
+    _ORDER = """
+        ORDER BY CASE WHEN NULLIF(mf.bis, '') < CURRENT_DATE::text THEN 2
+                      WHEN NULLIF(mf.von, '') > CURRENT_DATE::text THEN 1
+                      ELSE 0 END,
+                 NULLIF(mf.bis, '') DESC NULLS FIRST,
+                 mf.funktion, a.name
     """
 
     def get(self, id: int) -> Optional[MitgliedFunktion]:
@@ -105,7 +117,7 @@ class MitgliedFunktionRepository(BaseRepository):
     def list_for_mitglied(self, mitglied_id: int) -> list[MitgliedFunktion]:
         with self.cursor() as cur:
             cur.execute(
-                self._SELECT + " WHERE mf.mitglied_id = %s AND mf.deleted_at IS NULL ORDER BY mf.funktion, a.name",
+                self._SELECT + " WHERE mf.mitglied_id = %s AND mf.deleted_at IS NULL" + self._ORDER,
                 (mitglied_id,),
             )
             return [MitgliedFunktion(**dict(row)) for row in cur.fetchall()]
@@ -156,3 +168,43 @@ class MitgliedFunktionRepository(BaseRepository):
                 (deleted_by, id),
             )
             return cur.rowcount == 1
+
+    def wechsel(self, id: int, ab: str, abteilung_id: Optional[int], funktion: str,
+                updated_by: str, expected_version: int) -> Optional[MitgliedFunktion]:
+        """Schneidet die Funktionszuordnung zum Stichtag: Die bisherige endet am
+        Vortag, ab dem Stichtag gilt die neue Funktion/Abteilung.
+
+        Wie bei der Abteilungs-Zuordnung beides in einer Transaktion – und aus
+        demselben Grund: Eine beendete Funktion ohne Nachfolger nimmt dem
+        Betroffenen still die daran hängenden Rechte.
+
+        None, wenn die Zeile nicht (mehr) in der erwarteten Version vorliegt.
+        """
+        vortag = (date.fromisoformat(ab) - timedelta(days=1)).isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE mitglied_funktion
+                SET bis = %s,
+                    version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = %s
+                WHERE id = %s AND version = %s AND deleted_at IS NULL
+                RETURNING mitglied_id
+                """,
+                (vortag, updated_by, id, expected_version),
+            )
+            alt = cur.fetchone()
+            if alt is None:
+                return None
+            cur.execute(
+                """
+                INSERT INTO mitglied_funktion
+                    (mitglied_id, abteilung_id, funktion, von, created_by, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                RETURNING id
+                """,
+                (alt['mitglied_id'], abteilung_id, funktion, ab, updated_by, updated_by),
+            )
+            cur.execute(self._SELECT + " WHERE mf.id = %s", (cur.fetchone()['id'],))
+            return MitgliedFunktion(**dict(cur.fetchone()))

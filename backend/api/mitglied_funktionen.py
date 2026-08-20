@@ -6,7 +6,9 @@ from app.models.permission import Permission
 from ..core.authz import authorize_permission_delegation
 from ..core.deps import CurrentUser, DB
 from ..core.scope import require_abteilung, require_mitglied
-from ..core.validation import zuordnungsbeginn_or_400
+from ..core.validation import (
+    nicht_beendet_or_409, wechselstichtag_or_422, zuordnungsbeginn_or_400,
+)
 
 router = APIRouter(tags=["mitglied-funktionen"])
 
@@ -19,6 +21,15 @@ class FunktionWrite(BaseModel):
 
 
 class FunktionUpdate(FunktionWrite):
+    expected_version: int
+
+
+class FunktionWechsel(BaseModel):
+    """Wechsel statt Korrektur: „bis Juli ÜL Tischtennis, ab August ÜL Volleyball".
+    `expected_version` ist die der *bisherigen* Zeile."""
+    ab: str
+    abteilung_id: Optional[int] = None
+    funktion: str
     expected_version: int
 
 
@@ -118,3 +129,40 @@ def delete_funktion(mitglied_id: int, funktion_id: int, user: CurrentUser, db: D
         raise HTTPException(status_code=404, detail="Funktionszuordnung nicht gefunden")
     require_abteilung(user, eintrag.abteilung_id, Permission.PERSONEN_DELETE)
     db.mark_mitglied_funktion_deleted(funktion_id, deleted_by=user.username)
+
+
+@router.post("/mitglieder/{mitglied_id}/funktionen/{funktion_id}/wechsel",
+             status_code=status.HTTP_201_CREATED)
+def wechsel_funktion(mitglied_id: int, funktion_id: int, data: FunktionWechsel,
+                     user: CurrentUser, db: DB):
+    """Schneidet eine laufende Funktionszuordnung zum Stichtag und legt ab da die
+    neue Funktion/Abteilung an.
+
+    Dasselbe Muster wie bei der Abteilungs-Zuordnung, und aus demselben Grund: Ein
+    PUT auf die bestehende Zeile verschöbe die ganze Vergangenheit mit – wer bis
+    Juli ÜL Tischtennis war, wäre es rückwirkend nie gewesen. Für die
+    Beitragsregeln mit Funktions-Bedingung ist genau das der Unterschied.
+    """
+    _require_write(user)
+    require_mitglied(user, db, mitglied_id, Permission.PERSONEN_WRITE)
+    valid_keys = db.funktionen.list_keys()
+    if data.funktion not in valid_keys:
+        raise HTTPException(status_code=422, detail=f"Ungültige Funktion. Erlaubt: {valid_keys}")
+    eintrag = db.get_mitglied_funktion(funktion_id)
+    if eintrag is None or eintrag.mitglied_id != mitglied_id:
+        raise HTTPException(status_code=404, detail="Funktionszuordnung nicht gefunden")
+    # Beide Abteilungen: die bisherige, damit sich keine fremde Zuordnung
+    # umschreiben lässt, und die künftige, weil Funktionsrechte den Scope tragen.
+    require_abteilung(user, eintrag.abteilung_id, Permission.PERSONEN_WRITE)
+    require_abteilung(user, data.abteilung_id, Permission.PERSONEN_WRITE)
+    _pruefe_delegation(db, user, data.funktion, data.abteilung_id)
+    nicht_beendet_or_409(eintrag.bis)
+    ab = wechselstichtag_or_422(eintrag.von, eintrag.bis, data.ab)
+    zuordnungsbeginn_or_400(db, mitglied_id, ab)
+    neu = db.wechsel_mitglied_funktion(
+        funktion_id, ab, data.abteilung_id, data.funktion,
+        updated_by=user.username, expected_version=data.expected_version,
+    )
+    if neu is None:
+        raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
+    return asdict(neu)
