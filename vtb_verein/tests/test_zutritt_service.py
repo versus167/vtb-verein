@@ -13,7 +13,7 @@ import pytest
 import requests
 
 from app.services.zutritt_service import (
-    ZutrittService, build_alarm_digest, fehlertext, karte_fehlt,
+    ZutrittService, build_alarm_digest, fehlertext, ist_dauerhaft, karte_fehlt,
     _ms_to_iso, _iso_to_ms, sperr_fenster,
 )
 from app.services.ttlock_client import TTLockError
@@ -958,6 +958,41 @@ def test_gueltigkeit_aendern_holt_gesperrte_karten_nicht_zurueck_aufs_schloss():
 
     assert fake.added == []
     assert ber.ttlock_card_id is None and ber.sync_status == "pending"
+
+
+def test_fehlertexte_sagen_was_zu_tun_ist():
+    """Die Rohmeldung der Cloud ist zweisprachig und beantwortet die einzige Frage
+    nicht, die der Anwender hat: nochmal versuchen oder nicht?"""
+    # errcode 1 ist TTLocks Sammelfehler ("failed or means no") – keine Aussage über
+    # die Karte, also bleibt es ein Fehler, nur mit brauchbarem Text.
+    sammel = TTLockError("v3/identityCard/changePeriod: errcode=1 failed or means no",
+                         errcode=1)
+    assert "erneut versuchen" in fehlertext(sammel)
+    assert "errcode=1" in fehlertext(sammel)          # Rohmeldung bleibt zur Fehlersuche
+    assert karte_fehlt(sammel) is False               # wird NICHT als erledigt gewertet
+    assert ist_dauerhaft(sammel) is False             # und auch nicht als Absage
+
+    assert "Gateway" in fehlertext(TTLockError("offline", errcode=-3003))
+    # Unbekannte Codes bleiben, wie sie sind – lieber roh als falsch gedeutet.
+    assert fehlertext(TTLockError("xy", errcode=-9999)) == "xy"
+
+
+def test_sammelfehler_laesst_den_chip_status_stehen():
+    """Gegenprobe am Ablauf: Bei errcode=1 darf ein verlorener Chip nicht als
+    gesperrt in der Liste stehen, während er weiter öffnet."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    fake.change_should_fail = True
+    fake.change_errcode = 1
+
+    with pytest.raises(TTLockError):
+        svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+
+    assert svc.chip_repo.get(7).status == "aktiv"
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.sync_status == "fehler"
+        assert "erneut versuchen" in r.sync_fehler
+        assert r.ttlock_card_id is not None            # die Karte bleibt bekannt
 
 
 def test_karte_fehlt_erkennt_nur_den_passenden_errcode():
