@@ -419,7 +419,6 @@ def _person_row(user, mitglied, abteilungen: list, funktionen: list,
                 'abteilung_id': z.abteilung_id,
                 'abteilung_name': z.abteilung_name,
                 'abteilung_kuerzel': z.abteilung_kuerzel,
-                'status': z.status,
                 'von': z.von,
                 'bis': z.bis,
             }
