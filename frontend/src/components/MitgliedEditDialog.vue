@@ -126,8 +126,7 @@
                   <q-item-section>
                     <q-item-label>
                       {{ z.abteilung_name }}
-                      <q-badge class="q-ml-sm" :color="abteilungStatusColor(z.status)" text-color="white">{{ z.status }}</q-badge>
-                      <q-badge v-if="istBeendet(z)" class="q-ml-xs" color="grey-7" text-color="white">beendet</q-badge>
+                      <q-badge v-if="istBeendet(z)" class="q-ml-sm" color="grey-7" text-color="white">beendet</q-badge>
                       <q-badge v-else-if="istKuenftig(z)" class="q-ml-xs" color="deep-orange-7" text-color="white">künftig</q-badge>
                     </q-item-label>
                     <q-item-label caption>
@@ -423,34 +422,8 @@
             :options="abteilungOptions" option-value="id" option-label="name"
             emit-value map-options :rules="[(v) => !!v || 'Pflichtfeld']"
           />
-          <q-select v-model="zuordnungForm.status" label="Status *" outlined dense :options="abteilungStatusOptions" />
-
-          <!-- Korrektur oder Wechsel – nur bei geändertem Status an laufender Zeile. -->
-          <div v-if="zuordnungWechselFrage" class="q-pa-sm rounded-borders"
-               style="border: 1px solid rgba(128, 128, 128, .35)">
-            <div class="text-caption text-weight-medium q-mb-xs">Was hat sich geändert?</div>
-            <q-option-group v-model="zuordnungModus" :options="wechselOptionen" dense />
-            <template v-if="zuordnungModus === 'wechsel'">
-              <q-select v-model="zuordnungAb" label="Gilt ab *" outlined dense class="q-mt-sm"
-                :options="zuordnungAbOptionen" emit-value map-options
-                hint="Nur Monatserste – ein Schnitt mitten im Monat zählt ihn doppelt" />
-              <div v-if="zuordnungAb" class="text-caption text-grey q-mt-xs">
-                Die bisherige Zeile endet am {{ datumLang(vortag(zuordnungAb)) }}.
-              </div>
-              <q-banner v-if="abrechnungZeitraeume.length" dense rounded class="vtb-warnung q-mt-sm">
-                <template #avatar><q-icon name="warning" /></template>
-                <div class="text-weight-medium">
-                  Bereits abgerechnet: {{ abrechnungZeitraeume.join(', ') }}
-                </div>
-                <div class="text-caption">
-                  Die Sollstellung muss <b>gelöscht</b> und der Lauf wiederholt werden.
-                  Nicht stornieren – Storno heißt „diesmal nicht abrechnen“, die
-                  korrigierte Forderung entstünde dann nie.
-                </div>
-              </q-banner>
-            </template>
-          </div>
-
+          <!-- Kein Status mehr: Die Zuordnung sagt nur, von wann bis wann jemand
+               dazugehört. Ob er aktiv mitmacht, ist die Funktion „Passiv". -->
           <div class="row q-gutter-sm">
             <q-input v-model="zuordnungForm.von" label="Von" outlined dense type="date" class="col" clearable
               :min="form.eintrittsdatum || undefined" :max="form.austrittsdatum || undefined" />
@@ -667,7 +640,6 @@ const artOptions = [
   { label: 'Gastspieler', value: 'gastspieler' },
 ]
 // Nur noch beitragsrelevant/nicht – Rollen sind Funktionen (Schema v104).
-const abteilungStatusOptions = ['aktiv', 'passiv']
 const geschlechtOptions = [
   { label: 'männlich', value: 'm' },
   { label: 'weiblich', value: 'w' },
@@ -709,10 +681,6 @@ function snapshotForm() {
 // true, sobald sich ein Stammdaten-Feld gegenüber dem Snapshot unterscheidet.
 const stammDirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(pristineForm.value))
 
-function abteilungStatusColor(s) {
-  return { aktiv: 'positive', passiv: 'grey' }[s] ?? 'grey'
-}
-
 // ── Abteilungen ──────────────────────────────────────────────
 const zuordnungen = ref([])
 const abteilungOptions = ref([])
@@ -720,15 +688,12 @@ const zuordnungFormOpen = ref(false)
 const zuordnungSaving = ref(false)
 const editingZuordnungId = ref(null)
 const editingZuordnungVersion = ref(null)
-const zuordnungForm = ref({ abteilung_id: null, status: 'aktiv', von: null, bis: null })
-// Korrektur oder Wechsel: Zwei Änderungen sehen im Formular gleich aus und meinen
-// das Gegenteil. „War von Anfang an passiv" gehört in die bestehende Zeile; „ist ab
-// August passiv" braucht einen Schnitt, sonst gilt der neue Status rückwirkend für
-// die ganze Laufzeit — und der Beitragslauf lässt das Quartal wortlos ausfallen.
-const editingZuordnungOriginal = ref(null)
-const zuordnungModus = ref('wechsel')
-const zuordnungAb = ref(null)
+const zuordnungForm = ref({ abteilung_id: null, von: null, bis: null })
 
+// Korrektur oder Wechsel: Zwei Änderungen sehen im Formular gleich aus und meinen
+// das Gegenteil. „War von Anfang an ÜL Volleyball" gehört in die bestehende Zeile;
+// „ist ab August ÜL Volleyball" braucht einen Schnitt, sonst wandert die ganze
+// Vergangenheit mit — und der Beitragslauf rechnet rückwirkend falsch.
 const wechselOptionen = [
   { label: 'Wechsel – gilt ab einem Stichtag, davor bleibt es beim Bisherigen', value: 'wechsel' },
   { label: 'Korrektur – der Eintrag war von Anfang an falsch', value: 'korrektur' },
@@ -1256,19 +1221,8 @@ function defaultVon() {
 // ── Abteilungs-Zuordnungen ───────────────────────────────────
 // Die Frage stellt sich nur an einer LAUFENDEN Zeile und nur, wenn sich das *Was*
 // ändert. Bei einer beendeten Zeile gibt es nichts zu schneiden, und eine reine
-// Datumsänderung ist immer eine Korrektur.
-const zuordnungWechselFrage = computed(() =>
-  !!editingZuordnungId.value
-  && istLaufend(editingZuordnungOriginal.value ?? {})
-  && zuordnungForm.value.status !== editingZuordnungOriginal.value?.status)
-
-const zuordnungAbOptionen = computed(() => monatsErsteAuswahl({
-  von: editingZuordnungOriginal.value?.von,
-  bis: editingZuordnungOriginal.value?.bis,
-  eintritt: form.value.eintrittsdatum,
-  austritt: form.value.austrittsdatum,
-}))
-
+// Datumsänderung ist immer eine Korrektur. An der Abteilungs-Zuordnung gibt es
+// seit v105 kein „Was" mehr — dort ist immer nur ein Datum zu korrigieren.
 const funktionWechselFrage = computed(() => {
   const alt = editingFunktionOriginal.value
   if (!editingFunktionId.value || !istLaufend(alt ?? {})) return false
@@ -1283,8 +1237,6 @@ const funktionAbOptionen = computed(() => monatsErsteAuswahl({
   austritt: form.value.austrittsdatum,
 }))
 
-watch([zuordnungAb, zuordnungModus, zuordnungWechselFrage],
-  ([ab, modus, frage]) => ladeAbrechnungsWarnung(frage && modus === 'wechsel' ? ab : null))
 watch([funktionAb, funktionModus, funktionWechselFrage],
   ([ab, modus, frage]) => ladeAbrechnungsWarnung(frage && modus === 'wechsel' ? ab : null))
 
@@ -1292,41 +1244,23 @@ function openZuordnungForm(z) {
   if (z) {
     editingZuordnungId.value = z.id
     editingZuordnungVersion.value = z.version
-    zuordnungForm.value = { abteilung_id: z.abteilung_id, status: z.status, von: z.von, bis: z.bis }
+    zuordnungForm.value = { abteilung_id: z.abteilung_id, von: z.von, bis: z.bis }
   } else {
     editingZuordnungId.value = null
     editingZuordnungVersion.value = null
-    zuordnungForm.value = { abteilung_id: null, status: 'aktiv', von: defaultVon(), bis: null }
+    zuordnungForm.value = { abteilung_id: null, von: defaultVon(), bis: null }
   }
-  editingZuordnungOriginal.value = z ? { ...z } : null
-  zuordnungModus.value = 'wechsel'
-  zuordnungAb.value = vorgeschlagenerStichtag(zuordnungAbOptionen.value)
-  abrechnungZeitraeume.value = []
   zuordnungFormOpen.value = true
 }
 
 async function saveZuordnung() {
-  const istWechsel = zuordnungWechselFrage.value && zuordnungModus.value === 'wechsel'
-  if (istWechsel && !zuordnungAb.value) {
-    $q.notify({ type: 'negative', message: 'Bitte einen Stichtag für den Wechsel wählen.' })
-    return
-  }
   zuordnungSaving.value = true
   const istNeu = !editingZuordnungId.value
   const neueAbteilungId = zuordnungForm.value.abteilung_id
   const von = zuordnungForm.value.von || defaultVon()
   try {
-    if (istWechsel) {
-      // Ein Aufruf, nicht PUT + POST: Bräche der zweite weg, stünde eine beendete
-      // Zuordnung ohne Nachfolger da — jemand wäre still aus der Abteilung raus.
-      await api.post(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}/wechsel`, {
-        ab: zuordnungAb.value,
-        status: zuordnungForm.value.status,
-        expected_version: editingZuordnungVersion.value,
-      })
-    } else if (editingZuordnungId.value) {
+    if (editingZuordnungId.value) {
       await api.put(`/api/mitglieder/${getMitgliedId()}/abteilungen/${editingZuordnungId.value}`, {
-        status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
         bis: zuordnungForm.value.bis || null,
         expected_version: editingZuordnungVersion.value,
@@ -1334,7 +1268,6 @@ async function saveZuordnung() {
     } else {
       await api.post(`/api/mitglieder/${getMitgliedId()}/abteilungen`, {
         abteilung_id: zuordnungForm.value.abteilung_id,
-        status: zuordnungForm.value.status,
         von: zuordnungForm.value.von || null,
         bis: zuordnungForm.value.bis || null,
       })

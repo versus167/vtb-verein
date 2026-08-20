@@ -1,8 +1,7 @@
 # Plan: Zeiträume bei Abteilungs-Zuordnungen und Funktionen
 
-> Status (2026-08-20): **A–E umgesetzt** auf `feature/zuordnung-wechsel`, 1792 Tests
-> grün. **F ist beschlossen, aber nicht umgesetzt** – „passiv" wird eine Funktion,
-> und damit fällt der Abteilungs-Status ganz weg. Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
+> Status (2026-08-20): **A–F umgesetzt** auf `feature/zuordnung-wechsel`
+> (Schema v105), 1792 Tests grün. Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
 > abgerechnet wird — er wird es, wenn die Daten stimmen, und die Oberfläche sorgte
 > bis dahin dafür, dass sie es nicht tun.
 >
@@ -286,7 +285,7 @@ bereits. E bringt Schema **v104** (CHECK auf zwei Werte plus Bestandsumstellung)
   betroffenen Sollstellungen.
 
 
-### F) „Passiv" wird eine Funktion *(beschlossen, nicht umgesetzt)*
+### F) „Passiv" wird eine Funktion *(umgesetzt, Schema v105)*
 
 Der Abteilungs-Status ist auch nach E noch der einzige Ort im Modell, an dem eine
 Aussage über eine Person **kein eigenes Datum** hat. Im Beitragslauf ist er ein
@@ -362,7 +361,7 @@ genau das, wogegen dieser Plan angeht — eine gezeigte Entscheidung ist in Ordn
   entsteht. Teil A wird dadurch für Zuordnungen obsolet; das ist in Ordnung, er
   hat den Fehler erst sichtbar gemacht.
 
-#### Vorher zu lösen: die Abteilung im Paar meint heute etwas anderes
+#### Vorher gelöst: die Abteilung im Paar meinte etwas anderes
 
 `bedingung_abteilung_ids` / `ausnahme_abteilung_ids` koppeln eine Funktion an eine
 Abteilung — aber an die **Abteilungsmitgliedschaft**, nicht an die Abteilung der
@@ -381,18 +380,39 @@ Tischtennis" fällt das kaum auf, weil beides meist zusammenfällt. Bei `passiv`
 es genau der Unterschied: „passiv in TT" darf nicht den VB-Beitrag treffen, und
 umgekehrt.
 
-F braucht deshalb, dass das Paar die Abteilung der **Funktions-Zeile** prüft
-(zusätzlich oder statt der Mitgliedschaft). Das ist keine Zutat zu F, sondern
-Voraussetzung — und es ist unabhängig davon schon heute schief: Was das Formular
-verspricht („Je Zeile eine Funktion mit optionaler Abteilung") deckt sich nicht
-mit dem, was gerechnet wird. Vor F zu klären, ob bestehende Regeln von der
-Korrektur betroffen wären.
+*Umgesetzt:* Das Paar prüft jetzt die Abteilung der **Funktions-Zeile**. Eine
+vereinsweit eingetragene Funktion (Zeile ohne Abteilung) zählt dabei überall mit —
+sonst ließe sich „passiv im ganzen Verein" nicht ausdrücken. `_monate_je_schluessel`
+gruppiert dafür nach (Funktion, Abteilung) statt nur nach Funktion; die
+Abteilungs-Intervalle braucht die Berechnung damit gar nicht mehr.
 
-#### Zu klären, bevor es losgeht
+Das war unabhängig von F schon schief: Was das Formular versprach („Je Zeile eine
+Funktion mit optionaler Abteilung") deckte sich nicht mit dem, was gerechnet wurde.
 
-`funktion` hat kein Schutz-Kennzeichen: Wer `passiv` in der Funktions-Verwaltung
-löscht oder umbenennt, hebelt die Beitragsfreiheit aus — ohne Fehlermeldung, nur
-mit Beiträgen für Passive im nächsten Lauf. Entweder bekommt die Tabelle ein
-`system`-Flag (löschen/umbenennen gesperrt), oder der Service muss den Fall
-merklich behandeln. Ein stummer Ausfall ist hier die schlechteste Variante — es
-ist derselbe Fehlertyp, gegen den dieser ganze Plan angeht.
+#### Löschschutz — ohne `system`-Flag gelöst
+
+Die Sorge war: Wer `passiv` in der Funktions-Verwaltung löscht, hebelt die
+Beitragsfreiheit aus, ohne Fehlermeldung. Der Löschen-Endpunkt prüfte bisher nur,
+ob die Funktion noch **Trägern** zugeordnet ist — Beitragsregeln nicht. Das ist
+jetzt ergänzt: Nennt eine aktive Regel die Funktion in Bedingung oder Ausnahme,
+gibt es 409. Damit braucht `passiv` kein Sonderrecht, und die Lücke war ohnehin
+für jede Funktion offen.
+
+#### Der Schutz des Status-Feldes wandert mit
+
+Das alte Feld hatte einen Validator: Nur bekannte Werte, denn ein Tippfehler ergäbe
+eine Bedingung, auf die niemand passt — die Regel bliebe **stumm**. Denselben
+Schutz gab es für Funktions-Schlüssel bisher **nicht**, obwohl jetzt die
+Beitragsfreiheit an einem hängt. Der Endpunkt weist unbekannte Schlüssel nun mit
+422 ab.
+
+Und weil „nichts gesetzt" für einen Abteilungsbeitrag jetzt heißt „Passive zahlen
+mit", warnt die Oberfläche an zwei Stellen: im Formular als Banner, in der
+Regel-Liste als Chip „auch Passive". Gewollt ist das erlaubt — unbemerkt nicht.
+
+#### Migrationen müssen replaybar bleiben
+
+Beim Umbau aufgefallen: Die Tests drehen `schema_version` zurück und lassen die
+ganze Kette erneut über eine Datenbank laufen, in der spätere Schritte längst
+gegriffen haben. v104 liest `mitglied_abteilung.status` — den v105 entfernt. Beide
+prüfen deshalb über `_hat_spalte`, ob es für sie noch etwas zu tun gibt.

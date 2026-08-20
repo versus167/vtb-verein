@@ -7,7 +7,7 @@ _SELECT = """
     SELECT r.id, r.name, r.abteilung_id, a.name AS abteilung_name,
            r.betrag_pro_monat, r.einzug_turnus,
            r.gueltig_ab, r.gueltig_bis,
-           r.bedingung_raw, r.bedingung_abteilung_status,
+           r.bedingung_raw,
            r.bedingung_funktionen, r.bedingung_abteilung_ids,
            r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
            r.bedingung_alter_min, r.bedingung_alter_max,
@@ -26,7 +26,6 @@ def _map(row) -> Beitragsregel:
         betrag_pro_monat=r['betrag_pro_monat'], einzug_turnus=r['einzug_turnus'],
         gueltig_ab=r['gueltig_ab'], gueltig_bis=r['gueltig_bis'],
         bedingung_raw=r['bedingung_raw'],
-        bedingung_abteilung_status=r['bedingung_abteilung_status'],
         bedingung_funktionen=r['bedingung_funktionen'] or [],
         bedingung_abteilung_ids=r['bedingung_abteilung_ids'] or [],
         ausnahme_funktionen=r['ausnahme_funktionen'] or [],
@@ -67,22 +66,43 @@ class BeitragsregelRepository(BaseRepository):
             row = cur.fetchone()
             return _map(row) if row else None
 
+    def nennt_funktion(self, funktion_key: str) -> bool:
+        """Nennt eine aktive Regel diese Funktion als Bedingung oder Ausnahme?
+
+        Grundlage für den Löschschutz in der Funktionsverwaltung: Verschwindet die
+        Funktion, passt die Bedingung auf niemanden mehr – ohne Fehlermeldung, nur
+        mit falschen Beträgen im nächsten Lauf. Seit v105 hängt daran auch die
+        Beitragsfreiheit der Passiven.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM beitragsregel
+                WHERE deleted_at IS NULL
+                  AND (%s = ANY(COALESCE(bedingung_funktionen, '{}'))
+                       OR %s = ANY(COALESCE(ausnahme_funktionen, '{}')))
+                LIMIT 1
+                """,
+                (funktion_key, funktion_key),
+            )
+            return cur.fetchone() is not None
+
     def create(self, r: Beitragsregel, created_by: str) -> Beitragsregel:
         with self.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO beitragsregel (
                     name, abteilung_id, betrag_pro_monat, einzug_turnus,
-                    gueltig_ab, gueltig_bis, bedingung_raw, bedingung_abteilung_status,
+                    gueltig_ab, gueltig_bis, bedingung_raw,
                     bedingung_funktionen, bedingung_abteilung_ids,
                     ausnahme_funktionen, ausnahme_abteilung_ids,
                     bedingung_alter_min, bedingung_alter_max,
                     zahler_typ, gegenkonto, steuerschluessel, created_by, updated_by
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::integer[],%s,%s::integer[],%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::integer[],%s,%s::integer[],%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
                 (r.name, r.abteilung_id, r.betrag_pro_monat, r.einzug_turnus,
-                 r.gueltig_ab, r.gueltig_bis, r.bedingung_raw, r.bedingung_abteilung_status,
+                 r.gueltig_ab, r.gueltig_bis, r.bedingung_raw,
                  r.bedingung_funktionen, r.bedingung_abteilung_ids,
                  r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,
@@ -98,7 +118,7 @@ class BeitragsregelRepository(BaseRepository):
                 UPDATE beitragsregel
                 SET name=%s, abteilung_id=%s, betrag_pro_monat=%s, einzug_turnus=%s,
                     gueltig_ab=%s, gueltig_bis=%s,
-                    bedingung_raw=%s, bedingung_abteilung_status=%s,
+                    bedingung_raw=%s,
                     bedingung_funktionen=%s, bedingung_abteilung_ids=%s::integer[],
                     ausnahme_funktionen=%s, ausnahme_abteilung_ids=%s::integer[],
                     bedingung_alter_min=%s, bedingung_alter_max=%s,
@@ -108,7 +128,7 @@ class BeitragsregelRepository(BaseRepository):
                 """,
                 (r.name, r.abteilung_id, r.betrag_pro_monat, r.einzug_turnus,
                  r.gueltig_ab, r.gueltig_bis,
-                 r.bedingung_raw, r.bedingung_abteilung_status,
+                 r.bedingung_raw,
                  r.bedingung_funktionen, r.bedingung_abteilung_ids,
                  r.ausnahme_funktionen, r.ausnahme_abteilung_ids,
                  r.bedingung_alter_min, r.bedingung_alter_max,

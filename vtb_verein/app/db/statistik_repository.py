@@ -14,6 +14,7 @@ Bewusst OHNE Zahlungsstatus-Auswertung (siehe TODO/Branch feature/statistik-dash
 from datetime import date
 
 from app.db.base_repository import BaseRepository
+from app.db.funktion_repository import FUNKTION_PASSIV
 
 # Die 12-Monats-Entwicklung blickt bewusst 3 Monate in die Zukunft (Ticket #56):
 # vorerfasste Ein-/Austritte (Kündigung zum Quartals-/Jahresende, geplanter Eintritt)
@@ -28,7 +29,7 @@ def _laeuft_heute(alias: str) -> str:
     Als Funktion, weil dieselbe Bedingung an drei Stellen gebraucht wird und sie
     an zweien schlicht gefehlt hat: Eine vor Jahren beendete Zuordnung lief in der
     Abteilungsübersicht und im Abteilungs-Scope weiter mit, weil dort nur
-    `status = 'aktiv'` geprüft wurde – und der Status bleibt beim Beenden stehen.
+    `status = 'aktiv'` geprüft wurde, ein Kennzeichen ohne Datum (bis v105).
     """
     return (f"(safe_to_date({alias}.von) IS NULL "
             f"     OR safe_to_date({alias}.von) <= CURRENT_DATE) "
@@ -36,16 +37,34 @@ def _laeuft_heute(alias: str) -> str:
             f"     OR safe_to_date({alias}.bis) >= CURRENT_DATE)")
 
 
-# "aktiv in einer Abteilung": mindestens eine heute laufende Zuordnung mit Status
-# 'aktiv'. Bewusst NICHT über m.status – der wird weder angezeigt noch gepflegt
-# (#173) und wäre damit eine Kennzahl über ein totes Feld. Die Abteilungs-
-# Zuordnung dagegen wird gepflegt, hat von/bis und trägt den Passiv-Status dort,
-# wo er hingehört.
+def _nicht_passiv(alias: str) -> str:
+    """„Macht in dieser Abteilung aktiv mit": keine laufende `passiv`-Funktion.
+
+    Seit v105 sagt das die Funktion und nicht mehr ein Kennzeichen an der
+    Zuordnung — mit Zeitraum, den das Kennzeichen nie hatte. Eine vereinsweit
+    eingetragene `passiv`-Funktion (ohne Abteilung) zählt für jede Abteilung;
+    eine mit Abteilung nur für ihre eigene.
+    """
+    return (
+        "NOT EXISTS (SELECT 1 FROM mitglied_funktion mf_p "
+        f"            WHERE mf_p.mitglied_id = {alias}.mitglied_id "
+        f"              AND mf_p.funktion = '{FUNKTION_PASSIV}' "
+        "               AND mf_p.deleted_at IS NULL "
+        f"              AND (mf_p.abteilung_id IS NULL "
+        f"                   OR mf_p.abteilung_id = {alias}.abteilung_id) "
+        f"              AND {_laeuft_heute('mf_p')})"
+    )
+
+
+# "aktiv in einer Abteilung": mindestens eine heute laufende Zuordnung, in der
+# das Mitglied nicht passiv geführt wird. Bewusst NICHT über m.status – der wird
+# weder angezeigt noch gepflegt (#173) und wäre eine Kennzahl über ein totes
+# Feld. Die Abteilungs-Zuordnung dagegen wird gepflegt und hat von/bis.
 _IN_ABTEILUNG = (
     "EXISTS (SELECT 1 FROM mitglied_abteilung ma_a "
     "         WHERE ma_a.mitglied_id = m.id AND ma_a.deleted_at IS NULL "
-    "           AND ma_a.status = 'aktiv' "
-    f"           AND {_laeuft_heute('ma_a')})"
+    f"           AND {_laeuft_heute('ma_a')} "
+    f"           AND {_nicht_passiv('ma_a')})"
 )
 # "zählt zum Bestand": aktueller Mitgliederstand zum Anzeigetag (heute) – wer HEUTE
 # Mitglied ist. Eintritt nicht in der Zukunft (am Eintrittstag schon dabei) UND Austritt
@@ -82,8 +101,9 @@ class StatistikRepository(BaseRepository):
         join = (
             "JOIN mitglied_abteilung ma "
             "ON ma.mitglied_id = m.id AND ma.abteilung_id = %(aid)s "
-            "AND ma.deleted_at IS NULL AND ma.status = 'aktiv' "
-            f"AND {_laeuft_heute('ma')}"
+            "AND ma.deleted_at IS NULL "
+            f"AND {_laeuft_heute('ma')} "
+            f"AND {_nicht_passiv('ma')}"
         )
         return (
             join,
@@ -278,10 +298,10 @@ class StatistikRepository(BaseRepository):
                 LEFT JOIN mitglied_abteilung ma
                        ON ma.abteilung_id = a.id
                       AND ma.deleted_at IS NULL
-                      AND ma.status = 'aktiv'
-                      -- Der Status allein genügt nicht: Er bleibt beim Beenden
-                      -- stehen, die Zuordnung endet über `bis`.
+                      -- Zeitraum UND Passiv-Funktion: Beides fehlte hier, solange
+                      -- nur ein Status geprüft wurde, der kein Datum kannte.
                       AND {_laeuft_heute('ma')}
+                      AND {_nicht_passiv('ma')}
                 LEFT JOIN mitglied m
                        ON m.id = ma.mitglied_id
                       AND m.deleted_at IS NULL

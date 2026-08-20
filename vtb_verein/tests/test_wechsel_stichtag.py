@@ -137,6 +137,12 @@ def test_ein_wechsel_in_der_zukunft_beruehrt_nichts_abgerechnetes():
 
 
 # ------------------------------------------------------------------- Endpunkte
+#
+# Den Wechsel gibt es seit v105 nur noch an der **Funktion**: Eine Abteilungs-
+# Zuordnung sagt nur, von wann bis wann jemand dazugehört – dort ist nur ein Datum
+# zu ändern, und das ist immer eine Korrektur. Ob jemand aktiv mitmacht, ist die
+# Funktion `passiv`, und die wechselt nach demselben Muster wie „ÜL Tischtennis →
+# ÜL Volleyball".
 
 def _user(username='pfleger'):
     return SimpleNamespace(
@@ -148,56 +154,60 @@ def _user(username='pfleger'):
     )
 
 
-def _zuordnung(**kwargs):
-    from app.db.mitglied_abteilung_repository import MitgliedAbteilung
-    daten = dict(id=7, mitglied_id=5, abteilung_id=3, status='aktiv',
+def _eintrag(**kwargs):
+    from app.db.mitglied_funktion_repository import MitgliedFunktion
+    daten = dict(id=7, mitglied_id=5, abteilung_id=3, funktion='uebungsleiter',
                  von='2020-01-01', bis=None, version=1)
     daten.update(kwargs)
-    return MitgliedAbteilung(**daten)
+    return MitgliedFunktion(**daten)
 
 
 class _DB(SimpleNamespace):
     """Nur so viel Datastore, wie der Endpunkt anfasst."""
 
-    def __init__(self, zuordnung, wechsel_ergebnis='neu'):
+    def __init__(self, eintrag, wechsel_ergebnis='neu'):
         super().__init__()
-        self._zuordnung = zuordnung
+        self._eintrag = eintrag
         self._wechsel_ergebnis = wechsel_ergebnis
         self.wechsel_aufrufe = []
+        self.funktionen = SimpleNamespace(
+            list_keys=lambda: ['uebungsleiter', 'passiv'],
+            get_by_key=lambda key: None)     # keine Rechte hinterlegt → keine Delegation
 
-    def get_mitglied_abteilung(self, id):
-        return self._zuordnung
+    def get_mitglied_funktion(self, id):
+        return self._eintrag
 
     def get_mitglied(self, mitglied_id):
-        return SimpleNamespace(eintrittsdatum='2020-01-01', austrittsdatum=None)
+        return SimpleNamespace(id=mitglied_id, eintrittsdatum='2020-01-01', austrittsdatum=None)
 
-    def wechsel_mitglied_abteilung(self, id, ab, status, updated_by, expected_version):
-        self.wechsel_aufrufe.append((id, ab, status, expected_version))
+    def wechsel_mitglied_funktion(self, id, ab, abteilung_id, funktion,
+                                  updated_by, expected_version):
+        self.wechsel_aufrufe.append((id, ab, abteilung_id, funktion, expected_version))
         if self._wechsel_ergebnis is None:
             return None
-        return _zuordnung(id=8, status=status, von=ab, version=1)
+        return _eintrag(id=8, funktion=funktion, abteilung_id=abteilung_id, von=ab)
 
 
 def _wechsel(**kwargs):
-    from backend.api.mitglied_abteilungen import ZuordnungWechsel
-    daten = dict(ab='2026-08-01', status='passiv', expected_version=1)
+    from backend.api.mitglied_funktionen import FunktionWechsel
+    daten = dict(ab='2026-08-01', funktion='passiv', abteilung_id=3, expected_version=1)
     daten.update(kwargs)
-    return ZuordnungWechsel(**daten)
+    return FunktionWechsel(**daten)
 
 
 def test_endpunkt_schneidet_und_liefert_die_neue_zeile():
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung())
-    ergebnis = api.wechsel_zuordnung(5, 7, _wechsel(), _user(), db)
-    assert db.wechsel_aufrufe == [(7, '2026-08-01', 'passiv', 1)]
-    assert ergebnis['status'] == 'passiv' and ergebnis['von'] == '2026-08-01'
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag())
+    ergebnis = api.wechsel_funktion(5, 7, _wechsel(), _user(), db)
+    assert db.wechsel_aufrufe == [(7, '2026-08-01', 3, 'passiv', 1)]
+    assert ergebnis['funktion'] == 'passiv' and ergebnis['von'] == '2026-08-01'
 
 
 def test_endpunkt_weist_den_stichtag_mitten_im_monat_ab():
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung())
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag())
     with pytest.raises(HTTPException) as e:
-        api.wechsel_zuordnung(5, 7, _wechsel(ab='2026-08-15'), _user(), db)
+        api.wechsel_funktion(5, 7, _wechsel(ab='2026-08-15'), _user(), db)
     assert e.value.status_code == 422
     assert "Monatserster" in e.value.detail
     assert db.wechsel_aufrufe == []
@@ -206,35 +216,35 @@ def test_endpunkt_weist_den_stichtag_mitten_im_monat_ab():
 def test_endpunkt_weist_eine_beendete_zuordnung_ab():
     """An einer abgelaufenen Zeile gibt es nichts zu schneiden – das ist ein
     Zustand, kein Eingabefehler, also 409 statt 422."""
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung(bis=GESTERN))
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag(bis=GESTERN))
     with pytest.raises(HTTPException) as e:
-        api.wechsel_zuordnung(5, 7, _wechsel(), _user(), db)
+        api.wechsel_funktion(5, 7, _wechsel(), _user(), db)
     assert e.value.status_code == 409
     assert "neue Zuordnung" in e.value.detail
     assert db.wechsel_aufrufe == []
 
 
 def test_endpunkt_meldet_den_versionskonflikt():
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung(), wechsel_ergebnis=None)
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag(), wechsel_ergebnis=None)
     with pytest.raises(HTTPException) as e:
-        api.wechsel_zuordnung(5, 7, _wechsel(), _user(), db)
+        api.wechsel_funktion(5, 7, _wechsel(), _user(), db)
     assert e.value.status_code == 409
     assert "Versionskonflikt" in e.value.detail
 
 
-def test_endpunkt_prueft_den_status():
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung())
+def test_endpunkt_prueft_die_funktion():
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag())
     with pytest.raises(HTTPException) as e:
-        api.wechsel_zuordnung(5, 7, _wechsel(status='erfunden'), _user(), db)
+        api.wechsel_funktion(5, 7, _wechsel(funktion='erfunden'), _user(), db)
     assert e.value.status_code == 422
 
 
 def test_endpunkt_findet_fremde_zuordnung_nicht():
-    from backend.api import mitglied_abteilungen as api
-    db = _DB(_zuordnung(mitglied_id=99))
+    from backend.api import mitglied_funktionen as api
+    db = _DB(_eintrag(mitglied_id=99))
     with pytest.raises(HTTPException) as e:
-        api.wechsel_zuordnung(5, 7, _wechsel(), _user(), db)
+        api.wechsel_funktion(5, 7, _wechsel(), _user(), db)
     assert e.value.status_code == 404

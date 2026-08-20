@@ -1,15 +1,6 @@
 from dataclasses import dataclass
-from datetime import date, timedelta
 from typing import Optional
 from app.db.base_repository import BaseRepository
-
-# Der Status sagt nur noch, ob die Zuordnung beitragsrelevant ist. Rollen
-# ('trainer', 'vorstand', 'ehrenmitglied') standen früher hier und sind seit
-# Schema v104 raus: Sie gehören zu den Funktionen, die Zeitraum, Abteilung und
-# Rechte kennen und von den Beitragsregeln zeitraumgenau ausgewertet werden. Der
-# SPG-Import macht das ohnehin längst so (Vorstand/Ehrenmitglieder → Funktion).
-VALID_STATUS = ('aktiv', 'passiv')
-
 
 @dataclass
 class MitgliedAbteilung:
@@ -18,7 +9,6 @@ class MitgliedAbteilung:
     abteilung_id: Optional[int] = None
     abteilung_name: Optional[str] = None
     abteilung_kuerzel: Optional[str] = None
-    status: str = 'aktiv'
     von: Optional[str] = None
     bis: Optional[str] = None
     version: int = 1
@@ -35,7 +25,7 @@ class MitgliedAbteilungRepository(BaseRepository):
     _SELECT = """
         SELECT ma.id, ma.mitglied_id, ma.abteilung_id,
                a.name AS abteilung_name, a.kuerzel AS abteilung_kuerzel,
-               ma.status, ma.von, ma.bis,
+               ma.von, ma.bis,
                ma.version, ma.created_at, ma.created_by,
                ma.updated_at, ma.updated_by,
                ma.deleted_at, ma.deleted_by
@@ -85,35 +75,35 @@ class MitgliedAbteilungRepository(BaseRepository):
             )
             return cur.fetchone() is not None
 
-    def create(self, mitglied_id: int, abteilung_id: int, status: str,
+    def create(self, mitglied_id: int, abteilung_id: int,
                von: Optional[str], bis: Optional[str], created_by: str) -> MitgliedAbteilung:
         with self.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO mitglied_abteilung
-                    (mitglied_id, abteilung_id, status, von, bis, created_by, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
+                    (mitglied_id, abteilung_id, von, bis, created_by, updated_at, updated_by)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
                 RETURNING id
                 """,
-                (mitglied_id, abteilung_id, status, von, bis, created_by, created_by),
+                (mitglied_id, abteilung_id, von, bis, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
             cur.execute(self._SELECT + " WHERE ma.id = %s", (new_id,))
             return MitgliedAbteilung(**dict(cur.fetchone()))
 
-    def update(self, id: int, status: str, von: Optional[str], bis: Optional[str],
+    def update(self, id: int, von: Optional[str], bis: Optional[str],
                updated_by: str, expected_version: int) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE mitglied_abteilung
-                SET status = %s, von = %s, bis = %s,
+                SET von = %s, bis = %s,
                     version = version + 1,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = %s
                 WHERE id = %s AND version = %s AND deleted_at IS NULL
                 """,
-                (status, von, bis, updated_by, id, expected_version),
+                (von, bis, updated_by, id, expected_version),
             )
             return cur.rowcount == 1
 
@@ -130,45 +120,3 @@ class MitgliedAbteilungRepository(BaseRepository):
                 (deleted_by, id),
             )
             return cur.rowcount == 1
-
-    def wechsel(self, id: int, ab: str, status: str, updated_by: str,
-                expected_version: int) -> Optional[MitgliedAbteilung]:
-        """Schneidet die Zuordnung zum Stichtag: Die bisherige Zeile endet am
-        Vortag, ab dem Stichtag gilt eine neue mit dem neuen Status.
-
-        Beides in **einem** cursor()-Block und damit in einer Transaktion. Bräche
-        der zweite Schritt weg, stünde eine beendete Zuordnung ohne Nachfolger da –
-        das Mitglied wäre lautlos aus der Abteilung verschwunden.
-
-        Die alte Zeile behält ihren Status: Sie beschreibt die Vergangenheit und
-        wird nicht umgeschrieben. None, wenn die Zeile nicht (mehr) in der
-        erwarteten Version vorliegt.
-        """
-        vortag = (date.fromisoformat(ab) - timedelta(days=1)).isoformat()
-        with self.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE mitglied_abteilung
-                SET bis = %s,
-                    version = version + 1,
-                    updated_at = CURRENT_TIMESTAMP,
-                    updated_by = %s
-                WHERE id = %s AND version = %s AND deleted_at IS NULL
-                RETURNING mitglied_id, abteilung_id
-                """,
-                (vortag, updated_by, id, expected_version),
-            )
-            alt = cur.fetchone()
-            if alt is None:
-                return None
-            cur.execute(
-                """
-                INSERT INTO mitglied_abteilung
-                    (mitglied_id, abteilung_id, status, von, created_by, updated_at, updated_by)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
-                RETURNING id
-                """,
-                (alt['mitglied_id'], alt['abteilung_id'], status, ab, updated_by, updated_by),
-            )
-            cur.execute(self._SELECT + " WHERE ma.id = %s", (cur.fetchone()['id'],))
-            return MitgliedAbteilung(**dict(cur.fetchone()))

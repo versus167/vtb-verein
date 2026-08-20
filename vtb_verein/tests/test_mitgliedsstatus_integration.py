@@ -48,6 +48,7 @@ def clean(db):
     Integrationstests, und mehrere zählen Mitglieder vereinsweit."""
     def weg():
         with db.cursor() as cur:
+            cur.execute("DELETE FROM mitglied_funktion WHERE created_by = %s", (_MARKE,))
             cur.execute("DELETE FROM mitglied_abteilung WHERE created_by = %s", (_MARKE,))
             cur.execute("DELETE FROM mitglied_history WHERE created_by = %s", (_MARKE,))
             cur.execute("DELETE FROM mitglied WHERE created_by = %s", (_MARKE,))
@@ -103,11 +104,17 @@ def test_kpis_werten_den_toten_status_nicht_mehr_aus(db):
     assert 'aktiv_in_abteilung' in kpis
 
 
-def _mit_abteilung(db, mitglied_id, abteilung_id, *, status='aktiv', bis=None):
+def _mit_abteilung(db, mitglied_id, abteilung_id, *, passiv=False, bis=None):
     with db.cursor() as cur:
-        cur.execute("INSERT INTO mitglied_abteilung (mitglied_id, abteilung_id, status, "
-                    "von, bis, created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (mitglied_id, abteilung_id, status, VORJAHR, bis, _MARKE, _MARKE))
+        cur.execute("INSERT INTO mitglied_abteilung (mitglied_id, abteilung_id, "
+                    "von, bis, created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (mitglied_id, abteilung_id, VORJAHR, bis, _MARKE, _MARKE))
+        if passiv:
+            # Seit v105 sagt das die Funktion, nicht ein Kennzeichen an der Zuordnung.
+            cur.execute("INSERT INTO mitglied_funktion (mitglied_id, abteilung_id, funktion, "
+                        "von, created_by, updated_by) "
+                        "VALUES (%s, %s, 'passiv', %s, %s, %s)",
+                        (mitglied_id, abteilung_id, VORJAHR, _MARKE, _MARKE))
 
 
 def _abteilung(db, name='Status-Abt'):
@@ -122,7 +129,7 @@ def test_davon_in_abteilungen_zaehlt_die_gepflegte_zuordnung(db):
     wird und die von/bis samt Passiv-Status kennt."""
     aid = _abteilung(db)
     _mit_abteilung(db, _mitglied(db, 'Dabei'), aid)
-    _mit_abteilung(db, _mitglied(db, 'PassivInAbt'), aid, status='passiv')
+    _mit_abteilung(db, _mitglied(db, 'PassivInAbt'), aid, passiv=True)
     _mit_abteilung(db, _mitglied(db, 'Ausgelaufen'), aid, bis=GESTERN)
     _mitglied(db, 'OhneAbteilung')
 
@@ -136,7 +143,7 @@ def test_in_der_abteilungssicht_deckt_sich_die_zahl_mit_gesamt(db):
     blendet die Kachel deshalb aus."""
     aid = _abteilung(db)
     _mit_abteilung(db, _mitglied(db, 'Dabei'), aid)
-    _mit_abteilung(db, _mitglied(db, 'PassivInAbt'), aid, status='passiv')
+    _mit_abteilung(db, _mitglied(db, 'PassivInAbt'), aid, passiv=True)
 
     kpis = db.statistik.kpis(abteilung_id=aid)
     assert kpis['gesamt'] == kpis['aktiv_in_abteilung'] == 1

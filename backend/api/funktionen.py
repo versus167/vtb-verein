@@ -77,6 +77,16 @@ def delete_funktion(funktion_id: int, user: CurrentUser, db: DB):
             status_code=409,
             detail="Funktion wird noch verwendet und kann nicht gelöscht werden",
         )
+    # Auch Beitragsregeln zählen als Verwendung: Fiele die Funktion weg, träfe
+    # ihre Bedingung niemanden mehr – ohne Fehler, nur mit falschen Beträgen im
+    # nächsten Lauf. Seit v105 hängt daran die Beitragsfreiheit der Passiven.
+    funktion = db.funktionen.get(funktion_id)
+    if db.beitragsregeln.nennt_funktion(funktion.key):
+        raise HTTPException(
+            status_code=409,
+            detail=("Funktion wird in einer Beitragsregel verwendet (Bedingung oder "
+                    "Ausnahme) und kann nicht gelöscht werden"),
+        )
     db.funktionen.mark_deleted(funktion_id, deleted_by=user.username)
 
 

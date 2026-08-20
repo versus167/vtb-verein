@@ -4,7 +4,6 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, field_validator
 
-from app.db.mitglied_abteilung_repository import VALID_STATUS
 from app.models.beitrag import Beitragsregel, BeitragEinstellungen
 from app.models.permission import Permission
 from app.services.beitrags_service import BeitragsService
@@ -26,6 +25,26 @@ def _require_write(user):
     if not user.has_permission(Permission.BEITRAEGE_WRITE):
         raise HTTPException(status_code=403, detail="Keine Schreibberechtigung für Beiträge")
 
+def _bekannte_funktionen_or_422(db, data) -> None:
+    """Nur bekannte Funktions-Schlüssel in Bedingung und Ausnahme zulassen.
+
+    Denselben Schutz gab es bis v105 für den Abteilungs-Status. Er wird hier
+    umso wichtiger, weil die Beitragsfreiheit der Passiven jetzt an einem
+    Funktions-Schlüssel hängt: Ein Tippfehler ergäbe eine Bedingung, auf die
+    niemand passt – die Regel bliebe stumm, und auffallen würde das erst, wenn
+    die Beiträge eines Quartals fehlen.
+    """
+    genannt = list(data.bedingung_funktionen or []) + list(data.ausnahme_funktionen or [])
+    if not genannt:
+        return
+    bekannt = set(db.funktionen.list_keys())
+    unbekannt = sorted({f for f in genannt if f not in bekannt})
+    if unbekannt:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unbekannte Funktion: {', '.join(unbekannt)}")
+
+
 def _require_abrechnen(user):
     if not user.has_permission(Permission.BEITRAEGE_ABRECHNEN):
         raise HTTPException(status_code=403, detail="Keine Berechtigung für Beitragsabrechnung")
@@ -42,7 +61,6 @@ class RegelCreate(BaseModel):
     einzug_turnus: str = 'quartal'
     gueltig_ab: str
     gueltig_bis: Optional[str] = None
-    bedingung_abteilung_status: Optional[str] = None
     bedingung_funktionen: list[str] = []
     # Index-gleich zu bedingung_funktionen: je Einschluss eine optionale Abteilung (None = vereinsweit)
     bedingung_abteilung_ids: list[Optional[int]] = []
@@ -54,24 +72,6 @@ class RegelCreate(BaseModel):
     zahler_typ: str = 'mitglied'
     gegenkonto: Optional[str] = None
     steuerschluessel: Optional[str] = None
-
-    @field_validator('bedingung_abteilung_status')
-    @classmethod
-    def _bekannte_status(cls, v: Optional[str]) -> Optional[str]:
-        """Nur bekannte Abteilungs-Status zulassen.
-
-        Ein Tippfehler ergäbe sonst eine Bedingung, auf die kein Mitglied passt –
-        die Regel bliebe stumm, und auffallen würde das erst, wenn die Beiträge
-        eines Quartals fehlen."""
-        gewaehlt = [s.strip() for s in (v or '').split(',') if s.strip()]
-        if not gewaehlt:
-            return None            # leer = Grundregel (alle außer passiv), nie ''
-        unbekannt = [s for s in gewaehlt if s not in VALID_STATUS]
-        if unbekannt:
-            raise ValueError(
-                f"Unbekannter Abteilungs-Status: {', '.join(unbekannt)}. "
-                f"Erlaubt: {', '.join(VALID_STATUS)}")
-        return ','.join(gewaehlt)
 
 
 class RegelUpdate(RegelCreate):
@@ -102,11 +102,11 @@ def list_regeln(user: CurrentUser, db: DB):
 @router.post("/regeln", status_code=status.HTTP_201_CREATED)
 def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
     _require_write(user)
+    _bekannte_funktionen_or_422(db, data)
     r = Beitragsregel(
         name=data.name, abteilung_id=data.abteilung_id,
         betrag_pro_monat=data.betrag_pro_monat, einzug_turnus=data.einzug_turnus,
         gueltig_ab=data.gueltig_ab, gueltig_bis=data.gueltig_bis,
-        bedingung_abteilung_status=data.bedingung_abteilung_status,
         bedingung_funktionen=data.bedingung_funktionen,
         bedingung_abteilung_ids=data.bedingung_abteilung_ids,
         ausnahme_funktionen=data.ausnahme_funktionen,
@@ -124,6 +124,7 @@ def create_regel(data: RegelCreate, user: CurrentUser, db: DB):
 @router.put("/regeln/{regel_id}")
 def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     _require_write(user)
+    _bekannte_funktionen_or_422(db, data)
     r = db.beitragsregeln.get(regel_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Regel nicht gefunden")
@@ -133,7 +134,6 @@ def update_regel(regel_id: int, data: RegelUpdate, user: CurrentUser, db: DB):
     r.einzug_turnus = data.einzug_turnus
     r.gueltig_ab = data.gueltig_ab
     r.gueltig_bis = data.gueltig_bis
-    r.bedingung_abteilung_status = data.bedingung_abteilung_status
     r.bedingung_funktionen = data.bedingung_funktionen
     r.bedingung_abteilung_ids = data.bedingung_abteilung_ids
     r.ausnahme_funktionen = data.ausnahme_funktionen
@@ -380,7 +380,6 @@ def _regel_dict(r: Beitragsregel) -> dict:
         'betrag_pro_einzug': r.betrag_pro_einzug,
         'einzug_turnus': r.einzug_turnus,
         'gueltig_ab': r.gueltig_ab, 'gueltig_bis': r.gueltig_bis,
-        'bedingung_abteilung_status': r.bedingung_abteilung_status,
         'bedingung_funktionen': r.bedingung_funktionen,
         'bedingung_abteilung_ids': r.bedingung_abteilung_ids,
         'ausnahme_funktionen': r.ausnahme_funktionen,

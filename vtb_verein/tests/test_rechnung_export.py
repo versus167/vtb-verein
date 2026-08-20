@@ -125,8 +125,8 @@ def _user(db, username, perms, abteilung_id):
                 "VALUES (%s,%s,'xtest','xtest')", (uid, p))
         if abteilung_id is not None:
             cur.execute(
-                "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,status,von,created_by,updated_by) "
-                "VALUES (%s,%s,'aktiv',%s,'xtest','xtest')", (mid, abteilung_id, LASTWEEK))
+                "INSERT INTO mitglied_abteilung (mitglied_id,abteilung_id,von,created_by,updated_by) "
+                "VALUES (%s,%s,%s,'xtest','xtest')", (mid, abteilung_id, LASTWEEK))
     return db.get_user_by_id(uid)
 
 
