@@ -1,7 +1,8 @@
 # Plan: Zeiträume bei Abteilungs-Zuordnungen und Funktionen
 
 > Status (2026-08-20): **A–E umgesetzt** auf `feature/zuordnung-wechsel`, 1792 Tests
-> grün. Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
+> grün. **F ist beschlossen, aber nicht umgesetzt** – „passiv" wird eine Funktion,
+> und damit fällt der Abteilungs-Status ganz weg. Anlass war die Frage, ob ein Wechsel „ab 1.8. passiv" richtig
 > abgerechnet wird — er wird es, wenn die Daten stimmen, und die Oberfläche sorgte
 > bis dahin dafür, dass sie es nicht tun.
 >
@@ -228,11 +229,9 @@ passiv; alles andere ist eine Funktion.*
   „Ist seit Januar passiv", im März eingetragen, ergäbe dort März. Rückwirkende
   Korrekturen wären gar nicht abbildbar. Geprüft: Kein Service liest `*_history`
   — nur Prune (Aufräumen) und die Personen-Historie (Anzeige).
-* **„Passiv" als Funktion abbilden.** Beim Vereins-Status (#173) war die
-  Funktion die richtige Antwort, weil es dort *keine* zeitlich geführte Struktur
-  gab. Bei der Abteilung gibt es sie: Die Zuordnung hat von/bis. Passiv zusätzlich
-  als Funktion zu führen hieße, zwei Orte über dieselbe Beziehung sprechen zu
-  lassen — genau das Muster, das mit #173 gerade beseitigt wurde.
+* ~~**„Passiv" als Funktion abbilden.**~~ Der Einwand war: Die Zuordnung hat doch
+  schon von/bis, zwei Orte für dieselbe Beziehung wären das Muster aus #173. Er
+  hält nicht — die Zuordnung hat ein Datum, der *Status daran* nicht. Siehe F.
 
 ## Betroffene Dateien
 
@@ -285,3 +284,77 @@ bereits. E bringt Schema **v104** (CHECK auf zwei Werte plus Bestandsumstellung)
 * **Rückwirkender Wechsel:** erlaubt, auch in ein abgerechnetes Quartal, mit
   Warnung und dem ausdrücklichen Hinweis auf **Löschen statt Storno** der
   betroffenen Sollstellungen.
+
+
+### F) „Passiv" wird eine Funktion *(beschlossen, nicht umgesetzt)*
+
+Der Abteilungs-Status ist auch nach E noch der einzige Ort im Modell, an dem eine
+Aussage über eine Person **kein eigenes Datum** hat. Im Beitragslauf ist er ein
+reines Zeilen-Filter (`ma.status <> 'passiv'`); monatsgenau wird die Rechnung erst
+dadurch, dass man die Zuordnung *aufteilt* — deshalb überhaupt Teil A. Eine
+Funktion braucht diesen Umweg nicht: `funktions_monats_restriktion` wertet
+Funktionen längst **monatsweise** aus, mit optionalem Abteilungsbezug
+(`ausnahme_abteilung_ids`). Die Maschine ist da; der Status ist der Fremdkörper.
+
+Dazu das Argument, das den Ausschlag gibt: Für den Erfasser ist es **dieselbe
+Logik**. Ehrenmitglied, Übungsleiter, Vorstand, passiv — alles eine Sache mit
+Zeitraum und optionaler Abteilung, an einer Stelle gepflegt.
+
+#### Die Semantik fällt aus den Regeln, nicht aus einem Sonderfall
+
+Eine Beitragsregel hat einen Abteilungsbezug oder keinen. Die `passiv`-Funktion
+auch. Daraus ergibt sich alles:
+
+| `passiv` gilt … | Vereinsbeitrag (Regel ohne Abteilung) | Abteilungsbeitrag TT | Abteilungsbeitrag VB |
+|---|---|---|---|
+| für Abteilung TT | zahlt | entfällt | zahlt |
+| vereinsweit (ohne Abteilung) | zahlt | entfällt | entfällt |
+
+Ausgeschlossen werden also nur Regeln **mit** Abteilungsbezug; der Vereinsbeitrag
+läuft weiter. Das ist keine neue Festlegung, sondern die heutige: „Passiv in der
+Abteilung heißt nicht passiv im Verein."
+
+#### Eingebaut, nicht je Regel konfiguriert
+
+Der Ausschluss steckt im Service, so wie heute `ABTEILUNG_STATUS_BEITRAGSFREI` —
+**nicht** als `ausnahme_funktionen` in jeder einzelnen Regel. Sonst müsste jede
+neue Regel daran denken, und wer es vergisst, merkt es am Einzug. Umgekehrt gilt
+weiter „ausdrücklich genannt schlägt die Grundregel": Eine Regel, die `passiv`
+einschließt, rechnet Passive ab (reduzierter Passiv-Beitrag).
+
+#### Migration (Schema v105)
+
+1. Funktion `passiv` seeden.
+2. Je Zuordnung mit `status = 'passiv'` eine `mitglied_funktion`-Zeile anlegen —
+   dieselbe Abteilung, dasselbe `von`/`bis`.
+3. Bestandsregeln umschreiben, jeweils mit dem Abteilungsbezug der Regel:
+   * `bedingung_abteilung_status = 'aktiv'` → nichts zu tun (Grundregel).
+   * `= 'passiv'` → `bedingung_funktionen += ['passiv']` (der Passiv-Beitrag muss
+     Passive weiterhin *treffen* — hier kehrt sich die Bedeutung um, das ist die
+     Stelle, an der eine schlampige Migration Beiträge verlöre).
+   * `= 'aktiv,passiv'` → wie oben, plus die Grundregel bleibt: trifft beide.
+4. `version`-Bump auf den Zuordnungen, damit der alte Status in
+   `mitglied_abteilung_history` steht — **bevor** die Spalte fällt.
+5. `mitglied_abteilung.status` entfernen, ebenso `bedingung_abteilung_status`
+   und `ABTEILUNG_STATUS_BEITRAGSFREI`.
+
+#### Was sonst noch mitgeht
+
+* **Statistik:** „aktiv in Abteilung" fragt dann nach *laufender Zuordnung ohne
+  laufende `passiv`-Funktion* (für diese Abteilung oder vereinsweit) — an allen
+  drei Stellen von `_laeuft_heute`.
+* **Oberfläche:** Der Status verschwindet aus dem Zuordnungs-Dialog und aus der
+  Beitragsregel. Damit verliert die Wechsel-Rückfrage an der **Abteilungs-Zuordnung**
+  ihren Auslöser (es bleibt nur noch das Datum, also immer Korrektur) — der
+  **Funktions**-Wechsel bleibt und wird die Stelle, an der „ab August passiv"
+  entsteht. Teil A wird dadurch für Zuordnungen obsolet; das ist in Ordnung, er
+  hat den Fehler erst sichtbar gemacht.
+
+#### Zu klären, bevor es losgeht
+
+`funktion` hat kein Schutz-Kennzeichen: Wer `passiv` in der Funktions-Verwaltung
+löscht oder umbenennt, hebelt die Beitragsfreiheit aus — ohne Fehlermeldung, nur
+mit Beiträgen für Passive im nächsten Lauf. Entweder bekommt die Tabelle ein
+`system`-Flag (löschen/umbenennen gesperrt), oder der Service muss den Fall
+merklich behandeln. Ein stummer Ausfall ist hier die schlechteste Variante — es
+ist derselbe Fehlertyp, gegen den dieser ganze Plan angeht.
