@@ -2094,10 +2094,11 @@ function meldeAbgleich(abgleich) {
   const teile = []
   if (abgleich.erteilt) teile.push(`${abgleich.erteilt}× erteilt`)
   if (abgleich.entzogen) teile.push(`${abgleich.entzogen}× entzogen`)
-  // „gerichtet" = an so vielen Türen steht jetzt nachweislich das Soll. Das ist auch
-  // dann eine Auskunft, wenn sich nichts geändert hat – der Anwender drückt den Knopf
-  // ja gerade, weil er wissen will, ob die Sperre nun greift.
-  if (abgleich.gerichtet) teile.push(`${abgleich.gerichtet}× Karte bestätigt`)
+  // Getrennt ausweisen: „korrigiert" ging als Schreibvorgang bis ans Schloss,
+  // „bestätigt" heißt, dort stand das Soll schon. Beides ist eine Auskunft – der
+  // Anwender drückt den Knopf ja, weil er wissen will, ob die Sperre nun greift.
+  if (abgleich.gerichtet) teile.push(`${abgleich.gerichtet}× Karte korrigiert`)
+  if (abgleich.bestaetigt) teile.push(`${abgleich.bestaetigt}× bestätigt`)
   $q.notify({ type: 'positive', message: teile.join(' · ') || 'Nichts zu ändern' })
 }
 

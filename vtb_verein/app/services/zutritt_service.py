@@ -110,6 +110,22 @@ def unbestimmt(e: Exception) -> bool:
     return isinstance(e, TTLockError) and e.errcode in UNBESTIMMT_ERRCODES
 
 
+# Zwei Fenster gelten als gleich, wenn sie auf die Minute genau übereinstimmen: Auf dem
+# Weg ISO → ms → ISO wandert schon mal eine Sekunde, und deswegen einen Cloud-Write ans
+# Schloss zu schicken, wäre Unfug. Ab einer Minute ist es eine echte Abweichung.
+FENSTER_TOLERANZ_MS = 60_000
+
+
+def fenster_passt(soll: tuple[int, int], ist: tuple[int, int]) -> bool:
+    """Trägt die Karte am Schloss (`ist`) bereits das, was sie soll?"""
+    return all(abs(a - b) <= FENSTER_TOLERANZ_MS for a, b in zip(soll, ist))
+
+
+def karte_fenster(card: dict) -> tuple[int, int]:
+    """Gültigkeitsfenster einer Cloud-Karte in ms (0 = unbefristet)."""
+    return card.get('startDate') or 0, card.get('endDate') or 0
+
+
 def karte_wirkungslos(card: dict, jetzt_ms: Optional[int] = None) -> bool:
     """Liegt das Gültigkeitsfenster dieser Karte vollständig in der Vergangenheit?
 
@@ -508,7 +524,7 @@ class ZutrittService:
 
     # --- Chip-weite Aktionen (alle Schlösser eines Chips auf einmal) -------
     def _karte_richten(self, ber: TuerBerechtigung, chip, schloss, *,
-                       gesperrt: bool, actor: str) -> bool:
+                       gesperrt: bool, actor: str, pruefen: bool = False) -> str:
         """Das Fenster EINER Karte am Schloss auf das Soll bringen.
 
         Das Soll ist bei einem gesperrten Chip das abgelaufene Fenster
@@ -516,15 +532,29 @@ class ZutrittService:
         idempotent — er schreibt das Soll, egal was dort vorher stand — und damit
         genau die Reparatur, die ein Befund des Abgleichs verlangt.
 
+        Mit `pruefen` wird vorher nachgesehen, was dort steht, und nur bei einer
+        Abweichung geschrieben. Das ist der Unterschied zwischen billig und teuer:
+        Die Kartenliste beantwortet die Cloud selbst, ein `changePeriod` dagegen muss
+        übers Gateway bis ans Schloss — langsam, und an einem offline Gateway
+        scheitert es. Beim Sperren lohnt die Vorprüfung nicht (dort ändert sich das
+        Fenster ohnehin), beim Nachfassen fast immer.
+
         Returns:
-            True, wenn die Karte danach am Schloss liegt und das Soll trägt;
-            False, wenn dort keine Karte liegt und (gesperrter Chip) auch keine hinsoll.
+            'geschrieben' – das Soll wurde ans Schloss geschickt,
+            'bestaetigt'  – es stand dort schon (nur mit `pruefen`),
+            'ohne_karte'  – dort liegt keine Karte und (gesperrter Chip) soll auch keine hin.
         Raises:
             TTLockError, wenn das Schloss nicht erreicht wurde.
         """
         ziel_sync = SYNC_GESPERRT if gesperrt else SYNC_AKTIV
         von, bis = (sperr_fenster() if gesperrt
                     else (_iso_to_ms(ber.gueltig_von), _iso_to_ms(ber.gueltig_bis)))
+        if pruefen:
+            schon_gut = self._karte_pruefen(ber, chip, schloss, gesperrt=gesperrt,
+                                            soll=(von, bis), ziel_sync=ziel_sync,
+                                            actor=actor)
+            if schon_gut is not None:
+                return schon_gut
         try:
             self._client().ic_card_change_period(
                 schloss.ttlock_lock_id, ber.ttlock_card_id, von, bis)
@@ -548,7 +578,7 @@ class ZutrittService:
                         sync_status=ziel_sync, sync_fehler=None, by=actor)
                     logger.info("Chip %s an Schloss %s war dort schon gesperrt.",
                                 chip.kartennummer, schloss.name)
-                    return True
+                    return 'bestaetigt'
             if not weg:
                 self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                                 sync_status=SYNC_FEHLER,
@@ -558,11 +588,45 @@ class ZutrittService:
             # erreicht, worum es geht – ohne Karte öffnet dort nichts mehr. Beim
             # aktiven Chip muss sie zurück aufs Schloss, sonst stünde er als „aktiv"
             # in der Liste und die Tür bliebe stumm.
-            return self._karte_nicht_am_schloss(
+            return ('geschrieben' if self._karte_nicht_am_schloss(
                 ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)
+                else 'ohne_karte')
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                         sync_status=ziel_sync, sync_fehler=None, by=actor)
-        return True
+        return 'geschrieben'
+
+    def _karte_pruefen(self, ber: TuerBerechtigung, chip, schloss, *, gesperrt: bool,
+                       soll: tuple[int, int], ziel_sync: str, actor: str) -> Optional[str]:
+        """Nachsehen, was am Schloss steht – schreiben soll nur, wer muss.
+
+        Die Kartenliste beantwortet die Cloud aus ihrem eigenen Bestand; ein
+        `changePeriod` muss dagegen übers Gateway bis ans Schloss. Ein Lesevorgang
+        spart also im Regelfall (es stimmt ja meistens) einen langsamen Schreibvorgang,
+        der an einem offline Gateway ohnehin scheitern würde.
+
+        Bei gesperrtem Chip zählt nicht das exakte Fenster, sondern nur, dass es
+        vollständig in der Vergangenheit liegt: `sperr_fenster` rechnet bei jedem
+        Aufruf neue Zeitpunkte aus, ein Vergleich auf Gleichheit ginge immer daneben.
+
+        Returns:
+            None, wenn geschrieben werden muss; sonst das fertige Ergebnis.
+        """
+        try:
+            card = self._karte_nachschlagen(schloss, ber.ttlock_card_id)
+        except TTLockError:
+            return None            # Liste nicht erreichbar → schreiben statt raten
+        if card is None:
+            # Dort liegt keine Karte. Beim gesperrten Chip ist damit alles erreicht,
+            # beim aktiven muss sie zurück aufs Schloss.
+            return ('geschrieben' if self._karte_nicht_am_schloss(
+                ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)
+                else 'ohne_karte')
+        if not (karte_wirkungslos(card) if gesperrt
+                else fenster_passt(soll, karte_fenster(card))):
+            return None
+        self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                        sync_status=ziel_sync, sync_fehler=None, by=actor)
+        return 'bestaetigt'
 
     def chip_status_setzen(self, *, chip_id: int, status: str, actor: str = "SYSTEM") -> dict:
         """Setzt den Chip-Status und zieht ihn an ALLEN Schlössern des Chips nach.
@@ -592,10 +656,11 @@ class ZutrittService:
             if not schloss:
                 continue
             try:
-                if self._karte_richten(ber, chip, schloss, gesperrt=gesperrt, actor=actor):
-                    geaendert += 1
-                else:
+                if self._karte_richten(ber, chip, schloss, gesperrt=gesperrt,
+                                       actor=actor) == 'ohne_karte':
                     ohne_karte += 1
+                else:
+                    geaendert += 1
             except TTLockError as e:
                 fehler.append({"schloss": schloss.name, "meldung": fehlertext(e)})
 
@@ -740,7 +805,7 @@ class ZutrittService:
         # Nur auf ausdrücklichen Wunsch, nicht beim Gruppen-Abgleich: Das ist ein
         # Cloud-Write je Tür, und über alle Chips einer Gruppe würden daraus hunderte
         # Gateway-Aufrufe für einen Zustand, der meistens stimmt.
-        gerichtet = 0
+        gerichtet = bestaetigt = 0
         gesperrt = chip.status != CHIP_AKTIV
         for ber in (self.berechtigung_repo.list_for_chip(chip_id) if karten_richten else []):
             if not ber.ttlock_card_id:
@@ -749,17 +814,21 @@ class ZutrittService:
             if not schloss:
                 continue
             try:
-                if self._karte_richten(ber, chip, schloss, gesperrt=gesperrt, actor=actor):
+                if self._karte_richten(ber, chip, schloss, gesperrt=gesperrt,
+                                       pruefen=True, actor=actor) == 'bestaetigt':
+                    bestaetigt += 1
+                else:
                     gerichtet += 1
             except (ValueError, TTLockError) as e:
                 _fehler(ber.schloss_id, e)
 
-        if erteilt or entzogen or gerichtet or fehler:
+        if erteilt or entzogen or gerichtet or bestaetigt or fehler:
             logger.info("Chip %s abgeglichen: %d erteilt, %d entzogen, %d Karten "
-                        "gerichtet, %d Fehler.",
-                        chip.kartennummer, erteilt, entzogen, gerichtet, len(fehler))
+                        "korrigiert, %d bestätigt, %d Fehler.",
+                        chip.kartennummer, erteilt, entzogen, gerichtet, bestaetigt,
+                        len(fehler))
         return {"chip_id": chip_id, "erteilt": erteilt, "entzogen": entzogen,
-                "gerichtet": gerichtet, "fehler": fehler}
+                "gerichtet": gerichtet, "bestaetigt": bestaetigt, "fehler": fehler}
 
     def _gruppe_abgleichen(self, gruppe_id: int, chip_ids: list[int], *,
                            erteilt_von: Optional[int] = None, actor: str) -> dict:
