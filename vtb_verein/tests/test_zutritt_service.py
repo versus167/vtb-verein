@@ -297,6 +297,27 @@ class FakeCredentialRepo:
         self.by_schloss_typ[(schloss_id, typ)] = list(rows)
         return len(rows)
 
+    def ic_karte_gesetzt(self, schloss_id, *, credential_id, name, kartennummer,
+                         gueltig_von, gueltig_bis):
+        rows = self.by_schloss_typ.setdefault((schloss_id, CRED_IC), [])
+        for r in rows:
+            if r.ttlock_credential_id == credential_id:
+                r.name, r.detail = name, kartennummer
+                r.gueltig_von, r.gueltig_bis = gueltig_von, gueltig_bis
+                return
+        # Wie im echten Repo: `gesehen_am` erbt den Stand DIESES Schlosses – geschrieben
+        # ist nicht gelesen, der Spiegel wird davon nicht frischer.
+        rows.append(TuerCredential(
+            schloss_id=schloss_id, typ=CRED_IC, ttlock_credential_id=credential_id,
+            name=name, detail=kartennummer, gueltig_von=gueltig_von,
+            gueltig_bis=gueltig_bis,
+            gesehen_am=max((r.gesehen_am for r in rows if r.gesehen_am), default=None)))
+
+    def ic_karte_entfernt(self, schloss_id, credential_id):
+        self.by_schloss_typ[(schloss_id, CRED_IC)] = [
+            r for r in self.by_schloss_typ.get((schloss_id, CRED_IC), [])
+            if r.ttlock_credential_id != credential_id]
+
     def list_for_schloss(self, schloss_id):
         out = []
         for (sid, _typ), rows in self.by_schloss_typ.items():
@@ -513,8 +534,15 @@ def _p2_service(fake_client, chip_map=None):
     return ZutrittService(
         konto_repo=FakeKontoRepo(), schloss_repo=FakeSchlossRepo(),
         chip_repo=FakeChipRepo(chip_map or {}), berechtigung_repo=FakeBerechtigungRepo(),
-        log_repo=FakeLogRepo(), client_factory=lambda: fake_client,
+        log_repo=FakeLogRepo(), credential_repo=FakeCredentialRepo(),
+        client_factory=lambda: fake_client,
     )
+
+
+def _spiegel(svc, schloss_id=1):
+    """Was der Ist-Spiegel dieses Schlosses an IC-Karten führt (cardId -> Zeile)."""
+    return {c.ttlock_credential_id: c
+            for c in svc.credential_repo.by_schloss_typ.get((schloss_id, CRED_IC), [])}
 
 
 def test_chip_anlernen_ruft_add_und_setzt_card_id():
@@ -781,6 +809,71 @@ def test_chip_sperren_loescht_die_karten_am_schloss():
     for r in svc.berechtigung_repo.rows.values():
         assert r.deleted is False
         assert r.ttlock_card_id is None and r.sync_status == "gesperrt"
+
+
+# --- Ist-Spiegel: was wir geschrieben haben, steht sofort da ---------------
+# Der Abgleich vergleicht das Soll gegen den gespiegelten Ist-Stand, den der Sync
+# viermal am Tag holt. Bliebe der nach einem geglückten Schreibvorgang stehen, hielte
+# die App stundenlang eine Abweichung hoch, die sie gerade selbst beseitigt hat — beim
+# Sperren sogar das kritische „öffnet noch" für eine längst gelöschte Karte.
+
+def test_sperren_nimmt_die_karten_aus_dem_ist_spiegel():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    assert list(_spiegel(svc, 1)) == [9001] and list(_spiegel(svc, 2)) == [9001]
+
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+
+    # Kein Ist mehr = kein Befund: Genau darauf prüft der Abgleich (s.
+    # test_zutritt_abgleich_service::test_gesperrter_chip_ohne_karte_am_schloss...).
+    assert _spiegel(svc, 1) == {} and _spiegel(svc, 2) == {}
+
+
+def test_entsperren_traegt_die_karte_mit_ihrer_gueltigkeit_wieder_ein():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+
+    svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+
+    karte = _spiegel(svc, 2)[9001]
+    assert karte.detail == "818229331" and karte.name == "Chip blau"
+    assert karte.gueltig_bis == "2026-12-31T23:00:00+00:00"
+
+
+def test_spiegel_erbt_den_stand_des_schlosses_statt_jetzt():
+    """Geschrieben ist nicht gelesen. Ein frischer Zeitstempel machte jedes ANDERE
+    Schloss zum veralteten Spiegel – und entwertete dort echte Befunde."""
+    fake = FakeClient()
+    chip = FakeChip(7, None, kartennummer="818229331", bezeichnung="Chip blau")
+    svc = _p2_service(fake, chip_map={"818229331": chip})
+    svc.inventar_sync()
+    svc.credential_repo.replace_for_schloss_typ(1, CRED_IC, [
+        TuerCredential(schloss_id=1, typ=CRED_IC, ttlock_credential_id=4242,
+                       detail="999", gesehen_am="2026-08-20T06:00:00+00:00")])
+
+    svc.chip_anlernen(chip_id=7, schloss_id=1, actor="admin")
+
+    assert _spiegel(svc, 1)[9001].gesehen_am == "2026-08-20T06:00:00+00:00"
+
+
+def test_gueltigkeit_aendern_zieht_das_fenster_im_spiegel_nach():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+
+    svc.berechtigung_aendern(berechtigung_id=1, gueltig_bis="2027-06-30T22:00:00+00:00",
+                             actor="admin")
+
+    assert _spiegel(svc, 1)[9001].gueltig_bis == "2027-06-30T22:00:00+00:00"
+
+
+def test_entziehen_nimmt_die_karte_aus_dem_ist_spiegel():
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+
+    svc.berechtigung_entziehen(berechtigung_id=1, actor="admin")
+
+    assert _spiegel(svc, 1) == {} and list(_spiegel(svc, 2)) == [9001]
 
 
 def test_chip_entsperren_lernt_die_karten_wieder_an():
@@ -1187,7 +1280,7 @@ def _gruppen_service(fake_client=None, chip_status="aktiv"):
         konto_repo=FakeKontoRepo(), schloss_repo=schloss_repo,
         chip_repo=FakeChipRepo({"ABC": chip}), berechtigung_repo=FakeBerechtigungRepo(),
         gruppe_repo=FakeGruppeRepo(), log_repo=FakeLogRepo(),
-        client_factory=lambda: fake,
+        credential_repo=FakeCredentialRepo(), client_factory=lambda: fake,
     )
     return svc, fake
 
@@ -1345,6 +1438,22 @@ class TestGruppenAbgleich:
 
         assert fake.changed == [(3001, 9001, 0, _iso_to_ms("2026-12-31T23:00:00+00:00"))]
         assert res["gerichtet"] == 1 and res["bestaetigt"] == 0
+
+    def test_abgleichen_bringt_auch_einen_alten_spiegel_auf_stand(self):
+        """Der Fall ganz ohne Schreibvorgang: Am Schloss stimmt alles, nur unser Ist-Stand
+        ist alt. Nachgesehen haben wir gerade – das gehört in den Spiegel, sonst bliebe
+        der Fenster-Befund stehen und kein weiterer Klick löste ihn je auf."""
+        svc, fake = _gruppen_service()
+        svc.chip_anlernen(chip_id=1, schloss_id=1, actor="admin")
+        svc.credential_repo.ic_karte_gesetzt(          # Spiegel von gestern: befristet
+            1, credential_id=9001, name="Chip Wagner", kartennummer="ABC",
+            gueltig_von=None, gueltig_bis="2026-01-01T00:00:00+00:00")
+        fake.changed.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert fake.changed == [] and res["bestaetigt"] == 1
+        assert _spiegel(svc, 1)[9001].gueltig_bis is None
 
     def test_abgleichen_schreibt_nur_wo_es_abweicht(self):
         """Jeder Schreibvorgang geht übers Gateway bis ans Schloss. Was dort schon
