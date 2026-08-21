@@ -37,7 +37,13 @@
             <q-icon :name="befundIcon(b.art)" size="18px"
               :class="b.kritisch ? 'text-negative' : 'text-grey-7'" />
           </q-item-section>
-          <q-item-section>{{ b.text }}</q-item-section>
+          <q-item-section>
+            {{ b.text }}
+            <q-item-label v-if="b.veraltet" caption>
+              Stand dieses Schlosses ist älter als der letzte Sync – beim nächsten Lauf
+              bestätigt es sich oder es erledigt sich.
+            </q-item-label>
+          </q-item-section>
         </q-item>
       </q-list>
     </q-banner>
@@ -543,6 +549,18 @@
           </q-banner>
 
           <template v-if="!istExtern(schlossDetail.schloss)">
+          <!-- Befunde dieses Schlosses – auch die ohne Chip (fremde Karte), die unten
+               in keiner Zeile auftauchen könnten. -->
+          <q-banner v-if="befundeFuerSchloss(schlossDetail.schloss?.id).length" dense rounded
+            class="vtb-warnung q-mt-md">
+            <template #avatar><q-icon name="rule" /></template>
+            <div v-for="(b, i) in befundeFuerSchloss(schlossDetail.schloss?.id)" :key="i">
+              {{ b.text }}
+              <span v-if="b.veraltet" class="text-caption">
+                (Stand dieses Schlosses ist älter als der letzte Sync.)</span>
+            </div>
+          </q-banner>
+
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Zugeteilte Chips</div>
             <q-space />
@@ -562,7 +580,9 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(berStatus(b))">{{ berStatus(b) }}
+                  <q-chip dense size="sm" :color="syncColor(berStatus(b))"
+                    :text-color="berStatus(b) === 'öffnet noch!' ? 'white' : ''">
+                    {{ berStatus(b) }}
                     <q-tooltip v-if="berHinweis(b)">{{ berHinweis(b) }}</q-tooltip>
                   </q-chip>
                   <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
@@ -776,6 +796,19 @@
             </span>
           </div>
 
+          <!-- Was der Abgleich an DIESEM Chip gefunden hat. Der Kasten oben sagt, was
+               gelten soll; hier steht, wo das Schloss etwas anderes sagt. -->
+          <q-banner v-if="befundeFuerChip(chipDetail.chip?.id).length" dense rounded
+            class="vtb-warnung q-mt-md">
+            <template #avatar><q-icon name="rule" /></template>
+            <div v-for="(b, i) in befundeFuerChip(chipDetail.chip?.id)" :key="i">
+              {{ b.text }}
+              <span v-if="b.veraltet" class="text-caption">
+                (Stand dieses Schlosses ist älter als der letzte Sync – beim nächsten
+                Lauf bestätigt sich das oder es erledigt sich.)</span>
+            </div>
+          </q-banner>
+
           <div class="row items-center q-mt-md">
             <!-- Bei gesperrtem Chip wäre „Öffnet" schlicht falsch – die Türen sind ihm
                  weiter zugeteilt, aufmachen tut er keine davon. -->
@@ -807,7 +840,9 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(berStatus(b))">{{ berStatus(b) }}
+                  <q-chip dense size="sm" :color="syncColor(berStatus(b))"
+                    :text-color="berStatus(b) === 'öffnet noch!' ? 'white' : ''">
+                    {{ berStatus(b) }}
                     <q-tooltip v-if="berHinweis(b)">{{ berHinweis(b) }}</q-tooltip>
                   </q-chip>
                   <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
@@ -1349,22 +1384,39 @@ const offlineSeit = (s) => {
 const istExtern = (s) => !!s && s.quelle === 'extern'
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
 const akkuLow = (p) => p != null && p <= 20
-const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
+const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3',
+  gesperrt: 'orange-3', 'öffnet noch!': 'red', 'öffnet nicht': 'orange-3',
+  'Fenster weicht ab': 'orange-3' }[s] || 'grey-3')
 // Was diese Zeile AN DER TÜR bedeutet – nicht der rohe Sync-Status. Der beantwortet
 // nur „ist der Cloud-Write durch?" und stünde sonst auch bei einem verlorenen Chip
 // auf „aktiv", obwohl dessen Karte am Schloss ein abgelaufenes Fenster trägt.
 // Reihenfolge = Dringlichkeit: ein Fehler steht über allem, danach zählt, ob die
 // Karte überhaupt am Schloss liegt (keine cardId = nie angekommen oder −1021
 // verworfen), dann der Chip-Status.
-const berStatus = (b) => (b.sync_status === 'fehler' ? 'fehler'
-  : !b.ttlock_card_id ? 'nicht am Schloss'
-    : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
-      : b.sync_status)
-const berHinweis = (b) => ({
-  gesperrt: `Chip ist „${b.chip_status}" – die Karte liegt am Schloss, ist dort aber `
-    + 'auf abgelaufen gesetzt und öffnet nicht.',
-  'nicht am Schloss': 'Die Karte ist an diesem Schloss nicht (mehr) hinterlegt.',
-}[berStatus(b)] || '')
+// Der Abgleich sticht das Soll: Er weiß, was am Schloss steht, die Zeile nur, was
+// dort stehen sollte. „gesperrt" ohne Befund heißt deshalb „gesperrt, soweit wir
+// wissen" – sagt der Spiegel etwas anderes, gewinnt der Spiegel.
+const BEFUND_STATUS = {
+  sperre_offen: 'öffnet noch!', sperre_haengt: 'öffnet nicht',
+  karte_fehlt: 'nicht am Schloss', fenster_abweichend: 'Fenster weicht ab',
+}
+const berStatus = (b) => {
+  const befund = befundZurTuer(b)
+  if (befund && !befund.veraltet && BEFUND_STATUS[befund.art]) return BEFUND_STATUS[befund.art]
+  return b.sync_status === 'fehler' ? 'fehler'
+    : !b.ttlock_card_id ? 'nicht am Schloss'
+      : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
+        : b.sync_status
+}
+const berHinweis = (b) => {
+  const befund = befundZurTuer(b)
+  if (befund && !befund.veraltet) return befund.text
+  return {
+    gesperrt: `Chip ist „${b.chip_status}" – die Karte liegt am Schloss, ist dort aber `
+      + 'auf abgelaufen gesetzt und öffnet nicht.',
+    'nicht am Schloss': 'Die Karte ist an diesem Schloss nicht (mehr) hinterlegt.',
+  }[berStatus(b)] || ''
+}
 // Kompakte Status-Helfer für Pills/Dots auf den Karten und im Kopfbereich
 const onlineKurz = (o) => (o === true ? 'online' : o === false ? 'offline' : 'unbekannt')
 const onlineDotClass = (o) => (o === true ? 'schl-dot--gruen' : o === false ? 'schl-dot--rot' : 'schl-dot--grau')
@@ -1476,6 +1528,18 @@ const befundIcon = (art) => ({
   sperre_offen: 'gpp_bad', sperre_haengt: 'lock_clock', karte_fehlt: 'link_off',
   karte_fremd: 'help_outline', fenster_abweichend: 'event_busy',
 }[art] || 'rule')
+// Befunde nachschlagbar machen: an der Tür (Chip+Schloss) und je Schloss. Ohne das
+// stünde in der Türliste weiter unser Soll, während die Meldung das Gegenteil sagt.
+const befundJeTuer = computed(() => {
+  const m = {}
+  for (const b of abgleich.value.befunde || []) if (b.chip_id) m[`${b.chip_id}:${b.schloss_id}`] = b
+  return m
+})
+const befundeFuerSchloss = (schlossId) =>
+  (abgleich.value.befunde || []).filter((b) => b.schloss_id === schlossId)
+const befundeFuerChip = (chipId) =>
+  (abgleich.value.befunde || []).filter((b) => b.chip_id === chipId)
+const befundZurTuer = (b) => befundJeTuer.value[`${b.chip_id}:${b.schloss_id}`]
 
 async function loadAbteilungen() {
   try { const { data } = await api.get('/api/abteilungen/'); abteilungen.value = data }
