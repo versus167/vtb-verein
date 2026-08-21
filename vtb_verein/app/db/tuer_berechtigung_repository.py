@@ -18,7 +18,8 @@ _SELECT = """
            b.sync_status, b.sync_fehler, b.erteilt_von, b.gruppe_id,
            g.name AS gruppe_name,
            s.name AS schloss_name, c.bezeichnung AS chip_bezeichnung,
-           c.kartennummer AS kartennummer, c.mitglied_id AS mitglied_id,
+           c.kartennummer AS kartennummer, c.status AS chip_status,
+           c.mitglied_id AS mitglied_id,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            b.version, b.created_at, b.created_by, b.updated_at, b.updated_by,
            b.deleted_at, b.deleted_by
@@ -57,6 +58,21 @@ class TuerBerechtigungRepository(BaseRepository):
                 _SELECT + " WHERE b.chip_id = %s AND b.deleted_at IS NULL "
                           "ORDER BY s.name, b.id",
                 (chip_id,),
+            )
+            return [_map(r) for r in cur.fetchall()]
+
+    def list_fuer_abgleich(self) -> list[TuerBerechtigung]:
+        """Alle lebenden Berechtigungen an Schlössern, deren Ist gespiegelt wird.
+
+        Nur aktive Cloud-Schlösser: Ein externes Schloss (eigene Anlage) und ein
+        stillgelegtes liefern keinen Credential-Mirror – ihre Zeilen sähen im
+        Abgleich sonst reihenweise wie „Karte fehlt am Schloss" aus.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE b.deleted_at IS NULL AND s.deleted_at IS NULL "
+                          "AND s.aktiv AND s.ttlock_lock_id IS NOT NULL "
+                          "ORDER BY s.name, c.bezeichnung, b.id"
             )
             return [_map(r) for r in cur.fetchall()]
 
@@ -106,9 +122,14 @@ class TuerBerechtigungRepository(BaseRepository):
         return self.get(id)
 
     def update_period(self, id: int, *, gueltig_von: Optional[str],
-                      gueltig_bis: Optional[str], by: str) -> Optional[TuerBerechtigung]:
-        """Gültigkeit fortschreiben. Wird nur nach erfolgreichem Cloud-changePeriod
-        aufgerufen → Sync-Status auf 'aktiv' setzen und einen evtl. Altfehler löschen."""
+                      gueltig_bis: Optional[str], by: str,
+                      sync_status: str = SYNC_AKTIV) -> Optional[TuerBerechtigung]:
+        """Gültigkeit fortschreiben und einen evtl. Altfehler löschen.
+
+        Der Regelfall folgt einem erfolgreichen Cloud-changePeriod → 'aktiv'. Bei einem
+        gesperrten/verlorenen Chip wird die Gültigkeit dagegen nur lokal gepflegt, das
+        Schloss bleibt gesperrt – dann muss auch 'gesperrt' stehen bleiben, sonst
+        behauptete die Zeile eine Karte, die dort nichts öffnet."""
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -117,7 +138,7 @@ class TuerBerechtigungRepository(BaseRepository):
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND deleted_at IS NULL
                 """,
-                (gueltig_von, gueltig_bis, SYNC_AKTIV, by, id),
+                (gueltig_von, gueltig_bis, sync_status, by, id),
             )
             if cur.rowcount == 0:
                 return None

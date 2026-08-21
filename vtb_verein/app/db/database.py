@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 106
+SCHEMA_VERSION = 107
 
 
 # ---------------------------------------------------------------------------
@@ -3606,6 +3606,7 @@ class Database:
             104: self._migrate_v103_to_v104,
             105: self._migrate_v104_to_v105,
             106: self._migrate_v105_to_v106,
+            107: self._migrate_v106_to_v107,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7933,6 +7934,42 @@ class Database:
                 cur.execute(fn_sql)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 106 WHERE id = 1")
+
+    def _migrate_v106_to_v107(self) -> None:
+        """Gesperrte Chips sollen auch an ihren Türen als gesperrt zu erkennen sein.
+
+        `sync_status` beantwortet die Frage „steht an dieser Tür, was stehen soll?".
+        Beim Sperren eines Chips schrieb der Dienst dort bisher 'aktiv' – fachlich
+        richtig (der Cloud-Write ist durch), für den Leser aber die falsche Auskunft:
+        In der Türliste eines verlorenen Chips stand an jeder Zeile „aktiv", obwohl
+        die Karte am Schloss ein abgelaufenes Fenster trägt und nichts mehr öffnet.
+
+        Ab jetzt schreibt `chip_status_setzen` dort 'gesperrt' (der Wert war längst
+        vorgesehen — `user_has_valid_for_schloss` filtert ihn bereits heraus). Diese
+        Migration zieht die Zeilen nach, die vor der Änderung gesperrt wurden; Zeilen
+        ohne Karte am Schloss ('pending') und Fehlerzeilen bleiben, wie sie sind, denn
+        die sagen bereits etwas anderes und Wichtigeres.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE tuer_berechtigung b
+                SET sync_status = 'gesperrt', version = b.version + 1,
+                    updated_at = CURRENT_TIMESTAMP, updated_by = 'SYSTEM'
+                FROM schluessel_chip c
+                WHERE c.id = b.chip_id
+                  AND c.status <> 'aktiv'
+                  AND c.deleted_at IS NULL
+                  AND b.sync_status = 'aktiv'
+                  AND b.ttlock_card_id IS NOT NULL
+                  AND b.deleted_at IS NULL
+                """
+            )
+            if cur.rowcount:
+                logger.info("Migration v107: %d Berechtigungen gesperrter Chips "
+                            "auf sync_status='gesperrt' gesetzt.", cur.rowcount)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 107 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

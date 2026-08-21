@@ -34,6 +34,18 @@ class TuerCredentialRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def list_fuer_abgleich(self, typ: str) -> list[TuerCredential]:
+        """Der gespiegelte Ist-Stand eines Credential-Typs über alle aktiven
+        Cloud-Schlösser – Grundlage des Soll-Ist-Abgleichs (kein Cloud-Aufruf)."""
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE c.typ = %s AND s.deleted_at IS NULL "
+                          "AND s.aktiv AND s.ttlock_lock_id IS NOT NULL "
+                          "ORDER BY s.name, c.ttlock_credential_id",
+                (typ,),
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def replace_for_schloss_typ(self, schloss_id: int, typ: str,
                                 rows: list[TuerCredential]) -> int:
         """Ersetzt den Mirror für (Schloss, Typ) atomar: alte Zeilen löschen, frische

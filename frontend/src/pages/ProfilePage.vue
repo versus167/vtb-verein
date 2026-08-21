@@ -401,7 +401,10 @@
           </template>
 
           <template v-if="meinZugang.berechtigungen.length">
-            <div class="text-caption text-weight-medium q-mt-sm">Öffnet diese Türen</div>
+            <div class="text-caption text-weight-medium q-mt-sm">
+              {{ meinZugang.chips.every((c) => c.status === 'aktiv') ? 'Öffnet diese Türen'
+                : 'Zugeteilte Türen' }}
+            </div>
             <q-list dense>
               <q-item v-for="b in meinZugang.berechtigungen" :key="'b' + b.id" class="q-px-none">
                 <q-item-section>
@@ -409,8 +412,9 @@
                   <q-item-label caption v-if="b.gueltig_bis">gültig bis {{ fmt(b.gueltig_bis) }}</q-item-label>
                 </q-item-section>
                 <q-item-section side>
-                  <q-chip dense size="sm" :color="b.sync_status === 'aktiv' ? 'green-3' : 'grey-3'">
-                    {{ b.sync_status }}</q-chip>
+                  <!-- Nicht der rohe Sync-Status: Bei einem gesperrten/verlorenen Chip
+                       liegt die Karte zwar am Schloss, öffnet dort aber nicht. -->
+                  <q-chip dense size="sm" :color="zugangBerFarbe(b)">{{ zugangBerStatus(b) }}</q-chip>
                 </q-item-section>
               </q-item>
             </q-list>
@@ -564,6 +568,12 @@ function onKontakteChanged(liste) { kontakte.value = liste }
 
 // Self-Service Schließanlage (eigene Chips/Türen/Zutritte)
 const meinZugang = ref({ verknuepft: false, chips: [], berechtigungen: [], app_berechtigungen: [], zutritte: [] })
+const zugangBerStatus = (b) => (b.sync_status === 'fehler' ? 'fehler'
+  : !b.ttlock_card_id ? 'nicht am Schloss'
+    : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
+      : b.sync_status)
+const zugangBerFarbe = (b) => ({ aktiv: 'green-3', gesperrt: 'orange-3', fehler: 'red-3' }[
+  zugangBerStatus(b)] || 'grey-3')
 const zugangHasData = computed(() => {
   const z = meinZugang.value
   return !!(z && (z.chips.length || z.berechtigungen.length || z.app_berechtigungen.length || z.zutritte.length))

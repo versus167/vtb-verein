@@ -17,6 +17,7 @@ Master-Detail:
 Bewegungsdaten (Logs) sind DSGVO-sensibel → eigenes Recht `schliessanlage.protokoll`.
 Chip-/Schloss-Stammdatenpflege ist reine DB-Arbeit (kein Cloud-Write in Phase 1).
 """
+import logging
 from dataclasses import asdict
 from typing import Optional
 
@@ -29,6 +30,7 @@ from app.models.permission import Permission
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.zutritt_import_service import ImportFehler, run_import
 from app.services import zutritt_auswertung_service
+from app.services import zutritt_abgleich_service
 from app.services.ttlock_client import TTLockError
 from ..core.config import settings
 from ..core.deps import CurrentUser, DB
@@ -37,6 +39,8 @@ from .auth import _client_ip
 from .uploads import lese_upload
 
 router = APIRouter(prefix="/schliessanlage", tags=["schliessanlage"])
+
+logger = logging.getLogger(__name__)
 
 
 async def _lese_import(file: UploadFile) -> bytes:
@@ -323,6 +327,15 @@ def sync(request: Request, user: CurrentUser, db: DB,
             ergebnis["alarme_benachrichtigt"] = benachrichtigt
     except Exception:
         pass
+    # Jetzt ist das Ist frisch – der Soll-Ist-Abgleich ist genau hier aussagekräftig.
+    # Ein gesperrter Chip, der weiter öffnet, geht als Meldung raus (nur wenn neu).
+    if not logs_only:
+        try:
+            gemeldet = zutritt_abgleich_service.melde_sperrluecken(db)
+            if gemeldet:
+                ergebnis["sperrluecken_gemeldet"] = gemeldet
+        except Exception:
+            logger.exception("Sperr-Lücken-Abgleich nach dem Sync fehlgeschlagen.")
     try:
         db.access_log_repository.log(
             "schliessanlage_sync", category="schliessanlage",
@@ -332,6 +345,19 @@ def sync(request: Request, user: CurrentUser, db: DB,
     except Exception:
         pass
     return ergebnis
+
+
+@router.get("/abgleich")
+def abgleich(user: CurrentUser, db: DB):
+    """Soll-Ist-Abgleich der IC-Karten: Was steht bei uns, was liegt am Schloss?
+
+    Reine DB-Arbeit auf dem Stand des letzten Syncs (`stand`) – kein Cloud-Aufruf,
+    deshalb beliebig oft abrufbar. Verwalten-Recht, weil die Befunde beschreiben, wer
+    wo (nicht) hereinkommt; der Abteilungs-Scope schneidet fremde Schlösser weg.
+    """
+    _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
+    return zutritt_abgleich_service.abgleich(
+        db, schloss_ids=visible_schloss_ids(user, db, Permission.SCHLIESSANLAGE_VERWALTEN))
 
 
 @router.post("/import")

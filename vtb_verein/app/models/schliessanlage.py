@@ -271,6 +271,10 @@ class TuerBerechtigung:
     schloss_name: Optional[str] = None
     chip_bezeichnung: Optional[str] = None
     kartennummer: Optional[str] = None
+    # Status des Chips (aktiv/gesperrt/verloren). Er entscheidet, ob diese Zeile
+    # überhaupt eine Tür öffnet – deshalb gehört er in jede Berechtigungsliste:
+    # Ohne ihn stünde an der Tür eines verlorenen Chips weiter „aktiv".
+    chip_status: Optional[str] = None
     mitglied_id: Optional[int] = None
     mitglied_vorname: Optional[str] = None
     mitglied_nachname: Optional[str] = None
