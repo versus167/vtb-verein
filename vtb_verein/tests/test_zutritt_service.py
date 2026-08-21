@@ -260,10 +260,10 @@ class FakeBerechtigungRepo:
         r.ttlock_card_id, r.sync_status, r.sync_fehler = ttlock_card_id, sync_status, sync_fehler
         return r
 
-    def update_period(self, id, *, gueltig_von, gueltig_bis, by):
+    def update_period(self, id, *, gueltig_von, gueltig_bis, by, sync_status="aktiv"):
         r = self.rows[id]
         r.gueltig_von, r.gueltig_bis = gueltig_von, gueltig_bis
-        r.sync_status, r.sync_fehler = "aktiv", None
+        r.sync_status, r.sync_fehler = sync_status, None
         return r
 
     def soft_delete(self, id, deleted_by):
@@ -954,21 +954,50 @@ def test_gueltigkeit_aendern_spielt_eine_fehlende_karte_neu_auf():
 
 
 def test_gueltigkeit_aendern_holt_gesperrte_karten_nicht_zurueck_aufs_schloss():
-    """Bei einem gesperrten Chip wird die Gültigkeit gepflegt, mehr nicht."""
+    """Bei einem gesperrten Chip wird die Gültigkeit gepflegt, mehr nicht.
+
+    Ein `changePeriod` mit dem neuen Fenster machte die Karte am Schloss wieder
+    gültig – der verlorene Chip öffnete wieder, ohne dass irgendwo „aktiv" stünde.
+    """
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
     svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
     ber_id = next(iter(svc.berechtigung_repo.rows))
-    svc.berechtigung_repo.rows[ber_id].ttlock_card_id = 9001   # tote cardId von früher
     fake.added.clear()
-    fake.change_should_fail = True
-    fake.change_errcode = -1021
+    fake.changed.clear()
 
     ber = svc.berechtigung_aendern(berechtigung_id=ber_id,
                                    gueltig_bis="2027-06-30T22:00:00+00:00", actor="admin")
 
-    assert fake.added == []
-    assert ber.ttlock_card_id is None and ber.sync_status == "pending"
+    assert fake.added == [] and fake.changed == []      # die Cloud bleibt unberührt
+    assert ber.gueltig_bis == "2027-06-30T22:00:00+00:00"
+    assert ber.sync_status == "gesperrt"
+
+
+def test_ic_card_sync_dreht_gesperrte_tueren_nicht_auf_aktiv_zurueck():
+    """Die Karte liegt am Schloss – aber mit abgelaufenem Fenster. Zöge der Sync sie
+    wieder auf „aktiv", stellte er bei jedem Lauf die Behauptung her, die das Sperren
+    gerade beseitigt hat."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+    svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+
+    res = svc.ic_cards_sync()
+
+    assert res["berechtigungen_akt"] == 0 and res["berechtigungen_neu"] == 0
+    assert {b.sync_status for b in svc.berechtigung_repo.list_for_chip(7)} == {"gesperrt"}
+
+
+def test_gesperrter_chip_steht_an_seinen_tueren_als_gesperrt():
+    """Sonst behauptet die Türliste eines verlorenen Chips überall „aktiv"."""
+    fake = FakeClient()
+    svc = _chip_mit_zwei_schloessern(fake)
+
+    svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
+    assert {b.sync_status for b in svc.berechtigung_repo.list_for_chip(7)} == {"gesperrt"}
+
+    svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
+    assert {b.sync_status for b in svc.berechtigung_repo.list_for_chip(7)} == {"aktiv"}
 
 
 def test_fehlertexte_sagen_was_zu_tun_ist():
@@ -1038,7 +1067,7 @@ def test_sammelfehler_bei_bereits_gesperrter_karte_zaehlt_als_erledigt():
     assert svc.chip_repo.get(7).status == "verloren"
     assert out["schloesser"] == 2 and out["ohne_karte"] == 0
     for r in svc.berechtigung_repo.rows.values():
-        assert r.sync_status == "aktiv" and r.ttlock_card_id is not None
+        assert r.sync_status == "gesperrt" and r.ttlock_card_id is not None
 
 
 def test_sammelfehler_beim_entsperren_bleibt_ein_fehler():

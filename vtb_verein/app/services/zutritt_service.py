@@ -25,7 +25,7 @@ import requests
 from app.models.schliessanlage import (
     TuerZutrittLog, SchluesselChip, TuerBerechtigung, TuerCredential, record_type_label,
     IC_CARD_RECORD_TYPES, ALARM_RECORD_TYPES, GATEWAY_REMOTE_RECORD_TYPES,
-    SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING,
+    SYNC_AKTIV, SYNC_FEHLER, SYNC_PENDING, SYNC_GESPERRT,
     CHIP_AKTIV,
     CRED_FINGERPRINT, CRED_PASSCODE, CRED_EKEY, CRED_IC,
 )
@@ -429,6 +429,19 @@ class ZutrittService:
         schloss = self.schloss_repo.get(ber.schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
+        chip = self.chip_repo.get(ber.chip_id)
+        if not chip:
+            raise ValueError("Chip nicht gefunden")
+        if chip.status != CHIP_AKTIV:
+            # Ein gesperrter/verlorener Chip darf hier nicht durch die Hintertür
+            # zurück ans Schloss: `changePeriod` mit dem neuen Fenster machte die
+            # Karte dort wieder gültig. Die Gültigkeit wird nur lokal gepflegt und
+            # gilt erst, wenn der Chip wieder aktiv gesetzt wird.
+            logger.info("Berechtigung %s: Chip ist '%s' – neue Gültigkeit nur lokal "
+                        "gemerkt, das Schloss bleibt gesperrt.", ber.id, chip.status)
+            return self.berechtigung_repo.update_period(
+                ber.id, gueltig_von=gueltig_von, gueltig_bis=gueltig_bis, by=actor,
+                sync_status=SYNC_GESPERRT)
         try:
             self._client().ic_card_change_period(
                 schloss.ttlock_lock_id, ber.ttlock_card_id,
@@ -442,19 +455,12 @@ class ZutrittService:
                 raise
             # Die Karte liegt am Schloss nicht mehr: Erst die neue Gültigkeit lokal
             # festhalten, dann die Karte damit neu aufspielen – ein changePeriod auf
-            # eine nicht vorhandene Karte kann nie gelingen.
-            chip = self.chip_repo.get(ber.chip_id)
+            # eine nicht vorhandene Karte kann nie gelingen. (Ein gesperrter Chip
+            # kommt hier nicht an; der ist oben schon abgebogen.)
             ber = self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
                                                        gueltig_bis=gueltig_bis, by=actor)
-            if chip and chip.status == CHIP_AKTIV:
-                self._karte_nicht_am_schloss(ber, chip, schloss,
-                                             wiederherstellen=True, actor=actor)
-            else:
-                # Gesperrter/verlorener Chip: Die Gültigkeit wird gepflegt, aufs
-                # Schloss kommt er erst beim Entsperren wieder.
-                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
-                                                sync_status=SYNC_PENDING,
-                                                sync_fehler=None, by=actor)
+            self._karte_nicht_am_schloss(ber, chip, schloss,
+                                         wiederherstellen=True, actor=actor)
             return self.berechtigung_repo.get(ber.id)
         logger.info("Berechtigung %s: Gültigkeit geändert (%s–%s).",
                     berechtigung_id, gueltig_von or "sofort", gueltig_bis or "unbefristet")
@@ -519,6 +525,10 @@ class ZutrittService:
             raise ValueError("Chip nicht gefunden")
 
         gesperrt = status != CHIP_AKTIV
+        # Was am Schloss steht, muss auch an der Zeile stehen: Eine gesperrte Karte
+        # liegt zwar weiter dort, aber mit abgelaufenem Fenster – „aktiv" hieße in
+        # jeder Liste, sie öffne die Tür.
+        ziel_sync = SYNC_GESPERRT if gesperrt else SYNC_AKTIV
         fehler: list[dict] = []
         geaendert = 0
         ohne_karte = 0
@@ -550,7 +560,7 @@ class ZutrittService:
                         # früherer Versuch ist also durchgekommen.
                         self.berechtigung_repo.set_sync(
                             ber.id, ttlock_card_id=ber.ttlock_card_id,
-                            sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+                            sync_status=ziel_sync, sync_fehler=None, by=actor)
                         logger.info("Chip %s an Schloss %s war dort schon gesperrt.",
                                     chip.kartennummer, schloss.name)
                         geaendert += 1
@@ -578,7 +588,7 @@ class ZutrittService:
                     ohne_karte += 1
                 continue
             self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                            sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+                                            sync_status=ziel_sync, sync_fehler=None, by=actor)
             geaendert += 1
 
         if fehler:
@@ -817,17 +827,22 @@ class ZutrittService:
                         "SYSTEM")
                     neu_chips += 1
                 card_id = card.get("cardId")
+                # Dass die Karte am Schloss liegt, heißt nicht, dass sie öffnet: Beim
+                # gesperrten Chip trägt sie ein abgelaufenes Fenster. Der Sync darf sie
+                # deshalb nicht auf 'aktiv' zurückdrehen – er stellte sonst bei jedem
+                # Lauf die Behauptung wieder her, die das Sperren gerade beseitigt hat.
+                soll_sync = SYNC_AKTIV if chip.status == CHIP_AKTIV else SYNC_GESPERRT
                 ber = self.berechtigung_repo.find_active_for_chip_schloss(chip.id, s.id)
                 if not ber:
                     self.berechtigung_repo.create(TuerBerechtigung(
                         chip_id=chip.id, schloss_id=s.id, ttlock_card_id=card_id,
                         gueltig_von=_ms_to_iso(card.get("startDate")),
                         gueltig_bis=_ms_to_iso(card.get("endDate")),
-                        sync_status=SYNC_AKTIV), "SYSTEM")
+                        sync_status=soll_sync), "SYSTEM")
                     neu_ber += 1
-                elif ber.ttlock_card_id != card_id or ber.sync_status != SYNC_AKTIV:
+                elif ber.ttlock_card_id != card_id or ber.sync_status != soll_sync:
                     self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
-                                                    sync_status=SYNC_AKTIV, sync_fehler=None,
+                                                    sync_status=soll_sync, sync_fehler=None,
                                                     by="SYSTEM")
                     akt_ber += 1
         self.konto_repo.touch_sync(datetime.now(timezone.utc).isoformat())

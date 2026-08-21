@@ -526,7 +526,9 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ syncLabel(b) }}</q-chip>
+                  <q-chip dense size="sm" :color="syncColor(berStatus(b))">{{ berStatus(b) }}
+                    <q-tooltip v-if="berHinweis(b)">{{ berHinweis(b) }}</q-tooltip>
+                  </q-chip>
                   <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
                   <q-btn v-if="schlossDetail.darf_verwalten" flat dense round size="sm" icon="link_off"
@@ -665,8 +667,14 @@
           </div>
           <div class="col q-ml-sm" style="min-width: 0">
             <!-- Gleiche Reihenfolge wie in der Karte (#163): erst der Inhaber, dann der Chip -->
-            <div class="text-subtitle1 text-weight-bold ellipsis">
-              {{ chipInhaber(chipDetail.chip) || chipName(chipDetail.chip) }}
+            <div class="row items-center no-wrap q-gutter-xs">
+              <div class="text-subtitle1 text-weight-bold ellipsis">
+                {{ chipInhaber(chipDetail.chip) || chipName(chipDetail.chip) }}
+              </div>
+              <!-- Der Status steht auf der Karte, muss also auch hier stehen: Ohne ihn
+                   sah der Dialog eines verlorenen Chips aus wie der eines aktiven. -->
+              <span class="schl-pill" :class="chipStatusClass(chipDetail.chip?.status)">
+                {{ chipDetail.chip?.status }}</span>
             </div>
             <div class="text-caption text-grey ellipsis">
               <span v-if="chipInhaber(chipDetail.chip)">{{ chipName(chipDetail.chip) }} · </span>
@@ -683,6 +691,17 @@
         </q-card-section>
         <q-separator />
         <q-card-section class="col scroll">
+
+          <!-- Ein gesperrter/verlorener Chip behält seine Türen – sie öffnen nur nicht
+               mehr. Ohne diesen Satz liest man die Liste unten als „darf das alles". -->
+          <q-banner v-if="chipDetail.chip && chipDetail.chip.status !== 'aktiv'"
+            dense class="vtb-warnung" rounded>
+            <template #avatar><q-icon name="lock" /></template>
+            Der Chip ist als „{{ chipDetail.chip.status }}" markiert und öffnet keine der
+            Türen unten. Die Karten liegen weiter an den Schlössern, dort aber mit
+            abgelaufener Gültigkeit. Wird der Chip wieder auf „aktiv" gesetzt, gilt überall
+            die hinterlegte Gültigkeit erneut – neu anlernen muss man ihn nicht.
+          </q-banner>
 
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Rechtegruppen</div>
@@ -722,10 +741,20 @@
           </div>
 
           <div class="row items-center q-mt-md">
-            <div class="text-subtitle2">Öffnet diese Schlösser</div>
+            <!-- Bei gesperrtem Chip wäre „Öffnet" schlicht falsch – die Türen sind ihm
+                 weiter zugeteilt, aufmachen tut er keine davon. -->
+            <div class="text-subtitle2">
+              {{ chipDetail.chip?.status === 'aktiv' ? 'Öffnet diese Schlösser'
+                : 'Zugeteilte Schlösser' }}
+            </div>
             <q-space />
             <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
-              label="An Schloss anlernen" @click="openBerAnlernenForChip" />
+              label="An Schloss anlernen" :disable="chipDetail.chip?.status !== 'aktiv'"
+              @click="openBerAnlernenForChip">
+              <q-tooltip v-if="chipDetail.chip?.status !== 'aktiv'">
+                Erst wieder auf „aktiv" setzen – ein gesperrter Chip wird nicht angelernt
+              </q-tooltip>
+            </q-btn>
           </div>
           <q-list dense bordered separator>
             <q-item v-for="b in chipDetail.berechtigungen" :key="b.id">
@@ -742,7 +771,9 @@
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-xs no-wrap">
-                  <q-chip dense size="sm" :color="syncColor(b.sync_status)">{{ syncLabel(b) }}</q-chip>
+                  <q-chip dense size="sm" :color="syncColor(berStatus(b))">{{ berStatus(b) }}
+                    <q-tooltip v-if="berHinweis(b)">{{ berHinweis(b) }}</q-tooltip>
+                  </q-chip>
                   <q-btn v-if="status.darf_verwalten" flat dense round size="sm" icon="edit_calendar"
                     @click="openBerEdit(b)"><q-tooltip>Gültigkeit ändern</q-tooltip></q-btn>
                   <!-- Aus einer Gruppe stammende Türen lassen sich hier nicht einzeln
@@ -1283,11 +1314,21 @@ const istExtern = (s) => !!s && s.quelle === 'extern'
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3', gesperrt: 'orange-3' }[s] || 'grey-3')
-// „pending" heißt zweierlei: noch nie aufgespielt – oder am Schloss nicht mehr
-// vorhanden (die Cloud meldete −1021, der Dienst hat die tote cardId verworfen).
-// Für den Leser ist beides dasselbe: Die Karte liegt an dieser Tür nicht.
-const syncLabel = (b) => (b.sync_status === 'pending' && !b.ttlock_card_id
-  ? 'nicht am Schloss' : b.sync_status)
+// Was diese Zeile AN DER TÜR bedeutet – nicht der rohe Sync-Status. Der beantwortet
+// nur „ist der Cloud-Write durch?" und stünde sonst auch bei einem verlorenen Chip
+// auf „aktiv", obwohl dessen Karte am Schloss ein abgelaufenes Fenster trägt.
+// Reihenfolge = Dringlichkeit: ein Fehler steht über allem, danach zählt, ob die
+// Karte überhaupt am Schloss liegt (keine cardId = nie angekommen oder −1021
+// verworfen), dann der Chip-Status.
+const berStatus = (b) => (b.sync_status === 'fehler' ? 'fehler'
+  : !b.ttlock_card_id ? 'nicht am Schloss'
+    : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
+      : b.sync_status)
+const berHinweis = (b) => ({
+  gesperrt: `Chip ist „${b.chip_status}" – die Karte liegt am Schloss, ist dort aber `
+    + 'auf abgelaufen gesetzt und öffnet nicht.',
+  'nicht am Schloss': 'Die Karte ist an diesem Schloss nicht (mehr) hinterlegt.',
+}[berStatus(b)] || '')
 // Kompakte Status-Helfer für Pills/Dots auf den Karten und im Kopfbereich
 const onlineKurz = (o) => (o === true ? 'online' : o === false ? 'offline' : 'unbekannt')
 const onlineDotClass = (o) => (o === true ? 'schl-dot--gruen' : o === false ? 'schl-dot--rot' : 'schl-dot--grau')
