@@ -25,6 +25,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.models.permission import Permission
 from app.models.schliessanlage import CHIP_AKTIV, CRED_IC
 # Dieselbe Umrechnung und dieselbe Definition von „wirkungslos" wie auf dem Schreibweg –
 # ein zweiter Begriff davon wäre genau die Abweichung, die hier gefunden werden soll.
@@ -79,11 +80,16 @@ def _lesbar(von: Optional[str], bis: Optional[str]) -> str:
 
 def _befund(art: str, *, schloss_id: int, schloss: str, text: str,
             chip_id: Optional[int] = None, chip: Optional[str] = None,
-            kartennummer: Optional[str] = None) -> dict:
+            kartennummer: Optional[str] = None, veraltet: bool = False) -> dict:
+    # Ein Befund aus einem veralteten Spiegel ist keine Aussage über heute – er wird
+    # angezeigt (mit Hinweis), löst aber keine Meldung aus. Sonst weckt ein Schloss,
+    # das beim letzten Sync nicht erreichbar war, nachts jemanden wegen eines
+    # Zustands, den es seit Tagen nicht mehr gibt.
     return {
         'art': art, 'schloss_id': schloss_id, 'schloss': schloss,
         'chip_id': chip_id, 'chip': chip, 'kartennummer': kartennummer,
-        'text': text, 'kritisch': art in KRITISCH,
+        'text': text, 'veraltet': veraltet,
+        'kritisch': art in KRITISCH and not veraltet,
     }
 
 
@@ -95,6 +101,22 @@ def befunde(berechtigungen: list, karten: list, *, jetzt_ms: Optional[int] = Non
     unserer App vorbei angelernt.
     """
     jetzt_ms = jetzt_ms if jetzt_ms is not None else _jetzt_ms()
+    # Der Mirror wird je Schloss UND Typ ersetzt – und nur nach erfolgreichem Abruf.
+    # Ein Schloss, dessen Kartenliste beim letzten Lauf nicht kam, behält also seinen
+    # alten Stand. `gesehen_am` verrät das: Es liegt dann hinter dem jüngsten Stand.
+    stand_je_schloss: dict[int, object] = {}
+    for k in karten:
+        if k.gesehen_am and (k.schloss_id not in stand_je_schloss
+                             or k.gesehen_am > stand_je_schloss[k.schloss_id]):
+            stand_je_schloss[k.schloss_id] = k.gesehen_am
+    neuster = max(stand_je_schloss.values(), default=None)
+
+    def _veraltet(schloss_id: int) -> bool:
+        stand = stand_je_schloss.get(schloss_id)
+        # Gar kein Spiegel: entweder nie synchronisiert oder das Schloss hat wirklich
+        # keine Karte – das ist von hier aus nicht zu unterscheiden.
+        return stand is None or (neuster is not None and stand < neuster)
+
     nach_id = {(k.schloss_id, k.ttlock_credential_id): k for k in karten}
     nach_nummer = {(k.schloss_id, (k.detail or '').strip()): k
                    for k in karten if (k.detail or '').strip()}
@@ -113,6 +135,7 @@ def befunde(berechtigungen: list, karten: list, *, jetzt_ms: Optional[int] = Non
                 out.append(_befund(
                     BEFUND_KARTE_FEHLT, schloss_id=b.schloss_id, schloss=schloss,
                     chip_id=b.chip_id, chip=chip, kartennummer=b.kartennummer,
+                    veraltet=_veraltet(b.schloss_id),
                     text=f'„{chip}" ist an „{schloss}" zugeteilt, die Karte liegt dort '
                          f'aber nicht (mehr) – die Tür öffnet er nicht.'))
             continue
@@ -124,20 +147,24 @@ def befunde(berechtigungen: list, karten: list, *, jetzt_ms: Optional[int] = Non
             out.append(_befund(
                 BEFUND_SPERRE_OFFEN, schloss_id=b.schloss_id, schloss=schloss,
                 chip_id=b.chip_id, chip=chip, kartennummer=b.kartennummer,
+                veraltet=_veraltet(b.schloss_id),
                 text=f'„{chip}" ist als „{b.chip_status}" markiert, öffnet „{schloss}" '
-                     f'aber weiter – die Karte ist dort noch gültig.'))
+                     f'aber weiter – die Karte ist dort '
+                     f'{_lesbar(karte.gueltig_von, karte.gueltig_bis)} gültig.'))
         elif soll_gesperrt:
             continue                     # gesperrt und wirkungslos: genau so soll es sein
         elif ist_gesperrt:
             out.append(_befund(
                 BEFUND_SPERRE_HAENGT, schloss_id=b.schloss_id, schloss=schloss,
                 chip_id=b.chip_id, chip=chip, kartennummer=b.kartennummer,
+                veraltet=_veraltet(b.schloss_id),
                 text=f'„{chip}" ist aktiv, seine Karte an „{schloss}" trägt aber ein '
                      f'abgelaufenes Fenster – die Tür bleibt stumm.'))
         elif not _passt(_fenster(b.gueltig_von, b.gueltig_bis), ist):
             out.append(_befund(
                 BEFUND_FENSTER, schloss_id=b.schloss_id, schloss=schloss,
                 chip_id=b.chip_id, chip=chip, kartennummer=b.kartennummer,
+                veraltet=_veraltet(b.schloss_id),
                 text=f'Die Gültigkeit von „{chip}" an „{schloss}" weicht ab: '
                      f'{_lesbar(b.gueltig_von, b.gueltig_bis)} bei uns, '
                      f'{_lesbar(karte.gueltig_von, karte.gueltig_bis)} am Schloss.'))
@@ -149,7 +176,7 @@ def befunde(berechtigungen: list, karten: list, *, jetzt_ms: Optional[int] = Non
         name = k.name or (f'Nr. {k.detail}' if k.detail else f'cardId {k.ttlock_credential_id}')
         out.append(_befund(
             BEFUND_KARTE_FREMD, schloss_id=k.schloss_id, schloss=schloss,
-            kartennummer=k.detail,
+            kartennummer=k.detail, veraltet=_veraltet(k.schloss_id),
             text=f'An „{schloss}" liegt die Karte „{name}", zu der es bei uns keine '
                  f'Berechtigung gibt.'))
     return out
@@ -160,18 +187,38 @@ def abgleich(db, *, schloss_ids: Optional[set[int]] = None) -> dict:
 
     `stand` sagt, wie alt das Ist ist – ohne diese Angabe wäre „keine Befunde" nicht von
     „seit drei Tagen kein Sync" zu unterscheiden.
+
+    Jeder Befund trägt die Abteilung seines Schlosses; daran entscheidet sich, wer ihn
+    zu sehen bekommt (`darf_sehen`) – vereinsweite Schlösser gehören niemandem und
+    verlangen deshalb das vereinsweite Recht.
     """
     karten = db.tuer_credentials.list_fuer_abgleich(CRED_IC)
     berechtigungen = db.tuer_berechtigungen.list_fuer_abgleich()
     if schloss_ids is not None:
         karten = [k for k in karten if k.schloss_id in schloss_ids]
         berechtigungen = [b for b in berechtigungen if b.schloss_id in schloss_ids]
+    abteilung = {s.id: s.abteilung_id for s in db.tuer_schloesser.list_all()}
     gefunden = befunde(berechtigungen, karten)
+    for b in gefunden:
+        b['abteilung_id'] = abteilung.get(b['schloss_id'])
     return {
         'stand': max((k.gesehen_am for k in karten if k.gesehen_am), default=None),
         'befunde': gefunden,
         'kritisch': sum(1 for b in gefunden if b['kritisch']),
     }
+
+
+def darf_sehen(user, befund: dict) -> bool:
+    """Darf dieser Benutzer diesen Befund sehen? Gleiche Regel wie `darf_schloss`.
+
+    Der Befundtext nennt den Inhaber des Chips – das ist ein personenbezogenes Datum
+    und geht niemanden an, der die Tür nicht verwaltet.
+    """
+    abteilung_id = befund.get('abteilung_id')
+    if abteilung_id is None:
+        return user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN)
+    return user.has_permission_for_abteilung(Permission.SCHLIESSANLAGE_VERWALTEN,
+                                             abteilung_id)
 
 
 def signatur(kritische: list[dict]) -> str:
@@ -194,36 +241,56 @@ def build_sperr_digest(kritische: list[dict]) -> Optional[tuple[str, str]]:
     return titel, text
 
 
+def empfaenger(db) -> list:
+    """Wer wird benachrichtigt: aktive Konten mit `schliessanlage.verwalten`.
+
+    Nicht nur Admins – die Schließanlage verwaltet, wer das Recht dafür hat, und genau
+    der kann eine offene Sperre auch schließen. Abteilungsgebundene Rechte zählen mit;
+    was der Einzelne davon zu sehen bekommt, entscheidet danach `darf_sehen`.
+    """
+    from app.services.user_service import UserService
+    return [u for u in UserService(db).list_all()
+            if u.active and u.has_permission(Permission.SCHLIESSANLAGE_VERWALTEN)]
+
+
 def melde_sperrluecken(db) -> int:
-    """Admins über NEUE Sperr-Lücken benachrichtigen; Zahl der erreichten Empfänger.
+    """Über NEUE Sperr-Lücken benachrichtigen; Zahl der erreichten Empfänger.
 
     Läuft am Ende des Syncs, wenn das Ist frisch ist. Gemeldet wird nur, was sich seit
     der letzten Meldung geändert hat – der Sync läuft alle sechs Stunden, und eine Lücke,
     die eine Woche offen steht, darf keine 28 Nachrichten erzeugen. Auch die Entwarnung
     (leere Signatur) wird protokolliert, sonst bliebe ein zweites Auftreten derselben
-    Lücke später stumm. Das Gedächtnis ist das Zugriffsprotokoll: eine Zeile je Meldung,
-    mit derselben Aufbewahrung wie die übrigen Schließanlagen-Ereignisse.
+    Lücke später stumm. Das Gedächtnis ist das Zugriffsprotokoll: eine Zeile je Meldung
+    und Empfänger, mit derselben Aufbewahrung wie die übrigen Schließanlagen-Ereignisse.
+
+    Je Empfänger, nicht global: Ein abteilungsgebundener Verwalter sieht nur seine Türen,
+    und eine Lücke in einer anderen Abteilung darf ihn weder erreichen noch seine
+    Wiederholungssperre verbrauchen.
     """
     kritische = [b for b in abgleich(db)['befunde'] if b['kritisch']]
-    sig = signatur(kritische)
-    letzte = db.access_log_repository.list(event_type=_EVENT_MELDUNG, limit=1)
-    if letzte and (letzte[0].get('detail') or '') == sig:
-        return 0
-
-    sent = 0
-    digest = build_sperr_digest(kritische)
-    if digest is not None:
-        from app.services.user_service import UserService
-        from app.services.notification_service import NotificationService
-        titel, text = digest
-        empfaenger = [u for u in UserService(db).list_all() if u.active and u.role == 'admin']
-        for u in empfaenger:
+    erreicht = 0
+    for u in empfaenger(db):
+        seine = [b for b in kritische if darf_sehen(u, b)]
+        sig = signatur(seine)
+        letzte = db.access_log_repository.list(event_type=_EVENT_MELDUNG,
+                                               user_id=u.id, limit=1)
+        if letzte and (letzte[0].get('detail') or '') == sig:
+            continue
+        if not sig and not letzte:
+            continue                 # noch nie etwas gemeldet und nichts zu melden
+        digest = build_sperr_digest(seine)
+        if digest is not None:
+            from app.services.notification_service import NotificationService
+            titel, text = digest
             try:
-                if NotificationService.send_notification(u, titel, text, push_service=db.push):
-                    sent += 1
+                if NotificationService.send_notification(u, titel, text,
+                                                         push_service=db.push):
+                    erreicht += 1
             except Exception:
                 logger.exception("Sperr-Lücken-Meldung an %s fehlgeschlagen.", u.username)
-        logger.info("Sperr-Lücken-Meldung: %d Befund(e), %d/%d Admins erreicht.",
-                    len(kritische), sent, len(empfaenger))
-    db.access_log_repository.log(_EVENT_MELDUNG, category='schliessanlage', detail=sig)
-    return sent
+        db.access_log_repository.log(_EVENT_MELDUNG, category='schliessanlage',
+                                     user_id=u.id, username=u.username, detail=sig)
+    if kritische:
+        logger.info("Sperr-Lücken-Meldung: %d Befund(e), %d Empfänger erreicht.",
+                    len(kritische), erreicht)
+    return erreicht

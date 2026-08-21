@@ -156,29 +156,51 @@ class TestMeldung:
 
 
 class FakeLog:
-    """Zugriffsprotokoll als Gedächtnis der letzten Meldung."""
+    """Zugriffsprotokoll als Gedächtnis der letzten Meldung – je Empfänger eine Zeile,
+    deshalb filtert `list` wie das echte Repository auch nach `user_id`."""
     def __init__(self):
         self.zeilen = []
 
-    def log(self, event_type, *, category=None, detail=None, **kw):
-        self.zeilen.insert(0, {'event_type': event_type, 'detail': detail})
+    def log(self, event_type, *, category=None, detail=None, user_id=None, **kw):
+        self.zeilen.insert(0, {'event_type': event_type, 'detail': detail,
+                               'user_id': user_id})
 
-    def list(self, *, event_type=None, limit=100, **kw):
-        return [z for z in self.zeilen if z['event_type'] == event_type][:limit]
+    def list(self, *, event_type=None, user_id=None, limit=100, **kw):
+        return [z for z in self.zeilen
+                if z['event_type'] == event_type
+                and (user_id is None or z['user_id'] == user_id)][:limit]
 
 
 class FakeDB:
-    def __init__(self, berechtigungen, karten, empfaenger=()):
+    def __init__(self, berechtigungen, karten, empfaenger=(), abteilungen=None):
         self.access_log_repository = FakeLog()
         self.push = None
         self.tuer_berechtigungen = SimpleNamespace(list_fuer_abgleich=lambda: berechtigungen)
         self.tuer_credentials = SimpleNamespace(list_fuer_abgleich=lambda typ: karten)
+        # Schloss → Abteilung: daran entscheidet sich, wer den Befund sehen darf.
+        schloesser = [SimpleNamespace(id=sid, abteilung_id=abt)
+                      for sid, abt in (abteilungen or {1: None, 2: None}).items()]
+        self.tuer_schloesser = SimpleNamespace(list_all=lambda: schloesser)
         self.user_repository = SimpleNamespace(list_all=lambda: list(empfaenger))
         self.auth_token_repository = None
 
 
-def _admin(name='chef'):
-    return SimpleNamespace(id=1, username=name, role='admin', active=True)
+def _admin(name='chef', uid=1):
+    return SimpleNamespace(id=uid, username=name, role='admin', active=True,
+                           has_permission=lambda p: True,
+                           has_permission_global=lambda p: True,
+                           has_permission_for_abteilung=lambda p, a: True)
+
+
+def _verwalter(name, uid, abteilungen):
+    """Abteilungsgebundener Verwalter: Recht nur für genau diese Abteilungen."""
+    from app.models.permission import Permission
+    perm = Permission.SCHLIESSANLAGE_VERWALTEN
+    return SimpleNamespace(
+        id=uid, username=name, role='mitglied', active=True,
+        has_permission=lambda p: p == perm,
+        has_permission_global=lambda p: False,
+        has_permission_for_abteilung=lambda p, a: p == perm and a in abteilungen)
 
 
 class TestWiederholungssperre:
@@ -202,13 +224,23 @@ class TestWiederholungssperre:
         assert self._melden(db, monkeypatch, gesendet) == 0
         assert len(gesendet) == 1
 
-    def test_entwarnung_wird_protokolliert(self, monkeypatch):
-        """Ohne diese Zeile bliebe dieselbe Lücke beim zweiten Auftreten stumm."""
+    def test_ohne_befund_bleibt_es_still(self, monkeypatch):
+        """Wer nie etwas gemeldet bekam, braucht auch keine Entwarnung im Protokoll."""
         db = FakeDB([], [], empfaenger=[_admin()])
         gesendet = []
         assert self._melden(db, monkeypatch, gesendet) == 0
-        assert db.access_log_repository.zeilen[0]['detail'] == ''
+        assert db.access_log_repository.zeilen == []
         assert gesendet == []
+
+    def test_entwarnung_wird_protokolliert(self, monkeypatch):
+        """Ohne diese Zeile bliebe dieselbe Lücke beim zweiten Auftreten stumm."""
+        db = FakeDB([_ber(chip_status='verloren')], [_karte()], empfaenger=[_admin()])
+        gesendet = []
+        self._melden(db, monkeypatch, gesendet)
+        db.tuer_berechtigungen.list_fuer_abgleich = lambda: [_ber()]      # Chip wieder aktiv
+        assert self._melden(db, monkeypatch, gesendet) == 0
+        assert db.access_log_repository.zeilen[0]['detail'] == ''
+        assert len(gesendet) == 1
 
     def test_nach_entwarnung_meldet_dieselbe_luecke_wieder(self, monkeypatch):
         db = FakeDB([_ber(chip_status='verloren')], [_karte()], empfaenger=[_admin()])
@@ -220,10 +252,123 @@ class TestWiederholungssperre:
         assert self._melden(db, monkeypatch, gesendet) == 1
         assert len(gesendet) == 2
 
-    def test_ohne_erreichbare_admins_bleibt_die_signatur_gemerkt(self, monkeypatch):
-        db = FakeDB([_ber(chip_status='verloren')], [_karte()], empfaenger=[])
-        assert self._melden(db, monkeypatch, []) == 0
-        assert db.access_log_repository.zeilen[0]['detail'] != ''
+    def test_nicht_zugestellt_gilt_trotzdem_als_gemeldet(self, monkeypatch):
+        """Sonst liefe der Versuch bei jedem Sync erneut – vier Mal am Tag, dauerhaft."""
+        from app.services.notification_service import NotificationService
+        monkeypatch.setattr(NotificationService, 'send_notification',
+                            staticmethod(lambda *a, **k: False))    # kein Kanal erreichbar
+        db = FakeDB([_ber(chip_status='verloren')], [_karte()], empfaenger=[_admin()])
+        assert abg.melde_sperrluecken(db) == 0
+        assert db.access_log_repository.zeilen[0]['detail']
+
+
+class TestVeralteterSpiegel:
+    """Der Mirror wird je Schloss ersetzt – und nur nach erfolgreichem Abruf."""
+
+    def test_aelterer_stand_macht_den_befund_unverbindlich(self):
+        """Das Schloss war beim letzten Lauf nicht erreichbar: Was der Spiegel dort
+        zeigt, ist der Zustand von vorgestern – keine Grundlage für einen Alarm."""
+        befunde = abg.befunde(
+            [_ber(schloss_id=1), _ber(id=2, schloss_id=2, chip_status='verloren')],
+            [_karte(schloss_id=1, gesehen_am='2026-08-21T06:00:00+00:00'),
+             _karte(schloss_id=2, gesehen_am='2026-08-19T06:00:00+00:00')],
+            jetzt_ms=_JETZT_MS)
+        assert _arten(befunde) == [abg.BEFUND_SPERRE_OFFEN]
+        assert befunde[0]['veraltet'] is True and befunde[0]['kritisch'] is False
+
+    def test_gleicher_stand_ist_verbindlich(self):
+        befunde = abg.befunde(
+            [_ber(schloss_id=1), _ber(id=2, schloss_id=2, chip_status='verloren')],
+            [_karte(schloss_id=1, gesehen_am='2026-08-21T06:00:00+00:00'),
+             _karte(schloss_id=2, gesehen_am='2026-08-21T06:00:00+00:00')],
+            jetzt_ms=_JETZT_MS)
+        assert befunde[0]['veraltet'] is False and befunde[0]['kritisch'] is True
+
+    def test_ohne_spiegel_ist_karte_fehlt_nicht_belastbar(self):
+        """Vor dem ersten Sync stünde sonst an jeder Tür „Karte fehlt"."""
+        befunde = abg.befunde([_ber()], [], jetzt_ms=_JETZT_MS)
+        assert _arten(befunde) == [abg.BEFUND_KARTE_FEHLT]
+        assert befunde[0]['veraltet'] is True
+
+    def test_veraltete_luecke_loest_keine_meldung_aus(self, monkeypatch):
+        from app.services.notification_service import NotificationService
+        gesendet = []
+        monkeypatch.setattr(NotificationService, 'send_notification',
+                            staticmethod(lambda *a, **k: gesendet.append(a) or True))
+        db = FakeDB([_ber(schloss_id=1), _ber(id=2, schloss_id=2, chip_status='verloren')],
+                    [_karte(schloss_id=1, gesehen_am='2026-08-21T06:00:00+00:00'),
+                     _karte(schloss_id=2, gesehen_am='2026-08-19T06:00:00+00:00')],
+                    empfaenger=[_admin()])
+        assert abg.melde_sperrluecken(db) == 0
+        assert gesendet == []
+
+
+class TestEmpfaenger:
+    def test_wer_die_schliessanlage_verwaltet_wird_benachrichtigt(self):
+        """Nicht nur Admins – wer das Recht hat, kann die Sperre auch schließen."""
+        db = FakeDB([], [], empfaenger=[
+            _admin(uid=1), _verwalter('platzwart', 2, {5}),
+            SimpleNamespace(id=3, username='ohne', role='mitglied', active=True,
+                            has_permission=lambda p: False,
+                            has_permission_global=lambda p: False,
+                            has_permission_for_abteilung=lambda p, a: False),
+            SimpleNamespace(id=4, username='ruhend', role='admin', active=False,
+                            has_permission=lambda p: True,
+                            has_permission_global=lambda p: True,
+                            has_permission_for_abteilung=lambda p, a: True),
+        ])
+        assert [u.username for u in abg.empfaenger(db)] == ['chef', 'platzwart']
+
+    def test_vereinsweites_schloss_braucht_das_vereinsweite_recht(self):
+        """Gleiche Regel wie `darf_schloss`: Eine Tür ohne Abteilung gehört niemandem."""
+        befund = {'schloss_id': 1, 'abteilung_id': None}
+        assert abg.darf_sehen(_admin(), befund) is True
+        assert abg.darf_sehen(_verwalter('platzwart', 2, {5}), befund) is False
+
+    def test_abteilungsverwalter_sieht_nur_seine_tuer(self):
+        eigene = {'schloss_id': 1, 'abteilung_id': 5}
+        fremde = {'schloss_id': 2, 'abteilung_id': 9}
+        u = _verwalter('platzwart', 2, {5})
+        assert abg.darf_sehen(u, eigene) is True
+        assert abg.darf_sehen(u, fremde) is False
+
+
+class TestMeldungJeEmpfaenger:
+    def _db(self):
+        """Zwei Türen in zwei Abteilungen, an beiden öffnet ein verlorener Chip."""
+        return FakeDB(
+            [_ber(schloss_id=1, chip_status='verloren'),
+             _ber(id=2, schloss_id=2, chip_status='verloren')],
+            [_karte(schloss_id=1), _karte(schloss_id=2)],
+            empfaenger=[_verwalter('volleyball', 2, {5}), _verwalter('tischtennis', 3, {9})],
+            abteilungen={1: 5, 2: 9})
+
+    def test_jeder_bekommt_nur_seine_tuer(self, monkeypatch):
+        from app.services.notification_service import NotificationService
+        gesendet = []
+        monkeypatch.setattr(NotificationService, 'send_notification',
+                            staticmethod(lambda u, titel, text, **k: gesendet.append(
+                                (u.username, text)) or True))
+        assert abg.melde_sperrluecken(self._db()) == 2
+        je_user = dict(gesendet)
+        assert 'Halle' in je_user['volleyball'] and 'Küche' not in je_user['volleyball']
+
+    def test_fremde_luecke_verbraucht_die_sperre_nicht(self, monkeypatch):
+        """Sonst hielte eine Lücke in Abteilung A die Meldung für Abteilung B zurück."""
+        from app.services.notification_service import NotificationService
+        gesendet = []
+        monkeypatch.setattr(NotificationService, 'send_notification',
+                            staticmethod(lambda u, *a, **k: gesendet.append(u.username) or True))
+        db = self._db()
+        db.tuer_berechtigungen.list_fuer_abgleich = lambda: [
+            _ber(schloss_id=1, chip_status='verloren')]          # zunächst nur Abteilung 5
+        abg.melde_sperrluecken(db)
+        assert gesendet == ['volleyball']
+        db.tuer_berechtigungen.list_fuer_abgleich = lambda: [
+            _ber(schloss_id=1, chip_status='verloren'),
+            _ber(id=2, schloss_id=2, chip_status='verloren')]    # jetzt auch Abteilung 9
+        abg.melde_sperrluecken(db)
+        assert gesendet == ['volleyball', 'tischtennis']         # der erste nicht erneut
 
 
 class TestEndpunkt:
