@@ -15,7 +15,9 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.models.permission import Permission
-from app.models.ul_stunden import ULSatz
+from app.models.ul_stunden import (
+    ULSatz, LIZENZ_KLASSIFIKATIONEN, VERGUETUNGSARTEN, VERGUETUNG_OHNE,
+)
 from app.services.ul_stunden_service import ULStundenService
 from ..core.config import settings
 from ..core.deps import CurrentUser, DB
@@ -74,8 +76,9 @@ class AblehnenBody(BaseModel):
 
 
 class SatzCreate(BaseModel):
-    lizenz_klassifikation: str
-    satz: float
+    lizenz_klassifikation: Optional[str] = None   # None = gilt für beide Lizenzlagen
+    verguetungsart: str = 'stundensatz'
+    satz: float = 0.0                             # €/h bzw. €/Monat, je nach Art
     mitglied_id: Optional[int] = None
     abteilung_id: Optional[int] = None
     gueltig_ab: Optional[str] = None
@@ -110,6 +113,26 @@ def _can_erfassen(user, abteilung_id: int) -> bool:
     """Erfassen ist abteilungs-scoped (Funktion 'uebungsleiter' über die Berechtigungsmatrix)."""
     return (_can_verwalten(user)
             or user.has_permission_for_abteilung(Permission.UL_STUNDEN_ERFASSEN, abteilung_id))
+
+
+def _pruefe_satz(data) -> float:
+    """Validiert eine Satz-Eingabe und liefert den zu speichernden Satzwert.
+
+    Bei 'ohne_verguetung' wird der Wert auf 0 gezwungen: Dort gibt es keinen Betrag,
+    und eine stehengebliebene Zahl aus einem vorherigen Formularstand würde später
+    wie eine Vereinbarung aussehen. Die anderen Arten brauchen einen Wert > 0 –
+    ein Satz von 0 ist keine Vereinbarung, sondern ein vergessenes Feld.
+    """
+    if data.verguetungsart not in VERGUETUNGSARTEN:
+        raise HTTPException(status_code=400, detail="Unbekannte Vergütungsart")
+    if data.lizenz_klassifikation is not None and \
+            data.lizenz_klassifikation not in LIZENZ_KLASSIFIKATIONEN:
+        raise HTTPException(status_code=400, detail="Unbekannte Lizenz-Klassifikation")
+    if data.verguetungsart == VERGUETUNG_OHNE:
+        return 0.0
+    if data.satz is None or float(data.satz) <= 0:
+        raise HTTPException(status_code=400, detail="Satz muss größer als 0 sein")
+    return float(data.satz)
 
 
 def _can_erfassen_fremd(user) -> bool:
@@ -291,7 +314,8 @@ def create_satz(data: SatzCreate, user: CurrentUser, db: DB):
     if not _can_verwalten(user):
         raise HTTPException(status_code=403, detail="Keine Verwaltungsberechtigung")
     s = ULSatz(mitglied_id=data.mitglied_id, abteilung_id=data.abteilung_id,
-               lizenz_klassifikation=data.lizenz_klassifikation, satz=data.satz,
+               lizenz_klassifikation=data.lizenz_klassifikation,
+               verguetungsart=data.verguetungsart, satz=_pruefe_satz(data),
                gueltig_ab=(data.gueltig_ab or None))
     return asdict(db.ul_saetze.create(s, created_by=user.username))
 
@@ -306,7 +330,8 @@ def update_satz(satz_id: int, data: SatzUpdate, user: CurrentUser, db: DB):
     s.mitglied_id = data.mitglied_id
     s.abteilung_id = data.abteilung_id
     s.lizenz_klassifikation = data.lizenz_klassifikation
-    s.satz = data.satz
+    s.verguetungsart = data.verguetungsart
+    s.satz = _pruefe_satz(data)
     s.gueltig_ab = (data.gueltig_ab or None)
     s.version = data.expected_version
     if not db.ul_saetze.update(s, updated_by=user.username):

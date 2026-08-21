@@ -21,6 +21,9 @@
             </q-chip>
             <span class="q-mx-xs">{{ a.summen.summe_stunden }} Std.</span>
             <span v-if="a.summen.gesamtbetrag != null">· {{ fmtEuro(a.summen.gesamtbetrag) }}</span>
+            <span v-else-if="a.summen.verguetungsart === 'ohne_verguetung'" class="text-grey-7">
+              · ohne Vergütung
+            </span>
           </q-item-label>
         </q-item-section>
         <q-item-section side><q-icon name="chevron_right" color="grey-6" /></q-item-section>
@@ -84,11 +87,9 @@
 
           <div class="text-subtitle2">
             Summe: {{ detail.summen.summe_stunden }} Std.
-            <span v-if="detail.summen.gesamtbetrag != null">
-              · {{ fmtEuro(detail.summen.gesamtbetrag) }}
-              <span class="text-grey-7">({{ fmtEuro(detail.summen.verguetung_pro_stunde) }}/h)</span>
-            </span>
-            <span v-else class="text-orange">· kein Vergütungssatz hinterlegt</span>
+            <!-- Wer bestätigt, muss sehen WORAUF er bestätigt: Stundensatz,
+                 Monatspauschale oder gar keine Vergütung über die App. -->
+            <span v-if="verguetung" :class="verguetung.klasse">· {{ verguetung.text }}</span>
           </div>
           <div v-if="detail.status === 'abgelehnt' && detail.abgelehnt_grund"
             class="text-negative text-caption q-mt-xs">
@@ -114,12 +115,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAufgabenStore } from 'src/stores/aufgaben'
 import StundenKalender from 'src/components/StundenKalender.vue'
+import { fmtEuro, verguetungsHinweis } from 'src/composables/useUlVerguetung'
 
 defineOptions({ name: 'UlBestaetigungPage' })
 
@@ -143,10 +145,8 @@ function statusChip(status) {
     abgelehnt: { label: 'Abgelehnt', color: 'red' },
   }[status] || { label: status, color: 'grey' }
 }
-function fmtEuro(v) {
-  if (v == null) return ''
-  return Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
-}
+const verguetung = computed(() =>
+  detail.value ? verguetungsHinweis(detail.value.summen, detail.value.status) : null)
 function wochentagKurz(w) {
   return ['', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][w] || ''
 }

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 105
+SCHEMA_VERSION = 106
 
 
 # ---------------------------------------------------------------------------
@@ -528,8 +528,8 @@ _FN_MITGLIED_AUDIT_UPDATE = f"""
 
 _UL_ABRECHNUNG_COLS = (
     "id, version, mitglied_id, abteilung_id, zeitraum_von, zeitraum_bis, status, "
-    "lizenz_klassifikation, foerder_klassifikation, verguetung_pro_stunde, "
-    "trainerlizenz_nr, qualifikation, "
+    "lizenz_klassifikation, foerder_klassifikation, verguetungsart, "
+    "verguetung_pro_stunde, verguetung_monate, trainerlizenz_nr, qualifikation, "
     "eingereicht_am, eingereicht_von, bestaetigt_am, bestaetigt_von, abgelehnt_grund, "
     "exportiert_in_export_id, storno_exportiert_in_export_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
@@ -577,7 +577,8 @@ _FN_UL_STUNDE_AUDIT_UPDATE = f"""
 """
 
 _UL_SATZ_COLS = (
-    "id, version, mitglied_id, abteilung_id, lizenz_klassifikation, satz, gueltig_ab, "
+    "id, version, mitglied_id, abteilung_id, lizenz_klassifikation, verguetungsart, "
+    "satz, gueltig_ab, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _UL_SATZ_VALS = ", ".join("NEW." + c.strip() for c in _UL_SATZ_COLS.split(","))
@@ -610,7 +611,9 @@ _DDL_UL_TABLES = """
       status                          TEXT NOT NULL DEFAULT 'entwurf',
       lizenz_klassifikation           TEXT NOT NULL DEFAULT 'ohne_lizenz',
       foerder_klassifikation          TEXT,
-      verguetung_pro_stunde           REAL,
+      verguetungsart                  TEXT NOT NULL DEFAULT 'stundensatz',  -- Snapshot beim Einreichen
+      verguetung_pro_stunde           REAL,   -- Snapshot; €/h bzw. €/Monat, je nach Art
+      verguetung_monate               INTEGER,-- Snapshot; vergütete Monate der Pauschale
       trainerlizenz_nr                TEXT,   -- Snapshot beim Einreichen (Beleg)
       qualifikation                   TEXT,   -- Snapshot beim Einreichen (Beleg)
       eingereicht_am                  TEXT,
@@ -632,7 +635,8 @@ _DDL_UL_TABLES = """
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       mitglied_id INTEGER, abteilung_id INTEGER, zeitraum_von TEXT, zeitraum_bis TEXT,
       status TEXT, lizenz_klassifikation TEXT, foerder_klassifikation TEXT,
-      verguetung_pro_stunde REAL, trainerlizenz_nr TEXT, qualifikation TEXT,
+      verguetungsart TEXT, verguetung_pro_stunde REAL, verguetung_monate INTEGER,
+      trainerlizenz_nr TEXT, qualifikation TEXT,
       eingereicht_am TEXT, eingereicht_von TEXT, bestaetigt_am TEXT, bestaetigt_von TEXT,
       abgelehnt_grund TEXT, exportiert_in_export_id INTEGER, storno_exportiert_in_export_id INTEGER,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
@@ -667,8 +671,9 @@ _DDL_UL_TABLES = """
       id                    SERIAL PRIMARY KEY,
       mitglied_id           INTEGER REFERENCES mitglied(id),
       abteilung_id          INTEGER REFERENCES abteilung(id),
-      lizenz_klassifikation TEXT NOT NULL DEFAULT 'ohne_lizenz',
-      satz                  REAL NOT NULL,
+      lizenz_klassifikation TEXT,      -- NULL = gilt für beide Lizenzlagen
+      verguetungsart        TEXT NOT NULL DEFAULT 'stundensatz',
+      satz                  REAL NOT NULL,   -- €/h bzw. €/Monat, je nach Art
       gueltig_ab            TEXT,
       version               INTEGER NOT NULL DEFAULT 1,
       created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -681,7 +686,7 @@ _DDL_UL_TABLES = """
     CREATE TABLE IF NOT EXISTS ul_satz_history (
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       mitglied_id INTEGER, abteilung_id INTEGER, lizenz_klassifikation TEXT,
-      satz REAL, gueltig_ab TEXT,
+      verguetungsart TEXT, satz REAL, gueltig_ab TEXT,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -3600,6 +3605,7 @@ class Database:
             103: self._migrate_v102_to_v103,
             104: self._migrate_v103_to_v104,
             105: self._migrate_v104_to_v105,
+            106: self._migrate_v105_to_v106,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7872,6 +7878,61 @@ class Database:
         for regel_id, alt_wert, ziel in regeln:
             logger.warning("Beitragsregel %d: Status '%s' → %s 'passiv'.",
                            regel_id, alt_wert, ziel)
+
+    def _migrate_v105_to_v106(self) -> None:
+        """Nicht jeder Übungsleiter wird nach Stunden bezahlt (#84).
+
+        Bisher war die Vergütung im Modell eine einzige Multiplikation: erfasste
+        Stunden × €/h. Das trifft zwei reale Vereinbarungen nicht — den Monatsfestbetrag
+        und den ÜL, der überhaupt nicht über die App abgerechnet wird (Honorarvertrag,
+        Lohnbuchhaltung). Beide sollen ihre Stunden trotzdem lückenlos erfassen, weil der
+        Stundennachweis für Förderung und Prüfung gebraucht wird — die Aufzeichnung ist
+        also gerade *nicht* an die Auszahlung gekoppelt.
+
+        Deshalb bekommt die Vereinbarung (`ul_satz`) eine `verguetungsart`, die allein
+        die Betragsformel steuert; Erfassung, Sperr-Wasserzeichen und Workflow bleiben
+        für alle Arten identisch. Der Default 'stundensatz' bildet den Altbestand
+        unverändert ab — bestehende Sätze und Abrechnungen rechnen weiter wie bisher.
+
+        `ul_abrechnung.verguetungsart` ist der Snapshot beim Einreichen, analog zu
+        `verguetung_pro_stunde`: Ändert sich die Vereinbarung später, darf sich eine
+        bestätigte Abrechnung nicht rückwirkend verwandeln.
+
+        Dazu kommt `verguetung_monate` — die Bemessungsgrundlage der Pauschale. Sie steht
+        hier und nicht in einer Formel, weil sie von den *anderen* Abrechnungen des ÜL
+        abhängt: Ein Kalendermonat darf nur einmal vergütet werden, auch wenn zwei
+        Abrechnungen hineinragen (15.05.–15.06. und 16.06.–10.07. sind drei Monate, nicht
+        vier). Diese Abgrenzung ist zum Zeitpunkt des Einreichens entschieden und muss
+        danach fest stehen, sonst verschöbe eine spätere Nachbarabrechnung den Betrag.
+
+        Zusätzlich wird `ul_satz.lizenz_klassifikation` nullable (NULL = gilt für beide).
+        Die Spalte war als Pflichtfeld gedacht, solange jeder Satz ein €/h-Satz war und
+        die Lizenz den Satz bestimmte. Bei einer individuellen Festbetrags-Vereinbarung
+        ist sie dagegen eine Falle: Läuft die Trainerlizenz aus, greift der Satz nicht
+        mehr und die Auflösung fällt still auf den vereinsweiten Stundensatz zurück.
+        Bestandszeilen behalten ihren Wert, ein exakter Treffer gewinnt weiterhin.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE ul_satz ADD COLUMN IF NOT EXISTS "
+                        "verguetungsart TEXT NOT NULL DEFAULT 'stundensatz'")
+            cur.execute("ALTER TABLE ul_satz_history ADD COLUMN IF NOT EXISTS "
+                        "verguetungsart TEXT")
+            cur.execute("ALTER TABLE ul_abrechnung ADD COLUMN IF NOT EXISTS "
+                        "verguetungsart TEXT NOT NULL DEFAULT 'stundensatz'")
+            cur.execute("ALTER TABLE ul_abrechnung ADD COLUMN IF NOT EXISTS "
+                        "verguetung_monate INTEGER")
+            cur.execute("ALTER TABLE ul_abrechnung_history ADD COLUMN IF NOT EXISTS "
+                        "verguetungsart TEXT")
+            cur.execute("ALTER TABLE ul_abrechnung_history ADD COLUMN IF NOT EXISTS "
+                        "verguetung_monate INTEGER")
+            cur.execute("ALTER TABLE ul_satz ALTER COLUMN lizenz_klassifikation DROP NOT NULL")
+            cur.execute("ALTER TABLE ul_satz ALTER COLUMN lizenz_klassifikation DROP DEFAULT")
+            # Audit-Funktionen neu schreiben – sonst fehlt die neue Spalte in der History.
+            for fn_sql in (_FN_UL_SATZ_AUDIT_INSERT, _FN_UL_SATZ_AUDIT_UPDATE,
+                           _FN_UL_ABRECHNUNG_AUDIT_INSERT, _FN_UL_ABRECHNUNG_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 106 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

@@ -1,8 +1,10 @@
-"""Repository für konfigurierbare Übungsleiter-Vergütungssätze (€/h).
+"""Repository für konfigurierbare Übungsleiter-Vergütungsvereinbarungen.
 
 Auflösung (spezifischster gewinnt): ÜL-individuell (mitglied_id gesetzt) →
-Abteilung+Lizenz → vereinsweit+Lizenz. Der aufgelöste Satz wird beim Einreichen
-einer Abrechnung als Snapshot eingefroren.
+Abteilung → vereinsweit; auf jeder Stufe schlägt der exakte Lizenz-Treffer den
+lizenz-unabhängigen Satz (lizenz_klassifikation IS NULL). Die aufgelöste
+Vereinbarung — Satzwert *und* Vergütungsart — wird beim Einreichen einer
+Abrechnung als Snapshot eingefroren.
 """
 from typing import Optional
 
@@ -11,8 +13,8 @@ from app.db.base_repository import BaseRepository
 
 
 _SELECT = """
-    SELECT s.id, s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation, s.satz,
-           s.gueltig_ab,
+    SELECT s.id, s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation,
+           s.verguetungsart, s.satz, s.gueltig_ab,
            m.vorname AS mitglied_vorname, m.nachname AS mitglied_nachname,
            ab.name AS abteilung_name,
            s.version, s.created_at, s.created_by, s.updated_at, s.updated_by
@@ -33,7 +35,7 @@ class ULSatzRepository(BaseRepository):
             cur.execute(
                 _SELECT + " WHERE s.deleted_at IS NULL "
                 "ORDER BY (s.mitglied_id IS NOT NULL) DESC, ab.name NULLS FIRST, "
-                "s.lizenz_klassifikation"
+                "s.lizenz_klassifikation NULLS FIRST"
             )
             return [_map(r) for r in cur.fetchall()]
 
@@ -44,42 +46,47 @@ class ULSatzRepository(BaseRepository):
             return _map(row) if row else None
 
     def resolve(self, mitglied_id: int, abteilung_id: int,
-                lizenz_klassifikation: str) -> Optional[float]:
-        """Liefert den passendsten Satz (€/h) oder None.
+                lizenz_klassifikation: str) -> Optional[ULSatz]:
+        """Liefert die passendste Vereinbarung (Satz + Vergütungsart) oder None.
 
-        Reihenfolge: ÜL-spezifisch vor Abteilung-spezifisch vor vereinsweit;
-        bei Gleichstand der jüngste gueltig_ab.
+        Reihenfolge: ÜL-spezifisch vor Abteilung-spezifisch vor vereinsweit, und
+        innerhalb jeder Stufe die exakte Lizenz vor dem lizenz-unabhängigen Satz
+        (lizenz_klassifikation IS NULL); bei Gleichstand der jüngste gueltig_ab.
+
+        Die Geltungsbereiche stehen bewusst VOR der Lizenz: Eine individuelle
+        Vereinbarung soll auch dann greifen, wenn sie für beide Lizenzlagen gilt
+        und daneben ein exakter Abteilungssatz existiert.
         """
         with self.cursor() as cur:
             cur.execute(
-                """
-                SELECT satz FROM ul_satz
-                WHERE deleted_at IS NULL
-                  AND lizenz_klassifikation=%s
-                  AND (mitglied_id=%s OR mitglied_id IS NULL)
-                  AND (abteilung_id=%s OR abteilung_id IS NULL)
-                ORDER BY (mitglied_id IS NOT NULL) DESC,
-                         (abteilung_id IS NOT NULL) DESC,
-                         gueltig_ab DESC NULLS LAST
+                _SELECT + """
+                WHERE s.deleted_at IS NULL
+                  AND (s.lizenz_klassifikation=%s OR s.lizenz_klassifikation IS NULL)
+                  AND (s.mitglied_id=%s OR s.mitglied_id IS NULL)
+                  AND (s.abteilung_id=%s OR s.abteilung_id IS NULL)
+                ORDER BY (s.mitglied_id IS NOT NULL) DESC,
+                         (s.abteilung_id IS NOT NULL) DESC,
+                         (s.lizenz_klassifikation IS NOT NULL) DESC,
+                         s.gueltig_ab DESC NULLS LAST
                 LIMIT 1
                 """,
                 (lizenz_klassifikation, mitglied_id, abteilung_id),
             )
             row = cur.fetchone()
-            return row['satz'] if row else None
+            return _map(row) if row else None
 
     def create(self, s: ULSatz, created_by: str) -> ULSatz:
         with self.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO ul_satz
-                    (mitglied_id, abteilung_id, lizenz_klassifikation, satz, gueltig_ab,
-                     created_by, updated_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    (mitglied_id, abteilung_id, lizenz_klassifikation, verguetungsart,
+                     satz, gueltig_ab, created_by, updated_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
-                (s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation, s.satz,
-                 s.gueltig_ab, created_by, created_by),
+                (s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation, s.verguetungsart,
+                 s.satz, s.gueltig_ab, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -90,12 +97,12 @@ class ULSatzRepository(BaseRepository):
                 """
                 UPDATE ul_satz
                 SET mitglied_id=%s, abteilung_id=%s, lizenz_klassifikation=%s,
-                    satz=%s, gueltig_ab=%s, version=version+1,
+                    verguetungsart=%s, satz=%s, gueltig_ab=%s, version=version+1,
                     updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND version=%s AND deleted_at IS NULL
                 """,
-                (s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation, s.satz,
-                 s.gueltig_ab, updated_by, s.id, s.version),
+                (s.mitglied_id, s.abteilung_id, s.lizenz_klassifikation,
+                 s.verguetungsart, s.satz, s.gueltig_ab, updated_by, s.id, s.version),
             )
             return cur.rowcount == 1
 

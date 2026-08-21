@@ -55,6 +55,9 @@
             </q-chip>
             <span class="q-mx-xs">{{ a.summen.summe_stunden }} Std.</span>
             <span v-if="a.summen.gesamtbetrag != null">· {{ fmtEuro(a.summen.gesamtbetrag) }}</span>
+            <span v-else-if="a.summen.verguetungsart === 'ohne_verguetung'" class="text-grey-7">
+              · ohne Vergütung
+            </span>
             <q-chip dense size="sm" outline :color="a.lizenz_klassifikation === 'mit_lizenz' ? 'green-8' : 'blue-grey'">
               {{ a.lizenz_klassifikation === 'mit_lizenz' ? 'mit Lizenz' : 'ohne Lizenz' }}
             </q-chip>
@@ -233,18 +236,9 @@
           <div class="row items-center q-mt-sm">
             <div class="text-subtitle2">
               Summe: {{ detail.summen.summe_stunden }} Std.
-              <span v-if="detail.summen.gesamtbetrag != null">
-                · {{ fmtEuro(detail.summen.gesamtbetrag) }}
-                <span class="text-grey-7">({{ fmtEuro(detail.summen.verguetung_pro_stunde) }}/h)</span>
-              </span>
-              <!-- Entwurf: Satz ist noch nicht eingefroren → voraussichtliche Vergütung -->
-              <span v-else-if="detail.summen.vorschau_gesamtbetrag != null" class="text-grey-7">
-                · voraussichtlich {{ fmtEuro(detail.summen.vorschau_gesamtbetrag) }}
-                ({{ fmtEuro(detail.summen.vorschau_pro_stunde) }}/h)
-              </span>
-              <span v-else-if="detail.status !== 'entwurf'" class="text-orange">
-                · kein Vergütungssatz hinterlegt
-              </span>
+              <!-- Vergütung hängt an der Art (Stundensatz / Monatspauschale / ohne);
+                   die Stundensumme darüber steht unabhängig davon. -->
+              <span v-if="verguetung" :class="verguetung.klasse">· {{ verguetung.text }}</span>
             </div>
           </div>
           <div v-if="dError" class="text-negative text-caption q-mt-xs">{{ dError }}</div>
@@ -274,6 +268,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import StundenKalender from 'src/components/StundenKalender.vue'
+import { fmtEuro, verguetungsHinweis } from 'src/composables/useUlVerguetung'
 
 defineOptions({ name: 'UlStundenPage' })
 
@@ -312,10 +307,8 @@ function statusChip(status) {
   }[status] || { label: status, color: 'grey' }
 }
 
-function fmtEuro(v) {
-  if (v == null) return ''
-  return Number(v).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
-}
+const verguetung = computed(() =>
+  detail.value ? verguetungsHinweis(detail.value.summen, detail.value.status) : null)
 function wochentagKurz(w) {
   return ['', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'][w] || ''
 }
