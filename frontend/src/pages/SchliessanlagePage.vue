@@ -6,6 +6,42 @@
       synchronisiert werden.
     </q-banner>
 
+    <!-- Soll-Ist-Abgleich: Der Sync holt viermal am Tag das Ist herein – hier steht,
+         wo es vom Soll abweicht. „sperre_offen" ist der ernste Fall: ein gesperrter
+         Chip, der am Schloss noch öffnet; darüber gehen auch Meldungen an die Admins. -->
+    <q-banner v-if="abgleich.befunde.length" dense rounded class="q-mb-md"
+      :class="abgleich.kritisch ? 'vtb-warnung' : 'schl-extern-hinweis'">
+      <template #avatar>
+        <q-icon :name="abgleich.kritisch ? 'gpp_bad' : 'rule'" size="26px" />
+      </template>
+      <div class="row items-center no-wrap q-gutter-sm">
+        <div class="col">
+          <span v-if="abgleich.kritisch" class="text-weight-medium">
+            {{ abgleich.kritisch === 1 ? 'Ein gesperrter Chip öffnet noch'
+              : abgleich.kritisch + ' gesperrte Chips öffnen noch' }} –
+          </span>
+          {{ abgleich.befunde.length === 1 ? 'eine Abweichung' : abgleich.befunde.length + ' Abweichungen' }}
+          zwischen unseren Berechtigungen und dem, was an den Schlössern liegt.
+          <span v-if="abgleich.stand" class="text-caption">
+            (Stand {{ fmtDateTime(abgleich.stand) }})</span>
+        </div>
+        <q-btn flat dense no-caps size="sm" :icon="abgleichOffen ? 'expand_less' : 'expand_more'"
+          :label="abgleichOffen ? 'weniger' : 'ansehen'" @click="abgleichOffen = !abgleichOffen" />
+      </div>
+      <q-list v-if="abgleichOffen" dense class="q-mt-sm">
+        <!-- Klick führt dorthin, wo sich der Befund beheben lässt: zum Chip, sonst
+             zum Schloss (eine fremde Karte kennt keinen Chip von uns). -->
+        <q-item v-for="(b, i) in abgleich.befunde" :key="i" clickable
+          @click="b.chip_id ? openChip(b.chip_id) : openSchloss(b.schloss_id)">
+          <q-item-section avatar>
+            <q-icon :name="befundIcon(b.art)" size="18px"
+              :class="b.kritisch ? 'text-negative' : 'text-grey-7'" />
+          </q-item-section>
+          <q-item-section>{{ b.text }}</q-item-section>
+        </q-item>
+      </q-list>
+    </q-banner>
+
     <div class="row items-center q-mb-sm">
       <div class="text-h5">Schließanlage</div>
       <q-space />
@@ -1427,6 +1463,20 @@ async function loadChips() {
   const { data } = await api.get('/api/schliessanlage/chips')
   chips.value = data
 }
+// Soll-Ist-Abgleich: Was bei uns steht, gegen das, was am Schloss liegt. Rechnet auf
+// dem Stand des letzten Syncs (kein Cloud-Aufruf) und braucht das Verwalten-Recht.
+const abgleich = ref({ stand: null, befunde: [], kritisch: 0 })
+const abgleichOffen = ref(false)
+async function loadAbgleich() {
+  if (!status.value.darf_verwalten) { abgleich.value = { stand: null, befunde: [], kritisch: 0 }; return }
+  try { const { data } = await api.get('/api/schliessanlage/abgleich'); abgleich.value = data }
+  catch { abgleich.value = { stand: null, befunde: [], kritisch: 0 } }
+}
+const befundIcon = (art) => ({
+  sperre_offen: 'gpp_bad', sperre_haengt: 'lock_clock', karte_fehlt: 'link_off',
+  karte_fremd: 'help_outline', fenster_abweichend: 'event_busy',
+}[art] || 'rule')
+
 async function loadAbteilungen() {
   try { const { data } = await api.get('/api/abteilungen/'); abteilungen.value = data }
   catch { abteilungen.value = [] }
@@ -1554,6 +1604,7 @@ const methodeIcon = (m) => ({
 
 async function reloadAll() {
   await Promise.all([loadStatus(), loadSchloesser(), loadChips(), loadGruppen()])
+  await loadAbgleich()          // braucht status.darf_verwalten, läuft deshalb danach
   if (gesamtLogGeladen) await loadGesamtLog()
   if (auswertung.value) await ladeAuswertung()
 }

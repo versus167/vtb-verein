@@ -61,6 +61,21 @@ class TuerBerechtigungRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def list_fuer_abgleich(self) -> list[TuerBerechtigung]:
+        """Alle lebenden Berechtigungen an Schlössern, deren Ist gespiegelt wird.
+
+        Nur aktive Cloud-Schlösser: Ein externes Schloss (eigene Anlage) und ein
+        stillgelegtes liefern keinen Credential-Mirror – ihre Zeilen sähen im
+        Abgleich sonst reihenweise wie „Karte fehlt am Schloss" aus.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                _SELECT + " WHERE b.deleted_at IS NULL AND s.deleted_at IS NULL "
+                          "AND s.aktiv AND s.ttlock_lock_id IS NOT NULL "
+                          "ORDER BY s.name, c.bezeichnung, b.id"
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def find_active_for_chip_schloss(self, chip_id: int, schloss_id: int) -> Optional[TuerBerechtigung]:
         """Aktive (nicht gelöschte) Berechtigung dieses Chips an genau diesem Schloss.
         Spiegelt den partiellen Unique-Index (chip_id, schloss_id) WHERE deleted_at IS NULL."""

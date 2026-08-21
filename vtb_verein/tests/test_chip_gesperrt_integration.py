@@ -132,6 +132,59 @@ class TestMigrationV107:
         assert db.tuer_berechtigungen.get(bestand["ber"].id).version == vorher
 
 
+class TestAbgleichAbfragen:
+    """Soll und Ist für den Abgleich – beide Seiten müssen dieselben Schlösser meinen."""
+
+    def _schloss(self, db, name, *, lock_id, aktiv=True):
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tuer_schloss (ttlock_lock_id, name, aktiv, created_by, "
+                "updated_by) VALUES (%s,%s,%s,'test','test') RETURNING id",
+                (lock_id, f"{_MARKE} {name}", aktiv))
+            return cur.fetchone()['id']
+
+    def test_nur_aktive_cloud_schloesser_zaehlen(self, db, bestand):
+        """Ein externes oder stillgelegtes Schloss liefert keinen Mirror – seine Zeilen
+        sähen sonst reihenweise wie „Karte fehlt am Schloss" aus."""
+        from app.models.schliessanlage import TuerBerechtigung
+        for name, lock_id, aktiv in (("Tor", None, True), ("Alt", 7312, False)):
+            sid = self._schloss(db, name, lock_id=lock_id, aktiv=aktiv)
+            db.tuer_berechtigungen.create(
+                TuerBerechtigung(chip_id=bestand["chip"].id, schloss_id=sid,
+                                 ttlock_card_id=4712, sync_status='aktiv'), "test")
+
+        schloesser = {b.schloss_id for b in db.tuer_berechtigungen.list_fuer_abgleich()}
+        assert schloesser == {bestand["schloss_id"]}      # von dreien bleibt eines
+
+    def test_ist_liefert_nur_ic_karten(self, db, bestand):
+        from app.models.schliessanlage import CRED_IC, CRED_PASSCODE, TuerCredential
+        db.tuer_credentials.replace_for_schloss_typ(bestand["schloss_id"], CRED_IC, [
+            TuerCredential(schloss_id=bestand["schloss_id"], typ=CRED_IC,
+                           ttlock_credential_id=4711, detail="CHIPSPERR-KN1",
+                           gesehen_am="2026-08-21T06:00:00+00:00")])
+        db.tuer_credentials.replace_for_schloss_typ(bestand["schloss_id"], CRED_PASSCODE, [
+            TuerCredential(schloss_id=bestand["schloss_id"], typ=CRED_PASSCODE,
+                           ttlock_credential_id=55, name="Putzdienst")])
+        karten = db.tuer_credentials.list_fuer_abgleich(CRED_IC)
+        assert [k.ttlock_credential_id for k in karten] == [4711]
+
+    def test_gesperrter_chip_mit_gueltiger_karte_faellt_auf(self, db, bestand):
+        """Der ganze Weg an echten Daten: Chip verloren, Karte am Schloss unbefristet."""
+        from app.models.schliessanlage import CRED_IC, TuerCredential
+        from app.services import zutritt_abgleich_service as abgleich_service
+        db.tuer_credentials.replace_for_schloss_typ(bestand["schloss_id"], CRED_IC, [
+            TuerCredential(schloss_id=bestand["schloss_id"], typ=CRED_IC,
+                           ttlock_credential_id=4711, detail="CHIPSPERR-KN1",
+                           gesehen_am="2026-08-21T06:00:00+00:00")])
+        _sperren(db, bestand["chip"])
+
+        ergebnis = abgleich_service.abgleich(db)
+
+        eigene = [b for b in ergebnis['befunde'] if b['schloss_id'] == bestand["schloss_id"]]
+        assert [b['art'] for b in eigene] == [abgleich_service.BEFUND_SPERRE_OFFEN]
+        assert ergebnis['stand'] is not None
+
+
 class TestSelfService:
     def test_gesperrter_chip_oeffnet_im_self_service_nicht(self, db, bestand):
         """`user_has_valid_for_schloss` trägt die Entscheidung „darf per App öffnen"."""

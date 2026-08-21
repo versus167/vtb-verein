@@ -7,6 +7,10 @@ Berechtigungen), den read-only Credential-Mirror (Fingerprints/Passcodes/eKeys/I
 neue Zutrittslogs aus der TTLock-Cloud. Read-only gegenüber den Schlössern; schreibt nur in
 die eigene DB. Idempotent (Dedupe über recordId/Kartennummer), daher gefahrlos wiederholbar.
 
+Danach hält der Lauf das frische Ist gegen unser Soll (Soll-Ist-Abgleich der IC-Karten)
+und meldet Admins, wenn ein gesperrter oder verlorener Chip am Schloss noch öffnet.
+Der Abgleich selbst schreibt nichts an die Schlösser – er berichtet nur.
+
 TTLock-Zugangsdaten kommen aus der Env/.env (TTLOCK_CLIENT_ID/SECRET/USERNAME/PASSWORD),
 die DB aus VTB_DATABASE_URL.
 
@@ -32,6 +36,7 @@ from app.db.datastore import VereinsDB
 from app.services.zutritt_service import (
     ZutrittService, ZutrittNichtKonfiguriertError, notify_alarme,
 )
+from app.services import zutritt_abgleich_service
 
 
 def main() -> int:
@@ -70,6 +75,13 @@ def main() -> int:
             res = svc.credentials_sync()
             log(f"✓ Credential-Mirror: {res['credentials']} Credentials gespiegelt "
                 f"(Fingerprints/Passcodes/eKeys/IC).")
+            # Das Ist ist jetzt frisch – erst hier ist der Soll-Ist-Vergleich eine Aussage.
+            res = zutritt_abgleich_service.abgleich(db)
+            log(f"✓ Abgleich: {len(res['befunde'])} Befund(e), "
+                f"davon {res['kritisch']} sicherheitsrelevant.")
+            gemeldet = zutritt_abgleich_service.melde_sperrluecken(db)
+            if gemeldet:
+                log(f"⚠ Gesperrte Chips öffnen weiter → {gemeldet} Admin(s) benachrichtigt.")
         if not args.inventar_only:
             res = svc.logs_sync(backfill_days=args.backfill_days)
             log(f"✓ Log-Sync: {res['neu']} neue Zutrittslog-Einträge.")
