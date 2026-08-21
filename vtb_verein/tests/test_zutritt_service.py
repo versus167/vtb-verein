@@ -1285,7 +1285,7 @@ class TestGruppenAbgleich:
         svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
         res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
         assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "gerichtet": 0,
-                       "fehler": []}
+                       "bestaetigt": 0, "fehler": []}
         assert len(fake.added) == 2
 
     def test_offline_schloss_blockiert_die_uebrigen_nicht(self):
@@ -1328,7 +1328,7 @@ class TestGruppenAbgleich:
         fake.add_should_fail = False
         res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
         assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "gerichtet": 0,
-                       "fehler": []}
+                       "bestaetigt": 0, "fehler": []}
         assert svc.berechtigung_repo.list_for_chip(1)[0].sync_status == "fehler"
 
     def test_absage_des_schlosses_wird_als_dauerhaft_gemeldet(self):
@@ -1366,11 +1366,41 @@ class TestGruppenAbgleich:
         svc, fake = _gruppen_service()
         svc.chip_anlernen(chip_id=1, schloss_id=1,
                           gueltig_bis="2026-12-31T23:00:00+00:00", actor="admin")
+        fake.cards_by_lock[3001][0]["endDate"] = 0        # am Schloss auf unbefristet
         fake.changed.clear()
 
-        svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
 
         assert fake.changed == [(3001, 9001, 0, _iso_to_ms("2026-12-31T23:00:00+00:00"))]
+        assert res["gerichtet"] == 1 and res["bestaetigt"] == 0
+
+    def test_abgleichen_schreibt_nur_wo_es_abweicht(self):
+        """Jeder Schreibvorgang geht übers Gateway bis ans Schloss. Was dort schon
+        stimmt, wird gelesen und bestätigt – nicht neu geschrieben."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        fake.cards_by_lock[3002][0]["endDate"] = 1798758000000   # nur Tür 2 verstellt
+        fake.changed.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert [c[0] for c in fake.changed] == [3002]
+        assert res["gerichtet"] == 1 and res["bestaetigt"] == 1
+
+    def test_abgleichen_bestaetigt_eine_schon_gesperrte_karte(self):
+        """Bei gesperrtem Chip zählt nur, dass das Fenster in der Vergangenheit liegt –
+        `sperr_fenster` rechnet sonst bei jedem Klick neue Zeitpunkte aus."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.chip_repo.get(1).status = "verloren"
+        svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+        fake.changed.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert fake.changed == [] and res["bestaetigt"] == 2
 
     def test_gruppen_abgleich_fasst_die_karten_nicht_an(self):
         """Über alle Chips einer Gruppe wären das hunderte Gateway-Aufrufe für einen
@@ -1388,6 +1418,9 @@ class TestGruppenAbgleich:
         svc, fake = _gruppen_service()
         g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
         svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        for karten in fake.cards_by_lock.values():
+            for k in karten:
+                k["endDate"] = 1798758000000      # überall verstellt → muss geschrieben werden
         fake.change_should_fail = True
         fake.change_errcode = -3003
 
