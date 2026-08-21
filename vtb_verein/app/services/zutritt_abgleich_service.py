@@ -10,8 +10,10 @@ die Karten sagt, die *da* sind; wonach nicht gefragt wird, fällt durch:
     TTLock-App angelernt, oder ein Entziehen ist nicht durchgelaufen),
   * ein Gültigkeitsfenster, das vom hinterlegten abweicht,
   * und der Fall, auf den es wirklich ankommt: ein gesperrter oder verlorener Chip,
-    dessen Karte am Schloss noch ein gültiges Fenster trägt — er öffnet weiter,
-    während er in jeder Liste als gesperrt steht.
+    dessen Karte am Schloss überhaupt noch liegt. Trägt sie ein gültiges Fenster,
+    öffnet er weiter, während er in jeder Liste als gesperrt steht; ist sie
+    abgelaufen, gehört sie trotzdem gelöscht — was nicht am Schloss steht, kann
+    kein Fehler und kein Handgriff in der TTLock-App wieder gültig machen.
 
 Der Vergleich ist reine DB-Arbeit: Das Soll steht in `tuer_berechtigung` (inklusive
 Chip-Status), das Ist im Credential-Mirror `tuer_credential` (typ='ic'), den der Sync
@@ -42,6 +44,7 @@ BEFUND_KARTE_FEHLT = 'karte_fehlt'
 BEFUND_KARTE_FREMD = 'karte_fremd'
 BEFUND_FENSTER = 'fenster_abweichend'
 BEFUND_SPERRE_OFFEN = 'sperre_offen'
+BEFUND_SPERRE_ALT = 'sperre_alt'
 BEFUND_SPERRE_HAENGT = 'sperre_haengt'
 
 # Nur einer davon ist ein Sicherheitsproblem: ein gesperrter Chip, der weiter öffnet.
@@ -152,7 +155,16 @@ def befunde(berechtigungen: list, karten: list, *, jetzt_ms: Optional[int] = Non
                      f'aber weiter – die Karte ist dort '
                      f'{_lesbar(karte.gueltig_von, karte.gueltig_bis)} gültig.'))
         elif soll_gesperrt:
-            continue                     # gesperrt und wirkungslos: genau so soll es sein
+            # Abgelaufen ist besser als gültig, aber nicht das Soll: Bei einem
+            # gesperrten Chip liegt am Schloss gar keine Karte. Kein Alarm – er
+            # öffnet ja nicht –, aber ein Grund, einmal „Abgleichen" zu drücken.
+            out.append(_befund(
+                BEFUND_SPERRE_ALT, schloss_id=b.schloss_id, schloss=schloss,
+                chip_id=b.chip_id, chip=chip, kartennummer=b.kartennummer,
+                veraltet=_veraltet(b.schloss_id),
+                text=f'„{chip}" ist als „{b.chip_status}" markiert und öffnet „{schloss}" '
+                     f'nicht mehr – die Karte liegt dort aber noch (abgelaufen) und '
+                     f'gehört gelöscht.'))
         elif ist_gesperrt:
             out.append(_befund(
                 BEFUND_SPERRE_HAENGT, schloss_id=b.schloss_id, schloss=schloss,

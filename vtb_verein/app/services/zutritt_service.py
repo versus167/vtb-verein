@@ -81,7 +81,7 @@ NICHT_UNTERSTUETZT_ERRCODES = frozenset({-4043})
 # oder ein früherer, halb durchgelaufener Versuch hat sie bereits entfernt. Das ist
 # kein Ausfall, sondern eine Aussage über den Ist-Zustand: Die Karte liegt dort
 # nicht. Fürs Sperren und Entziehen ist damit genau das Ziel erreicht; nur beim
-# Wieder-Aktivieren muss sie zurück aufs Schloss (siehe _karte_nicht_am_schloss).
+# Wieder-Aktivieren muss sie zurück aufs Schloss (siehe _karte_neu_anlernen).
 KARTE_UNBEKANNT_ERRCODES = frozenset({-1021})
 
 # Das Gateway hat den Auftrag nicht ans Schloss gebracht. −3003 sagt das direkt;
@@ -129,9 +129,9 @@ def karte_fenster(card: dict) -> tuple[int, int]:
 def karte_wirkungslos(card: dict, jetzt_ms: Optional[int] = None) -> bool:
     """Liegt das Gültigkeitsfenster dieser Karte vollständig in der Vergangenheit?
 
-    Das ist die Form, die `sperr_fenster` erzeugt – und die einzige, an der sich ein
-    „ist schon gesperrt" ablesen lässt. Ein Vergleich auf Gleichheit ginge nicht:
-    `sperr_fenster` rechnet bei jedem Aufruf neue Zeitpunkte aus.
+    Gesperrt wird heute durch Löschen der Karte. Vorher geschah es über ein Fenster in
+    der Vergangenheit – solche Karten liegen an den Schlössern noch, und der Abgleich
+    muss sie erkennen: Sie öffnen nichts (kein Alarm), gehören aber trotzdem entfernt.
     """
     start, ende = card.get('startDate') or 0, card.get('endDate') or 0
     jetzt = jetzt_ms if jetzt_ms is not None else int(
@@ -166,19 +166,6 @@ def _cloud_schloss(schloss) -> None:
         raise ValueError(
             f"'{schloss.name}' ist ein externes Schloss (nicht in der TTLock-Cloud) – "
             f"Fernöffnen/-verriegeln und Anlernen gibt es dort nicht")
-
-
-def sperr_fenster(jetzt: Optional[datetime] = None) -> tuple[int, int]:
-    """Gültigkeitsfenster, das eine IC-Karte sofort wirkungslos macht.
-
-    TTLock kennt für IC-Karten kein „einfrieren", nur einen Gültigkeitszeitraum.
-    Ein Fenster, das komplett in der Vergangenheit liegt, ist die eindeutige Form
-    von „gilt nicht mehr" — anders als endDate=0, das bei TTLock *unbefristet*
-    bedeutet. Zwei getrennte Zeitpunkte, damit nirgends Ende <= Beginn steht.
-    """
-    jetzt = jetzt or datetime.now(timezone.utc)
-    ende = int(jetzt.timestamp() * 1000) - 60_000        # vor einer Minute abgelaufen
-    return ende - 60_000, ende
 
 
 def build_alarm_digest(alarme: list[dict]) -> Optional[tuple[str, str]]:
@@ -403,34 +390,37 @@ class ZutrittService:
                 return card
         return None
 
-    def _karte_nicht_am_schloss(self, ber: TuerBerechtigung, chip, schloss,
-                                *, wiederherstellen: bool, actor: str) -> bool:
-        """Aufräumen, wenn die Cloud die IC-Karte an diesem Schloss nicht kennt (−1021).
+    def _karte_nach_nummer(self, schloss, kartennummer: Optional[str]) -> Optional[dict]:
+        """Die Karte mit DIESER Nummer am Schloss suchen (None = keine).
 
-        Die lokale Zeile behauptet eine cardId, die es dort nicht gibt. Die wird
-        gelöscht, damit die Zeile ehrlich „nicht am Schloss" sagt (`pending`) – und
-        damit ein erneutes Anlernen sie repariert, statt an derselben toten cardId
-        weiterzuarbeiten.
+        Für den Fall ohne `ttlock_card_id`: Unter welcher Kennung die Cloud sie führt,
+        wissen wir dann nicht – die Nummer steht aber auf dem Chip. So fällt auch eine
+        Karte auf, die jemand per BLE an unserer App vorbei angelernt hat.
+        """
+        nummer = (kartennummer or '').strip()
+        if not nummer:
+            return None
+        for card in self._fetch_all_pages(self._client().ic_cards, schloss.ttlock_lock_id):
+            if str(card.get('cardNumber') or '').strip() == nummer:
+                return card
+        return None
 
-        Beim Sperren ist damit alles erledigt: Eine Karte, die es nicht gibt, öffnet
-        auch nichts. Beim Wieder-Aktivieren dagegen wäre die Tür stumm – dort muss
-        die Karte mit ihrer hinterlegten Gültigkeit zurück aufs Schloss.
+    def _karte_neu_anlernen(self, ber: TuerBerechtigung, chip, schloss,
+                            *, actor: str) -> None:
+        """Die Karte eines AKTIVEN Chips ersetzen, die es am Schloss nicht (mehr) gibt.
 
-        Returns:
-            True, wenn die Karte danach (wieder) am Schloss liegt
+        Die lokale Zeile behauptet eine cardId, die die Cloud dort nicht kennt (−1021).
+        Die wird verworfen – sonst arbeitete jeder weitere Versuch an derselben toten
+        Kennung – und die Karte mit ihrer hinterlegten Gültigkeit neu angelernt. Ohne
+        das bliebe die Tür stumm, während der Chip in der Liste als aktiv steht.
         """
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
                                         sync_status=SYNC_PENDING, sync_fehler=None,
                                         by=actor)
-        if not wiederherstellen:
-            logger.info("Chip %s: Karte lag an Schloss %s nicht mehr vor – "
-                        "nichts zu sperren.", chip.kartennummer, schloss.name)
-            return False
         ber.ttlock_card_id = None
         self._karte_aufspielen(ber, chip, schloss, actor)
         logger.info("Chip %s: Karte an Schloss %s fehlte und wurde neu angelernt.",
                     chip.kartennummer, schloss.name)
-        return True
 
     def berechtigung_aendern(self, *, berechtigung_id: int,
                              gueltig_von: Optional[str] = None,
@@ -440,24 +430,26 @@ class ZutrittService:
         ber = self.berechtigung_repo.get(berechtigung_id)
         if not ber:
             raise ValueError("Berechtigung nicht gefunden")
-        if not ber.ttlock_card_id:
-            raise ValueError("Berechtigung ist noch nicht mit der Cloud synchronisiert")
         schloss = self.schloss_repo.get(ber.schloss_id)
         if not schloss:
             raise ValueError("Schloss nicht gefunden")
         chip = self.chip_repo.get(ber.chip_id)
         if not chip:
             raise ValueError("Chip nicht gefunden")
+        # Der Chip-Status zuerst: Bei einem gesperrten Chip liegt am Schloss gar keine
+        # Karte mehr, die Gültigkeit ist dann reine Vormerkung fürs Wiederaktivieren.
         if chip.status != CHIP_AKTIV:
             # Ein gesperrter/verlorener Chip darf hier nicht durch die Hintertür
             # zurück ans Schloss: `changePeriod` mit dem neuen Fenster machte die
             # Karte dort wieder gültig. Die Gültigkeit wird nur lokal gepflegt und
             # gilt erst, wenn der Chip wieder aktiv gesetzt wird.
             logger.info("Berechtigung %s: Chip ist '%s' – neue Gültigkeit nur lokal "
-                        "gemerkt, das Schloss bleibt gesperrt.", ber.id, chip.status)
+                        "gemerkt, am Schloss liegt keine Karte.", ber.id, chip.status)
             return self.berechtigung_repo.update_period(
                 ber.id, gueltig_von=gueltig_von, gueltig_bis=gueltig_bis, by=actor,
                 sync_status=SYNC_GESPERRT)
+        if not ber.ttlock_card_id:
+            raise ValueError("Berechtigung ist noch nicht mit der Cloud synchronisiert")
         try:
             self._client().ic_card_change_period(
                 schloss.ttlock_lock_id, ber.ttlock_card_id,
@@ -475,8 +467,7 @@ class ZutrittService:
             # kommt hier nicht an; der ist oben schon abgebogen.)
             ber = self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
                                                        gueltig_bis=gueltig_bis, by=actor)
-            self._karte_nicht_am_schloss(ber, chip, schloss,
-                                         wiederherstellen=True, actor=actor)
+            self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
             return self.berechtigung_repo.get(ber.id)
         logger.info("Berechtigung %s: Gültigkeit geändert (%s–%s).",
                     berechtigung_id, gueltig_von or "sofort", gueltig_bis or "unbefristet")
@@ -525,116 +516,135 @@ class ZutrittService:
     # --- Chip-weite Aktionen (alle Schlösser eines Chips auf einmal) -------
     def _karte_richten(self, ber: TuerBerechtigung, chip, schloss, *,
                        gesperrt: bool, actor: str, pruefen: bool = False) -> str:
-        """Das Fenster EINER Karte am Schloss auf das Soll bringen.
+        """Die Karte EINER Berechtigung am Schloss auf das Soll bringen.
 
-        Das Soll ist bei einem gesperrten Chip das abgelaufene Fenster
-        (`sperr_fenster`), sonst die hinterlegte Gültigkeit. Der Aufruf ist
-        idempotent — er schreibt das Soll, egal was dort vorher stand — und damit
-        genau die Reparatur, die ein Befund des Abgleichs verlangt.
+        Das Soll hängt am Chip-Status und ist bewusst schlicht: Ein gesperrter oder
+        verlorener Chip hat am Schloss GAR KEINE Karte, ein aktiver eine mit der
+        hinterlegten Gültigkeit. Beides kostet denselben einen Schreibvorgang – und
+        was nicht am Schloss steht, kann durch keinen Fehler und keinen Handgriff in
+        der TTLock-App wieder gültig werden.
 
-        Mit `pruefen` wird vorher nachgesehen, was dort steht, und nur bei einer
-        Abweichung geschrieben. Das ist der Unterschied zwischen billig und teuer:
-        Die Kartenliste beantwortet die Cloud selbst, ein `changePeriod` dagegen muss
-        übers Gateway bis ans Schloss — langsam, und an einem offline Gateway
-        scheitert es. Beim Sperren lohnt die Vorprüfung nicht (dort ändert sich das
-        Fenster ohnehin), beim Nachfassen fast immer.
+        Mit `pruefen` wird vorher nachgesehen und nur bei einer Abweichung geschrieben:
+        Die Kartenliste beantwortet die Cloud aus ihrem eigenen Bestand, ein Schreiben
+        muss dagegen übers Gateway bis ans Schloss.
 
         Returns:
-            'geschrieben' – das Soll wurde ans Schloss geschickt,
-            'bestaetigt'  – es stand dort schon (nur mit `pruefen`),
-            'ohne_karte'  – dort liegt keine Karte und (gesperrter Chip) soll auch keine hin.
+            'geschrieben' – am Schloss wurde etwas geändert,
+            'bestaetigt'  – dort stand das Soll schon.
         Raises:
             TTLockError, wenn das Schloss nicht erreicht wurde.
         """
-        ziel_sync = SYNC_GESPERRT if gesperrt else SYNC_AKTIV
-        von, bis = (sperr_fenster() if gesperrt
-                    else (_iso_to_ms(ber.gueltig_von), _iso_to_ms(ber.gueltig_bis)))
-        if pruefen:
-            schon_gut = self._karte_pruefen(ber, chip, schloss, gesperrt=gesperrt,
-                                            soll=(von, bis), ziel_sync=ziel_sync,
-                                            actor=actor)
-            if schon_gut is not None:
-                return schon_gut
+        if gesperrt:
+            return self._karte_entfernen(ber, chip, schloss, actor=actor, pruefen=pruefen)
+        return self._karte_gueltig_machen(ber, chip, schloss, actor=actor, pruefen=pruefen)
+
+    def _karte_entfernen(self, ber: TuerBerechtigung, chip, schloss, *,
+                         actor: str, pruefen: bool) -> str:
+        """Die Karte eines gesperrten/verlorenen Chips am Schloss löschen.
+
+        Die Berechtigung selbst bleibt bestehen — sie ist das Soll für den Tag, an dem
+        der Chip wieder aktiv gesetzt wird; dann wird die Karte neu angelernt. Ohne
+        `ttlock_card_id` gibt es nichts zu löschen; mit `pruefen` wird zusätzlich über
+        die Kartennummer nachgesehen, ob dort doch eine Karte liegt (an unserer App
+        vorbei per BLE angelernt, oder eine cardId aus einer früheren Runde).
+        """
+        card_id = ber.ttlock_card_id
+        if not card_id:
+            if not pruefen:
+                return 'bestaetigt'
+            try:
+                card = self._karte_nach_nummer(schloss, chip.kartennummer)
+            except TTLockError:
+                return 'bestaetigt'        # Liste nicht erreichbar → nichts zu greifen
+            if card is None:
+                return 'bestaetigt'
+            card_id = card.get('cardId')
+            logger.info("Chip %s: unerwartete Karte an Schloss %s gefunden – wird "
+                        "entfernt.", chip.kartennummer, schloss.name)
         try:
-            self._client().ic_card_change_period(
-                schloss.ttlock_lock_id, ber.ttlock_card_id, von, bis)
+            self._client().ic_card_delete(schloss.ttlock_lock_id, card_id)
         except TTLockError as e:
             weg = karte_fehlt(e)
             if not weg and unbestimmt(e):
-                # Sammelfehler: nachschlagen statt raten. Die Kartenliste sagt, ob
-                # die Karte dort überhaupt geführt wird – und mit welchem Fenster.
+                # Sammelfehler: Die Kartenliste sagt, ob sie dort noch geführt wird.
                 try:
-                    card = self._karte_nachschlagen(schloss, ber.ttlock_card_id)
+                    weg = self._karte_nachschlagen(schloss, card_id) is None
                 except TTLockError:
-                    card = {}              # Liste ebenfalls nicht erreichbar → unklar
-                if card is None:
-                    weg = True
-                elif gesperrt and karte_wirkungslos(card):
-                    # Ziel schon erreicht: Das Fenster liegt komplett in der
-                    # Vergangenheit, die Karte öffnet dort nichts mehr. Ein früherer
-                    # Versuch ist also durchgekommen.
-                    self.berechtigung_repo.set_sync(
-                        ber.id, ttlock_card_id=ber.ttlock_card_id,
-                        sync_status=ziel_sync, sync_fehler=None, by=actor)
-                    logger.info("Chip %s an Schloss %s war dort schon gesperrt.",
-                                chip.kartennummer, schloss.name)
-                    return 'bestaetigt'
+                    weg = False            # Liste ebenfalls nicht erreichbar → unklar
             if not weg:
                 self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                                 sync_status=SYNC_FEHLER,
                                                 sync_fehler=fehlertext(e), by=actor)
                 raise
-            # Die Karte liegt an diesem Schloss nicht vor. Beim Sperren ist damit
-            # erreicht, worum es geht – ohne Karte öffnet dort nichts mehr. Beim
-            # aktiven Chip muss sie zurück aufs Schloss, sonst stünde er als „aktiv"
-            # in der Liste und die Tür bliebe stumm.
-            return ('geschrieben' if self._karte_nicht_am_schloss(
-                ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)
-                else 'ohne_karte')
-        self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                        sync_status=ziel_sync, sync_fehler=None, by=actor)
+            logger.info("Chip %s: Karte lag an Schloss %s nicht mehr vor – "
+                        "nichts zu löschen.", chip.kartennummer, schloss.name)
+            self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
+                                            sync_status=SYNC_GESPERRT, sync_fehler=None,
+                                            by=actor)
+            return 'bestaetigt'
+        self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
+                                        sync_status=SYNC_GESPERRT, sync_fehler=None,
+                                        by=actor)
+        logger.info("Chip %s: Karte an Schloss %s gelöscht (Chip ist gesperrt).",
+                    chip.kartennummer, schloss.name)
         return 'geschrieben'
 
-    def _karte_pruefen(self, ber: TuerBerechtigung, chip, schloss, *, gesperrt: bool,
-                       soll: tuple[int, int], ziel_sync: str, actor: str) -> Optional[str]:
-        """Nachsehen, was am Schloss steht – schreiben soll nur, wer muss.
-
-        Die Kartenliste beantwortet die Cloud aus ihrem eigenen Bestand; ein
-        `changePeriod` muss dagegen übers Gateway bis ans Schloss. Ein Lesevorgang
-        spart also im Regelfall (es stimmt ja meistens) einen langsamen Schreibvorgang,
-        der an einem offline Gateway ohnehin scheitern würde.
-
-        Bei gesperrtem Chip zählt nicht das exakte Fenster, sondern nur, dass es
-        vollständig in der Vergangenheit liegt: `sperr_fenster` rechnet bei jedem
-        Aufruf neue Zeitpunkte aus, ein Vergleich auf Gleichheit ginge immer daneben.
-
-        Returns:
-            None, wenn geschrieben werden muss; sonst das fertige Ergebnis.
-        """
+    def _karte_gueltig_machen(self, ber: TuerBerechtigung, chip, schloss, *,
+                              actor: str, pruefen: bool) -> str:
+        """Die Karte eines aktiven Chips am Schloss auf die hinterlegte Gültigkeit
+        bringen — und sie anlernen, wenn sie dort nicht liegt (etwa weil der Chip
+        vorher gesperrt war)."""
+        soll = (_iso_to_ms(ber.gueltig_von), _iso_to_ms(ber.gueltig_bis))
+        if not ber.ttlock_card_id:
+            self._karte_aufspielen(ber, chip, schloss, actor)
+            logger.info("Chip %s: Karte an Schloss %s (wieder) angelernt.",
+                        chip.kartennummer, schloss.name)
+            return 'geschrieben'
+        if pruefen:
+            try:
+                card = self._karte_nachschlagen(schloss, ber.ttlock_card_id)
+            except TTLockError:
+                card = {}                  # nicht erreichbar → schreiben statt raten
+            if card is None:
+                self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
+                return 'geschrieben'
+            if card and fenster_passt(soll, karte_fenster(card)):
+                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                sync_status=SYNC_AKTIV, sync_fehler=None,
+                                                by=actor)
+                return 'bestaetigt'
         try:
-            card = self._karte_nachschlagen(schloss, ber.ttlock_card_id)
-        except TTLockError:
-            return None            # Liste nicht erreichbar → schreiben statt raten
-        if card is None:
-            # Dort liegt keine Karte. Beim gesperrten Chip ist damit alles erreicht,
-            # beim aktiven muss sie zurück aufs Schloss.
-            return ('geschrieben' if self._karte_nicht_am_schloss(
-                ber, chip, schloss, wiederherstellen=not gesperrt, actor=actor)
-                else 'ohne_karte')
-        if not (karte_wirkungslos(card) if gesperrt
-                else fenster_passt(soll, karte_fenster(card))):
-            return None
+            self._client().ic_card_change_period(
+                schloss.ttlock_lock_id, ber.ttlock_card_id, *soll)
+        except TTLockError as e:
+            weg = karte_fehlt(e)
+            if not weg and unbestimmt(e):
+                try:
+                    weg = self._karte_nachschlagen(schloss, ber.ttlock_card_id) is None
+                except TTLockError:
+                    weg = False
+            if not weg:
+                self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
+                                                sync_status=SYNC_FEHLER,
+                                                sync_fehler=fehlertext(e), by=actor)
+                raise
+            # Die Karte liegt dort nicht mehr – für einen aktiven Chip wäre die Tür
+            # sonst stumm, also zurück aufs Schloss damit.
+            self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
+            return 'geschrieben'
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
-                                        sync_status=ziel_sync, sync_fehler=None, by=actor)
-        return 'bestaetigt'
+                                        sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
+        return 'geschrieben'
 
     def chip_status_setzen(self, *, chip_id: int, status: str, actor: str = "SYSTEM") -> dict:
         """Setzt den Chip-Status und zieht ihn an ALLEN Schlössern des Chips nach.
 
-        `aktiv` stellt die hinterlegte Gültigkeit jeder Berechtigung wieder her,
-        jeder andere Status setzt sie auf ein abgelaufenes Fenster (s. `sperr_fenster`).
-        Die lokal gespeicherte Gültigkeit bleibt dabei unangetastet — nur so lässt
-        sich beim Entsperren wiederherstellen, was ursprünglich gelten sollte.
+        Jeder Status außer `aktiv` LÖSCHT die Karte an allen Schlössern des Chips;
+        `aktiv` lernt sie dort wieder an, mit der hinterlegten Gültigkeit. Beides ist
+        derselbe eine Schreibvorgang je Tür — und eine Karte, die am Schloss nicht
+        mehr existiert, kann durch keinen Fehler und keinen Handgriff in der
+        TTLock-App wieder gültig werden. Die Berechtigung selbst bleibt bestehen: Sie
+        ist das Soll für den Tag, an dem der Chip wieder auftaucht.
 
         Der Status wird erst gespeichert, wenn alle Schlösser erreicht wurden: Ein
         Chip, der als „gesperrt" in der Liste steht, aber noch an einer Tür öffnet,
@@ -650,14 +660,14 @@ class ZutrittService:
         geaendert = 0
         ohne_karte = 0
         for ber in self.berechtigung_repo.list_for_chip(chip_id):
-            if not ber.ttlock_card_id:
-                continue          # nie angelernt → am Schloss gibt es nichts zu ändern
+            if not ber.ttlock_card_id and gesperrt:
+                continue          # dort liegt keine Karte – genau das ist beim Sperren das Ziel
             schloss = self.schloss_repo.get(ber.schloss_id)
             if not schloss:
                 continue
             try:
                 if self._karte_richten(ber, chip, schloss, gesperrt=gesperrt,
-                                       actor=actor) == 'ohne_karte':
+                                       actor=actor) == 'bestaetigt':
                     ohne_karte += 1
                 else:
                     geaendert += 1
@@ -808,8 +818,10 @@ class ZutrittService:
         gerichtet = bestaetigt = 0
         gesperrt = chip.status != CHIP_AKTIV
         for ber in (self.berechtigung_repo.list_for_chip(chip_id) if karten_richten else []):
-            if not ber.ttlock_card_id:
+            if not ber.ttlock_card_id and not gesperrt:
                 continue          # nie angekommen – oben schon versucht, nicht doppelt
+            # Beim gesperrten Chip wird auch OHNE cardId nachgesehen: Über die
+            # Kartennummer fällt auf, was jemand an unserer App vorbei angelernt hat.
             schloss = self.schloss_repo.get(ber.schloss_id)
             if not schloss:
                 continue

@@ -754,9 +754,9 @@
             dense class="vtb-warnung" rounded>
             <template #avatar><q-icon name="lock" /></template>
             Der Chip ist als „{{ chipDetail.chip.status }}" markiert und öffnet keine der
-            Türen unten. Die Karten liegen weiter an den Schlössern, dort aber mit
-            abgelaufener Gültigkeit. Wird der Chip wieder auf „aktiv" gesetzt, gilt überall
-            die hinterlegte Gültigkeit erneut – neu anlernen muss man ihn nicht.
+            Türen unten: Seine Karten sind an den Schlössern gelöscht. Die Zuteilung bleibt
+            bestehen – wird der Chip wieder auf „aktiv" gesetzt, werden die Karten dort
+            automatisch neu angelernt, mit der hinterlegten Gültigkeit.
           </q-banner>
 
           <div class="row items-center q-mt-md">
@@ -942,13 +942,13 @@
           <q-input v-model="chipForm.aufbewahrungsort" label="Standardstandort (wenn nicht ausgegeben)"
             outlined dense />
           <!-- Der Status wirkt an den Türen: alles außer „aktiv" setzt die Karten des
-               Chips an allen Schlössern auf abgelaufen, „aktiv" stellt sie wieder her.
+               Chips an allen Schlössern, „aktiv" lernt sie dort wieder an.
                Das braucht das Gateway – schlägt es fehl, bleibt der alte Status stehen. -->
           <q-select v-model="chipForm.status" :options="['aktiv','gesperrt','verloren']" label="Status"
             outlined dense
             :hint="chipForm.status === 'aktiv'
-              ? 'Karte gilt an allen zugeteilten Schlössern'
-              : 'Sperrt die Karte an allen Schlössern (über das Gateway)'" />
+              ? 'Karte wird an allen zugeteilten Schlössern angelernt'
+              : 'Löscht die Karte an allen Schlössern (über das Gateway)'" />
           <div v-if="chipError" class="text-negative text-caption">{{ chipError }}</div>
         </q-card-section>
         <q-card-actions align="right" class="q-px-md q-pb-md">
@@ -1392,10 +1392,10 @@ const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p 
 const akkuLow = (p) => p != null && p <= 20
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3',
   gesperrt: 'orange-3', 'öffnet noch!': 'red', 'öffnet nicht': 'orange-3',
-  'Fenster weicht ab': 'orange-3' }[s] || 'grey-3')
+  'Karte noch da': 'orange-3', 'Fenster weicht ab': 'orange-3' }[s] || 'grey-3')
 // Was diese Zeile AN DER TÜR bedeutet – nicht der rohe Sync-Status. Der beantwortet
 // nur „ist der Cloud-Write durch?" und stünde sonst auch bei einem verlorenen Chip
-// auf „aktiv", obwohl dessen Karte am Schloss ein abgelaufenes Fenster trägt.
+// auf „aktiv", obwohl dessen Karte am Schloss längst gelöscht ist.
 // Reihenfolge = Dringlichkeit: ein Fehler steht über allem, danach zählt, ob die
 // Karte überhaupt am Schloss liegt (keine cardId = nie angekommen oder −1021
 // verworfen), dann der Chip-Status.
@@ -1403,23 +1403,25 @@ const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3'
 // dort stehen sollte. „gesperrt" ohne Befund heißt deshalb „gesperrt, soweit wir
 // wissen" – sagt der Spiegel etwas anderes, gewinnt der Spiegel.
 const BEFUND_STATUS = {
-  sperre_offen: 'öffnet noch!', sperre_haengt: 'öffnet nicht',
+  sperre_offen: 'öffnet noch!', sperre_alt: 'Karte noch da', sperre_haengt: 'öffnet nicht',
   karte_fehlt: 'nicht am Schloss', fenster_abweichend: 'Fenster weicht ab',
 }
 const berStatus = (b) => {
   const befund = befundZurTuer(b)
   if (befund && !befund.veraltet && BEFUND_STATUS[befund.art]) return BEFUND_STATUS[befund.art]
+  // Reihenfolge: Bei gesperrtem Chip IST die fehlende Karte der Soll-Zustand – „nicht
+  // am Schloss" läse sich dort wie ein Mangel.
   return b.sync_status === 'fehler' ? 'fehler'
-    : !b.ttlock_card_id ? 'nicht am Schloss'
-      : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
+    : b.chip_status && b.chip_status !== 'aktiv' ? 'gesperrt'
+      : !b.ttlock_card_id ? 'nicht am Schloss'
         : b.sync_status
 }
 const berHinweis = (b) => {
   const befund = befundZurTuer(b)
   if (befund && !befund.veraltet) return befund.text
   return {
-    gesperrt: `Chip ist „${b.chip_status}" – die Karte liegt am Schloss, ist dort aber `
-      + 'auf abgelaufen gesetzt und öffnet nicht.',
+    gesperrt: `Chip ist „${b.chip_status}" – die Karte ist an diesem Schloss gelöscht. `
+      + 'Beim Aktivieren wird sie automatisch neu angelernt.',
     'nicht am Schloss': 'Die Karte ist an diesem Schloss nicht (mehr) hinterlegt.',
   }[berStatus(b)] || ''
 }
@@ -1531,8 +1533,8 @@ async function loadAbgleich() {
   catch { abgleich.value = { stand: null, befunde: [], kritisch: 0 } }
 }
 const befundIcon = (art) => ({
-  sperre_offen: 'gpp_bad', sperre_haengt: 'lock_clock', karte_fehlt: 'link_off',
-  karte_fremd: 'help_outline', fenster_abweichend: 'event_busy',
+  sperre_offen: 'gpp_bad', sperre_alt: 'delete_sweep', sperre_haengt: 'lock_clock',
+  karte_fehlt: 'link_off', karte_fremd: 'help_outline', fenster_abweichend: 'event_busy',
 }[art] || 'rule')
 // Befunde nachschlagbar machen: an der Tür (Chip+Schloss) und je Schloss. Ohne das
 // stünde in der Türliste weiter unser Soll, während die Meldung das Gegenteil sagt.
