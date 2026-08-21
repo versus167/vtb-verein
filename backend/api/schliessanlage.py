@@ -915,14 +915,18 @@ def gruppe_chip_entfernen(gruppe_id: int, chip_id: int, request: Request,
 
 @router.post("/chips/{chip_id}/gruppen-abgleich")
 def chip_gruppen_abgleich(chip_id: int, request: Request, user: CurrentUser, db: DB):
-    """Nachfassen: die Gruppen-Türen eines Chips erneut abgleichen.
+    """Nachfassen: Türen UND Karten eines Chips erneut mit den Schlössern abgleichen.
 
-    Für den Fall, dass beim ersten Versuch ein Schloss offline war – der Abgleich
-    ist zustandsbasiert, ein zweiter Lauf holt genau das Fehlende nach."""
+    Für den Fall, dass beim ersten Versuch ein Schloss offline war – der Abgleich ist
+    zustandsbasiert, ein zweiter Lauf holt genau das Fehlende nach. `karten_richten`
+    schreibt zusätzlich an jeder Tür das Soll-Fenster: Das ist der Knopf, den man
+    drückt, wenn der Soll-Ist-Abgleich eine Abweichung meldet (etwa eine Sperre, die
+    nicht bis zum Schloss durchkam)."""
     _require(user, Permission.SCHLIESSANLAGE_VERWALTEN, "Schließanlage verwalten")
     ergebnis = _abgleich_ausfuehren(db.zutritt.chip_gruppen_abgleichen, chip_id=chip_id,
-                                    erteilt_von=user.id, actor=user.username)
-    _log_gruppe(db, request, user, None, f"Chip {chip_id}: Gruppen abgeglichen")
+                                    erteilt_von=user.id, karten_richten=True,
+                                    actor=user.username)
+    _log_gruppe(db, request, user, None, f"Chip {chip_id}: Türen und Karten abgeglichen")
     return ergebnis
 
 

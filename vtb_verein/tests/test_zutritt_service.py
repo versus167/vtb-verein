@@ -1284,7 +1284,8 @@ class TestGruppenAbgleich:
         g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
         svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
         res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
-        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "fehler": []}
+        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "gerichtet": 0,
+                       "fehler": []}
         assert len(fake.added) == 2
 
     def test_offline_schloss_blockiert_die_uebrigen_nicht(self):
@@ -1326,7 +1327,8 @@ class TestGruppenAbgleich:
             svc.chip_anlernen(chip_id=1, schloss_id=3, actor="admin")
         fake.add_should_fail = False
         res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
-        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "fehler": []}
+        assert res == {"chip_id": 1, "erteilt": 0, "entzogen": 0, "gerichtet": 0,
+                       "fehler": []}
         assert svc.berechtigung_repo.list_for_chip(1)[0].sync_status == "fehler"
 
     def test_absage_des_schlosses_wird_als_dauerhaft_gemeldet(self):
@@ -1339,6 +1341,60 @@ class TestGruppenAbgleich:
         res = svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
         assert res["fehler"][0]["dauerhaft"] is True
         assert res["fehler"][0]["meldung"].startswith("Das Schloss unterstützt keine Chip-Karten")
+
+    def test_abgleichen_richtet_die_karten_am_schloss(self):
+        """Der Knopf, den man drückt, wenn der Soll-Ist-Abgleich etwas meldet: Eine
+        Sperre, die nicht bis zum Schloss kam, wird hier nachgeholt."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.chip_repo.get(1).status = "verloren"      # ohne die Karten zu sperren
+        fake.changed.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert res["gerichtet"] == 2 and res["fehler"] == []
+        jetzt_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        assert {c[0] for c in fake.changed} == {3001, 3002}
+        for _, _, von, bis in fake.changed:
+            assert 0 < von < bis < jetzt_ms          # abgelaufenes Fenster = gesperrt
+        assert {b.sync_status for b in svc.berechtigung_repo.list_for_chip(1)} == {"gesperrt"}
+
+    def test_abgleichen_stellt_die_hinterlegte_gueltigkeit_wieder_her(self):
+        """Bei aktivem Chip zählt, was bei uns steht – nicht, was jemand in der
+        TTLock-App am Schloss verstellt hat."""
+        svc, fake = _gruppen_service()
+        svc.chip_anlernen(chip_id=1, schloss_id=1,
+                          gueltig_bis="2026-12-31T23:00:00+00:00", actor="admin")
+        fake.changed.clear()
+
+        svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert fake.changed == [(3001, 9001, 0, _iso_to_ms("2026-12-31T23:00:00+00:00"))]
+
+    def test_gruppen_abgleich_fasst_die_karten_nicht_an(self):
+        """Über alle Chips einer Gruppe wären das hunderte Gateway-Aufrufe für einen
+        Zustand, der meistens stimmt – Karten richtet nur der Knopf am Chip."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        fake.changed.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, actor="admin")
+
+        assert fake.changed == [] and res["gerichtet"] == 0
+
+    def test_ein_offline_schloss_haelt_das_richten_nicht_auf(self):
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        fake.change_should_fail = True
+        fake.change_errcode = -3003
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert res["gerichtet"] == 0 and len(res["fehler"]) == 2
+        assert all(not f["dauerhaft"] for f in res["fehler"])
 
     def test_offline_schloss_bleibt_ein_vorlaeufiger_fehler(self):
         svc, fake = _gruppen_service()

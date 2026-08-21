@@ -762,10 +762,13 @@
           <div class="row items-center q-mt-md">
             <div class="text-subtitle2">Rechtegruppen</div>
             <q-space />
-            <q-btn v-if="status.darf_verwalten && chipDetail.gruppen?.length" flat dense size="sm"
+            <!-- Auch ohne Gruppe sinnvoll: Der Knopf gleicht nicht nur ab, WELCHE Türen
+                 der Chip hat, sondern schreibt an jeder auch das Soll-Fenster. -->
+            <q-btn v-if="status.darf_verwalten" flat dense size="sm"
               icon="sync" color="primary" label="Abgleichen" :loading="gruppeSpeichert"
               @click="chipAbgleichen">
-              <q-tooltip>Türen der Gruppen erneut mit den Schlössern abgleichen</q-tooltip>
+              <q-tooltip>Türen und Karten erneut mit den Schlössern abgleichen – schreibt
+                an jeder Tür, was gelten soll (Sperre bzw. hinterlegte Gültigkeit)</q-tooltip>
             </q-btn>
             <q-btn v-if="status.darf_verwalten" flat dense size="sm" icon="add" color="primary"
               label="Gruppe geben" @click="openChipGruppeWahl" />
@@ -806,6 +809,9 @@
               <span v-if="b.veraltet" class="text-caption">
                 (Stand dieses Schlosses ist älter als der letzte Sync – beim nächsten
                 Lauf bestätigt sich das oder es erledigt sich.)</span>
+            </div>
+            <div v-if="status.darf_verwalten" class="q-mt-xs">
+              „Abgleichen" oben schreibt an jeder Tür erneut, was gelten soll.
             </div>
           </q-banner>
 
@@ -2088,6 +2094,10 @@ function meldeAbgleich(abgleich) {
   const teile = []
   if (abgleich.erteilt) teile.push(`${abgleich.erteilt}× erteilt`)
   if (abgleich.entzogen) teile.push(`${abgleich.entzogen}× entzogen`)
+  // „gerichtet" = an so vielen Türen steht jetzt nachweislich das Soll. Das ist auch
+  // dann eine Auskunft, wenn sich nichts geändert hat – der Anwender drückt den Knopf
+  // ja gerade, weil er wissen will, ob die Sperre nun greift.
+  if (abgleich.gerichtet) teile.push(`${abgleich.gerichtet}× Karte bestätigt`)
   $q.notify({ type: 'positive', message: teile.join(' · ') || 'Nichts zu ändern' })
 }
 
