@@ -185,6 +185,93 @@ class TestAbgleichAbfragen:
         assert ergebnis['stand'] is not None
 
 
+class TestSpiegelNachziehen:
+    """Was wir selbst ans Schloss geschrieben haben, gehört sofort in den Ist-Spiegel.
+
+    Sonst hielte der Abgleich bis zum nächsten Sync (viermal am Tag) die Abweichung
+    hoch, die der Klick gerade beseitigt hat — beim Sperren das kritische „öffnet
+    noch" für eine Karte, die am Schloss längst gelöscht ist.
+    """
+
+    def _karte(self, db, schloss_id, *, gesehen_am=None, card_id=4711):
+        from app.models.schliessanlage import CRED_IC, TuerCredential
+        db.tuer_credentials.replace_for_schloss_typ(schloss_id, CRED_IC, [
+            TuerCredential(schloss_id=schloss_id, typ=CRED_IC,
+                           ttlock_credential_id=card_id, detail=f"{_MARKE}-KN1",
+                           gesehen_am=gesehen_am or "2026-08-21T06:00:00+00:00")])
+
+    def _ic(self, db, schloss_id):
+        from app.models.schliessanlage import CRED_IC
+        return [c for c in db.tuer_credentials.list_for_schloss(schloss_id)
+                if c.typ == CRED_IC]
+
+    def test_geloeschte_karte_verschwindet_sofort_aus_dem_spiegel(self, db, bestand):
+        self._karte(db, bestand["schloss_id"])
+
+        db.tuer_credentials.ic_karte_entfernt(bestand["schloss_id"], 4711)
+
+        assert self._ic(db, bestand["schloss_id"]) == []
+
+    def test_angelernte_karte_steht_sofort_im_spiegel(self, db, bestand):
+        db.tuer_credentials.ic_karte_gesetzt(
+            bestand["schloss_id"], credential_id=9001, name="Chip blau",
+            kartennummer=f"{_MARKE}-KN1", gueltig_von=None,
+            gueltig_bis="2026-12-31T23:00:00+00:00")
+
+        karten = self._ic(db, bestand["schloss_id"])
+        assert [(k.ttlock_credential_id, k.detail, k.gueltig_bis) for k in karten] == [
+            (9001, f"{_MARKE}-KN1", "2026-12-31T23:00:00+00:00")]
+
+    def test_zweiter_schreibvorgang_zieht_nach_statt_zu_doppeln(self, db, bestand):
+        self._karte(db, bestand["schloss_id"])
+
+        db.tuer_credentials.ic_karte_gesetzt(
+            bestand["schloss_id"], credential_id=4711, name="Chip blau",
+            kartennummer=f"{_MARKE}-KN1", gueltig_von=None,
+            gueltig_bis="2027-06-30T22:00:00+00:00")
+
+        karten = self._ic(db, bestand["schloss_id"])
+        assert len(karten) == 1
+        assert karten[0].gueltig_bis == "2027-06-30T22:00:00+00:00"
+        # Der Stand des Schlosses bleibt, wo er war – wir haben nichts gelesen.
+        assert karten[0].gesehen_am == "2026-08-21T06:00:00+00:00"
+
+    def test_neue_zeile_erbt_den_stand_des_schlosses(self, db, bestand):
+        """Ein frischer Zeitstempel machte jedes ANDERE Schloss zum veralteten
+        Spiegel (`_veraltet`) und entwertete dort echte Befunde."""
+        self._karte(db, bestand["schloss_id"], gesehen_am="2026-08-20T06:00:00+00:00")
+
+        db.tuer_credentials.ic_karte_gesetzt(
+            bestand["schloss_id"], credential_id=9002, name="Chip blau",
+            kartennummer=f"{_MARKE}-KN2", gueltig_von=None, gueltig_bis=None)
+
+        neu = [k for k in self._ic(db, bestand["schloss_id"])
+               if k.ttlock_credential_id == 9002]
+        assert [k.gesehen_am for k in neu] == ["2026-08-20T06:00:00+00:00"]
+
+    def test_sperren_beendet_den_kritischen_befund_ohne_sync(self, db, bestand):
+        """Der ganze Weg: verlorener Chip mit gültiger Karte am Schloss meldet sich
+        kritisch – nach dem Löschen der Karte ist der Befund weg, nicht erst morgen."""
+        from app.services import zutritt_abgleich_service as abgleich_service
+        self._karte(db, bestand["schloss_id"])
+        _sperren(db, bestand["chip"])
+        vorher = [b for b in abgleich_service.abgleich(db)['befunde']
+                  if b['schloss_id'] == bestand["schloss_id"]]
+        assert [b['art'] for b in vorher] == [abgleich_service.BEFUND_SPERRE_OFFEN]
+
+        db.tuer_credentials.ic_karte_entfernt(bestand["schloss_id"], 4711)
+        # Beides gehört zusammen, und der Service tut es auch zusammen: Bliebe die
+        # cardId an der Zeile stehen, meldete der Abgleich statt „öffnet noch" ein
+        # „Karte fehlt am Schloss" – wieder ein Befund, den niemand braucht.
+        db.tuer_berechtigungen.set_sync(bestand["ber"].id, ttlock_card_id=None,
+                                        sync_status='gesperrt', sync_fehler=None,
+                                        by="test")
+
+        nachher = [b for b in abgleich_service.abgleich(db)['befunde']
+                   if b['schloss_id'] == bestand["schloss_id"]]
+        assert nachher == []
+
+
 class TestSelfService:
     def test_gesperrter_chip_oeffnet_im_self_service_nicht(self, db, bestand):
         """`user_has_valid_for_schloss` trägt die Entscheidung „darf per App öffnen"."""

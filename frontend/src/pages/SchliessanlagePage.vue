@@ -1781,6 +1781,7 @@ async function openSchloss(id) {
   try {
     const { data } = await api.get(`/api/schliessanlage/schloesser/${id}`)
     schlossDetail.value = data; schlossDialog.value = true
+    await loadAbgleich()          // der Dialog zeigt die Befunde dieses Schlosses
   } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Detail fehlgeschlagen' }) }
 }
 
@@ -1833,7 +1834,7 @@ async function saveSchloss() {
       aktiv: schlossForm.value.aktiv, version: schlossForm.value.version,
     })
     schlossFormDialog.value = false; schlossDialog.value = false
-    await loadSchloesser()
+    await Promise.all([loadSchloesser(), loadAbgleich()])
   } catch (e) { schlossError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen' }
   finally { saving.value = false }
 }
@@ -2027,6 +2028,7 @@ async function openChip(id) {
   try {
     const { data } = await api.get(`/api/schliessanlage/chips/${id}`)
     chipDetail.value = data; chipDialog.value = true
+    await loadAbgleich()          // der Dialog zeigt die Befunde dieses Chips
   } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Detail fehlgeschlagen' }) }
 }
 // --- Rechtegruppen (#169) ---------------------------------------------------
@@ -2154,7 +2156,8 @@ async function saveGruppeSchloesser() {
       `/api/schliessanlage/gruppen/${gruppeDetail.value.gruppe.id}/schloesser`,
       { schloss_ids: gruppeSchloesser.value })
     meldeAbgleich(data.abgleich)
-    await Promise.all([loadGruppen(), openGruppe(gruppeDetail.value.gruppe.id)])
+    await Promise.all([loadGruppen(), loadAbgleich(),
+                       openGruppe(gruppeDetail.value.gruppe.id)])
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
   } finally { gruppeSpeichert.value = false }
@@ -2166,7 +2169,7 @@ async function gruppeAbgleichen() {
   try {
     const { data } = await api.post(`/api/schliessanlage/gruppen/${id}/abgleich`)
     meldeAbgleich(data)
-    await openGruppe(id)
+    await Promise.all([loadAbgleich(), openGruppe(id)])
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Abgleich fehlgeschlagen' })
   } finally { gruppeSpeichert.value = false }
@@ -2178,7 +2181,7 @@ async function gruppeChipHinzufuegen(chipId) {
   try {
     const { data } = await api.post(`/api/schliessanlage/gruppen/${id}/chips`, { chip_id: chipId })
     meldeAbgleich(data.abgleich)
-    await Promise.all([loadGruppen(), loadChips(), openGruppe(id)])
+    await Promise.all([loadGruppen(), loadChips(), loadAbgleich(), openGruppe(id)])
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Zuordnen fehlgeschlagen' })
   } finally { gruppeNeuerChip.value = null }
@@ -2195,7 +2198,7 @@ function gruppeChipEntfernen(chipId) {
     try {
       const { data } = await api.delete(`/api/schliessanlage/gruppen/${id}/chips/${chipId}`)
       meldeAbgleich(data.abgleich)
-      await Promise.all([loadGruppen(), openGruppe(id)])
+      await Promise.all([loadGruppen(), loadAbgleich(), openGruppe(id)])
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entfernen fehlgeschlagen' })
     }
@@ -2214,7 +2217,7 @@ function gruppeAufloesen() {
       const { data } = await api.delete(`/api/schliessanlage/gruppen/${g.id}`)
       meldeAbgleich(data)
       gruppeDialog.value = false
-      await Promise.all([loadGruppen(), loadChips()])
+      await Promise.all([loadGruppen(), loadChips(), loadAbgleich()])
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Auflösen fehlgeschlagen' })
     }
@@ -2366,7 +2369,9 @@ async function saveChip() {
     }
     chipFormDialog.value = false; chipDialog.value = false
     chipSichtbarMachen(payload)
-    await loadChips()
+    // Sperren/Entsperren schreibt an jeder Tür – die Befunde von eben sind damit
+    // erledigt und müssen weg, nicht erst beim nächsten Sync.
+    await Promise.all([loadChips(), loadAbgleich()])
   } catch (e) { chipError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen' }
   finally { saving.value = false }
 }
@@ -2382,7 +2387,8 @@ function deleteChip() {
     .onOk(async () => {
       try {
         await api.delete(`/api/schliessanlage/chips/${c.id}`)
-        chipDialog.value = false; await loadChips()
+        chipDialog.value = false
+        await Promise.all([loadChips(), loadAbgleich()])
       } catch (e) { $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Löschen fehlgeschlagen' }) }
     })
 }

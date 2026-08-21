@@ -315,10 +315,12 @@ class TuerAppBerechtigung:
 class TuerCredential:
     """Read-only gespiegeltes Credential am Schloss (Fingerprint/Passcode/eKey/IC-Karte).
 
-    Reiner Cloud-Mirror (kein Anlernen/Löschen über die App): je Schloss + Typ wird die
-    TTLock-Liste 1:1 gespiegelt, damit auch Credential-Typen sichtbar werden, die NICHT
-    über unsere App liefen (Fingerprints/Funk-Keys = bisheriger blinder Fleck). Kein
-    History/Soft-Delete – pro Schloss+Typ wird die Cloud-Liste autoritativ ersetzt."""
+    Cloud-Mirror: je Schloss + Typ wird die TTLock-Liste 1:1 gespiegelt, damit auch
+    Credential-Typen sichtbar werden, die NICHT über unsere App liefen (Fingerprints/
+    Funk-Keys = bisheriger blinder Fleck). Kein History/Soft-Delete – pro Schloss+Typ
+    ersetzt der Sync die Cloud-Liste autoritativ. Dazwischen zieht die App nach, was
+    sie selbst ans Schloss geschrieben hat (nur IC-Karten), damit der Soll-Ist-Abgleich
+    nicht bis zum nächsten Sync eine erledigte Abweichung behauptet."""
     id: Optional[int] = None
     schloss_id: int = 0
     typ: str = CRED_FINGERPRINT                    # fingerprint | passcode | ekey | ic

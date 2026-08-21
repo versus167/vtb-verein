@@ -350,6 +350,31 @@ class ZutrittService:
         ), actor)
         return self._karte_aufspielen(ber, chip, schloss, actor)
 
+    # --- Ist-Spiegel des Schlosses nachziehen -------------------------------
+    # Der Abgleich prüft das Soll gegen den gespiegelten Ist-Stand, den der Sync
+    # viermal am Tag holt. Nach einem geglückten Schreibvorgang wissen wir es besser
+    # als der Spiegel – und sagen es ihm, statt bis zum nächsten Sync eine Abweichung
+    # stehen zu lassen, die wir gerade beseitigt haben. Autoritativ bleibt der Sync:
+    # Er ersetzt die Kartenliste je Schloss und meldet jede Abweichung wieder, die
+    # wirklich besteht. Ohne `credential_repo` (Alt-Aufrufer) passiert schlicht nichts.
+
+    def _spiegel_gesetzt(self, schloss, chip, card_id: Optional[int],
+                         gueltig_von: Optional[str], gueltig_bis: Optional[str]) -> None:
+        """Im Spiegel vermerken: DIESE Karte liegt jetzt mit diesem Fenster am Schloss."""
+        if self.credential_repo is None or not card_id:
+            return
+        self.credential_repo.ic_karte_gesetzt(
+            schloss.id, credential_id=card_id,
+            name=chip.bezeichnung or f"Chip {chip.kartennummer}",
+            kartennummer=chip.kartennummer,
+            gueltig_von=gueltig_von, gueltig_bis=gueltig_bis)
+
+    def _spiegel_entfernt(self, schloss, card_id: Optional[int]) -> None:
+        """Im Spiegel vermerken: Diese Karte liegt am Schloss nicht mehr."""
+        if self.credential_repo is None or not card_id:
+            return
+        self.credential_repo.ic_karte_entfernt(schloss.id, card_id)
+
     def _karte_aufspielen(self, ber: TuerBerechtigung, chip, schloss,
                           actor: str) -> TuerBerechtigung:
         """IC-Karte für eine bestehende Berechtigungszeile ans Schloss schreiben.
@@ -369,6 +394,7 @@ class ZutrittService:
                                             by=actor)
             raise
         card_id = resp.get("cardId")
+        self._spiegel_gesetzt(schloss, chip, card_id, ber.gueltig_von, ber.gueltig_bis)
         logger.info("Chip %s an Schloss %s angelernt (cardId=%s).",
                     chip.kartennummer, schloss.name, card_id)
         return self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=card_id,
@@ -414,6 +440,7 @@ class ZutrittService:
         Kennung – und die Karte mit ihrer hinterlegten Gültigkeit neu angelernt. Ohne
         das bliebe die Tür stumm, während der Chip in der Liste als aktiv steht.
         """
+        self._spiegel_entfernt(schloss, ber.ttlock_card_id)     # tote cardId, auch im Spiegel
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
                                         sync_status=SYNC_PENDING, sync_fehler=None,
                                         by=actor)
@@ -469,6 +496,7 @@ class ZutrittService:
                                                        gueltig_bis=gueltig_bis, by=actor)
             self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
             return self.berechtigung_repo.get(ber.id)
+        self._spiegel_gesetzt(schloss, chip, ber.ttlock_card_id, gueltig_von, gueltig_bis)
         logger.info("Berechtigung %s: Gültigkeit geändert (%s–%s).",
                     berechtigung_id, gueltig_von or "sofort", gueltig_bis or "unbefristet")
         return self.berechtigung_repo.update_period(ber.id, gueltig_von=gueltig_von,
@@ -497,6 +525,7 @@ class ZutrittService:
                                 logger.info("Berechtigung %s: Karte war an '%s' nicht mehr "
                                             "gelistet – Entziehen ist erledigt.",
                                             ber.id, schloss.name)
+                                self._spiegel_entfernt(schloss, ber.ttlock_card_id)
                                 self.berechtigung_repo.soft_delete(ber.id, actor)
                                 return {"ok": True}
                         except TTLockError:
@@ -509,6 +538,7 @@ class ZutrittService:
                         raise
                     logger.info("Berechtigung %s: Karte lag an '%s' nicht mehr vor – "
                                 "Entziehen ist damit erledigt.", ber.id, schloss.name)
+                self._spiegel_entfernt(schloss, ber.ttlock_card_id)
         self.berechtigung_repo.soft_delete(ber.id, actor)
         logger.info("Berechtigung %s entzogen (Chip von Schloss entfernt).", berechtigung_id)
         return {"ok": True}
@@ -578,10 +608,12 @@ class ZutrittService:
                 raise
             logger.info("Chip %s: Karte lag an Schloss %s nicht mehr vor – "
                         "nichts zu löschen.", chip.kartennummer, schloss.name)
+            self._spiegel_entfernt(schloss, card_id)
             self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
                                             sync_status=SYNC_GESPERRT, sync_fehler=None,
                                             by=actor)
             return 'bestaetigt'
+        self._spiegel_entfernt(schloss, card_id)
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=None,
                                         sync_status=SYNC_GESPERRT, sync_fehler=None,
                                         by=actor)
@@ -609,6 +641,12 @@ class ZutrittService:
                 self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
                 return 'geschrieben'
             if card and fenster_passt(soll, karte_fenster(card)):
+                # Nichts zu schreiben – aber wir haben gerade gelesen, was dort liegt.
+                # Das gehört in den Spiegel, sonst bliebe ein Fenster-Befund aus einem
+                # alten Stand stehen, den kein weiterer Klick je auflöste.
+                self._spiegel_gesetzt(schloss, chip, ber.ttlock_card_id,
+                                      _ms_to_iso(card.get('startDate')),
+                                      _ms_to_iso(card.get('endDate')))
                 self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                                 sync_status=SYNC_AKTIV, sync_fehler=None,
                                                 by=actor)
@@ -632,6 +670,8 @@ class ZutrittService:
             # sonst stumm, also zurück aufs Schloss damit.
             self._karte_neu_anlernen(ber, chip, schloss, actor=actor)
             return 'geschrieben'
+        self._spiegel_gesetzt(schloss, chip, ber.ttlock_card_id,
+                              ber.gueltig_von, ber.gueltig_bis)
         self.berechtigung_repo.set_sync(ber.id, ttlock_card_id=ber.ttlock_card_id,
                                         sync_status=SYNC_AKTIV, sync_fehler=None, by=actor)
         return 'geschrieben'
