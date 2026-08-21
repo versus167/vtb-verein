@@ -66,14 +66,26 @@ _SQL_GEBUEHR = """
     ORDER BY m.nachname, m.vorname, f.id
 """
 
-# ÜL-Honorar (Kreditor je ÜL): eine Position je bestätigter Abrechnung. Betrag =
-# Summe der (lebenden) Termin-Stunden × eingefrorenem Vergütungssatz; Belegdatum =
+# ÜL-Honorar (Kreditor je ÜL): eine Position je bestätigter Abrechnung. Belegdatum =
 # Bestätigungsdatum; Kostenstelle aus der Abteilung. Anders als Beitrag/Gebühr (Debitor
 # im Soll) ist dies eine Kreditor-Buchung – die Soll/Haben-Drehung macht der Service.
+#
+# Der Betrag hängt an der beim Einreichen eingefrorenen `verguetungsart` (#84):
+# Stundensatz rechnet Summe der (lebenden) Termin-Stunden × Satz, die Monatspauschale
+# Satz × `verguetung_monate`. Wie viele Monate das sind, entscheidet der Service beim
+# Einreichen und friert es ein – ein Kalendermonat wird nur einmal vergütet, auch wenn
+# zwei Abrechnungen in ihn hineinragen. Diese Abgrenzung braucht die Nachbarzeilen und
+# hat hier deshalb nichts zu suchen; hier steht nur die Multiplikation.
+# 'ohne_verguetung' fällt schon über {cond} heraus.
 _SQL_UL = """
     SELECT 'ul_abrechnung' AS quelle_typ, a.id AS quelle_id,
            a.zeitraum_von || ' – ' || a.zeitraum_bis AS periode,
-           COALESCE(st.summe_stunden, 0) * COALESCE(a.verguetung_pro_stunde, 0) AS betrag_soll,
+           CASE a.verguetungsart
+             WHEN 'monatspauschale'
+               THEN COALESCE(a.verguetung_pro_stunde, 0) * COALESCE(a.verguetung_monate, 0)
+             WHEN 'ohne_verguetung' THEN 0
+             ELSE COALESCE(st.summe_stunden, 0) * COALESCE(a.verguetung_pro_stunde, 0)
+           END AS betrag_soll,
            a.bestaetigt_am AS belegdatum,
            a.status AS quelle_status, a.deleted_at AS quelle_deleted_at,
            m.id AS mitglied_id, m.mitgliedsnummer, m.vorname, m.nachname,
@@ -103,8 +115,19 @@ _COND_STORNO = ("{p}.exportiert_in_export_id IS NOT NULL "
 # ÜL: nur bestätigte Abrechnungen sind exportierbar. Eine exportierte Abrechnung ist
 # gegen Statuswechsel/Löschen gesperrt (siehe ul_abrechnung_repository), daher kann der
 # Storno-Zweig faktisch nur über einen ganzen Gegenbuchungs-Lauf greifen.
+# Zwei Gruppen bleiben draußen, weil bei ihnen nichts zu zahlen ist und eine
+# 0,00-€-Kreditorbuchung die Fibu nur zumüllt:
+#   - 'ohne_verguetung': reine Stundennachweise, die Auszahlung läuft außerhalb der
+#     App (Honorarvertrag, Lohnbuchhaltung).
+#   - Monatspauschalen ohne offenen Monat: Der Zeitraum liegt vollständig in Monaten,
+#     die eine frühere Abrechnung schon vergütet hat (Nachtrag im laufenden Monat).
+# Ein Stundensatz ohne hinterlegten Satz wird dagegen weiter mit 0,00 € exportiert –
+# das ist ein fehlender Stammdatensatz und soll auffallen, nicht verschwinden.
 _COND_UL_NEU = ("a.exportiert_in_export_id IS NULL AND a.deleted_at IS NULL "
-                "AND a.status = 'bestaetigt'")
+                "AND a.status = 'bestaetigt' "
+                "AND a.verguetungsart <> 'ohne_verguetung' "
+                "AND NOT (a.verguetungsart = 'monatspauschale' "
+                "         AND COALESCE(a.verguetung_monate, 0) = 0)")
 _COND_UL_STORNO = ("a.exportiert_in_export_id IS NOT NULL "
                    "AND a.storno_exportiert_in_export_id IS NULL "
                    "AND (a.status <> 'bestaetigt' OR a.deleted_at IS NOT NULL)")

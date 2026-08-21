@@ -2,8 +2,13 @@
 
 Erzeugt einen A4-Quer-Beleg im Stil des bisherigen Papier-Formulars:
 Vereins-Kopf + Registrier-Nr., ÜL-Stammdaten, Termine je Wochentag mit
-Spaltensummen, Monats-Gesamtstunden, Vergütung/h, Gesamtbetrag und
-Unterschriftsfeldern (Übungsleiter / Abteilungsleiter).
+Spaltensummen, Monats-Gesamtstunden, Vergütungsblock und Unterschriftsfeldern
+(Übungsleiter / Abteilungsleiter).
+
+Der Termin- und Stundenteil ist von der Vergütungsart unabhängig: Auch wer einen
+Monatsfestbetrag bekommt oder gar nicht über die App abgerechnet wird, braucht den
+vollständigen Nachweis. Nur der Vergütungsblock am Ende beschriftet sich je Art
+(#84) – bei 'ohne_verguetung' steht dort kein Betrag.
 
 Reuse: gleiches reportlab-Fundament wie kassenbuch_pdf_service.py.
 """
@@ -48,6 +53,36 @@ def _fmt_euro(v) -> str:
 def _fmt_std(v) -> str:
     f = float(v)
     return str(int(f)) if f == int(f) else f"{f:.2f}".replace('.', ',')
+
+
+def _verguetungs_rows(summen: dict) -> list[list[str]]:
+    """Zeilen des Vergütungsblocks – Beschriftung und Bemessung je Vergütungsart.
+
+    Der Satzwert steht in `verguetung_pro_stunde`; die Einheit ergibt sich aus der
+    Art (€/h bzw. €/Monat). Bei 'ohne_verguetung' entfällt der Betrag ganz: Der
+    Beleg ist dann reiner Stundennachweis, die Auszahlung regelt eine Vereinbarung
+    außerhalb der App – eine 0,00-€-Zeile würde das Gegenteil behaupten.
+    """
+    art = summen.get('verguetungsart') or 'stundensatz'
+    if art == 'ohne_verguetung':
+        return [['Vergütung', 'nach gesonderter Vereinbarung']]
+    if art == 'monatspauschale':
+        monate = summen.get('anzahl_monate') or 0
+        im_zeitraum = summen.get('monate_im_zeitraum') or 0
+        # Weniger vergütete als berührte Monate heißt: Ein Monat läuft bereits über
+        # eine andere Abrechnung. Das gehört auf den Beleg – sonst sieht die Zahl
+        # nach einem Rechenfehler aus.
+        text = (str(monate) if monate == im_zeitraum
+                else f"{monate} von {im_zeitraum} im Zeitraum")
+        return [
+            ['Monatspauschale', _fmt_euro(summen.get('verguetung_pro_stunde'))],
+            ['Vergütete Monate', text],
+            ['Gesamtbetrag', _fmt_euro(summen.get('gesamtbetrag'))],
+        ]
+    return [
+        ['Vergütung / h', _fmt_euro(summen.get('verguetung_pro_stunde'))],
+        ['Gesamtbetrag', _fmt_euro(summen.get('gesamtbetrag'))],
+    ]
 
 
 def _als_date(wert):
@@ -168,7 +203,8 @@ def erstelle_stundennachweis_pdf(
 
     :param verein: {'name','strasse','plz_ort','registrier_nr'}
     :param termine: Liste {datum, stunden, wochentag, angebot}
-    :param summen: {summe_stunden, verguetung_pro_stunde, gesamtbetrag, monatssummen}
+    :param summen: {summe_stunden, monatssummen, verguetungsart, verguetung_pro_stunde,
+        anzahl_monate, monate_im_zeitraum, gesamtbetrag} – s. ULStundenService.summen
     :param eingereicht_von/_am: Erfasser + Einreich-Zeitpunkt (Nachweis-Block)
     :param bestaetigt_von/_am: Bestätiger + Bestätigungs-Zeitpunkt (Nachweis-Block)
     """
@@ -293,8 +329,7 @@ def erstelle_stundennachweis_pdf(
                    for ym, std in sorted(summen.get('monatssummen', {}).items())]
     zus_rows = [['Gesamtstunden', _fmt_std(summen.get('summe_stunden', 0))]]
     zus_rows += monats_rows
-    zus_rows.append(['Vergütung / h', _fmt_euro(summen.get('verguetung_pro_stunde'))])
-    zus_rows.append(['Gesamtbetrag', _fmt_euro(summen.get('gesamtbetrag'))])
+    zus_rows += _verguetungs_rows(summen)
     zus = Table(zus_rows, colWidths=[5 * cm, 3.5 * cm], hAlign='RIGHT')
     zus.setStyle(TableStyle([
         ('FONTSIZE', (0, 0), (-1, -1), 9),

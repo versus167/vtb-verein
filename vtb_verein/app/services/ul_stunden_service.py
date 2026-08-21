@@ -14,12 +14,60 @@ from typing import Optional
 
 from app.models.ul_stunden import (
     ULAbrechnung, ULStunde, LIZENZ_MIT, LIZENZ_OHNE, STATUS_ENTWURF,
+    VERGUETUNG_STUNDENSATZ, VERGUETUNG_MONATSPAUSCHALE, VERGUETUNG_OHNE,
 )
 from app.services.ul_stundennachweis_pdf_service import erstelle_stundennachweis_pdf
 
 
 def _as_date(s: str) -> date:
     return date.fromisoformat(s[:10])
+
+
+def monatsschluessel(von: str, bis: str) -> list[str]:
+    """Angebrochene Kalendermonate zwischen von und bis (beide inkl.), als 'YYYY-MM'.
+
+    Bemessungsgrundlage der Monatspauschale: Sep–Nov sind drei Monate, auch wenn im
+    Oktober kein Termin stattfand. Der Festbetrag ist eine Vereinbarung über den
+    Zeitraum, nicht über die geleisteten Einheiten – wer nur einzelne Monate
+    abrechnen will, schneidet den Zeitraum entsprechend.
+
+    Monate statt einer bloßen Anzahl, weil sie über Abrechnungen hinweg gegeneinander
+    abgeglichen werden müssen (s. ULStundenService.verguetungs_monate).
+    """
+    v, b = _as_date(von), _as_date(bis)
+    if b < v:
+        return []
+    out, jahr, monat = [], v.year, v.month
+    while (jahr, monat) <= (b.year, b.month):
+        out.append(f"{jahr:04d}-{monat:02d}")
+        jahr, monat = (jahr + 1, 1) if monat == 12 else (jahr, monat + 1)
+    return out
+
+
+def monate_im_zeitraum(von: str, bis: str) -> int:
+    """Anzahl angebrochener Kalendermonate – s. monatsschluessel."""
+    return len(monatsschluessel(von, bis))
+
+
+def berechne_betrag(verguetungsart: str, satz: Optional[float], summe_stunden: float,
+                    anzahl_monate: int) -> Optional[float]:
+    """Betrag einer Abrechnung – die einzige Stelle, an der die Art zu Geld wird.
+
+    None heißt „kein Betrag": entweder gibt es keine Vereinbarung, oder sie sieht
+    gar keine Auszahlung über die App vor. `anzahl_monate` sind die tatsächlich zu
+    vergütenden Monate (bereits anderweitig vergütete abgezogen), nicht einfach die
+    Monate im Zeitraum – die Abgrenzung macht ULStundenService.verguetungs_monate.
+
+    Achtung: dieselbe Multiplikation steckt ein zweites Mal in SQL (`_SQL_UL` im
+    fibu_export_repository), weil der Export über alle Abrechnungen aggregiert.
+    Sie kommt dort aber mit dem eingefrorenen `verguetung_monate` aus – die
+    Abgrenzungslogik selbst gibt es nur hier.
+    """
+    if verguetungsart == VERGUETUNG_OHNE or satz is None:
+        return None
+    if verguetungsart == VERGUETUNG_MONATSPAUSCHALE:
+        return round(anzahl_monate * satz, 2)
+    return round(summe_stunden * satz, 2)
 
 
 class ULStundenService:
@@ -51,6 +99,30 @@ class ULStundenService:
             raise ValueError("Ungültiges Datum")
         if dv > db_:
             raise ValueError("'von' darf nicht nach 'bis' liegen")
+
+    # ------------------------------------------------------ Monats-Abgrenzung
+    def verguetungs_monate(self, abrechnung: ULAbrechnung) -> list[str]:
+        """Kalendermonate, die diese Abrechnung als Monatspauschale vergütet.
+
+        Jeder Monat wird höchstens einmal bezahlt: Ragen zwei aufeinanderfolgende
+        Abrechnungen in denselben Monat (15.05.–15.06. und dann 16.06.–10.07.),
+        gehört er der ersten – zusammen sind das drei Pauschalen, nicht vier. Das
+        Sperr-Wasserzeichen allein verhindert das nicht; es rechnet tagegenau und
+        lässt den direkten Anschluss ausdrücklich zu.
+
+        Maßgeblich sind die Zeiträume der anderen Abrechnungen, nicht deren eigene
+        Abgrenzung: Ein Monat, den eine frühere Abrechnung berührt, ist entweder von
+        ihr oder von einer noch früheren vergütet – in beiden Fällen ist er vergeben.
+        """
+        eigene = monatsschluessel(abrechnung.zeitraum_von, abrechnung.zeitraum_bis)
+        if not eigene:
+            return []
+        belegt: set[str] = set()
+        for von, bis in self.db.ul_abrechnungen.monatspauschal_zeitraeume(
+                abrechnung.mitglied_id, abrechnung.abteilung_id,
+                exclude_id=abrechnung.id):
+            belegt.update(monatsschluessel(von, bis))
+        return [m for m in eigene if m not in belegt]
 
     # --------------------------------------------------------------- Lizenz
     def lizenz_fuer(self, mitglied_id: int, bis: str) -> str:
@@ -235,7 +307,7 @@ class ULStundenService:
             raise ValueError("Mindestens ein Termin muss erfasst sein")
         # Erneut prüfen: ein anderer Vorgang könnte den Zeitraum zwischenzeitlich gesperrt haben.
         self._pruefe_sperre(abrechnung.mitglied_id, abrechnung.abteilung_id, abrechnung.zeitraum_von)
-        satz = self.db.ul_saetze.resolve(
+        vereinbarung = self.db.ul_saetze.resolve(
             abrechnung.mitglied_id, abrechnung.abteilung_id, abrechnung.lizenz_klassifikation
         )
         # Lizenz-Beleg-Stammdaten beim Einreichen einfrieren (analog Satz): ein später am
@@ -245,8 +317,18 @@ class ULStundenService:
             m = self.db.get_mitglied(abrechnung.mitglied_id)
         except (KeyError, AttributeError):
             m = None
+        art = vereinbarung.verguetungsart if vereinbarung else VERGUETUNG_STUNDENSATZ
+        # Die Monats-Abgrenzung hängt an den Nachbar-Abrechnungen und wird deshalb
+        # hier entschieden und eingefroren – sonst verschöbe eine später eingereichte
+        # Nachbarabrechnung rückwirkend den Betrag dieser hier.
+        monate = (len(self.verguetungs_monate(abrechnung))
+                  if art == VERGUETUNG_MONATSPAUSCHALE else None)
         ok = self.db.ul_abrechnungen.einreichen(
-            abrechnung.id, verguetung_pro_stunde=satz, eingereicht_von=eingereicht_von,
+            abrechnung.id,
+            verguetungsart=art,
+            verguetung_pro_stunde=(vereinbarung.satz if vereinbarung else None),
+            verguetung_monate=monate,
+            eingereicht_von=eingereicht_von,
             trainerlizenz_nr=(m.trainerlizenz_nr if m else None),
             qualifikation=(m.qualifikation if m else None),
         )
@@ -256,30 +338,61 @@ class ULStundenService:
 
     # --------------------------------------------------------------- Summen
     def summen(self, abrechnung: ULAbrechnung) -> dict:
+        """Stunden-, Monats- und Betragsaggregate für Anzeige und Beleg.
+
+        `verguetung_pro_stunde` trägt je nach `verguetungsart` €/h oder €/Monat —
+        die Spalte behielt ihren Namen, weil sie den Snapshot des Satzwerts meint.
+        Anzeige und Beleg beschriften sie anhand der Art.
+        """
         stunden = self.db.ul_abrechnungen.list_stunden(abrechnung.id)
         total = round(sum(s.stunden for s in stunden), 2)
-        satz = abrechnung.verguetung_pro_stunde
-        gesamt = round(total * satz, 2) if satz is not None else None
-        # Vorschau: solange kein Satz eingefroren ist (Entwurf/abgelehnt), den aktuell
-        # gültigen Satz auflösen, damit der ÜL die voraussichtliche Vergütung sieht.
-        # Der eingefrorene Snapshot (verguetung_pro_stunde) entsteht erst beim Einreichen.
+        im_zeitraum = monate_im_zeitraum(abrechnung.zeitraum_von, abrechnung.zeitraum_bis)
+
+        # Eingereicht/bestätigt/abgelehnt rechnet aus dem eingefrorenen Snapshot, der
+        # Entwurf aus der aktuell gültigen Vereinbarung. Maßstab ist der Status und nicht
+        # mehr der Satzwert: Bei 'ohne_verguetung' bleibt der Betrag auch im Snapshot
+        # leer, „kein Betrag" heißt hier also nicht „noch nicht eingefroren".
+        eingefroren = abrechnung.status != STATUS_ENTWURF
+        if eingefroren:
+            art, satz = abrechnung.verguetungsart, abrechnung.verguetung_pro_stunde
+            monate = abrechnung.verguetung_monate or 0
+        else:
+            art, satz, monate = VERGUETUNG_STUNDENSATZ, None, 0
+        gesamt = berechne_betrag(art, satz, total, monate)
+
+        # Vorschau: solange nichts eingefroren ist, die aktuell gültige Vereinbarung
+        # auflösen, damit der ÜL die voraussichtliche Vergütung sieht – inklusive der
+        # Monats-Abgrenzung, sonst verspräche die Vorschau einen schon vergebenen Monat.
         vorschau_satz = None
         vorschau_gesamt = None
-        if satz is None:
-            vorschau_satz = self.db.ul_saetze.resolve(
+        vorschau_art = None
+        if not eingefroren:
+            vereinbarung = self.db.ul_saetze.resolve(
                 abrechnung.mitglied_id, abrechnung.abteilung_id,
                 abrechnung.lizenz_klassifikation,
             )
-            if vorschau_satz is not None:
-                vorschau_gesamt = round(total * vorschau_satz, 2)
+            if vereinbarung is not None:
+                art = vorschau_art = vereinbarung.verguetungsart
+                vorschau_satz = vereinbarung.satz
+                if art == VERGUETUNG_MONATSPAUSCHALE:
+                    monate = len(self.verguetungs_monate(abrechnung))
+                vorschau_gesamt = berechne_betrag(art, vorschau_satz, total, monate)
+
         monat: dict[str, float] = {}
         for s in stunden:
             key = s.datum[:7]  # YYYY-MM
             monat[key] = round(monat.get(key, 0.0) + s.stunden, 2)
         return {
             'summe_stunden': total,
+            # anzahl_monate = tatsächlich vergütet, monate_im_zeitraum = berührt.
+            # Differenz > 0 heißt: ein Monat läuft schon über eine andere Abrechnung
+            # (Muster wie bei der anteiligen Beitrags-Vorschau).
+            'anzahl_monate': monate,
+            'monate_im_zeitraum': im_zeitraum,
+            'verguetungsart': art,
             'verguetung_pro_stunde': satz,
             'gesamtbetrag': gesamt,
+            'vorschau_verguetungsart': vorschau_art,
             'vorschau_pro_stunde': vorschau_satz,
             'vorschau_gesamtbetrag': vorschau_gesamt,
             'monatssummen': monat,

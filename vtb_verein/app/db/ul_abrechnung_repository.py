@@ -13,7 +13,8 @@ from app.db.base_repository import BaseRepository
 _SELECT = """
     SELECT a.id, a.mitglied_id, a.abteilung_id, a.zeitraum_von, a.zeitraum_bis,
            a.status, a.lizenz_klassifikation, a.foerder_klassifikation,
-           a.verguetung_pro_stunde, a.trainerlizenz_nr, a.qualifikation,
+           a.verguetungsart, a.verguetung_pro_stunde, a.verguetung_monate,
+           a.trainerlizenz_nr, a.qualifikation,
            a.eingereicht_am, a.eingereicht_von, a.bestaetigt_am, a.bestaetigt_von,
            a.abgelehnt_grund,
            a.exportiert_in_export_id, a.storno_exportiert_in_export_id,
@@ -140,22 +141,24 @@ class ULAbrechnungRepository(BaseRepository):
             )
             return cur.rowcount == 1
 
-    def einreichen(self, id: int, *, verguetung_pro_stunde: Optional[float],
+    def einreichen(self, id: int, *, verguetungsart: str,
+                   verguetung_pro_stunde: Optional[float],
+                   verguetung_monate: Optional[int],
                    eingereicht_von: str, trainerlizenz_nr: Optional[str] = None,
                    qualifikation: Optional[str] = None) -> bool:
         with self.cursor() as cur:
             cur.execute(
                 """
                 UPDATE ul_abrechnung
-                SET status='eingereicht', verguetung_pro_stunde=%s,
-                    trainerlizenz_nr=%s, qualifikation=%s,
+                SET status='eingereicht', verguetungsart=%s, verguetung_pro_stunde=%s,
+                    verguetung_monate=%s, trainerlizenz_nr=%s, qualifikation=%s,
                     eingereicht_am=CURRENT_TIMESTAMP, eingereicht_von=%s,
                     abgelehnt_grund=NULL, version=version+1,
                     updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND status='entwurf' AND deleted_at IS NULL
                 """,
-                (verguetung_pro_stunde, trainerlizenz_nr, qualifikation,
-                 eingereicht_von, eingereicht_von, id),
+                (verguetungsart, verguetung_pro_stunde, verguetung_monate,
+                 trainerlizenz_nr, qualifikation, eingereicht_von, eingereicht_von, id),
             )
             return cur.rowcount == 1
 
@@ -195,6 +198,7 @@ class ULAbrechnungRepository(BaseRepository):
                 UPDATE ul_abrechnung
                 SET status='entwurf', eingereicht_am=NULL, eingereicht_von=NULL,
                     bestaetigt_am=NULL, bestaetigt_von=NULL, verguetung_pro_stunde=NULL,
+                    verguetungsart=DEFAULT, verguetung_monate=NULL,
                     trainerlizenz_nr=NULL, qualifikation=NULL,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id=%s AND status IN ('eingereicht','bestaetigt','abgelehnt')
@@ -217,6 +221,35 @@ class ULAbrechnungRepository(BaseRepository):
                 (deleted_by, deleted_by, id),
             )
             return cur.rowcount == 1
+
+    def monatspauschal_zeitraeume(self, mitglied_id: int, abteilung_id: int,
+                                  exclude_id: Optional[int] = None) -> list[tuple[str, str]]:
+        """(von, bis) aller Monatspauschal-Abrechnungen, die einen Monat verbrauchen.
+
+        Grundlage der Monats-Abgrenzung: Ein Kalendermonat wird nur einmal vergütet,
+        auch wenn zwei aufeinanderfolgende Abrechnungen in ihn hineinragen. Maßstab
+        sind dieselben Status wie beim Sperr-Wasserzeichen (`max_gesperrt_bis`) –
+        eingereicht zählt schon, abgelehnt nicht mehr –, damit Sperre und Vergütung
+        dieselbe Vorstellung davon haben, was ein Zeitraum bereits belegt.
+
+        Der Zuschnitt (mitglied + abteilung) ist ebenfalls der der Sperre: Eine
+        Pauschale in Fußball und eine in Turnen sind zwei Vereinbarungen und werden
+        im selben Monat beide bezahlt.
+        """
+        sql = """
+            SELECT zeitraum_von, zeitraum_bis
+            FROM ul_abrechnung
+            WHERE mitglied_id=%s AND abteilung_id=%s AND deleted_at IS NULL
+              AND verguetungsart='monatspauschale'
+              AND status IN ('eingereicht','bestaetigt')
+        """
+        params: list = [mitglied_id, abteilung_id]
+        if exclude_id is not None:
+            sql += " AND id <> %s"
+            params.append(exclude_id)
+        with self.cursor() as cur:
+            cur.execute(sql, params)
+            return [(r['zeitraum_von'], r['zeitraum_bis']) for r in cur.fetchall()]
 
     # ------------------------------------------------------------- Sperr-Logik
     def max_gesperrt_bis(self, mitglied_id: int, abteilung_id: int) -> Optional[str]:
