@@ -55,11 +55,20 @@ class TestAllesInOrdnung:
     def test_unbefristete_karte_am_schloss_ist_kein_befund(self):
         assert abg.befunde([_ber()], [_karte()], jetzt_ms=_JETZT_MS) == []
 
-    def test_gesperrter_chip_mit_abgelaufener_karte_ist_kein_befund(self):
+    def test_gesperrter_chip_ohne_karte_am_schloss_ist_kein_befund(self):
         """Genau das ist das Ziel des Sperrens – kein Grund, jemanden zu behelligen."""
-        befunde = abg.befunde([_ber(chip_status='verloren')], [_gesperrte_karte()],
+        befunde = abg.befunde([_ber(chip_status='verloren', ttlock_card_id=None)], [],
                               jetzt_ms=_JETZT_MS)
         assert befunde == []
+
+    def test_abgelaufene_karte_eines_gesperrten_chips_soll_weg(self):
+        """Sie öffnet nicht – aber Soll ist, dass am Schloss gar keine Karte liegt.
+        Kein Alarm, wohl aber ein Grund für einen Klick auf „Abgleichen"."""
+        befunde = abg.befunde([_ber(chip_status='verloren')], [_gesperrte_karte()],
+                              jetzt_ms=_JETZT_MS)
+        assert _arten(befunde) == [abg.BEFUND_SPERRE_ALT]
+        assert befunde[0]['kritisch'] is False
+        assert 'gehört gelöscht' in befunde[0]['text']
 
     def test_gleiches_fenster_auf_die_sekunde_genau_passt(self):
         """ISO → ms → ISO lässt Sekunden wandern; das ist keine Abweichung."""

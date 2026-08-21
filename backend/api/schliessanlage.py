@@ -998,8 +998,8 @@ def chip_update(chip_id: int, data: ChipUpdateIn, user: CurrentUser, db: DB):
     if not chip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chip nicht gefunden")
     mitglied_id, inhaber_user_id = _inhaber_pruefen(db, data.mitglied_id, data.user_id)
-    # Der Status wirkt an den Schlössern: alles außer 'aktiv' setzt die IC-Karten des
-    # Chips auf ein abgelaufenes Gültigkeitsfenster, 'aktiv' stellt sie wieder her.
+    # Der Status wirkt an den Schlössern: alles außer 'aktiv' LÖSCHT die IC-Karten des
+    # Chips dort, 'aktiv' lernt sie wieder an (mit der hinterlegten Gültigkeit).
     # Deshalb zuerst die Cloud — schlägt sie fehl, bleibt der alte Status stehen,
     # statt in der Liste eine Sperre zu behaupten, die es an der Tür nicht gibt.
     if data.status != chip.status:

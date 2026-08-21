@@ -14,7 +14,7 @@ import requests
 
 from app.services.zutritt_service import (
     ZutrittService, build_alarm_digest, fehlertext, ist_dauerhaft, karte_fehlt,
-    karte_wirkungslos, _ms_to_iso, _iso_to_ms, sperr_fenster,
+    karte_wirkungslos, _ms_to_iso, _iso_to_ms,
 )
 from app.services.ttlock_client import TTLockError
 from app.models.schliessanlage import (
@@ -765,40 +765,46 @@ def _chip_mit_zwei_schloessern(fake):
     return svc
 
 
-def test_chip_sperren_setzt_alle_karten_auf_abgelaufen():
+def test_chip_sperren_loescht_die_karten_am_schloss():
+    """Was nicht am Schloss steht, kann kein Fehler und kein Handgriff in der
+    TTLock-App wieder gültig machen."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
 
     out = svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
 
     assert out["schloesser"] == 2
-    assert {c[0] for c in fake.changed} == {30392116, 30392117}
-    jetzt_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    for _, _, von, bis in fake.changed:
-        # Vollständig in der Vergangenheit – nicht 0/0, das hieße bei TTLock unbefristet.
-        assert 0 < von < bis < jetzt_ms
+    assert {d[0] for d in fake.deleted} == {30392116, 30392117}
+    assert fake.cards_by_lock[30392116] == [] and fake.cards_by_lock[30392117] == []
     assert svc.chip_repo.get(7).status == "gesperrt"
+    # Die Berechtigung bleibt – sie ist das Soll für den Tag, an dem er auftaucht.
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.deleted is False
+        assert r.ttlock_card_id is None and r.sync_status == "gesperrt"
 
 
-def test_chip_entsperren_stellt_die_hinterlegte_gueltigkeit_wieder_her():
+def test_chip_entsperren_lernt_die_karten_wieder_an():
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
     svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
-    fake.changed.clear()
+    fake.added.clear()
 
     svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
 
-    nach_schloss = {c[0]: (c[2], c[3]) for c in fake.changed}
+    # Angelernt wird mit der hinterlegten Gültigkeit, nicht mit irgendeinem Fenster.
+    nach_schloss = {a[0]: (a[2], a[3]) for a in fake.added}
     assert nach_schloss[30392116] == (0, 0)               # war unbefristet
     assert nach_schloss[30392117] == (0, _iso_to_ms("2026-12-31T23:00:00+00:00"))
     assert svc.chip_repo.get(7).status == "aktiv"
+    for r in svc.berechtigung_repo.rows.values():
+        assert r.ttlock_card_id is not None and r.sync_status == "aktiv"
 
 
 def test_chip_sperren_bei_cloud_fehler_aendert_den_status_nicht():
     """Sonst stünde „gesperrt" in der Liste, während die Karte weiter öffnet."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    fake.change_should_fail = True
+    fake.delete_should_fail = True
 
     with pytest.raises(TTLockError):
         svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
@@ -854,8 +860,8 @@ def test_chip_loeschen_bricht_ab_wenn_ein_schloss_nicht_erreichbar_ist():
 def test_sperren_akzeptiert_eine_karte_die_es_am_schloss_nicht_mehr_gibt():
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    fake.change_should_fail = True
-    fake.change_errcode = -1021
+    fake.delete_should_fail = True
+    fake.delete_errcode = -1021
 
     out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
 
@@ -864,47 +870,24 @@ def test_sperren_akzeptiert_eine_karte_die_es_am_schloss_nicht_mehr_gibt():
     # Die Zeile behauptet keine tote cardId mehr und steht nicht auf „fehler".
     for r in svc.berechtigung_repo.rows.values():
         assert r.ttlock_card_id is None
-        assert r.sync_status == "pending" and r.sync_fehler is None
+        assert r.sync_status == "gesperrt" and r.sync_fehler is None
 
 
 def test_sperren_bleibt_bei_einer_echten_stoerung_hart():
     """Gegenprobe: −3003 (Gateway offline) ist weiterhin ein Fehler."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    fake.change_should_fail = True
+    fake.delete_should_fail = True
 
     with pytest.raises(TTLockError):
         svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
     assert svc.chip_repo.get(7).status == "aktiv"
 
 
-def test_entsperren_spielt_eine_fehlende_karte_neu_auf():
-    """Sonst stünde der Chip als „aktiv" in der Liste und die Tür bliebe stumm."""
-    fake = FakeClient()
-    svc = _chip_mit_zwei_schloessern(fake)
-    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
-    fake.added.clear()
-    fake.change_should_fail = True
-    fake.change_errcode = -1021
-
-    out = svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
-
-    assert out["schloesser"] == 2 and out["ohne_karte"] == 0
-    assert {a[0] for a in fake.added} == {30392116, 30392117}
-    # Neu angelernt wird mit der hinterlegten Gültigkeit, nicht mit dem Sperrfenster.
-    nach_schloss = {a[0]: (a[2], a[3]) for a in fake.added}
-    assert nach_schloss[30392116] == (0, 0)
-    assert nach_schloss[30392117] == (0, _iso_to_ms("2026-12-31T23:00:00+00:00"))
-    for r in svc.berechtigung_repo.rows.values():
-        assert r.sync_status == "aktiv" and r.ttlock_card_id is not None
-
-
 def test_entsperren_meldet_wenn_das_neu_anlernen_scheitert():
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
     svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
-    fake.change_should_fail = True
-    fake.change_errcode = -1021
     fake.add_should_fail = True
 
     with pytest.raises(TTLockError):
@@ -1023,8 +1006,8 @@ def test_sammelfehler_laesst_den_chip_status_stehen():
     weiter öffnet."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    fake.change_should_fail = True
-    fake.change_errcode = 1
+    fake.delete_should_fail = True
+    fake.delete_errcode = 1
 
     with pytest.raises(TTLockError):
         svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
@@ -1038,49 +1021,46 @@ def test_sammelfehler_laesst_den_chip_status_stehen():
 
 def test_sammelfehler_mit_karte_nicht_in_der_liste_gilt_als_gesperrt():
     """errcode=1 sagt nur „hat nicht geklappt". Die Kartenliste sagt, was gilt: Ist
-    die Karte dort nicht geführt, öffnet sie auch nichts – Sperren erledigt."""
+    die Karte dort nicht geführt, gibt es auch nichts mehr zu löschen."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
     fake.cards_by_lock = {}                    # Schlösser kennen die Karte nicht (mehr)
-    fake.change_should_fail = True
-    fake.change_errcode = 1
+    fake.delete_should_fail = True
+    fake.delete_errcode = 1
 
     out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
 
     assert svc.chip_repo.get(7).status == "verloren"
     assert out["ohne_karte"] == 2
     for r in svc.berechtigung_repo.rows.values():
-        assert r.ttlock_card_id is None and r.sync_status == "pending"
+        assert r.ttlock_card_id is None and r.sync_status == "gesperrt"
 
 
-def test_sammelfehler_bei_bereits_gesperrter_karte_zaehlt_als_erledigt():
-    """Der Fall aus der Praxis: Ein früherer Versuch kam durch, der zweite läuft in
-    den Sammelfehler. Das Fenster liegt längst in der Vergangenheit."""
+def test_zweites_sperren_findet_nichts_mehr_zu_loeschen():
+    """Zustandsbasiert: Was beim ersten Mal weg ist, wird nicht noch einmal gelöscht."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")   # Fenster gesetzt
-    fake.change_should_fail = True
-    fake.change_errcode = 1
+    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    fake.deleted.clear()
 
     out = svc.chip_status_setzen(chip_id=7, status="verloren", actor="admin")
 
     assert svc.chip_repo.get(7).status == "verloren"
-    assert out["schloesser"] == 2 and out["ohne_karte"] == 0
-    for r in svc.berechtigung_repo.rows.values():
-        assert r.sync_status == "gesperrt" and r.ttlock_card_id is not None
+    assert fake.deleted == [] and out["schloesser"] == 0
 
 
-def test_sammelfehler_beim_entsperren_bleibt_ein_fehler():
-    """Ein abgelaufenes Fenster ist beim Aktivieren gerade NICHT das Ziel."""
+def test_sammelfehler_beim_richten_einer_aktiven_karte_bleibt_ein_fehler():
+    """errcode=1 mit weiterhin gelisteter Karte sagt nur „nicht angekommen"."""
     fake = FakeClient()
     svc = _chip_mit_zwei_schloessern(fake)
-    svc.chip_status_setzen(chip_id=7, status="gesperrt", actor="admin")
+    ber_id = next(iter(svc.berechtigung_repo.rows))
     fake.change_should_fail = True
     fake.change_errcode = 1
 
     with pytest.raises(TTLockError):
-        svc.chip_status_setzen(chip_id=7, status="aktiv", actor="admin")
-    assert svc.chip_repo.get(7).status == "gesperrt"
+        svc.berechtigung_aendern(berechtigung_id=ber_id,
+                                 gueltig_bis="2027-06-30T22:00:00+00:00", actor="admin")
+    assert svc.berechtigung_repo.rows[ber_id].sync_status == "fehler"
 
 
 def test_entziehen_bei_sammelfehler_und_fehlender_karte_ist_erledigt():
@@ -1119,12 +1099,6 @@ def test_karte_fehlt_erkennt_nur_den_passenden_errcode():
     assert karte_fehlt(TTLockError("offline", errcode=-3003)) is False
     assert karte_fehlt(ValueError("kein Cloud-Fehler")) is False
     assert "nicht mehr vor" in fehlertext(TTLockError("weg", errcode=-1021))
-
-
-def test_sperr_fenster_liegt_vollstaendig_in_der_vergangenheit():
-    von, bis = sperr_fenster(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc))
-    jetzt_ms = int(datetime(2026, 8, 6, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
-    assert von < bis < jetzt_ms
 
 
 # ---------------------------------------------------------------------------
@@ -1348,16 +1322,14 @@ class TestGruppenAbgleich:
         svc, fake = _gruppen_service()
         g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
         svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
-        svc.chip_repo.get(1).status = "verloren"      # ohne die Karten zu sperren
-        fake.changed.clear()
+        svc.chip_repo.get(1).status = "verloren"      # ohne die Karten zu entfernen
+        fake.deleted.clear()
 
         res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
 
         assert res["gerichtet"] == 2 and res["fehler"] == []
-        jetzt_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        assert {c[0] for c in fake.changed} == {3001, 3002}
-        for _, _, von, bis in fake.changed:
-            assert 0 < von < bis < jetzt_ms          # abgelaufenes Fenster = gesperrt
+        assert {d[0] for d in fake.deleted} == {3001, 3002}
+        assert fake.cards_by_lock[3001] == [] and fake.cards_by_lock[3002] == []
         assert {b.sync_status for b in svc.berechtigung_repo.list_for_chip(1)} == {"gesperrt"}
 
     def test_abgleichen_stellt_die_hinterlegte_gueltigkeit_wieder_her(self):
@@ -1388,19 +1360,35 @@ class TestGruppenAbgleich:
         assert [c[0] for c in fake.changed] == [3002]
         assert res["gerichtet"] == 1 and res["bestaetigt"] == 1
 
-    def test_abgleichen_bestaetigt_eine_schon_gesperrte_karte(self):
-        """Bei gesperrtem Chip zählt nur, dass das Fenster in der Vergangenheit liegt –
-        `sperr_fenster` rechnet sonst bei jedem Klick neue Zeitpunkte aus."""
+    def test_abgleichen_bestaetigt_eine_schon_entfernte_karte(self):
+        """Zweiter Klick: Die Karten sind weg, es bleibt beim Nachsehen – die Prüfung
+        läuft dann über die Kartennummer, denn eine cardId gibt es nicht mehr."""
         svc, fake = _gruppen_service()
         g = svc.gruppe_repo.anlegen("Übungsleiter", [1, 2])
         svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
         svc.chip_repo.get(1).status = "verloren"
         svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
-        fake.changed.clear()
+        fake.deleted.clear()
 
         res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
 
-        assert fake.changed == [] and res["bestaetigt"] == 2
+        assert fake.deleted == [] and res["bestaetigt"] == 2
+
+    def test_abgleichen_entfernt_eine_heimlich_angelernte_karte(self):
+        """Ohne cardId hilft die Nummer: Was jemand per BLE an der App vorbei angelernt
+        hat, gehört bei einem verlorenen Chip trotzdem nicht ans Schloss."""
+        svc, fake = _gruppen_service()
+        g = svc.gruppe_repo.anlegen("Übungsleiter", [1])
+        svc.gruppe_chip_zuordnen(gruppe_id=g.id, chip_id=1, actor="admin")
+        svc.chip_repo.get(1).status = "verloren"
+        svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+        fake.cards_by_lock[3001] = [{"cardId": 4242, "cardNumber": "ABC",
+                                     "cardName": "von Hand", "startDate": 0, "endDate": 0}]
+        fake.deleted.clear()
+
+        res = svc.chip_gruppen_abgleichen(chip_id=1, karten_richten=True, actor="admin")
+
+        assert fake.deleted == [(3001, 4242)] and res["gerichtet"] == 1
 
     def test_gruppen_abgleich_fasst_die_karten_nicht_an(self):
         """Über alle Chips einer Gruppe wären das hunderte Gateway-Aufrufe für einen
