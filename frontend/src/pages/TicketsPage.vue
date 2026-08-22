@@ -75,7 +75,11 @@
       >
         <q-card-section class="q-py-md q-px-md">
           <div class="row items-center q-mb-sm no-wrap">
-            <span class="text-caption text-grey-5 col">#{{ t.id }}</span>
+            <span class="text-caption text-grey-5">#{{ t.id }}</span>
+            <q-icon v-if="t.intern" name="lock" size="16px" color="primary" class="q-ml-xs">
+              <q-tooltip>Nur intern sichtbar</q-tooltip>
+            </q-icon>
+            <q-space />
             <q-chip dense :color="statusColor(t.status)" text-color="white" :label="statusLabel(t.status)" />
             <q-btn v-if="zeigeGeloeschte" flat round dense icon="restore" color="primary" size="sm"
               @click.stop="onRestore(t)">
@@ -119,6 +123,14 @@
       @row-click="(_, row) => openDetailDialog(row)"
       class="cursor-pointer"
     >
+      <template #body-cell-titel="props">
+        <q-td :props="props">
+          <q-icon v-if="props.row.intern" name="lock" size="16px" color="primary" class="q-mr-xs">
+            <q-tooltip>Nur intern sichtbar</q-tooltip>
+          </q-icon>
+          {{ props.row.titel }}
+        </q-td>
+      </template>
       <template #body-cell-status="props">
         <q-td :props="props">
           <q-chip dense :color="statusColor(props.row.status)" text-color="white"
@@ -268,6 +280,22 @@
                     class="col"
                   />
                 </div>
+                <!-- Intern (#178): steht bewusst bei den anderen Eigenschaften
+                     und nicht in der Kopfzeile — es ist eine Eigenschaft des
+                     Tickets, die man wie Priorität oder Bereich ändert. -->
+                <div class="q-mb-sm">
+                  <q-checkbox v-model="detailForm.intern" dense color="primary">
+                    <span class="row items-center no-wrap">
+                      <q-icon name="lock" size="18px" class="q-mr-xs" />
+                      Nur intern sichtbar
+                    </span>
+                  </q-checkbox>
+                  <div class="text-caption text-grey-7 q-ml-sm" style="margin-top:2px">
+                    {{ detailForm.intern
+                      ? 'Sichtbar nur für Melder, Zuständige des Bereichs und Administratoren.'
+                      : 'Sichtbar für alle angemeldeten Mitglieder.' }}
+                  </div>
+                </div>
                 <div class="row justify-end q-mb-md">
                   <q-btn
                     v-if="detailFormDirty"
@@ -284,7 +312,12 @@
 
               <!-- ── Nur-Lesen-Ansicht ── -->
               <template v-else>
-                <div class="text-h6 q-mb-sm">{{ selectedTicket.titel }}</div>
+                <div class="text-h6 q-mb-sm">
+                  <q-icon v-if="selectedTicket.intern" name="lock" size="20px" color="primary"
+                    class="q-mr-xs">
+                    <q-tooltip>Nur intern sichtbar</q-tooltip>
+                  </q-icon>{{ selectedTicket.titel }}
+                </div>
                 <div class="text-body2 q-mb-md" style="white-space: pre-wrap">
                   {{ selectedTicket.beschreibung || '—' }}
                 </div>
@@ -599,6 +632,7 @@ const detailFormDirty = computed(() => {
     detailForm.value.bereich_id !== t.bereich_id ||
     detailForm.value.kategorie_id !== t.kategorie_id ||
     detailForm.value.prioritaet !== t.prioritaet ||
+    detailForm.value.intern !== !!t.intern ||
     detailForm.value.faellig_am !== (t.faellig_am || '') ||
     false
   )
@@ -794,6 +828,10 @@ const historyEvents = computed(() => {
       if (r.titel !== prev.titel) changes.push('Titel geändert')
       if ((r.beschreibung ?? '') !== (prev.beschreibung ?? '')) changes.push('Beschreibung bearbeitet')
       if ((r.faellig_am ?? '') !== (prev.faellig_am ?? '')) changes.push(r.faellig_am ? `Fällig am → ${formatDate(r.faellig_am)}` : 'Fälligkeit entfernt')
+      // Vor Schema v108 kannte die History kein `intern`; dort steht NULL, was
+      // wie „nicht intern" gilt — sonst meldete die erste Zeile nach der
+      // Migration einen Wechsel, den nie jemand vorgenommen hat.
+      if (!!r.intern !== !!prev.intern) changes.push(r.intern ? 'Als intern markiert' : 'Intern-Markierung entfernt')
     }
     if (!changes.length) changes = ['bearbeitet']
     events.push({ version: r.version, wer: r.updated_by, wann: r.updated_at, changes })
@@ -802,7 +840,7 @@ const historyEvents = computed(() => {
 })
 
 function emptyCreateForm() {
-  return { titel: '', beschreibung: '', bereich_id: null, kategorie_id: null, prioritaet: 'normal', faellig_am: '' }
+  return { titel: '', beschreibung: '', bereich_id: null, kategorie_id: null, prioritaet: 'normal', intern: false, faellig_am: '' }
 }
 
 function syncDetailForm(ticket) {
@@ -812,6 +850,7 @@ function syncDetailForm(ticket) {
     bereich_id:    ticket.bereich_id,
     kategorie_id:  ticket.kategorie_id,
     prioritaet:    ticket.prioritaet,
+    intern:        !!ticket.intern,
     faellig_am:    ticket.faellig_am || '',
   }
 }

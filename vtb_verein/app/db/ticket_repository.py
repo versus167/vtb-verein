@@ -22,7 +22,7 @@ class TicketRepository:
     # ------------------------------------------------------------------
 
     _SELECT_TICKET = (
-        "SELECT id, titel, beschreibung, status, prioritaet, "
+        "SELECT id, titel, beschreibung, status, prioritaet, intern, "
         "bereich_id, kategorie_id, gemeldet_von, zugewiesen_an, "
         "faellig_am, geschlossen_am, geschlossen_von, "
         "version, created_at, updated_at, deleted_at, deleted_by FROM tickets"
@@ -103,12 +103,12 @@ class TicketRepository:
     def create(self, ticket: Ticket, created_by: str) -> Ticket:
         cursor = self.conn.execute(
             "INSERT INTO tickets "
-            "(titel, beschreibung, status, prioritaet, bereich_id, kategorie_id, "
+            "(titel, beschreibung, status, prioritaet, intern, bereich_id, kategorie_id, "
             "gemeldet_von, zugewiesen_an, faellig_am, created_by, updated_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 ticket.titel, ticket.beschreibung, ticket.status, ticket.prioritaet,
-                ticket.bereich_id, ticket.kategorie_id, ticket.gemeldet_von,
+                ticket.intern, ticket.bereich_id, ticket.kategorie_id, ticket.gemeldet_von,
                 ticket.zugewiesen_an, ticket.faellig_am,
                 created_by, created_by
             )
@@ -119,14 +119,14 @@ class TicketRepository:
     def update(self, ticket: Ticket, updated_by: str) -> bool:
         cursor = self.conn.execute(
             "UPDATE tickets SET "
-            "titel = %s, beschreibung = %s, status = %s, prioritaet = %s, "
+            "titel = %s, beschreibung = %s, status = %s, prioritaet = %s, intern = %s, "
             "bereich_id = %s, kategorie_id = %s, zugewiesen_an = %s, faellig_am = %s, "
             "geschlossen_am = %s, geschlossen_von = %s, "
             "updated_at = CURRENT_TIMESTAMP, updated_by = %s, version = version + 1 "
             "WHERE id = %s AND version = %s AND deleted_at IS NULL",
             (
                 ticket.titel, ticket.beschreibung, ticket.status, ticket.prioritaet,
-                ticket.bereich_id, ticket.kategorie_id, ticket.zugewiesen_an, ticket.faellig_am,
+                ticket.intern, ticket.bereich_id, ticket.kategorie_id, ticket.zugewiesen_an, ticket.faellig_am,
                 ticket.geschlossen_am, ticket.geschlossen_von,
                 updated_by,
                 ticket.id, ticket.version
@@ -158,7 +158,7 @@ class TicketRepository:
 
     def get_history(self, ticket_id: int) -> list[dict]:
         cursor = self.conn.execute(
-            "SELECT id, version, titel, beschreibung, status, prioritaet, bereich_id, kategorie_id, "
+            "SELECT id, version, titel, beschreibung, status, prioritaet, intern, bereich_id, kategorie_id, "
             "zugewiesen_an, faellig_am, geschlossen_am, geschlossen_von, "
             "deleted_at, deleted_by, created_at, updated_at, updated_by "
             "FROM tickets_history WHERE id = %s ORDER BY version ASC",
@@ -172,7 +172,7 @@ class TicketRepository:
         else:
             where_order = "WHERE t.deleted_at IS NULL ORDER BY t.updated_at DESC"
         cursor = self.conn.execute(
-            "SELECT t.id, t.titel, t.beschreibung, t.status, t.prioritaet, "
+            "SELECT t.id, t.titel, t.beschreibung, t.status, t.prioritaet, t.intern, "
             "t.bereich_id, t.kategorie_id, t.gemeldet_von, t.zugewiesen_an, "
             "t.faellig_am, t.geschlossen_am, t.geschlossen_von, "
             "t.version, t.created_at, t.updated_at, t.deleted_at, t.deleted_by, "
@@ -187,7 +187,7 @@ class TicketRepository:
     def _map_ticket(self, row) -> Ticket:
         return Ticket(
             id=row['id'], titel=row['titel'], beschreibung=row['beschreibung'],
-            status=row['status'], prioritaet=row['prioritaet'],
+            status=row['status'], prioritaet=row['prioritaet'], intern=row['intern'],
             bereich_id=row['bereich_id'], kategorie_id=row['kategorie_id'],
             gemeldet_von=row['gemeldet_von'], zugewiesen_an=row['zugewiesen_an'],
             faellig_am=row['faellig_am'], geschlossen_am=row['geschlossen_am'],
@@ -199,7 +199,7 @@ class TicketRepository:
     def _map_ticket_with_counts(self, row) -> Ticket:
         return Ticket(
             id=row['id'], titel=row['titel'], beschreibung=row['beschreibung'],
-            status=row['status'], prioritaet=row['prioritaet'],
+            status=row['status'], prioritaet=row['prioritaet'], intern=row['intern'],
             bereich_id=row['bereich_id'], kategorie_id=row['kategorie_id'],
             gemeldet_von=row['gemeldet_von'], zugewiesen_an=row['zugewiesen_an'],
             faellig_am=row['faellig_am'], geschlossen_am=row['geschlossen_am'],

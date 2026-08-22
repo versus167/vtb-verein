@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 107
+SCHEMA_VERSION = 108
 
 
 # ---------------------------------------------------------------------------
@@ -3438,6 +3438,36 @@ _KALENDER_ABO_UNIQUE_INDEXES = (
     "ON kalender_abo (user_id) WHERE deleted_at IS NULL",
 )
 
+# --- Interne Tickets (Schema v108, Ticket #178) --------------------------------
+# Die Audit-Funktionen der Tickets sind seit v108 geteilte Konstanten, weil die
+# Spaltenliste jetzt an zwei Stellen gebraucht wird: im Frischaufbau und in der
+# Migration, die `intern` nachrüstet. Ohne das würde ein migrierter Bestand die
+# neue Spalte zwar in `tickets` führen, aber nie in die History schreiben.
+_TICKET_COLS = (
+    "id, version, titel, beschreibung, status, prioritaet, intern, "
+    "bereich_id, kategorie_id, gemeldet_von, zugewiesen_an, "
+    "faellig_am, geschlossen_am, geschlossen_von, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TICKET_VALS = ", ".join("NEW." + c.strip() for c in _TICKET_COLS.split(","))
+
+_FN_TICKETS_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_tickets_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO tickets_history ({_TICKET_COLS}) VALUES ({_TICKET_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_TICKETS_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_tickets_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO tickets_history ({_TICKET_COLS}) VALUES ({_TICKET_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
 
 class Database:
     """Manages PostgreSQL connection and schema."""
@@ -3607,6 +3637,7 @@ class Database:
             105: self._migrate_v104_to_v105,
             106: self._migrate_v105_to_v106,
             107: self._migrate_v106_to_v107,
+            108: self._migrate_v107_to_v108,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -7971,6 +8002,38 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 107 WHERE id = 1")
 
+    def _migrate_v107_to_v108(self) -> None:
+        """Interne Tickets (#178): ein Ticket kann als „nur intern" gekennzeichnet werden.
+
+        Bis hierher durfte jeder angemeldete Benutzer jedes Ticket lesen — die
+        Bereichs-ACL regelte nur das Schreiben und Schließen. Wer etwas Heikles
+        melden wollte (Personal, Beschwerde über eine Person, Sicherheitslücke),
+        hatte keine Möglichkeit dazu. `intern` schließt das: gesetzt, sehen das
+        Ticket nur noch Melder, Zugewiesener, die am Bereich Berechtigten und
+        Admins.
+
+        Bestandstickets bleiben ausdrücklich offen (DEFAULT FALSE) — die Spalte
+        schränkt nichts nachträglich ein, sie schafft nur die Möglichkeit.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE tickets "
+                "ADD COLUMN IF NOT EXISTS intern BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+            # In der History bewusst NULL-bar und ohne Default: Zeilen, die vor
+            # dieser Migration entstanden sind, wissen nichts über `intern`, und
+            # ein aufgedrücktes FALSE würde behaupten, jemand hätte das damals so
+            # entschieden. Der Verlauf im Frontend liest NULL wie „nicht intern".
+            cur.execute(
+                "ALTER TABLE tickets_history ADD COLUMN IF NOT EXISTS intern BOOLEAN"
+            )
+            # Die Audit-Funktionen müssen die neue Spalte mitschreiben, sonst
+            # fehlt sie im Verlauf (Fresh == Migriert).
+            cur.execute(_FN_TICKETS_AUDIT_INSERT)
+            cur.execute(_FN_TICKETS_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 108 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8884,6 +8947,7 @@ class Database:
                               CHECK(status IN ('offen','in_pruefung','eingeplant','rueckfrage','erledigt','abgelehnt')),
               prioritaet      TEXT NOT NULL DEFAULT 'normal'
                               CHECK(prioritaet IN ('niedrig','normal','hoch','sicherheit')),
+              intern          BOOLEAN NOT NULL DEFAULT FALSE,
               bereich_id      INTEGER REFERENCES ticket_bereiche(id),
               kategorie_id    INTEGER REFERENCES ticket_kategorien(id),
               gemeldet_von    INTEGER NOT NULL REFERENCES users(id),
@@ -8908,6 +8972,7 @@ class Database:
               beschreibung    TEXT,
               status          TEXT,
               prioritaet      TEXT,
+              intern          BOOLEAN,
               bereich_id      INTEGER,
               kategorie_id    INTEGER,
               gemeldet_von    INTEGER,
@@ -9899,42 +9964,8 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_tickets_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO tickets_history (
-                    id, version, titel, beschreibung, status, prioritaet,
-                    bereich_id, kategorie_id, gemeldet_von, zugewiesen_an,
-                    faellig_am, geschlossen_am, geschlossen_von,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.titel, NEW.beschreibung, NEW.status, NEW.prioritaet,
-                    NEW.bereich_id, NEW.kategorie_id, NEW.gemeldet_von, NEW.zugewiesen_an,
-                    NEW.faellig_am, NEW.geschlossen_am, NEW.geschlossen_von,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_tickets_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO tickets_history (
-                        id, version, titel, beschreibung, status, prioritaet,
-                        bereich_id, kategorie_id, gemeldet_von, zugewiesen_an,
-                        faellig_am, geschlossen_am, geschlossen_von,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.titel, NEW.beschreibung, NEW.status, NEW.prioritaet,
-                        NEW.bereich_id, NEW.kategorie_id, NEW.gemeldet_von, NEW.zugewiesen_an,
-                        NEW.faellig_am, NEW.geschlossen_am, NEW.geschlossen_von,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_TICKETS_AUDIT_INSERT)
+        cur.execute(_FN_TICKETS_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_ticket_kommentare_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN

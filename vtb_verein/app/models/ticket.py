@@ -74,6 +74,9 @@ class Ticket:
     beschreibung: str = field(default='')
     status: str = field(default=TicketStatus.OFFEN)
     prioritaet: str = field(default=TicketPrioritaet.NORMAL)
+    # Intern (#178): sichtbar nur für Melder, Zugewiesenen, am Bereich
+    # Berechtigte und Admins. Offen (False) ist der Normalfall.
+    intern: bool = field(default=False)
     bereich_id: Optional[int] = field(default=None)
     kategorie_id: Optional[int] = field(default=None)
     gemeldet_von: Optional[int] = field(default=None)

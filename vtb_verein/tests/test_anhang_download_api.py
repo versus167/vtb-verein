@@ -117,7 +117,7 @@ def _ticket_db(tmp_path, anhang, ticket_id=7):
         dienst,
         tickets=SimpleNamespace(
             get_ticket=lambda tid: SimpleNamespace(
-                id=tid, bereich_id=1, gemeldet_von=1, zugewiesen_an=None),
+                id=tid, bereich_id=1, gemeldet_von=1, zugewiesen_an=None, intern=False),
             get_anhang=lambda aid: anhang if anhang.id == aid else None,
         ),
     )
