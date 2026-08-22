@@ -301,6 +301,13 @@
           <q-input v-model="einst.kassendifferenz_gegenkonto" label="Gegenkonto Kassendifferenz" outlined dense
             clearable hint="Gegenkonto (Feld 01) der System-Kategorie Kassendifferenz beim Kassenexport" />
           <q-separator class="q-my-sm" />
+          <div class="text-subtitle2">Rechnungsexport (FBASC)</div>
+          <div class="text-caption text-grey-7">
+            Der Standard-Kreditor und die Aufwandskonten der Rechnungen werden im
+            Bereich <b>Rechnungen</b> gepflegt (Reiter <b>Einstellungen</b> bzw.
+            <b>Kategorien</b>) – dort, wo auch exportiert wird.
+          </div>
+          <q-separator class="q-my-sm" />
           <div class="text-subtitle2">SEPA-Lastschrift (eigener Einzug)</div>
           <q-input v-model="einst.sepa_glaeubiger_id" label="Gläubiger-ID (Creditor Identifier)" outlined dense
             clearable hint="von der Bundesbank vergeben, z. B. DE98ZZZ09999999999" />

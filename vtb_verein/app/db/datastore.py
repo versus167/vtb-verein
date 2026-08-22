@@ -240,6 +240,7 @@ class VereinsDB:
             anhang_repo=self._rechnung_anhang_repo,
             export_repo=self._rechnung_export_repo,
             anhang_service=self._anhang_service,
+            fibu_einstellungen_repo=self._fibu_einstellungen_repo,
         )
 
         # Passwort-Tresor (#85)

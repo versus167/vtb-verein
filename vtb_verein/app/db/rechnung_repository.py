@@ -147,6 +147,52 @@ class RechnungRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    # Eigene Abfrage für den FBASC-Export: Die Kreditor-Zeile braucht Anschrift,
+    # Bankverbindung und Mitgliedsnummer des Empfängers sowie die Konten der
+    # Kategorie. Bewusst NICHT in `_SELECT` aufgenommen und als dict statt als
+    # `Rechnung` geliefert — sonst reiste der Personenstamm bei jedem Aufruf der
+    # Listen („Meine Rechnungen", Freigabe) unnötig mit bis ins Frontend.
+    _SELECT_FBASC = """
+        SELECT r.id, r.betrag_cent, r.rechnungsdatum, r.rechnungsnummer, r.beschreibung,
+               r.empfaenger_typ, r.empfaenger_name, r.empfaenger_iban,
+               r.freigegeben_am, r.freigegeben_von, r.created_by,
+               k.name AS kategorie_name, k.sachkonto AS kategorie_sachkonto,
+               k.kostenstelle AS kategorie_kostenstelle,
+               k.kostentraeger AS kategorie_kostentraeger,
+               ab.name AS abteilung_name, ab.id AS abteilung_id,
+               ab.kostenstelle AS abteilung_kostenstelle,
+               em.id AS empfaenger_mitglied_id, em.mitgliedsnummer,
+               em.vorname, em.nachname, em.strasse, em.plz, em.ort, em.land,
+               em.iban AS mitglied_iban, em.bic, em.kontoinhaber,
+               (SELECT ko.wert FROM mitglied_kontakt ko
+                 WHERE ko.mitglied_id = em.id AND ko.typ = 'email' AND ko.ist_primaer
+                   AND ko.deleted_at IS NULL LIMIT 1) AS email
+        FROM rechnung r
+        LEFT JOIN rechnung_kategorie k ON k.id = r.kategorie_id
+        LEFT JOIN abteilung ab ON ab.id = r.abteilung_id
+        LEFT JOIN mitglied em ON em.id = r.empfaenger_mitglied_id
+    """
+
+    def list_fbasc_offen(self) -> list[dict]:
+        """Export-Delta für den FBASC-Lauf: freigegeben und noch nicht gestempelt."""
+        with self.cursor() as cur:
+            cur.execute(
+                self._SELECT_FBASC
+                + " WHERE r.deleted_at IS NULL AND r.status = 'freigegeben'"
+                  " AND r.exportiert_in_export_id IS NULL ORDER BY r.id"
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def list_fbasc_fuer_export(self, export_id: int) -> list[dict]:
+        """Re-Download: dieselben Zeilen wie beim ursprünglichen Lauf."""
+        with self.cursor() as cur:
+            cur.execute(
+                self._SELECT_FBASC
+                + " WHERE r.exportiert_in_export_id = %s ORDER BY r.id",
+                (export_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
     def list_fuer_export(self, export_id: int) -> list[Rechnung]:
         """Re-Download: die in einem Lauf gestempelten Rechnungen."""
         with self.cursor() as cur:

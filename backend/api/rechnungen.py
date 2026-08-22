@@ -34,6 +34,7 @@ from app.services.rechnung_service import (
     RechnungGesperrtError,
 )
 from app.services.rechnung_export_service import (
+    FibuRechnungExportFehler,
     KeineRechnungenError,
     NichtJuengsterLaufError,
 )
@@ -174,6 +175,39 @@ def _zip_response(dateiname: str, zip_bytes: bytes) -> Response:
     )
 
 
+# ---------------------------------------------------------------------------
+# Einstellungen des Bereichs
+# ---------------------------------------------------------------------------
+
+class RechnungEinstellungenUpdate(BaseModel):
+    rechnung_kreditor_konto: Optional[str] = None
+
+
+@router.get("/einstellungen")
+def einstellungen(user: CurrentUser, db: DB):
+    """Bereichs-Einstellungen der Rechnungen.
+
+    Der Standard-Kreditor liegt technisch in `fibu_einstellungen` (dort stehen alle
+    Konten), gepflegt wird er aber hier: Er gehört fachlich zum Einreichen von
+    Rechnungen, und wer den Export fährt, hat `rechnungen.verwalten` – nicht
+    zwingend das Recht für den Fibu-Export.
+    """
+    _require_verwalten(user)
+    e = db.fibu_einstellungen.get()
+    return {"rechnung_kreditor_konto": e.rechnung_kreditor_konto}
+
+
+@router.put("/einstellungen")
+def einstellungen_speichern(data: RechnungEinstellungenUpdate, user: CurrentUser, db: DB):
+    _require_verwalten(user)
+    # Auf dem Bestand aufsetzen: Die übrigen Konten gehören anderen Bereichen und
+    # dürfen von hier aus nicht angefasst werden.
+    e = db.fibu_einstellungen.get()
+    e.rechnung_kreditor_konto = (data.rechnung_kreditor_konto or "").strip() or None
+    gespeichert = db.fibu_einstellungen.update(e, updated_by=user.username)
+    return {"rechnung_kreditor_konto": gespeichert.rechnung_kreditor_konto}
+
+
 @router.get("/export/vorschau")
 def export_vorschau(user: CurrentUser, db: DB):
     _require_verwalten(user)
@@ -189,12 +223,19 @@ def list_exporte(user: CurrentUser, db: DB):
 
 @router.post("/export")
 def exportieren(user: CurrentUser, db: DB):
-    """Neuer Lauf: Zip mit Belegen + uebersicht.csv; stempelt die Rechnungen."""
+    """Neuer Lauf: Zip mit fbasc.hia, Belegen und uebersicht.csv; stempelt die Rechnungen."""
     _require_verwalten(user)
     try:
         dateiname, zip_bytes = db.rechnung_export.exportieren(user.username)
     except KeineRechnungenError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except FibuRechnungExportFehler as exc:
+        # 422 statt 409: Es liegt nicht am Zustand des Laufs, sondern an fehlender
+        # Konfiguration. Die Einzelmeldungen sagen, welches Konto fehlt.
+        raise HTTPException(status_code=422, detail={
+            "message": "Export nicht möglich – Konten unvollständig konfiguriert.",
+            "fehler": exc.fehler,
+        })
     return _zip_response(dateiname, zip_bytes)
 
 

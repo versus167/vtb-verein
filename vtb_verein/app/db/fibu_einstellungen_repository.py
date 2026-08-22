@@ -5,6 +5,7 @@ from app.db.base_repository import BaseRepository
 _COLS = """id, debitor_konto_basis, default_gegenkonto, default_steuerschluessel,
            verein_kostenstelle, default_kostentraeger,
            ul_aufwand_konto, ul_kreditor_konto_basis, kassendifferenz_gegenkonto,
+           rechnung_kreditor_konto,
            sepa_glaeubiger_id, sepa_glaeubiger_name, sepa_iban, sepa_bic, sepa_vorlauftage,
            version, created_at, created_by, updated_at, updated_by"""
 
@@ -30,6 +31,7 @@ class FibuEinstellungenRepository(BaseRepository):
                 SET debitor_konto_basis=%s, default_gegenkonto=%s, default_steuerschluessel=%s,
                     verein_kostenstelle=%s, default_kostentraeger=%s,
                     ul_aufwand_konto=%s, ul_kreditor_konto_basis=%s, kassendifferenz_gegenkonto=%s,
+                    rechnung_kreditor_konto=%s,
                     sepa_glaeubiger_id=%s, sepa_glaeubiger_name=%s, sepa_iban=%s, sepa_bic=%s,
                     sepa_vorlauftage=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
@@ -38,6 +40,7 @@ class FibuEinstellungenRepository(BaseRepository):
                 (e.debitor_konto_basis, e.default_gegenkonto, e.default_steuerschluessel,
                  e.verein_kostenstelle, e.default_kostentraeger,
                  e.ul_aufwand_konto, e.ul_kreditor_konto_basis, e.kassendifferenz_gegenkonto,
+                 e.rechnung_kreditor_konto,
                  e.sepa_glaeubiger_id, e.sepa_glaeubiger_name, e.sepa_iban, e.sepa_bic,
                  e.sepa_vorlauftage,
                  updated_by),

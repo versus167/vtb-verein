@@ -21,6 +21,12 @@ _EOL = "\r\n"
 # gekappt wird am Ende, also trifft es den Namen und nicht die Bezeichnung.
 _MAX_BUCHUNGSTEXT = 250
 
+# Feld 22 (Name) fasst laut Schnittstellenbeschreibung 50 Zeichen. Bei Mitgliedern
+# fällt das nie ins Gewicht; seit die Rechnungen externe Aussteller mitbringen,
+# steht dort aber ein frei erfasster Firmenname („Sportartikel Großhandel Sachsen
+# GmbH & Co. KG"), der die Grenze reißen kann.
+_MAX_NAME = 50
+
 
 def _datum(iso) -> str:
     """Datum → TT.MM.JJJJ; leer/ungültig → ''.
@@ -74,7 +80,7 @@ def felder(p: FibuExportPosition) -> list[str]:
     f[17] = "E"                         # Währung EURO
     f[19] = p.kontenart or "D"          # Kontenart 'D' Debitor | 'K' Kreditor (ÜL-Honorar)
     f[20] = _clean(p.suchname)          # Suchname (Adresscode)
-    f[22] = _clean(p.nachname)          # Name
+    f[22] = _clean(p.nachname)[:_MAX_NAME]   # Name (max. 50)
     f[24] = _clean(p.strasse)           # Straße
     f[25] = _clean(p.plz)               # PLZ
     f[26] = _clean(p.ort)               # Ort

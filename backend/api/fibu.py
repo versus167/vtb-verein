@@ -75,6 +75,7 @@ def _einst_dict(e: FibuEinstellungen) -> dict:
         'ul_aufwand_konto': e.ul_aufwand_konto,
         'ul_kreditor_konto_basis': e.ul_kreditor_konto_basis,
         'kassendifferenz_gegenkonto': e.kassendifferenz_gegenkonto,
+        'rechnung_kreditor_konto': e.rechnung_kreditor_konto,
         'sepa_glaeubiger_id': e.sepa_glaeubiger_id,
         'sepa_glaeubiger_name': e.sepa_glaeubiger_name,
         'sepa_iban': e.sepa_iban,
@@ -140,21 +141,24 @@ def get_einstellungen(user: CurrentUser, db: DB):
 @router.put("/einstellungen")
 def update_einstellungen(data: EinstellungenUpdate, user: CurrentUser, db: DB):
     _require_export(user)
-    e = FibuEinstellungen(
-        debitor_konto_basis=data.debitor_konto_basis,
-        default_gegenkonto=(data.default_gegenkonto or None),
-        default_steuerschluessel=(data.default_steuerschluessel or None),
-        verein_kostenstelle=data.verein_kostenstelle,
-        default_kostentraeger=data.default_kostentraeger,
-        ul_aufwand_konto=(data.ul_aufwand_konto or None),
-        ul_kreditor_konto_basis=data.ul_kreditor_konto_basis,
-        kassendifferenz_gegenkonto=(data.kassendifferenz_gegenkonto or None),
-        sepa_glaeubiger_id=(data.sepa_glaeubiger_id or None),
-        sepa_glaeubiger_name=(data.sepa_glaeubiger_name or None),
-        sepa_iban=(data.sepa_iban or None),
-        sepa_bic=(data.sepa_bic or None),
-        sepa_vorlauftage=data.sepa_vorlauftage,
-    )
+    # Auf dem gespeicherten Stand aufsetzen und nur die Felder dieses Formulars
+    # überschreiben. Ein frisch gebautes Objekt würde jede Einstellung, die
+    # anderswo gepflegt wird, beim Speichern auf NULL ziehen – der
+    # Standard-Kreditor der Rechnungen steht im Rechnungs-Bereich.
+    e = db.fibu_einstellungen.get()
+    e.debitor_konto_basis = data.debitor_konto_basis
+    e.default_gegenkonto = data.default_gegenkonto or None
+    e.default_steuerschluessel = data.default_steuerschluessel or None
+    e.verein_kostenstelle = data.verein_kostenstelle
+    e.default_kostentraeger = data.default_kostentraeger
+    e.ul_aufwand_konto = data.ul_aufwand_konto or None
+    e.ul_kreditor_konto_basis = data.ul_kreditor_konto_basis
+    e.kassendifferenz_gegenkonto = data.kassendifferenz_gegenkonto or None
+    e.sepa_glaeubiger_id = data.sepa_glaeubiger_id or None
+    e.sepa_glaeubiger_name = data.sepa_glaeubiger_name or None
+    e.sepa_iban = data.sepa_iban or None
+    e.sepa_bic = data.sepa_bic or None
+    e.sepa_vorlauftage = data.sepa_vorlauftage
     return _einst_dict(db.fibu_einstellungen.update(e, updated_by=user.username))
 
 

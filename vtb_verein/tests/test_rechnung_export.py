@@ -1,10 +1,13 @@
-"""Integrationstests des Rechnungs-Exports (Schema v78).
+"""Integrationstests des Rechnungs-Exports (Schema v78, FBASC seit v109).
 
-Der Export ist bewusst KEIN FBASC-Lauf, sondern ein Belegstapel für die Fibu:
-ein flaches Zip mit den Belegdateien plus uebersicht.csv. Geprüft werden die
-Delta-Semantik (jede Rechnung genau einmal), der Un-Export des jüngsten Laufs,
-der Re-Download aus den gestempelten Zeilen und das Verhalten bei fehlender
-Beleg-Datei auf dem Server.
+Geprüft werden hier der Belegstapel und die Lauf-Mechanik: die Delta-Semantik
+(jede Rechnung genau einmal), der Un-Export des jüngsten Laufs, der Re-Download
+aus den gestempelten Zeilen, die Benennung der Belegdateien, `uebersicht.csv` und
+das Verhalten bei fehlender Beleg-Datei auf dem Server.
+
+Die Buchungszeilen der `fbasc.hia` selbst stehen in test_rechnung_fbasc_export.py.
+Weil der Lauf ohne konfigurierte Konten abbricht, richtet `_setup` sie mit ein –
+sonst käme man hier gar nicht erst bis zum Zip.
 
 Läuft nur mit ``VTB_TEST_DATABASE_URL`` (leere Wegwerf-DB).
 """
@@ -19,6 +22,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # Repo-Root
+
+from app.services.rechnung_export_service import FibuRechnungExportFehler  # noqa: E402
 
 _URL = os.getenv("VTB_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -98,13 +103,30 @@ def clean(db):
 # ---------------------------------------------------------------- Testdaten
 
 def _setup(db):
-    """Abteilung + Einreicher + Freigeber/Geschäftsstelle."""
+    """Abteilung + Einreicher + Freigeber/Geschäftsstelle – und die Fibu-Konten.
+
+    Seit v109 rendert der Export eine `fbasc.hia` und verweigert den Lauf, solange
+    Kreditor- oder Aufwandskonto fehlen. Die Konten gehören deshalb zum
+    Grundaufbau jedes Export-Tests."""
     with db.cursor() as cur:
         cur.execute("INSERT INTO abteilung (name,kostenstelle,created_by,updated_by) "
                     "VALUES ('X-Fussball',77,'xtest','xtest') RETURNING id")
         abteilung = cur.fetchone()["id"]
-    return abteilung, _user(db, "xtester_ein", ("rechnungen.einreichen",), abteilung), \
-        _user(db, "xtester_gs", ("rechnungen.verwalten",), None)
+    einreicher = _user(db, "xtester_ein", ("rechnungen.einreichen",), abteilung)
+    gs = _user(db, "xtester_gs", ("rechnungen.verwalten",), None)
+    _konten_setzen(db, gs)
+    return abteilung, einreicher, gs
+
+
+def _konten_setzen(db, gs):
+    einst = db.fibu_einstellungen.get()
+    einst.ul_kreditor_konto_basis = 70000
+    einst.rechnung_kreditor_konto = "70999"
+    db.fibu_einstellungen.update(einst, updated_by="xtest")
+    for k in db.rechnungen.list_kategorien():
+        if not k.sachkonto:
+            db.rechnungen.kategorie_aktualisieren(
+                k.id, gs, expected_version=k.version, sachkonto="4400")
 
 
 def _user(db, username, perms, abteilung_id):
@@ -143,6 +165,11 @@ def _freigegebene_rechnung(db, einreicher, gs, abteilung, *, belege=1, **felder)
     return db.rechnungen.freigeben(r.id, gs)
 
 
+# Was im Zip neben den Belegen liegt: die Buchungsdatei für die Fibu und die
+# Übersicht zum Mitlesen.
+_METADATEIEN = {"fbasc.hia", "uebersicht.csv"}
+
+
 def _entpacke(zip_bytes):
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     return zf, zf.namelist()
@@ -168,7 +195,7 @@ def test_zip_enthaelt_belege_und_uebersicht(db):
     _, namen = _entpacke(zip_bytes)
     beleg = f"R{r.id} - Erstattung ExpTest xtester_ein - X-Fussball - " \
             f"Buerobedarf - Baelle - beleg0.jpg"     # PNG wird zu JPEG normalisiert
-    assert sorted(namen) == [beleg, "uebersicht.csv"]
+    assert sorted(namen) == [beleg, "fbasc.hia", "uebersicht.csv"]
 
     zeile = _uebersicht(zip_bytes)[0]
     assert zeile["Nr"] == f"R{r.id}"
@@ -211,7 +238,7 @@ def test_mehrere_belege_behalten_ihren_namen(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    belege = sorted(n for n in namen if n != "uebersicht.csv")
+    belege = sorted(n for n in namen if n not in _METADATEIEN)
     assert [n.rsplit(" - ", 1)[-1] for n in belege] == \
         ["beleg0.jpg", "beleg1.jpg", "beleg2.jpg"]
     assert all(n.startswith(f"R{r.id} - ") for n in belege)
@@ -232,7 +259,7 @@ def test_gleicher_originalname_wird_durchgezaehlt(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     zf, namen = _entpacke(zip_bytes)
-    belege = [n for n in namen if n != "uebersicht.csv"]
+    belege = [n for n in namen if n not in _METADATEIEN]
     assert len(set(belege)) == 2
     assert sorted(n.rsplit(" - ", 1)[-1] for n in belege) == ["scan (2).jpg", "scan.jpg"]
 
@@ -246,7 +273,7 @@ def test_dateiname_traegt_die_erfassten_angaben(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n != "uebersicht.csv")
+    beleg = next(n for n in namen if n not in _METADATEIEN)
     # 'Bürobedarf' ist die erste Kategorie (alphabetisch) – der Umlaut wird
     # umschrieben, nicht weggeworfen.
     assert beleg == (f"R{r.id} - Zahlung Aussteller - X-Fussball - "
@@ -262,7 +289,7 @@ def test_dateiname_bleibt_windowstauglich(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n != "uebersicht.csv")
+    beleg = next(n for n in namen if n not in _METADATEIEN)
     assert beleg.isascii()
     assert not set(beleg) & set('\\/:*?"<>|')
     assert "Baelle Netze" in beleg
@@ -411,7 +438,8 @@ def test_fehlende_belegdatei_bricht_lauf_nicht_ab(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    assert namen == ["uebersicht.csv"]                      # kein Beleg, aber ein Lauf
+    # Kein Beleg, aber ein Lauf: Buchungszeile und Übersicht entstehen trotzdem.
+    assert sorted(namen) == ["fbasc.hia", "uebersicht.csv"]
     assert _uebersicht(zip_bytes)[0]["Belegdateien"] == ""
 
 
@@ -426,16 +454,30 @@ def test_summe_und_anzahl_im_header(db):
     assert export.summe_cent == 3550
 
 
-def test_rechnung_ohne_betrag_stoert_summe_nicht(db):
-    """Eingereicht wird nur mit Betrag – die Geschäftsstelle darf ihn danach aber
-    wieder leeren (und Altbestände haben keinen). Der Export muss das aushalten."""
+def test_rechnung_ohne_betrag_haelt_den_lauf_an(db):
+    """Ohne Betrag gibt es keine Buchung – der Lauf bricht ab und nennt die Rechnung.
+
+    Bis v108 lief der Export durch und ließ die Betragsspalte der Übersicht leer;
+    die Buchungszeile tippte ohnehin jemand von Hand. Mit der `fbasc.hia` geht das
+    nicht mehr: Eine Zeile über 0,00 € wäre eine sinnlose Buchung, und die Rechnung
+    trüge danach den Export-Stempel, ohne je bezahlt worden zu sein. Der Betrag
+    lässt sich nachtragen – von genau der Stelle, die auch exportiert.
+    """
     abteilung, einreicher, gs = _setup(db)
     ohne = _freigegebene_rechnung(db, einreicher, gs, abteilung, betrag_cent=700)
     db.rechnungen.aktualisieren(ohne.id, gs, expected_version=ohne.version,
                                 betrag_cent=None)
     _freigegebene_rechnung(db, einreicher, gs, abteilung, betrag_cent=500)
 
+    with pytest.raises(FibuRechnungExportFehler) as exc:
+        db.rechnung_export.exportieren(gs.username)
+    assert exc.value.fehler == [f"Rechnung #{ohne.id}: kein Betrag erfasst."]
+    # Nichts gestempelt: nach dem Nachtragen läuft derselbe Delta-Lauf durch.
+    assert db.rechnung_export.list_exporte() == []
+
+    db.rechnungen.aktualisieren(ohne.id, gs,
+                                expected_version=db.rechnungen.get(ohne.id, gs).version,
+                                betrag_cent=700)
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
-    betraege = [z["Betrag EUR"] for z in _uebersicht(zip_bytes)]
-    assert betraege == ["", "5,00"]
-    assert db.rechnung_export.list_exporte()[0].summe_cent == 500
+    assert [z["Betrag EUR"] for z in _uebersicht(zip_bytes)] == ["7,00", "5,00"]
+    assert db.rechnung_export.list_exporte()[0].summe_cent == 1200

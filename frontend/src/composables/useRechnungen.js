@@ -97,6 +97,23 @@ export function fehlertext(e, fallback) {
   return e?.response?.data?.detail || fallback
 }
 
+// Fehler aus einer Blob-Antwort. Wer eine Datei per `responseType: 'blob'` holt,
+// bekommt auch den Fehlerkörper als Blob – `data.detail` ist dort immer undefined,
+// und jede Meldung des Servers ging bisher still im Fallback unter. Das fällt beim
+// Rechnungsexport auf: Dort sagt der Server, WELCHES Konto fehlt.
+export async function blobFehlertext(e, fallback) {
+  const data = e?.response?.data
+  if (data instanceof Blob) {
+    try {
+      const detail = JSON.parse(await data.text())?.detail
+      if (typeof detail === 'string') return detail
+      // Strukturierter Fehler: Kopfzeile plus die einzelnen Ursachen.
+      if (detail?.message) return [detail.message, ...(detail.fehler || [])].join(' ')
+    } catch { /* kein JSON – dann bleibt es beim Fallback */ }
+  }
+  return fehlertext(e, fallback)
+}
+
 // Beleg-Auswahl: identisch zu AnhangPanel, damit die vorgehaltene Auswahl im
 // Einreich-Dialog dieselben Dateien akzeptiert wie der spätere Upload.
 export const BELEG_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
