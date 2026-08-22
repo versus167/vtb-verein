@@ -40,6 +40,11 @@ class FibuEinstellungen:
     ul_aufwand_konto: Optional[str] = None          # ÜL-Honorar: Soll-Sachkonto (= Gegenkonto der Kreditor-Buchung)
     ul_kreditor_konto_basis: Optional[int] = None   # ÜL-Honorar: Kreditor-Konto = Basis + Mitgliedsnummer
     kassendifferenz_gegenkonto: Optional[str] = None  # Gegenkonto (FBASC Feld 01) für die System-Kategorie „Kassendifferenz"
+    # Rechnungs-Export: Standard-Kreditor (FBASC Feld 00) für alles, was nicht an
+    # den Einreicher zurückgeht. Gepflegt wird er im Rechnungs-Bereich, nicht auf
+    # der Fibu-Seite. Für Erstattungen an Mitglieder greift stattdessen
+    # ul_kreditor_konto_basis – eine Person hat nur ein Kreditorkonto.
+    rechnung_kreditor_konto: Optional[str] = None
     # SEPA-Lastschrift (eigener Einzug, Ticket #114) – Gläubiger-Angaben der pain.008.
     sepa_glaeubiger_id: Optional[str] = None      # Creditor Identifier (CI) des Vereins
     sepa_glaeubiger_name: Optional[str] = None    # Name des Zahlungsempfängers

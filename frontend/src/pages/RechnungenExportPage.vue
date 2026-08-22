@@ -5,19 +5,37 @@
       <q-space />
       <q-btn unelevated color="primary" icon="download"
         :label="`Export starten (${vorschau.anzahl})`"
-        :disable="vorschau.anzahl === 0" :loading="busy" @click="exportieren" />
+        :disable="vorschau.anzahl === 0 || vorschau.fehler.length > 0"
+        :loading="busy" @click="exportieren" />
     </div>
+
+    <!-- Konten fehlen: Der Lauf würde abbrechen, also gar nicht erst anbieten.
+         Rot und über den Hinweisen, weil es hier nicht um eine Warnung geht,
+         sondern um die Bedingung dafür, dass überhaupt exportiert werden kann. -->
+    <q-banner v-if="vorschau.fehler.length" dense class="bg-red-1 q-mb-md">
+      <template #avatar><q-icon name="error" color="negative" /></template>
+      <div class="text-weight-medium text-negative">
+        Export nicht möglich – Konten unvollständig konfiguriert.
+      </div>
+      <div v-for="(f, i) in vorschau.fehler" :key="i" class="text-caption">{{ f }}</div>
+      <div class="text-caption q-mt-xs">
+        Zu setzen unter <b>Finanzen → Fibu-Export → Einstellungen</b> bzw. je Kategorie
+        unter <b>Rechnungen → Kategorien</b>.
+      </div>
+    </q-banner>
 
     <q-banner v-if="vorschau.hinweise.length" dense class="bg-orange-1 q-mb-md">
       <template #avatar><q-icon name="warning" color="orange" /></template>
       <div v-for="(h, i) in vorschau.hinweise" :key="i" class="text-caption">{{ h }}</div>
     </q-banner>
 
-    <!-- Der Dateiname trägt die Angaben mit, solange die Fibu die Übersicht
-         nicht einliest – hier steht, was im Zip zu erwarten ist. -->
+    <!-- Was im Zip zu erwarten ist – die Dateinamen tragen die Angaben mit,
+         damit man sie auch ohne die Übersicht zuordnen kann. -->
     <div class="text-caption text-grey-7 q-mb-md">
-      Das Zip enthält je Beleg eine Datei plus <code>uebersicht.csv</code>. Die
-      Dateinamen tragen die Angaben mit:
+      Das Zip enthält <code>fbasc.hia</code> (die Buchungszeilen für die Fibu),
+      je Beleg eine Datei und <code>uebersicht.csv</code> zum Mitlesen. Jede Rechnung
+      wird als Kreditor-Buchung übergeben: Aufwandskonto der Kategorie im Soll gegen
+      den Empfänger im Haben. Die Dateinamen tragen die Angaben mit:
       <code>Nr - Zahlung an - Abteilung - Kategorie - Notiz - Originalname</code>
     </div>
 
@@ -94,13 +112,13 @@ import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
-import { fmtBetrag, fmtDatum, fehlertext } from 'src/composables/useRechnungen'
+import { fmtBetrag, fmtDatum, fehlertext, blobFehlertext } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'RechnungenExportPage' })
 
 const $q = useQuasar()
 
-const vorschau = ref({ rechnungen: [], anzahl: 0, summe_cent: 0, hinweise: [] })
+const vorschau = ref({ rechnungen: [], anzahl: 0, summe_cent: 0, hinweise: [], fehler: [] })
 const exporte = ref([])
 const busy = ref(false)
 
@@ -136,7 +154,10 @@ async function exportieren() {
     $q.notify({ type: 'positive', message: 'Export erstellt' })
     await load()
   } catch (e) {
-    $q.notify({ type: 'negative', message: fehlertext(e, 'Export fehlgeschlagen') })
+    $q.notify({ type: 'negative', multiLine: true, timeout: 8000,
+      message: await blobFehlertext(e, 'Export fehlgeschlagen') })
+    // Die Vorschau nachziehen: Bei fehlenden Konten steht dort ab jetzt, welche.
+    await load().catch(() => {})
   } finally {
     busy.value = false
   }
@@ -147,7 +168,8 @@ async function erneutLaden(e) {
     const res = await api.get(`/api/rechnungen/export/${e.id}`, { responseType: 'blob' })
     speichereZip(res.data, dateinameAus(res, e.dateiname))
   } catch (err) {
-    $q.notify({ type: 'negative', message: fehlertext(err, 'Download fehlgeschlagen') })
+    $q.notify({ type: 'negative',
+      message: await blobFehlertext(err, 'Download fehlgeschlagen') })
   }
 }
 

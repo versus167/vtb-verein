@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 108
+SCHEMA_VERSION = 109
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ _FN_KASSEN_KATEGORIEN_AUDIT_UPDATE = """
 _FIBU_EINSTELLUNGEN_COLS = (
     "id, version, debitor_konto_basis, default_gegenkonto, default_steuerschluessel, "
     "verein_kostenstelle, default_kostentraeger, ul_aufwand_konto, ul_kreditor_konto_basis, "
-    "kassendifferenz_gegenkonto, "
+    "kassendifferenz_gegenkonto, rechnung_kreditor_konto, "
     "sepa_glaeubiger_id, sepa_glaeubiger_name, sepa_iban, sepa_bic, sepa_vorlauftage, "
     "created_at, created_by, updated_at, updated_by"
 )
@@ -3638,6 +3638,7 @@ class Database:
             106: self._migrate_v105_to_v106,
             107: self._migrate_v106_to_v107,
             108: self._migrate_v107_to_v108,
+            109: self._migrate_v108_to_v109,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -6017,6 +6018,7 @@ class Database:
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
               kassendifferenz_gegenkonto TEXT,
+              rechnung_kreditor_konto  TEXT,
               sepa_glaeubiger_id       TEXT,
               sepa_glaeubiger_name     TEXT,
               sepa_iban                TEXT,
@@ -8034,6 +8036,39 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 108 WHERE id = 1")
 
+    def _migrate_v108_to_v109(self) -> None:
+        """Standard-Kreditor für den FBASC-Export der Rechnungen.
+
+        Der Rechnungs-Export lieferte bisher einen Belegstapel plus `uebersicht.csv`;
+        die Buchungszeile entstand von Hand in der Fibu. Jetzt rendert er wie
+        Kassenbuch und Sollstellungen eine `fbasc.hia` – eine freigegebene Rechnung
+        ist eine Verbindlichkeit: Aufwand (Kategorie-Sachkonto) im Soll gegen
+        Kreditor im Haben.
+
+        Für eine Erstattung an ein Mitglied ist der Kreditor dessen Personenkonto
+        aus `ul_kreditor_konto_basis` + Mitgliedsnummer – dieselbe Person hat nur
+        ein Kreditorkonto, gleich ob sie Honorar oder Auslagen bekommt. Geht das
+        Geld nicht an den Einreicher, greift dieser eine Standard-Kreditor: Ein
+        externer Aussteller hat weder Mitgliedsnummer noch Stammsatz in der App.
+        Gepflegt wird der Wert im Rechnungs-Bereich, nicht auf der Fibu-Seite –
+        wer Rechnungen verwaltet, braucht dafür kein Fibu-Export-Recht.
+
+        Bewusst ohne Vorbelegung: Ein geratener Kontenrahmen-Wert wäre schlimmer als
+        keiner – ohne gesetztes Konto verweigert der Export den Lauf mit einer
+        klaren Meldung, statt auf ein falsches Konto zu buchen.
+        """
+        with self.cursor() as cur:
+            for tbl in ('fibu_einstellungen', 'fibu_einstellungen_history'):
+                cur.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS rechnung_kreditor_konto TEXT"
+                )
+            # Audit-Funktionen neu erzeugen, sonst fehlt die Spalte in der History
+            # (Fresh == Migriert).
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EINSTELLUNGEN_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 109 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9472,6 +9507,12 @@ class Database:
               ul_aufwand_konto         TEXT,
               ul_kreditor_konto_basis  INTEGER,
               kassendifferenz_gegenkonto TEXT,
+              -- Standard-Kreditor für Rechnungen (v109): Wohin das Geld geht, wenn
+              -- NICHT an den Einreicher erstattet wird. Mitglieder bekommen ihr
+              -- Personenkonto aus ul_kreditor_konto_basis, ein Fremdaussteller hat
+              -- keine Mitgliedsnummer und läuft über dieses eine Konto. Gepflegt
+              -- wird der Wert im Rechnungs-Bereich (Reiter Einstellungen).
+              rechnung_kreditor_konto  TEXT,
               -- SEPA-Lastschrift (eigener Einzug, Ticket #114): Gläubiger-Angaben für
               -- die pain.008 und die Vorlauffrist bis zum Ausführungsdatum.
               sepa_glaeubiger_id       TEXT,

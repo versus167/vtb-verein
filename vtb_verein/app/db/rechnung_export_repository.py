@@ -40,7 +40,7 @@ class RechnungExportRepository(BaseRepository):
 
     def create_export(self, *, exportiert_von: str, dateiname: str,
                       anzahl_rechnungen: int, summe_cent: Optional[int],
-                      rechnung_ids: list[int]) -> RechnungExport:
+                      rechnung_ids: list[int], format: str = "fbasc") -> RechnungExport:
         """Legt den Lauf an und stempelt die Rechnungen – atomar.
 
         Das `exportiert_in_export_id IS NULL` im UPDATE ist die Absicherung gegen
@@ -51,10 +51,11 @@ class RechnungExportRepository(BaseRepository):
                 """
                 INSERT INTO rechnung_exporte
                     (exportiert_von, dateiname, format, anzahl_rechnungen, summe_cent, created_by)
-                VALUES (%s,%s,'zip',%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s)
                 RETURNING id
                 """,
-                (exportiert_von, dateiname, anzahl_rechnungen, summe_cent, exportiert_von),
+                (exportiert_von, dateiname, format, anzahl_rechnungen, summe_cent,
+                 exportiert_von),
             )
             export_id = cur.fetchone()["id"]
             if rechnung_ids:

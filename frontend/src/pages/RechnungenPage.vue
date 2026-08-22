@@ -8,6 +8,7 @@
       <q-tab v-if="kannFreigeben" name="freigabe" icon="how_to_reg" label="Freigabe" />
       <q-tab v-if="kannVerwalten" name="export" icon="download" label="Export" />
       <q-tab v-if="kannVerwalten" name="kategorien" icon="sell" label="Kategorien" />
+      <q-tab v-if="kannVerwalten" name="einstellungen" icon="settings" label="Einstellungen" />
     </q-tabs>
     <q-separator class="q-mb-md" />
 
@@ -15,6 +16,7 @@
     <RechnungenFreigabePage v-else-if="tab === 'freigabe' && kannFreigeben" />
     <RechnungenExportPage v-else-if="tab === 'export' && kannVerwalten" />
     <RechnungenKategorienPage v-else-if="tab === 'kategorien' && kannVerwalten" />
+    <RechnungenEinstellungenPage v-else-if="tab === 'einstellungen' && kannVerwalten" />
   </q-page>
 </template>
 
@@ -25,6 +27,7 @@ import RechnungenMeinePage from 'pages/RechnungenMeinePage.vue'
 import RechnungenFreigabePage from 'pages/RechnungenFreigabePage.vue'
 import RechnungenExportPage from 'pages/RechnungenExportPage.vue'
 import RechnungenKategorienPage from 'pages/RechnungenKategorienPage.vue'
+import RechnungenEinstellungenPage from 'pages/RechnungenEinstellungenPage.vue'
 
 defineOptions({ name: 'RechnungenPage' })
 
