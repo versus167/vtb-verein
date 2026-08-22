@@ -121,7 +121,7 @@
 
     <!-- Kategorie anlegen / bearbeiten -->
     <q-dialog v-model="kategorieDialogOpen" persistent>
-      <q-card style="min-width: 420px">
+      <q-card class="vtb-dialog-karte">
         <q-card-section class="text-h6">
           {{ editingKategorieId ? 'Kategorie bearbeiten' : 'Neue Kategorie' }}
         </q-card-section>
@@ -170,7 +170,7 @@
 
     <!-- Kasse anlegen / bearbeiten -->
     <q-dialog v-model="kasseDialogOpen" persistent>
-      <q-card style="min-width: 420px">
+      <q-card class="vtb-dialog-karte">
         <q-card-section class="text-h6">
           {{ editingKasseId ? 'Kasse bearbeiten' : 'Neue Kasse' }}
         </q-card-section>
@@ -214,16 +214,52 @@
 
     <!-- Berechtigungen verwalten -->
     <q-dialog v-model="berechtigungDialogOpen" persistent>
-      <q-card style="min-width: 520px; max-width: 640px">
-        <q-card-section class="row items-center">
-          <div class="text-h6">Berechtigungen – {{ selectedKasse?.name }}</div>
-          <q-space />
+      <q-card class="vtb-dialog-karte" style="--vtb-dialog-breite: 520px; max-width: 640px">
+        <!-- no-wrap + col: Der Kassenname bricht innerhalb seiner Spalte um,
+             das Schließkreuz bleibt oben rechts stehen (#177). -->
+        <q-card-section class="row items-start no-wrap">
+          <div class="text-h6 col">Berechtigungen – {{ selectedKasse?.name }}</div>
           <q-btn icon="close" flat round dense v-close-popup />
         </q-card-section>
         <q-separator />
 
         <q-card-section>
+          <!-- Am Handy je Benutzer ein Block statt fünf Spalten (#177): Die
+               Rechte-Spalten standen rechts außerhalb des Bildschirms, also
+               genau das, was hier vergeben werden soll. -->
+          <template v-if="$q.screen.lt.sm">
+            <div v-if="berechtigungLoading" class="row justify-center q-py-md">
+              <q-spinner size="28px" color="primary" />
+            </div>
+            <div v-else-if="!berechtigungen.length" class="text-grey text-center q-py-md">
+              Noch keine Berechtigungen vergeben.
+            </div>
+            <q-list v-else bordered separator class="rounded-borders">
+              <q-item v-for="b in berechtigungen" :key="b.user_id">
+                <q-item-section>
+                  <q-item-label class="text-weight-medium">{{ b.username }}</q-item-label>
+                  <q-item-label class="row items-center q-gutter-x-md q-mt-xs">
+                    <q-checkbox dense label="Lesen"
+                      :model-value="b.darf_lesen"
+                      @update:model-value="v => updateBerechtigung(b, 'darf_lesen', v)" />
+                    <q-checkbox dense label="Schreiben"
+                      :model-value="b.darf_schreiben"
+                      @update:model-value="v => updateBerechtigung(b, 'darf_schreiben', v)" />
+                    <q-checkbox dense label="Exportieren"
+                      :model-value="b.darf_exportieren"
+                      @update:model-value="v => updateBerechtigung(b, 'darf_exportieren', v)" />
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section side top>
+                  <q-btn flat dense round icon="delete" color="negative" size="sm"
+                    @click="revokeBerechtigung(b)" />
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </template>
+
           <q-table
+            v-else
             :rows="berechtigungen"
             :columns="berechtigungColumns"
             row-key="user_id"
@@ -269,25 +305,31 @@
         <q-separator />
         <q-card-section>
           <div class="text-subtitle2 q-mb-sm">Benutzer hinzufügen</div>
-          <div class="row q-gutter-sm items-center">
-            <q-select
-              v-model="newBerechtigungUser"
-              :options="verfuegbareUsers"
-              option-label="username"
-              option-value="id"
-              label="Benutzer"
-              outlined
-              dense
-              class="col"
-            />
-            <q-btn
-              label="Hinzufügen"
-              color="primary"
-              unelevated
-              dense
-              :disable="!newBerechtigungUser"
-              @click="addBerechtigung"
-            />
+          <!-- q-col-gutter statt q-gutter: col-12-Zeilen ragen mit q-gutter über
+               den Viewport hinaus. Am Handy steht der Knopf unter der Auswahl. -->
+          <div class="row q-col-gutter-sm items-center">
+            <div class="col-12 col-sm">
+              <q-select
+                v-model="newBerechtigungUser"
+                :options="verfuegbareUsers"
+                option-label="username"
+                option-value="id"
+                label="Benutzer"
+                outlined
+                dense
+              />
+            </div>
+            <div class="col-12 col-sm-auto">
+              <q-btn
+                label="Hinzufügen"
+                color="primary"
+                unelevated
+                :dense="!$q.screen.lt.sm"
+                :class="$q.screen.lt.sm ? 'full-width' : ''"
+                :disable="!newBerechtigungUser"
+                @click="addBerechtigung"
+              />
+            </div>
           </div>
         </q-card-section>
       </q-card>

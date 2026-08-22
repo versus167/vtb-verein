@@ -81,24 +81,21 @@
     </div>
 
     <q-dialog v-model="dialogOpen">
-      <q-card style="min-width:340px; max-width:92vw">
-        <q-card-section class="row items-center">
-          <div class="text-h6">{{ aktuell?.vorname }} {{ aktuell?.nachname }}</div>
-          <q-space />
+      <q-card class="vtb-dialog-karte" style="--vtb-dialog-breite: 340px; max-width: 92vw">
+        <!-- no-wrap + col: Ein langer Name soll innerhalb seiner Spalte umbrechen.
+             Ohne das rutscht das Schließkreuz unter die Überschrift, statt oben
+             rechts zu bleiben (#177). -->
+        <q-card-section class="row items-start no-wrap">
+          <div class="text-h6 col">{{ aktuell?.vorname }} {{ aktuell?.nachname }}</div>
           <q-btn flat dense round icon="close" v-close-popup />
         </q-card-section>
 
         <!-- Noch kein Zugang: freischalten -->
         <template v-if="aktuell && !aktuell.user_id">
           <q-card-section class="q-pt-none q-gutter-sm">
-            <q-select
-              v-model="mail" outlined dense clearable
+            <MailAuswahl v-model="mail" :adressen="mailOptionen"
               label="Mailadresse für den Zugang"
-              :options="mailOptionen" use-input new-value-mode="add-unique"
-              hide-dropdown-icon input-debounce="0" :rules="[mailRulePflicht]"
-              hint="Hinterlegte Adressen stehen zur Auswahl – eine neue kann direkt eingetippt werden."
-              @new-value="(wert, done) => done(wert.trim(), 'add-unique')"
-            />
+              hint="Für diese Person ist noch keine Adresse hinterlegt – bitte eintippen." />
             <q-banner v-if="belegtVon" dense class="bg-orange-1 text-orange-10 rounded-borders">
               <template #avatar><q-icon name="warning" color="orange-9" /></template>
               Diese Adresse gehört bereits zum Zugang von „{{ belegtVon }}“.
@@ -110,11 +107,14 @@
             </div>
             <div v-if="error" class="text-negative text-caption">{{ error }}</div>
           </q-card-section>
-          <q-card-actions align="right">
+          <q-card-actions
+            :align="$q.screen.lt.sm ? undefined : 'right'"
+            :class="$q.screen.lt.sm ? 'vtb-btn-reihe vtb-btn-reihe--umgekehrt q-px-md q-pb-md' : ''"
+          >
             <q-btn flat label="Abbrechen" v-close-popup />
             <q-btn
               unelevated color="primary" label="Freischalten" icon="how_to_reg"
-              :loading="busy" :disable="!mail || !!belegtVon" @click="freischalten"
+              :loading="busy" :disable="!mailWert || !!belegtVon" @click="freischalten"
             />
           </q-card-actions>
         </template>
@@ -168,13 +168,8 @@
                   @click="starteMailWechsel"
                 />
                 <div v-else class="q-gutter-sm">
-                  <q-select
-                    v-model="mail" outlined dense clearable
-                    label="Neue Mailadresse"
-                    :options="mailOptionen" use-input new-value-mode="add-unique"
-                    hide-dropdown-icon input-debounce="0" :rules="[mailRulePflicht]"
-                    @new-value="(wert, done) => done(wert.trim(), 'add-unique')"
-                  />
+                  <MailAuswahl v-model="mail" :adressen="mailOptionen"
+                    label="Neue Mailadresse" :ausser="aktuell.email" />
                   <q-banner v-if="belegtVon" dense class="bg-orange-1 text-orange-10 rounded-borders">
                     <template #avatar><q-icon name="warning" color="orange-9" /></template>
                     Diese Adresse gehört bereits zum Zugang von „{{ belegtVon }}“.
@@ -189,14 +184,18 @@
               <div v-if="error" class="text-negative text-caption q-mt-sm">{{ error }}</div>
             </template>
           </q-card-section>
-          <q-card-actions v-if="!aktuell.zugang_geloescht" align="right">
+          <q-card-actions
+            v-if="!aktuell.zugang_geloescht"
+            :align="$q.screen.lt.sm ? undefined : 'right'"
+            :class="$q.screen.lt.sm ? 'vtb-btn-reihe vtb-btn-reihe--umgekehrt q-px-md q-pb-md' : ''"
+          >
             <template v-if="mailWechsel">
               <q-btn flat label="Abbrechen" :disable="busy" @click="mailWechsel = false" />
               <q-space />
               <q-btn
                 unelevated color="primary" icon="forward_to_inbox"
                 label="Ändern & einladen" :loading="busy"
-                :disable="!mail || !!belegtVon" @click="mailAendern"
+                :disable="!mailWert || !!belegtVon" @click="mailAendern"
               />
             </template>
             <template v-else>
@@ -223,7 +222,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
-import { mailRulePflicht } from 'src/utils/email'
+import MailAuswahl from 'components/MailAuswahl.vue'
 
 defineOptions({ name: 'ZugaengePage' })
 
@@ -263,13 +262,17 @@ const gefiltert = computed(() => {
 
 const sichtbar = computed(() => gefiltert.value.slice(0, MAX_TREFFER))
 
-const mailOptionen = computed(() => (aktuell.value?.mails || []).map((m) => m.wert))
+const mailOptionen = computed(() => aktuell.value?.mails || [])
+
+// Eingetipptes kommt mit Rändern (Handy-Tastaturen hängen gern ein Leerzeichen an).
+// Einmal getrimmt an einer Stelle – daran hängen Prüfung, Knopf und Versand.
+const mailWert = computed(() => String(mail.value || '').trim())
 
 // Warnung schon vor dem Absenden: dieselbe Adresse kann nur ein Konto tragen.
 const belegtVon = computed(() => {
-  if (!mail.value) return null
+  if (!mailWert.value) return null
   const treffer = (aktuell.value?.mails || [])
-    .find((m) => m.wert.toLowerCase() === String(mail.value).toLowerCase())
+    .find((m) => m.wert.toLowerCase() === mailWert.value.toLowerCase())
   return treffer?.belegt_von || null
 })
 
@@ -331,7 +334,7 @@ async function freischalten() {
   error.value = ''
   try {
     await api.post(`/api/personen/mitglied/${aktuell.value.mitglied_id}/zugang`,
-      { email: String(mail.value).trim() })
+      { email: mailWert.value })
     dialogOpen.value = false
     $q.notify({ type: 'positive', message: 'Zugang freigeschaltet, Anmelde-Mail ist unterwegs.' })
     await load()
@@ -375,7 +378,7 @@ async function mailAendern() {
   error.value = ''
   try {
     await api.put(`/api/personen/mitglied/${aktuell.value.mitglied_id}/zugang/mailadresse`,
-      { email: String(mail.value).trim() })
+      { email: mailWert.value })
     dialogOpen.value = false
     mailWechsel.value = false
     $q.notify({ type: 'positive',
