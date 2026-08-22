@@ -387,14 +387,52 @@ body.body--dark .vtb-foto-thumb {
   .vtb-btn-reihe {
     flex-direction: column;
   }
+  // In einer Aktionsleiste steht die Hauptaktion rechts, also zuletzt im Markup.
+  // Gestapelt gehört sie nach oben unter den Daumen – Abbrechen und Destruktives
+  // darunter (#177). Deshalb dreht diese Variante die Reihenfolge um, statt das
+  // Markup je Bildschirmbreite zu doppeln.
+  .vtb-btn-reihe--umgekehrt {
+    flex-direction: column-reverse;
+  }
+  // Ein Abstandhalter trennt links von rechts; gestapelt gibt es kein Links und
+  // Rechts mehr, und als Flex-Kind würde er die Leiste in die Höhe ziehen.
+  .vtb-btn-reihe > .q-space {
+    display: none;
+  }
   .vtb-btn-reihe > .q-btn,
   .vtb-btn-voll-mobil {
     width: 100%;
     min-height: 44px;
   }
+  // Quasar rückt in einer waagerechten Aktionsleiste jeden Folge-Button ein.
+  // Gestapelt stünden die Knöpfe dadurch treppenförmig versetzt.
+  .vtb-btn-reihe > .q-btn + .q-btn {
+    margin-left: 0;
+  }
 }
 .vtb-feedback-senden {
   border-radius: 10px;
+}
+
+// ── Dialog-Karten am Handy ──────────────────────────────────────────────────
+// Eine feste `min-width: 520px` sprengt jedes Telefon: `min-width` sticht in CSS
+// die `max-width: 100%`, die Quasar der Karte mitgibt – die Karte ragt über den
+// Rand hinaus, und was rechts steht, ist nicht mehr erreichbar. Bei den
+// Kassenberechtigungen war das ausgerechnet die Spalte mit den Rechte-Haken
+// (#177).
+//
+// Die Wunschbreite steht deshalb in einer Variablen und gilt erst ab Quasars
+// `sm` (600px); darunter füllt die Karte schlicht die Breite. Nutzung:
+//   <q-card class="vtb-dialog-karte" style="--vtb-dialog-breite: 520px">
+.vtb-dialog-karte {
+  min-width: var(--vtb-dialog-breite, 420px);
+  max-width: 100%;
+}
+@media (max-width: 599px) {
+  .vtb-dialog-karte {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 // Dialog am oberen Rand des Handys (#147): Kopfzeile und Aktionsleiste bleiben
