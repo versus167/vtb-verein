@@ -89,6 +89,23 @@
 
         <q-input v-model="form.beschreibung" label="Beschreibung" outlined dense
           type="textarea" :rows="$q.screen.lt.sm ? 3 : 5" />
+
+        <!-- Intern (#178): Standard ist offen — ein mitlesbares Ticket erspart
+             Doppelmeldungen. Wer etwas Heikles meldet, schränkt hier ein. -->
+        <div>
+          <q-checkbox v-model="form.intern" dense color="primary">
+            <span class="row items-center no-wrap">
+              <q-icon name="lock" size="18px" class="q-mr-xs" />
+              Nur intern sichtbar
+            </span>
+          </q-checkbox>
+          <div class="text-caption text-grey-7 q-ml-sm" style="margin-top:2px">
+            {{ form.intern
+              ? 'Sichtbar nur für dich, die Zuständigen des Bereichs und Administratoren.'
+              : 'Sichtbar für alle angemeldeten Mitglieder.' }}
+          </div>
+        </div>
+
         <div v-if="error" class="vtb-fehler">
           <q-icon name="error" size="20px" />
           <span>{{ error }}</span>
@@ -147,7 +164,7 @@ const screenshotBlob = ref(null)
 const screenshotUrl  = ref(null)
 
 const vtbAppBereichId = ref(null)
-const form = ref({ titel: '', bereich_id: null, beschreibung: '' })
+const form = ref({ titel: '', bereich_id: null, beschreibung: '', intern: false })
 
 const istVtbApp = computed(
   () => vtbAppBereichId.value != null && form.value.bereich_id === vtbAppBereichId.value,
@@ -345,7 +362,7 @@ async function loadBereiche() {
 watch(dialogOpen, async (offen) => {
   if (!offen) return
   aufraeumen()
-  form.value = { titel: '', bereich_id: defaultBereichId, beschreibung: '' }
+  form.value = { titel: '', bereich_id: defaultBereichId, beschreibung: '', intern: false }
   error.value = ''
   kameraFehler.value = ''
   // Screenshot der Seite hinter dem Dialog (der Dialog selbst wird ausgeblendet).
@@ -379,6 +396,7 @@ async function onSave() {
       beschreibung: form.value.beschreibung,
       prioritaet:   'normal',
       bereich_id:   form.value.bereich_id,
+      intern:       form.value.intern,
     })
 
     // Anhänge — App-Ticket: der Screenshot; sonst: alle Fotos/Uploads.

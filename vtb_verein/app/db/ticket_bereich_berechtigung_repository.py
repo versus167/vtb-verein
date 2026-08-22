@@ -109,6 +109,29 @@ class TicketBereichBerechtigungRepository:
         b = self.get_berechtigung(bereich_id, user_id)
         return bool(b and b['darf_schliessen'])
 
+    def user_hat_bereichsrecht(self, bereich_id: int, user_id: int) -> bool:
+        """Hat der User IRGENDEIN Recht an diesem Bereich (lesen/bearbeiten/schließen)?
+
+        Absichtlich nicht nur ``darf_lesen``: Die API kaskadiert zwar
+        schließen → bearbeiten → lesen, Zeilen aus der Zeit davor müssen das aber
+        nicht tun. Für die Frage „gehört der User zu diesem Bereich?" (interne
+        Tickets, #178) zählt jedes gesetzte Flag.
+        """
+        b = self.get_berechtigung(bereich_id, user_id)
+        return bool(b and (b['darf_lesen'] or b['darf_bearbeiten'] or b['darf_schliessen']))
+
+    def get_bereich_ids_mit_recht(self, user_id: int) -> set[int]:
+        """Alle Bereiche, an denen der User irgendein Recht hat – ein Roundtrip.
+
+        Gegenstück zu ``user_hat_bereichsrecht`` für Listen, damit die Ticketliste
+        nicht je Zeile nachfragt.
+        """
+        return {
+            e['bereich_id']
+            for e in self.list_berechtigungen_fuer_user(user_id)
+            if e['darf_lesen'] or e['darf_bearbeiten'] or e['darf_schliessen']
+        }
+
     def get_lesbare_bereich_ids(self, user_id: int) -> list[int]:
         """Gibt alle Bereich-IDs zurück, die ein User lesen darf."""
         cur = self._conn.cursor()

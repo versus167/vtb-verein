@@ -4,7 +4,8 @@ Ticket API – Tickets, Bereiche, Kategorien, Anhänge.
 Berechtigungsmodell:
   - Admins: voller Zugriff auf alles
   - Normale User:
-      - Lesen:      darf_lesen auf den Bereich des Tickets  (oder eigene Tickets)
+      - Lesen:      offene Tickets darf jeder Angemeldete lesen; interne nur
+                    Melder, Zugewiesener und wer am Bereich berechtigt ist (#178)
       - Schreiben:  darf_bearbeiten auf den Bereich
       - Abschließen: darf_schliessen auf den Bereich
       - Bereiche/Kategorien verwalten: Permission tickets.bereiche_verwalten
@@ -49,6 +50,11 @@ class TicketWrite(BaseModel):
     titel: str = Field(..., max_length=TITEL_MAX_LAENGE)
     beschreibung: str = ''
     prioritaet: str = TicketPrioritaet.NORMAL
+    # Wer ein Ticket anlegen oder bearbeiten darf, darf es auch als intern
+    # kennzeichnen bzw. die Kennzeichnung wieder aufheben (#178). Es braucht kein
+    # eigenes Recht dafür: Der Melder soll selbst entscheiden können, ob seine
+    # Meldung öffentlich mitgelesen wird – genau das ist der Zweck.
+    intern: bool = False
     bereich_id: Optional[int] = None
     kategorie_id: Optional[int] = None
     faellig_am: Optional[str] = None
@@ -109,7 +115,28 @@ def _require_bereiche_verwalten(user) -> None:
 
 
 def _can_read(ticket: Ticket, user, db) -> bool:
-    return True
+    """Darf dieser User das Ticket sehen?
+
+    Der Normalfall bleibt offen: Ein Ticket ist eine Meldung über die Vereins-App,
+    und dass jeder sie mitlesen kann, spart Doppelmeldungen und macht den Stand der
+    Dinge sichtbar. Nur ein ausdrücklich als `intern` markiertes Ticket (#178) ist
+    auf seinen Kreis beschränkt – für die Fälle, in denen der Inhalt selbst heikel
+    ist (Personen, Beschwerden, Sicherheitslücken).
+
+    Der Kreis ist derselbe, der auch benachrichtigt wird: der Melder, ein konkret
+    Zugewiesener und wer am Bereich irgendein Recht hat. Ein Ticket ohne Bereich
+    kann es über die API nicht geben (Pflichtfeld beim Anlegen); fällt eins aus dem
+    Bestand doch so an, bleibt es seinem Melder und den Admins vorbehalten.
+    """
+    if not ticket.intern:
+        return True
+    if user.role == "admin":
+        return True
+    if ticket.gemeldet_von == user.id or ticket.zugewiesen_an == user.id:
+        return True
+    if ticket.bereich_id is None:
+        return False
+    return db.ticket_bereich_berechtigungen.user_hat_bereichsrecht(ticket.bereich_id, user.id)
 
 
 def _can_write(ticket: Ticket, user, db) -> bool:
@@ -367,6 +394,21 @@ def list_tickets(
     else:
         tickets = db.tickets.list_tickets_with_counts()
 
+    # Interne Tickets aussortieren (#178). Bewusst hier und nicht erst im
+    # Frontend: Ein Filter in der Oberfläche ließe sich abschalten, die Daten
+    # wären trotzdem über die Leitung gegangen. Die Bereichsrechte werden dafür
+    # EINMAL geladen statt je Zeile – die Liste ist der heißeste Pfad des
+    # Ticketbereichs.
+    if user.role != "admin" and any(t.intern for t in tickets):
+        meine_bereiche = db.ticket_bereich_berechtigungen.get_bereich_ids_mit_recht(user.id)
+        tickets = [
+            t for t in tickets
+            if not t.intern
+            or t.gemeldet_von == user.id
+            or t.zugewiesen_an == user.id
+            or (t.bereich_id is not None and t.bereich_id in meine_bereiche)
+        ]
+
     # Bereichs-Filter
     if bereich_id is not None:
         tickets = [t for t in tickets if t.bereich_id == bereich_id]
@@ -398,6 +440,7 @@ def create_ticket(data: TicketWrite, user: CurrentUser, db: DB):
         titel=data.titel,
         beschreibung=data.beschreibung,
         prioritaet=data.prioritaet,
+        intern=data.intern,
         bereich_id=data.bereich_id,
         kategorie_id=data.kategorie_id,
         gemeldet_von=user.id,
@@ -423,6 +466,7 @@ def update_ticket(ticket_id: int, data: TicketUpdate, user: CurrentUser, db: DB)
     ticket.titel = data.titel
     ticket.beschreibung = data.beschreibung
     ticket.prioritaet = data.prioritaet
+    ticket.intern = data.intern
     ticket.bereich_id = data.bereich_id
     ticket.kategorie_id = data.kategorie_id
     ticket.faellig_am = data.faellig_am
