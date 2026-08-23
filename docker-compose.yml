@@ -6,6 +6,18 @@ services:
       POSTGRES_USER: ${VTB_PG_USER}
       POSTGRES_PASSWORD: ${VTB_PG_PASSWORD}
       POSTGRES_DB: ${VTB_PG_DB}
+      TZ: ${VTB_TZ:-Europe/Berlin}
+    # Zeitzone braucht hier BEIDES: `TZ` stellt nur die Container-Uhr, die
+    # Server-Zeitzone schreibt Postgres beim `initdb` in postgresql.conf – und die
+    # schlägt danach jede Env-Variable. Ein bestehendes Cluster bliebe also auf
+    # Etc/UTC, und `CURRENT_DATE` läge zwischen Mitternacht und 02:00 Ortszeit einen
+    # Tag zurück (Buchungsdatum, Ein-/Austritts-Statistik, Monatsläufe).
+    command:
+      - postgres
+      - -c
+      - timezone=${VTB_TZ:-Europe/Berlin}
+      - -c
+      - log_timezone=${VTB_TZ:-Europe/Berlin}
     volumes:
       - ./pg_data:/var/lib/postgresql
     healthcheck:
@@ -31,6 +43,10 @@ services:
     environment:
       VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
       VTB_UPLOAD_PATH: /app/uploads
+      # Ohne TZ läuft der Container in UTC – `date.today()` läge dann nachts einen Tag
+      # zurück und müsste sich mit CURRENT_DATE der DB streiten. tzdata steckt im
+      # python-slim-Image, deshalb genügt die Variable.
+      TZ: ${VTB_TZ:-Europe/Berlin}
       # Container-Pfad wie VTB_UPLOAD_PATH darüber: Das Vereinswappen liegt im
       # Image unter /app/branding/vtb und ersetzt die neutrale Wortmarke. Ein
       # anderer Verein trägt hier seinen Pfad ein und hängt das Verzeichnis
@@ -81,6 +97,7 @@ services:
       - .env
     environment:
       VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+      TZ: ${VTB_TZ:-Europe/Berlin}
     command: >
       sh -c '
       H="$${TTLOCK_SYNC_INTERVAL_HOURS:-6}";
@@ -116,6 +133,7 @@ services:
       - .env
     environment:
       VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+      TZ: ${VTB_TZ:-Europe/Berlin}
     command: >
       sh -c '
       H="$${CLUBDECKEL_BEITRAG_INTERVAL_HOURS:-24}";
