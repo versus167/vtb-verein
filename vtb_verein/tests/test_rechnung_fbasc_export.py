@@ -4,7 +4,8 @@ Bis Schema v108 lieferte der Rechnungsexport ein Zip aus Belegen plus
 `uebersicht.csv`; die Buchungszeile tippte jemand in der Fibu nach. Seit v109
 rendert er – wie Kassenbuch und Sollstellungen – eine `fbasc.hia`: Eine
 freigegebene Rechnung ist eine Verbindlichkeit, also Aufwand (Kategorie-Sachkonto)
-im Soll gegen Kreditor im Haben.
+im Soll gegen Kreditor im Haben. Seit dem 23.08.2026 liegt keine CSV mehr bei –
+nur Altläufe (`format='zip'`) liefern sie beim Re-Download weiterhin.
 
 Der Kreditor ist bei einer Erstattung das Personenkonto des Mitglieds
 (ul_kreditor_konto_basis + Mitgliedsnummer), bei einem externen Aussteller der
@@ -332,12 +333,14 @@ def _hia_zeilen(dateien: dict) -> list[list[str]]:
 
 @integration
 class TestExportInhalt:
-    def test_zip_enthaelt_hia_uebersicht_und_beleg(self, db, welt):
+    def test_zip_enthaelt_hia_und_beleg(self, db, welt):
+        """Buchungsdatei und Belege – und nichts weiter: Was früher in der
+        `uebersicht.csv` stand, steht in der Buchungszeile."""
         _freigegebene_rechnung(db, welt)
         _, zip_bytes = db.rechnung_export.exportieren("fbasctest")
         namen = _entpacke(zip_bytes).keys()
         assert "fbasc.hia" in namen
-        assert "uebersicht.csv" in namen
+        assert "uebersicht.csv" not in namen
         assert any(n.startswith("R1 - ") for n in namen)
 
     def test_buchungszeile_stimmt(self, db, welt):
@@ -389,6 +392,7 @@ class TestAltlaeufe:
         _, zip_bytes = db.rechnung_export.re_download(export_id)
         namen = _entpacke(zip_bytes).keys()
         assert "fbasc.hia" not in namen
+        # Dort war die CSV die einzige Lesehilfe – sie bleibt dem Altlauf erhalten.
         assert "uebersicht.csv" in namen
 
 

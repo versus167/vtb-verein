@@ -223,7 +223,7 @@ def list_exporte(user: CurrentUser, db: DB):
 
 @router.post("/export")
 def exportieren(user: CurrentUser, db: DB):
-    """Neuer Lauf: Zip mit fbasc.hia, Belegen und uebersicht.csv; stempelt die Rechnungen."""
+    """Neuer Lauf: Zip mit fbasc.hia und den Belegen; stempelt die Rechnungen."""
     _require_verwalten(user)
     try:
         dateiname, zip_bytes = db.rechnung_export.exportieren(user.username)
