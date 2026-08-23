@@ -606,6 +606,38 @@ Fremd-Log-Import, inkl. `resolve_extern_konto`).
 - Dieselbe Momentaufnahme trägt die Auswertung: eine Chip-Weitergabe verschiebt dort
   keine Öffnungen mehr von einem Öffner zum nächsten.
 
+## Akku schwach → internes Ticket (umgesetzt, Schema v110)
+
+Der Ladestand kam mit jedem Inventar-Sync herein (`electricQuantity`) und stand in der
+Liste; gehandelt hat trotzdem nur, wer hinschaute. Jetzt meldet sich die Anlage selbst:
+Unterhalb einer eingestellten Schwelle legt sie ein **internes Ticket** im konfigurierten
+Bereich an — über den regulären `TicketService`, also samt Benachrichtigung an die im
+Bereich Zuständigen.
+
+- **Stammdaten** (`schliessanlage_einstellungen`, Single-Row wie `fibu_einstellungen`):
+  Ticket-Bereich, Schwelle in Prozent, Priorität. Gepflegt im Bereich Schließanlage,
+  Reiter **Einstellungen** (vereinsweites `schliessanlage.verwalten`). **Ohne Bereich
+  passiert nichts** — das ist der Aus-Schalter. Dieselbe Schwelle färbt auch die
+  Akku-Anzeige („Akku niedrig"), damit es nicht zwei Begriffe davon gibt.
+- **Ein Ticket je Entladung, nicht je Lauf:** `tuer_schloss.akku_ticket_id` merkt sich die
+  offene Meldung. Der Sync läuft alle sechs Stunden — ohne Merker stünden nach einer Woche
+  28 gleichlautende Tickets im Bereich. Freigegeben wird der Merker erst, wenn der Akku
+  wieder ≥ Schwelle + 10 Prozentpunkte meldet (Batteriewechsel); bewusst **nicht** am
+  Ticket-Status festgemacht, sonst käme ein zu früh geschlossenes Ticket sechs Stunden
+  später als neues zurück. Der Merker wird ohne Versions-Bump geschrieben (Maschinen-
+  zustand wie der Sync-Cursor) und erzeugt deshalb keine History-Zeile.
+- **Kein FK** auf `tickets`/`ticket_bereiche`: beide sind geprunte Entitäten, ein FK
+  zwänge zu einem `ChildRef` — und der würde beim Prune eines Bereichs die Einstellungen
+  bzw. beim Prune eines Tickets das Schloss mitlöschen. Ein ins Leere zeigender Verweis
+  ist folgenlos (gilt als „nicht eingerichtet" bzw. „kein offenes Ticket").
+- **`tickets.gemeldet_von` ist jetzt optional:** Hinter einem automatischen Ticket steht
+  kein Mensch; die API zeigt dort **„System"**. Ein Platzhalter-Benutzer wäre eine
+  Behauptung über jemanden — samt dessen Benachrichtigungen und Leserecht am internen
+  Ticket.
+- **Wo es läuft:** am Ende des Syncs, wenn die Akkustände frisch sind — im Cron-Sidecar
+  (`tools/zutritt_sync.py`) wie im on-demand-Sync der Seite
+  (`app/services/schloss_akku_service.py`).
+
 ## Offene Punkte (vor/während Phase 1 klären)
 
 - ~~**Scheduler für den 4×/Tag-Hintergrund-Sync.**~~ ✅ **entschieden 2026-06-29, umgesetzt

@@ -8,7 +8,8 @@ from app.db.base_repository import BaseRepository
 _SELECT = """
     SELECT s.id, s.ttlock_lock_id, s.quelle, s.name, s.standort, s.abteilung_id,
            s.ttlock_gateway_id, s.gateway_online, s.lock_mac, s.akku_prozent, s.akku_stand_at,
-           s.aktiv, s.notiz, s.letzter_log_serverdate, s.letztes_event_at, s.letztes_event_type,
+           s.aktiv, s.notiz, s.letzter_log_serverdate, s.letztes_event_at,
+           s.letztes_event_type, s.akku_ticket_id,
            (SELECT MAX(sl.geaendert_am) FROM tuer_schloss_status_log sl
               WHERE sl.schloss_id = s.id) AS gateway_online_seit,
            (SELECT COALESCE(
@@ -205,6 +206,20 @@ class TuerSchlossRepository(BaseRepository):
             if cur.rowcount == 0:
                 return None
         return self.get(s.id)
+
+    def set_akku_ticket(self, schloss_id: int, ticket_id: Optional[int]) -> None:
+        """Merker für die offene Akku-Meldung setzen (Ticket-Nr.) oder löschen (None).
+
+        Bewusst OHNE `version=version+1`: Das ist Maschinenzustand wie der Sync-Cursor,
+        keine inhaltliche Änderung am Schloss. Ein Versions-Bump erzeugte je Meldung eine
+        History-Zeile, die nichts erzählt – dasselbe Leerrauschen, das an anderer Stelle
+        schon einmal Arbeit gemacht hat.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE tuer_schloss SET akku_ticket_id = %s WHERE id = %s",
+                (ticket_id, schloss_id),
+            )
 
     def soft_delete(self, id: int, deleted_by: str) -> bool:
         with self.cursor() as cur:

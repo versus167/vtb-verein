@@ -27,10 +27,13 @@ from pydantic import BaseModel
 from app.services.anhang_service import DateiZuGrossError
 
 from app.models.permission import Permission
+from app.models.schliessanlage import SchliessanlageEinstellungen
+from app.models.ticket import TicketPrioritaet
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.zutritt_import_service import ImportFehler, run_import
 from app.services import zutritt_auswertung_service
 from app.services import zutritt_abgleich_service
+from app.services import schloss_akku_service
 from app.services.ttlock_client import TTLockError
 from ..core.config import settings
 from ..core.deps import CurrentUser, DB
@@ -205,6 +208,13 @@ class GruppeChipIn(BaseModel):
     chip_id: int
 
 
+class EinstellungenIn(BaseModel):
+    """Stammdaten des Bereichs: Akku-Überwachung. Bereich = None schaltet sie ab."""
+    akku_ticket_bereich_id: Optional[int] = None
+    akku_ticket_schwelle: int = 20
+    akku_ticket_prioritaet: str = TicketPrioritaet.NORMAL
+
+
 # --- Status / Sync ----------------------------------------------------------
 @router.get("/status")
 def status_info(user: CurrentUser, db: DB):
@@ -225,6 +235,11 @@ def status_info(user: CurrentUser, db: DB):
         # Imports (beides vereinsweit, s. log_import) gehört an eine Stelle – hierher.
         "darf_import": (user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN)
                         and user.has_permission_global(Permission.SCHLIESSANLAGE_PROTOKOLL)),
+        # Stammdaten gelten für die ganze Anlage, nicht je Abteilung -> vereinsweit.
+        "darf_einstellungen": user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN),
+        # Ab hier gilt ein Akku als schwach: dieselbe Zahl, die das Ticket auslöst, färbt
+        # auch die Anzeige – zwei Begriffe von „niedrig" wären genau eine Verwirrung zuviel.
+        "akku_schwelle": db.schliessanlage_einstellungen.get().akku_ticket_schwelle,
     }
 
 
@@ -336,6 +351,12 @@ def sync(request: Request, user: CurrentUser, db: DB,
                 ergebnis["sperrluecken_gemeldet"] = gemeldet
         except Exception:
             logger.exception("Sperr-Lücken-Abgleich nach dem Sync fehlgeschlagen.")
+        # Die Akkustände sind jetzt ebenfalls frisch – schwache melden sich selbst
+        # per Ticket (nur einmal je Entladung, s. schloss_akku_service).
+        try:
+            ergebnis.update(schloss_akku_service.pruefe_akkustaende(db))
+        except Exception:
+            logger.exception("Akku-Prüfung nach dem Sync fehlgeschlagen.")
     try:
         db.access_log_repository.log(
             "schliessanlage_sync", category="schliessanlage",
@@ -345,6 +366,43 @@ def sync(request: Request, user: CurrentUser, db: DB,
     except Exception:
         pass
     return ergebnis
+
+
+# --- Stammdaten des Bereichs -----------------------------------------------
+@router.get("/einstellungen")
+def einstellungen_lesen(user: CurrentUser, db: DB):
+    """Stammdaten der Schließanlage (bisher: Akku-Überwachung). Vereinsweites
+    Verwalten-Recht – die Einstellung gilt für alle Schlösser, nicht je Abteilung."""
+    if not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung: Schließanlage verwalten (vereinsweit)")
+    return asdict(db.schliessanlage_einstellungen.get())
+
+
+@router.put("/einstellungen")
+def einstellungen_speichern(data: EinstellungenIn, user: CurrentUser, db: DB):
+    """Stammdaten speichern. Der Ticket-Bereich ist der Ein-/Aus-Schalter der
+    Akku-Überwachung: ohne ihn wird kein Ticket erzeugt."""
+    if not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Keine Berechtigung: Schließanlage verwalten (vereinsweit)")
+    if not 1 <= data.akku_ticket_schwelle <= 100:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Akku-Schwelle muss zwischen 1 und 100 % liegen.")
+    if data.akku_ticket_prioritaet not in TicketPrioritaet.ALL:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Unbekannte Priorität.")
+    if data.akku_ticket_bereich_id is not None:
+        bereich = db.tickets.get_bereich(data.akku_ticket_bereich_id)
+        if bereich is None or bereich.deleted_at:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Ticket-Bereich nicht gefunden.")
+    e = SchliessanlageEinstellungen(
+        akku_ticket_bereich_id=data.akku_ticket_bereich_id,
+        akku_ticket_schwelle=data.akku_ticket_schwelle,
+        akku_ticket_prioritaet=data.akku_ticket_prioritaet,
+    )
+    return asdict(db.schliessanlage_einstellungen.update(e, user.username))
 
 
 @router.get("/abgleich")

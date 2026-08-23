@@ -11,6 +11,9 @@ Danach hält der Lauf das frische Ist gegen unser Soll (Soll-Ist-Abgleich der IC
 und meldet Admins, wenn ein gesperrter oder verlorener Chip am Schloss noch öffnet.
 Der Abgleich selbst schreibt nichts an die Schlösser – er berichtet nur.
 
+Ebenfalls am frischen Ist: Schlösser unter der eingestellten Akku-Schwelle bekommen ein
+internes Ticket im dafür konfigurierten Bereich (Bereich Schließanlage → Einstellungen).
+
 TTLock-Zugangsdaten kommen aus der Env/.env (TTLOCK_CLIENT_ID/SECRET/USERNAME/PASSWORD),
 die DB aus VTB_DATABASE_URL.
 
@@ -37,6 +40,7 @@ from app.services.zutritt_service import (
     ZutrittService, ZutrittNichtKonfiguriertError, notify_alarme,
 )
 from app.services import zutritt_abgleich_service
+from app.services import schloss_akku_service
 
 
 def main() -> int:
@@ -82,6 +86,14 @@ def main() -> int:
             gemeldet = zutritt_abgleich_service.melde_sperrluecken(db)
             if gemeldet:
                 log(f"⚠ Gesperrte Chips öffnen weiter → {gemeldet} Admin(s) benachrichtigt.")
+            # Akkustände sind mit dem Inventar frisch hereingekommen: Was unter der
+            # eingestellten Schwelle liegt, meldet sich selbst als Ticket (einmal je
+            # Entladung). Ohne hinterlegten Ticket-Bereich passiert hier nichts.
+            akku = schloss_akku_service.pruefe_akkustaende(db)
+            if akku.get("akku_tickets"):
+                log(f"⚠ Akku schwach → {akku['akku_tickets']} Ticket(s) angelegt.")
+            if akku.get("akku_erholt"):
+                log(f"✓ {akku['akku_erholt']} Schloss/Schlösser wieder mit vollem Akku.")
         if not args.inventar_only:
             res = svc.logs_sync(backfill_days=args.backfill_days)
             log(f"✓ Log-Sync: {res['neu']} neue Zutrittslog-Einträge.")
