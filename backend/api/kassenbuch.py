@@ -146,6 +146,8 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, KeyError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, OSError):
+        return HTTPException(status_code=500, detail=f"Fehler beim Speichern: {exc}")
     return HTTPException(status_code=500, detail="Interner Fehler.")
 
 
@@ -491,9 +493,13 @@ class ZaehlungWrite(BaseModel):
     buchungstext: Optional[str] = None
 
 
-def _zaehlung_dict(z, belegnummer: Optional[str] = None) -> dict:
+def _zaehlung_dict(db, z, belegnummer: Optional[str] = None) -> dict:
     d = asdict(z)
     d["belegnummer"] = belegnummer          # Beleg-Nr. der zugehörigen Zähl-Buchung (Anzeige)
+    # ID des angehängten Protokoll-PDFs (None → Anhängen ist fehlgeschlagen, die
+    # Oberfläche bietet dann „Protokoll nachtragen" an).
+    anhang = db.kassenbuch.protokoll_anhang(z)
+    d["protokoll_anhang_id"] = anhang.id if anhang else None
     return d
 
 
@@ -523,7 +529,7 @@ def list_zaehlungen(kasse_id: int, user: CurrentUser, db: DB):
         raise HTTPException(status_code=403, detail=str(exc))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    return [_zaehlung_dict(z, _beleg_fuer_buchung(db, z.buchung_id)) for z in zaehlungen]
+    return [_zaehlung_dict(db, z, _beleg_fuer_buchung(db, z.buchung_id)) for z in zaehlungen]
 
 
 @router.post("/{kasse_id}/zaehlungen", status_code=201)
@@ -544,7 +550,23 @@ def create_zaehlung(kasse_id: int, data: ZaehlungWrite, user: CurrentUser, db: D
         )
     except Exception as exc:
         raise _kassenbuch_error_to_http(exc)
-    return _zaehlung_dict(zaehlung, _beleg_fuer_buchung(db, zaehlung.buchung_id))
+    return _zaehlung_dict(db, zaehlung, _beleg_fuer_buchung(db, zaehlung.buchung_id))
+
+
+@router.post("/{kasse_id}/zaehlungen/{zaehlung_id}/protokoll", status_code=201)
+def zaehlprotokoll_nachtragen(kasse_id: int, zaehlung_id: int, user: CurrentUser, db: DB):
+    """Hängt das Zählprotokoll-PDF nachträglich an die Zähl-Buchung.
+
+    Für Zählungen, bei denen das Anhängen beim Buchen fehlgeschlagen ist. Idempotent —
+    hängt das Protokoll schon dran, passiert nichts."""
+    try:
+        db.kassenbuch.protokoll_nachtragen(
+            kasse_id, zaehlung_id, user_id=user.id, is_admin=_kassen_admin(user)
+        )
+        zaehlung = db.kassenbuch._zaehlung.get(zaehlung_id)
+    except Exception as exc:
+        raise _kassenbuch_error_to_http(exc)
+    return _zaehlung_dict(db, zaehlung, _beleg_fuer_buchung(db, zaehlung.buchung_id))
 
 
 # ---------------------------------------------------------------------------

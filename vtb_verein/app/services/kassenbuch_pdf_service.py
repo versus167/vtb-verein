@@ -6,7 +6,7 @@ für einen angegebenen Datumsbereich.
 
 Verwendet reportlab (muss in requirements.txt sein).
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -36,26 +36,33 @@ def _fmt_euro(cent: int) -> str:
     return f"{cent / 100:,.2f} €".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
-def _fmt_datum(iso: str) -> str:
-    """Formatiert ISO-Datum als TT.MM.JJJJ."""
+def _fmt_datum(iso) -> str:
+    """Formatiert ein Datum als TT.MM.JJJJ – ISO-String oder date/datetime-Objekt."""
     if not iso:
         return ''
+    if isinstance(iso, date):        # datetime ist Subklasse von date
+        return iso.strftime('%d.%m.%Y')
     try:
-        d = date.fromisoformat(iso)
-        return d.strftime('%d.%m.%Y')
+        return date.fromisoformat(str(iso)[:10]).strftime('%d.%m.%Y')
     except ValueError:
-        return iso
+        return str(iso)
 
 
-def _fmt_zeitstempel(ts: str) -> str:
-    """Formatiert einen TEXT-Zeitstempel (z.B. '2026-06-17 14:32:11.123') als TT.MM.JJJJ HH:MM."""
+def _fmt_zeitstempel(ts) -> str:
+    """Formatiert einen Zeitstempel als TT.MM.JJJJ HH:MM.
+
+    Nimmt ISO-Strings ('2026-06-17 14:32:11.123') *und* datetime-Objekte: Seit die
+    Audit-Spalten TIMESTAMPTZ sind, liefert psycopg ein datetime statt Text — und
+    `datetime.fromisoformat` wirft dafür TypeError, nicht ValueError.
+    """
     if not ts:
         return ''
+    if isinstance(ts, datetime):
+        return ts.strftime('%d.%m.%Y %H:%M')
     try:
-        from datetime import datetime
-        return datetime.fromisoformat(ts).strftime('%d.%m.%Y %H:%M')
+        return datetime.fromisoformat(str(ts)).strftime('%d.%m.%Y %H:%M')
     except ValueError:
-        return ts
+        return str(ts)
 
 
 def _stueckelung_label(wert_cent: int) -> str:

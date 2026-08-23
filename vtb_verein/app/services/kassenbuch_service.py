@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 KASSENDIFFERENZ_KATEGORIE = "Kassendifferenz"
 
 
+def zaehlprotokoll_dateiname(zaehlung_id: int) -> str:
+    """Dateiname des Zählprotokoll-Anhangs — trägt die Zählungs-ID und ist damit
+    das Erkennungsmerkmal, an dem das Protokoll später wiedergefunden wird."""
+    return f"zaehlprotokoll-{zaehlung_id}.pdf"
+
+
 class BuchungGesperrtError(Exception):
     """Wird geworfen wenn eine exportierte Buchung geändert oder storniert werden soll."""
     pass
@@ -995,27 +1001,14 @@ class KassenbuchService:
             created_by,
         )
 
-        # Zählprotokoll-PDF erzeugen und an die Zähl-Buchung hängen (best-effort).
-        if self._anhang_repo is not None and self._anhang_service is not None and user_id is not None:
+        # Zählprotokoll-PDF erzeugen und an die Zähl-Buchung hängen (best-effort:
+        # die Zählung selbst ist gebucht und darf an einem PDF-Fehler nicht scheitern).
+        # Ob es geklappt hat, sagt `protokoll_anhang()` — die Oberfläche zeigt es an
+        # und bietet „nachtragen" an, damit ein Fehlschlag nicht unbemerkt bleibt.
+        if user_id is not None:
             try:
-                kasse = self._kasse.get_kasse(kasse_id)
-                pdf_bytes = erstelle_zaehlprotokoll_pdf(
-                    kasse_name=kasse.name,
-                    stueckelung=norm,
-                    ist_cent=ist_cent,
-                    soll_cent=soll_cent,
-                    differenz_cent=differenz_cent,
-                    gezaehlt_am=zaehlung.created_at or "",
-                    gezaehlt_von=created_by,
-                    belegnummer=gespeicherte_buchung.belegnummer or "",
-                    notiz=notiz or "",
-                )
-                self.add_anhang(
-                    buchung_id=gespeicherte_buchung.id,
-                    original_name=f"zaehlprotokoll-{zaehlung.id}.pdf",
-                    mime_type="application/pdf",
-                    inhalt=pdf_bytes,
-                    hochgeladen_von=user_id,
+                self._haenge_zaehlprotokoll_an(
+                    zaehlung, gespeicherte_buchung, hochgeladen_von=user_id
                 )
             except Exception:
                 logger.exception(
@@ -1024,6 +1017,81 @@ class KassenbuchService:
                 )
 
         return zaehlung
+
+    # -- Protokoll-PDF: erzeugen, anhängen, nachtragen ----------------------
+
+    def _haenge_zaehlprotokoll_an(
+        self, zaehlung: KassenZaehlung, buchung: Kassenbuchung, hochgeladen_von: int,
+    ) -> KassenbuchungAnhang:
+        """Baut das Zählprotokoll-PDF aus der gespeicherten Zählung und hängt es
+        an deren Zähl-Buchung.
+
+        Nimmt die Daten bewusst aus `zaehlung` (nicht aus den Aufruf-Parametern),
+        damit ein nachträglicher Lauf dasselbe Protokoll erzeugt wie der erste.
+        """
+        if self._anhang_repo is None or self._anhang_service is None:
+            raise RuntimeError("Anhang-Repository/-Service nicht konfiguriert.")
+        kasse = self._kasse.get_kasse(zaehlung.kasse_id)
+        pdf_bytes = erstelle_zaehlprotokoll_pdf(
+            kasse_name=kasse.name,
+            stueckelung=zaehlung.stueckelung or {},
+            ist_cent=zaehlung.ist_cent,
+            soll_cent=zaehlung.soll_cent,
+            differenz_cent=zaehlung.differenz_cent,
+            gezaehlt_am=zaehlung.created_at or "",
+            gezaehlt_von=zaehlung.created_by or "",
+            belegnummer=buchung.belegnummer or "",
+            notiz=zaehlung.notiz or "",
+        )
+        return self.add_anhang(
+            buchung_id=buchung.id,
+            original_name=zaehlprotokoll_dateiname(zaehlung.id),
+            mime_type="application/pdf",
+            inhalt=pdf_bytes,
+            hochgeladen_von=hochgeladen_von,
+        )
+
+    def protokoll_anhang(self, zaehlung: KassenZaehlung) -> KassenbuchungAnhang | None:
+        """Der angehängte Protokoll-Beleg einer Zählung — None, wenn er fehlt.
+
+        Erkannt wird er am Dateinamen, der die Zählungs-ID trägt; hochgeladene
+        Belege an derselben Buchung zählen also nicht als Protokoll.
+        """
+        if self._anhang_repo is None or zaehlung.buchung_id is None:
+            return None
+        name = zaehlprotokoll_dateiname(zaehlung.id)
+        for anhang in self._anhang_repo.list_by_buchung(zaehlung.buchung_id):
+            if anhang.original_name == name:
+                return anhang
+        return None
+
+    def protokoll_nachtragen(
+        self, kasse_id: int, zaehlung_id: int, user_id: int, is_admin: bool = False,
+    ) -> KassenbuchungAnhang:
+        """Erzeugt das Zählprotokoll-PDF nachträglich und hängt es an die Zähl-Buchung.
+
+        Idempotent: hängt es schon dran, kommt der vorhandene Anhang zurück. Gedacht
+        für Zählungen, bei denen das Anhängen beim Buchen fehlgeschlagen ist.
+
+        Raises:
+            KeinSchreibzugriffError, KeyError (Zählung/Buchung unbekannt).
+        """
+        if self._zaehlung is None:
+            raise RuntimeError("Zählungs-Repository nicht konfiguriert.")
+        self._pruefe_schreibzugriff(kasse_id, user_id, is_admin)
+
+        zaehlung = self._zaehlung.get(zaehlung_id)
+        if zaehlung is None or zaehlung.deleted_at or zaehlung.kasse_id != kasse_id:
+            raise KeyError(f"Zählung {zaehlung_id} nicht gefunden.")
+        if zaehlung.buchung_id is None:
+            raise KeyError(f"Zählung {zaehlung_id} hat keine Buchung.")
+
+        vorhanden = self.protokoll_anhang(zaehlung)
+        if vorhanden is not None:
+            return vorhanden
+
+        buchung = self._buchung.get_kassenbuchung(zaehlung.buchung_id)
+        return self._haenge_zaehlprotokoll_an(zaehlung, buchung, hochgeladen_von=user_id)
 
     def list_zaehlungen(
         self, kasse_id: int, user_id: int = None, is_admin: bool = False,

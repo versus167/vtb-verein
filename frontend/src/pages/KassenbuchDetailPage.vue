@@ -663,6 +663,24 @@
                     </tbody>
                   </q-markup-table>
                   <div v-if="z.notiz" class="text-caption q-mt-sm"><b>Notiz:</b> {{ z.notiz }}</div>
+
+                  <q-separator spaced />
+                  <div class="row items-center no-wrap q-gutter-xs">
+                    <template v-if="z.protokoll_anhang_id">
+                      <q-btn flat dense no-caps size="sm" icon="picture_as_pdf" color="primary"
+                             label="Protokoll (PDF)" :loading="protokollBusy === z.id"
+                             @click="ladeProtokoll(z)" />
+                    </template>
+                    <template v-else>
+                      <q-icon name="warning" color="orange" size="20px" />
+                      <div class="col text-caption text-orange-9">
+                        Protokoll-PDF hängt nicht an Beleg {{ z.belegnummer || '–' }}.
+                      </div>
+                      <q-btn v-if="kannSchreiben" flat dense no-caps size="sm" icon="post_add"
+                             color="primary" label="Nachtragen" :loading="protokollBusy === z.id"
+                             @click="protokollNachtragen(z)" />
+                    </template>
+                  </div>
                 </q-card-section>
               </q-card>
             </q-expansion-item>
@@ -1038,6 +1056,22 @@ async function onSaveBuchung() {
   }
 }
 
+// Rückmeldung nach dem Buchen einer Zählung: Ob das Protokoll-PDF wirklich an der
+// Buchung hängt, verrät erst die Antwort – ohne diesen Hinweis fiele ein Fehlschlag
+// nur zufällig auf (die Buchung selbst ist ja gespeichert).
+function meldeZaehlungGespeichert(data, text) {
+  if (data?.protokoll_anhang_id) {
+    $q.notify({ type: 'positive', message: text })
+  } else {
+    $q.notify({
+      type: 'warning',
+      timeout: 8000,
+      message: `${text} Das Zählprotokoll konnte nicht angehängt werden – `
+        + 'unter „Zählprotokolle" nachtragen.',
+    })
+  }
+}
+
 // Bucht eine „mit Zählung"-Kategorie: die Zählung IST die Buchung dieser Kategorie
 // (Betrag = Zählung − Altbestand). Der Endpunkt erzeugt Buchung + Zählprotokoll-PDF.
 async function onSaveZaehlBuchung() {
@@ -1048,13 +1082,13 @@ async function onSaveZaehlBuchung() {
   }
   buchungSaving.value = true
   try {
-    await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
+    const { data } = await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
       stueckelung,
       kategorie: buchungForm.value.kategorie.trim(),
       buchungstext: buchungForm.value.buchungstext.trim(),
       notiz: buchungForm.value.notiz || null,
     })
-    $q.notify({ type: 'positive', message: 'Zählung gebucht.' })
+    meldeZaehlungGespeichert(data, 'Zählung gebucht.')
     buchungDialogOpen.value = false
     await Promise.all([loadBuchungen(), loadBestand()])
   } catch (e) {
@@ -1326,18 +1360,55 @@ async function onSaveZaehlung() {
   }
   zaehlSaving.value = true
   try {
-    await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
+    const { data } = await api.post(`/api/kassen/${kasseId.value}/zaehlungen`, {
       stueckelung,
       notiz: zaehlNotiz.value || null,
       ausloesende_buchung_id: zaehlAusloeserId.value,
     })
-    $q.notify({ type: 'positive', message: 'Zählung gespeichert.' })
+    meldeZaehlungGespeichert(data, 'Zählung gespeichert.')
     zaehlDialogOpen.value = false
     await Promise.all([loadBuchungen(), loadBestand()])
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern der Zählung.' })
   } finally {
     zaehlSaving.value = false
+  }
+}
+
+// Zählprotokoll-PDF: Das Anhängen beim Buchen ist best-effort. Fehlt es, zeigt die
+// Liste das an und lässt es nachtragen – statt es (wie früher) still zu verschlucken.
+const protokollBusy = ref(null)
+
+async function ladeProtokoll(z) {
+  protokollBusy.value = z.id
+  try {
+    const url = `/api/kassen/${kasseId.value}/buchungen/${z.buchung_id}`
+      + `/anhaenge/${z.protokoll_anhang_id}/datei`
+    const { data } = await api.get(url, { responseType: 'blob' })
+    const blobUrl = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = `zaehlprotokoll-${z.id}.pdf`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000)
+  } catch {
+    $q.notify({ type: 'negative', message: 'Protokoll konnte nicht geladen werden.' })
+  } finally {
+    protokollBusy.value = null
+  }
+}
+
+async function protokollNachtragen(z) {
+  protokollBusy.value = z.id
+  try {
+    const { data } = await api.post(`/api/kassen/${kasseId.value}/zaehlungen/${z.id}/protokoll`)
+    Object.assign(z, data)
+    $q.notify({ type: 'positive', message: 'Zählprotokoll angehängt.' })
+    await loadBuchungen()          // Anhang-Zähler an der Buchung nachziehen
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Nachtragen fehlgeschlagen.' })
+  } finally {
+    protokollBusy.value = null
   }
 }
 
