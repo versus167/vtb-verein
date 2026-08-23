@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 109
+SCHEMA_VERSION = 110
 
 
 # ---------------------------------------------------------------------------
@@ -1142,7 +1142,7 @@ _RECHNUNG_KATEGORIEN_SEED = (
 _TUER_SCHLOSS_COLS = (
     "id, version, ttlock_lock_id, quelle, name, standort, abteilung_id, ttlock_gateway_id, "
     "gateway_online, lock_mac, akku_prozent, akku_stand_at, aktiv, notiz, "
-    "letzter_log_serverdate, letztes_event_at, letztes_event_type, "
+    "letzter_log_serverdate, letztes_event_at, letztes_event_type, akku_ticket_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TUER_SCHLOSS_VALS = ", ".join("NEW." + c.strip() for c in _TUER_SCHLOSS_COLS.split(","))
@@ -1473,6 +1473,98 @@ _ZUTRITT_TRIGGERS = (
     ('trig_schluessel_chip_audit_update',   'UPDATE', 'schluessel_chip',   'fn_schluessel_chip_audit_update'),
     ('trig_tuer_berechtigung_audit_insert', 'INSERT', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_insert'),
     ('trig_tuer_berechtigung_audit_update', 'UPDATE', 'tuer_berechtigung', 'fn_tuer_berechtigung_audit_update'),
+)
+
+# ============================================================================
+# Akku-Überwachung → Ticket (Schema v110)
+# ----------------------------------------------------------------------------
+# Der Inventar-Sync bringt viermal am Tag den Akkustand jedes Schlosses herein –
+# gelesen hat ihn bisher nur, wer zufällig auf die Seite schaute. Unter einer
+# einstellbaren Schwelle legt die App jetzt selbst ein internes Ticket an. Zwei Teile:
+#
+#  * `schliessanlage_einstellungen` – Single-Row-Konfiguration (id=1, gleiches Muster
+#    wie fibu_/beitrag_einstellungen): in welchen Ticket-Bereich die Meldung gehört,
+#    ab welchem Prozentwert und mit welcher Priorität. Ohne Bereich passiert nichts –
+#    das ist der Aus-Schalter.
+#  * `tuer_schloss.akku_ticket_id` – Merker, dass für DIESEN Akku-Abstieg schon ein
+#    Ticket offen ist. Ohne ihn erzeugte jeder Sync-Lauf ein weiteres. Zurückgesetzt
+#    wird er erst, wenn der Akku wieder deutlich über der Schwelle liegt – also nach
+#    einem Batteriewechsel; ein Ticket je Entladung, nicht je Lauf.
+#
+# `akku_ticket_bereich_id` und `akku_ticket_id` sind bewusst OHNE Fremdschlüssel: Beide
+# Ziele (`ticket_bereiche`, `tickets`) sind geprunte Entitäten. Ein echter FK zwänge
+# dort zu einem ChildRef – und der würde beim Prune eines Bereichs die Einstellungen
+# bzw. beim Prune eines Tickets das Schloss mitlöschen. Zeigt ein Verweis ins Leere,
+# ist das folgenlos: die Konfiguration meldet sich als „nicht eingerichtet", der
+# Merker als „kein offenes Ticket".
+# Geteilt zwischen Frischaufbau und Migration v109→v110 (Fresh == Migriert).
+_ZUTRITT_AKKU_TICKET_SQL = (
+    "ALTER TABLE tuer_schloss ADD COLUMN IF NOT EXISTS akku_ticket_id INTEGER",
+    "ALTER TABLE tuer_schloss_history ADD COLUMN IF NOT EXISTS akku_ticket_id INTEGER",
+)
+
+_DDL_SCHLIESSANLAGE_EINSTELLUNGEN = """
+    CREATE TABLE IF NOT EXISTS schliessanlage_einstellungen (
+      id                     INTEGER PRIMARY KEY DEFAULT 1,
+      akku_ticket_bereich_id INTEGER,
+      akku_ticket_schwelle   INTEGER NOT NULL DEFAULT 20,
+      akku_ticket_prioritaet TEXT NOT NULL DEFAULT 'normal',
+      version                INTEGER NOT NULL DEFAULT 1,
+      created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by             TEXT,
+      updated_at             TEXT,
+      updated_by             TEXT,
+      CHECK (id = 1)
+    );
+    CREATE TABLE IF NOT EXISTS schliessanlage_einstellungen_history (
+      id                     INTEGER NOT NULL,
+      version                INTEGER NOT NULL,
+      akku_ticket_bereich_id INTEGER,
+      akku_ticket_schwelle   INTEGER,
+      akku_ticket_prioritaet TEXT,
+      created_at             TEXT,
+      created_by             TEXT,
+      updated_at             TEXT,
+      updated_by             TEXT,
+      PRIMARY KEY (id, version)
+    );
+    INSERT INTO schliessanlage_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+"""
+
+_SCHLIESSANLAGE_EINSTELLUNGEN_COLS = (
+    "id, version, akku_ticket_bereich_id, akku_ticket_schwelle, akku_ticket_prioritaet, "
+    "created_at, created_by, updated_at, updated_by"
+)
+_SCHLIESSANLAGE_EINSTELLUNGEN_VALS = ", ".join(
+    "NEW." + c.strip() for c in _SCHLIESSANLAGE_EINSTELLUNGEN_COLS.split(","))
+
+_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_schliessanlage_einstellungen_audit_insert()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO schliessanlage_einstellungen_history ({_SCHLIESSANLAGE_EINSTELLUNGEN_COLS})
+        VALUES ({_SCHLIESSANLAGE_EINSTELLUNGEN_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_schliessanlage_einstellungen_audit_update()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO schliessanlage_einstellungen_history ({_SCHLIESSANLAGE_EINSTELLUNGEN_COLS})
+            VALUES ({_SCHLIESSANLAGE_EINSTELLUNGEN_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_SCHLIESSANLAGE_EINSTELLUNGEN_TRIGGERS = (
+    ('trig_schliessanlage_einst_audit_insert', 'INSERT', 'schliessanlage_einstellungen',
+     'fn_schliessanlage_einstellungen_audit_insert'),
+    ('trig_schliessanlage_einst_audit_update', 'UPDATE', 'schliessanlage_einstellungen',
+     'fn_schliessanlage_einstellungen_audit_update'),
 )
 
 # ============================================================================
@@ -3639,6 +3731,7 @@ class Database:
             107: self._migrate_v106_to_v107,
             108: self._migrate_v107_to_v108,
             109: self._migrate_v108_to_v109,
+            110: self._migrate_v109_to_v110,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8069,6 +8162,47 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 109 WHERE id = 1")
 
+    def _migrate_v109_to_v110(self) -> None:
+        """Akku-Überwachung der Schlösser meldet sich selbst per Ticket.
+
+        Der Akkustand kam mit jedem Inventar-Sync herein und stand in der Liste;
+        gehandelt hat trotzdem nur, wer hinschaute. Ab hier legt die App unterhalb
+        einer einstellbaren Schwelle selbst ein internes Ticket im konfigurierten
+        Bereich an – und zwar genau eines je Entladung, nicht eines je Sync-Lauf
+        (Merker `tuer_schloss.akku_ticket_id`, zurückgesetzt beim Batteriewechsel).
+
+        Ohne hinterlegten Ticket-Bereich passiert nichts: Die Funktion ist nach der
+        Migration aus, bis jemand sie im Bereich Schließanlage einrichtet.
+
+        Damit die App überhaupt melden kann, wird außerdem `tickets.gemeldet_von`
+        optional: Hinter einem automatischen Ticket steht kein Mensch.
+
+        DDL geteilt mit dem Frischaufbau (_ZUTRITT_AKKU_TICKET_SQL,
+        _DDL_SCHLIESSANLAGE_EINSTELLUNGEN); die Audit-Funktion von `tuer_schloss`
+        wird neu erzeugt, sonst fehlte die neue Spalte in der History.
+        """
+        with self.cursor() as cur:
+            for sql in _ZUTRITT_AKKU_TICKET_SQL:
+                cur.execute(sql)
+            cur.execute(_DDL_SCHLIESSANLAGE_EINSTELLUNGEN)
+            # Ein Ticket, das die App selbst schreibt, hat keinen Melder. Bisher war
+            # `gemeldet_von` NOT NULL – ein Platzhalter-Benutzer an dieser Stelle wäre
+            # eine Behauptung über einen Menschen (samt dessen Benachrichtigungen und
+            # Leserecht am internen Ticket). Bestandstickets bleiben unberührt.
+            cur.execute("ALTER TABLE tickets ALTER COLUMN gemeldet_von DROP NOT NULL")
+            cur.execute(_FN_TUER_SCHLOSS_AUDIT_INSERT)
+            cur.execute(_FN_TUER_SCHLOSS_AUDIT_UPDATE)
+            cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE)
+            for name, event, table, fn in _SCHLIESSANLAGE_EINSTELLUNGEN_TRIGGERS:
+                cur.execute(f"""
+                    CREATE OR REPLACE TRIGGER {name}
+                    AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION {fn}();
+                """)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 110 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -8985,7 +9119,12 @@ class Database:
               intern          BOOLEAN NOT NULL DEFAULT FALSE,
               bereich_id      INTEGER REFERENCES ticket_bereiche(id),
               kategorie_id    INTEGER REFERENCES ticket_kategorien(id),
-              gemeldet_von    INTEGER NOT NULL REFERENCES users(id),
+              -- Melder: NULL heißt „von der App selbst erstellt" (v110, Akku-
+              -- Überwachung der Schließanlage). Hinter einem solchen Ticket steht
+              -- kein Mensch – ein aufgedrückter Platzhalter-Benutzer würde
+              -- behaupten, jemand hätte es gemeldet, und bekäme dessen
+              -- Benachrichtigungen und Leserechte.
+              gemeldet_von    INTEGER REFERENCES users(id),
               zugewiesen_an   INTEGER REFERENCES users(id),
               faellig_am      TEXT,
               geschlossen_am  TEXT,
@@ -9398,6 +9537,11 @@ class Database:
             cur.execute(sql)
         # Konnektivitäts-/Status-Log je Schloss (Schema v65). DDL geteilt mit v64→v65.
         cur.execute(_DDL_TUER_SCHLOSS_STATUS_LOG)
+        # Akku-Merker am Schloss + Konfiguration der Akku-Tickets (Schema v110).
+        # Geteilt mit Migration v109→v110.
+        for sql in _ZUTRITT_AKKU_TICKET_SQL:
+            cur.execute(sql)
+        cur.execute(_DDL_SCHLIESSANLAGE_EINSTELLUNGEN)
         # Chip-Rechtegruppen (Schema v93, #169) – setzt tuer_schloss/schluessel_chip
         # voraus und ergänzt tuer_berechtigung.gruppe_id. Geteilt mit v92→v93.
         cur.execute(_DDL_CHIP_GRUPPE)
@@ -9659,6 +9803,8 @@ class Database:
         cur.execute(_FN_SCHLUESSEL_CHIP_AUDIT_UPDATE)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_INSERT)
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
+        cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE)
         for fn_sql in _CHIP_GRUPPE_FNS:
             cur.execute(fn_sql)
         cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
@@ -10236,6 +10382,7 @@ class Database:
             *_RECHNUNG_TRIGGERS,
             *_SEPA_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
+            *_SCHLIESSANLAGE_EINSTELLUNGEN_TRIGGERS,
             *_CHIP_GRUPPE_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,

@@ -175,6 +175,15 @@ def _can_verwalten(ticket: Ticket, user, db) -> bool:
     return db.ticket_bereich_berechtigungen.user_darf_bearbeiten(ticket.bereich_id, user.id)
 
 
+def _melder_name(gemeldet_von: Optional[int], username: Optional[str]) -> str:
+    """Wer hat gemeldet? Ohne `gemeldet_von` war es die App selbst (z. B. die
+    Akku-Überwachung der Schließanlage) – das ist keine fehlende Angabe, sondern
+    die Aussage."""
+    if gemeldet_von is None:
+        return 'System'
+    return username or f'#{gemeldet_von}'
+
+
 def _enrich(ticket_dict: dict, db) -> dict:
     """Fügt gemeldet_von_username und bereich_name hinzu.
 
@@ -184,7 +193,7 @@ def _enrich(ticket_dict: dict, db) -> dict:
     """
     gemeldet_von = ticket_dict.get('gemeldet_von')
     username = db.get_username(gemeldet_von) if gemeldet_von else None
-    ticket_dict['gemeldet_von_username'] = username or f'#{gemeldet_von}'
+    ticket_dict['gemeldet_von_username'] = _melder_name(gemeldet_von, username)
     zugewiesen_an = ticket_dict.get('zugewiesen_an')
     ticket_dict['zugewiesen_an_username'] = db.get_username(zugewiesen_an) if zugewiesen_an else None
     bereich_id = ticket_dict.get('bereich_id')
@@ -425,7 +434,7 @@ def list_tickets(
     result = []
     for t in tickets:
         d = asdict(t)
-        d['gemeldet_von_username'] = user_lookup.get(t.gemeldet_von, f'#{t.gemeldet_von}')
+        d['gemeldet_von_username'] = _melder_name(t.gemeldet_von, user_lookup.get(t.gemeldet_von))
         d['zugewiesen_an_username'] = user_lookup.get(t.zugewiesen_an) if t.zugewiesen_an else None
         d['bereich_name'] = bereiche_lookup.get(t.bereich_id) if t.bereich_id else None
         result.append(d)

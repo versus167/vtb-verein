@@ -737,6 +737,9 @@ LOG_REGISTRY: tuple[LogRule, ...] = (
     LogRule("prune_einstellungen_history", "Bereinigungs-Einstellungen (Historie)",
             "prune_einstellungen_history",
             ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
+    LogRule("schliessanlage_einstellungen_history", "Schließanlagen-Einstellungen (Historie)",
+            "schliessanlage_einstellungen_history",
+            ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
 )
 
 LOG_BY_NAME: dict[str, LogRule] = {r.name: r for r in LOG_REGISTRY}

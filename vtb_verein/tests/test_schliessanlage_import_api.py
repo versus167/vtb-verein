@@ -23,7 +23,7 @@ from fastapi import HTTPException  # noqa: E402
 
 from app.models.permission import Permission  # noqa: E402
 from app.models.schliessanlage import (  # noqa: E402
-    SchluesselChip, TuerSchloss, QUELLE_EXTERN,
+    SchliessanlageEinstellungen, SchluesselChip, TuerSchloss, QUELLE_EXTERN,
 )
 from backend.api import schliessanlage as api  # noqa: E402
 
@@ -187,6 +187,8 @@ def test_status_meldet_import_erst_bei_beiden_rechten():
     db = _DB()
     db.ttlock_konto = SimpleNamespace(get=lambda: None)
     db.zutritt = SimpleNamespace(is_configured=lambda: False)
+    db.schliessanlage_einstellungen = SimpleNamespace(
+        get=lambda: SchliessanlageEinstellungen())
 
     nur_verwalten = api.status_info(_user(Permission.SCHLIESSANLAGE_VERWALTEN,
                                           Permission.SCHLIESSANLAGE_READ), db)

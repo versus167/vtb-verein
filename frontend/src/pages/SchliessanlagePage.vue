@@ -89,6 +89,7 @@
       <q-tab name="gruppen" icon="workspaces" label="Gruppen" />
       <q-tab v-if="status.darf_protokoll" name="log" icon="history" label="Log" />
       <q-tab v-if="status.darf_protokoll" name="auswertung" icon="insights" label="Auswertung" />
+      <q-tab v-if="status.darf_einstellungen" name="einstellungen" icon="settings" label="Einstellungen" />
     </q-tabs>
 
     <!-- ====================== Schlösser ====================== -->
@@ -478,6 +479,35 @@
       </template>
     </div>
 
+    <!-- ====================== Einstellungen ====================== -->
+    <div v-if="tab === 'einstellungen'">
+      <q-card flat bordered class="schl-karte" style="max-width:560px">
+        <q-card-section class="q-pb-none">
+          <div class="text-subtitle2 text-weight-bold">Akku-Überwachung</div>
+          <div class="text-caption text-grey-7">
+            Fällt der Akku eines Schlosses auf oder unter die Schwelle, legt die App beim
+            nächsten Sync selbst ein internes Ticket im gewählten Bereich an – einmal je
+            Entladung, nicht bei jedem Lauf. Ohne Bereich passiert nichts.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-gutter-sm">
+          <q-select v-model="einst.akku_ticket_bereich_id" :options="bereichOptionen"
+            option-value="id" option-label="name" emit-value map-options clearable
+            label="Ticket-Bereich" outlined dense
+            hint="leer = keine automatischen Tickets" />
+          <q-input v-model.number="einst.akku_ticket_schwelle" type="number" min="1" max="100"
+            label="Ticket ab Akkustand (%)" outlined dense
+            hint="z. B. 20 – gemeldet wird bei 20 % und darunter" />
+          <q-select v-model="einst.akku_ticket_prioritaet" :options="prioritaetOptionen"
+            emit-value map-options label="Priorität des Tickets" outlined dense />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn unelevated rounded no-caps color="primary" label="Speichern"
+            :loading="einstSpeichern" @click="saveEinstellungen" />
+        </q-card-actions>
+      </q-card>
+    </div>
+
     <!-- ====================== Schloss-Detail ====================== -->
     <q-dialog v-model="schlossDialog" :maximized="$q.screen.lt.sm">
       <q-card class="schl-dialog" style="min-width:min(680px,96vw)">
@@ -525,6 +555,12 @@
                     <q-icon :name="akkuIcon(schlossDetail.schloss?.akku_prozent ?? 100)" size="15px" />
                     {{ schlossDetail.schloss?.akku_prozent ?? '–' }} %
                   </div>
+                  <!-- Die Meldung ist schon geschrieben: direkt dorthin, statt sie im
+                       Ticket-Bereich suchen zu lassen. -->
+                  <router-link v-if="schlossDetail.schloss?.akku_ticket_id"
+                    class="schl-stat__hinweis" :to="`/tickets?ticket=${schlossDetail.schloss.akku_ticket_id}`">
+                    Ticket #{{ schlossDetail.schloss.akku_ticket_id }}
+                  </router-link>
                 </div>
               </div>
             </template>
@@ -1345,7 +1381,8 @@ function credentialGruppen(credentials) {
 }
 
 const tab = ref('schloesser')
-const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false, darf_import: false, letzter_sync_at: null })
+const status = ref({ konfiguriert: false, darf_verwalten: false, darf_protokoll: false, darf_sync: false,
+  darf_import: false, darf_einstellungen: false, akku_schwelle: 20, letzter_sync_at: null })
 const schloesser = ref([])
 const chips = ref([])
 const abteilungen = ref([])
@@ -1389,7 +1426,9 @@ const offlineSeit = (s) => {
 // Fernöffnen – sein Log kommt per Import statt per Sync.
 const istExtern = (s) => !!s && s.quelle === 'extern'
 const akkuIcon = (p) => (p > 80 ? 'battery_full' : p > 40 ? 'battery_5_bar' : p > 20 ? 'battery_3_bar' : 'battery_alert')
-const akkuLow = (p) => p != null && p <= 20
+// „Niedrig" ist genau der Wert, ab dem auch das Ticket kommt (Reiter Einstellungen) –
+// zwei Begriffe davon wären eine Verwirrung zuviel.
+const akkuLow = (p) => p != null && p <= (status.value.akku_schwelle ?? 20)
 const syncColor = (s) => ({ aktiv: 'green-3', pending: 'grey-3', fehler: 'red-3',
   gesperrt: 'orange-3', 'öffnet noch!': 'red', 'öffnet nicht': 'orange-3',
   'Karte noch da': 'orange-3', 'Fenster weicht ab': 'orange-3' }[s] || 'grey-3')
@@ -1429,7 +1468,7 @@ const berHinweis = (b) => {
 const onlineKurz = (o) => (o === true ? 'online' : o === false ? 'offline' : 'unbekannt')
 const onlineDotClass = (o) => (o === true ? 'schl-dot--gruen' : o === false ? 'schl-dot--rot' : 'schl-dot--grau')
 const onlinePillClass = (o) => (o === true ? 'schl-pill--ok' : o === false ? 'schl-pill--warn' : '')
-const akkuPillClass = (p) => (p <= 20 ? 'schl-pill--warn' : p <= 40 ? 'schl-pill--achtung' : 'schl-pill--ok')
+const akkuPillClass = (p) => (akkuLow(p) ? 'schl-pill--warn' : p <= 40 ? 'schl-pill--achtung' : 'schl-pill--ok')
 const chipStatusClass = (st) =>
   ({ aktiv: 'schl-pill--ok', gesperrt: 'schl-pill--achtung', verloren: 'schl-pill--warn' }[st] || '')
 const anzahlOnline = computed(() => schloesser.value.filter((s) => s.gateway_online === true).length)
@@ -1553,6 +1592,52 @@ async function loadAbteilungen() {
   try { const { data } = await api.get('/api/abteilungen/'); abteilungen.value = data }
   catch { abteilungen.value = [] }
 }
+
+// ── Einstellungen (Akku-Überwachung) ─────────────────────────────────────────
+// Wohin die automatische Akku-Meldung geht und ab wann. Nur für vereinsweite
+// Verwalter sichtbar (status.darf_einstellungen), deshalb lazy beim ersten Öffnen.
+const einst = ref({ akku_ticket_bereich_id: null, akku_ticket_schwelle: 20, akku_ticket_prioritaet: 'normal' })
+const einstSpeichern = ref(false)
+const bereichOptionen = ref([])
+let einstGeladen = false
+const prioritaetOptionen = [
+  { value: 'niedrig', label: 'Niedrig' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'hoch', label: 'Hoch' },
+  { value: 'sicherheit', label: 'Sicherheit' },
+]
+async function loadEinstellungen() {
+  if (!status.value.darf_einstellungen) return
+  try {
+    const [{ data: e }, { data: bereiche }] = await Promise.all([
+      api.get('/api/schliessanlage/einstellungen'),
+      api.get('/api/tickets/bereiche'),
+    ])
+    einst.value = {
+      akku_ticket_bereich_id: e.akku_ticket_bereich_id,
+      akku_ticket_schwelle: e.akku_ticket_schwelle,
+      akku_ticket_prioritaet: e.akku_ticket_prioritaet,
+    }
+    bereichOptionen.value = bereiche
+    einstGeladen = true
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Einstellungen laden fehlgeschlagen' })
+  }
+}
+async function saveEinstellungen() {
+  einstSpeichern.value = true
+  try {
+    await api.put('/api/schliessanlage/einstellungen', {
+      akku_ticket_bereich_id: einst.value.akku_ticket_bereich_id ?? null,
+      akku_ticket_schwelle: einst.value.akku_ticket_schwelle ?? 20,
+      akku_ticket_prioritaet: einst.value.akku_ticket_prioritaet || 'normal',
+    })
+    $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
+    await loadStatus()          // die Schwelle färbt auch die Akku-Anzeige
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
+  } finally { einstSpeichern.value = false }
+}
 // Gesamt-Log (dritter Reiter): lazy beim ersten Öffnen laden
 const gesamtLog = ref([])
 const gesamtLogLoading = ref(false)
@@ -1570,6 +1655,7 @@ async function loadGesamtLog() {
 watch(tab, (t) => {
   if (t === 'log' && !gesamtLogGeladen) loadGesamtLog()
   if (t === 'auswertung' && !auswertung.value) ladeAuswertung()
+  if (t === 'einstellungen' && !einstGeladen) loadEinstellungen()
 })
 
 // ── Auswertung (#161): serverseitig aggregiert, lazy beim ersten Öffnen ──
@@ -2496,6 +2582,16 @@ function deleteChip() {
 .schl-stat__wert--klein {
   font-size: 12px;
 }
+/* Verweis unter einem Statuswert (z. B. auf das offene Akku-Ticket) – bewusst leise:
+   die Zahl darüber ist die Aussage, der Link nur der kurze Weg dorthin. */
+.schl-stat__hinweis {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: .72rem;
+  color: $flaeche;
+  text-decoration: none;
+}
+.schl-stat__hinweis:hover { text-decoration: underline; }
 .schl-dialog {
   border-radius: 14px;
 }
@@ -2710,6 +2806,9 @@ body.body--dark {
   .schl-stat__label {
     color: #9fb0cc;
   }
+  .schl-stat__hinweis {
+    color: $akzent;
+  }
   .schl-karte:hover {
     box-shadow: none;
     border-color: $akzent;
@@ -2797,6 +2896,9 @@ body.vtb-theme--vtb {
   }
   .schl-stat__label {
     color: rgba(255, 255, 255, 0.65);
+  }
+  .schl-stat__hinweis {
+    color: $akzent;
   }
   /* Gesamt-Log-Tab liegt direkt auf Gelb: kräftige dunkle Töne wie die Pills.
      Die hellen Varianten gelten weiter unten nur auf blauen Karten/Dialogen. */

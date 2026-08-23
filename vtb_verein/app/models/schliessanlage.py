@@ -181,6 +181,11 @@ class TuerSchloss:
     letzter_log_serverdate: Optional[int] = None  # Sync-Cursor (ms)
     letztes_event_at: Optional[str] = None        # Status-Snapshot (letzter Schließvorgang)
     letztes_event_type: Optional[int] = None
+    # Offene Akku-Meldung: Nummer des automatisch erzeugten Tickets (v110). Gesetzt,
+    # solange der Akku unter der eingestellten Schwelle liegt – verhindert, dass
+    # jeder Sync-Lauf ein weiteres Ticket erzeugt. Bewusst ohne FK auf `tickets`
+    # (s. database.py): zeigt der Merker nach einem Prune ins Leere, ist das folgenlos.
+    akku_ticket_id: Optional[int] = None
     # per Subquery befüllt: seit wann gilt der aktuelle gateway_online-Status (#82)
     gateway_online_seit: Optional[str] = None
     # per Subquery befüllt: wer den letzten Vorgang ausgelöst hat (Mitglied > Chip >
@@ -195,6 +200,26 @@ class TuerSchloss:
     updated_by: Optional[str] = None
     deleted_at: Optional[str] = None
     deleted_by: Optional[str] = None
+
+
+
+@dataclass
+class SchliessanlageEinstellungen:
+    """Stammdaten des Bereichs Schließanlage (Single-Row, id=1).
+
+    Bisher nur die Akku-Überwachung: Wohin eine automatische Meldung geht und ab
+    welchem Ladestand sie fällig ist. `akku_ticket_bereich_id` ist gleichzeitig der
+    Ein-/Aus-Schalter – ohne Bereich wird kein Ticket erzeugt.
+    """
+    id: int = 1
+    akku_ticket_bereich_id: Optional[int] = None
+    akku_ticket_schwelle: int = 20
+    akku_ticket_prioritaet: str = "normal"
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
 
 
 @dataclass
