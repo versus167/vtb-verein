@@ -12,20 +12,21 @@ Das Zip ist flach (alles im Root):
     ├─ fbasc.hia
     ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - beleg.pdf
     ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - lieferschein.jpg
-    ├─ R43 - Erstattung Tim Trainer - Verein - Reisekosten - Fahrt - tanken.pdf
-    └─ uebersicht.csv
+    └─ R43 - Erstattung Tim Trainer - Verein - Reisekosten - Fahrt - tanken.pdf
 
 Der Dateiname trägt die erfassten Angaben mit (`_dateiname`): Wer nur den Ordner vor
 sich hat, soll sehen, an wen gezahlt wird, aus welcher Abteilung und wofür. Die
 Zeichen sind auf ASCII und Windows-taugliche Namen reduziert; führend steht die
-Rechnungsnummer, damit Datei, Buchungszeile (Feld 39) und CSV-Zeile zusammenfinden.
-Feld 39 fasst 255 Zeichen, die Namen bleiben deutlich darunter.
+Rechnungsnummer, damit Datei und Buchungszeile (Feld 39) zusammenfinden. Feld 39
+fasst 255 Zeichen, die Namen bleiben deutlich darunter.
 
-Die `uebersicht.csv` bleibt als Lesehilfe erhalten – sie bekommt bewusst KEINE
-Buchungszeile: Sie ist kein Beleg, sondern die menschenlesbare Zusammenfassung
-dessen, was in der `fbasc.hia` steht. (Beim Kassenbuch ist das anders: der
-Kassenbericht dort ist ein aufbewahrungspflichtiger Beleg und bekommt eine
-0,00-Zeile.)
+Eine `uebersicht.csv` liegt seit dem 23.08.2026 NICHT mehr bei: Was die Buchhaltung braucht,
+steht in der `fbasc.hia` (Konten, Betrag, Belegdatum, Empfänger samt IBAN,
+Buchungstext, Belegdatei) – die CSV wiederholte das nur in anderer Form. Was
+ausschließlich in ihr stand, ist der interne Vorgang (eingereicht von, freigegeben
+von/am, Klarnamen von Kategorie und Abteilung); der bleibt in der App, wo er
+hingehört. Läufe aus der Zeit davor liefern beim Re-Download weiterhin ihre CSV
+(`format='zip'`, ohne `fbasc.hia` – dort war sie die einzige Lesehilfe).
 
 Kreditor-Auflösung (Feld 00):
 - Erstattung an ein Mitglied → Personenkonto = ul_kreditor_konto_basis +
@@ -402,12 +403,11 @@ class RechnungExportService:
         )
 
     def _baue_fbasc_zip(self, rechnungen: list, zeilen: list[dict]) -> bytes:
-        """fbasc.hia + Belege + uebersicht.csv, alles flach im Root."""
+        """fbasc.hia + Belege, alles flach im Root."""
         einst = self._einstellungen()
         nach_id = {z["id"]: z for z in zeilen}
         positionen: list[FibuExportPosition] = []
         dateien: dict[str, bytes] = {}
-        csv_zeilen: list[list] = []
         verwendet: set[str] = set()
 
         for r in rechnungen:
@@ -419,7 +419,6 @@ class RechnungExportService:
                 name = self._eindeutig(self._dateiname(r, a), self._ext(a), verwendet)
                 dateien[name] = inhalt
                 namen.append(name)
-            csv_zeilen.append(self._csv_zeile(r, namen))
 
             z = nach_id.get(r.id)
             if z is None:      # Re-Download eines Laufs, dessen Zeile inzwischen fehlt
@@ -436,14 +435,16 @@ class RechnungExportService:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(fibu_formatter.FBASC_DATEINAME, fibu_formatter.render(positionen))
-            zf.writestr(_UEBERSICHT_DATEINAME, self._uebersicht_csv(csv_zeilen))
             for name, inhalt in dateien.items():
                 zf.writestr(name, inhalt)
         return buf.getvalue()
 
     # ------------------------------------------------------------------
-    # Zip-Bau (Altläufe vor v109 – ohne fbasc.hia)
+    # Zip-Bau (Altläufe vor v109 – ohne fbasc.hia, dafür mit uebersicht.csv)
     # ------------------------------------------------------------------
+    # Nur noch der Re-Download alter Läufe kommt hier durch. Die CSV war dort die
+    # einzige lesbare Zusammenfassung – sie nachträglich wegzunehmen hieße, einen
+    # bereits übergebenen Lauf anders auszuliefern als damals.
 
     def _baue_zip(self, rechnungen: list) -> bytes:
         dateien: dict[str, bytes] = {}
@@ -558,8 +559,8 @@ class RechnungExportService:
         """Basisname (ohne Endung) aus den erfassten Angaben.
 
         Die Rechnungsnummer steht vorn: sie ist der einzige Bestandteil, der die
-        Datei wieder ihrer Zeile in `uebersicht.csv` zuordnet, und sie sortiert
-        den Ordner in Einreichungsreihenfolge.
+        Datei wieder ihrer Buchungszeile zuordnet (Belegnummer, Feld 04), und sie
+        sortiert den Ordner in Einreichungsreihenfolge.
         """
         teile = [
             f"R{r.id}",

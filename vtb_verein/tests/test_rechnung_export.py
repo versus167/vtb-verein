@@ -2,8 +2,12 @@
 
 Geprüft werden hier der Belegstapel und die Lauf-Mechanik: die Delta-Semantik
 (jede Rechnung genau einmal), der Un-Export des jüngsten Laufs, der Re-Download
-aus den gestempelten Zeilen, die Benennung der Belegdateien, `uebersicht.csv` und
-das Verhalten bei fehlender Beleg-Datei auf dem Server.
+aus den gestempelten Zeilen, die Benennung der Belegdateien und das Verhalten bei
+fehlender Beleg-Datei auf dem Server.
+
+Seit dem 23.08.2026 liegt dem Lauf keine `uebersicht.csv` mehr bei – was die Buchhaltung
+braucht, steht in der `fbasc.hia`. Die Zusammenfassungen, die früher gegen die CSV
+geprüft wurden, werden deshalb hier gegen die Buchungszeile geprüft.
 
 Die Buchungszeilen der `fbasc.hia` selbst stehen in test_rechnung_fbasc_export.py.
 Weil der Lauf ohne konfigurierte Konten abbricht, richtet `_setup` sie mit ein –
@@ -11,7 +15,6 @@ sonst käme man hier gar nicht erst bis zum Zip.
 
 Läuft nur mit ``VTB_TEST_DATABASE_URL`` (leere Wegwerf-DB).
 """
-import csv
 import io
 import os
 import sys
@@ -118,10 +121,16 @@ def _setup(db):
     return abteilung, einreicher, gs
 
 
+# Konten, mit denen `_setup` die Fibu-Einstellungen bestückt – die Buchungszeile
+# wird gegen sie geprüft.
+_UL_KREDITOR_BASIS = 70000
+_SAMMELKREDITOR = "70999"
+
+
 def _konten_setzen(db, gs):
     einst = db.fibu_einstellungen.get()
-    einst.ul_kreditor_konto_basis = 70000
-    einst.rechnung_kreditor_konto = "70999"
+    einst.ul_kreditor_konto_basis = _UL_KREDITOR_BASIS
+    einst.rechnung_kreditor_konto = _SAMMELKREDITOR
     db.fibu_einstellungen.update(einst, updated_by="xtest")
     for k in db.rechnungen.list_kategorien():
         if not k.sachkonto:
@@ -165,9 +174,12 @@ def _freigegebene_rechnung(db, einreicher, gs, abteilung, *, belege=1, **felder)
     return db.rechnungen.freigeben(r.id, gs)
 
 
-# Was im Zip neben den Belegen liegt: die Buchungsdatei für die Fibu und die
-# Übersicht zum Mitlesen.
-_METADATEIEN = {"fbasc.hia", "uebersicht.csv"}
+# Was im Zip neben den Belegen liegt: die Buchungsdatei für die Fibu.
+_METADATEIEN = {"fbasc.hia"}
+
+# Feldnummern der FBASC-Zeile, soweit hier gebraucht (s. fibu_formatter.felder).
+_F_KONTO, _F_BETRAG, _F_BELEGNR, _F_KOSTENSTELLE = 0, 2, 4, 7
+_F_DOKUMENT, _F_IBAN = 39, 40
 
 
 def _entpacke(zip_bytes):
@@ -175,15 +187,16 @@ def _entpacke(zip_bytes):
     return zf, zf.namelist()
 
 
-def _uebersicht(zip_bytes) -> list[dict]:
+def _buchungszeilen(zip_bytes) -> list[list[str]]:
     zf, _ = _entpacke(zip_bytes)
-    text = zf.read("uebersicht.csv").decode("utf-8-sig")
-    return list(csv.DictReader(io.StringIO(text), delimiter=";"))
+    text = zf.read("fbasc.hia").decode("utf-8")
+    return [z.split(";") for z in text.split("\r\n") if z]
 
 
 # ------------------------------------------------------------------- Tests
 
-def test_zip_enthaelt_belege_und_uebersicht(db):
+def test_zip_enthaelt_beleg_und_buchungsdatei(db):
+    """Im Zip liegen die Belege und die fbasc.hia – sonst nichts (keine CSV mehr)."""
     abteilung, einreicher, gs = _setup(db)
     r = _freigegebene_rechnung(db, einreicher, gs, abteilung,
                                betrag_cent=1250, rechnungsdatum="2026-07-01",
@@ -195,40 +208,40 @@ def test_zip_enthaelt_belege_und_uebersicht(db):
     _, namen = _entpacke(zip_bytes)
     beleg = f"R{r.id} - Erstattung ExpTest xtester_ein - X-Fussball - " \
             f"Buerobedarf - Baelle - beleg0.jpg"     # PNG wird zu JPEG normalisiert
-    assert sorted(namen) == [beleg, "fbasc.hia", "uebersicht.csv"]
+    assert sorted(namen) == [beleg, "fbasc.hia"]
 
-    zeile = _uebersicht(zip_bytes)[0]
-    assert zeile["Nr"] == f"R{r.id}"
-    assert zeile["Belegdateien"] == beleg
-    assert zeile["Betrag EUR"] == "12,50"                  # deutsches Dezimalkomma
-    assert zeile["Rechnungsnummer"] == "RE-4711"
-    assert zeile["Abteilung"] == "X-Fussball"
-    assert zeile["Kostenstelle"] == "77"
-    assert zeile["Freigegeben von"] == "xtester_gs"
+    (zeile,) = _buchungszeilen(zip_bytes)
+    assert zeile[_F_BELEGNR] == f"R{r.id}"
+    assert zeile[_F_DOKUMENT] == beleg
+    assert zeile[_F_BETRAG] == "12,50"                     # deutsches Dezimalkomma
+    assert "RE-4711" in zeile[12]                          # Rechnungsnr. im Buchungstext
+    assert zeile[_F_KOSTENSTELLE] == "77"                  # aus der Abteilung
 
 
-def test_zahlungsrichtung_in_der_uebersicht(db):
+def test_zahlungsrichtung_steht_in_der_buchungszeile(db):
     """Die Buchhaltung muss sehen, wohin das Geld fließt.
 
-    Erstattung → Einreicher samt IBAN aus dem Mitgliedsstamm; Aussteller →
-    nur die Richtung, die Bankverbindung steht auf dem Beleg.
+    Erstattung → Personenkonto des Einreichers samt IBAN aus dem Mitgliedsstamm;
+    Aussteller → Sammelkreditor, die Bankverbindung steht auf dem Beleg. Genau das
+    war die Aussage der früheren Spalte „Zahlung an" – nur führt sie hier zu einem
+    anderen Konto, statt in einer CSV-Spalte zu stehen.
     """
     abteilung, einreicher, gs = _setup(db)
+    nummer = 4711        # ohne Mitgliedsnummer gäbe es kein Personenkonto
     with db.cursor() as cur:
-        cur.execute("UPDATE mitglied SET iban='DE02120300000000202051' WHERE user_id=%s",
-                    (einreicher.id,))
+        cur.execute("UPDATE mitglied SET iban='DE02120300000000202051', "
+                    "mitgliedsnummer=%s WHERE user_id=%s", (nummer, einreicher.id))
 
     _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="mitglied")
     _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="extern")
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
-    zeilen = _uebersicht(zip_bytes)
-    assert zeilen[0]["Zahlung an"] == "Erstattung an Einreicher"
-    assert zeilen[0]["Empfaenger"] == "ExpTest xtester_ein"
-    assert zeilen[0]["IBAN"] == "DE02120300000000202051"     # aus dem Mitgliedsstamm
-    assert zeilen[1]["Zahlung an"] == "Rechnungsaussteller"
-    assert zeilen[1]["Empfaenger"] == ""                     # steht auf dem Beleg
-    assert zeilen[1]["IBAN"] == ""
+    erstattung, aussteller = _buchungszeilen(zip_bytes)
+    assert erstattung[_F_KONTO] == str(_UL_KREDITOR_BASIS + nummer)
+    assert erstattung[22] == "xtester_ein"                    # Name des Einreichers
+    assert erstattung[_F_IBAN] == "DE02120300000000202051"    # aus dem Mitgliedsstamm
+    assert aussteller[_F_KONTO] == _SAMMELKREDITOR
+    assert aussteller[_F_IBAN] == ""                          # steht auf dem Beleg
 
 
 def test_mehrere_belege_behalten_ihren_namen(db):
@@ -242,7 +255,8 @@ def test_mehrere_belege_behalten_ihren_namen(db):
     assert [n.rsplit(" - ", 1)[-1] for n in belege] == \
         ["beleg0.jpg", "beleg1.jpg", "beleg2.jpg"]
     assert all(n.startswith(f"R{r.id} - ") for n in belege)
-    assert _uebersicht(zip_bytes)[0]["Belegdateien"] == " | ".join(belege)
+    # Jeder Beleg findet sich in einer Buchungszeile wieder (Hauptzeile + 0,00-Zeilen).
+    assert sorted(z[_F_DOKUMENT] for z in _buchungszeilen(zip_bytes)) == belege
 
 
 def test_gleicher_originalname_wird_durchgezaehlt(db):
@@ -265,8 +279,8 @@ def test_gleicher_originalname_wird_durchgezaehlt(db):
 
 
 def test_dateiname_traegt_die_erfassten_angaben(db):
-    """Solange die Fibu die uebersicht.csv nicht mitliest, muss der Dateiname
-    allein sagen, an wen gezahlt wird, aus welcher Abteilung und wofür."""
+    """Wer nur den Ordner vor sich hat, muss am Dateinamen sehen, an wen gezahlt
+    wird, aus welcher Abteilung und wofür."""
     abteilung, einreicher, gs = _setup(db)
     r = _freigegebene_rechnung(db, einreicher, gs, abteilung, empfaenger_typ="extern",
                                beschreibung="Trikots F-Jugend")
@@ -305,7 +319,7 @@ def test_langer_dateiname_wird_gekappt(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n != "uebersicht.csv")
+    beleg = next(n for n in namen if n not in _METADATEIEN)
     assert len(beleg) <= 160
     assert not beleg.rsplit(".", 1)[0].endswith((" ", "-", "."))
 
@@ -322,7 +336,7 @@ def test_delta_zweiter_lauf_ohne_bereits_exportierte(db):
     assert [r.id for r in v["rechnungen"]] == [zweite.id]
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
-    nummern = [z["Nr"] for z in _uebersicht(zip_bytes)]
+    nummern = [z[_F_BELEGNR] for z in _buchungszeilen(zip_bytes)]
     assert nummern == [f"R{zweite.id}"]
     assert f"R{erste.id}" not in nummern
 
@@ -381,7 +395,7 @@ def test_re_download_liefert_denselben_inhalt(db):
     name2, erneut = db.rechnung_export.re_download(export.id)
 
     assert name2 == dateiname
-    assert _uebersicht(erneut) == _uebersicht(original)
+    assert _buchungszeilen(erneut) == _buchungszeilen(original)
     assert sorted(_entpacke(erneut)[1]) == sorted(_entpacke(original)[1])
 
 
@@ -438,9 +452,9 @@ def test_fehlende_belegdatei_bricht_lauf_nicht_ab(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    # Kein Beleg, aber ein Lauf: Buchungszeile und Übersicht entstehen trotzdem.
-    assert sorted(namen) == ["fbasc.hia", "uebersicht.csv"]
-    assert _uebersicht(zip_bytes)[0]["Belegdateien"] == ""
+    # Kein Beleg, aber ein Lauf: die Buchungszeile entsteht trotzdem, nur ohne Dokument.
+    assert sorted(namen) == ["fbasc.hia"]
+    assert _buchungszeilen(zip_bytes)[0][_F_DOKUMENT] == ""
 
 
 def test_summe_und_anzahl_im_header(db):
@@ -457,8 +471,9 @@ def test_summe_und_anzahl_im_header(db):
 def test_rechnung_ohne_betrag_haelt_den_lauf_an(db):
     """Ohne Betrag gibt es keine Buchung – der Lauf bricht ab und nennt die Rechnung.
 
-    Bis v108 lief der Export durch und ließ die Betragsspalte der Übersicht leer;
-    die Buchungszeile tippte ohnehin jemand von Hand. Mit der `fbasc.hia` geht das
+    Bis v108 lief der Export durch und ließ die Betragsspalte der damaligen
+    Übersicht leer; die Buchungszeile tippte ohnehin jemand von Hand. Mit der
+    `fbasc.hia` geht das
     nicht mehr: Eine Zeile über 0,00 € wäre eine sinnlose Buchung, und die Rechnung
     trüge danach den Export-Stempel, ohne je bezahlt worden zu sein. Der Betrag
     lässt sich nachtragen – von genau der Stelle, die auch exportiert.
@@ -479,5 +494,5 @@ def test_rechnung_ohne_betrag_haelt_den_lauf_an(db):
                                 expected_version=db.rechnungen.get(ohne.id, gs).version,
                                 betrag_cent=700)
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
-    assert [z["Betrag EUR"] for z in _uebersicht(zip_bytes)] == ["7,00", "5,00"]
+    assert [z[_F_BETRAG] for z in _buchungszeilen(zip_bytes)] == ["7,00", "5,00"]
     assert db.rechnung_export.list_exporte()[0].summe_cent == 1200

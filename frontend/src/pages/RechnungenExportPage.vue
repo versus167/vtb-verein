@@ -30,12 +30,12 @@
     </q-banner>
 
     <!-- Was im Zip zu erwarten ist – die Dateinamen tragen die Angaben mit,
-         damit man sie auch ohne die Übersicht zuordnen kann. -->
+         damit man einen Beleg auch ohne Liste seiner Buchungszeile zuordnen kann. -->
     <div class="text-caption text-grey-7 q-mb-md">
-      Das Zip enthält <code>fbasc.hia</code> (die Buchungszeilen für die Fibu),
-      je Beleg eine Datei und <code>uebersicht.csv</code> zum Mitlesen. Jede Rechnung
-      wird als Kreditor-Buchung übergeben: Aufwandskonto der Kategorie im Soll gegen
-      den Empfänger im Haben. Die Dateinamen tragen die Angaben mit:
+      Das Zip enthält <code>fbasc.hia</code> (die Buchungszeilen für die Fibu) und
+      je Beleg eine Datei. Jede Rechnung wird als Kreditor-Buchung übergeben:
+      Aufwandskonto der Kategorie im Soll gegen den Empfänger im Haben. Die
+      Dateinamen tragen die Angaben mit:
       <code>Nr - Zahlung an - Abteilung - Kategorie - Notiz - Originalname</code>
     </div>
 
