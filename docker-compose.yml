@@ -152,3 +152,36 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # Ticket-Erinnerungen (#179): mahnt offene Tickets an, die noch KEIN
+  # Verantwortlicher geöffnet hat – gestaffelt nach Priorität, danach wöchentlich.
+  # Anlegen/Zuweisen/Kommentieren melden sich schon selbst; hier geht es um den Fall,
+  # dass die Meldung unterging. Gleicher Sidecar-Ansatz wie die übrigen Läufe.
+  # Intervall über TICKET_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag).
+  ticket-erinnerung:
+    image: vtb-verein:latest
+    container_name: vtb-ticket-erinnerung
+    healthcheck:
+      disable: true
+    depends_on:
+      vtb-verein:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+      TZ: ${VTB_TZ:-Europe/Berlin}
+    command: >
+      sh -c '
+      H="$${TICKET_ERINNERUNG_INTERVAL_HOURS:-24}";
+      echo "[ticket-erinnerung] gestartet – Intervall $${H}h";
+      while true; do
+        python tools/ticket_erinnerung_lauf.py || echo "[ticket-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
+        sleep "$$(( H * 3600 ))";
+      done'
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+

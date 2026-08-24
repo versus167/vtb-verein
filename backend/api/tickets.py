@@ -430,6 +430,9 @@ def list_tickets(
     from app.services.user_service import UserService
     user_lookup = {u.id: u.username for u in UserService(db).list_all()}
     bereiche_lookup = {b.id: b.name for b in db.tickets.get_bereiche()}
+    # Ungelesen-Markierung (#179): EIN Roundtrip für die ganze Liste statt einer
+    # Abfrage je Zeile – die Liste ist der heißeste Pfad des Ticketbereichs.
+    ungelesen = db.tickets.ids_ungelesen(user)
 
     result = []
     for t in tickets:
@@ -437,6 +440,7 @@ def list_tickets(
         d['gemeldet_von_username'] = _melder_name(t.gemeldet_von, user_lookup.get(t.gemeldet_von))
         d['zugewiesen_an_username'] = user_lookup.get(t.zugewiesen_an) if t.zugewiesen_an else None
         d['bereich_name'] = bereiche_lookup.get(t.bereich_id) if t.bereich_id else None
+        d['ungelesen'] = t.id in ungelesen
         result.append(d)
     return result
 

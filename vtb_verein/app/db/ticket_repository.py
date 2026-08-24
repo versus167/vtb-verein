@@ -93,6 +93,63 @@ class TicketRepository:
         )
         return cursor.fetchone()["anzahl"]
 
+    def ids_ungelesen_fuer(self, user_id: int, bereich_ids: list[int]) -> set[int]:
+        """IDs offener Tickets, die DIESER Benutzer noch nicht geöffnet hat (#179).
+
+        Der persönliche Gegenpol zu :meth:`list_unbeachtet`: Dort geht es darum, ob
+        überhaupt jemand hingesehen hat, hier um „habe ich das schon gelesen?".
+        Gezählt wird, was ihn angeht – ihm zugewiesen oder in einem seiner Bereiche.
+
+        Selbst gemeldete Tickets bleiben draußen: Wer eines schreibt, hat es gesehen;
+        es als ungelesen zu markieren, wäre eine Meldung über die eigene Eingabe.
+        """
+        bedingungen = ["zugewiesen_an = %s"]
+        params: list = [user_id]
+        if bereich_ids:
+            bedingungen.append("bereich_id = ANY(%s)")
+            params.append(list(bereich_ids))
+        params += [list(TicketStatus.ABGESCHLOSSEN), user_id, user_id]
+        cursor = self.conn.execute(
+            "SELECT id FROM tickets "
+            "WHERE deleted_at IS NULL AND (" + " OR ".join(bedingungen) + ") "
+            "  AND status <> ALL(%s) "
+            "  AND gemeldet_von IS DISTINCT FROM %s "
+            "  AND NOT EXISTS (SELECT 1 FROM ticket_zugriff_log z "
+            "                  WHERE z.ticket_id = tickets.id AND z.user_id = %s)",
+            params,
+        )
+        return {row["id"] for row in cursor.fetchall()}
+
+    def list_unbeachtet(self) -> list[Ticket]:
+        """Offene Tickets, die noch KEIN Verantwortlicher geöffnet hat (#179).
+
+        Verantwortlich ist der Zugewiesene und – über die Bereichs-Berechtigung –
+        wer im Bereich bearbeiten oder schließen darf. Sichten von anderen zählen
+        bewusst nicht: Dass der Melder sein eigenes Ticket ansieht, heißt nicht,
+        dass sich jemand darum kümmert.
+
+        Sobald einer aus dem Kreis es einmal geöffnet hat, verschwindet das Ticket
+        aus dieser Liste – die Erinnerung hört damit von selbst auf.
+        """
+        cursor = self.conn.execute(
+            self._SELECT_TICKET + """
+             WHERE deleted_at IS NULL
+               AND status <> ALL(%s)
+               AND NOT EXISTS (
+                 SELECT 1 FROM ticket_zugriff_log z
+                 WHERE z.ticket_id = tickets.id
+                   AND (z.user_id = tickets.zugewiesen_an
+                        OR z.user_id IN (
+                          SELECT b.user_id FROM ticket_bereich_berechtigungen b
+                          WHERE b.bereich_id = tickets.bereich_id
+                            AND b.deleted_at IS NULL
+                            AND (b.darf_bearbeiten = 1 OR b.darf_schliessen = 1)))
+               )
+             ORDER BY created_at""",
+            (list(TicketStatus.ABGESCHLOSSEN),),
+        )
+        return [self._map_ticket(row) for row in cursor.fetchall()]
+
     def list_by_gemeldet(self, user_id: int) -> list[Ticket]:
         cursor = self.conn.execute(
             self._SELECT_TICKET + " WHERE gemeldet_von = %s AND deleted_at IS NULL ORDER BY created_at DESC",

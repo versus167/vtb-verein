@@ -158,6 +158,28 @@ class TicketService:
             tickets = self._ticket_repo.list_all()
         return tickets
 
+    def ids_ungelesen(self, user) -> set[int]:
+        """Welche offenen Tickets hat dieser Benutzer noch nicht geöffnet? (#179)
+
+        „Seine" Tickets sind die ihm zugewiesenen und die aus Bereichen, in denen er
+        bearbeiten oder schließen darf – derselbe Kreis, aus dem sich auch die
+        Aufgabenzahl speist. Ein reiner Leser bekommt keine Ungelesen-Markierung:
+        Er ist für nichts zuständig, ihn würde sie nur behelligen.
+        """
+        bereiche = [b["bereich_id"]
+                    for b in self._berechtigung_repo.list_berechtigungen_fuer_user(user.id)
+                    if b.get("darf_bearbeiten") or b.get("darf_schliessen")]
+        return self._ticket_repo.ids_ungelesen_fuer(user.id, bereiche)
+
+    def list_unbeachtet(self) -> list[Ticket]:
+        """Offene Tickets, die noch KEIN Verantwortlicher geöffnet hat (#179).
+
+        Grundlage der Erinnerungen: Sichten von Melder oder Unbeteiligten zählen
+        nicht – erst wenn jemand aus dem zuständigen Kreis hineingesehen hat, gilt
+        das Ticket als angekommen.
+        """
+        return self._ticket_repo.list_unbeachtet()
+
     def list_tickets_with_counts(self, nur_geloeschte: bool = False) -> list[Ticket]:
         return self._ticket_repo.list_all_with_counts(nur_geloeschte=nur_geloeschte)
 

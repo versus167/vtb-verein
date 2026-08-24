@@ -47,6 +47,10 @@
       />
       <q-checkbox v-model="filterNurMeine" label="Nur meine" />
       <q-checkbox v-model="filterMitAbgeschlossenen" label="Abgeschlossene" />
+      <!-- Zahl direkt am Filter: Sie ist der Grund, ihn anzuklicken. -->
+      <q-checkbox v-model="filterNurUngelesen"
+        :label="anzahlUngelesen ? `Ungelesen (${anzahlUngelesen})` : 'Ungelesen'"
+        :disable="!anzahlUngelesen && !filterNurUngelesen" />
       <q-checkbox v-if="kannVerwaltenIrgendwas" v-model="zeigeGeloeschte"
         color="negative" label="Gelöschte anzeigen" />
     </div>
@@ -75,6 +79,10 @@
       >
         <q-card-section class="q-py-md q-px-md">
           <div class="row items-center q-mb-sm no-wrap">
+            <!-- Ungelesen: derselbe Punkt wie im Mail-Postfach, keine Erklärung nötig -->
+            <q-badge v-if="t.ungelesen" rounded color="primary" class="q-mr-xs">
+              <q-tooltip>Noch nicht geöffnet</q-tooltip>
+            </q-badge>
             <span class="text-caption text-grey-5">#{{ t.id }}</span>
             <q-icon v-if="t.intern" name="lock" size="16px" color="primary" class="q-ml-xs">
               <q-tooltip>Nur intern sichtbar</q-tooltip>
@@ -124,7 +132,10 @@
       class="cursor-pointer"
     >
       <template #body-cell-titel="props">
-        <q-td :props="props">
+        <q-td :props="props" :class="props.row.ungelesen ? 'text-weight-bold' : ''">
+          <q-badge v-if="props.row.ungelesen" rounded color="primary" class="q-mr-xs">
+            <q-tooltip>Noch nicht geöffnet</q-tooltip>
+          </q-badge>
           <q-icon v-if="props.row.intern" name="lock" size="16px" color="primary" class="q-mr-xs">
             <q-tooltip>Nur intern sichtbar</q-tooltip>
           </q-icon>
@@ -599,6 +610,11 @@ const filterBereich = ref(null)
 const filterStatus = ref(null)
 const filterNurMeine = ref(true)   // Standardansicht: nur eigene/zuständige Tickets
 const filterMitAbgeschlossenen = ref(false)
+// Ungelesen (#179): offene Tickets aus meinen Bereichen oder mir zugewiesen, in die
+// ich noch nie hineingesehen habe. Kommt fertig vom Server – ob etwas gelesen ist,
+// steht im Zugriffsprotokoll und nicht im Browser.
+const filterNurUngelesen = ref(false)
+const anzahlUngelesen = computed(() => tickets.value.filter(t => t.ungelesen).length)
 // "Einblenden": gelöschte (verborgene) Tickets anzeigen – nur für Verwalter.
 const zeigeGeloeschte = ref(false)
 
@@ -738,6 +754,7 @@ const filteredTickets = computed(() => {
     t.zugewiesen_an === currentUserId.value ||
     !!_bereichFlags(t).darf_bearbeiten
   )
+  if (filterNurUngelesen.value) result = result.filter(t => t.ungelesen)
   return result
 })
 
@@ -912,15 +929,19 @@ async function openDetailDialog(ticket) {
   detailDialogOpen.value = true
   const jobs = [loadAnhaenge(ticket.id), loadKommentare(ticket.id)]
   // „Gesehen" protokollieren (fire-and-forget, throttled im Backend).
-  markGesehen(ticket.id)
+  markGesehen(ticket)
   if (canChangeStatus.value) {
     jobs.push(loadMoeglicheVerantwortliche(ticket.id), loadGesehen(ticket.id))
   }
   await Promise.all(jobs)
 }
 
-function markGesehen(ticketId) {
-  api.post(`/api/tickets/${ticketId}/gesehen`).catch(() => { /* best-effort */ })
+function markGesehen(ticket) {
+  // Erst wenn es protokolliert ist, verschwindet der Punkt – sonst behauptete die
+  // Liste „gelesen", während der Server nichts davon weiß.
+  api.post(`/api/tickets/${ticket.id}/gesehen`)
+    .then(() => { ticket.ungelesen = false })
+    .catch(() => { /* best-effort */ })
 }
 
 async function loadMoeglicheVerantwortliche(ticketId) {
