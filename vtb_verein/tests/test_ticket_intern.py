@@ -65,6 +65,9 @@ class _FakeTicketService:
     def list_tickets_with_counts(self, nur_geloeschte=False):
         return list(self._tickets)
 
+    def ids_ungelesen(self, user):
+        return set()          # Ungelesen-Markierung (#179) – hier nicht Gegenstand
+
     def get_bereiche(self):
         return [TicketBereich(id=BEREICH, name="Bereich")]
 

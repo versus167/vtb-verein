@@ -193,6 +193,26 @@ class AccessLogRepository:
             wert = row["created_at"]
             return wert.isoformat() if hasattr(wert, "isoformat") else wert
 
+    def letzte_je_detail(self, event_type: str) -> Dict[str, Any]:
+        """Zu jedem `detail` dieses Ereignistyps der jüngste Zeitpunkt.
+
+        Gedächtnis für wiederkehrende System-Meldungen: Wer schon einmal an etwas
+        erinnert hat, muss wissen, wann – sonst käme dieselbe Erinnerung bei jedem
+        Lauf erneut. Das Protokoll trägt diese Information ohnehin, dafür braucht
+        es keine eigene Tabelle.
+        """
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT detail, MAX(created_at) AS zuletzt
+                FROM access_log
+                WHERE event_type = %s AND detail IS NOT NULL
+                GROUP BY detail
+                """,
+                (event_type,),
+            )
+            return {row["detail"]: row["zuletzt"] for row in cur.fetchall()}
+
     def distinct_usernames(self) -> List[str]:
         """Alle im Protokoll vorkommenden Benutzernamen (alphabetisch, ohne NULL/leer).
 
