@@ -472,8 +472,8 @@ lässt die Suite rot werden, und das ist Absicht.
 ## Roadmap
 
 Siehe [TODO.md](TODO.md). Offene Schwerpunkte u.a.: Mitglieder-Export (CSV/Excel),
-Pagination für große Listen, Belegungsansicht für die Spielstätten und die
-Aufbewahrung/Archivierung ausgetretener Mitglieder.
+Pagination für große Listen, Belegungsansicht für die Spielstätten und der
+Probeimport der FBASC-Dateien in die Ziel-Fibu.
 
 ## Lizenz
 
