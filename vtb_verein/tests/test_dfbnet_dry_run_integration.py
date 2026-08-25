@@ -647,6 +647,39 @@ def _export_ohne():
     return _datei(_zeile(), _zeile(**_SPAETER_FREMD))
 
 
+def test_vorschau_meldet_die_luecke_vorab(db, stammdaten):
+    """Was der Lauf als Frage stellen wird, steht schon in der Vorschau."""
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    verschwunden = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
+
+    bericht = dfbnet.dry_run(db, _export_ohne())
+
+    assert [e['termin_id'] for e in bericht.entfallene] == [verschwunden.id]
+    eintrag = bericht.entfallene[0]
+    assert (eintrag['mannschaft'], eintrag['spielkennung']) == ('Erste', '900000011')
+    assert eintrag['gemeldet'] is False
+    assert _offene(db, verschwunden.id) == []        # die Vorschau schreibt nichts
+
+
+def test_vorschau_kennzeichnet_die_schon_gestellte_frage(db, stammdaten):
+    """Zweiter Lauf mit derselben Lücke: Der Termin weiß längst Bescheid."""
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    dfbnet.uebernehmen(db, _export_ohne(), actor=_MARKE)
+
+    assert [e['gemeldet'] for e in dfbnet.dry_run(db, _export_ohne()).entfallene] == [True]
+
+
+def test_vorschau_ohne_luecke_bleibt_leer(db, stammdaten):
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    assert dfbnet.dry_run(db, _export_voll()).entfallene == []
+
+
+def test_vorschau_behauptet_nichts_ausserhalb_des_dateifensters(db, stammdaten):
+    """Ein Auszug über eine Woche darf nichts über die nächste sagen."""
+    dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
+    assert dfbnet.dry_run(db, _datei(_zeile())).entfallene == []     # nur 15.08.
+
+
 def test_fehlendes_spiel_wird_gemeldet_aber_nicht_abgesagt(db, stammdaten):
     """„Fehlt" heißt nicht „abgesagt" – der Export ist ein Zeitfenster-Auszug."""
     dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)

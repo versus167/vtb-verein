@@ -178,8 +178,12 @@
         icon="groups" class="q-mb-sm"
         :label="`${bericht.unbekannte_teams.length} nicht zugeordnete Teamnamen`">
         <div class="text-caption text-grey q-pa-sm">
-          Darunter sind auch die Gegner – zugeordnet werden muss nur, was eine
-          eigene Mannschaft ist.
+          Hier steht jede Zeile, in der <b>keine</b> der beiden Mannschaften einem
+          eigenen Team zugeordnet ist – und zwar mit beiden Namen. Deshalb stehen
+          darunter auch Gegner und fremde Vereine, die auf unseren Plätzen spielen:
+          Die kommen bei jedem Import wieder und sind kein Fehler. Zuordnen musst
+          du nur, was eine eigene Mannschaft ist – mit ihr verschwindet die ganze
+          Zeile aus dieser Liste, also auch der Gegner darin.
         </div>
         <div v-if="offeneAenderungen" class="q-px-sm q-pb-sm">
           <q-btn dense unelevated color="primary" icon="refresh"
@@ -207,8 +211,55 @@
         </q-list>
       </q-expansion-item>
 
-      <q-list bordered separator>
-        <q-item v-for="(b, i) in bericht.befunde" :key="i">
+      <!-- Die Gegenrichtung: im Kalender vorhanden, im Export nicht mehr.
+           Steht bewusst schon in der Vorschau – ein Lauf stellt daraus Fragen am
+           Termin, und was er tut, soll vorher zu sehen sein. -->
+      <q-expansion-item v-if="bericht.entfallene?.length" default-opened
+        icon="event_busy" class="q-mb-sm"
+        :label="`${bericht.entfallene.length} Spiel(e) stehen nicht mehr im Export`">
+        <div class="text-caption text-grey q-pa-sm">
+          Diese Termine liegen im Zeitraum der Datei, haben dort aber keine Zeile
+          mehr. Abgesagt wird deswegen nichts – der Export ist ein
+          Zeitfenster-Auszug, meist steckt eine Verlegung dahinter. Das Übernehmen
+          stellt die Frage am Termin, entscheiden tut der Betreuer.
+        </div>
+        <q-list dense>
+          <q-item v-for="e in bericht.entfallene" :key="e.termin_id">
+            <q-item-section>
+              <q-item-label>
+                {{ e.mannschaft }}
+                <span v-if="e.gegner" class="text-caption text-grey">
+                  · gegen {{ e.gegner }}
+                </span>
+              </q-item-label>
+              <q-item-label caption>
+                {{ datumZeit(e.beginn) }} · Spiel {{ e.spielkennung }}
+                <span v-if="e.gemeldet"> · steht schon als Frage am Termin</span>
+              </q-item-label>
+            </q-item-section>
+          </q-item>
+        </q-list>
+      </q-expansion-item>
+
+      <!-- Standardmäßig nur die Zeilen, die vom Bestand abweichen. Ein
+           Vereinsspielplan hat schnell mehrere hundert Zeilen; unverändert
+           Übernommenes, Platzbelegungen und fremde Partien beantworten keine
+           Frage, verdecken aber die drei, um die es geht. Gezählt wird oben in
+           den Kacheln weiter alles. -->
+      <div class="row items-center q-mb-sm">
+        <div class="text-caption text-grey">
+          {{ sichtbareBefunde.length }} von {{ bericht.befunde.length }} Zeile(n)
+          <span v-if="nurAbweichungen && !sichtbareBefunde.length">
+            – nichts anzulegen oder zu ändern
+          </span>
+        </div>
+        <q-space />
+        <q-toggle v-model="nurAbweichungen" dense
+          label="Nur neue und abweichende Spiele" />
+      </div>
+
+      <q-list v-if="sichtbareBefunde.length" bordered separator>
+        <q-item v-for="b in sichtbareBefunde" :key="befundKey(b)">
           <q-item-section avatar>
             <q-icon :name="symbol(b.einordnung).icon" :color="symbol(b.einordnung).farbe" />
           </q-item-section>
@@ -405,11 +456,35 @@ const kacheln = computed(() => {
   }))
 })
 
-// „Nichts zu tun" heißt: keine Zeile, die ein Lauf anlegen oder ändern würde.
+// Fehlende Spiele, zu denen noch keine Frage am Termin steht – die einzige
+// Wirkung, die ein Lauf auch dann noch hätte, wenn sonst alles passt. Nach einem
+// Lauf zählt hier nichts mehr: Der Bericht ist dann der Stand von VOR dem Lauf,
+// die Fragen stehen längst am Termin.
+const offeneEntfallene = computed(() => (ergebnis.value
+  ? 0
+  : (bericht.value?.entfallene ?? []).filter((e) => !e.gemeldet).length))
+
+// „Nichts zu tun" heißt: keine Zeile, die ein Lauf anlegen, ändern oder als
+// fehlend melden würde.
 const nichtsZuTun = computed(() => {
   const z = bericht.value?.zusammenfassung ?? {}
-  return (z.neu ?? 0) === 0 && (z.aenderung ?? 0) === 0
+  return (z.neu ?? 0) === 0 && (z.aenderung ?? 0) === 0 && offeneEntfallene.value === 0
 })
+
+// Nur zeigen, was ein Lauf anfassen würde: neue Spiele (fehlen im Kalender)
+// und abweichende. Die übrigen Einordnungen sind Bestätigungen des Bestands
+// bzw. fremde Partien – sie bleiben abrufbar, aber nicht im Weg.
+const RELEVANT = ['neu', 'aenderung']
+const nurAbweichungen = ref(true)
+const sichtbareBefunde = computed(() => {
+  const alle = bericht.value?.befunde ?? []
+  return nurAbweichungen.value
+    ? alle.filter((b) => RELEVANT.includes(b.einordnung))
+    : alle
+})
+// Stabiler Schlüssel trotz Filter: die Zeilennummer aus der Datei – bei einem
+// vereinsinternen Spiel je beteiligter Mannschaft eine.
+const befundKey = (b) => `${b.spiel?.zeile}-${b.mannschaft_id ?? ''}`
 
 async function senden(commit) {
   busy.value = true
@@ -689,6 +764,9 @@ function uebernehmen() {
   $q.dialog({
     title: 'Spielplan übernehmen',
     message: `${z.neu ?? 0} Spiel(e) anlegen und ${z.aenderung ?? 0} abweichende prüfen? `
+      + (offeneEntfallene.value
+        ? `${offeneEntfallene.value} fehlende(s) Spiel(e) werden am Termin als Frage vermerkt. `
+        : '')
       + 'Termine, die in der App geändert wurden, bleiben unangetastet.',
     cancel: true, persistent: true,
   }).onOk(() => senden(true))

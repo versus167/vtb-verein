@@ -155,6 +155,11 @@ Export wieder auf, wird die Meldung hinfällig. Der Schnappschuss-Mechanismus
 greift hier nicht, deshalb blockiert eine bereits entschiedene `entfallen`-Zeile
 weitere Meldungen zu demselben Termin.
 
+Gesucht wird schon im Dry-Run (`_entfallene`), nicht erst beim Lauf: Die Vorschau
+listet die Lücken als `bericht.entfallene` samt Kennzeichen, ob die Frage am
+Termin bereits steht — „Vorschau = Aktion" gilt auch für diese Richtung. Der Lauf
+schreibt danach genau diese Liste fort.
+
 ## Platzbelegung — fremde Spiele auf unseren Plätzen
 
 Diese Zeilen werden **mitimportiert**, nicht verworfen. Später sollen die
