@@ -91,9 +91,11 @@
           type="textarea" :rows="$q.screen.lt.sm ? 3 : 5" />
 
         <!-- Intern (#178): Standard ist offen — ein mitlesbares Ticket erspart
-             Doppelmeldungen. Wer etwas Heikles meldet, schränkt hier ein. -->
+             Doppelmeldungen. Wer etwas Heikles meldet, schränkt hier ein.
+             Ausnahme ist der Screenshot: siehe `mitScreenshot` im Skript. -->
         <div>
-          <q-checkbox v-model="form.intern" dense color="primary">
+          <q-checkbox v-model="form.intern" dense color="primary"
+            @update:model-value="internManuell = true">
             <span class="row items-center no-wrap">
               <q-icon name="lock" size="18px" class="q-mr-xs" />
               Nur intern sichtbar
@@ -103,6 +105,10 @@
             {{ form.intern
               ? 'Sichtbar nur für dich, die Zuständigen des Bereichs und Administratoren.'
               : 'Sichtbar für alle angemeldeten Mitglieder.' }}
+          </div>
+          <div v-if="internVoreingestellt" class="text-caption text-grey-7 q-ml-sm">
+            Voreingestellt, weil der Screenshot die Seite zeigt, die gerade offen
+            war – dort können Namen und andere persönliche Daten stehen.
           </div>
         </div>
 
@@ -174,6 +180,21 @@ const istVtbApp = computed(
 const zeigeScreenshot = computed(() => props.withScreenshot && istVtbApp.value)
 // Foto/Upload sonst, sobald irgendein Bereich gewählt ist.
 const zeigeFotoBereich = computed(() => form.value.bereich_id != null && !zeigeScreenshot.value)
+
+// Geht ein Screenshot mit? Dann ist „nur intern" voreingestellt: Das Bild
+// entsteht automatisch beim Öffnen des Dialogs, niemand wählt bewusst aus, was
+// darauf zu sehen ist. Wer aus der Mitglieder- oder Kassenansicht heraus meldet,
+// hätte sonst versehentlich Namen und Beträge in einem Ticket stehen, das jedes
+// angemeldete Mitglied mitlesen darf. Ein Vorschlag, keine Sperre – der Haken
+// bleibt bedienbar, und ab dem ersten Klick darauf entscheidet der Mensch.
+const mitScreenshot = computed(() => zeigeScreenshot.value && !!screenshotBlob.value)
+const internManuell = ref(false)
+const internVoreingestellt = computed(
+  () => form.value.intern && mitScreenshot.value && !internManuell.value)
+
+watch(mitScreenshot, (mit) => {
+  if (!internManuell.value) form.value.intern = mit
+})
 
 // Mehrere Bilder je Ticket, jedes { id, blob, url, name, type }.
 const fotos = ref([])
@@ -363,6 +384,7 @@ watch(dialogOpen, async (offen) => {
   if (!offen) return
   aufraeumen()
   form.value = { titel: '', bereich_id: defaultBereichId, beschreibung: '', intern: false }
+  internManuell.value = false
   error.value = ''
   kameraFehler.value = ''
   // Screenshot der Seite hinter dem Dialog (der Dialog selbst wird ausgeblendet).
