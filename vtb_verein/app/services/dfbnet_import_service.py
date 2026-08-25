@@ -134,6 +134,10 @@ class ImportBericht:
     # Bekannte Plätze, deren Stammdaten vom Export abweichen:
     # [{id, name, dfbnet_nr, version, felder: [{feld, app, dfbnet}]}]
     abweichende_spielstaetten: list = field(default_factory=list)
+    # Andersherum: eigene Termine im Zeitfenster der Datei, zu denen der Export
+    # keine Zeile mehr hat (s. _entfallene) —
+    # [{termin_id, mannschaft_id, mannschaft, beginn, gegner, spielkennung, gemeldet}]
+    entfallene: list = field(default_factory=list)
     fehler: list = field(default_factory=list)         # Zeilen, die nicht lesbar waren
 
     @property
@@ -147,7 +151,7 @@ class ImportBericht:
         """Erster und letzter Spieltag der Datei als ISO-Datum, sonst (None, None).
 
         Das ist nicht bloß Anzeige-Beiwerk, sondern **das** Fenster, in dem
-        :func:`_entfallene_melden` überhaupt nach fehlenden Spielen sucht — der
+        :func:`_entfallene` überhaupt nach fehlenden Spielen sucht — der
         DFBnet-Export liefert höchstens ein Quartal, „fehlt" kann also immer nur
         innerhalb dieser Grenzen etwas heißen. Beide lesen deshalb hier, damit die
         angezeigte Spanne genau die geprüfte ist.
@@ -340,6 +344,35 @@ def _wirkung(stand: Optional[dict], feld: str, app_wert, dfbnet_wert) -> str:
     return WIRKUNG_ENTSCHEIDUNG
 
 
+def _entfallene(db, bericht: ImportBericht) -> list[dict]:
+    """Eigene Termine im Zeitfenster der Datei, zu denen der Export nichts sagt.
+
+    Der Export ist ein Zeitfenster-Auszug, kein Vollbestand: „fehlt" heißt nicht
+    „abgesagt". Gesucht wird deshalb nur innerhalb des Datumsfensters der Datei
+    und nur für Mannschaften, die darin überhaupt vorkommen — sonst meldete ein
+    Teil-Export den halben Kalender als entfallen.
+
+    Läuft schon in der Vorschau, damit „Vorschau = Aktion" auch für diese Frage
+    gilt; geschrieben wird hier nichts (das tut :func:`_entfallene_melden`).
+    `gemeldet` sagt, ob die Frage am Termin schon steht — dann tut ein Lauf
+    nichts mehr, und die Vorschau soll das auch so zeigen.
+    """
+    eigene = [b for b in bericht.befunde if b.mannschaft_id]
+    von, bis = bericht.zeitraum
+    if not eigene or von is None:
+        return []
+    vorhanden = {(b.mannschaft_id, b.spiel.spielkennung) for b in eigene}
+    namen = {b.mannschaft_id: b.mannschaft_name for b in eigene}
+    return [
+        {'termin_id': t.id, 'mannschaft_id': t.mannschaft_id,
+         'mannschaft': namen.get(t.mannschaft_id), 'beginn': t.beginn,
+         'gegner': t.gegner, 'spielkennung': t.extern_ref,
+         'gemeldet': db.termin_abweichungen.hat_unerledigte(t.id, FELD_ENTFALLEN)}
+        for t in db.termine.list_importierte(sorted(namen), von, bis)
+        if (t.mannschaft_id, t.extern_ref) not in vorhanden
+    ]
+
+
 def dry_run(db, daten: bytes) -> ImportBericht:
     """Ordnet jede Zeile zu und meldet, was ein Lauf täte. Schreibt nichts."""
     spiele, fehler = parse_spielplan(daten)
@@ -424,6 +457,7 @@ def dry_run(db, daten: bytes) -> ImportBericht:
         neue_staetten.values(), key=lambda e: (-e['anzahl'], e['name']))
     bericht.abweichende_spielstaetten = sorted(
         andere_staetten.values(), key=lambda e: e['name'])
+    bericht.entfallene = _entfallene(db, bericht)
     return bericht
 
 
@@ -535,36 +569,25 @@ def _melde_abweichungen(db, termin, entscheiden: dict, staette, *,
 
 def _entfallene_melden(db, bericht: ImportBericht, ergebnis: UebernahmeErgebnis, *,
                        actor: str, neue: Optional[list] = None) -> None:
-    """Spiele melden, die im Export nicht mehr auftauchen — ohne sie abzusagen.
+    """Die fehlenden Spiele als Frage festhalten — ohne sie abzusagen.
 
-    Der Export ist ein Zeitfenster-Auszug, kein Vollbestand: „fehlt" heißt nicht
-    „abgesagt". Verglichen wird deshalb nur innerhalb des Datumsfensters der Datei
-    und nur für Mannschaften, die darin überhaupt vorkommen — sonst meldete ein
-    Teil-Export den halben Kalender als entfallen.
+    Gefunden hat sie schon die Vorschau (:func:`_entfallene`); hier wird nur noch
+    geschrieben. Genau deshalb steht in der Vorschau dieselbe Liste, die der Lauf
+    dann meldet — auch die Unterscheidung „steht schon am Termin".
     """
     eigene = [b for b in bericht.befunde if b.mannschaft_id]
-    if not eigene:
-        return
-    von, bis = bericht.zeitraum
-    if von is None:
-        return
-    vorhanden = {(b.mannschaft_id, b.spiel.spielkennung) for b in eigene}
-
     # Wieder aufgetauchte Spiele: die alte Meldung ist damit erledigt.
     db.termin_abweichungen.entfallen_zuruecknehmen(
         [b.termin_id for b in eigene if b.termin_id], actor)
 
-    teams = sorted({b.mannschaft_id for b in eigene})
-    for termin in db.termine.list_importierte(teams, von, bis):
-        if (termin.mannschaft_id, termin.extern_ref) in vorhanden:
-            continue
-        if db.termin_abweichungen.hat_unerledigte(termin.id, FELD_ENTFALLEN):
+    for eintrag in bericht.entfallene:
+        if eintrag['gemeldet']:
             continue    # schon gemeldet oder längst entschieden
         _, ist_neu = db.termin_abweichungen.melden(
-            termin.id, FELD_ENTFALLEN, wert_app=termin.beginn, wert_extern=None,
-            erkannt_von=actor)
+            eintrag['termin_id'], FELD_ENTFALLEN, wert_app=eintrag['beginn'],
+            wert_extern=None, erkannt_von=actor)
         if ist_neu and neue is not None:
-            neue.append((termin.mannschaft_id, termin.id, FELD_ENTFALLEN))
+            neue.append((eintrag['mannschaft_id'], eintrag['termin_id'], FELD_ENTFALLEN))
         ergebnis.entfallen += 1
         ergebnis.abweichungen += 1
 
