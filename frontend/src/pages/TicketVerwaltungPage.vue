@@ -7,6 +7,7 @@
     <q-tabs v-model="tab" align="left" class="q-mb-md">
       <q-tab name="bereiche"   label="Bereiche"   icon="folder" />
       <q-tab name="kategorien" label="Kategorien" icon="label" />
+      <q-tab name="erinnerungen" label="Erinnerungen" icon="notifications_active" />
     </q-tabs>
 
     <!-- ── Bereiche ── -->
@@ -123,6 +124,89 @@
           </q-item>
         </q-list>
       </q-tab-panel>
+
+      <!-- ── Erinnerungen ── -->
+      <q-tab-panel name="erinnerungen" class="q-pa-none">
+        <div class="text-body2 q-mb-md">
+          Einmal täglich sieht die App nach, welche offenen Tickets liegen bleiben, und
+          erinnert die Verantwortlichen daran – zugewiesen ist das der Zugewiesene, sonst
+          alle, die im Bereich bearbeiten oder schließen dürfen.
+          <span class="text-grey-8">
+            Die Fristen gelten je Priorität; <strong>0 Tage</strong> heißt „diese
+            Priorität nicht erinnern".
+          </span>
+        </div>
+
+        <q-card flat bordered class="q-mb-md">
+          <q-card-section>
+            <div class="row items-center no-wrap">
+              <div class="col">
+                <div class="text-subtitle1">Unbeachtete Tickets</div>
+                <div class="text-caption text-grey-8">
+                  Noch niemand aus dem zuständigen Kreis hat das Ticket geöffnet. Gezählt
+                  ab der Meldung – die Erinnerung endet, sobald jemand hineinsieht.
+                </div>
+              </div>
+              <q-toggle v-model="erinnerung.unbeachtet_aktiv" />
+            </div>
+
+            <div class="row q-col-gutter-sm q-mt-sm">
+              <div v-for="p in PRIORITAETEN" :key="p.key" class="col-6 col-sm-3">
+                <q-input
+                  v-model.number="erinnerung['unbeachtet_tage_' + p.key]"
+                  type="number" dense outlined min="0" max="365" suffix="Tage"
+                  :label="p.label" :disable="!erinnerung.unbeachtet_aktiv"
+                />
+              </div>
+              <div class="col-6 col-sm-3">
+                <q-input
+                  v-model.number="erinnerung.unbeachtet_wiederholung_tage"
+                  type="number" dense outlined min="1" max="365" suffix="Tage"
+                  label="Dann wieder alle" :disable="!erinnerung.unbeachtet_aktiv"
+                />
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
+
+        <q-card flat bordered class="q-mb-md">
+          <q-card-section>
+            <div class="row items-center no-wrap">
+              <div class="col">
+                <div class="text-subtitle1">Liegen gebliebene Tickets</div>
+                <div class="text-caption text-grey-8">
+                  Jemand hat hingesehen, seither passiert nichts mehr: kein Kommentar,
+                  keine Statusänderung, kein Anhang. Gezählt ab der letzten Aktivität –
+                  bloßes Ansehen verlängert die Frist nicht.
+                </div>
+              </div>
+              <q-toggle v-model="erinnerung.stillstand_aktiv" />
+            </div>
+
+            <div class="row q-col-gutter-sm q-mt-sm">
+              <div v-for="p in PRIORITAETEN" :key="p.key" class="col-6 col-sm-3">
+                <q-input
+                  v-model.number="erinnerung['stillstand_tage_' + p.key]"
+                  type="number" dense outlined min="0" max="365" suffix="Tage"
+                  :label="p.label" :disable="!erinnerung.stillstand_aktiv"
+                />
+              </div>
+              <div class="col-6 col-sm-3">
+                <q-input
+                  v-model.number="erinnerung.stillstand_wiederholung_tage"
+                  type="number" dense outlined min="1" max="365" suffix="Tage"
+                  label="Dann wieder alle" :disable="!erinnerung.stillstand_aktiv"
+                />
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
+
+        <div class="row justify-end">
+          <q-btn label="Speichern" color="primary" unelevated
+                 :loading="saving" @click="saveErinnerung" />
+        </div>
+      </q-tab-panel>
     </q-tab-panels>
 
     <!-- ── Bereich-Dialog ── -->
@@ -219,13 +303,33 @@ const kategorieDialogOpen = ref(false)
 const editKategorie = ref(null)
 const kategorieForm = ref({ name: '', icon: '' })
 
+// Erinnerungen (#179-Nachgang): Fristen je Priorität – dringend zuerst, wie in der Ticketliste.
+const PRIORITAETEN = [
+  { key: 'sicherheit', label: 'Sicherheit' },
+  { key: 'hoch',       label: 'Hoch' },
+  { key: 'normal',     label: 'Normal' },
+  { key: 'niedrig',    label: 'Niedrig' },
+]
+const erinnerung = ref({
+  unbeachtet_aktiv: true,
+  unbeachtet_tage_sicherheit: 1, unbeachtet_tage_hoch: 1,
+  unbeachtet_tage_normal: 3, unbeachtet_tage_niedrig: 7,
+  unbeachtet_wiederholung_tage: 7,
+  stillstand_aktiv: true,
+  stillstand_tage_sicherheit: 3, stillstand_tage_hoch: 7,
+  stillstand_tage_normal: 28, stillstand_tage_niedrig: 28,
+  stillstand_wiederholung_tage: 14,
+})
+
 async function loadAll() {
-  const [b, k] = await Promise.all([
+  const [b, k, e] = await Promise.all([
     api.get('/api/tickets/bereiche'),
     api.get('/api/tickets/kategorien'),
+    api.get('/api/tickets/erinnerung-einstellungen'),
   ])
   bereiche.value = b.data
   kategorien.value = k.data
+  erinnerung.value = e.data
 }
 
 async function loadBerechtigungen(bereichId) {
@@ -386,6 +490,28 @@ async function deleteKategorie(k) {
     await api.delete(`/api/tickets/kategorien/${k.id}`)
     await loadAll()
   })
+}
+
+// ── Erinnerungen ───────────────────────────────────────────────────────────
+async function saveErinnerung() {
+  saving.value = true
+  try {
+    // Nur die Felder, die der Server kennt: `id`, `version` und die Zeitstempel
+    // kommen beim Lesen mit, gehören aber nicht ins Schreib-Schema.
+    const daten = { unbeachtet_aktiv: erinnerung.value.unbeachtet_aktiv,
+                    stillstand_aktiv: erinnerung.value.stillstand_aktiv }
+    for (const art of ['unbeachtet', 'stillstand']) {
+      for (const p of PRIORITAETEN) daten[`${art}_tage_${p.key}`] = erinnerung.value[`${art}_tage_${p.key}`]
+      daten[`${art}_wiederholung_tage`] = erinnerung.value[`${art}_wiederholung_tage`]
+    }
+    const { data } = await api.put('/api/tickets/erinnerung-einstellungen', daten)
+    erinnerung.value = data
+    $q.notify({ type: 'positive', message: 'Erinnerungen gespeichert.' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Speichern.' })
+  } finally {
+    saving.value = false
+  }
 }
 
 usePageRefresh(loadAll)

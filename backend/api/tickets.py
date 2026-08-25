@@ -20,8 +20,8 @@ from typing import Optional
 from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
 from app.models.ticket import (
-    Ticket, TicketBereich, TicketKategorie, TicketKommentar,
-    TicketStatus, TicketPrioritaet,
+    Ticket, TicketBereich, TicketErinnerungEinstellungen, TicketKategorie,
+    TicketKommentar, TicketStatus, TicketPrioritaet,
 )
 from app.services.ticket_service import TicketNichtGefundenError, UngueltigerStatusWechselError
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
@@ -374,6 +374,52 @@ def update_kategorie(kategorie_id: int, data: KategorieUpdate, user: CurrentUser
 def delete_kategorie(kategorie_id: int, user: CurrentUser, db: DB):
     _require_bereiche_verwalten(user)
     db.tickets.mark_kategorie_deleted(kategorie_id, deleted_by=user.username)
+
+
+# ---------------------------------------------------------------------------
+# Erinnerungen (#179-Nachgang)
+# ---------------------------------------------------------------------------
+# Vor den Ticket-Routen: `/{ticket_id}` würde „erinnerung-einstellungen" sonst als
+# Ticket-Nummer lesen.
+
+# Obergrenze der Fristen. Ein Jahr ist großzügig und fängt trotzdem den Vertipper
+# ab, der eine Erinnerung faktisch abschaltet, ohne dass es jemand merkt — wer sie
+# nicht will, setzt die Frist auf 0 oder den Schalter um.
+FRIST_MAX_TAGE = 365
+
+
+class ErinnerungEinstellungenWrite(BaseModel):
+    unbeachtet_aktiv: bool = True
+    unbeachtet_tage_sicherheit: int = Field(1, ge=0, le=FRIST_MAX_TAGE)
+    unbeachtet_tage_hoch: int = Field(1, ge=0, le=FRIST_MAX_TAGE)
+    unbeachtet_tage_normal: int = Field(3, ge=0, le=FRIST_MAX_TAGE)
+    unbeachtet_tage_niedrig: int = Field(7, ge=0, le=FRIST_MAX_TAGE)
+    unbeachtet_wiederholung_tage: int = Field(7, ge=1, le=FRIST_MAX_TAGE)
+    stillstand_aktiv: bool = True
+    stillstand_tage_sicherheit: int = Field(3, ge=0, le=FRIST_MAX_TAGE)
+    stillstand_tage_hoch: int = Field(7, ge=0, le=FRIST_MAX_TAGE)
+    stillstand_tage_normal: int = Field(28, ge=0, le=FRIST_MAX_TAGE)
+    stillstand_tage_niedrig: int = Field(28, ge=0, le=FRIST_MAX_TAGE)
+    stillstand_wiederholung_tage: int = Field(14, ge=1, le=FRIST_MAX_TAGE)
+
+
+@router.get("/erinnerung-einstellungen")
+def erinnerung_einstellungen_lesen(user: CurrentUser, db: DB):
+    """Fristen der Ticket-Erinnerungen. Dasselbe Recht wie Bereiche/Kategorien:
+    Wer den Bereich einrichtet, legt auch fest, wann er sich meldet."""
+    _require_bereiche_verwalten(user)
+    return asdict(db.ticket_erinnerung_einstellungen.get())
+
+
+@router.put("/erinnerung-einstellungen")
+def erinnerung_einstellungen_speichern(data: ErinnerungEinstellungenWrite,
+                                       user: CurrentUser, db: DB):
+    """Fristen speichern. Frist 0 heißt: diese Priorität gar nicht mahnen — der
+    Schalter je Erinnerungsart schaltet den ganzen Zweig ab."""
+    _require_bereiche_verwalten(user)
+    einstellungen = TicketErinnerungEinstellungen(**data.model_dump())
+    return asdict(db.ticket_erinnerung_einstellungen.update(
+        einstellungen, updated_by=user.username))
 
 
 # ---------------------------------------------------------------------------

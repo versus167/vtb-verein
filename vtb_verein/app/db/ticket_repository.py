@@ -21,12 +21,14 @@ class TicketRepository:
     # Tickets
     # ------------------------------------------------------------------
 
-    _SELECT_TICKET = (
-        "SELECT id, titel, beschreibung, status, prioritaet, intern, "
+    _TICKET_SPALTEN = (
+        "id, titel, beschreibung, status, prioritaet, intern, "
         "bereich_id, kategorie_id, gemeldet_von, zugewiesen_an, "
         "faellig_am, geschlossen_am, geschlossen_von, "
-        "version, created_at, updated_at, deleted_at, deleted_by FROM tickets"
+        "version, created_at, updated_at, deleted_at, deleted_by"
     )
+
+    _SELECT_TICKET = f"SELECT {_TICKET_SPALTEN} FROM tickets"
 
     def get(self, id: int) -> Optional[Ticket]:
         cursor = self.conn.execute(
@@ -120,6 +122,19 @@ class TicketRepository:
         )
         return {row["id"] for row in cursor.fetchall()}
 
+    # Der Kreis, dessen Blick zählt: der Zugewiesene und wer im Bereich bearbeiten
+    # oder schließen darf. Geteilt zwischen `list_unbeachtet` (NOT EXISTS) und
+    # `list_stillstehend` (EXISTS) – die beiden Listen sind Gegenstücke und dürfen
+    # nicht auseinanderlaufen.
+    _VERANTWORTLICHER_BLICK_WHERE = """
+        (z.user_id = tickets.zugewiesen_an
+         OR z.user_id IN (
+           SELECT b.user_id FROM ticket_bereich_berechtigungen b
+           WHERE b.bereich_id = tickets.bereich_id
+             AND b.deleted_at IS NULL
+             AND (b.darf_bearbeiten = 1 OR b.darf_schliessen = 1)))
+    """
+
     def list_unbeachtet(self) -> list[Ticket]:
         """Offene Tickets, die noch KEIN Verantwortlicher geöffnet hat (#179).
 
@@ -132,23 +147,67 @@ class TicketRepository:
         aus dieser Liste – die Erinnerung hört damit von selbst auf.
         """
         cursor = self.conn.execute(
-            self._SELECT_TICKET + """
+            self._SELECT_TICKET + f"""
              WHERE deleted_at IS NULL
                AND status <> ALL(%s)
-               AND NOT EXISTS (
-                 SELECT 1 FROM ticket_zugriff_log z
-                 WHERE z.ticket_id = tickets.id
-                   AND (z.user_id = tickets.zugewiesen_an
-                        OR z.user_id IN (
-                          SELECT b.user_id FROM ticket_bereich_berechtigungen b
-                          WHERE b.bereich_id = tickets.bereich_id
-                            AND b.deleted_at IS NULL
-                            AND (b.darf_bearbeiten = 1 OR b.darf_schliessen = 1)))
-               )
+               AND NOT EXISTS (SELECT 1 FROM ticket_zugriff_log z
+                                WHERE z.ticket_id = tickets.id
+                                  AND {self._VERANTWORTLICHER_BLICK_WHERE})
              ORDER BY created_at""",
             (list(TicketStatus.ABGESCHLOSSEN),),
         )
         return [self._map_ticket(row) for row in cursor.fetchall()]
+
+    def list_stillstehend(self) -> list[Ticket]:
+        """Offene Tickets, die ein Verantwortlicher gesehen hat – mit dem Zeitpunkt,
+        seit dem nichts mehr geschieht (#179-Nachgang).
+
+        Das Gegenstück zu :meth:`list_unbeachtet`: Dort liegt ein Ticket, weil
+        niemand hingesehen hat; hier hat jemand hingesehen – und dann blieb es
+        liegen. Beide Listen schließen einander aus, damit kein Ticket zweimal
+        gemahnt wird.
+
+        `stillstand_seit` ist der SPÄTERE von zwei Zeitpunkten:
+
+        * die letzte Aktivität am Ticket – Änderung (`updated_at`, also auch jeder
+          Status- oder Zuweisungswechsel), Kommentar oder Anhang, und
+        * der erste Blick eines Verantwortlichen.
+
+        Der erste Blick gehört dazu, weil ein lange unbeachtetes Ticket sonst in
+        derselben Sekunde stillstünde, in der es endlich jemand öffnet. Jeder
+        WEITERE Blick zählt bewusst nicht: Draufschauen ist keine Bearbeitung, sonst
+        ließe sich die Erinnerung durch Wegklicken beliebig vertagen.
+
+        Ob die Frist gerissen ist, entscheidet der Erinnerungs-Service anhand der
+        eingestellten Tage je Priorität – das Repository liefert nur den Stand.
+        Zeitspalten werden über ::text nach timestamptz geholt: `tickets.created_at`
+        und Co. sind je nach Migrationsstand TEXT oder TIMESTAMPTZ.
+        """
+        cursor = self.conn.execute(
+            f"""
+            SELECT {self._TICKET_SPALTEN},
+                   GREATEST(
+                     NULLIF(updated_at::text, '')::timestamptz,
+                     NULLIF(created_at::text, '')::timestamptz,
+                     (SELECT MAX(NULLIF(k.created_at::text, '')::timestamptz)
+                        FROM ticket_kommentare k WHERE k.ticket_id = tickets.id),
+                     (SELECT MAX(NULLIF(a.hochgeladen_am::text, '')::timestamptz)
+                        FROM ticket_anhaenge a WHERE a.ticket_id = tickets.id),
+                     (SELECT MIN(z.created_at) FROM ticket_zugriff_log z
+                       WHERE z.ticket_id = tickets.id
+                         AND {self._VERANTWORTLICHER_BLICK_WHERE})
+                   ) AS stillstand_seit
+              FROM tickets
+             WHERE deleted_at IS NULL
+               AND status <> ALL(%s)
+               AND EXISTS (SELECT 1 FROM ticket_zugriff_log z
+                            WHERE z.ticket_id = tickets.id
+                              AND {self._VERANTWORTLICHER_BLICK_WHERE})
+             ORDER BY stillstand_seit
+            """,
+            (list(TicketStatus.ABGESCHLOSSEN),),
+        )
+        return [self._map_ticket(row, stillstand=True) for row in cursor.fetchall()]
 
     def list_by_gemeldet(self, user_id: int) -> list[Ticket]:
         cursor = self.conn.execute(
@@ -241,8 +300,9 @@ class TicketRepository:
         )
         return [self._map_ticket_with_counts(row) for row in cursor.fetchall()]
 
-    def _map_ticket(self, row) -> Ticket:
+    def _map_ticket(self, row, stillstand: bool = False) -> Ticket:
         return Ticket(
+            stillstand_seit=row['stillstand_seit'] if stillstand else None,
             id=row['id'], titel=row['titel'], beschreibung=row['beschreibung'],
             status=row['status'], prioritaet=row['prioritaet'], intern=row['intern'],
             bereich_id=row['bereich_id'], kategorie_id=row['kategorie_id'],

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 110
+SCHEMA_VERSION = 111
 
 
 # ---------------------------------------------------------------------------
@@ -3561,6 +3561,107 @@ _FN_TICKETS_AUDIT_UPDATE = f"""
 """
 
 
+# ============================================================================
+# Ticket-Erinnerungen: Fristen (Schema v111)
+# ----------------------------------------------------------------------------
+# Seit #179 mahnt der Sidecar-Lauf Tickets an, die noch NIEMAND geöffnet hat.
+# Dazu kommt jetzt der zweite, häufigere Fall: gelesen, angefasst – und dann
+# liegen geblieben. Beide Fristen standen als Konstanten im Code; ab hier
+# stellt sie der Verein selbst ein, denn wie lange „zu lange" ist, weiß nicht
+# der Code, sondern wer die Tickets bearbeitet.
+#
+# Single-Row-Konfiguration (id=1, gleiches Muster wie fibu_/schliessanlage_-
+# einstellungen): je Priorität eine Frist, dazu der Wiederholungsabstand und ein
+# Aus-Schalter je Erinnerungsart. Frist 0 schaltet eine einzelne Priorität ab –
+# der Verein kann also niedrige Tickets in Ruhe lassen und hohe eng führen.
+_DDL_TICKET_ERINNERUNG_EINSTELLUNGEN = """
+    CREATE TABLE IF NOT EXISTS ticket_erinnerung_einstellungen (
+      id                           INTEGER PRIMARY KEY DEFAULT 1,
+      unbeachtet_aktiv             BOOLEAN NOT NULL DEFAULT TRUE,
+      unbeachtet_tage_sicherheit   INTEGER NOT NULL DEFAULT 1,
+      unbeachtet_tage_hoch         INTEGER NOT NULL DEFAULT 1,
+      unbeachtet_tage_normal       INTEGER NOT NULL DEFAULT 3,
+      unbeachtet_tage_niedrig      INTEGER NOT NULL DEFAULT 7,
+      unbeachtet_wiederholung_tage INTEGER NOT NULL DEFAULT 7,
+      stillstand_aktiv             BOOLEAN NOT NULL DEFAULT TRUE,
+      stillstand_tage_sicherheit   INTEGER NOT NULL DEFAULT 3,
+      stillstand_tage_hoch         INTEGER NOT NULL DEFAULT 7,
+      stillstand_tage_normal       INTEGER NOT NULL DEFAULT 28,
+      stillstand_tage_niedrig      INTEGER NOT NULL DEFAULT 28,
+      stillstand_wiederholung_tage INTEGER NOT NULL DEFAULT 14,
+      version                      INTEGER NOT NULL DEFAULT 1,
+      created_at                   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by                   TEXT,
+      updated_at                   TEXT,
+      updated_by                   TEXT,
+      CHECK (id = 1)
+    );
+    CREATE TABLE IF NOT EXISTS ticket_erinnerung_einstellungen_history (
+      id                           INTEGER NOT NULL,
+      version                      INTEGER NOT NULL,
+      unbeachtet_aktiv             BOOLEAN,
+      unbeachtet_tage_sicherheit   INTEGER,
+      unbeachtet_tage_hoch         INTEGER,
+      unbeachtet_tage_normal       INTEGER,
+      unbeachtet_tage_niedrig      INTEGER,
+      unbeachtet_wiederholung_tage INTEGER,
+      stillstand_aktiv             BOOLEAN,
+      stillstand_tage_sicherheit   INTEGER,
+      stillstand_tage_hoch         INTEGER,
+      stillstand_tage_normal       INTEGER,
+      stillstand_tage_niedrig      INTEGER,
+      stillstand_wiederholung_tage INTEGER,
+      created_at                   TEXT,
+      created_by                   TEXT,
+      updated_at                   TEXT,
+      updated_by                   TEXT,
+      PRIMARY KEY (id, version)
+    );
+    INSERT INTO ticket_erinnerung_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+"""
+
+_TICKET_ERINNERUNG_EINSTELLUNGEN_COLS = (
+    "id, version, unbeachtet_aktiv, unbeachtet_tage_sicherheit, unbeachtet_tage_hoch, "
+    "unbeachtet_tage_normal, unbeachtet_tage_niedrig, unbeachtet_wiederholung_tage, "
+    "stillstand_aktiv, stillstand_tage_sicherheit, stillstand_tage_hoch, "
+    "stillstand_tage_normal, stillstand_tage_niedrig, stillstand_wiederholung_tage, "
+    "created_at, created_by, updated_at, updated_by"
+)
+_TICKET_ERINNERUNG_EINSTELLUNGEN_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TICKET_ERINNERUNG_EINSTELLUNGEN_COLS.split(","))
+
+_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_ticket_erinnerung_einst_audit_insert()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO ticket_erinnerung_einstellungen_history
+            ({_TICKET_ERINNERUNG_EINSTELLUNGEN_COLS})
+        VALUES ({_TICKET_ERINNERUNG_EINSTELLUNGEN_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_ticket_erinnerung_einst_audit_update()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO ticket_erinnerung_einstellungen_history
+                ({_TICKET_ERINNERUNG_EINSTELLUNGEN_COLS})
+            VALUES ({_TICKET_ERINNERUNG_EINSTELLUNGEN_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS = (
+    ('trig_ticket_erinnerung_einst_audit_insert', 'INSERT',
+     'ticket_erinnerung_einstellungen', 'fn_ticket_erinnerung_einst_audit_insert'),
+    ('trig_ticket_erinnerung_einst_audit_update', 'UPDATE',
+     'ticket_erinnerung_einstellungen', 'fn_ticket_erinnerung_einst_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -3732,6 +3833,7 @@ class Database:
             108: self._migrate_v107_to_v108,
             109: self._migrate_v108_to_v109,
             110: self._migrate_v109_to_v110,
+            111: self._migrate_v110_to_v111,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8203,6 +8305,36 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 110 WHERE id = 1")
 
+    def _migrate_v110_to_v111(self) -> None:
+        """Die Fristen der Ticket-Erinnerungen werden einstellbar (#179-Nachgang).
+
+        Seit #179 mahnt der Sidecar-Lauf Tickets an, die noch NIEMAND geöffnet hat.
+        Der zweite Fall kommt jetzt dazu: gelesen, vielleicht sogar angefasst – und
+        dann liegen geblieben. Beide Fristen standen als Konstanten im Code; wie
+        lange „zu lange" ist, weiß aber nicht der Code, sondern wer die Tickets
+        bearbeitet. Ab hier stehen sie in `ticket_erinnerung_einstellungen`
+        (Single-Row, id=1) und lassen sich in der Ticket-Verwaltung setzen.
+
+        Die Vorgabewerte der neuen Zeile sind exakt die bisherigen Konstanten
+        (Sicherheit/Hoch 1 Tag, Normal 3, Niedrig 7, Wiederholung 7) – nach der
+        Migration mahnt der Lauf also unverändert weiter. Neu ist allein der
+        Stillstands-Zweig, der mit 3/7/28/28 Tagen startet.
+
+        DDL geteilt mit dem Frischaufbau (_DDL_TICKET_ERINNERUNG_EINSTELLUNGEN).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TICKET_ERINNERUNG_EINSTELLUNGEN)
+            cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+            for name, event, table, fn in _TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS:
+                cur.execute(f"""
+                    CREATE OR REPLACE TRIGGER {name}
+                    AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION {fn}();
+                """)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 111 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9287,6 +9419,8 @@ class Database:
             )
         """)
         cur.execute(_DDL_TICKET_ZUGRIFF_LOG)
+        # Fristen der Ticket-Erinnerungen (Schema v111). Geteilt mit Migration v110→v111.
+        cur.execute(_DDL_TICKET_ERINNERUNG_EINSTELLUNGEN)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS kassenbuchung_anhaenge (
               id              SERIAL PRIMARY KEY,
@@ -9805,6 +9939,8 @@ class Database:
         cur.execute(_FN_TUER_BERECHTIGUNG_AUDIT_UPDATE)
         cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_INSERT)
         cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE)
+        cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
         for fn_sql in _CHIP_GRUPPE_FNS:
             cur.execute(fn_sql)
         cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
@@ -10383,6 +10519,7 @@ class Database:
             *_SEPA_TRIGGERS,
             *_ZUTRITT_TRIGGERS,
             *_SCHLIESSANLAGE_EINSTELLUNGEN_TRIGGERS,
+            *_TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS,
             *_CHIP_GRUPPE_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,
