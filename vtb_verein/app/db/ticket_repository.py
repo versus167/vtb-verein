@@ -30,12 +30,26 @@ class TicketRepository:
 
     _SELECT_TICKET = f"SELECT {_TICKET_SPALTEN} FROM tickets"
 
+    # Zähler für die Anzeige. Bewusst eine geteilte Konstante, weil Liste und
+    # Einzel-Ticket dieselbe Zahl liefern MÜSSEN: Die Oberfläche ersetzt die
+    # Listenzeile durch die Antwort der Detail- und Schreib-Endpunkte. Fehlte der
+    # Zähler dort, verschwänden Kommentar- und Anhang-Symbol aus der Liste, sobald
+    # jemand das Ticket bearbeitet hat — bis zum nächsten Neuladen (#54-Nachgang).
+    _COUNT_SPALTEN = (
+        "(SELECT COUNT(*) FROM ticket_kommentare k "
+        " WHERE k.ticket_id = t.id AND k.deleted_at IS NULL) AS kommentar_count, "
+        "(SELECT COUNT(*) FROM ticket_anhaenge a "
+        " WHERE a.ticket_id = t.id AND a.deleted_at IS NULL) AS anhang_count"
+    )
+
     def get(self, id: int) -> Optional[Ticket]:
+        """Ein Ticket – samt Kommentar- und Anhang-Zähler (s. `_COUNT_SPALTEN`)."""
         cursor = self.conn.execute(
-            self._SELECT_TICKET + " WHERE id = %s", (id,)
+            f"SELECT {self._TICKET_SPALTEN}, {self._COUNT_SPALTEN} "
+            "FROM tickets t WHERE t.id = %s", (id,)
         )
         row = cursor.fetchone()
-        return self._map_ticket(row) if row else None
+        return self._map_ticket_with_counts(row) if row else None
 
     def list_all(self, include_deleted: bool = False) -> list[Ticket]:
         if include_deleted:
@@ -292,11 +306,8 @@ class TicketRepository:
             "t.bereich_id, t.kategorie_id, t.gemeldet_von, t.zugewiesen_an, "
             "t.faellig_am, t.geschlossen_am, t.geschlossen_von, "
             "t.version, t.created_at, t.updated_at, t.deleted_at, t.deleted_by, "
-            "(SELECT COUNT(*) FROM ticket_kommentare k "
-            " WHERE k.ticket_id = t.id AND k.deleted_at IS NULL) AS kommentar_count, "
-            "(SELECT COUNT(*) FROM ticket_anhaenge a "
-            " WHERE a.ticket_id = t.id AND a.deleted_at IS NULL) AS anhang_count "
-            "FROM tickets t " + where_order
+            + self._COUNT_SPALTEN +
+            " FROM tickets t " + where_order
         )
         return [self._map_ticket_with_counts(row) for row in cursor.fetchall()]
 
