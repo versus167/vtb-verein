@@ -152,11 +152,12 @@ services:
           cpus: '0.1'
           memory: 64M
 
-  # Ticket-Erinnerungen (#179): mahnt offene Tickets an, die noch KEIN
-  # Verantwortlicher geöffnet hat – gestaffelt nach Priorität, danach wöchentlich.
-  # Anlegen/Zuweisen/Kommentieren melden sich schon selbst; hier geht es um den Fall,
-  # dass die Meldung unterging. Gleicher Sidecar-Ansatz wie die übrigen Läufe.
-  # Intervall über TICKET_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag).
+  # Ticket-Erinnerungen (#179 + Nachgang): mahnt offene Tickets an, die liegen bleiben –
+  # weil sie noch KEIN Verantwortlicher geöffnet hat, oder weil seit dem Hinsehen
+  # nichts mehr passiert ist. Anlegen/Zuweisen/Kommentieren melden sich schon selbst;
+  # hier geht es um das, was danach kommt. Gleicher Sidecar-Ansatz wie die übrigen Läufe.
+  # Intervall über TICKET_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag); die Fristen
+  # je Priorität stellt der Verein in der App ein (Tickets → Verwaltung → Erinnerungen).
   ticket-erinnerung:
     image: vtb-verein:latest
     container_name: vtb-ticket-erinnerung

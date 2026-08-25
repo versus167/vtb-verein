@@ -91,6 +91,10 @@ class Ticket:
     deleted_by: Optional[str] = field(default=None)
     kommentar_count: Optional[int] = field(default=None)
     anhang_count: Optional[int] = field(default=None)
+    # Nur von `list_stillstehend` gefüllt (#179-Nachgang): seit wann am Ticket nichts mehr
+    # geschieht – der spätere von „letzte Änderung/Kommentar/Anhang" und „erster
+    # Blick eines Verantwortlichen". Erneutes Ansehen verschiebt ihn nicht.
+    stillstand_seit: Optional[str] = field(default=None)
 
 
 @dataclass
@@ -127,3 +131,53 @@ class TicketTeilnehmer:
     user_id: Optional[int] = field(default=None)
     hinzugefuegt_von: Optional[int] = field(default=None)
     hinzugefuegt_am: Optional[str] = field(default=None)
+
+
+@dataclass
+class TicketErinnerungEinstellungen:
+    """Fristen der Ticket-Erinnerungen (Single-Row, id=1) – #179-Nachgang.
+
+    Zwei Erinnerungsarten, die verschiedene Fragen stellen:
+
+    * **unbeachtet** – noch NIEMAND aus dem zuständigen Kreis hat das Ticket
+      geöffnet (#179). Gezählt ab Erstellung.
+    * **stillstand** – jemand hat es gesehen, seither ist aber nichts mehr
+      passiert: kein Kommentar, keine Statusänderung, kein Anhang. Gezählt ab
+      der letzten Aktivität.
+
+    Je Priorität eine Frist in Tagen, dazu der Abstand der Wiederholungen und ein
+    Schalter je Art. **Frist 0 schaltet die einzelne Priorität ab** – niedrige
+    Tickets dürfen in Ruhe liegen, sicherheitsrelevante nicht.
+    """
+    id: int = 1
+
+    unbeachtet_aktiv: bool = True
+    unbeachtet_tage_sicherheit: int = 1
+    unbeachtet_tage_hoch: int = 1
+    unbeachtet_tage_normal: int = 3
+    unbeachtet_tage_niedrig: int = 7
+    unbeachtet_wiederholung_tage: int = 7
+
+    stillstand_aktiv: bool = True
+    stillstand_tage_sicherheit: int = 3
+    stillstand_tage_hoch: int = 7
+    stillstand_tage_normal: int = 28
+    stillstand_tage_niedrig: int = 28
+    stillstand_wiederholung_tage: int = 14
+
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+
+    def _tage(self, art: str, prioritaet: str) -> int:
+        """Frist für diese Priorität; unbekannte Prioritäten erben die von „Normal"."""
+        return getattr(self, f"{art}_tage_{prioritaet}",
+                       getattr(self, f"{art}_tage_normal"))
+
+    def unbeachtet_tage(self, prioritaet: str) -> int:
+        return self._tage("unbeachtet", prioritaet)
+
+    def stillstand_tage(self, prioritaet: str) -> int:
+        return self._tage("stillstand", prioritaet)

@@ -71,6 +71,9 @@ from app.db.ul_satz_repository import ULSatzRepository
 from app.db.ttlock_konto_repository import TTLockKontoRepository
 from app.db.tuer_schloss_repository import TuerSchlossRepository
 from app.db.tuer_schloss_status_log_repository import TuerSchlossStatusLogRepository
+from app.db.ticket_erinnerung_einstellungen_repository import (
+    TicketErinnerungEinstellungenRepository,
+)
 from app.db.schliessanlage_einstellungen_repository import (
     SchliessanlageEinstellungenRepository,
 )
@@ -205,6 +208,7 @@ class VereinsDB:
         self._ticket_teilnehmer_repo = TicketTeilnehmerRepository(self.conn)
         self._ticket_bereich_berechtigung_repo = TicketBereichBerechtigungRepository(self.conn)
         self._ticket_zugriff_log_repo = TicketZugriffLogRepository(self.conn)
+        self._ticket_erinnerung_einstellungen_repo = TicketErinnerungEinstellungenRepository(self.conn)
 
         self._ticket_service = TicketService(
             ticket_repo=self._ticket_repo,
@@ -408,6 +412,11 @@ class VereinsDB:
     def ticket_bereiche(self) -> TicketBereichRepository:
         """Direktzugriff auf TicketBereichRepository."""
         return self._ticket_bereich_repo
+
+    @property
+    def ticket_erinnerung_einstellungen(self) -> TicketErinnerungEinstellungenRepository:
+        """Fristen der Ticket-Erinnerungen (Single-Row, #179-Nachgang)."""
+        return self._ticket_erinnerung_einstellungen_repo
 
     @property
     def ticket_kategorien(self) -> TicketKategorieRepository:

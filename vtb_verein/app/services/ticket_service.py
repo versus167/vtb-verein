@@ -180,6 +180,30 @@ class TicketService:
         """
         return self._ticket_repo.list_unbeachtet()
 
+    def list_stillstehend(self) -> list[Ticket]:
+        """Offene Tickets, die jemand gesehen hat und an denen seither nichts
+        geschieht (#179-Nachgang) – mit `stillstand_seit` je Ticket.
+
+        Das Gegenstück zu :meth:`list_unbeachtet`: nicht „hat überhaupt jemand
+        hingesehen?", sondern „ist seit dem Hinsehen etwas passiert?".
+        """
+        return self._ticket_repo.list_stillstehend()
+
+    def zustaendige_empfaenger(self, ticket: Ticket) -> list[int]:
+        """Wen eine Erinnerung zum liegen gebliebenen Ticket angeht (#179-Nachgang).
+
+        Vorrang-Regel wie bei :meth:`anzahl_zustaendig`: Ist jemand zugewiesen, ist
+        er es – dann bekommen nicht alle Bereichs-Bearbeiter eine Mahnung über eine
+        Aufgabe, die sie nicht übernommen haben. Ohne Zuweisung liegt das Ticket
+        beim ganzen Kreis, und der wird als Ganzes erinnert.
+
+        Bewusst ANDERS als bei der Unbeachtet-Erinnerung: Solange niemand hingesehen
+        hat, ist auch nichts verteilt – dort geht die Mahnung an alle.
+        """
+        if ticket.zugewiesen_an:
+            return [ticket.zugewiesen_an]
+        return list(dict.fromkeys(self._bereich_user_ids(ticket.bereich_id)))
+
     def list_tickets_with_counts(self, nur_geloeschte: bool = False) -> list[Ticket]:
         return self._ticket_repo.list_all_with_counts(nur_geloeschte=nur_geloeschte)
 
