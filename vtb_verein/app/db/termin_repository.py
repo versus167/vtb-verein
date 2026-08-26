@@ -9,7 +9,7 @@ termine.verwalten – Admins umgehen die ACL ohnehin (das entscheidet die API-Sc
 Die Aktiv-Definition (von <= Stichtag <= bis) deckt sich mit der Kader-Semantik in
 mitglied_mannschaft (von ist dort NOT NULL, bis optional).
 """
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from psycopg.types.json import Jsonb
@@ -33,6 +33,11 @@ def _jetzt_lokal() -> str:
     """Jetzt als lokale Wandzeit im Termin-Format – dieselbe Zeitbasis wie beginn/ende."""
     return datetime.now().strftime('%Y-%m-%dT%H:%M')
 
+
+# Fenster des Hinweises „noch nicht beantwortet" an Kachel und Nav-Punkt.
+# Zwei Wochen: weit genug, dass ein Wochenendspiel früh auftaucht, eng genug,
+# dass die Zahl nicht zur Dauerdekoration wird.
+OFFENE_MELDUNGEN_TAGE = 14
 
 VALID_TYPEN = ('training', 'spiel', 'sonstiges')
 VALID_STATUS = ('geplant', 'abgesagt')
@@ -300,6 +305,51 @@ class TerminRepository(BaseRepository):
             d["gast"] = r['ist_gast']
             result.append(d)
         return result
+
+    def anzahl_offene_meldungen(self, user_id: int,
+                                tage: int = OFFENE_MELDUNGEN_TAGE,
+                                jetzt: Optional[str] = None) -> int:
+        """Wie viele der eigenen Termine der nächsten `tage` Tage sind unbeantwortet?
+
+        Zahl hinter dem Hinweis an Kachel und Nav-Punkt (#133-Muster). Der Ausschnitt
+        ist bewusst derselbe wie in „Meine Termine" (list_for_user): eigener Kader am
+        Stichtag plus Gast-Termine — was der Hinweis zählt, muss der Benutzer hinter
+        der Kachel auch finden. Der Verwalter-Bypass gilt hier NICHT: Gezählt wird die
+        eigene Meldung, und die schuldet nur, wer selbst antworten darf.
+
+        Offen heißt: keine aktive Antwort — eine unbeantwortete Einladung
+        (`antwort IS NULL`) zählt also mit, „vielleicht" nicht. Abgesagte Termine
+        bleiben außen vor, und die Untergrenze ist der Moment statt des Tages: An ein
+        Spiel von heute Vormittag erinnert am Abend niemand mehr.
+        """
+        jetzt = jetzt or _jetzt_lokal()
+        with self.cursor() as cur:
+            cur.execute(
+                _KADER_CTE + """
+                , ich AS (
+                    SELECT id FROM mitglied
+                    WHERE user_id = %(uid)s AND deleted_at IS NULL
+                )
+                SELECT count(*) AS n
+                FROM termine t
+                WHERE t.deleted_at IS NULL AND t.status = 'geplant'
+                  AND t.beginn >= %(jetzt)s
+                  AND LEFT(t.beginn, 10) <= %(bis)s
+                  AND (t.mannschaft_id IN (SELECT mannschaft_id FROM kader)
+                       OR EXISTS (SELECT 1 FROM termin_zusage z
+                                  JOIN ich ON ich.id = z.mitglied_id
+                                  WHERE z.termin_id = t.id AND z.deleted_at IS NULL))
+                  AND NOT EXISTS (SELECT 1 FROM termin_zusage z2
+                                  JOIN ich ON ich.id = z2.mitglied_id
+                                  WHERE z2.termin_id = t.id AND z2.deleted_at IS NULL
+                                    AND z2.antwort IS NOT NULL)
+                """,
+                {"uid": user_id, "tag": jetzt[:10],
+                 "jetzt": jetzt,
+                 "bis": (date.fromisoformat(jetzt[:10])
+                         + timedelta(days=tage)).isoformat()},
+            )
+            return cur.fetchone()['n']
 
     # ----------------------------------------------------------------- ACL
     def get_access_for_user(self, user_id: int, mannschaft_id: int,

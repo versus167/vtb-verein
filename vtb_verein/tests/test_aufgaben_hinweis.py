@@ -25,9 +25,10 @@ from backend.api.ul_stunden import anzahl_zu_bestaetigen  # noqa: E402
 class _User:
     """Rechte lenient (has_permission) und scoped (allowed_abteilungen)."""
 
-    def __init__(self, *perms, scoped=None):
+    def __init__(self, *perms, scoped=None, id=1):
         self._perms = set(perms)
         self._scoped = scoped or {}
+        self.id = id                         # Termin-Zählung fragt nach dem Konto
 
     def has_permission(self, p):
         return p in self._perms or p in self._scoped
@@ -67,11 +68,22 @@ class _TicketService:
         return self.anzahl
 
 
+class _TerminRepo:
+    def __init__(self, anzahl=0):
+        self.anzahl = anzahl
+        self.aufrufe = []
+
+    def anzahl_offene_meldungen(self, user_id):
+        self.aufrufe.append(user_id)
+        return self.anzahl
+
+
 class _DB:
-    def __init__(self, ul=0, rechnungen=0, tickets=0):
+    def __init__(self, ul=0, rechnungen=0, tickets=0, termine=0):
         self.ul_abrechnungen = _AbrRepo(ul)
         self.rechnungen = _RechnungService(rechnungen)
         self.tickets = _TicketService(tickets)
+        self.termine = _TerminRepo(termine)
 
 
 # ------------------------------------------------------- ÜL-Bestätigungen
@@ -101,19 +113,26 @@ def test_ul_ohne_bestaetigungsrecht_kein_hinweis():
 # ----------------------------------------------------------- Aggregation
 
 def test_offene_aufgaben_summiert_die_quellen():
-    db = _DB(ul=2, rechnungen=3, tickets=4)
+    db = _DB(ul=2, rechnungen=3, tickets=4, termine=5)
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
-        "gesamt": 9,
-        "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4},
+        "gesamt": 14,
+        "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4, "termine": 5},
     }
+
+
+def test_termine_werden_fuer_den_angemeldeten_benutzer_gezaehlt():
+    """Die eigene Meldung – gefragt wird mit der eigenen user_id, nicht global."""
+    db = _DB(termine=2)
+    assert offene_aufgaben(_User(id=42), db)["offen"]["termine"] == 2
+    assert db.termine.aufrufe == [42]
 
 
 def test_ohne_aufgaben_bleibt_alles_null():
     """Jeder Schlüssel wird geliefert – das Frontend blendet bei 0 selbst aus."""
     ergebnis = offene_aufgaben(_User(), _DB())
     assert ergebnis["gesamt"] == 0
-    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter", "tickets"}
+    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter", "tickets", "termine"}
 
 
 def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
@@ -127,7 +146,7 @@ def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
         "gesamt": 3,
-        "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1},
+        "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1, "termine": 0},
     }
 
 

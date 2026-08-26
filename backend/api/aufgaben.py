@@ -26,6 +26,11 @@ _QUELLEN = (
     ("rechnungen", lambda user, db: db.rechnungen.anzahl_zur_freigabe(user)),
     ("uebungsleiter", anzahl_zu_bestaetigen),
     ("tickets", lambda user, db: db.tickets.anzahl_zustaendig(user)),
+    # Termine der nächsten zwei Wochen ohne eigene Meldung (#95-Nachgang). Anders
+    # als die übrigen Arten wartet hier niemand auf eine Entscheidung – wohl aber
+    # der Betreuer auf die Antwort, und ohne Zahl vergisst man sie genau so lange,
+    # bis die Erinnerung kommt.
+    ("termine", lambda user, db: db.termine.anzahl_offene_meldungen(user.id)),
 )
 
 
