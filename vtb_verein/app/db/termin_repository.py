@@ -682,6 +682,33 @@ class TerminRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def list_geplante_im_fenster(self, von: str, bis: str) -> list[Termin]:
+        """Aktive, geplante Termine ALLER Mannschaften mit beginn im Datumsfenster
+        (ISO-Datum, beide inklusiv) – Grundlage des Erinnerungslaufs (#95-Nachgang).
+
+        Ohne Mannschafts-Filter, weil der Lauf keine Sicht eines Users hat: Er
+        erinnert im ganzen Verein. Abgesagte bleiben außen vor – zu einem Termin,
+        der nicht stattfindet, muss niemand mehr melden.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                WHERE t.deleted_at IS NULL AND t.status = 'geplant'
+                  AND LEFT(t.beginn, 10) BETWEEN %(von)s AND %(bis)s
+                ORDER BY t.beginn, t.id
+                """,
+                {"von": von, "bis": bis},
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def set_extern_stand(self, termin_id: int, extern_stand: dict) -> None:
         """Schnappschuss nachtragen, ohne den Termin fachlich zu ändern.
 

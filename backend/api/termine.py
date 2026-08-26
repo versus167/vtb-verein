@@ -16,6 +16,11 @@ Serien-Anlage) nehmen ein `benachrichtigen`-Flag entgegen; der Kader wird dann
 fachlich etwas geändert hat). extern_ref ist noch nicht per API setzbar
 (kommt mit dem DFBnet-Import).
 
+Erinnerungen (#95-Nachgang): Ein Sidecar-Lauf (termin_erinnerung_service) erinnert
+kurz vor dem Termin die, von denen noch keine Meldung vorliegt. Den Vorlauf setzt
+`/erinnerung-einstellungen` – vereinsweit, deshalb am globalen Recht
+`termine.verwalten` statt an der Kader-ACL.
+
 Gäste: Verwalter können Mitglieder derselben ABTEILUNG (unabhängig von einer
 eigenen Kader-Zugehörigkeit) als Gäste zu einem Termin eintragen (z. B.
 AH-Spieler hilft in der Ersten aus). Mit dem Recht `termine.gaeste_vereinsweit`
@@ -32,10 +37,11 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.spielstaette_repository import PLATZHALTER_UNBEKANNT
 from app.models.permission import Permission
+from app.models.termin import TerminErinnerungEinstellungen
 from app.db.termin_repository import VALID_TYPEN
 from app.db.termin_abweichung_repository import (
     FELD_ENTFALLEN, STATUS_OFFEN, STATUS_UEBERNOMMEN, VALID_ENTSCHEIDUNGEN,
@@ -128,6 +134,14 @@ class SerieUpdate(BaseModel):
 # ----------------------------------------------------------------- Authorisierung
 def _darf_alle_verwalten(user) -> bool:
     return user.role == 'admin' or user.has_permission(Permission.TERMINE_VERWALTEN)
+
+
+def _require_alle_verwalten(user) -> None:
+    """Für vereinsweite Einstellungen (Erinnerungs-Vorlauf): Die Kader-ACL hilft
+    hier nicht weiter – die Zeile gilt für alle Mannschaften."""
+    if not _darf_alle_verwalten(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Keine Berechtigung, Termine zu verwalten")
 
 
 def _darf_vereinsweit_einladen(user) -> bool:
@@ -431,6 +445,40 @@ def meine_termine(user: CurrentUser, db: DB,
         von = date.today().isoformat()
     db.termin_serien.materialize_due()   # alle fälligen Serien rollierend nachziehen
     return _enrich_zusagen(db, user, db.termine.list_for_user(user.id, von=von, bis=bis))
+
+
+# ------------------------------------------------------------------ Erinnerungen
+# Vor den Einzel-Termin-Routen: `/{termin_id}` würde „erinnerung-einstellungen"
+# sonst als Termin-Nummer lesen.
+
+# Obergrenze des Vorlaufs. Vier Wochen sind großzügig – wer drei Monate vorher
+# erinnert, hat sich vertippt; abschalten geht über die 0 bzw. den Schalter.
+VORLAUF_MAX_TAGE = 28
+
+
+class ErinnerungEinstellungenWrite(BaseModel):
+    aktiv: bool = True
+    erste_stufe_tage: int = Field(3, ge=0, le=VORLAUF_MAX_TAGE)
+    zweite_stufe_tage: int = Field(1, ge=0, le=VORLAUF_MAX_TAGE)
+
+
+@router.get("/erinnerung-einstellungen")
+def erinnerung_einstellungen_lesen(user: CurrentUser, db: DB):
+    """Vorlauf der Termin-Erinnerungen. Am globalen Recht, nicht an der Kader-ACL:
+    Die Zeile gilt für den ganzen Verein, nicht für eine Mannschaft."""
+    _require_alle_verwalten(user)
+    return asdict(db.termin_erinnerung_einstellungen.get())
+
+
+@router.put("/erinnerung-einstellungen")
+def erinnerung_einstellungen_speichern(data: ErinnerungEinstellungenWrite,
+                                       user: CurrentUser, db: DB):
+    """Vorlauf speichern. Stufe 0 heißt: diese Stufe nicht erinnern – der Schalter
+    schaltet den ganzen Lauf ab."""
+    _require_alle_verwalten(user)
+    einstellungen = TerminErinnerungEinstellungen(**data.model_dump())
+    return asdict(db.termin_erinnerung_einstellungen.update(
+        einstellungen, updated_by=user.username))
 
 
 # --------------------------------------------------------------- Einzel-Termine
