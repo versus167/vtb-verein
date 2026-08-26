@@ -17,9 +17,9 @@ fachlich etwas geändert hat). extern_ref ist noch nicht per API setzbar
 (kommt mit dem DFBnet-Import).
 
 Erinnerungen (#95-Nachgang): Ein Sidecar-Lauf (termin_erinnerung_service) erinnert
-kurz vor dem Termin die, von denen noch keine Meldung vorliegt. Den Vorlauf setzt
-`/erinnerung-einstellungen` – vereinsweit, deshalb am globalen Recht
-`termine.verwalten` statt an der Kader-ACL.
+kurz vor dem Termin – und am Spieltag selbst – die, von denen noch keine Meldung
+vorliegt. Den Vorlauf setzt `/erinnerung-einstellungen` – vereinsweit, deshalb am
+globalen Recht `termine.verwalten` statt an der Kader-ACL.
 
 Gäste: Verwalter können Mitglieder derselben ABTEILUNG (unabhängig von einer
 eigenen Kader-Zugehörigkeit) als Gäste zu einem Termin eintragen (z. B.
@@ -460,6 +460,9 @@ class ErinnerungEinstellungenWrite(BaseModel):
     aktiv: bool = True
     erste_stufe_tage: int = Field(3, ge=0, le=VORLAUF_MAX_TAGE)
     zweite_stufe_tage: int = Field(1, ge=0, le=VORLAUF_MAX_TAGE)
+    # Am Termintag selbst – nur zu Spielen und nur vor dem Anpfiff (kein Vorlauf,
+    # daher ein Schalter und keine Tageszahl).
+    spieltag_aktiv: bool = True
 
 
 @router.get("/erinnerung-einstellungen")
@@ -473,8 +476,9 @@ def erinnerung_einstellungen_lesen(user: CurrentUser, db: DB):
 @router.put("/erinnerung-einstellungen")
 def erinnerung_einstellungen_speichern(data: ErinnerungEinstellungenWrite,
                                        user: CurrentUser, db: DB):
-    """Vorlauf speichern. Stufe 0 heißt: diese Stufe nicht erinnern – der Schalter
-    schaltet den ganzen Lauf ab."""
+    """Vorlauf speichern. Stufe 0 heißt: diese Stufe nicht erinnern – der obere
+    Schalter schaltet den ganzen Lauf ab, `spieltag_aktiv` nur die Stufe am
+    Termintag."""
     _require_alle_verwalten(user)
     einstellungen = TerminErinnerungEinstellungen(**data.model_dump())
     return asdict(db.termin_erinnerung_einstellungen.update(

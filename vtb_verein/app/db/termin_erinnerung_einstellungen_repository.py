@@ -6,10 +6,10 @@ jede Änderung per Audit-Trigger in `termin_erinnerung_einstellungen_history`.
 from app.models.termin import TerminErinnerungEinstellungen
 from app.db.base_repository import BaseRepository
 
-_COLS = """id, aktiv, erste_stufe_tage, zweite_stufe_tage,
+_COLS = """id, aktiv, erste_stufe_tage, zweite_stufe_tage, spieltag_aktiv,
            version, created_at, created_by, updated_at, updated_by"""
 
-_SETZBAR = ("aktiv", "erste_stufe_tage", "zweite_stufe_tage")
+_SETZBAR = ("aktiv", "erste_stufe_tage", "zweite_stufe_tage", "spieltag_aktiv")
 
 
 class TerminErinnerungEinstellungenRepository(BaseRepository):

@@ -118,6 +118,9 @@
           >
             <q-item-section avatar><q-icon name="event" /></q-item-section>
             <q-item-section>Termine</q-item-section>
+            <q-item-section side>
+              <AufgabenBadge :anzahl="aufgaben.anzahl('termine')" />
+            </q-item-section>
           </q-item>
 
           <q-item

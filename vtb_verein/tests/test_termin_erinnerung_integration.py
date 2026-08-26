@@ -134,9 +134,11 @@ def _platz(db):
         return cur.fetchone()['id']
 
 
-def _termin(db, mannschaft_id, in_tagen=3, typ='training'):
-    return db.termine.create(mannschaft_id, typ, f"{tag(in_tagen)}T19:00", None, None,
-                             None, None, None, None, None, 't',
+def _termin(db, mannschaft_id, in_tagen=3, typ='training', zeit='19:00'):
+    gegner = 'SV Gegner' if typ == 'spiel' else None
+    heim = 'heim' if typ == 'spiel' else None
+    return db.termine.create(mannschaft_id, typ, f"{tag(in_tagen)}T{zeit}", None, None,
+                             None, None, gegner, heim, None, 't',
                              spielstaette_id=_platz(db))
 
 
@@ -263,6 +265,30 @@ class TestLauf:
             details = [r['detail'] for r in cur.fetchall()]
         assert details == sorted([f"{team['termin'].id}:3", f"{morgen.id}:1"])
 
+    def test_spiel_heute_wird_am_spieltag_erinnert(self, db, team, gesendet):
+        """Der Termintag gehört mit ins Fenster – aber nur wegen des Spiels."""
+        spiel = _termin(db, team["mannschaft_id"], in_tagen=0, typ='spiel', zeit='23:59')
+        _termin(db, team["mannschaft_id"], in_tagen=0, typ='training', zeit='23:59')
+        erin.erinnern(db)
+        assert any(url == f"/termine?termin={spiel.id}" for _, _, _, url in gesendet)
+        assert any("der Termin ist heute." in text for _, _, text, _ in gesendet)
+        with db.cursor() as cur:
+            cur.execute("SELECT detail FROM access_log WHERE event_type=%s",
+                        (erin.EVENT_ERINNERUNG,))
+            details = {r['detail'] for r in cur.fetchall()}
+        # Spiel heute (Spieltags-Stufe) und der Termin in drei Tagen – das Training
+        # von heute bleibt außen vor.
+        assert f"{spiel.id}:{erin.STUFE_SPIELTAG}" in details
+        assert f"{team['termin'].id}:3" in details
+        assert len(details) == 2
+
+    def test_ohne_spieltags_stufe_bleibt_heute_leer(self, db, team, gesendet):
+        db.termin_erinnerung_einstellungen.update(
+            TerminErinnerungEinstellungen(spieltag_aktiv=False), 't')
+        _termin(db, team["mannschaft_id"], in_tagen=0, typ='spiel', zeit='23:59')
+        erin.erinnern(db)
+        assert not any("der Termin ist heute." in text for _, _, text, _ in gesendet)
+
     def test_abgeschaltet_laeuft_gar_nicht(self, db, team, gesendet):
         db.termin_erinnerung_einstellungen.update(
             TerminErinnerungEinstellungen(aktiv=False), 't')
@@ -289,16 +315,18 @@ class TestLauf:
 
 # ------------------------------------------------------------------ Einstellungen
 class TestEinstellungen:
-    def test_vorgabe_ist_drei_und_ein_tag(self, db):
+    def test_vorgabe_ist_drei_und_ein_tag_plus_spieltag(self, db):
         e = db.termin_erinnerung_einstellungen.get()
-        assert (e.aktiv, e.erste_stufe_tage, e.zweite_stufe_tage) == (True, 3, 1)
+        assert (e.aktiv, e.erste_stufe_tage, e.zweite_stufe_tage,
+                e.spieltag_aktiv) == (True, 3, 1, True)
 
     def test_update_schreibt_history(self, db):
         db.termin_erinnerung_einstellungen.update(
-            TerminErinnerungEinstellungen(erste_stufe_tage=5, zweite_stufe_tage=2), 'chef')
+            TerminErinnerungEinstellungen(erste_stufe_tage=5, zweite_stufe_tage=2,
+                                          spieltag_aktiv=False), 'chef')
         e = db.termin_erinnerung_einstellungen.get()
-        assert (e.erste_stufe_tage, e.zweite_stufe_tage, e.version, e.updated_by) == \
-            (5, 2, 2, 'chef')
+        assert (e.erste_stufe_tage, e.zweite_stufe_tage, e.spieltag_aktiv,
+                e.version, e.updated_by) == (5, 2, False, 2, 'chef')
         with db.cursor() as cur:
             cur.execute("SELECT version, erste_stufe_tage FROM "
                         "termin_erinnerung_einstellungen_history ORDER BY version")

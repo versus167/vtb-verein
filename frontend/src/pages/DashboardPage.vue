@@ -40,7 +40,8 @@
       </div>
 
       <div v-if="hatTermineZugriff || auth.hasPermission('termine.verwalten')" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="termine" icon="event" title="Termine" caption="Training & Spiele" />
+        <SettingsTile to="termine" icon="event" title="Termine" caption="Training & Spiele"
+          :badge="aufgaben.anzahl('termine')" />
       </div>
 
       <div v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')" class="col-6 col-sm-4 col-md-3">

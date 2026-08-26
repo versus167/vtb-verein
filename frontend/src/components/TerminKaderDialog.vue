@@ -114,6 +114,7 @@ import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { ANTWORTEN } from 'src/composables/useTermine'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -123,6 +124,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'geaendert'])
 
 const $q = useQuasar()
+const aufgaben = useAufgabenStore()
 const open = computed({
   get: () => props.modelValue,
   set: (v) => emit('update:modelValue', v),
@@ -275,6 +277,9 @@ async function setFuer(p, key) {
     }
     await load()
     emit('geaendert')
+    // Betreuer tragen hier auch ihre eigene Antwort ein – dann zählt der Hinweis
+    // an Kachel und Nav-Punkt einen Termin weniger.
+    aufgaben.laden()
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
   } finally {

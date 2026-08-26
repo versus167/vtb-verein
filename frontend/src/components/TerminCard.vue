@@ -162,6 +162,7 @@ import TerminAbweichungDialog from 'components/TerminAbweichungDialog.vue'
 import { ANTWORTEN, terminTitel, uhrzeit, wochentag, tagMonat, kartenLink,
          abweichungFeldLabel, abweichungWert } from 'src/composables/useTermine'
 import { ladeAppInfo } from 'src/composables/useAppInfo'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 
 // Der Spieltitel braucht das Vereinskürzel aus /api/app-info; der Aufruf ist
 // idempotent und geteilt, egal wie viele Karten auf der Seite stehen.
@@ -175,6 +176,7 @@ const props = defineProps({
 const emit = defineEmits(['bearbeiten', 'absagen', 'reaktivieren', 'loeschen', 'reload', 'oeffnen'])
 
 const $q = useQuasar()
+const aufgaben = useAufgabenStore()
 const busy = ref(false)
 const kaderOffen = ref(false)
 const abweichungOffen = ref(false)
@@ -242,6 +244,10 @@ async function senden(key, kommentar, zuruecknehmen = false) {
       await api.put(`/api/termine/${props.termin.id}/zusage`, { antwort: key, kommentar })
     }
     emit('reload')
+    // Der Hinweis an Kachel und Nav-Punkt zählt genau diese Antwort – er soll
+    // sofort verschwinden und nicht erst beim nächsten Refresh (auch andersherum:
+    // Zurücknehmen bringt den Termin wieder in die Zahl).
+    aufgaben.laden()
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Speichern fehlgeschlagen' })
   } finally {

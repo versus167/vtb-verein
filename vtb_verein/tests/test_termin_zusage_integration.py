@@ -31,6 +31,8 @@ LASTWEEK = (date.today() - timedelta(days=7)).isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 NEXTWEEK = (date.today() + timedelta(days=7)).isoformat()
+# Jenseits des 14-Tage-Fensters des Hinweises (OFFENE_MELDUNGEN_TAGE).
+IN_20_TAGEN = (date.today() + timedelta(days=20)).isoformat()
 
 
 @pytest.fixture(scope="module")
@@ -223,3 +225,87 @@ def test_is_mitglied_in_kader(db):
                                        username="zusagetester1", nachname="Kuenftig")
     assert db.termine.is_mitglied_in_kader(mit2, mid) is False
     assert db.termine.is_mitglied_in_kader(mit2, mid, stichtag=TOMORROW) is True
+
+
+# ------------------------------------------- Hinweis „noch nicht beantwortet"
+# Zahl hinter dem Badge an Kachel und Nav-Punkt (#95-Nachgang). Der Ausschnitt
+# muss derselbe sein wie in „Meine Termine" – sonst zählt der Hinweis etwas, das
+# der Benutzer hinter der Kachel nicht findet.
+
+def _offen(db, user_id):
+    return db.termine.anzahl_offene_meldungen(user_id)
+
+
+def test_offene_meldung_zaehlt_den_eigenen_kader_termin(db):
+    mid = _make_mannschaft(db)
+    uid, _mit = _make_kader_mitglied(db, mid)
+    _termin(db, mid)
+    assert _offen(db, uid) == 1
+
+
+@pytest.mark.parametrize("antwort", ['zu', 'ab', 'vielleicht'])
+def test_jede_antwort_nimmt_den_termin_aus_der_zahl(db, antwort):
+    mid = _make_mannschaft(db)
+    uid, mit = _make_kader_mitglied(db, mid)
+    t = _termin(db, mid)
+    db.termin_zusagen.set_antwort(t.id, mit, antwort, 'weil', 't')
+    assert _offen(db, uid) == 0
+    # Zurückgenommen ist wieder offen.
+    db.termin_zusagen.remove_antwort(t.id, mit, 't')
+    assert _offen(db, uid) == 1
+
+
+def test_einladung_ohne_antwort_zaehlt_mit(db):
+    mid = _make_mannschaft(db)
+    uid, mit = _make_kader_mitglied(db, mid)
+    t = _termin(db, mid)
+    db.termin_zusagen.lade_ein(t.id, mit, 't')
+    assert _offen(db, uid) == 1
+
+
+def test_gast_einladung_zaehlt_auch_ohne_kader(db):
+    """Gast-Termine stehen in „Meine Termine" – also gehören sie in die Zahl."""
+    mid = _make_mannschaft(db)
+    fremd = _make_mannschaft(db, name="Andere")
+    uid, mit = _make_kader_mitglied(db, mid)
+    gast_termin = _termin(db, fremd)
+    assert _offen(db, uid) == 0                  # fremdes Team geht mich nichts an
+    db.termin_zusagen.lade_ein(gast_termin.id, mit, 't')
+    assert _offen(db, uid) == 1
+
+
+def test_fenster_endet_nach_zwei_wochen(db):
+    mid = _make_mannschaft(db)
+    uid, _mit = _make_kader_mitglied(db, mid)
+    _termin(db, mid, beginn=f"{NEXTWEEK}T19:00")
+    _termin(db, mid, beginn=f"{IN_20_TAGEN}T19:00")
+    assert _offen(db, uid) == 1
+
+
+def test_vergangenes_und_abgesagtes_zaehlt_nicht(db):
+    mid = _make_mannschaft(db)
+    uid, _mit = _make_kader_mitglied(db, mid)
+    _termin(db, mid, beginn=f"{YESTERDAY}T19:00")
+    abgesagt = _termin(db, mid)
+    db.termine.set_status(abgesagt.id, 'abgesagt', 't',
+                          expected_version=abgesagt.version)
+    assert _offen(db, uid) == 0
+
+
+def test_wer_am_stichtag_nicht_mehr_im_kader_ist_zaehlt_nichts(db):
+    mid = _make_mannschaft(db)
+    uid, _mit = _make_kader_mitglied(db, mid, bis=YESTERDAY)
+    _termin(db, mid)
+    assert _offen(db, uid) == 0
+
+
+def test_konto_ohne_mitglied_bleibt_bei_null(db):
+    """Ein Konto ohne Mitglied (z. B. reiner Verwalter) schuldet keine Meldung."""
+    mid = _make_mannschaft(db)
+    _termin(db, mid)
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO users (username,email,password_hash,role,active,"
+                    "created_by,updated_by) VALUES ('zusagetester_ohne','o@x.de','x',"
+                    "'mitglied',1,'t','t') RETURNING id")
+        uid = cur.fetchone()['id']
+    assert _offen(db, uid) == 0
