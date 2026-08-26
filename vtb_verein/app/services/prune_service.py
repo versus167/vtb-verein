@@ -743,6 +743,9 @@ LOG_REGISTRY: tuple[LogRule, ...] = (
     LogRule("ticket_erinnerung_einstellungen_history", "Ticket-Erinnerungen (Historie)",
             "ticket_erinnerung_einstellungen_history",
             ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
+    LogRule("termin_erinnerung_einstellungen_history", "Termin-Erinnerungen (Historie)",
+            "termin_erinnerung_einstellungen_history",
+            ts_expr="COALESCE(updated_at, created_at)", gruppe="Einstellungs-Historie"),
 )
 
 LOG_BY_NAME: dict[str, LogRule] = {r.name: r for r in LOG_REGISTRY}

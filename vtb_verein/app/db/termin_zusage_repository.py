@@ -161,6 +161,57 @@ class TerminZusageRepository(BaseRepository):
             )
             return [r['user_id'] for r in cur.fetchall()]
 
+    def list_offene_user_ids(self, termin_id: int) -> list[int]:
+        """user_ids derer, von denen zu diesem Termin noch keine Meldung vorliegt
+        (#95-Nachgang) – Empfängerkreis der Termin-Erinnerung.
+
+        Gefragt sind zwei Gruppen, und zwar dieselben, die auch die Kader-Ansicht
+        als „offen" zeigt:
+
+        * der am Termin-Datum aktive **Kader** – ohne aktive Zeile oder mit einer
+          Einladung, die noch unbeantwortet ist (`antwort IS NULL`);
+        * eingeladene **Gäste** (Zeile mit `antwort IS NULL` ohne Kader-Zugehörigkeit)
+          – wer als Gast eingetragen wurde, hat bereits eine Antwort und ist damit raus.
+
+        „Vielleicht" zählt als Meldung: Der Spieler hat geantwortet, mehr weiß er
+        selbst noch nicht. Ohne Benutzerkonto gibt es keinen Kanal – solche
+        Kader-Mitglieder bleiben hier still übrig (der Betreuer sieht sie in der
+        Kader-Liste). Aktiv/gesperrt filtert der Versand über `user.active`.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                WITH t AS (
+                    SELECT mannschaft_id, LEFT(beginn, 10) AS tag
+                    FROM termine WHERE id = %(tid)s AND deleted_at IS NULL
+                ),
+                kandidaten AS (
+                    SELECT m.id AS mitglied_id, m.user_id
+                    FROM t
+                    JOIN mitglied_mannschaft mm ON mm.mannschaft_id = t.mannschaft_id
+                        AND mm.deleted_at IS NULL
+                        AND mm.von <= t.tag AND (mm.bis IS NULL OR mm.bis >= t.tag)
+                    JOIN mitglied m ON m.id = mm.mitglied_id AND m.deleted_at IS NULL
+                    UNION
+                    SELECT m.id AS mitglied_id, m.user_id
+                    FROM termin_zusage z
+                    JOIN mitglied m ON m.id = z.mitglied_id AND m.deleted_at IS NULL
+                    WHERE z.termin_id = %(tid)s AND z.deleted_at IS NULL
+                      AND z.antwort IS NULL
+                )
+                SELECT DISTINCT k.user_id
+                FROM kandidaten k
+                WHERE k.user_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM termin_zusage z2
+                      WHERE z2.termin_id = %(tid)s AND z2.mitglied_id = k.mitglied_id
+                        AND z2.deleted_at IS NULL AND z2.antwort IS NOT NULL
+                  )
+                """,
+                {"tid": termin_id},
+            )
+            return [r['user_id'] for r in cur.fetchall()]
+
     def list_gaeste_with_zusage(self, termin_id: int) -> list[dict]:
         """Gäste des Termins: aktive Antworten von Mitgliedern, die am
         Termin-Datum NICHT im Kader der Termin-Mannschaft stehen."""

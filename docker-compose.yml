@@ -152,6 +152,43 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # Termin-Erinnerungen (#95-Nachgang): erinnert kurz vor einem Termin die, von denen
+  # noch keine Meldung vorliegt (Kader + eingeladene Gäste). Anlegen/Ändern/Einladen
+  # melden sich schon selbst; hier geht es um die, die es danach vergessen haben.
+  # Gleicher Sidecar-Ansatz wie die übrigen Läufe. Intervall über
+  # TERMIN_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag); den Vorlauf (Vorgabe 3 und
+  # 1 Tag) stellt der Verein in der App ein (Termine → Erinnerungen).
+  termin-erinnerung:
+    image: vtb-verein:latest
+    container_name: vtb-termin-erinnerung
+    healthcheck:
+      disable: true
+    depends_on:
+      vtb-verein:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      VTB_DATABASE_URL: postgresql://${VTB_PG_USER}:${VTB_PG_PASSWORD}@db:5432/${VTB_PG_DB}
+      TZ: ${VTB_TZ:-Europe/Berlin}
+    command: >
+      sh -c '
+      H="$${TERMIN_ERINNERUNG_INTERVAL_HOURS:-24}";
+      echo "[termin-erinnerung] gestartet – Intervall $${H}h";
+      while true; do
+        python tools/termin_erinnerung_lauf.py || echo "[termin-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
+        sleep "$$(( H * 3600 ))";
+      done'
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
   # Ticket-Erinnerungen (#179 + Nachgang): mahnt offene Tickets an, die liegen bleiben –
   # weil sie noch KEIN Verantwortlicher geöffnet hat, oder weil seit dem Hinsehen
   # nichts mehr passiert ist. Anlegen/Zuweisen/Kommentieren melden sich schon selbst;

@@ -54,3 +54,29 @@ class Termin:
     # Belag (Rasen/Kunstrasen/…): steht am Termin, weil die Spieler danach ihre
     # Schuhe wählen – die Spielstätte selbst schaut dafür niemand nach.
     spielstaette_untergrund: Optional[str] = None
+
+
+@dataclass
+class TerminErinnerungEinstellungen:
+    """Vorlauf der Termin-Erinnerungen (Single-Row, id=1) – #95-Nachgang, Schema v112.
+
+    Vor einem Termin wird erinnert, wer noch keine Meldung abgegeben hat. Zwei
+    Stufen mit je einem Vorlauf in Tagen; je Termin und Stufe geht die Erinnerung
+    genau einmal raus.
+
+    **Stufe 0 schaltet die einzelne Stufe ab** – wer nur einmal erinnern will,
+    setzt die zweite auf 0; `aktiv=False` schaltet den ganzen Lauf ab. Welche der
+    beiden Zahlen die größere ist, spielt keine Rolle: Der Lauf sortiert sie
+    (s. termin_erinnerung_service.stufen).
+    """
+    id: int = 1
+
+    aktiv: bool = True
+    erste_stufe_tage: int = 3
+    zweite_stufe_tage: int = 1
+
+    version: int = 1
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None

@@ -556,6 +556,7 @@ def test_jede_tabelle_hat_einen_loeschpfad(db):
         "ttlock_konto":          "Zugangsdaten der Schließanlage, eine Zeile",
         "schliessanlage_einstellungen": "Singleton-Konfiguration, eine Zeile",
         "ticket_erinnerung_einstellungen": "Singleton-Konfiguration, eine Zeile",
+        "termin_erinnerung_einstellungen": "Singleton-Konfiguration, eine Zeile",
         "tuer_credential":       "Spiegel des TTLock-Cloud-Zustands, wird dort hart ersetzt",
         "dfbnet_import_stand":   "Stand des letzten Spielplan-Imports, eine überschriebene Zeile",
     }

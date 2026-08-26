@@ -11,6 +11,11 @@
       <q-space />
       <q-btn v-if="darfVerwalten && tab !== 'meine'" flat color="primary"
         icon="repeat" label="Serien" class="q-mr-sm" @click="serienOffen = true" />
+      <!-- Vorlauf der Erinnerungen gilt vereinsweit, hängt also am globalen Recht
+           und nicht an der Kader-Rolle des gerade offenen Tabs. -->
+      <q-btn v-if="auth.hasPermission('termine.verwalten')" flat color="primary"
+        icon="notifications_active" label="Erinnerungen" class="q-mr-sm"
+        @click="erinnerungOffen = true" />
       <q-btn v-if="darfVerwalten && tab !== 'meine'" color="primary" unelevated
         icon="add" label="Neuer Termin" :round="$q.screen.lt.sm" @click="openCreate" />
     </div>
@@ -48,6 +53,9 @@
     <TerminFormDialog v-model="formOpen" :termin="formTermin" :mannschaft-id="tab"
       @saved="loadTermine" />
 
+    <!-- Vorlauf der Termin-Erinnerungen (vereinsweit) -->
+    <TerminErinnerungDialog v-model="erinnerungOffen" />
+
     <!-- Terminserien verwalten (nur im Team-Tab) -->
     <TerminSerienDialog v-if="tab !== 'meine'" v-model="serienOffen"
       :mannschaft-id="tab" @geaendert="loadTermine" />
@@ -64,6 +72,7 @@ import { useAuthStore } from 'src/stores/auth'
 import TerminCard from 'components/TerminCard.vue'
 import TerminFormDialog from 'components/TerminFormDialog.vue'
 import TerminSerienDialog from 'components/TerminSerienDialog.vue'
+import TerminErinnerungDialog from 'components/TerminErinnerungDialog.vue'
 import { useTerminAktionen } from 'src/composables/useTermine'
 
 const $q = useQuasar()
@@ -247,6 +256,9 @@ const { setStatus, confirmDelete } = useTerminAktionen(loadTermine)
 
 // ── Terminserien ──────────────────────────────────────────
 const serienOffen = ref(false)
+
+// ── Erinnerungen (vereinsweiter Vorlauf) ──────────────────
+const erinnerungOffen = ref(false)
 </script>
 
 <style lang="scss" scoped>

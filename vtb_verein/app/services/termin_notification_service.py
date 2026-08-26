@@ -138,7 +138,9 @@ def diff_termin(alt, neu) -> list[str]:
     return zeilen
 
 
-def _detail_zeilen(t) -> list[str]:
+def detail_zeilen(t) -> list[str]:
+    """Ende/Ort/Treffpunkt/Beschreibung als Meldungszeilen – geteilt mit der
+    Erinnerung an fehlende Meldungen (termin_erinnerung_service)."""
     zeilen = []
     if t.ende:
         zeilen.append(f"Ende: {format_wandzeit(t.ende)}")
@@ -196,7 +198,7 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
     if aktion == AKTION_GEAENDERT and aenderungen:
         zeilen += ["", "Änderungen:"] + [f"- {z}" for z in aenderungen]
     else:
-        zeilen += _detail_zeilen(termin)
+        zeilen += detail_zeilen(termin)
     if aktion == AKTION_ABGESAGT:
         zeilen += ["", "Der Termin wurde abgesagt."]
     elif aktion == AKTION_REAKTIVIERT:
@@ -219,7 +221,7 @@ def notify_einladung(db, termin, mitglied_ids: list[int],
     m_name = _mannschaft_name(db, termin.mannschaft_id)
     zeilen = [f"Du bist eingeladen: {termin_titel(termin, m_name)} am "
               f"{format_wandzeit(termin.beginn)} ({m_name})"]
-    zeilen += _detail_zeilen(termin)
+    zeilen += detail_zeilen(termin)
     zeilen += ["", "Bitte in der App zu- oder absagen."]
     user_ids = []
     for mid in mitglied_ids:

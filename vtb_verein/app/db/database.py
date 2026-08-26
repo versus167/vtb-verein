@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 111
+SCHEMA_VERSION = 112
 
 
 # ---------------------------------------------------------------------------
@@ -3662,6 +3662,82 @@ _TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS = (
 )
 
 
+# --- Termin-Erinnerungen (#95-Nachgang, Schema v112) -------------------------------
+# Vor einem Termin erinnert der Sidecar-Lauf die, von denen noch keine Meldung
+# vorliegt (termin_erinnerung_service). WANN das passiert, gehört nicht in den
+# Code: Ob drei Tage Vorlauf passen oder eher fünf, weiß der Verein, nicht der
+# Entwickler. Darum wie bei den Ticket-Fristen eine Single-Row-Konfiguration
+# (id=1, gleiches Muster wie fibu_/schliessanlage_/ticket_erinnerung_-
+# einstellungen): zwei Stufen mit je einem Vorlauf in Tagen, dazu ein
+# Aus-Schalter. Stufe 0 schaltet die einzelne Stufe ab – wer nur einmal erinnern
+# will, setzt die zweite auf 0.
+_DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
+    CREATE TABLE IF NOT EXISTS termin_erinnerung_einstellungen (
+      id                    INTEGER PRIMARY KEY DEFAULT 1,
+      aktiv                 BOOLEAN NOT NULL DEFAULT TRUE,
+      erste_stufe_tage      INTEGER NOT NULL DEFAULT 3,
+      zweite_stufe_tage     INTEGER NOT NULL DEFAULT 1,
+      version               INTEGER NOT NULL DEFAULT 1,
+      created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by            TEXT,
+      updated_at            TEXT,
+      updated_by            TEXT,
+      CHECK (id = 1)
+    );
+    CREATE TABLE IF NOT EXISTS termin_erinnerung_einstellungen_history (
+      id                    INTEGER NOT NULL,
+      version               INTEGER NOT NULL,
+      aktiv                 BOOLEAN,
+      erste_stufe_tage      INTEGER,
+      zweite_stufe_tage     INTEGER,
+      created_at            TEXT,
+      created_by            TEXT,
+      updated_at            TEXT,
+      updated_by            TEXT,
+      PRIMARY KEY (id, version)
+    );
+    INSERT INTO termin_erinnerung_einstellungen (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+"""
+
+_TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS = (
+    "id, version, aktiv, erste_stufe_tage, zweite_stufe_tage, "
+    "created_at, created_by, updated_at, updated_by"
+)
+_TERMIN_ERINNERUNG_EINSTELLUNGEN_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS.split(","))
+
+_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_erinnerung_einst_audit_insert()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO termin_erinnerung_einstellungen_history
+            ({_TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS})
+        VALUES ({_TERMIN_ERINNERUNG_EINSTELLUNGEN_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_termin_erinnerung_einst_audit_update()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO termin_erinnerung_einstellungen_history
+                ({_TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS})
+            VALUES ({_TERMIN_ERINNERUNG_EINSTELLUNGEN_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_TERMIN_ERINNERUNG_EINSTELLUNGEN_TRIGGERS = (
+    ('trig_termin_erinnerung_einst_audit_insert', 'INSERT',
+     'termin_erinnerung_einstellungen', 'fn_termin_erinnerung_einst_audit_insert'),
+    ('trig_termin_erinnerung_einst_audit_update', 'UPDATE',
+     'termin_erinnerung_einstellungen', 'fn_termin_erinnerung_einst_audit_update'),
+)
+
+
 class Database:
     """Manages PostgreSQL connection and schema."""
 
@@ -3834,6 +3910,7 @@ class Database:
             109: self._migrate_v108_to_v109,
             110: self._migrate_v109_to_v110,
             111: self._migrate_v110_to_v111,
+            112: self._migrate_v111_to_v112,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8335,6 +8412,35 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 111 WHERE id = 1")
 
+    def _migrate_v111_to_v112(self) -> None:
+        """Vorlauf der Termin-Erinnerungen wird einstellbar (#95-Nachgang).
+
+        Neu ist der Erinnerungslauf zu Terminen: Wer bis kurz vor dem Termin keine
+        Meldung abgegeben hat, wird daran erinnert (termin_erinnerung_service,
+        Sidecar `termin-erinnerung`). Wann das passiert, gehört nicht in den Code –
+        drei Tage Vorlauf passen dem einen Verein, dem nächsten fünf. Ab hier steht
+        es in `termin_erinnerung_einstellungen` (Single-Row, id=1) und lässt sich in
+        den Terminen unter „Erinnerungen" setzen.
+
+        Die neue Zeile startet mit den Vorgabewerten 3 und 1 Tag Vorlauf und aktiv –
+        wer das nicht will, schaltet es dort ab. Es gibt nichts zu übernehmen: Vor
+        dieser Version hat niemand an Termine erinnert.
+
+        DDL geteilt mit dem Frischaufbau (_DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN)
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+            for name, event, table, fn in _TERMIN_ERINNERUNG_EINSTELLUNGEN_TRIGGERS:
+                cur.execute(f"""
+                    CREATE OR REPLACE TRIGGER {name}
+                    AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION {fn}();
+                """)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 112 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9737,6 +9843,9 @@ class Database:
         # Kalender-Abos (Schema v89, #153): ein ICS-Feed je User, adressiert über
         # einen gehashten Token. DDL geteilt mit Migration v88→v89.
         cur.execute(_DDL_KALENDER_ABO)
+        # Vorlauf der Termin-Erinnerungen (Schema v112): wann vor einem Termin die
+        # erinnert werden, von denen noch keine Meldung vorliegt. Geteilt mit v111→v112.
+        cur.execute(_DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN)
 
         # Fibu-Export (Format hmd FBASC): Export-Lauf-Header + globale Konten-Konfiguration.
         cur.execute("""
@@ -9941,6 +10050,8 @@ class Database:
         cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE)
         cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
         cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+        cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+        cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
         for fn_sql in _CHIP_GRUPPE_FNS:
             cur.execute(fn_sql)
         cur.execute(_FN_DFBNET_IMPORT_STAND_AUDIT_INSERT)
@@ -10520,6 +10631,7 @@ class Database:
             *_ZUTRITT_TRIGGERS,
             *_SCHLIESSANLAGE_EINSTELLUNGEN_TRIGGERS,
             *_TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS,
+            *_TERMIN_ERINNERUNG_EINSTELLUNGEN_TRIGGERS,
             *_CHIP_GRUPPE_TRIGGERS,
             *_TUER_APP_BERECHTIGUNG_TRIGGERS,
             *_TRESOR_TRIGGERS,

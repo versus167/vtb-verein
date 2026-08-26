@@ -97,6 +97,9 @@ from app.db.clubdeckel_buchung_repository import ClubdeckelBuchungRepository
 from app.db.kalender_abo_repository import KalenderAboRepository
 from app.db.termin_repository import TerminRepository
 from app.db.termin_zusage_repository import TerminZusageRepository
+from app.db.termin_erinnerung_einstellungen_repository import (
+    TerminErinnerungEinstellungenRepository,
+)
 from app.db.termin_serie_repository import TerminSerieRepository
 from app.db.spielstaette_repository import SpielstaetteRepository
 from app.db.termin_abweichung_repository import TerminAbweichungRepository
@@ -273,6 +276,9 @@ class VereinsDB:
         self._termin_repo = TerminRepository(self.conn)
         # Termin-Zusagen/RSVP (#95, Etappe 2)
         self._termin_zusage_repo = TerminZusageRepository(self.conn)
+        # Vorlauf der Termin-Erinnerungen (#95-Nachgang): Single-Row-Konfiguration
+        self._termin_erinnerung_einstellungen_repo = (
+            TerminErinnerungEinstellungenRepository(self.conn))
         # Terminserien (#95): wöchentliche Vorlagen, rollierend materialisiert
         self._termin_serie_repo = TerminSerieRepository(self.conn)
         # Spielstätten (#95): Stammdaten der Plätze/Hallen, Pflichtfeld am Termin
@@ -502,6 +508,12 @@ class VereinsDB:
     @property
     def termin_zusagen(self) -> TerminZusageRepository:
         return self._termin_zusage_repo
+
+    # --- Vorlauf der Termin-Erinnerungen (#95-Nachgang) ---
+    @property
+    def termin_erinnerung_einstellungen(
+            self) -> TerminErinnerungEinstellungenRepository:
+        return self._termin_erinnerung_einstellungen_repo
 
     # --- Terminserien (#95) ---
     @property
