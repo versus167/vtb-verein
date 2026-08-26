@@ -9,6 +9,8 @@ Wer zu-, ab- oder „vielleicht" gesagt hat, hört nichts.
 Der Vorlauf (zwei Stufen, Vorgabe 3 und 1 Tag) steht in der App unter
 Termine → Erinnerungen, nicht im Code: Wie viel Vorlauf eine Mannschaft braucht,
 weiß der Verein. Stufe 0 schaltet eine Stufe ab, der Schalter den ganzen Lauf.
+Dazu die Spieltags-Stufe am Termintag selbst – nur zu Spielen und nur, solange
+der Anpfiff noch bevorsteht.
 
 Schreibt nur in die eigene DB (eine Protokollzeile je Termin und Stufe, damit
 dieselbe Erinnerung nicht bei jedem Lauf erneut rausgeht) und verschickt
@@ -44,8 +46,10 @@ def _trockenlauf(db, log) -> None:
     if not einst.aktiv:
         log("✓ Termin-Erinnerungen sind abgeschaltet (Termine → Erinnerungen).")
         return
-    stufen = erinnerung.stufen(einst)
-    log(f"✓ Stufen: {', '.join(f'{s} Tag(e) vorher' for s in stufen)}")
+    stufen = [f'{s} Tag(e) vorher' for s in erinnerung.stufen(einst)]
+    if einst.spieltag_aktiv:
+        stufen.append('am Spieltag (nur Spiele, vor dem Anpfiff)')
+    log(f"✓ Stufen: {', '.join(stufen) or '– keine –'}")
 
     termine = erinnerung.anstehende_termine(db, einst)
     faellig = erinnerung.faellige(
@@ -54,7 +58,9 @@ def _trockenlauf(db, log) -> None:
     log(f"✓ {len(termine)} anstehende(r) Termin(e), {len(faellig)} mit fälliger Stufe:")
     for termin, stufe, vorlauf in faellig:
         offene = db.termin_zusagen.list_offene_user_ids(termin.id)
-        log(f"  #{termin.id} [{stufe}-Tage-Stufe, in {vorlauf} Tag(en)] "
+        label = ('Spieltag' if stufe == erinnerung.STUFE_SPIELTAG
+                 else f'{stufe}-Tage-Stufe')
+        log(f"  #{termin.id} [{label}, {erinnerung.wann_text(vorlauf)}] "
             f"{termin_titel(termin)} am {format_wandzeit(termin.beginn)} "
             f"({termin.mannschaft_name}): {len(offene)} ohne Meldung")
 

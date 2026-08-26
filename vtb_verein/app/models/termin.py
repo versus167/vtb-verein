@@ -68,12 +68,17 @@ class TerminErinnerungEinstellungen:
     setzt die zweite auf 0; `aktiv=False` schaltet den ganzen Lauf ab. Welche der
     beiden Zahlen die größere ist, spielt keine Rolle: Der Lauf sortiert sie
     (s. termin_erinnerung_service.stufen).
+
+    Dazu die Spieltags-Stufe (v113): am Termintag selbst wird nur noch zu SPIELEN
+    erinnert und nur vor dem Anpfiff. Beim Training ist die kurzfristige Meldung
+    meist egal, beim Spiel zählt jeder Kopf.
     """
     id: int = 1
 
     aktiv: bool = True
     erste_stufe_tage: int = 3
     zweite_stufe_tage: int = 1
+    spieltag_aktiv: bool = True
 
     version: int = 1
     created_at: Optional[str] = None

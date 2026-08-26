@@ -64,18 +64,20 @@ class TestSpeichern:
     def test_werte_gehen_mit_dem_benutzernamen_durch(self):
         calls = []
         daten = api.ErinnerungEinstellungenWrite(aktiv=False, erste_stufe_tage=5,
-                                                 zweite_stufe_tage=2)
+                                                 zweite_stufe_tage=2,
+                                                 spieltag_aktiv=False)
         ergebnis = api.erinnerung_einstellungen_speichern(daten, _VERWALTER, _db(calls))
         (gespeichert, updated_by), = calls
         assert (gespeichert.aktiv, gespeichert.erste_stufe_tage,
-                gespeichert.zweite_stufe_tage) == (False, 5, 2)
+                gespeichert.zweite_stufe_tage,
+                gespeichert.spieltag_aktiv) == (False, 5, 2, False)
         assert updated_by == 'orga'
         assert ergebnis['zweite_stufe_tage'] == 2
 
-    def test_vorgabe_ist_drei_und_ein_tag(self):
+    def test_vorgabe_ist_drei_und_ein_tag_plus_spieltag(self):
         daten = api.ErinnerungEinstellungenWrite()
-        assert (daten.aktiv, daten.erste_stufe_tage, daten.zweite_stufe_tage) == \
-            (True, 3, 1)
+        assert (daten.aktiv, daten.erste_stufe_tage, daten.zweite_stufe_tage,
+                daten.spieltag_aktiv) == (True, 3, 1, True)
 
 
 class TestGrenzen:

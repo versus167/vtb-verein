@@ -37,6 +37,21 @@
               label="Zweite Erinnerung" :disable="!einstellungen.aktiv" />
           </div>
         </div>
+
+        <q-separator class="q-my-md" />
+
+        <div class="row items-center no-wrap">
+          <div class="col">
+            <div class="text-subtitle1">Auch am Spieltag</div>
+            <div class="text-caption text-grey-8">
+              Am Termintag selbst – nur zu Spielen und nur, solange der Anpfiff noch
+              bevorsteht. Beim Training ändert die Meldung am selben Tag kaum noch
+              etwas, beim Spiel zählt jeder Kopf.
+            </div>
+          </div>
+          <q-toggle v-model="einstellungen.spieltag_aktiv"
+            :disable="!einstellungen.aktiv" />
+        </div>
       </q-card-section>
 
       <q-card-actions align="right">
@@ -68,7 +83,8 @@ const open = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
-const einstellungen = ref({ aktiv: true, erste_stufe_tage: 3, zweite_stufe_tage: 1 })
+const einstellungen = ref({ aktiv: true, erste_stufe_tage: 3, zweite_stufe_tage: 1,
+                            spieltag_aktiv: true })
 const loading = ref(false)
 const saving = ref(false)
 
@@ -94,6 +110,7 @@ async function speichern() {
       aktiv: e.aktiv,
       erste_stufe_tage: e.erste_stufe_tage,
       zweite_stufe_tage: e.zweite_stufe_tage,
+      spieltag_aktiv: e.spieltag_aktiv,
     })
     $q.notify({ type: 'positive', message: 'Erinnerungen gespeichert.' })
     open.value = false

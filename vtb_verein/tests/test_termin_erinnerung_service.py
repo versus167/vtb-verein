@@ -2,12 +2,13 @@
 
 Geprüft wird, wann erinnert wird und wann nicht: welche Stufe bei welchem Vorlauf
 greift, dass ein ausgefallener Lauf seine Stufe nachholt, dass ein kurzfristig
-angelegter Termin NICHT beide Stufen auf einmal auslöst und dass eine verschickte
-Stufe nicht bei jedem Lauf erneut rausgeht. Alles reine Funktionen über
-Termin-Objekte – ohne DB, ohne Versand.
+angelegter Termin NICHT beide Stufen auf einmal auslöst, dass eine verschickte
+Stufe nicht bei jedem Lauf erneut rausgeht – und die Spieltags-Stufe am Termintag
+mit ihren drei Bedingungen (eingeschaltet, Spiel, Anpfiff steht noch bevor).
+Alles reine Funktionen über Termin-Objekte – ohne DB, ohne Versand.
 """
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,8 @@ from app.models.termin import TerminErinnerungEinstellungen  # noqa: E402
 from app.services import termin_erinnerung_service as erin  # noqa: E402
 
 _HEUTE = date(2026, 8, 26)
+# Laufzeitpunkt wie beim echten Sidecar: morgens, lange vor dem Anpfiff.
+_JETZT = datetime(2026, 8, 26, 9, 10)
 
 
 @pytest.fixture(autouse=True)
@@ -28,18 +31,18 @@ def _standard_kuerzel(monkeypatch):
 
 
 def _termin(in_tagen=3, id=7, typ='spiel', gegner='SV Beispiel',
-            heim_auswaerts='heim', mannschaft_name='AH'):
+            heim_auswaerts='heim', mannschaft_name='AH', zeit='18:30'):
     tag = _HEUTE + timedelta(days=in_tagen)
     return SimpleNamespace(
         id=id, mannschaft_id=1, mannschaft_name=mannschaft_name, typ=typ,
-        beginn=f"{tag.isoformat()}T18:30", ende=None, ort='Sportplatz',
+        beginn=f"{tag.isoformat()}T{zeit}", ende=None, ort='Sportplatz',
         treffpunkt=None, treffpunkt_zeit=None, beschreibung=None,
         gegner=gegner, heim_auswaerts=heim_auswaerts, status='geplant')
 
 
-def _faellig(termin, bereits=None, einst=None):
+def _faellig(termin, bereits=None, einst=None, jetzt=_JETZT):
     """Einen Termin durch den Lauf schicken – „welche Stufe ist dran?" (None = keine)."""
-    treffer = erin.faellige([termin], bereits or {}, einst, _HEUTE)
+    treffer = erin.faellige([termin], bereits or {}, einst, jetzt)
     return treffer[0][1] if treffer else None
 
 
@@ -53,9 +56,12 @@ class TestStufen:
     def test_ausserhalb_des_vorlaufs_passiert_nichts(self):
         assert _faellig(_termin(in_tagen=4)) is None
 
-    def test_am_termintag_ist_erinnern_zu_spaet(self):
-        assert _faellig(_termin(in_tagen=0)) is None
+    def test_beim_training_ist_der_termintag_zu_spaet(self):
+        assert _faellig(_termin(in_tagen=0, typ='training')) is None
+
+    def test_vergangene_termine_bleiben_still(self):
         assert _faellig(_termin(in_tagen=-1)) is None
+        assert _faellig(_termin(in_tagen=-1, typ='training')) is None
 
     def test_ausgefallener_lauf_holt_die_stufe_nach(self):
         """Vorlauf 2 bei den Stufen 3/1: Die 3er-Stufe kommt verspätet nach, statt
@@ -77,6 +83,45 @@ class TestStufen:
     def test_erste_stufe_blockiert_die_zweite_nicht(self):
         termin = _termin(in_tagen=1)
         assert _faellig(termin, {erin.schluessel(termin.id, 3): 'egal'}) == 1
+
+
+class TestSpieltag:
+    """Am Termintag selbst – die Stufe mit drei Bedingungen."""
+
+    def test_spiel_heute_wird_erinnert(self):
+        assert _faellig(_termin(in_tagen=0)) == erin.STUFE_SPIELTAG
+
+    def test_training_heute_nicht(self):
+        assert _faellig(_termin(in_tagen=0, typ='training')) is None
+        assert _faellig(_termin(in_tagen=0, typ='sonstiges')) is None
+
+    def test_nach_dem_anpfiff_ist_schluss(self):
+        """Ein Abendlauf soll nicht an ein Spiel von heute Vormittag erinnern."""
+        assert _faellig(_termin(in_tagen=0, zeit='09:00'),
+                        jetzt=datetime(2026, 8, 26, 20, 0)) is None
+        # Kurz davor geht sie noch raus – da kann man noch absagen.
+        assert _faellig(_termin(in_tagen=0, zeit='20:30'),
+                        jetzt=datetime(2026, 8, 26, 20, 0)) == erin.STUFE_SPIELTAG
+
+    def test_abschaltbar_ohne_die_vorlauf_stufen_zu_treffen(self):
+        einst = TerminErinnerungEinstellungen(spieltag_aktiv=False)
+        assert _faellig(_termin(in_tagen=0), einst=einst) is None
+        assert _faellig(_termin(in_tagen=1), einst=einst) == 1
+
+    def test_geht_nur_einmal_raus(self):
+        termin = _termin(in_tagen=0)
+        bereits = {erin.schluessel(termin.id, erin.STUFE_SPIELTAG): 'egal'}
+        assert _faellig(termin, bereits) is None
+
+    def test_die_vortags_stufe_blockiert_sie_nicht(self):
+        """Gestern die 1er-Stufe, heute noch einmal am Spieltag – zwei Anlässe."""
+        termin = _termin(in_tagen=0)
+        assert _faellig(termin, {erin.schluessel(termin.id, 1): 'egal'}) == \
+            erin.STUFE_SPIELTAG
+
+    def test_text_sagt_heute(self):
+        _, text = erin.build_erinnerung(_termin(in_tagen=0), vorlauf=0)
+        assert "der Termin ist heute." in text
 
 
 class TestEinstellungen:

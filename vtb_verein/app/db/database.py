@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 112
+SCHEMA_VERSION = 113
 
 
 # ---------------------------------------------------------------------------
@@ -3670,13 +3670,16 @@ _TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS = (
 # (id=1, gleiches Muster wie fibu_/schliessanlage_/ticket_erinnerung_-
 # einstellungen): zwei Stufen mit je einem Vorlauf in Tagen, dazu ein
 # Aus-Schalter. Stufe 0 schaltet die einzelne Stufe ab – wer nur einmal erinnern
-# will, setzt die zweite auf 0.
+# will, setzt die zweite auf 0. Dazu (v113) die Spieltags-Stufe: am Termintag
+# selbst erinnert der Lauf nur noch zu SPIELEN und nur vor dem Anpfiff – beim
+# Training ist die kurzfristige Meldung meist egal, beim Spiel zählt jeder Kopf.
 _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
     CREATE TABLE IF NOT EXISTS termin_erinnerung_einstellungen (
       id                    INTEGER PRIMARY KEY DEFAULT 1,
       aktiv                 BOOLEAN NOT NULL DEFAULT TRUE,
       erste_stufe_tage      INTEGER NOT NULL DEFAULT 3,
       zweite_stufe_tage     INTEGER NOT NULL DEFAULT 1,
+      spieltag_aktiv        BOOLEAN NOT NULL DEFAULT TRUE,
       version               INTEGER NOT NULL DEFAULT 1,
       created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by            TEXT,
@@ -3690,6 +3693,7 @@ _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
       aktiv                 BOOLEAN,
       erste_stufe_tage      INTEGER,
       zweite_stufe_tage     INTEGER,
+      spieltag_aktiv        BOOLEAN,
       created_at            TEXT,
       created_by            TEXT,
       updated_at            TEXT,
@@ -3700,7 +3704,7 @@ _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
 """
 
 _TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS = (
-    "id, version, aktiv, erste_stufe_tage, zweite_stufe_tage, "
+    "id, version, aktiv, erste_stufe_tage, zweite_stufe_tage, spieltag_aktiv, "
     "created_at, created_by, updated_at, updated_by"
 )
 _TERMIN_ERINNERUNG_EINSTELLUNGEN_VALS = ", ".join(
@@ -3911,6 +3915,7 @@ class Database:
             110: self._migrate_v109_to_v110,
             111: self._migrate_v110_to_v111,
             112: self._migrate_v111_to_v112,
+            113: self._migrate_v112_to_v113,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8440,6 +8445,35 @@ class Database:
                 """)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 112 WHERE id = 1")
+
+    def _migrate_v112_to_v113(self) -> None:
+        """Erinnerung am Spieltag selbst (#95-Nachgang, zweiter Aufschlag).
+
+        v112 erinnert nur mit Vorlauf und schweigt am Termintag – aus der Idee,
+        dass die Meldung dann fürs Planen zu spät kommt. Der erste Praxistag hat
+        das widerlegt: Ein Lauf um 9 Uhr erreicht ein Spiel um 18 Uhr früh genug,
+        um noch zu- oder abzusagen, und genau dort zählt jeder Kopf. Beim Training
+        stimmt der alte Gedanke weiterhin, deshalb gilt die Stufe NUR für Spiele
+        (und nur, solange der Anpfiff noch bevorsteht – s. termin_erinnerung_service).
+
+        Neue Spalte `spieltag_aktiv` in Tabelle und History, Vorgabe an. Die
+        Audit-Funktionen müssen mit: Sie sind f-Strings über
+        _TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS – wer nur die Tabelle erweitert,
+        bekommt eine History, die die neue Spalte nie mitschreibt, ohne dass
+        irgendetwas kracht.
+
+        DDL/Funktionen geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE termin_erinnerung_einstellungen "
+                        "ADD COLUMN IF NOT EXISTS spieltag_aktiv BOOLEAN NOT NULL "
+                        "DEFAULT TRUE")
+            cur.execute("ALTER TABLE termin_erinnerung_einstellungen_history "
+                        "ADD COLUMN IF NOT EXISTS spieltag_aktiv BOOLEAN")
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 113 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
