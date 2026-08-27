@@ -29,8 +29,8 @@
             <q-tab-panel name="password" class="q-pa-none">
               <q-form @submit.prevent="onLogin" class="q-gutter-md">
                 <q-input
-                  v-model="username"
-                  label="Benutzername"
+                  v-model="kennung"
+                  label="Benutzername oder E-Mail"
                   outlined
                   dark
                   color="vtb-gelb"
@@ -93,13 +93,13 @@
             <q-tab-panel name="magic" class="q-pa-none">
               <div v-if="!magicSent" class="q-gutter-md">
                 <div class="text-body2 text-center login-hint">
-                  Gib deine E-Mail-Adresse ein. Du erhältst einen Link, mit dem du dich ohne Passwort einloggen kannst.
+                  Gib deine E-Mail-Adresse oder deinen Benutzernamen ein. Den Link schicken wir
+                  an die hinterlegte Adresse – damit loggst du dich ohne Passwort ein.
                 </div>
                 <q-form @submit.prevent="onRequestMagicLink" class="q-gutter-md">
                   <q-input
-                    v-model="magicEmail"
-                    label="E-Mail-Adresse"
-                    type="email"
+                    v-model="magicKennung"
+                    label="E-Mail-Adresse oder Benutzername"
                     outlined
                     dark
                     color="vtb-gelb"
@@ -107,7 +107,7 @@
                     no-error-icon
                     lazy-rules="ondemand"
                     :disable="loading"
-                    :rules="[mailRulePflicht]"
+                    :rules="[kennungRule]"
                   >
                     <template #prepend>
                       <q-icon name="email" />
@@ -136,8 +136,8 @@
                 <q-icon name="mark_email_read" size="4rem" color="positive" />
                 <div class="text-h6">E-Mail unterwegs!</div>
                 <div class="text-body2 login-hint">
-                  Falls ein Konto mit dieser Adresse existiert, haben wir dir einen Login-Link geschickt.
-                  Bitte prüfe auch deinen Spam-Ordner.
+                  Falls es dazu ein Konto gibt, haben wir den Login-Link an die dort hinterlegte
+                  E-Mail-Adresse geschickt. Bitte prüfe auch deinen Spam-Ordner.
                 </div>
                 <q-btn flat label="Nochmal versuchen" color="vtb-gelb" no-caps @click="magicSent = false" />
               </div>
@@ -169,7 +169,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
 import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInfo'
 import { zurUebersicht } from 'src/router/nach-login'
-import { mailRulePflicht } from 'src/utils/email'
+import { pruefeMailadresse } from 'src/utils/email'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -191,13 +191,15 @@ onMounted(() => {
   import('pages/DashboardPage.vue').catch(() => {})
 })
 
-const username = ref('')
+// Kennung = Benutzername *oder* E-Mail-Adresse. Beides ist eindeutig, also nimmt
+// das Backend an beiden Stellen beides an – Passwort-Login wie Login-Link.
+const kennung = ref('')
 const password = ref('')
 const showPassword = ref(false)
 
 const rememberMe = ref(false)
 
-const magicEmail = ref('')
+const magicKennung = ref('')
 const magicSent = ref(false)
 
 const loading = ref(false)
@@ -211,11 +213,20 @@ async function onReloadApp() {
   window.location.reload()
 }
 
+// Nur wenn ein @ drinsteht, ist eine Adresse gemeint – dann soll ein Vertipper
+// sofort auffallen. Ohne @ ist ein Benutzername gemeint, für den es keine Formregel
+// gibt außer: nicht leer.
+function kennungRule (value) {
+  const wert = (value ?? '').trim()
+  if (!wert) return 'Bitte E-Mail-Adresse oder Benutzernamen eingeben.'
+  return wert.includes('@') ? (pruefeMailadresse(wert) || true) : true
+}
+
 async function onLogin() {
   errorMsg.value = ''
   loading.value = true
   try {
-    await auth.login(username.value, password.value, rememberMe.value)
+    await auth.login(kennung.value, password.value, rememberMe.value)
   } catch (err) {
     errorMsg.value = err.response?.data?.detail || 'Anmeldung fehlgeschlagen'
     loading.value = false
@@ -234,7 +245,7 @@ async function onRequestMagicLink() {
   errorMsg.value = ''
   loading.value = true
   try {
-    await api.post('/api/auth/magic-link/request', { email: magicEmail.value })
+    await api.post('/api/auth/magic-link/request', { kennung: magicKennung.value })
     magicSent.value = true
   } catch (err) {
     errorMsg.value = err.response?.data?.detail || 'Anfrage fehlgeschlagen'

@@ -26,18 +26,19 @@ class UserService:
     # Authentifizierung
     # ============================================
     
-    def authenticate(self, username: str, password: str) -> Optional[User]:
+    def authenticate(self, kennung: str, password: str) -> Optional[User]:
         """
-        Authentifiziert User mit Username und Passwort
-        
+        Authentifiziert User mit Kennung und Passwort
+
         Args:
-            username: Benutzername
+            kennung: Benutzername **oder** E-Mail-Adresse – beides ist eindeutig
+                und beides wird akzeptiert (siehe `UserRepository.get_by_kennung`)
             password: Passwort (Klartext)
-            
+
         Returns:
             User-Objekt wenn erfolgreich, sonst None
         """
-        user = self.user_repo.get_by_username(username.lower().strip())
+        user = self.user_repo.get_by_kennung(kennung)
 
         if not user:
             return None
@@ -185,6 +186,39 @@ class UserService:
             raise ValueError("Ein aktives Konto braucht eine E-Mail oder ein Passwort. "
                              "Ohne beides bitte inaktiv anlegen (Konto ohne Zugang).")
 
+    def _pruefe_kennung_kollision(self, username: Optional[str], email: Optional[str],
+                                  ausser_id: Optional[int] = None) -> None:
+        """Weder Benutzername noch E-Mail dürfen auf ein *anderes* Konto zeigen.
+
+        Beide sind Anmelde-Kennungen, jede für sich eindeutig – über Kreuz prüft die
+        Datenbank aber nichts (die Unique-Indizes gelten je Spalte). Ohne diese Regel
+        gäbe es Kennungen, die auf zwei Konten passen. `get_by_kennung` entscheidet
+        solche Fälle zwar fest, damit die Anmeldung nicht vom Zufall abhängt – aber
+        eines der beiden Konten wäre über diese Kennung dann nicht mehr erreichbar,
+        und zwar lautlos. Besser, es lässt sich gar nicht erst anlegen.
+
+        Ausdrücklich erlaubt bleibt Benutzername = *eigene* Adresse: Beide Wege
+        führen dann zum selben Konto (dafür `ausser_id`).
+
+        Ein von Hand vergebener Benutzername ist der einzige Weg hierher –
+        `PersonService._generate_username` erzeugt „vorname.nachname" ohne @.
+        """
+        treffer = self.user_repo.finde_kennungs_kollision(
+            username=username or '', email=email, ausser_id=ausser_id
+        )
+        if not treffer:
+            return
+        if treffer['name_trifft_adresse']:
+            raise ValueError(
+                f"Der Benutzername '{username}' ist die E-Mail-Adresse des Kontos "
+                f"'{treffer['username']}'. Beides sind Anmelde-Kennungen – bitte einen "
+                "anderen Benutzernamen wählen."
+            )
+        raise ValueError(
+            f"Die E-Mail-Adresse '{email}' ist der Benutzername eines anderen Kontos. "
+            "Beides sind Anmelde-Kennungen – bitte eine andere Adresse eintragen."
+        )
+
     def create(self, username: str, email: Optional[str], role: str,
                active: bool, created_by: str, password: Optional[str] = None,
                send_magic_link: bool = True) -> User:
@@ -228,6 +262,7 @@ class UserService:
             password_hash = ''
 
         self._pruefe_anmeldeweg(active, email, password_hash)
+        self._pruefe_kennung_kollision(username, email)
 
         # User erstellen
         user = self.user_repo.create(
@@ -295,6 +330,7 @@ class UserService:
         # Änderung der letzte Anmeldeweg genommen wird – z. B. E-Mail gelöscht,
         # ohne dass je ein Passwort gesetzt wurde.
         self._pruefe_anmeldeweg(active, email, user.password_hash)
+        self._pruefe_kennung_kollision(username, email, ausser_id=user_id)
 
         # Wenn aktuell ein aktiver Admin -> inaktiv oder herabgestuft wird
         if user.role == 'admin' and user.active:

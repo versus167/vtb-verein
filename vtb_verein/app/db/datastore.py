@@ -796,6 +796,14 @@ class VereinsDB:
     def get_user_by_email(self, email: str) -> Optional[User]:
         return self._user_repo.get_by_email(email)
 
+    def get_user_by_kennung(self, kennung: str) -> Optional[User]:
+        """Konto zu Benutzername *oder* E-Mail-Adresse (Anmeldung, Login-Link)."""
+        return self._user_repo.get_by_kennung(kennung)
+
+    def get_username_by_kennung(self, kennung: str) -> Optional[str]:
+        """Nur der Benutzername zur Kennung – ohne Permission-Fanout (Anmelde-Bremse)."""
+        return self._user_repo.get_username_by_kennung(kennung)
+
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         return self._user_repo.get_by_id(user_id)
 
