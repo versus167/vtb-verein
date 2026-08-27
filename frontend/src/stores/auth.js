@@ -17,9 +17,11 @@ export const useAuthStore = defineStore('auth', {
   },
 
   actions: {
-    async login(username, password, rememberMe = false) {
+    async login(kennung, password, rememberMe = false) {
       const form = new URLSearchParams()
-      form.append('username', username)
+      // Das Feld heißt `username`, weil OAuth2PasswordRequestForm es so vorgibt –
+      // inhaltlich ist es die Kennung: Benutzername *oder* E-Mail-Adresse.
+      form.append('username', kennung)
       form.append('password', password)
       const { data } = await api.post(`/api/auth/login?remember_me=${rememberMe}`, form)
       this._applyUser(data)

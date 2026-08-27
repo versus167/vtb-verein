@@ -50,7 +50,7 @@ def test_ein_anmeldeweg_genuegt_fuer_aktiv(email, hash_):
 def _service(user):
     """UserService mit Stub-Repository – authenticate braucht sonst nichts."""
     repo = SimpleNamespace(
-        get_by_username=lambda name: user if user and user.username == name else None,
+        get_by_kennung=lambda kennung: user if user and user.username == kennung else None,
         update_last_login=lambda uid: True,
     )
     return UserService(SimpleNamespace(user_repository=repo, auth_token_repository=None))

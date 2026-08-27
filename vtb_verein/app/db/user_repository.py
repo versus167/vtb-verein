@@ -15,6 +15,41 @@ from app.models.user import User
 from app.db.base_repository import BaseRepository
 from app.db.permission_repository import PermissionRepository
 
+# Spaltenliste aller User-Lesezugriffe – genau die Felder, die `_row_to_user`
+# erwartet. Als Konstante, damit ein neues Feld nicht an einer der Abfragen
+# vergessen wird (`get_username` liest bewusst weniger und bleibt außen vor).
+_USER_SELECT = """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
+                         version, created_at, created_by, updated_at, updated_by,
+                         matrix_id, preferred_contact
+                  FROM users"""
+
+# Anmelde-Kennung = Benutzername ODER E-Mail-Adresse. Beide Merkmale sind im
+# Bestand eindeutig, also darf man sich mit beiden anmelden. Verglichen wird ohne
+# Rücksicht auf Groß-/Kleinschreibung – wie schon immer beim Benutzernamen.
+_KENNUNG_WHERE = ("deleted_at IS NULL "
+                  "AND (LOWER(username) = LOWER(%(k)s) OR LOWER(email) = LOWER(%(k)s))")
+
+
+def _kennung_order(kennung: str) -> str:
+    """Macht die Auswahl eindeutig, falls eine Kennung auf zwei Konten passt.
+
+    Das kann nur passieren, wenn ein Benutzername wie die Adresse eines anderen
+    Kontos aussieht oder sich zwei Adressen allein in der Schreibweise
+    unterscheiden (der Unique-Index vergleicht exakt). Beides kommt in einem
+    Verein nicht vor – aber „irgendeine" Zeile darf hier nie herauskommen, sonst
+    hinge der Anmeldeweg vom Zufall der Sortierung ab.
+
+    Reihenfolge: erst die naheliegende Deutung (mit @ die Adresse, sonst der
+    Benutzername), dann die exakte Schreibweise, zuletzt die kleinste id.
+    """
+    erst = 'email' if '@' in kennung else 'username'
+    # COALESCE, weil `email` NULL sein darf (Konto ohne Zugang): Ein Vergleich mit
+    # NULL ergibt NULL, und `ORDER BY … DESC` stellt NULL in Postgres nach vorn –
+    # ausgerechnet die Zeile, die *nicht* passt, käme also zuerst.
+    return (f"ORDER BY COALESCE(LOWER({erst}) = LOWER(%(k)s), FALSE) DESC, "
+            "(COALESCE(username = %(k)s, FALSE) OR COALESCE(email = %(k)s, FALSE)) DESC, "
+            "id")
+
 
 class UserRepository(BaseRepository):
     """Repository for User CRUD operations.
@@ -48,10 +83,8 @@ class UserRepository(BaseRepository):
         """Find User by username (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
-                          version, created_at, created_by, updated_at, updated_by,
-                          matrix_id, preferred_contact
-                   FROM users WHERE LOWER(username) = LOWER(%s) AND deleted_at IS NULL""",
+                f"""{_USER_SELECT}
+                    WHERE LOWER(username) = LOWER(%s) AND deleted_at IS NULL""",
                 (username,)
             )
             row = cur.fetchone()
@@ -64,30 +97,124 @@ class UserRepository(BaseRepository):
 
         Ohne Adresse gibt es nichts zu suchen: Konten ohne Zugang haben email IS NULL,
         und eine leer abgeschickte Anmeldung darf niemanden treffen.
+
+        Groß-/Kleinschreibung spielt keine Rolle — wie beim Benutzernamen. Der
+        Unique-Index vergleicht dagegen exakt, zwei Konten könnten sich also
+        theoretisch allein in der Schreibweise unterscheiden. Für diesen Fall ist
+        die Auswahl fest verdrahtet: exakte Schreibweise zuerst, danach die
+        kleinste id — nie „irgendeine" Zeile.
         """
-        if not (email or '').strip():
+        email = (email or '').strip()
+        if not email:
             return None
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
-                          version, created_at, created_by, updated_at, updated_by,
-                          matrix_id, preferred_contact
-                   FROM users WHERE email = %s AND deleted_at IS NULL""",
-                (email,)
+                f"""{_USER_SELECT}
+                    WHERE LOWER(email) = LOWER(%s) AND deleted_at IS NULL
+                    ORDER BY (email = %s) DESC, id
+                    LIMIT 1""",
+                (email, email)
             )
             row = cur.fetchone()
             if not row:
                 return None
             return self._load_permissions(self._row_to_user(row))
-    
+
+    def get_by_kennung(self, kennung: str) -> Optional[User]:
+        """Konto zu einer Anmelde-Kennung: Benutzername **oder** E-Mail-Adresse.
+
+        Beides ist im Bestand eindeutig (partielle Unique-Indizes
+        `uix_users_username_active` / `uix_users_email_active`), also taugt auch
+        beides als Kennung: Der Passwort-Login nimmt die Adresse, der Login-Link
+        den Benutzernamen. Niemand muss sich merken, welches der beiden Merkmale
+        an welcher Stelle gemeint war.
+
+        Der Vorrang steht in `_kennung_order` – gebraucht wird er nur in dem
+        praktisch nicht vorkommenden Fall, dass ein Benutzername wie die Adresse
+        eines *anderen* Kontos aussieht. Ein fremdes Konto lässt sich damit nicht
+        übernehmen: Was danach folgt, ist weiterhin die Passwortprüfung bzw. die
+        Zustellung an die am Konto hinterlegte Adresse.
+        """
+        kennung = (kennung or '').strip()
+        if not kennung:
+            return None
+        with self.cursor() as cur:
+            cur.execute(
+                f"""{_USER_SELECT}
+                    WHERE {_KENNUNG_WHERE}
+                    {_kennung_order(kennung)}
+                    LIMIT 1""",
+                {'k': kennung}
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return self._load_permissions(self._row_to_user(row))
+
+    def get_username_by_kennung(self, kennung: str) -> Optional[str]:
+        """Nur den Benutzernamen zur Kennung – ohne den Permission-Fanout von
+        `get_by_kennung` (`_load_permissions`).
+
+        Für die Anmelde-Bremse: Die muss Benutzername und E-Mail auf *einen*
+        Zählschlüssel bringen, und das **vor** der eigentlichen Prüfung – ein
+        abgewiesener Versuch soll so wenig wie möglich kosten. Vorrang und
+        Auswahl sind dieselben wie bei `get_by_kennung`, sonst zählte die Bremse
+        auf ein anderes Konto als das, gegen das geprüft wird.
+        """
+        kennung = (kennung or '').strip()
+        if not kennung:
+            return None
+        with self.cursor() as cur:
+            cur.execute(
+                f"""SELECT username FROM users
+                    WHERE {_KENNUNG_WHERE}
+                    {_kennung_order(kennung)}
+                    LIMIT 1""",
+                {'k': kennung}
+            )
+            row = cur.fetchone()
+            return row['username'] if row else None
+
+    def finde_kennungs_kollision(self, *, username: str, email: Optional[str],
+                                 ausser_id: Optional[int] = None) -> Optional[dict]:
+        """Sucht ein *anderes* Konto, dessen Benutzername auf die Adresse trifft –
+        oder umgekehrt. None, wenn nichts kollidiert.
+
+        Für sich genommen ist jeder der beiden Werte eindeutig (partielle
+        Unique-Indizes), über Kreuz prüft die Datenbank aber nichts. Seit beides
+        als Anmelde-Kennung gilt, muss diese Prüfung jemand machen –
+        `UserService._pruefe_kennung_kollision` tut es.
+
+        `ausser_id` klammert das eigene Konto aus: Benutzername *gleich* eigener
+        Adresse ist ausdrücklich in Ordnung (beide Wege führen zum selben Konto).
+        """
+        username = (username or '').strip()
+        email = (email or '').strip() or None
+        if not username and not email:
+            return None
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT username,
+                       LOWER(email)    = LOWER(%(u)s) AS name_trifft_adresse,
+                       LOWER(username) = LOWER(%(e)s) AS adresse_trifft_namen
+                FROM users
+                WHERE deleted_at IS NULL
+                  AND (id <> %(id)s OR %(id)s IS NULL)
+                  AND (LOWER(email) = LOWER(%(u)s) OR LOWER(username) = LOWER(%(e)s))
+                ORDER BY id
+                LIMIT 1
+                """,
+                {'u': username or None, 'e': email, 'id': ausser_id}
+            )
+            return cur.fetchone()
+
     def get_by_id(self, user_id: int) -> Optional[User]:
         """Find User by ID (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
-                          version, created_at, created_by, updated_at, updated_by,
-                          matrix_id, preferred_contact
-                   FROM users WHERE id = %s AND deleted_at IS NULL""",
+                f"""{_USER_SELECT}
+                    WHERE id = %s AND deleted_at IS NULL""",
                 (user_id,)
             )
             row = cur.fetchone()
@@ -110,10 +237,8 @@ class UserRepository(BaseRepository):
         """List all users (only non-deleted)."""
         with self.cursor() as cur:
             cur.execute(
-                """SELECT id, username, email, password_hash, role, active, last_login, last_seen,
-                          version, created_at, created_by, updated_at, updated_by,
-                          matrix_id, preferred_contact
-                   FROM users WHERE deleted_at IS NULL ORDER BY username"""
+                f"""{_USER_SELECT}
+                    WHERE deleted_at IS NULL ORDER BY username"""
             )
             return [self._load_permissions(self._row_to_user(row)) for row in cur.fetchall()]
     

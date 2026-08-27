@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from ..core.db import get_db, get_db as _get_db
@@ -51,14 +51,17 @@ def _log_access(db, request: Request, event_type: str, **kwargs) -> None:
         pass
 
 
-def _classify_login_failure(db, username: str) -> str:
+def _classify_login_failure(db, kennung: str) -> str:
     """Klassifiziert einen fehlgeschlagenen Login für das Protokoll (nicht für den Client).
 
     'unknown_user' | 'inactive' | 'bad_password' – best-effort, fällt auf 'bad_password'
     zurück. Die 401-Meldung an den Client bleibt davon unberührt generisch.
+
+    Gesucht wird über die Kennung (Benutzername oder E-Mail), sonst stünde bei
+    jeder Anmeldung per Adresse ein irreführendes 'unknown_user' im Protokoll.
     """
     try:
-        user = db.users.get_by_username(username.lower().strip())
+        user = db.users.get_by_kennung(kennung)
         if user is None:
             return "unknown_user"
         if not user.active:
@@ -66,6 +69,27 @@ def _classify_login_failure(db, username: str) -> str:
     except Exception:
         pass
     return "bad_password"
+
+
+def _zaehlschluessel(db, kennung: str) -> str:
+    """Führt Benutzername und E-Mail auf *einen* Schlüssel für die Anmelde-Bremse
+    zurück: den Benutzernamen des getroffenen Kontos.
+
+    Seit man sich mit beidem anmelden darf, hätte ein Konto sonst zwei getrennte
+    Zähler – ein Angreifer bekäme allein durch den Wechsel der Form die doppelte
+    Zahl an Versuchen, und ein erfolgreicher Login (protokolliert wird immer der
+    Benutzername) setzte die Zählung der anderen Form nicht zurück.
+
+    Bewusst der schlanke Lookup ohne Permission-Fanout: Das läuft *vor* der Bremse,
+    ein abgewiesener Versuch soll so wenig wie möglich kosten. Unbekannte Eingaben
+    bleiben, wie sie sind – für erfundene Konten verhält sich die Bremse damit
+    weiterhin genauso wie für vorhandene.
+    """
+    try:
+        treffer = db.get_username_by_kennung(kennung)
+    except Exception:
+        treffer = None
+    return treffer or kennung.strip()
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -101,9 +125,10 @@ def _pruefe_login_bremse(db, request: Request, username: str, ip: str | None) ->
     Die Reihenfolge ist Absicht: Erst gar keine bcrypt-Runde ausführen, sonst
     kostet jeder abgewiesene Versuch weiterhin Rechenzeit.
 
-    Gezählt wird über den eingetippten Benutzernamen, auch wenn es ihn gar nicht
-    gibt. Damit antwortet die Bremse für existierende und erfundene Konten gleich
-    und verrät nicht, welche existieren.
+    `username` ist der Zählschlüssel aus `_zaehlschluessel`: der Benutzername des
+    getroffenen Kontos, sonst die Eingabe unverändert. Auch nicht existierende
+    Konten werden also gezählt – damit antwortet die Bremse für existierende und
+    erfundene Konten gleich und verrät nicht, welche existieren.
     """
     jetzt = datetime.now(timezone.utc)
     fenster_start = (jetzt - timedelta(minutes=LOGIN_FENSTER_MIN)).isoformat()
@@ -203,13 +228,17 @@ def login(
     remember_me: bool = False,
     db=Depends(get_db),
 ):
-    _pruefe_login_bremse(db, request, form_data.username, _client_ip(request))
+    # `form_data.username` ist die Kennung: Benutzername *oder* E-Mail-Adresse.
+    # Beide sind eindeutig, also nimmt der Login beides an (das Feld heißt nur so,
+    # weil OAuth2PasswordRequestForm es vorgibt).
+    kennung = _zaehlschluessel(db, form_data.username)
+    _pruefe_login_bremse(db, request, kennung, _client_ip(request))
     service = UserService(db)
     user = service.authenticate(form_data.username, form_data.password)
     if user is None:
         _log_access(
             db, request, "login_failed",
-            username=form_data.username,
+            username=kennung,
             detail=_classify_login_failure(db, form_data.username),
         )
         raise HTTPException(
@@ -392,10 +421,16 @@ def revoke_my_session(session_id: int, user: CurrentUser, db: DB):
 # ---------------------------------------------------------------------------
 
 class MagicLinkRequest(BaseModel):
-    # Obergrenze nach RFC 5321. Nicht der Form wegen — die Adresse landet im
+    # Kennung = E-Mail-Adresse **oder** Benutzername: Beides ist eindeutig, also
+    # nimmt auch der Login-Link beides an. Der alte Feldname `email` bleibt als
+    # Alias gültig — eine noch nicht neu geladene App im Browser soll sich weiter
+    # anmelden können.
+    #
+    # Obergrenze nach RFC 5321. Nicht der Form wegen — die Eingabe landet im
     # Zugriffsprotokoll, und das wird für Auth-Ereignisse dauerhaft aufbewahrt.
     # Ohne Grenze könnte man es mit beliebig langen Zeichenketten vollschreiben.
-    email: str = Field(..., max_length=254)
+    kennung: str = Field(..., max_length=254,
+                         validation_alias=AliasChoices('kennung', 'email'))
 
 
 class MagicLinkValidate(BaseModel):
@@ -466,18 +501,29 @@ def _send_magic_link_email(recipient: str, username: str, token: str) -> None:
 
 @router.post("/magic-link/request")
 def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_db)):
-    """Sendet einen Magic-Link an die angegebene E-Mail-Adresse.
+    """Sendet einen Login-Link an das Konto zur angegebenen Kennung.
 
-    Gibt immer 200 zurück, um keine Informationen über vorhandene Adressen preiszugeben.
+    Kennung ist die E-Mail-Adresse **oder** der Benutzername – beides ist eindeutig.
+    Der Link geht in jedem Fall an die am Konto hinterlegte Adresse, nie an eine
+    eingetippte: Sonst wäre der Benutzername eines anderen genug, um sich dessen
+    Link schicken zu lassen.
+
+    Gibt immer 200 zurück, um keine Informationen über vorhandene Konten preiszugeben.
     """
     if not _smtp_configured():
         raise HTTPException(status_code=503, detail="E-Mail-Versand nicht konfiguriert")
 
-    # Aufbau prüfen, bevor irgendetwas passiert: Ein Vertipper bekommt so sofort einen
-    # Hinweis statt der beruhigenden 200, und offensichtlicher Unsinn landet nicht im
-    # Protokoll. Über vorhandene Adressen verrät die Antwort nichts – geprüft wird nur
-    # die Form der Eingabe, nicht der Bestand.
-    mailadresse_or_422(data.email, pflicht=True)
+    kennung = data.kennung.strip()
+    if not kennung:
+        raise HTTPException(status_code=422, detail="Bitte E-Mail-Adresse oder Benutzername eingeben.")
+    # Sieht die Eingabe nach einer Adresse aus, wird der Aufbau geprüft, bevor
+    # irgendetwas passiert: Ein Vertipper bekommt so sofort einen Hinweis statt der
+    # beruhigenden 200, und offensichtlicher Unsinn landet nicht im Protokoll. Ohne @
+    # ist ein Benutzername gemeint – für den gibt es keine Formregel außer der Länge.
+    # Über vorhandene Konten verrät die Antwort in keinem Fall etwas: Geprüft wird
+    # nur die Form der Eingabe, nicht der Bestand.
+    if '@' in kennung:
+        mailadresse_or_422(kennung, pflicht=True)
 
     ip = _client_ip(request)
     now = datetime.now(timezone.utc)
@@ -491,29 +537,36 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
         since=(now - timedelta(minutes=MAGIC_LINK_IP_WINDOW_MIN)).isoformat(),
     ) >= MAGIC_LINK_MAX_PER_IP:
         _log_access(db, request, "magic_link_rate_limited",
-                    detail=f"ip · {data.email}")
+                    detail=f"ip · {data.kennung}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Zu viele Anfragen. Bitte versuche es später erneut.",
         )
 
-    user = db.get_user_by_email(data.email)
-    # Protokoll: ob eine passende (aktive) Adresse existierte, nur im detail-Feld –
-    # nach außen bleibt die Antwort einheitlich 200 (kein User-Enumeration-Leak).
+    user = db.get_user_by_kennung(kennung)
+    # Zustellbar heißt: Konto gefunden, aktiv und mit hinterlegter Adresse. Der
+    # letzte Punkt ist neu wichtig – ein Namensträger ohne App-Zugang (email IS NULL)
+    # ist über den Benutzernamen jetzt auffindbar, bekommt aber weiterhin keinen Link.
+    zustellbar = bool(user and user.active and (user.email or '').strip())
+
+    # Protokoll: ob ein zustellbares Konto existierte, nur im detail-Feld – nach außen
+    # bleibt die Antwort einheitlich 200 (kein User-Enumeration-Leak). Getroffene Konten
+    # stehen mit id/Benutzername dabei, auch wenn nichts rausging: Sonst ließe sich
+    # später nicht erklären, warum jemand keinen Link bekommen hat.
     #
-    # Die angefragte Adresse steht dabei, und zwar **wie eingetippt**: Bei no_match
-    # ist sie die einzige Spur — ohne sie sieht man, dass jemand Adressen durchprobiert,
-    # aber nicht welche. Und weil der Abgleich exakt erfolgt (users.email = %s), ist
-    # ein no_match auf eine scheinbar richtige Adresse oft ein Groß-/Kleinschreib- oder
-    # Leerzeichen-Problem — das erkennt man nur am Original, nicht an einer
-    # normalisierten Fassung.
+    # Die angefragte Kennung steht ebenfalls dabei, und zwar **wie eingetippt**: Bei
+    # no_match ist sie die einzige Spur — ohne sie sieht man, dass jemand Kennungen
+    # durchprobiert, aber nicht welche. Groß-/Kleinschreibung spielt für den Abgleich
+    # zwar keine Rolle mehr, ein überzähliges Zeichen oder Leerzeichen im Wort aber
+    # sehr wohl — und das erkennt man nur am Original, nicht an einer normalisierten
+    # Fassung.
     _log_access(
         db, request, "magic_link_request",
         user_id=user.id if user else None,
         username=user.username if user else None,
-        detail=f"{'match' if (user and user.active) else 'no_match'} · {data.email}",
+        detail=f"{'match' if zustellbar else 'no_match'} · {data.kennung}",
     )
-    should_send = bool(user and user.active)
+    should_send = zustellbar
 
     # Pro-Empfänger-Limit: schützt das Postfach eines echten Nutzers auch dann,
     # wenn der Angreifer die IP wechselt. Bei Überschreitung wird *still* nicht
@@ -527,7 +580,7 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
         _log_access(
             db, request, "magic_link_rate_limited",
             user_id=user.id, username=user.username,
-            detail=f"user · {data.email}",
+            detail=f"user · {data.kennung}",
         )
         should_send = False
 
@@ -538,7 +591,9 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
             expires_days=7,
         )
         try:
-            _send_magic_link_email(data.email, user.username, token)
+            # Empfänger ist immer die am Konto hinterlegte Adresse, nicht die
+            # eingetippte Kennung – die kann ein Benutzername sein.
+            _send_magic_link_email(user.email, user.username, token)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {exc}")
 

@@ -62,8 +62,12 @@ class _AccessLog:
         return max(treffer).isoformat() if treffer else None
 
 
-def _db(eintraege=()):
-    return SimpleNamespace(access_log_repository=_AccessLog(eintraege))
+def _db(eintraege=(), konto=None):
+    """`konto` = Benutzername, auf den eine Kennung auflöst (None = unbekannt)."""
+    return SimpleNamespace(
+        access_log_repository=_AccessLog(eintraege),
+        get_username_by_kennung=lambda kennung: konto,
+    )
 
 
 def _request(ip='198.51.100.7'):
@@ -176,8 +180,8 @@ def test_abweisung_wird_protokolliert():
 def test_login_prueft_die_bremse_vor_der_passwortpruefung():
     """Reihenfolge ist Absicht: Ein abgewiesener Versuch darf keine bcrypt-Runde
     mehr kosten, sonst bleibt die Rechenlast beim Verteidiger."""
-    db = _db(_fehlversuche(api.LOGIN_MAX_PRO_KONTO))
-    db.users = SimpleNamespace(get_by_username=lambda u: None)
+    db = _db(_fehlversuche(api.LOGIN_MAX_PRO_KONTO), konto='max')
+    db.users = SimpleNamespace(get_by_kennung=lambda k: None)
 
     gerufen = []
 
@@ -200,3 +204,32 @@ def test_login_prueft_die_bremse_vor_der_passwortpruefung():
         assert gerufen == [], "authenticate() darf gar nicht erst laufen"
     finally:
         api.UserService = original
+
+
+# ------------------------------------ Kennung: Benutzername oder E-Mail-Adresse
+def test_adresse_zaehlt_auf_denselben_schluessel_wie_der_benutzername():
+    """Seit man sich mit beidem anmelden darf, darf ein Konto nicht zwei getrennte
+    Zähler haben – sonst verdoppelt der bloße Wechsel der Form die Zahl der
+    erlaubten Versuche, und ein erfolgreicher Login (protokolliert wird immer der
+    Benutzername) setzte die andere Form nicht zurück."""
+    db = _db(konto='max')
+    assert api._zaehlschluessel(db, 'max@example.org') == 'max'
+
+
+def test_unbekannte_kennung_bleibt_stehen():
+    """Für erfundene Konten muss sich die Bremse genauso verhalten wie für
+    vorhandene – sonst wäre schon der Zählschlüssel eine Auskunft darüber,
+    welche Konten es gibt."""
+    db = _db(konto=None)
+    assert api._zaehlschluessel(db, '  Gibtsnicht ') == 'Gibtsnicht'
+
+
+def test_login_per_adresse_laeuft_in_die_sperre_des_kontos():
+    """Endpunkt-Sicht auf dasselbe: Zehn Fehlversuche auf „max" sperren auch den
+    Weg über „max@example.org"."""
+    db = _db(_fehlversuche(api.LOGIN_MAX_PRO_KONTO, username='max'), konto='max')
+    with pytest.raises(HTTPException) as e:
+        api.login(_request(), SimpleNamespace(),
+                  SimpleNamespace(username='max@example.org', password='geheim'),
+                  remember_me=False, db=db)
+    assert e.value.status_code == 429
