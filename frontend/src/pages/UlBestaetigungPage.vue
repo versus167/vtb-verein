@@ -30,7 +30,7 @@
       </q-item>
     </q-list>
     <div v-if="abrechnungen.length === 0" class="text-grey text-center q-py-lg">
-      Keine Abrechnungen in diesem Status.
+      {{ leerText }}
     </div>
 
     <!-- Detail -->
@@ -136,6 +136,12 @@ const statusFilterOptionen = [
   { label: 'Abgelehnt', value: 'abgelehnt' },
   { label: 'Alle', value: '' },
 ]
+
+// Bei „Alle" ist kein Status gewählt – „in diesem Status" wäre dann irreführend
+// und liest sich wie ein Filter, den man gar nicht gesetzt hat (#180).
+const leerText = computed(() => statusFilter.value
+  ? 'Keine Abrechnungen in diesem Status.'
+  : 'Keine Abrechnungen vorhanden.')
 
 function statusChip(status) {
   return {

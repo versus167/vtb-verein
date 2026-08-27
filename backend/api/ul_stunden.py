@@ -281,8 +281,17 @@ def anzahl_zu_bestaetigen(user, db) -> int:
 
 
 @router.get("/zu-bestaetigen")
-def list_zu_bestaetigen(user: CurrentUser, db: DB, status_filter: Optional[str] = 'eingereicht'):
-    """Abrechnungen zur Bestätigung – auf die Abteilungen des Abteilungsleiters beschränkt."""
+def list_zu_bestaetigen(user: CurrentUser, db: DB, status_filter: Optional[str] = None):
+    """Abrechnungen zur Bestätigung – auf die Abteilungen des Abteilungsleiters beschränkt.
+
+    Ohne `status_filter`: alle Status (#180). Der Default stand hier einmal auf
+    'eingereicht' – und weil das Frontend „Alle" dadurch ausdrückt, dass es den
+    Parameter *weglässt*, bekam man auf „Alle" stillschweigend wieder nur die
+    eingereichten. Sind die gerade alle bestätigt, blieb die Liste leer.
+
+    Was diese Sicht ausmacht, ist die Abteilungs-Beschränkung, nicht ein fest
+    verdrahteter Status – den wählt der Benutzer. Wer wirklich nur die offenen
+    zählen will, sagt es ausdrücklich (siehe `anzahl_zu_bestaetigen`)."""
     darf, abteilungen = _bestaetigungs_scope(user)
     if not darf:
         raise HTTPException(status_code=403, detail="Keine Berechtigung zur Bestätigung")
