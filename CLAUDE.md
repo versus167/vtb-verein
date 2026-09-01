@@ -49,6 +49,20 @@ Code.
 - Neue Permission-Keys als Konstante in `permission.py` ergänzen, im Admin-Seed (`_seed_data`)
   aufnehmen und für Bestands-Admins in der Migration nachziehen (Fresh == Upgrade).
 
+## Wiki (Architektur-/Hintergrundwissen)
+- Unter **`~/wikis/vtb`** liegt ein separat gepflegtes Wiki (eigenes Git-Repo,
+  `wiki-skills`-Plugin) mit Hintergrundwissen zu Architekturentscheidungen,
+  Berechtigungslogik und "warum ist das so"-Fragen. Kein Ersatz für diese Datei oder
+  den Code, sondern ergänzendes Kontextwissen, das sonst nur in Köpfen oder verstreuten
+  Notizen steckt.
+- **Vor folgenden Aufgaben zuerst per `wiki-query` nachschauen:** Fragen zur
+  Berechtigungslogik über das hier Beschriebene hinaus, Architektur-/Designentscheidungen,
+  die nicht offensichtlich aus dem Code hervorgehen, "warum wurde X so gelöst?"-Fragen.
+- **Nicht nötig bei:** reinen Implementierungsaufgaben ohne Hintergrundfragen, Bugfixes mit
+  im Code klar erkennbarer Ursache.
+- Neue, wiederkehrend relevante Erkenntnisse (nicht Tagesgeschäft) per `wiki-ingest`
+  festhalten, statt sie nur im PR-Kommentar oder Ticket verschwinden zu lassen.
+
 ## Tests
 - **Immer über das venv** ausführen: `./venv/bin/python -m pytest vtb_verein/tests/ -q`
   (nie System-Python). Warnungen sind Fehler (`filterwarnings = error`).
