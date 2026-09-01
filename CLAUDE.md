@@ -59,7 +59,7 @@ Code.
   Berechtigungslogik über das hier Beschriebene hinaus, Architektur-/Designentscheidungen,
   die nicht offensichtlich aus dem Code hervorgehen, "warum wurde X so gelöst?"-Fragen.
 - **Nicht nötig bei:** reinen Implementierungsaufgaben ohne Hintergrundfragen, Bugfixes mit
-  im Code klar erkennbarer Ursache.
+  im Code klar erkennbarer Ursache. Aber ein wiki.query kostet wenig und sollte im Zweifel trotzdem gemacht werden.
 - Neue, wiederkehrend relevante Erkenntnisse (nicht Tagesgeschäft) per `wiki-ingest`
   festhalten, statt sie nur im PR-Kommentar oder Ticket verschwinden zu lassen.
 
