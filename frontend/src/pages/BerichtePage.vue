@@ -223,9 +223,11 @@ const entwicklungReihe = computed(() =>
   (data.value?.entwicklung?.[entwicklungGran.value] || []).map((e) => ({
     ...e,
     istZukunft: istZukunftsperiode(e.periode),
+    // Am Handy ist eine Spalte ~20 px breit – ein vierstelliges Jahr braucht dort
+    // rund 26 px und überlappt den Nachbarn. Darum unter `sm` auf «'15» kürzen (#186).
     label: entwicklungGran.value === 'monat'
       ? MONATE_KURZ[Number(e.periode.slice(5, 7)) - 1]
-      : e.periode,
+      : ($q.screen.lt.sm ? `'${e.periode.slice(2)}` : e.periode),
   })),
 )
 
@@ -323,5 +325,18 @@ onMounted(load)
   top: 0;
   bottom: 18px;
   border-left: 1px dashed #9e9e9e;
+}
+
+/* Handy (#186): 12 Perioden × 2 Balken + Beschriftung wollen in ~300 px. Damit alle
+   zwölf gleichzeitig sichtbar bleiben – der Sinn eines Trend-Charts – werden die
+   Abstände zusammengezogen und die Zahl im Balken weggelassen; sie passt in einen
+   ~9 px breiten Balken ohnehin nicht. Die genauen Werte stehen weiter im title. */
+@media (max-width: 599px) {
+  .entwicklung-chart { gap: 2px; }
+  .entwicklung-bars  { gap: 2px; }
+  .entwicklung-wert  { display: none; }
+  .entwicklung-jahr:not(.ist-zukunft) + .entwicklung-jahr.ist-zukunft::before {
+    left: -1px;
+  }
 }
 </style>
