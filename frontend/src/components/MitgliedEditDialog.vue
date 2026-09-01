@@ -45,7 +45,12 @@
             </div>
             <div class="row q-gutter-sm">
               <q-input v-if="!personMode && !istGast" v-model="form.mitgliedsnummer" label="Mitgliedsnr." outlined dense type="number" class="col" :readonly="!canWrite" />
-              <q-input v-model="form.geburtsdatum" :label="istGast ? 'Geburtsdatum' : 'Geburtsdatum *'" outlined dense type="date" class="col" :readonly="!canWrite" />
+              <q-input v-model="form.geburtsdatum" :label="istGast ? 'Geburtsdatum' : 'Geburtsdatum *'" outlined dense type="date" class="col" :readonly="!canWrite">
+                <!-- Alter direkt am Feld (#182); aktualisiert sich beim Tippen mit -->
+                <template v-if="alterImFormular !== null" #append>
+                  <span class="text-caption text-grey-7">{{ alterImFormular }} J.</span>
+                </template>
+              </q-input>
               <q-select
                 v-model="form.geschlecht" label="Geschlecht" outlined dense class="col"
                 :options="geschlechtOptions" emit-value map-options clearable
@@ -592,6 +597,7 @@ import { mailRule, mailRulePflicht, pruefeMailadresse } from 'src/utils/email'
 import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
+import { alterAus } from 'src/utils/datetime'
 import { datumLang, istBeendet, istKuenftig, istLaufend, monatsErster, monatsErsteAuswahl, vortag } from 'src/utils/zeitraum'
 
 const props = defineProps({
@@ -609,6 +615,10 @@ const emit = defineEmits(['update:modelValue', 'saved'])
 
 const $q = useQuasar()
 const auth = useAuthStore()
+
+// Alter zum eingetragenen Geburtsdatum (#182) – null, solange das Feld leer,
+// unvollständig oder in der Zukunft ist.
+const alterImFormular = computed(() => alterAus(form.value.geburtsdatum))
 
 const canWrite = computed(() => auth.hasPermission('personen.write'))
 const canDelete = computed(() => auth.hasPermission('personen.delete'))

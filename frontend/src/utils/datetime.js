@@ -36,6 +36,20 @@ export function formatDate(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : v
 }
 
+// Reine Datumsangabe "YYYY-MM-DD[…]" → Alter in vollen Jahren (null bei leer,
+// unparsbar oder in der Zukunft). Bewusst per Regex und nicht über new Date():
+// ein reines Datum durch die Zeitzone zu schicken kippt es auf den Vortag – siehe
+// Kopfkommentar. `heute` ist nur zum Testen gedacht.
+export function alterAus(v, { heute = new Date() } = {}) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v ?? ''))
+  if (!m) return null
+  const jahr = +m[1], monat = +m[2], tag = +m[3]
+  const vorGeburtstag = (heute.getMonth() + 1) < monat
+    || ((heute.getMonth() + 1) === monat && heute.getDate() < tag)
+  const alter = heute.getFullYear() - jahr - (vorGeburtstag ? 1 : 0)
+  return alter >= 0 ? alter : null
+}
+
 // Zeitstempel → grobe Abstandsangabe ("vor 3 Tagen"). Für Aktivitäts-Anzeigen
 // (letzter Login, zuletzt aktiv): dort zählt „wie lange her", nicht der Kalendertag.
 // Das genaue Datum gehört daneben in einen Tooltip.

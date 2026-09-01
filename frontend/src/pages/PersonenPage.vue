@@ -702,7 +702,7 @@ import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { mailRule, mailRulePflicht } from 'src/utils/email'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
-import { formatDateTime, formatRelative } from 'src/utils/datetime'
+import { formatDateTime, formatRelative, alterAus } from 'src/utils/datetime'
 import { aktivesTheme } from 'src/composables/useTheme'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
@@ -859,6 +859,14 @@ const columns = computed(() => {
   return cols
 })
 
+// Geburtsdatum mit Alter dahinter: "2010-05-14 (16)". Ohne verwertbares Datum
+// bleibt es beim Rohwert bzw. dem Gedankenstrich.
+function mitAlter(v) {
+  if (!v) return '—'
+  const a = alterAus(v)
+  return a === null ? v : `${v} (${a})`
+}
+
 // Spalten sind tab-abhängig: Im Tab "Nur Benutzer" interessieren Rolle und
 // letzte Aktivität statt Geburtstag/Eintritt (Ticket #14).
 function spaltenFuerFilter() {
@@ -892,7 +900,10 @@ function spaltenFuerFilter() {
     cols.push({ name: 'rolle', label: 'Rolle', field: 'role', align: 'left', sortable: true })
   } else {
     cols.push(
-      { name: 'geburtsdatum', label: 'Geburtstag', field: r => r.mitglied?.geburtsdatum, align: 'left', sortable: true },
+      // Alter in Klammern dahinter (#182). Sortiert wird über `field`, also weiter
+      // nach dem Datum – nicht nach dem formatierten String.
+      { name: 'geburtsdatum', label: 'Geburtstag', field: r => r.mitglied?.geburtsdatum,
+        align: 'left', sortable: true, format: mitAlter },
       { name: 'eintritt',     label: 'Eintritt/Austritt', field: r => r.mitglied?.austrittsdatum || r.mitglied?.eintrittsdatum, align: 'left', sortable: true },
     )
   }
