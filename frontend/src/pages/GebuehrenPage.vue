@@ -193,6 +193,7 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { alterAus } from 'src/utils/datetime'
 
 const $q = useQuasar()
 const auth = useAuthStore()
@@ -321,16 +322,7 @@ function filterMitglieder(val, update) {
 const selectedMitglied = computed(() =>
   alleMitglieder.value.find(m => m.id === fForm.value.mitglied_id) || null)
 
-const mitgliedAlter = computed(() => {
-  const g = selectedMitglied.value?.geburtsdatum
-  if (!g) return null
-  const d = new Date(g)
-  if (isNaN(d.getTime())) return null
-  const t = new Date()
-  let a = t.getFullYear() - d.getFullYear()
-  if (t.getMonth() < d.getMonth() || (t.getMonth() === d.getMonth() && t.getDate() < d.getDate())) a--
-  return a
-})
+const mitgliedAlter = computed(() => alterAus(selectedMitglied.value?.geburtsdatum))
 
 const selectedMitgliedAbteilungen = computed(() => {
   const m = selectedMitglied.value
