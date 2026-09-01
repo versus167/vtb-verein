@@ -3,7 +3,8 @@
     <div class="row items-center q-mb-md q-gutter-sm">
       <div class="text-h5">Zugänge</div>
       <q-space />
-      <q-chip dense outline color="primary" :label="`${mitZugang} von ${zeilen.length} freigeschaltet`" />
+      <q-chip dense outline color="primary"
+        :label="`${mitZugang} von ${imBlick.length} freigeschaltet`" />
     </div>
 
     <div class="text-caption text-grey q-mb-md">
@@ -22,6 +23,16 @@
         >
           <template #prepend><q-icon name="search" /></template>
         </q-input>
+      </div>
+      <div v-if="mannschaftOptionen.length" class="col-12 col-sm-auto">
+        <q-select
+          v-model="mannschaftFilter" :options="mannschaftOptionen"
+          option-value="id" option-label="label" emit-value map-options
+          label="Mannschaft" outlined dense clearable
+          style="min-width: 200px"
+        >
+          <template #prepend><q-icon name="groups" /></template>
+        </q-select>
       </div>
       <div class="col-12 col-sm-auto">
         <q-btn-toggle
@@ -51,10 +62,8 @@
             <template v-if="z.user_id && !z.zugang_geloescht">
               · {{ z.email }}
               <span v-if="!z.active"> · deaktiviert</span>
-              <span v-else-if="z.last_login"> · zuletzt angemeldet {{ fmtDatum(z.last_login) }}</span>
-              <span v-else-if="z.einladung_status === 'fehler'" class="text-negative">
+              <span v-else-if="!z.last_login && z.einladung_status === 'fehler'" class="text-negative">
                 · Einladung nicht versendet</span>
-              <span v-else> · noch nicht angemeldet</span>
             </template>
             <template v-else-if="z.zugang_geloescht">
               · Konto im Papierkorb
@@ -62,6 +71,23 @@
             <template v-else-if="!z.mails.length">
               · keine Mailadresse hinterlegt
             </template>
+          </q-item-label>
+          <q-item-label v-if="z.mannschaften?.length" caption lines="1">
+            <q-icon name="groups" size="14px" class="q-mr-xs" />{{ kaderText(z) }}
+          </q-item-label>
+          <!-- Login ≠ Aktivität: „angemeldet" ist der letzte echte Login, „aktiv"
+               der letzte Request. Beim Rollout ist genau das die Frage – hat die
+               Person den Zugang je benutzt, und benutzt sie ihn noch? -->
+          <q-item-label v-if="z.user_id && !z.zugang_geloescht" caption lines="1">
+            <span v-if="z.last_login">
+              zuletzt angemeldet {{ formatRelative(z.last_login) }}
+              <q-tooltip>{{ formatDateTime(z.last_login) }}</q-tooltip>
+            </span>
+            <span v-else>noch nicht angemeldet</span>
+            <span v-if="z.last_seen">
+              · aktiv {{ formatRelative(z.last_seen) }}
+              <q-tooltip>{{ formatDateTime(z.last_seen) }}</q-tooltip>
+            </span>
           </q-item-label>
         </q-item-section>
         <q-item-section side>
@@ -132,11 +158,16 @@
                 Mailadresse <b>{{ aktuell.email }}</b>
               </div>
               <div class="text-caption text-grey q-mt-sm">
-                <template v-if="!aktuell.active">Zugang ist deaktiviert.</template>
-                <template v-else-if="aktuell.last_login">
-                  Zuletzt angemeldet {{ fmtDatum(aktuell.last_login) }}.
-                </template>
-                <template v-else>Noch nie angemeldet.</template>
+                <div v-if="!aktuell.active">Zugang ist deaktiviert.</div>
+                <div v-if="aktuell.last_login">
+                  Zuletzt angemeldet {{ formatRelative(aktuell.last_login) }}
+                  ({{ formatDateTime(aktuell.last_login) }}).
+                </div>
+                <div v-else>Noch nie angemeldet.</div>
+                <div v-if="aktuell.last_seen">
+                  Zuletzt aktiv {{ formatRelative(aktuell.last_seen) }}
+                  ({{ formatDateTime(aktuell.last_seen) }}).
+                </div>
               </div>
 
               <!-- Versandstand der letzten Einladung: „abgeschickt" ist alles, was
@@ -144,13 +175,13 @@
               <div v-if="aktuell.einladung_status === 'fehler'"
                 class="text-caption text-negative q-mt-sm">
                 <q-icon name="error_outline" size="16px" class="q-mr-xs" />
-                Die Einladung vom {{ fmtDatum(aktuell.einladung_zuletzt) }} konnte nicht
+                Die Einladung vom {{ formatDateTime(aktuell.einladung_zuletzt) }} konnte nicht
                 versendet werden. Adresse prüfen und neu einladen.
               </div>
               <div v-else-if="aktuell.einladung_status === 'ok'"
                 class="text-caption text-grey q-mt-sm">
                 <q-icon name="mark_email_read" size="16px" class="q-mr-xs" />
-                Einladung am {{ fmtDatum(aktuell.einladung_zuletzt) }} abgeschickt
+                Einladung am {{ formatDateTime(aktuell.einladung_zuletzt) }} abgeschickt
                 (ob sie ankam, sieht die App nicht).
               </div>
               <div v-else-if="!aktuell.last_login" class="text-caption text-grey q-mt-sm">
@@ -222,6 +253,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { formatDateTime, formatRelative } from 'src/utils/datetime'
 import MailAuswahl from 'components/MailAuswahl.vue'
 
 defineOptions({ name: 'ZugaengePage' })
@@ -234,6 +266,7 @@ const zeilen = ref([])
 const loading = ref(false)
 const suche = ref('')
 const filter = ref('ohne')
+const mannschaftFilter = ref(null)
 const dialogOpen = ref(false)
 const aktuell = ref(null)
 const mail = ref(null)
@@ -244,13 +277,49 @@ const error = ref('')
 // Deckel gegen eine 600-Zeilen-Liste am Handy; wer jemanden sucht, tippt ohnehin.
 const MAX_TREFFER = 60
 
+// Auswahl aus den geladenen Zeilen ableiten statt aus /api/mannschaften/: So
+// erscheinen nur Mannschaften, in denen wirklich jemand aus dem eigenen Bereich
+// steht – der Abteilungs-Scope der Liste gilt damit automatisch auch hier.
+const mannschaftOptionen = computed(() => {
+  const nachId = new Map()
+  const namensZaehler = new Map()
+  for (const z of zeilen.value) {
+    for (const m of z.mannschaften || []) {
+      if (nachId.has(m.id)) continue
+      nachId.set(m.id, m)
+      namensZaehler.set(m.name, (namensZaehler.get(m.name) || 0) + 1)
+    }
+  }
+  // Mannschaftsnamen sind nur je Abteilung eindeutig („1. Mannschaft" gibt es
+  // mehrfach) – bei Dubletten die Abteilung dazuschreiben, sonst nicht.
+  return [...nachId.values()]
+    .map((m) => ({
+      id: m.id,
+      label: namensZaehler.get(m.name) > 1 && m.abteilung
+        ? `${m.name} · ${m.abteilung}` : m.name,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'))
+})
+
+// Bezugsgröße für den Zähler oben: bei gewählter Mannschaft deren Kader, sonst
+// der ganze Verein. „12 von 18 freigeschaltet" ist beim Rollout die Zahl, die zählt.
+const imBlick = computed(() => (mannschaftFilter.value == null
+  ? zeilen.value
+  : zeilen.value.filter((z) => imKader(z))))
+
 const mitZugang = computed(
-  () => zeilen.value.filter((z) => z.user_id && !z.zugang_geloescht).length,
+  () => imBlick.value.filter((z) => z.user_id && !z.zugang_geloescht).length,
 )
+
+function imKader(z) {
+  return (z.mannschaften || []).some((m) => m.id === mannschaftFilter.value)
+}
+
+const kaderText = (z) => (z.mannschaften || []).map((m) => m.name).join(', ')
 
 const gefiltert = computed(() => {
   const q = (suche.value || '').trim().toLowerCase()
-  return zeilen.value.filter((z) => {
+  return imBlick.value.filter((z) => {
     const hatZugang = !!z.user_id && !z.zugang_geloescht
     if (filter.value === 'ohne' && hatZugang) return false
     if (filter.value === 'mit' && !hatZugang) return false
@@ -298,8 +367,6 @@ function statusFarbe(z) {
   if (!z.last_login && z.einladung_status === 'fehler') return 'negative'
   return z.last_login ? 'positive' : 'primary'
 }
-
-const fmtDatum = (v) => (v ? new Date(v).toLocaleDateString('de-DE') : '')
 
 async function load() {
   loading.value = true

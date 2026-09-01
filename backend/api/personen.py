@@ -621,8 +621,9 @@ def list_freischaltung(user: CurrentUser, db: DB):
     Bewusst NICHT `list_personen`: Freischalter sollen Zugänge verteilen können,
     ohne Bankdaten, Beiträge oder Adressen zu sehen. Geliefert wird nur, was für
     die Entscheidung „wer bekommt einen Login und an welche Adresse" nötig ist –
-    Name, Jahrgang (unterscheidet Namensvettern), Abteilungen, hinterlegte
-    Mailadressen und der Zustand des Kontos.
+    Name, Jahrgang (unterscheidet Namensvettern), Abteilungen, Mannschaften
+    (#183: der Rollout läuft kaderweise), hinterlegte Mailadressen und der
+    Zustand des Kontos samt Login-/Aktivitätszeitpunkt.
 
     Ausgetretene sind draußen (Ist-Stand heute, vgl. Statistik-Semantik).
     """
@@ -636,11 +637,26 @@ def list_freischaltung(user: CurrentUser, db: DB):
             SELECT m.id AS mitglied_id, m.vorname, m.nachname, m.mitgliedsnummer,
                    NULLIF(substring(m.geburtsdatum from 1 for 4), '') AS geburtsjahr,
                    u.id AS user_id, u.username, u.email, u.active, u.last_login,
+                   u.last_seen,
                    (u.id IS NOT NULL AND u.deleted_at IS NOT NULL) AS zugang_geloescht,
                    (SELECT string_agg(DISTINCT a.name, ', ' ORDER BY a.name)
                       FROM mitglied_abteilung ma
                       JOIN abteilung a ON a.id = ma.abteilung_id
                      WHERE ma.mitglied_id = m.id AND ma.deleted_at IS NULL) AS abteilungen,
+                   -- Kader am heutigen Tag (#183): Beim Rollout geht das Freischalten
+                   -- mannschaftsweise, die Abteilung allein ist dafür zu grob. DISTINCT,
+                   -- weil dieselbe Mannschaft mehrfach am Mitglied hängen kann (zwei
+                   -- Rollen, aufeinanderfolgende Zeiträume).
+                   (SELECT json_agg(k ORDER BY k.name)
+                      FROM (SELECT DISTINCT t.id, t.name, ta.name AS abteilung
+                              FROM mitglied_mannschaft mm
+                              JOIN mannschaft t ON t.id = mm.mannschaft_id
+                                               AND t.deleted_at IS NULL
+                              LEFT JOIN abteilung ta ON ta.id = t.abteilung_id
+                             WHERE mm.mitglied_id = m.id AND mm.deleted_at IS NULL
+                               AND mm.von <= CURRENT_DATE::text
+                               AND (mm.bis IS NULL
+                                    OR mm.bis >= CURRENT_DATE::text)) k) AS mannschaften,
                    (SELECT json_agg(json_build_object(
                                'wert', k.wert,
                                'primaer', k.ist_primaer,
@@ -673,8 +689,10 @@ def list_freischaltung(user: CurrentUser, db: DB):
         if erlaubt is not None and r['mitglied_id'] not in erlaubt:
             continue
         r['mails'] = r['mails'] or []
+        r['mannschaften'] = r['mannschaften'] or []
         r['einladung_zuletzt'] = _ts_iso(r['einladung_zuletzt'])
         r['last_login'] = _ts_iso(r['last_login'])
+        r['last_seen'] = _ts_iso(r['last_seen'])
         ergebnis.append(r)
     return ergebnis
 
