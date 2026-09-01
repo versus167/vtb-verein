@@ -35,3 +35,22 @@ export function formatDate(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v))
   return m ? `${m[3]}.${m[2]}.${m[1]}` : v
 }
+
+// Zeitstempel → grobe Abstandsangabe ("vor 3 Tagen"). Für Aktivitäts-Anzeigen
+// (letzter Login, zuletzt aktiv): dort zählt „wie lange her", nicht der Kalendertag.
+// Das genaue Datum gehört daneben in einen Tooltip.
+export function formatRelative(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
+  const d = parseTimestamp(v)
+  if (!d) return placeholder
+  const min = Math.floor((Date.now() - d.getTime()) / 60000)
+  if (min < 1)  return 'gerade eben'
+  if (min < 60) return `vor ${min} Min.`
+  const h = Math.floor(min / 60)
+  if (h < 24)   return `vor ${h} Std.`
+  const tage = Math.floor(h / 24)
+  if (tage < 30)  return `vor ${tage} Tag${tage === 1 ? '' : 'en'}`
+  const monate = Math.floor(tage / 30)
+  if (monate < 12) return `vor ${monate} Monat${monate === 1 ? '' : 'en'}`
+  const jahre = Math.floor(tage / 365)
+  return `vor ${jahre} Jahr${jahre === 1 ? '' : 'en'}`
+}

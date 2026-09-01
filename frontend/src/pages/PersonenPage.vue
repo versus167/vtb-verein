@@ -113,7 +113,7 @@
             </q-chip>
           </div>
           <div v-if="p.last_seen" class="text-caption text-grey-5">
-            Zuletzt aktiv: {{ formatLastLogin(p.last_seen) }}
+            Zuletzt aktiv: {{ formatRelative(p.last_seen) }}
           </div>
         </q-card-section>
         <q-separator />
@@ -275,7 +275,7 @@
       <template #body-cell-last_seen="props">
         <q-td :props="props">
           <span v-if="props.row.last_seen" class="text-caption">
-            {{ formatLastLogin(props.row.last_seen) }}
+            {{ formatRelative(props.row.last_seen) }}
             <q-tooltip>{{ new Date(props.row.last_seen).toLocaleString('de-DE') }}</q-tooltip>
           </span>
           <span v-else class="text-grey">—</span>
@@ -702,7 +702,7 @@ import MitgliedEditDialog from 'src/components/MitgliedEditDialog.vue'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { mailRule, mailRulePflicht } from 'src/utils/email'
 import { proposeAufnahmegebuehr } from 'src/utils/aufnahmegebuehr'
-import { formatDateTime } from 'src/utils/datetime'
+import { formatDateTime, formatRelative } from 'src/utils/datetime'
 import { aktivesTheme } from 'src/composables/useTheme'
 
 // Name wird für <keep-alive :include="['PersonenPage']"> im MainLayout benötigt,
@@ -1031,21 +1031,6 @@ const zahlungsartOptionen = [
   { label: 'Lastschrift', value: 'lastschrift' },
   { label: 'Sonstiges', value: 'sonstiges' },
 ]
-
-function formatLastLogin(iso) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const min  = Math.floor(diff / 60000)
-  if (min < 1)   return 'gerade eben'
-  if (min < 60)  return `vor ${min} Min.`
-  const h = Math.floor(min / 60)
-  if (h < 24)    return `vor ${h} Std.`
-  const d = Math.floor(h / 24)
-  if (d < 30)    return `vor ${d} Tag${d === 1 ? '' : 'en'}`
-  const m = Math.floor(d / 30)
-  if (m < 12)    return `vor ${m} Monat${m === 1 ? '' : 'en'}`
-  const y = Math.floor(d / 365)
-  return `vor ${y} Jahr${y === 1 ? '' : 'en'}`
-}
 
 // Konto ohne Zugang: existiert als Benutzer, hat aber keinen Anmeldeweg – weder
 // E-Mail (Magic-Link) noch Passwort. So werden Schlüsselträger ohne App-Konto
