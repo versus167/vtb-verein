@@ -427,3 +427,69 @@ class TestParentGate:
                                                                 parent_hold_days=365)
         assert ids_sql in cnt_sql
         assert ids_params == cnt_params
+
+
+class TestUebungsleiterAufbewahrung:
+    """#188: ÜL-Abrechnungen und -Sätze hatten weder eine ArchiveRule noch eine LogRule –
+    sie alterten also nie und hielten damit jeden Übungsleiter, der je eine Abrechnung
+    eingereicht hatte, dauerhaft in Tor 4 fest."""
+
+    def test_abrechnung_altert_ab_jahresende_des_zeitraums(self):
+        """Datiert über das Ende des abgerechneten Zeitraums, nicht über das Einreichen:
+        aufbewahrungspflichtig ist die Leistung, nicht der Verwaltungsakt."""
+        regel = _archive("ul_abrechnung_alter")
+        assert regel.table == "ul_abrechnung"
+        assert regel.date_expr == _ab_jahresende("zeitraum_bis")
+        assert regel.default_days == 10 * 365
+
+    def test_stunden_wandern_mit_der_abrechnung(self):
+        """Die Stunden sind Belegzeilen der Abrechnung. Blieben sie aktiv, hielte Tor 4
+        die Abrechnung im Papierkorb fest – der Löschpfad käme keinen Schritt weiter."""
+        regel = _archive("ul_abrechnung_alter")
+        assert {(c.table, c.fk) for c in regel.children} == \
+            {("ul_stunde", "abrechnung_id")}
+
+    def test_satz_bekommt_bewusst_keine_datumsregel(self):
+        """Ein Vergütungssatz hat kein natürliches Enddatum. Eine Alters-Regel würde
+        Sätze archivieren, die noch in Benutzung sind – und damit jede künftige
+        Abrechnung entwerten."""
+        assert not [r for r in ARCHIVE_REGISTRY if r.table == "ul_satz"]
+
+    def test_satz_stirbt_mit_seinem_uebungsleiter(self):
+        """Stattdessen hängt er am Ausscheiden – wie clubdeckel_berechtigung."""
+        kinder = {(c.table, c.fk) for c in _archive("mitglied_austritt_alter").children}
+        assert ("ul_satz", "mitglied_id") in kinder
+
+    def test_fibu_export_wartet_auf_die_abrechnung(self):
+        """Die beiden Export-Spalten der Abrechnung sind (anders als bei den Forderungen)
+        ohne FK angelegt – ohne Guard könnte der Export vor ihr verschwinden und eine
+        Export-Nummer zurücklassen, die auf nichts mehr zeigt."""
+        refs = {(c.table, c.fk) for c in _entity("fibu_export").children}
+        assert {("ul_abrechnung", "exportiert_in_export_id"),
+                ("ul_abrechnung", "storno_exportiert_in_export_id")} <= refs
+
+    def test_kein_ul_kind_haelt_das_mitglied_mehr_fest(self):
+        """Der eigentliche Zweck von #188: Ein Kind ohne eigene Uhr blockiert Tor 4 des
+        Mitglieds für immer. Nach dieser Änderung altert jedes ÜL-Kind – übrig bleiben
+        nur die vier Teamkassen-Tabellen aus #187.
+
+        Wer hier eine Tabelle ergänzt, muss begründen, warum ein ausgeschiedenes
+        Mitglied ihretwegen dauerhaft mit Namen und Adresse im Papierkorb liegt.
+        """
+        NOCH_OHNE_UHR = {
+            "clubdeckel":        "#187: Teamkasse ist Stammdatum, altert (noch) nicht",
+            "clubdeckel_buchung": "#187: Ledger braucht erst den Saldovortrag",
+            "clubdeckel_event":  "#187: hängt an der Teamkasse",
+            "clubdeckel_gruppe": "#187: Sortiments-Stand begründet alte Buchungen",
+        }
+        altert = {r.table for r in ARCHIVE_REGISTRY}
+        altert |= {c.table for r in ARCHIVE_REGISTRY for c in r.children}
+        altert |= {r.table for r in LOG_REGISTRY}
+
+        blocker = {c.table for c in _entity("mitglied").children} - altert
+        assert blocker == set(NOCH_OHNE_UHR), (
+            "Kinder von mitglied ohne eigenen Alterungspfad: "
+            + ", ".join(sorted(blocker - set(NOCH_OHNE_UHR)))
+            + " | erledigte Ausnahmen bitte streichen: "
+            + ", ".join(sorted(set(NOCH_OHNE_UHR) - blocker))
+        )

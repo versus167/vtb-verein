@@ -235,6 +235,15 @@ class ULAbrechnungRepository(BaseRepository):
         Der Zuschnitt (mitglied + abteilung) ist ebenfalls der der Sperre: Eine
         Pauschale in Fußball und eine in Turnen sind zwei Vereinbarungen und werden
         im selben Monat beide bezahlt.
+
+        Reicht bewusst unbegrenzt weit zurück – und wird seit #188 nach zehn Jahren
+        beschnitten, weil `ul_abrechnung_alter` alte Abrechnungen in den Papierkorb
+        schiebt (`deleted_at IS NULL` blendet sie hier aus). Ein so alter Monat wäre
+        rechnerisch wieder frei, praktisch aber unerreichbar: Das Sperr-Wasserzeichen
+        (`max_gesperrt_bis` + 1 Tag) lässt keine Erfassung in der Vergangenheit zu.
+        Nur wenn die GESAMTE Historie eines ÜL wegfällt, fällt auch das Wasserzeichen –
+        dann ist die Vergangenheit wieder offen. Bei zehn Jahren Abstand ist das kein
+        Fehler, sondern das Ende der Aufbewahrung.
         """
         sql = """
             SELECT zeitraum_von, zeitraum_bis
