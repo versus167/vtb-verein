@@ -13,6 +13,7 @@ wird beim Lesen ausgeblendet, damit es niemand aktiv auswählt — es trägt nur
 Altbestand aus der Migration.
 """
 from dataclasses import asdict
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -23,6 +24,10 @@ from app.models.spielstaette import Spielstaette
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/spielstaetten", tags=["spielstaetten"])
+
+# Obergrenze des Belegungs-Zeitraums. Zwei Monate: Die Ansicht zeigt eine Woche,
+# ein Monatsblick ist plausibel, ein aufgeklapptes Jahr ein Versehen.
+MAX_FENSTER_TAGE = 62
 
 
 class SpielstaetteWrite(BaseModel):
@@ -49,6 +54,39 @@ def _require_verwalten(user) -> None:
                             "Keine Berechtigung, Spielstätten zu verwalten")
 
 
+def _require_belegung(user) -> None:
+    """Den Belegungsplan darf lesen, wer ihn braucht — ohne Umweg über zwei Rechte.
+
+    `spielstaetten.belegung` ist das gemeinte Recht (Platzwart). Wer die Plätze pflegt
+    oder ohnehin alle Termine verwaltet, sieht denselben Plan; ihm dafür ein zweites
+    Recht zuzuteilen wäre Verwaltungsarbeit ohne Erkenntnisgewinn. Dasselbe Muster wie
+    `system.config` bei den Stammdaten oben.
+    """
+    if not (user.has_permission(Permission.SPIELSTAETTEN_BELEGUNG)
+            or user.has_permission(Permission.SPIELSTAETTEN_VERWALTEN)
+            or user.has_permission(Permission.TERMINE_VERWALTEN)):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Keine Berechtigung für den Belegungsplan")
+
+
+def _fenster(von: str, bis: str) -> tuple[str, str]:
+    """Datumsfenster prüfen und begrenzen.
+
+    Die Obergrenze ist kein Schutz vor Angreifern (das Recht hat man oder nicht),
+    sondern vor Versehen: Ein aufgeklapptes Jahr liefert Tausende Zeilen an eine
+    Ansicht, die eine Woche darstellen soll.
+    """
+    try:
+        d_von, d_bis = date.fromisoformat(von), date.fromisoformat(bis)
+    except ValueError:
+        raise HTTPException(422, "von/bis müssen Datumsangaben (YYYY-MM-DD) sein")
+    if d_bis < d_von:
+        raise HTTPException(422, "bis liegt vor von")
+    if (d_bis - d_von).days + 1 > MAX_FENSTER_TAGE:
+        raise HTTPException(422, f"Zeitraum umfasst höchstens {MAX_FENSTER_TAGE} Tage")
+    return d_von.isoformat(), d_bis.isoformat()
+
+
 def _clean(w: SpielstaetteWrite) -> Spielstaette:
     name = (w.name or '').strip()
     if not name:
@@ -71,6 +109,28 @@ def _clean(w: SpielstaetteWrite) -> Spielstaette:
 def list_spielstaetten(user: CurrentUser, db: DB, mit_unbekannt: bool = False):
     """Auswählbare Spielstätten. `mit_unbekannt` nur für Auswertungen."""
     return [asdict(s) for s in db.spielstaetten.list_all(mit_unbekannt=mit_unbekannt)]
+
+
+@router.get("/belegung")
+def belegung(user: CurrentUser, db: DB, von: str, bis: str):
+    """Belegungsplan der eigenen Plätze im Zeitraum (#152).
+
+    Liefert die Plätze getrennt von den Terminen, weil ein Platz OHNE Belegung im Plan
+    stehen muss — die freie Zeile ist die eigentliche Aussage für den Platzwart.
+    `parallel_moeglich` sagt, wie viele Termine gleichzeitig auf einen Platz passen
+    (geteiltes Kleinfeld), und ist damit die Grundlage dafür, eine Überschneidung als
+    Konflikt zu erkennen statt nur als Nebeneinander.
+
+    Steht VOR den `/{spielstaette_id}`-Routen: Sonst führe „belegung" als ID ins Leere.
+    """
+    _require_belegung(user)
+    von, bis = _fenster(von, bis)
+    return {
+        "von": von,
+        "bis": bis,
+        "plaetze": [asdict(s) for s in db.spielstaetten.list_eigene()],
+        "termine": [asdict(t) for t in db.termine.belegung(von, bis)],
+    }
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
