@@ -114,6 +114,16 @@ class Permission:
     # bekommen. SYSTEM_CONFIG bleibt als Obermenge gültig – siehe
     # backend/api/spielstaetten.py::_require_verwalten.
     SPIELSTAETTEN_VERWALTEN = 'spielstaetten.verwalten'
+    # Belegungsplan der eigenen Plätze lesen – wer wann auf welchem Platz ist, quer
+    # über ALLE Mannschaften. Gedacht für Platzwarte, die weder Termine verwalten
+    # noch Stammdaten pflegen müssen, aber wissen, wann gemäht werden kann.
+    # Bewusst NICHT abteilungsgescoped: Ein Platz gehört dem Verein, nicht einer
+    # Abteilung, und eine halbe Belegung wäre schlimmer als keine – sie zeigte einen
+    # Platz als frei, den eine andere Abteilung belegt. Personenbezogene Daten
+    # enthält der Plan keine (Mannschaft, Zeit, Gegner).
+    # Wer `spielstaetten.verwalten` oder `termine.verwalten` hat, sieht ihn ohnehin
+    # (siehe backend/api/spielstaetten.py::_require_belegung).
+    SPIELSTAETTEN_BELEGUNG = 'spielstaetten.belegung'
 
     # --- Tickets ---
     # Grundzugriff: Zugang zur Ticket-Seite, alle Tickets lesen, Tickets erstellen, öffentliche Kommentare schreiben

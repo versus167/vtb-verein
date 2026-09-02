@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 117
+SCHEMA_VERSION = 118
 
 
 # ---------------------------------------------------------------------------
@@ -1753,6 +1753,7 @@ _CHIP_GRUPPE_UNIQUE_INDEXES = (
 # Spielstätten-Pflege als eigenes Recht (Schema v86) – vorher an system.config
 # gekoppelt, das aber zusätzlich Datenbereinigung und Mitglieder-Import öffnet.
 _PERM_SPIELSTAETTEN_VERWALTEN = 'spielstaetten.verwalten'
+_PERM_SPIELSTAETTEN_BELEGUNG = 'spielstaetten.belegung'
 _PERM_SYSTEM_CONFIG = 'system.config'
 
 # Zugang freischalten als eigenes Recht (Schema v88) – vorher nur über
@@ -4151,6 +4152,7 @@ class Database:
             115: self._migrate_v114_to_v115,
             116: self._migrate_v115_to_v116,
             117: self._migrate_v116_to_v117,
+            118: self._migrate_v117_to_v118,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8853,6 +8855,34 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 117 WHERE id = 1")
 
+    def _migrate_v117_to_v118(self) -> None:
+        """Neues Recht `spielstaetten.belegung` (#152).
+
+        Reine Rechte-Migration, kein Schema. Der Belegungsplan zeigt, wer wann auf
+        welchem eigenen Platz ist — quer über alle Mannschaften und damit über alle
+        Abteilungen. Gedacht für Platzwarte, die weder Termine verwalten noch
+        Stammdaten pflegen müssen.
+
+        Nachgezogen wird nur für Admins (analog Frisch-Seed). Wer
+        `spielstaetten.verwalten` oder `termine.verwalten` hält, sieht den Plan
+        ohnehin, weil der Endpoint beide als Obermenge akzeptiert — dasselbe Muster,
+        mit dem `system.config` bei den Spielstätten-Stammdaten weitergilt. Ein
+        zweiter Eintrag in `user_permissions` brächte dort nichts als Rauschen in der
+        Rechte-Matrix.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_permissions (user_id, permission, created_by, updated_by)
+                SELECT id, %s, 'SYSTEM', 'SYSTEM' FROM users
+                WHERE role = 'admin' AND deleted_at IS NULL
+                ON CONFLICT DO NOTHING
+                """,
+                (_PERM_SPIELSTAETTEN_BELEGUNG,),
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 118 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -11278,6 +11308,7 @@ class Database:
             'tresor.verwalten',
             'termine.verwalten',
             'spielstaetten.verwalten',
+            _PERM_SPIELSTAETTEN_BELEGUNG,
             _PERM_PERSONEN_FREISCHALTEN,
             _PERM_TERMINE_GAESTE_VEREINSWEIT,
         }

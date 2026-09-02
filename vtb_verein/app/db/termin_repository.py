@@ -759,6 +759,42 @@ class TerminRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def belegung(self, von: str, bis: str) -> list[Termin]:
+        """Alle Termine auf EIGENEN Spielstätten im Datumsfenster – der Belegungsplan (#152).
+
+        Der Zuschnitt unterscheidet sich in drei Punkten bewusst von den übrigen
+        Termin-Abfragen, und jeder folgt aus der Frage, die ein Platzwart stellt:
+
+        * **Ohne Kader-Filter.** Wer den Platz mäht, muss jede Belegung sehen, nicht nur
+          die seiner Mannschaften. Die Zugangsentscheidung fällt deshalb einmal am
+          Endpoint über ein globales Recht, nicht hier über die ACL.
+        * **Nur eigene Plätze** (``ist_eigen``). Ein Auswärtsspiel belegt nichts, was
+          dieser Verein zu pflegen hätte; die beiden Platzhalter-Zeilen fallen darüber
+          ebenfalls heraus.
+        * **Abgesagte bleiben drin.** Sie sind für den Platzwart die interessantere
+          Information: Der Platz ist an dem Tag doch frei. Die Anzeige markiert sie.
+
+        Kein Personenbezug – Mannschaft, Zeit, Typ und Gegner, mehr nicht.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {', '.join('t.' + c.strip() for c in _COLS.split(','))},
+                       ma.name AS mannschaft_name,
+                       s.name AS spielstaette_name,
+                       s.strasse AS spielstaette_strasse, s.plz AS spielstaette_plz,
+                       s.ort AS spielstaette_ort, s.untergrund AS spielstaette_untergrund
+                FROM termine t
+                JOIN spielstaette s ON s.id = t.spielstaette_id
+                LEFT JOIN mannschaft ma ON ma.id = t.mannschaft_id
+                WHERE t.deleted_at IS NULL AND s.deleted_at IS NULL AND s.ist_eigen
+                  AND LEFT(t.beginn, 10) BETWEEN %(von)s AND %(bis)s
+                ORDER BY t.spielstaette_id, t.beginn, t.id
+                """,
+                {"von": von, "bis": bis},
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def set_extern_stand(self, termin_id: int, extern_stand: dict) -> None:
         """Schnappschuss nachtragen, ohne den Termin fachlich zu ändern.
 

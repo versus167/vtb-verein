@@ -112,6 +112,11 @@ PERMISSION_GROUPS = [
              'Gäste aus dem ganzen Verein zu Terminen einladen'),
             (Permission.SPIELSTAETTEN_VERWALTEN,
              'Spielstätten pflegen (Plätze, Hallen)'),
+            # Reines Leserecht für Platzwarte: Wer wann auf welchem eigenen Platz
+            # ist, quer über alle Mannschaften. Die beiden Rechte darüber schließen
+            # es ein (backend/api/spielstaetten.py::_require_belegung).
+            (Permission.SPIELSTAETTEN_BELEGUNG,
+             'Belegungsplan der eigenen Plätze ansehen'),
         ],
     },
     {

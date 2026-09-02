@@ -234,6 +234,16 @@ const routes = [
         meta: { title: 'Termine' },
       },
       {
+        path: 'platzbelegung',
+        name: 'platzbelegung',
+        component: () => import('pages/PlatzbelegungPage.vue'),
+        // ODER-Liste: `spielstaetten.belegung` ist das gemeinte Recht, die beiden
+        // anderen schließen es ein (backend/api/spielstaetten.py::_require_belegung).
+        meta: { title: 'Platzbelegung',
+                permission: ['spielstaetten.belegung', 'spielstaetten.verwalten',
+                             'termine.verwalten'] },
+      },
+      {
         // Kein meta.permission: der Zugriff ist ACL-basiert (Kader-Zugehörigkeit
         // + Wart-ACL) wie bei den Terminen – die Seite/Backend setzen ihn je Team durch.
         path: 'teamkasse',

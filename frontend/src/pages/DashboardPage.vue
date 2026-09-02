@@ -44,6 +44,10 @@
           :badge="aufgaben.anzahl('termine')" />
       </div>
 
+      <div v-if="zeigePlatzbelegung" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="platzbelegung" icon="grass" title="Platzbelegung" caption="Wer wann auf welchem Platz" />
+      </div>
+
       <div v-if="hatKassenZugriff || auth.hasPermission('kassen.verwalten')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile :to="kassenZiel" icon="account_balance_wallet" title="Kassenbuch" caption="Buchungen & Berichte" />
       </div>
@@ -142,6 +146,15 @@ const hatRechnungenZugriff = computed(() =>
   auth.hasPermission('rechnungen.einreichen') ||
   auth.hasPermission('rechnungen.freigeben') ||
   auth.hasPermission('rechnungen.verwalten'),
+)
+
+// Rein permission-gesteuert – keine ACL-Probe nötig. Die beiden Verwalten-Rechte
+// schließen das Leserecht ein (backend/api/spielstaetten.py::_require_belegung),
+// deshalb stehen sie hier ebenso wie im Nav-Punkt.
+const zeigePlatzbelegung = computed(() =>
+  auth.hasPermission('spielstaetten.belegung') ||
+  auth.hasPermission('spielstaetten.verwalten') ||
+  auth.hasPermission('termine.verwalten'),
 )
 
 const zeigeEinstellungen = computed(() =>

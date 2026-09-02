@@ -74,6 +74,21 @@ class SpielstaetteRepository(BaseRepository):
             )
             return [_map(r) for r in cur.fetchall()]
 
+    def list_eigene(self) -> list[Spielstaette]:
+        """Die eigenen Plätze und Hallen – die Zeilen des Belegungsplans (#152).
+
+        Eigenständig statt als Filter über ``list_all``, weil der Plan sie auch dann
+        braucht, wenn kein einziger Termin darauf liegt: Ein Platz ohne Belegung ist
+        die Information, auf die ein Platzwart wartet, nicht eine, die man weglässt.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"SELECT {_COLS} FROM spielstaette "
+                "WHERE deleted_at IS NULL AND ist_eigen AND platzhalter IS NULL "
+                "ORDER BY lower(name), id"
+            )
+            return [_map(r) for r in cur.fetchall()]
+
     def get_platzhalter(self, schluessel: str) -> Optional[Spielstaette]:
         with self.cursor() as cur:
             cur.execute(

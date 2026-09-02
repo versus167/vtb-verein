@@ -124,6 +124,18 @@
           </q-item>
 
           <q-item
+            v-if="auth.hasPermission('spielstaetten.belegung')
+              || auth.hasPermission('spielstaetten.verwalten')
+              || auth.hasPermission('termine.verwalten')"
+            clickable
+            :to="{ name: 'platzbelegung' }"
+            active-class="vtb-nav-active"
+          >
+            <q-item-section avatar><q-icon name="grass" /></q-item-section>
+            <q-item-section>Platzbelegung</q-item-section>
+          </q-item>
+
+          <q-item
             v-if="hatTeamkasseZugriff"
             clickable
             :to="{ name: 'teamkasse' }"
