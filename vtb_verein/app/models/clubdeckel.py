@@ -12,10 +12,13 @@
                      'verkauf'-Gegenzeile als Nullsummen-Paar via paar_ref),
                      einkauf (Team kauft vom Mitglied, positiv),
                      zahlung (Mitglied→Mitglied, Nullsummen-Paar via paar_ref),
-                     beitrag (Monatspauschale, negativ, beitrag_monat 'YYYY-MM').
+                     beitrag (Monatspauschale, negativ, beitrag_monat 'YYYY-MM'),
+                     event (einmalige Umlage, negativ, event_id).
+- ClubdeckelEvent:   einmalige Sammlung auf den ganzen Kader (#181).
 
-Wart-ACL (clubdeckel_berechtigung) und Beitragsbefreiungen haben bewusst kein
-eigenes Modell — sie werden nur als Listen mit Namen angezeigt (dict im Repo).
+Wart-ACL (clubdeckel_berechtigung), Beitragsbefreiungen und die generellen
+Sammlungs-Opt-outs haben bewusst kein eigenes Modell — sie werden nur als Listen
+mit Namen angezeigt (dict im Repo).
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -102,7 +105,8 @@ class ClubdeckelBuchung:
     deckel_id: int
     mitglied_id: int
     artikel_id: Optional[int]
-    typ: str                      # 'konsum' | 'verkauf' | 'einkauf' | 'zahlung' | 'beitrag'
+    # 'konsum' | 'verkauf' | 'kauf' | 'einkauf' | 'zahlung' | 'beitrag' | 'event'
+    typ: str
     menge: Optional[int]
     betrag: Decimal               # vorzeichenbehaftet
     paar_ref: Optional[str]       # verknüpft Nullsummen-Paare (zahlung, Mitglieds-Verkauf)
@@ -111,6 +115,7 @@ class ClubdeckelBuchung:
     artikel_name: Optional[str]   # Snapshot der Bezeichnung zum Buchungszeitpunkt
     gegen_name: Optional[str]     # Snapshot des Gegenkontos ('Team' | Mitgliedsname)
     termin_id: Optional[int]      # Termin, bei dem gebucht wurde (#167); None = keiner
+    event_id: Optional[int]       # Sammlung, aus der die Zeile stammt (#181)
     version: int
     created_at: str
     created_by: str
@@ -121,3 +126,33 @@ class ClubdeckelBuchung:
     # Nur für die Anzeige (per JOIN aufgelöst), keine Tabellenspalten:
     mitglied_name: Optional[str] = None
     termin_label: Optional[str] = None   # z. B. „Spiel 16.08. 15:00"
+
+
+@dataclass
+class ClubdeckelEvent:
+    """Eine einmalige Sammlung auf den ganzen Kader (#181, v114).
+
+    „60. Geburtstag Klaus: 5 € von allen" — im Gegensatz zum Monatsbeitrag ohne
+    Wiederholung und immer von Hand ausgelöst. `fuer_mitglied_id` ist der, für
+    den gesammelt wird; er zahlt sein eigenes Geschenk nicht mit. Wer generell
+    nicht mitmacht, steht in clubdeckel_event_opt_out (am Deckel, nicht am
+    Event). Gebucht wird gegen den Club: je Teilnehmer eine Buchung typ='event'
+    über −betrag.
+    """
+    id: int
+    deckel_id: int
+    name: str
+    betrag: Decimal
+    fuer_mitglied_id: Optional[int]
+    version: int
+    created_at: str
+    created_by: str
+    updated_at: str
+    updated_by: str
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
+    # Nur für die Anzeige (per JOIN/Aggregat aufgelöst), keine Tabellenspalten:
+    fuer_name: Optional[str] = None
+    gebucht_anzahl: int = 0            # aktive Buchungen dieser Sammlung
+    gebucht_summe: Decimal = Decimal('0')   # eingesammelt (positiv)
+    gebucht_am: Optional[str] = None   # wann zuletzt gebucht wurde

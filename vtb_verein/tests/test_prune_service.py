@@ -65,6 +65,24 @@ class TestRegistry:
         assert {"tuer_app_berechtigung", "tuer_berechtigung", "tuer_schloss",
                 "schluessel_chip", "ul_stunde", "ul_abrechnung", "ul_satz"} <= names
 
+    def test_teamkassen_sammlungen_registriert(self):
+        """#181: Jede neue Soft-Delete-Tabelle muss ins Register — sonst wachsen
+        soft-gelöschte Zeilen unbegrenzt und werden nie bereinigt."""
+        order = [e.name for e in PRUNE_REGISTRY]
+        assert {"clubdeckel_event", "clubdeckel_event_opt_out"} <= set(order)
+        # Die Buchung zeigt per event_id auf die Sammlung, muss also vor ihr weg;
+        # die Sammlung selbst vor der Teamkasse.
+        assert order.index("clubdeckel_buchung") < order.index("clubdeckel_event")
+        assert order.index("clubdeckel_event") < order.index("clubdeckel")
+        assert ("clubdeckel_buchung", "event_id") in {
+            (c.table, c.fk) for c in _entity("clubdeckel_event").children}
+        deckel_kinder = {(c.table, c.fk) for c in _entity("clubdeckel").children}
+        assert {("clubdeckel_event", "deckel_id"),
+                ("clubdeckel_event_opt_out", "deckel_id")} <= deckel_kinder
+        mitglied_kinder = {(c.table, c.fk) for c in _entity("mitglied").children}
+        assert {("clubdeckel_event", "fuer_mitglied_id"),
+                ("clubdeckel_event_opt_out", "mitglied_id")} <= mitglied_kinder
+
     def test_mitglied_guards_gegen_schliessanlage_und_ul(self):
         """Befund #75: mitglied darf nicht geprunt werden, solange Chip/Zutritts-Log/ÜL
         darauf zeigen (sonst FK-RESTRICT sprengt den ganzen Lauf)."""

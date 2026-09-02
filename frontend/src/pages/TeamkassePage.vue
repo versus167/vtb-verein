@@ -596,6 +596,7 @@
         <q-tabs v-model="verwaltenTab" dense no-caps :inline-label="$q.screen.gt.xs"
           align="left" active-color="primary" indicator-color="primary" class="q-mb-md">
           <q-tab name="mannschaft" icon="groups" label="Mannschaft" />
+          <q-tab name="events" icon="redeem" label="Sammlungen" />
           <q-tab name="history" icon="receipt_long" label="History" />
           <q-tab v-if="istVerwalter" name="stammdaten" icon="tune" label="Stammdaten" />
         </q-tabs>
@@ -642,12 +643,25 @@
                 </div>
               </div>
               <q-btn v-if="istVerwalter && deckel.beitrag && m.imKader" round unelevated
+                size="sm"
                 :color="befreitSet.has(m.mitglied_id) ? 'grey-4' : 'green-5'"
                 :text-color="befreitSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
                 :icon="befreitSet.has(m.mitglied_id) ? 'money_off' : 'how_to_reg'"
                 :disable="saving" @click.stop="toggleBeitrag(m)">
                 <q-tooltip>{{ befreitSet.has(m.mitglied_id)
                   ? 'Beitrag inaktiv — aktivieren' : 'Beitrag aktiv — deaktivieren' }}</q-tooltip>
+              </q-btn>
+              <!-- Sammlungs-Opt-out (#181): gilt für ALLE Sammlungen dieser
+                   Teamkasse, nicht für eine einzelne — deshalb steht er hier
+                   am Mitglied und nicht am Event. -->
+              <q-btn v-if="m.imKader" round unelevated size="sm"
+                :color="sammlungAusSet.has(m.mitglied_id) ? 'grey-4' : 'teal-5'"
+                :text-color="sammlungAusSet.has(m.mitglied_id) ? 'grey-8' : 'white'"
+                :icon="sammlungAusSet.has(m.mitglied_id) ? 'do_not_disturb_on' : 'volunteer_activism'"
+                :disable="saving" @click.stop="toggleSammlung(m)">
+                <q-tooltip>{{ sammlungAusSet.has(m.mitglied_id)
+                  ? 'Macht bei Sammlungen nicht mit — wieder aufnehmen'
+                  : 'Macht bei Sammlungen mit — dauerhaft ausnehmen' }}</q-tooltip>
               </q-btn>
               <q-btn round unelevated color="deep-purple-5" icon="shopping_bag"
                 :disable="!deckel.aktiv || saving" @click.stop="openKaufDialog(m)">
@@ -661,6 +675,80 @@
           </q-card>
           <div v-if="!mitgliederGefiltert.length" class="text-grey q-mb-md">
             Keine Mitglieder gefunden.
+          </div>
+        </div>
+
+        <!-- ---------- Sammlungen: einmalige Umlage auf den Kader (#181) ---------- -->
+        <div v-if="verwaltenTab === 'events'">
+          <div class="text-caption text-grey-8 q-mb-sm">
+            Einmalige Umlage auf den ganzen Kader — „5 € von allen fürs Geschenk".
+            Gebucht wird gegen den Club; wer die Auslage hatte, holt sie sich über
+            An-/Verkauf zurück. Wer generell nicht mitmacht, steht im Reiter
+            „Mannschaft" auf <q-icon name="do_not_disturb_on" size="14px" />.
+          </div>
+          <q-btn color="primary" unelevated no-caps icon="add" label="Neue Sammlung"
+            class="q-mb-md" :disable="!deckel.aktiv || saving" @click="openEventDialog()" />
+
+          <q-card v-for="e in events" :key="e.id" flat bordered class="q-mb-sm">
+            <div class="q-pa-sm">
+              <div class="row items-center no-wrap q-gutter-xs">
+                <div class="col" style="min-width: 0">
+                  <div class="text-weight-medium ellipsis">{{ e.name }}</div>
+                  <div class="text-caption text-grey-8 ellipsis">
+                    {{ fmtEuro(e.betrag) }} je Kopf<template v-if="e.fuer_name">
+                      · für {{ e.fuer_name }}</template>
+                  </div>
+                </div>
+                <q-chip v-if="e.gebucht_anzahl" dense square color="green-1"
+                  text-color="green-10" icon="check">
+                  {{ e.gebucht_anzahl }}× · {{ fmtEuro(e.gebucht_summe) }}
+                </q-chip>
+                <q-chip v-else dense square color="grey-3" text-color="grey-9">
+                  offen
+                </q-chip>
+              </div>
+              <div class="text-caption text-grey q-mt-xs">
+                <template v-if="e.gebucht_anzahl">
+                  zuletzt gebucht {{ fmtDateTime(e.gebucht_am) }}
+                </template>
+                <template v-else-if="teilnehmerAnzahl(e)">
+                  {{ teilnehmerAnzahl(e) }} von {{ kader.length }} zahlen mit
+                  · Summe {{ fmtEuro(teilnehmerAnzahl(e) * Number(e.betrag)) }}
+                </template>
+                <template v-else>
+                  Niemand zahlt mit — alle ausgenommen oder Kader leer.
+                </template>
+              </div>
+              <div class="row items-center q-gutter-xs q-mt-sm">
+                <q-btn v-if="!e.gebucht_anzahl" color="primary" unelevated dense no-caps
+                  icon="playlist_add_check" label="Buchen" class="q-px-sm"
+                  :disable="!deckel.aktiv || saving || !teilnehmerAnzahl(e)"
+                  @click="bucheEvent(e)" />
+                <q-btn v-else color="primary" outline dense no-caps icon="playlist_add"
+                  label="Nachbuchen" class="q-px-sm"
+                  :disable="!deckel.aktiv || saving" @click="bucheEvent(e)">
+                  <q-tooltip>Bucht nur, wer noch keine Zeile hat</q-tooltip>
+                </q-btn>
+                <q-btn v-if="e.gebucht_anzahl" color="negative" outline dense no-caps
+                  icon="undo" label="Storno" class="q-px-sm"
+                  :disable="saving" @click="stornoEvent(e)">
+                  <q-tooltip>Nimmt alle Buchungen dieser Sammlung zurück</q-tooltip>
+                </q-btn>
+                <q-space />
+                <q-btn flat round dense icon="edit" :disable="saving"
+                  @click="openEventDialog(e)">
+                  <q-tooltip>Bearbeiten</q-tooltip>
+                </q-btn>
+                <q-btn flat round dense icon="delete" color="negative"
+                  :disable="saving || !!e.gebucht_anzahl" @click="deleteEvent(e)">
+                  <q-tooltip>{{ e.gebucht_anzahl
+                    ? 'Erst stornieren' : 'Sammlung löschen' }}</q-tooltip>
+                </q-btn>
+              </div>
+            </div>
+          </q-card>
+          <div v-if="!events.length" class="text-grey q-mb-md">
+            Noch keine Sammlung angelegt.
           </div>
         </div>
 
@@ -889,6 +977,34 @@
       </q-card>
     </q-dialog>
 
+    <!-- Sammlung anlegen/bearbeiten (#181). Betrag und Ausnahme sind nach dem
+         Buchen gesperrt: Sonst behauptete die Liste etwas anderes als die schon
+         gebuchten Zeilen. Zum Korrigieren erst stornieren. -->
+    <q-dialog v-model="eventDialog" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
+      <q-card style="min-width: 340px">
+        <q-card-section class="text-h6">
+          {{ eventForm.id ? 'Sammlung bearbeiten' : 'Neue Sammlung' }}
+        </q-card-section>
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model="eventForm.name" dense outlined autofocus
+            label="Anlass * (z. B. 60. Geburtstag Klaus)" />
+          <q-input :model-value="fmtPreisInput(eventForm.betrag)" dense outlined
+            label="Betrag je Kopf (€) *" inputmode="decimal" :disable="eventForm.gesperrt"
+            @change="v => { eventForm.betrag = parsePreis(v) }" />
+          <q-select v-model="eventForm.fuer" :options="fuerOptionen" emit-value map-options
+            dense outlined options-dense clearable :disable="eventForm.gesperrt"
+            label="Für wen gesammelt wird (zahlt nicht mit)" />
+          <div class="text-caption text-grey">{{ eventHinweis }}</div>
+          <div v-if="dialogError" class="text-negative text-caption">{{ dialogError }}</div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat no-caps label="Abbrechen" v-close-popup />
+          <q-btn color="primary" unelevated no-caps label="Speichern"
+            :loading="saving" @click="saveEvent" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- Gruppe bearbeiten (#167, v100): Name und Verkäufer. Ab wann das gilt,
          steht NICHT hier — das kommt aus dem Katalog-Zeitraum oben, damit es
          für diese Angabe nur einen Ort gibt. -->
@@ -988,6 +1104,9 @@ const historySuche = ref('')       // History: Volltextsuche im Buchungstext (#1
 const warte = ref([])
 const befreiungen = ref([])
 const kader = ref([])
+// Sammlungen (#181) + der generelle „macht nicht mit"-Haken je Mitglied
+const events = ref([])
+const eventOptOuts = ref([])
 
 const dialogError = ref('')
 const gruppeDialog = ref(false)
@@ -998,6 +1117,8 @@ const zahlungDialog = ref(false)
 const zahlungForm = ref({})
 const kaufDialog = ref(false)
 const kaufForm = ref({})
+const eventDialog = ref(false)
+const eventForm = ref({})
 const stammdatenForm = ref({})
 const stammdatenError = ref('')  // Inline-Fehler im Stammdaten-Tab (kein Dialog mehr)
 const neuerWart = ref(null)
@@ -1123,6 +1244,29 @@ const befreitSet = computed(() => new Set(befreiungen.value.map(b => b.mitglied_
 const beitragAktivAnzahl = computed(() =>
   kader.value.filter(k => !befreitSet.value.has(k.mitglied_id)).length)
 
+// Sammlungen (#181): „macht generell nicht mit" gilt am DECKEL, also für jede
+// Sammlung. Wer mitzahlt, ist der Kader minus diese Menge minus der, für den
+// gesammelt wird — dieselbe Rechnung, die das Backend beim Buchen anstellt.
+const sammlungAusSet = computed(() =>
+  new Set(eventOptOuts.value.map(o => o.mitglied_id)))
+
+function teilnehmerAnzahl(e) {
+  return kader.value.filter(k => !sammlungAusSet.value.has(k.mitglied_id)
+    && k.mitglied_id !== e.fuer_mitglied_id).length
+}
+
+const fuerOptionen = computed(() =>
+  kader.value.map(k => ({ label: k.name, value: k.mitglied_id })))
+
+const eventHinweis = computed(() => {
+  const f = eventForm.value
+  if (f.gesperrt) return 'Schon gebucht — nur der Anlass lässt sich noch ändern.'
+  const anzahl = teilnehmerAnzahl({ fuer_mitglied_id: f.fuer })
+  const betrag = Number(f.betrag)
+  const summe = Number.isFinite(betrag) ? fmtEuro(anzahl * betrag) : '—'
+  return `${anzahl} von ${kader.value.length} zahlen mit · Summe ${summe}`
+})
+
 const mitgliederGefiltert = computed(() => {
   const q = (mitgliedSuche.value || '').trim().toLowerCase()
   return q ? mitgliederListe.value.filter(m => m.name.toLowerCase().includes(q))
@@ -1233,6 +1377,9 @@ function buchungText(b) {
     return `Zahlung${dir}${note}`
   }
   if (b.typ === 'beitrag') return b.notiz || `Mannschaftsbeitrag ${b.beitrag_monat}`
+  // Sammlung (#181): notiz ist der eingefrorene Anlass — auch dann noch lesbar,
+  // wenn die Sammlung längst umbenannt oder geprunt ist.
+  if (b.typ === 'event') return `Sammlung: ${b.notiz || 'ohne Anlass'}`
   return b.notiz || b.typ
 }
 
@@ -1338,6 +1485,22 @@ async function loadBefreiungen() {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/befreiungen`)
     befreiungen.value = data
   } catch { befreiungen.value = [] }
+}
+
+async function loadEvents() {
+  if (!deckel.value || !istWart.value) return
+  try {
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/events`)
+    events.value = data
+  } catch { events.value = [] }
+}
+
+async function loadEventOptOuts() {
+  if (!deckel.value || !istWart.value) return
+  try {
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/event-opt-out`)
+    eventOptOuts.value = data
+  } catch { eventOptOuts.value = [] }
 }
 
 async function loadKader() {
@@ -1541,7 +1704,7 @@ async function loadTabDaten() {
     await loadAuswertung()
   } else if (tab.value === 'verwalten') {
     await Promise.all([loadAlleBuchungen(), loadSalden(), loadKader(), loadWarte(),
-      loadBefreiungen()])
+      loadBefreiungen(), loadEvents(), loadEventOptOuts()])
   }
 }
 
@@ -2064,6 +2227,103 @@ async function toggleBeitrag(m) {
         : `${m.name}: Beitrag aktiv` })
   } catch (e) {
     fehler(e, 'Änderung fehlgeschlagen')
+  }
+}
+
+// „Macht bei Sammlungen mit"-Schalter je Mitglied (#181): an → Opt-out setzen,
+// ausgenommen → Opt-out aufheben. Wirkt auf alle künftigen Sammlungen; schon
+// gebuchte Zeilen bleiben stehen (dafür gibt es den Storno).
+async function toggleSammlung(m) {
+  const machtMit = !sammlungAusSet.value.has(m.mitglied_id)
+  try {
+    if (machtMit) await api.put(`${BASE}/${deckel.value.id}/event-opt-out/${m.mitglied_id}`)
+    else await api.delete(`${BASE}/${deckel.value.id}/event-opt-out/${m.mitglied_id}`)
+    await loadEventOptOuts()
+    $q.notify({ type: 'positive', timeout: 1000,
+      message: machtMit ? `${m.name}: nimmt an Sammlungen nicht mehr teil`
+        : `${m.name}: nimmt wieder an Sammlungen teil` })
+  } catch (e) {
+    fehler(e, 'Änderung fehlgeschlagen')
+  }
+}
+
+// ------------------------------------------------------------- Sammlungen
+function openEventDialog(event = null) {
+  dialogError.value = ''
+  eventForm.value = event
+    ? { id: event.id, name: event.name, betrag: Number(event.betrag),
+        fuer: event.fuer_mitglied_id, version: event.version,
+        gesperrt: !!event.gebucht_anzahl }
+    : { id: null, name: '', betrag: null, fuer: null, gesperrt: false }
+  eventDialog.value = true
+}
+
+async function saveEvent() {
+  const f = eventForm.value
+  if (!f.name?.trim()) {
+    dialogError.value = 'Anlass ist erforderlich.'
+    return
+  }
+  if (!Number.isFinite(Number(f.betrag)) || Number(f.betrag) <= 0) {
+    dialogError.value = 'Betrag muss größer als 0 sein.'
+    return
+  }
+  saving.value = true
+  try {
+    const body = { name: f.name.trim(), betrag: Number(f.betrag),
+      fuer_mitglied_id: f.fuer ?? null }
+    if (f.id) await api.put(`${BASE}/${deckel.value.id}/events/${f.id}`,
+      { ...body, expected_version: f.version })
+    else await api.post(`${BASE}/${deckel.value.id}/events`, body)
+    eventDialog.value = false
+    await loadEvents()
+  } catch (e) {
+    dialogError.value = e.response?.data?.detail || 'Speichern fehlgeschlagen'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function bucheEvent(e) {
+  saving.value = true
+  try {
+    const { data } = await api.post(`${BASE}/${deckel.value.id}/events/${e.id}/buchen`)
+    $q.notify({ type: data.gebucht ? 'positive' : 'info', timeout: 1600,
+      message: data.gebucht
+        ? `${e.name}: ${data.gebucht} Buchungen angelegt`
+        : `${e.name}: alle Teilnehmer waren schon gebucht` })
+    await Promise.all([loadEvents(), loadDeckel(), loadSalden(), loadAlleBuchungen()])
+  } catch (err) {
+    fehler(err, 'Buchen fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function stornoEvent(e) {
+  saving.value = true
+  try {
+    const { data } = await api.post(`${BASE}/${deckel.value.id}/events/${e.id}/storno`)
+    $q.notify({ type: 'positive', timeout: 1600,
+      message: `${e.name}: ${data.storniert} Buchungen storniert` })
+    await Promise.all([loadEvents(), loadDeckel(), loadSalden(), loadAlleBuchungen()])
+  } catch (err) {
+    fehler(err, 'Storno fehlgeschlagen')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function deleteEvent(e) {
+  saving.value = true
+  try {
+    await api.delete(`${BASE}/${deckel.value.id}/events/${e.id}`)
+    $q.notify({ type: 'positive', message: 'Sammlung gelöscht', timeout: 1200 })
+    await loadEvents()
+  } catch (err) {
+    fehler(err, 'Löschen fehlgeschlagen')
+  } finally {
+    saving.value = false
   }
 }
 

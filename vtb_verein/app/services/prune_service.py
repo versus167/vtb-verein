@@ -294,6 +294,12 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("clubdeckel_beitrag_befreiung", "Teamkassen-Beitragsbefreiungen",
                 "clubdeckel_beitrag_befreiung",
                 history_table="clubdeckel_beitrag_befreiung_history"),
+    PruneEntity("clubdeckel_event_opt_out", "Teamkassen-Sammlungs-Opt-outs",
+                "clubdeckel_event_opt_out",
+                history_table="clubdeckel_event_opt_out_history"),
+    PruneEntity("clubdeckel_event", "Teamkassen-Sammlungen", "clubdeckel_event",
+                history_table="clubdeckel_event_history",
+                children=(ChildRef("clubdeckel_buchung", "event_id"),)),
     PruneEntity("clubdeckel", "Teamkassen", "clubdeckel",
                 history_table="clubdeckel_history",
                 children=(
@@ -302,6 +308,8 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("clubdeckel_gruppe", "deckel_id"),
                     ChildRef("clubdeckel_berechtigung", "deckel_id"),
                     ChildRef("clubdeckel_beitrag_befreiung", "deckel_id"),
+                    ChildRef("clubdeckel_event", "deckel_id"),
+                    ChildRef("clubdeckel_event_opt_out", "deckel_id"),
                 )),
     # --- Spielbetrieb: Mannschafts-Termine (#95, Blatt vor mannschaft) ---
     PruneEntity("termin_zusage", "Termin-Zusagen", "termin_zusage",
@@ -438,6 +446,8 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
                     ChildRef("clubdeckel_berechtigung", "mitglied_id"),
                     ChildRef("clubdeckel_buchung", "mitglied_id"),
+                    ChildRef("clubdeckel_event", "fuer_mitglied_id"),
+                    ChildRef("clubdeckel_event_opt_out", "mitglied_id"),
                     ChildRef("clubdeckel_gruppe", "verkaeufer_mitglied_id"),
                     ChildRef("gebuehr_forderung", "mitglied_id"),
                     ChildRef("mitglied_abteilung", "mitglied_id"),
@@ -668,6 +678,7 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("schluessel_chip", "mitglied_id"),
             ChildRef("clubdeckel_berechtigung", "mitglied_id"),
             ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
+            ChildRef("clubdeckel_event_opt_out", "mitglied_id"),
         ),
     ),
 )

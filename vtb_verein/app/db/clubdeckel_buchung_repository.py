@@ -10,6 +10,11 @@ Zeilen, Team-Saldo = −Σ Mitgliedssalden. Konventionen:
 - einkauf:  Team kauft vom Mitglied (z. B. Kasten Bier geliefert) → +betrag.
 - zahlung:  Mitglied zahlt an Mitglied (bar/PayPal/…) → PAAR: +betrag beim
             Zahler (Schuld sinkt), −betrag beim Empfänger, gemeinsame paar_ref.
+- event:    einmalige Sammlung auf den Kader (#181) → −betrag, event_id.
+            Gebucht wird gegen das Team, also eine Einzelzeile wie 'beitrag'.
+            Anders als dort zählt beim Nachbuchen nur eine AKTIVE Zeile als
+            erledigt: Ein Event bucht immer ein Mensch, und der will nach dem
+            Storno („falscher Betrag") korrigieren und erneut buchen können.
 - beitrag:  Monatspauschale → −betrag, beitrag_monat 'YYYY-MM'. Automatisch
             nachgebucht über buche_faellige_beitraege; ein Monat gilt als
             erledigt, sobald IRGENDEINE Beitragszeile existiert (auch storniert
@@ -31,7 +36,7 @@ from app.db.base_repository import BaseRepository
 
 _COLS = ("id, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
          "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, termin_id, "
-         "version, created_at, created_by, updated_at, updated_by, "
+         "event_id, version, created_at, created_by, updated_at, updated_by, "
          "deleted_at, deleted_by")
 _B_COLS = ", ".join("b." + c.strip() for c in _COLS.split(","))
 
@@ -397,6 +402,68 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 )
                 gebucht += cur.rowcount
         return gebucht
+
+    # ----------------------------------------------------------------- event
+    def buche_event(self, deckel_id: int, mannschaft_id: int, event_id: int,
+                    name: str, betrag: Decimal, fuer_mitglied_id: Optional[int],
+                    created_by: str, stichtag: Optional[str] = None) -> int:
+        """Bucht eine Sammlung auf den Kader (#181) — je Teilnehmer eine Zeile
+        typ='event' über −betrag gegen das Team.
+
+        Teilnehmer ist, wer am Stichtag (Vorgabe: heute) aktiv im Kader steht,
+        NICHT das Mitglied ist, für das gesammelt wird, und keinen generellen
+        Opt-out hat. Wer schon eine aktive Zeile zu diesem Event hat, wird
+        übersprungen — ein zweiter Klick auf „Buchen" holt also nur die Nachzügler
+        (z. B. einen frisch entfernten Opt-out) nach, statt doppelt zu belasten.
+
+        Der Event-Name wandert als Snapshot in die Notiz: Die History soll auch
+        dann noch lesbar sein, wenn das Event längst umbenannt oder geprunt ist.
+        Gibt die Zahl der neu gebuchten Zeilen zurück.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO clubdeckel_buchung
+                    (deckel_id, mitglied_id, typ, betrag, event_id, notiz,
+                     gegen_name, created_by, updated_by)
+                SELECT DISTINCT %(did)s, mm.mitglied_id, 'event', %(betrag)s,
+                       %(eid)s, %(notiz)s, 'Team', %(actor)s, %(actor)s
+                FROM mitglied_mannschaft mm
+                JOIN mitglied m ON m.id = mm.mitglied_id AND m.deleted_at IS NULL
+                WHERE mm.mannschaft_id = %(man)s AND mm.deleted_at IS NULL
+                  AND mm.von <= %(tag)s
+                  AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                  AND mm.mitglied_id IS DISTINCT FROM %(fuer)s::int
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clubdeckel_event_opt_out o
+                      WHERE o.deckel_id = %(did)s AND o.mitglied_id = mm.mitglied_id
+                        AND o.deleted_at IS NULL)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clubdeckel_buchung alt
+                      WHERE alt.deckel_id = %(did)s AND alt.mitglied_id = mm.mitglied_id
+                        AND alt.typ = 'event' AND alt.event_id = %(eid)s
+                        AND alt.deleted_at IS NULL)
+                """,
+                {"did": deckel_id, "man": mannschaft_id, "eid": event_id,
+                 "betrag": -betrag, "notiz": name, "actor": created_by,
+                 "fuer": fuer_mitglied_id,
+                 "tag": stichtag or date.today().isoformat()},
+            )
+            return cur.rowcount
+
+    def storno_event(self, deckel_id: int, event_id: int, deleted_by: str) -> int:
+        """Nimmt eine ganze Sammlung zurück — alle aktiven Zeilen des Events auf
+        einmal. Einzeln ginge auch (storno()), wäre bei zwölf Mitgliedern aber
+        zwölf Klicks. Gibt die Zahl der stornierten Zeilen zurück."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE clubdeckel_buchung "
+                "SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s, version=version+1 "
+                "WHERE deckel_id=%s AND event_id=%s AND typ='event' "
+                "  AND deleted_at IS NULL",
+                (deleted_by, deckel_id, event_id),
+            )
+            return cur.rowcount
 
     # ---------------------------------------------------------------- storno
     def storno(self, buchung_id: int, deleted_by: str) -> bool:
