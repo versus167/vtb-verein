@@ -791,7 +791,15 @@
                     { 'tt-durchgestrichen': b.deleted_at }]">
                     {{ fmtEuro(b.betrag) }}
                   </span>
-                  <q-btn v-if="!b.deleted_at" flat round dense size="sm" icon="delete"
+                  <!-- Ein Saldovortrag lässt sich nicht stornieren: Er trägt die
+                       Summe längst entfernter Buchungen, die niemand mehr
+                       nachrechnen kann (#187). Fortschreiben darf ihn nur der
+                       Abschlusslauf. -->
+                  <q-icon v-if="b.typ === 'vortrag'" name="lock_clock" size="xs"
+                    color="grey-6">
+                    <q-tooltip>Saldovortrag — nicht stornierbar</q-tooltip>
+                  </q-icon>
+                  <q-btn v-else-if="!b.deleted_at" flat round dense size="sm" icon="delete"
                     color="negative" :disable="saving" @click="storno(b)">
                     <q-tooltip>Stornieren{{ b.paar_ref ? ' (ganzes Paar)' : '' }}{{
                       b.typ === 'beitrag' ? ' — Beitrag wird damit erlassen' : '' }}</q-tooltip>
@@ -1380,6 +1388,9 @@ function buchungText(b) {
   // Sammlung (#181): notiz ist der eingefrorene Anlass — auch dann noch lesbar,
   // wenn die Sammlung längst umbenannt oder geprunt ist.
   if (b.typ === 'event') return `Sammlung: ${b.notiz || 'ohne Anlass'}`
+  // Saldovortrag (#187): trägt die Summe aller Buchungen bis zum Stichtag, die es
+  // einzeln nicht mehr gibt. Die Notiz nennt den Stichtag.
+  if (b.typ === 'vortrag') return b.notiz || 'Saldovortrag'
   return b.notiz || b.typ
 }
 

@@ -94,8 +94,16 @@ class ClubdeckelBuchungRepository(BaseRepository):
         eingefrorenen Artikel-/Gegenkonto-Bezeichnungen, Notiz und
         Beitragsmonat (#129).
         von/bis (ISO-Zeitstempel) und termin_id grenzen den Tag- bzw.
-        Termin-Ausschnitt ein (#167); termin_id sticht das Zeitfenster."""
-        filt = "" if mit_storniert else " AND b.deleted_at IS NULL"
+        Termin-Ausschnitt ein (#167); termin_id sticht das Zeitfenster.
+
+        Vom Saldovortrag zusammengefasste Zeilen bleiben auch bei mit_storniert=True
+        draußen (#187): Sie sind nicht storniert, sondern in der Vortragszeile
+        aufgegangen. Als „Storniert" angezeigt wären sie eine Lüge — und der
+        Wiederherstellen-Knopf daneben ein Angebot, das die API zu Recht ablehnt.
+        Die Vortragszeile selbst trägt dieselbe `vortrag_ref` (sie gehört zum selben
+        Batch) und muss natürlich sichtbar bleiben — sie IST der Ersatz."""
+        filt = ("" if mit_storniert else " AND b.deleted_at IS NULL") \
+            + " AND (b.vortrag_ref IS NULL OR b.typ = 'vortrag')"
         with self.cursor() as cur:
             cur.execute(
                 f"""
@@ -468,11 +476,16 @@ class ClubdeckelBuchungRepository(BaseRepository):
     # ---------------------------------------------------------------- storno
     def storno(self, buchung_id: int, deleted_by: str) -> bool:
         """Soft-Delete einer Buchung; bei Paaren (paar_ref) immer beide Zeilen,
-        damit die Nullsumme erhalten bleibt."""
+        damit die Nullsumme erhalten bleibt.
+
+        Eine Vortragszeile (typ 'vortrag') lässt sich nicht stornieren: Sie trägt
+        die Summe längst entfernter Buchungen, die niemand mehr nachrechnen kann.
+        Sie zu stornieren hieße, diesen Betrag ersatzlos aus dem Saldo zu nehmen.
+        Fortschreiben darf sie nur der Abschlusslauf (#187)."""
         with self.cursor() as cur:
             cur.execute(
                 "SELECT deckel_id, paar_ref FROM clubdeckel_buchung "
-                "WHERE id = %s AND deleted_at IS NULL",
+                "WHERE id = %s AND deleted_at IS NULL AND typ <> 'vortrag'",
                 (buchung_id,),
             )
             row = cur.fetchone()
@@ -497,11 +510,18 @@ class ClubdeckelBuchungRepository(BaseRepository):
     def restore(self, buchung_id: int, restored_by: str) -> bool:
         """Storno zurücknehmen (#127): un-delete einer soft-gelöschten Buchung;
         bei Paaren (paar_ref) immer beide Zeilen, damit die Nullsumme erhalten
-        bleibt. Gegenstück zu storno(). version+1 → Audit-History-Eintrag."""
+        bleibt. Gegenstück zu storno(). version+1 → Audit-History-Eintrag.
+
+        Zwei Sorten sind ausgenommen (#187): Zeilen, die ein Abschlusslauf
+        zusammengefasst hat (`vortrag_ref` gesetzt) — ihr Betrag steckt schon in
+        der Vortragszeile, sie zurückzuholen zählte ihn ein zweites Mal —, und
+        Vortragszeilen selbst, die ein Abschluss auf 0,00 € heruntergeschrieben
+        und gelöscht hat."""
         with self.cursor() as cur:
             cur.execute(
                 "SELECT deckel_id, paar_ref FROM clubdeckel_buchung "
-                "WHERE id = %s AND deleted_at IS NOT NULL",
+                "WHERE id = %s AND deleted_at IS NOT NULL "
+                "  AND vortrag_ref IS NULL AND typ <> 'vortrag'",
                 (buchung_id,),
             )
             row = cur.fetchone()
@@ -554,6 +574,109 @@ class ClubdeckelBuchungRepository(BaseRepository):
                 (deckel_id, mitglied_id),
             )
             return cur.fetchone()['saldo']
+
+    # ------------------------------------------------------- Saldovortrag (#187)
+    # Fällig ist eine Zeile, die älter als der Stichtag ist und keine Vortragszeile
+    # ist. Die bestehende Vortragszeile wird NICHT über ihr Alter erfasst, sondern
+    # immer mitsaldiert – sie trägt ja das Ergebnis aller früheren Läufe.
+    _FAELLIG = ("deleted_at IS NULL AND typ <> 'vortrag' "
+                "AND LEFT(created_at::text, 10) < %s")
+
+    def vortrag_faellig(self, stichtag: str) -> int:
+        """Wie viele Buchungen der nächste Abschlusslauf zusammenfassen würde.
+
+        Dieselbe Bedingung, die der Lauf verwendet – „Vorschau = Aktion" gilt auch
+        hier. Gezählt werden die verschwindenden Zeilen, nicht die entstehenden
+        Vorträge: Das ist die Zahl, die dem Admin sagt, was er verliert."""
+        with self.cursor() as cur:
+            cur.execute(
+                f"SELECT COUNT(*) AS n FROM clubdeckel_buchung WHERE {self._FAELLIG}",
+                (stichtag,),
+            )
+            return cur.fetchone()['n']
+
+    def saldovortrag(self, stichtag: str, actor: str) -> int:
+        """Fasst alle vor dem Stichtag gebuchten Zeilen je Deckel und Mitglied zu
+        einer Vortragszeile zusammen. Gibt die Zahl der zusammengefassten Zeilen zurück.
+
+        Das ist der Ersatz für eine Alters-Regel, die es hier nicht geben darf: Der
+        Saldo ist ``SUM(betrag)`` über die aktiven Zeilen, ein bloßes Archivieren
+        würde ihn um die Summe der entfernten verschieben. Die Vortragszeile trägt
+        exakt diese Summe, der Saldo bleibt also gleich – und weil sich die Vorträge
+        beider Seiten eines Nullsummen-Paars gegenseitig aufheben, stimmt auch der
+        Team-Saldo weiter.
+
+        Zwei Invarianten, ohne die der Mechanismus seinen Zweck verfehlte:
+
+        * **Rollierend.** Die vorhandene Vortragszeile wird mitsaldiert und an Ort
+          und Stelle fortgeschrieben – es entsteht keine zweite. Sonst wüchse die
+          Menge wieder unbegrenzt, nur langsamer.
+        * **Summe 0 = keine Zeile.** Ergibt der Abschluss 0,00 €, verschwindet auch
+          die Vortragszeile. Sonst behielte jedes ausgeschiedene Mitglied eine Zeile
+          und bliebe über Tor 4 des Prune weiter unlöschbar – der eigentliche Grund
+          für den ganzen Mechanismus.
+
+        Gruppen ohne fällige Zeile werden übersprungen (``HAVING``): Ein Lauf, bei
+        dem nichts zusammenzufassen ist, darf die vorhandene Vortragszeile nicht
+        anfassen, sonst schriebe jeder Lauf eine inhaltsgleiche History-Zeile.
+        """
+        notiz = f"Saldovortrag bis {stichtag}"
+        zusammengefasst = 0
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT deckel_id, mitglied_id, SUM(betrag) AS summe
+                FROM clubdeckel_buchung
+                WHERE deleted_at IS NULL
+                  AND (typ = 'vortrag' OR ({self._FAELLIG}))
+                GROUP BY deckel_id, mitglied_id
+                HAVING COUNT(*) FILTER (WHERE typ <> 'vortrag') > 0
+                """,
+                (stichtag,),
+            )
+            gruppen = [dict(r) for r in cur.fetchall()]
+
+            for g in gruppen:
+                ref = uuid.uuid4().hex
+                schluessel = (g['deckel_id'], g['mitglied_id'])
+                cur.execute(
+                    f"UPDATE clubdeckel_buchung "
+                    f"SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s, vortrag_ref=%s, "
+                    f"    version=version+1 "
+                    f"WHERE deckel_id=%s AND mitglied_id=%s AND {self._FAELLIG}",
+                    (actor, ref, *schluessel, stichtag),
+                )
+                zusammengefasst += cur.rowcount
+
+                if g['summe'] != 0:
+                    cur.execute(
+                        "UPDATE clubdeckel_buchung "
+                        "SET betrag=%s, notiz=%s, vortrag_ref=%s, "
+                        "    updated_at=CURRENT_TIMESTAMP, updated_by=%s, version=version+1 "
+                        "WHERE deckel_id=%s AND mitglied_id=%s "
+                        "  AND typ='vortrag' AND deleted_at IS NULL",
+                        (g['summe'], notiz, ref, actor, *schluessel),
+                    )
+                    if cur.rowcount == 0:
+                        cur.execute(
+                            "INSERT INTO clubdeckel_buchung "
+                            "(deckel_id, mitglied_id, typ, betrag, notiz, vortrag_ref, "
+                            " created_by, updated_by) "
+                            "VALUES (%s,%s,'vortrag',%s,%s,%s,%s,%s)",
+                            (*schluessel, g['summe'], notiz, ref, actor, actor),
+                        )
+                else:
+                    # betrag=0 mit demselben Bump: Selbst wenn diese Zeile je wieder
+                    # auftauchte, verschöbe sie keinen Saldo mehr.
+                    cur.execute(
+                        "UPDATE clubdeckel_buchung "
+                        "SET betrag=0, deleted_at=CURRENT_TIMESTAMP, deleted_by=%s, "
+                        "    vortrag_ref=%s, version=version+1 "
+                        "WHERE deckel_id=%s AND mitglied_id=%s "
+                        "  AND typ='vortrag' AND deleted_at IS NULL",
+                        (actor, ref, *schluessel),
+                    )
+        return zusammengefasst
 
     # ------------------------------------------------- Strichliste am Termin
     def konsum_fuer_termin(self, deckel_id: int, mitglied_id: int,

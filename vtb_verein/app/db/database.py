@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 116
+SCHEMA_VERSION = 117
 
 
 # ---------------------------------------------------------------------------
@@ -2802,6 +2802,43 @@ _CLUBDECKEL_EVENT_UNIQUE_INDEXES = (
     "WHERE typ = 'event' AND deleted_at IS NULL",
 )
 
+# Saldovortrag im Ledger (Schema v117, #187). Wie _CLUBDECKEL_BUCHUNG_EVENT_DDL
+# bewusst NICHT inline in _DDL_CLUBDECKEL, sondern als eigener Schritt hinterher:
+# Der typ-CHECK trägt denselben Namen, den Postgres der Inline-Fassung gibt, und
+# wird hier ein zweites Mal ersetzt — die Reihenfolge (erst Event, dann Vortrag)
+# ist deshalb im Frischaufbau dieselbe wie in den Migrationen.
+#
+# vortrag_ref markiert alle Zeilen EINES Abschlusslaufs je Mitglied und Deckel —
+# die zusammengefassten ebenso wie die Vortragszeile, die aus ihnen entstanden ist.
+# Sie ist der Grund, warum eine zusammengefasste Zeile nicht per restore()
+# zurückgeholt werden darf: Ihr Betrag steckt bereits im Vortrag, ein
+# Wiederherstellen rechnete ihn ein zweites Mal in den Saldo.
+#
+# Ein TEXT-Batch statt eines Fremdschlüssels auf die Vortragszeile, weil es die
+# Vortragszeile nicht immer gibt: Ergibt der Abschluss 0,00 EUR, entsteht keine —
+# die zusammengefassten Zeilen brauchen die Markierung aber trotzdem. Wie
+# `loesch_ref` eine reine Verwaltungsspalte und deshalb NICHT in der History.
+_CLUBDECKEL_BUCHUNG_VORTRAG_DDL = (
+    "ALTER TABLE clubdeckel_buchung ADD COLUMN IF NOT EXISTS vortrag_ref TEXT",
+    "ALTER TABLE clubdeckel_buchung DROP CONSTRAINT IF EXISTS clubdeckel_buchung_typ_check",
+    "ALTER TABLE clubdeckel_buchung ADD CONSTRAINT clubdeckel_buchung_typ_check "
+    "CHECK (typ IN ('konsum', 'verkauf', 'kauf', 'einkauf', 'zahlung', 'beitrag', "
+    "'event', 'vortrag'))",
+)
+
+_CLUBDECKEL_VORTRAG_INDEXES = (
+    ("idx_clubdeckel_buchung_vortrag_ref", "clubdeckel_buchung(vortrag_ref)"),
+)
+
+_CLUBDECKEL_VORTRAG_UNIQUE_INDEXES = (
+    # Rollierend: Es gibt je Mitglied und Deckel dauerhaft HÖCHSTENS EINE aktive
+    # Vortragszeile. Ohne diesen Index entstünde pro Abschlusslauf eine weitere und
+    # die Menge wüchse wieder unbegrenzt — genau das, was der Vortrag verhindern soll.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_buchung_vortrag_active "
+    "ON clubdeckel_buchung (deckel_id, mitglied_id) "
+    "WHERE typ = 'vortrag' AND deleted_at IS NULL",
+)
+
 _CLUBDECKEL_EVENT_TRIGGERS = (
     ('trig_clubdeckel_event_audit_insert',         'INSERT', 'clubdeckel_event',         'fn_clubdeckel_event_audit_insert'),
     ('trig_clubdeckel_event_audit_update',         'UPDATE', 'clubdeckel_event',         'fn_clubdeckel_event_audit_update'),
@@ -4113,6 +4150,7 @@ class Database:
             114: self._migrate_v113_to_v114,
             115: self._migrate_v114_to_v115,
             116: self._migrate_v115_to_v116,
+            117: self._migrate_v116_to_v117,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8785,6 +8823,36 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 116 WHERE id = 1")
 
+    def _migrate_v116_to_v117(self) -> None:
+        """Saldovortrag im Teamkassen-Ledger (#187).
+
+        Der Saldo eines Mitglieds ist `SUM(betrag)` über seine AKTIVEN Zeilen —
+        es gibt keinen Periodenabschluss. Alte Buchungen zu entfernen verschiebt
+        deshalb den Saldo, lautlos und ohne dass eine Buchung fehlte. Genau
+        darum stand `clubdeckel_buchung` als einzige Bewegungstabelle ohne
+        Alters-Regel da, und über Tor 4 (`NOT EXISTS` ohne `deleted_at`-Filter)
+        hielt jede je gebuchte Zeile ihr Mitglied dauerhaft im Papierkorb fest.
+
+        Der neue Buchungstyp 'vortrag' löst das: Ein Abschlusslauf fasst die
+        fälligen Zeilen je Mitglied und Deckel zu einer Zeile zusammen, die
+        exakt ihre Summe trägt. `vortrag_ref` markiert, welche Zeilen zu
+        welchem Abschluss gehören — und ist zugleich die Sperre gegen
+        `restore`, das ihren Betrag sonst ein zweites Mal in den Saldo rechnete.
+
+        Rein strukturell: Es entstehen keine Vortragszeilen, der Bestand bleibt
+        unangetastet. Den ersten Abschluss löst der Admin über die
+        Datenbereinigungs-Seite aus.
+        """
+        with self.cursor() as cur:
+            for sql in _CLUBDECKEL_BUCHUNG_VORTRAG_DDL:
+                cur.execute(sql)
+            for name, ziel in _CLUBDECKEL_VORTRAG_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {ziel}")
+            for sql in _CLUBDECKEL_VORTRAG_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 117 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -10162,6 +10230,11 @@ class Database:
         cur.execute(_DDL_CLUBDECKEL_EVENT)
         for sql in _CLUBDECKEL_BUCHUNG_EVENT_DDL:
             cur.execute(sql)
+        # Saldovortrag im Ledger (Schema v117, #187): vortrag_id + der um 'vortrag'
+        # erweiterte typ-CHECK. Muss NACH _CLUBDECKEL_BUCHUNG_EVENT_DDL laufen — beide
+        # ersetzen denselben CHECK, und der Vortrag ist der spätere Stand.
+        for sql in _CLUBDECKEL_BUCHUNG_VORTRAG_DDL:
+            cur.execute(sql)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
@@ -11136,6 +11209,7 @@ class Database:
             *_TRESOR_KONTAKT_INDEXES,
             *_CLUBDECKEL_INDEXES,
             *_CLUBDECKEL_EVENT_INDEXES,
+            *_CLUBDECKEL_VORTRAG_INDEXES,
             *_TICKET_LOESCH_REF_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
@@ -11163,7 +11237,8 @@ class Database:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)
-        for sql in (*_CLUBDECKEL_UNIQUE_INDEXES, *_CLUBDECKEL_EVENT_UNIQUE_INDEXES):
+        for sql in (*_CLUBDECKEL_UNIQUE_INDEXES, *_CLUBDECKEL_EVENT_UNIQUE_INDEXES,
+                    *_CLUBDECKEL_VORTRAG_UNIQUE_INDEXES):
             cur.execute(sql)
         for sql in _TERMINE_UNIQUE_INDEXES:
             cur.execute(sql)

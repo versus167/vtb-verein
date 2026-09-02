@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 # --- Default-Aufbewahrung (später konfigurierbar) ---------------------------------
@@ -92,6 +92,15 @@ DEFAULT_USERS_RETENTION_DAYS = 365
 # gerade entstehenden Anhang wegziehen.
 DATEI_VERWAIST = "datei_verwaist"
 DEFAULT_VERWAISTE_DATEI_RETENTION_DAYS = 30
+
+# Teamkasse (#187): zwei Alters-Regeln, die KEINE ArchiveRule sein können – ihre
+# Wirkung ist nicht ein generischer Soft-Delete, sondern eine Domänen-Operation
+# (siehe AbschlussRule). Fünf Jahre wie Termine und abgeschlossene Tickets: Es sind
+# keine Belege im steuerlichen Sinn, aber lange genug, dass ein Mitglied nachfragen
+# kann, warum es 40 Euro schuldet.
+CLUBDECKEL_VORTRAG = "clubdeckel_vortrag"
+CLUBDECKEL_ALTER = "clubdeckel_alter"
+DEFAULT_CLUBDECKEL_RETENTION_DAYS = 5 * 365
 
 
 @dataclass(frozen=True)
@@ -209,6 +218,42 @@ class ArchiveRule:
     children: tuple[ChildRef, ...] = field(default_factory=tuple)
     # Gesetzt, wenn das Archivieren einen laufenden Saldo verfälschen würde.
     vortrag: Optional[SaldoVortrag] = None
+
+
+@dataclass(frozen=True)
+class AbschlussRule:
+    """Alters-Regel, deren Wirkung eine Domänen-Operation ist statt eines Soft-Deletes.
+
+    Die ``ArchiveRule`` setzt ``deleted_at`` und ist damit für alles richtig, was
+    einfach verschwinden darf. Zwei Vorgänge in der Teamkasse dürfen das nicht (#187):
+
+    * Das **Ledger** kennt keinen Periodenabschluss – der Saldo ist ``SUM(betrag)``
+      über die aktiven Zeilen. Ein bloßes Archivieren verschöbe ihn um die Summe der
+      entfernten Zeilen, lautlos. Erst muss der Betrag in eine Vortragszeile wandern.
+    * Eine ganze **Teamkasse** verschwindet nur als Batch mit gemeinsamer
+      ``loesch_ref``, sonst kann ``restore`` sie nicht mehr zurückholen – dieselbe
+      Lehre wie bei den verborgenen Tickets.
+
+    Beides ist Domänenwissen und steht deshalb im jeweiligen Repository; hier stehen
+    nur Name, Frist und die zwei Einstiegspunkte. ``vorschau`` zählt, was der nächste
+    Lauf anfassen würde, ``lauf`` tut es – beide über dieselbe Bedingung, damit
+    „Vorschau = Aktion" auch hier gilt.
+    """
+    name: str                       # Schlüssel (auch in prune_einstellungen nutzbar)
+    label: str                      # Anzeigename (DE)
+    table: str                      # Live-Tabelle (Bezugspunkt der Vorschau-Zahl)
+    default_days: int
+    vorschau: Callable[[Any, str], int]
+    lauf: Callable[[Any, str, str], int]
+    # Alle Tabellen, die dieser Lauf in den Papierkorb bringt. Nötig, weil die Wirkung
+    # hier hinter einer Repository-Methode steckt und nicht wie bei der ArchiveRule an
+    # `children` ablesbar ist — ohne diese Liste wüsste niemand von außen, welche
+    # Tabellen dadurch überhaupt eine Uhr haben.
+    deckt: tuple[str, ...] = ()
+    # Ein Satz für die Admin-UI. Nötig, weil die Rubrik dort pauschal „wandert in den
+    # Papierkorb und bleibt wiederherstellbar" verspricht — für den Saldovortrag wäre
+    # das falsch, die zusammengefassten Zeilen kommen nicht einzeln zurück.
+    hinweis: str = ""
 
 
 @dataclass(frozen=True)
@@ -352,6 +397,11 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("tresor_freigabe", "tresor_id"),
                 )),
     # --- Teamkasse/Clubdeckel (#98, Blatt → Wurzel, vor mannschaft/mitglied) ---
+    # In den Papierkorb kommt eine Buchung auf drei Wegen: durch ein Storno, mit dem
+    # kompletten Soft-Delete ihrer Teamkasse — und seit #187 durch den Saldovortrag,
+    # der sie in einer Zeile typ='vortrag' zusammenfasst. Eine ArchiveRule darf sie
+    # dagegen NIE bekommen: Die verschöbe den Saldo um die Summe der archivierten
+    # Zeilen, ohne dass ihr Wert irgendwo aufgefangen wäre (siehe AbschlussRule).
     PruneEntity("clubdeckel_buchung", "Teamkassen-Buchungen", "clubdeckel_buchung",
                 history_table="clubdeckel_buchung_history"),
     PruneEntity("clubdeckel_artikel", "Teamkassen-Artikel", "clubdeckel_artikel",
@@ -789,6 +839,56 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             # ohne mitglied_id (allgemeine Sätze der Abteilung) bleiben unberührt.
             ChildRef("ul_satz", "mitglied_id"),
         ),
+    ),
+)
+
+
+def _lauf_clubdeckel_alter(db, stichtag: str, actor: str) -> int:
+    """Tote Teamkassen komplett soft-löschen – über den vorhandenen Batch-Weg.
+
+    `loesche_komplett` setzt Deckel und Kinder in EINEM Batch mit gemeinsamer
+    `loesch_ref` auf `deleted_at`, und genau das macht die Sache umkehrbar: Der
+    Admin-Papierkorb holt exakt diesen Batch zurück. Eine ArchiveRule würde die
+    Kinder einzeln soft-löschen, ohne Batch-Marker – der Deckel ließe sich danach
+    nicht mehr vollständig wiederherstellen.
+    """
+    ids = db.clubdeckel.faellige_deckel_ids(stichtag)
+    for deckel_id in ids:
+        db.clubdeckel.loesche_komplett(deckel_id, actor)
+    return len(ids)
+
+
+# Alters-Regeln mit Domänen-Wirkung (siehe AbschlussRule). Reihenfolge zählt: Erst
+# stirbt die tote Teamkasse als Ganzes, dann wird in den übrigen vorgetragen. Andersherum
+# bekäme ein Deckel, der ohnehin fällig ist, noch frische Vortragszeilen, die im selben
+# Lauf wieder soft-gelöscht würden – dieselbe Wirkung, nur mit Rauschen in der History.
+ABSCHLUSS_REGISTRY: tuple[AbschlussRule, ...] = (
+    AbschlussRule(
+        CLUBDECKEL_ALTER, "Tote Teamkassen (Abschluss)", "clubdeckel",
+        DEFAULT_CLUBDECKEL_RETENTION_DAYS,
+        vorschau=lambda db, tag: len(db.clubdeckel.faellige_deckel_ids(tag)),
+        lauf=_lauf_clubdeckel_alter,
+        # Deckungsgleich mit `_CHILD_TABLES` in clubdeckel_repository — genau die
+        # Tabellen, die `loesche_komplett` mitnimmt (per Test abgesichert).
+        deckt=("clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
+               "clubdeckel_gruppe", "clubdeckel_berechtigung",
+               "clubdeckel_beitrag_befreiung", "clubdeckel_event",
+               "clubdeckel_event_opt_out"),
+        hinweis="Deaktivierte Teamkassen, in denen seither nichts mehr passiert ist. "
+                "Sie wandern als Ganzes in den Papierkorb – mit allen Buchungen, "
+                "Artikeln und Rechten – und lassen sich von dort komplett "
+                "wiederherstellen.",
+    ),
+    AbschlussRule(
+        CLUBDECKEL_VORTRAG, "Teamkassen-Buchungen (Saldovortrag)", "clubdeckel_buchung",
+        DEFAULT_CLUBDECKEL_RETENTION_DAYS,
+        vorschau=lambda db, tag: db.clubdeckel_buchungen.vortrag_faellig(tag),
+        lauf=lambda db, tag, actor: db.clubdeckel_buchungen.saldovortrag(tag, actor),
+        deckt=("clubdeckel_buchung",),
+        hinweis="Alte Buchungen werden je Mitglied durch EINE Vortragszeile mit ihrer "
+                "Summe ersetzt. Die Deckelstände bleiben auf den Cent gleich – die "
+                "einzelnen Buchungen dahinter sind danach aber nicht mehr "
+                "wiederherstellbar und im Verlauf nicht mehr zu sehen.",
     ),
 )
 
@@ -1372,6 +1472,47 @@ class PruneService:
             "history_loeschbar": None,
         }
 
+    def abschluss_retention(self, rule: AbschlussRule) -> tuple[int, bool]:
+        """Wirksames Alters-Fenster (Tage) einer AbschlussRule + ob ein Override gesetzt ist."""
+        o = self._db.prune_einstellungen.get_all().get(rule.name)
+        if o:
+            return o["retention_days"], True
+        return rule.default_days, False
+
+    def _abschluss_report_row(self, rule: AbschlussRule) -> dict:
+        """Report-Zeile einer Alters-Regel mit Domänen-Wirkung.
+
+        ``archivierbar`` ist die Zahl der Zeilen, die der nächste Lauf anfasst — beim
+        Saldovortrag die zusammengefassten Buchungen, bei den toten Teamkassen die
+        Deckel. Beides landet im Papierkorb und nicht im Hard-Delete, deshalb steht es
+        wie die Alters-Archivierung in ``summe_archivierbar`` und nicht in
+        ``summe_loeschbar``.
+        """
+        days, is_override = self.abschluss_retention(rule)
+        stichtag = (date.today() - timedelta(days=days)).isoformat()
+        return {
+            "name": rule.name,
+            "label": rule.label,
+            "table": rule.table,
+            "gruppe": "Aufbewahrungsfristen",
+            "soft_delete": False,
+            "retention_days": days,
+            "keep_min": None,
+            "history_retention_days": None,
+            "is_override": is_override,
+            "eintraege": self._count(
+                f"SELECT COUNT(*) AS n FROM {rule.table} WHERE deleted_at IS NULL", []),
+            "im_papierkorb": None,
+            "loeschbar": 0,
+            "archivierbar": rule.vorschau(self._db, stichtag),
+            "archiviert_statt_geloescht": True,
+            "vortrag_cent": None,
+            "hinweis": rule.hinweis,
+            "history_table": None,
+            "history_gesamt": None,
+            "history_loeschbar": None,
+        }
+
     def einstellungen(self) -> list[dict]:
         """Konfigurations-Sicht für die Admin-UI: Struktur + wirksame Tunables je Entität."""
         cfg = self.effective_config()
@@ -1388,6 +1529,7 @@ class PruneService:
             for e in PRUNE_REGISTRY
         ]
         rows.extend(self._archive_report_row(r) for r in ARCHIVE_REGISTRY)
+        rows.extend(self._abschluss_report_row(r) for r in ABSCHLUSS_REGISTRY)
         rows.extend(self._log_report_row(r) for r in LOG_REGISTRY)
         rows.append(self._datei_report_row())
         return rows
@@ -1451,6 +1593,13 @@ class PruneService:
             summe_archivierbar += row["archivierbar"]
             entities.append(row)
 
+        # Alters-Regeln mit Domänen-Wirkung (Teamkasse, #187) – dieselbe Rubrik,
+        # weil auch sie nur in den Papierkorb schieben.
+        for rule in ABSCHLUSS_REGISTRY:
+            row = self._abschluss_report_row(rule)
+            summe_archivierbar += row["archivierbar"]
+            entities.append(row)
+
         # Sonder-Bereiche: Protokolle und Gerätebindungen (Hard-Delete nach Alter)
         for rule in LOG_REGISTRY:
             row = self._log_report_row(rule)
@@ -1507,6 +1656,26 @@ class PruneService:
         #    noch nicht alt genug, daher bleibt „Vorschau = Aktion" für das Löschen erhalten.
         archiv_entities: list[dict] = []
         summe_archiviert = 0
+
+        # 0a) Alters-Regeln mit Domänen-Wirkung ZUERST (#187): Sie schreiben selbst
+        #     Zeilen fort bzw. löschen als Batch und müssen deshalb vor der
+        #     generischen Archivierung laufen — eine tote Teamkasse, die hier fällt,
+        #     hat danach nichts mehr, was noch zu archivieren wäre.
+        for rule in ABSCHLUSS_REGISTRY:
+            days, _ = self.abschluss_retention(rule)
+            stichtag = (date.today() - timedelta(days=days)).isoformat()
+            n = rule.lauf(self._db, stichtag, "SYSTEM-PRUNE")
+            summe_archiviert += n
+            archiv_entities.append({
+                "name": rule.name,
+                "label": rule.label,
+                "archiviert": n,
+                "geloescht": 0,
+                "history_geloescht": None,
+                "dateien_geloescht": 0,
+                "vortrag_cent": None,
+            })
+
         for rule in ARCHIVE_REGISTRY:
             days, _ = self.archive_retention(rule)
             cutoff = (date.today() - timedelta(days=days)).isoformat()

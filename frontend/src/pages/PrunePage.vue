@@ -97,7 +97,10 @@
             dense color="orange-8" text-color="white" icon="archive"
             :label="props.row.archivierbar"
           >
-            <q-tooltip>Werden in den Papierkorb verschoben (wiederherstellbar)</q-tooltip>
+            <!-- Der Regelfall ist wiederherstellbar; Regeln mit eigener Wirkung
+                 (Saldovortrag, #187) sagen im `hinweis` selbst, was sie tun. -->
+            <q-tooltip>{{ props.row.hinweis
+              || 'Werden in den Papierkorb verschoben (wiederherstellbar)' }}</q-tooltip>
           </q-chip>
           <q-chip
             v-else-if="props.row.loeschbar > 0"
