@@ -194,6 +194,41 @@ class ClubdeckelRepository(BaseRepository):
             return cur.rowcount > 0
 
     # ------------------------------------------------ Komplett-Löschen (#125)
+    # Wann eine Teamkasse „tot" ist: deaktiviert – und seither ist nichts mehr
+    # passiert. Die Uhr läuft ab dem späteren von beidem, dem Deaktivieren (das
+    # `updated_at` setzt) und der letzten echten Buchung. Vortragszeilen zählen
+    # dabei NICHT als Aktivität: Sie entstehen maschinell beim Abschlusslauf und
+    # würden die Uhr sonst bei jedem Lauf neu starten.
+    _TOT_SEIT = """
+        GREATEST(c.updated_at,
+                 COALESCE((SELECT MAX(b.created_at) FROM clubdeckel_buchung b
+                           WHERE b.deckel_id = c.id AND b.typ <> 'vortrag'),
+                          c.updated_at))
+    """
+
+    def faellige_deckel_ids(self, stichtag: str) -> list[int]:
+        """Teamkassen, die seit dem Stichtag tot sind – Kandidaten fürs Altern (#187).
+
+        Anders als bei den datierten Bewegungsdaten gibt es hier kein Belegdatum: Eine
+        Teamkasse ist ein Stammdatum ohne natürliches Ende. Gerechnet wird deshalb ab
+        dem Zeitpunkt, an dem sie AUFGEHÖRT hat zu leben – dasselbe Muster wie bei den
+        Gerätebindungen im Prune, wo die Frist ab Widerruf oder Ablauf läuft.
+
+        Eine noch aktive Teamkasse altert nie, egal wie lange nichts gebucht wurde:
+        Die Winterpause einer Mannschaft ist kein Grund, ihren Deckel abzuräumen.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT c.id FROM clubdeckel c
+                WHERE c.deleted_at IS NULL AND c.aktiv = 0
+                  AND LEFT(({self._TOT_SEIT})::text, 10) < %s
+                ORDER BY c.id
+                """,
+                (stichtag,),
+            )
+            return [r['id'] for r in cur.fetchall()]
+
     def loesche_komplett(self, deckel_id: int, deleted_by: str) -> Optional[str]:
         """Kompletter Soft-Delete der ganzen Teamkasse (Deckel + alle Kinder) als
         ein Batch mit gemeinsamer loesch_ref — Admin-Aktion, per restore() umkehrbar.

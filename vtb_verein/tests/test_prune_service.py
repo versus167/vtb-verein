@@ -8,6 +8,7 @@ from app.services.prune_service import (
     ChildRef,
     LogRule,
     LOG_REGISTRY,
+    ABSCHLUSS_REGISTRY,
     PruneEntity,
     PRUNE_REGISTRY,
     ARCHIVE_REGISTRY,
@@ -468,28 +469,62 @@ class TestUebungsleiterAufbewahrung:
         assert {("ul_abrechnung", "exportiert_in_export_id"),
                 ("ul_abrechnung", "storno_exportiert_in_export_id")} <= refs
 
-    def test_kein_ul_kind_haelt_das_mitglied_mehr_fest(self):
-        """Der eigentliche Zweck von #188: Ein Kind ohne eigene Uhr blockiert Tor 4 des
-        Mitglieds für immer. Nach dieser Änderung altert jedes ÜL-Kind – übrig bleiben
-        nur die vier Teamkassen-Tabellen aus #187.
+    def test_kein_kind_haelt_das_mitglied_mehr_fest(self):
+        """Der eigentliche Zweck von #188 – und seit #187 geschlossen: Ein Kind ohne
+        eigene Uhr blockiert Tor 4 des Mitglieds für immer, weil die Klausel nach der
+        physischen Existenz der Zeile fragt und nicht nach ihrem Löschzustand.
 
-        Wer hier eine Tabelle ergänzt, muss begründen, warum ein ausgeschiedenes
-        Mitglied ihretwegen dauerhaft mit Namen und Adresse im Papierkorb liegt.
+        Jetzt altert jedes der rund zwanzig Kinder auf einem der vier Wege: eigene
+        ArchiveRule, Kind einer ArchiveRule, LogRule oder AbschlussRule. Wer hier eine
+        Tabelle hinzufügt, muss begründen, warum ein ausgeschiedenes Mitglied
+        ihretwegen dauerhaft mit Namen und Adresse im Papierkorb liegen bleibt.
         """
-        NOCH_OHNE_UHR = {
-            "clubdeckel":        "#187: Teamkasse ist Stammdatum, altert (noch) nicht",
-            "clubdeckel_buchung": "#187: Ledger braucht erst den Saldovortrag",
-            "clubdeckel_event":  "#187: hängt an der Teamkasse",
-            "clubdeckel_gruppe": "#187: Sortiments-Stand begründet alte Buchungen",
-        }
         altert = {r.table for r in ARCHIVE_REGISTRY}
         altert |= {c.table for r in ARCHIVE_REGISTRY for c in r.children}
         altert |= {r.table for r in LOG_REGISTRY}
+        altert |= {t for r in ABSCHLUSS_REGISTRY for t in r.deckt}
 
-        blocker = {c.table for c in _entity("mitglied").children} - altert
-        assert blocker == set(NOCH_OHNE_UHR), (
-            "Kinder von mitglied ohne eigenen Alterungspfad: "
-            + ", ".join(sorted(blocker - set(NOCH_OHNE_UHR)))
-            + " | erledigte Ausnahmen bitte streichen: "
-            + ", ".join(sorted(set(NOCH_OHNE_UHR) - blocker))
+        blocker = sorted({c.table for c in _entity("mitglied").children} - altert)
+        assert not blocker, (
+            "Kinder von mitglied ohne eigenen Alterungspfad – sie halten jedes je "
+            "betroffene Mitglied dauerhaft im Papierkorb: " + ", ".join(blocker)
         )
+
+
+class TestTeamkassenAbschluss:
+    """#187: Zwei Alters-Regeln, deren Wirkung eine Domänen-Operation ist. Beide
+    könnten keine ArchiveRule sein – die eine würde den Saldo verschieben, die
+    andere das Wiederherstellen der Teamkasse kaputt machen."""
+
+    def _regel(self, name):
+        return next(r for r in ABSCHLUSS_REGISTRY if r.name == name)
+
+    def test_ledger_bekommt_weiterhin_keine_archive_rule(self):
+        """Die wichtigste Invariante der ganzen Domäne: Eine Alters-Regel auf
+        `clubdeckel_buchung` würde aktive Zeilen soft-löschen, ohne dass ihr Betrag
+        irgendwo aufgefangen wäre — der Saldo verschöbe sich lautlos um deren Summe.
+        Fällige Zeilen dürfen NUR über den Saldovortrag verschwinden."""
+        assert not [r for r in ARCHIVE_REGISTRY if r.table == "clubdeckel_buchung"]
+        assert not [r for r in ARCHIVE_REGISTRY
+                    for c in r.children if c.table == "clubdeckel_buchung"]
+
+    def test_deckt_stimmt_mit_dem_loeschbatch_ueberein(self):
+        """`deckt` sagt, welche Tabellen dieser Lauf in den Papierkorb bringt — die
+        Grundlage dafür, dass der Löschpfad-Test sie überhaupt als abgedeckt sieht.
+        Kommt der Teamkasse eine Kind-Tabelle dazu, ohne dass sie hier auftaucht,
+        wäre die Aussage still falsch."""
+        from app.db.clubdeckel_repository import _CHILD_TABLES
+        assert set(self._regel("clubdeckel_alter").deckt) == \
+            {"clubdeckel", *_CHILD_TABLES}
+
+    def test_tote_teamkasse_faellt_vor_dem_vortrag(self):
+        """Andersherum bekäme ein ohnehin fälliger Deckel noch frische
+        Vortragszeilen, die derselbe Lauf wieder soft-löscht — gleiche Wirkung, aber
+        Rauschen in der History."""
+        namen = [r.name for r in ABSCHLUSS_REGISTRY]
+        assert namen.index("clubdeckel_alter") < namen.index("clubdeckel_vortrag")
+
+    def test_beide_regeln_altern_nach_fuenf_jahren(self):
+        """Keine Belege im steuerlichen Sinn, aber lange genug für die Rückfrage
+        „wieso schulde ich 40 Euro?" — dieselbe Frist wie Termine und Tickets."""
+        assert {r.default_days for r in ABSCHLUSS_REGISTRY} == {5 * 365}
