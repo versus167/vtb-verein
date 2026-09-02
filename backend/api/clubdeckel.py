@@ -20,6 +20,11 @@ Jede Konsum-Buchung wird dem gerade laufenden Termin der Mannschaft zugeordnet
 (#167). Darüber laufen die Matrix (Gitter Mitglied × Artikel, Vorbild
 consumptions.php des Club-Tresors) und die Tages-/Termin-Auswertung.
 
+Sammlungen (#181) sind einmalige Umlagen auf den Kader („5 € von allen fürs
+Geschenk"): Der Wart legt sie an und bucht sie auf Knopfdruck gegen den Club.
+Außen vor bleiben das Mitglied, für das gesammelt wird, und wer generell nicht
+mitmacht (Opt-out an der Mitgliederliste, gilt für alle Sammlungen des Deckels).
+
 Buchungsmodell: Saldo je Mitglied = SUM(betrag), Team-Saldo = −Σ Mitglieder.
 Konsum negativ (bei Mitglieds-Verkäufer mit 'verkauf'-Gegenzeile als Nullsummen-
 Paar), Einkauf (Team kauft vom Mitglied) positiv, Zahlung Mitglied→Mitglied als
@@ -118,6 +123,17 @@ class EinkaufCreate(BaseModel):
     mitglied_id: int                         # Verkäufer ans Team (+betrag)
     betrag: float
     notiz: Optional[str] = None
+
+
+class EventWrite(BaseModel):
+    name: str
+    betrag: float                            # je Kopf, > 0
+    # Für wen gesammelt wird — zahlt selbst nicht mit. None = niemand ausgenommen.
+    fuer_mitglied_id: Optional[int] = None
+
+
+class EventUpdate(EventWrite):
+    expected_version: int
 
 
 class AnVerkaufCreate(BaseModel):
@@ -810,6 +826,138 @@ def revoke_befreiung(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB
     _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
     if not db.clubdeckel_befreiungen.revoke(deckel_id, mitglied_id, user.username):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Keine Befreiung vorhanden")
+    return {"status": "entfernt"}
+
+
+# ----------------------------------------------------------- Sammlungen (#181)
+def _event_im_deckel(db: DB, deckel_id: int, event_id: int):
+    event = db.clubdeckel_events.get(event_id)
+    if event is None or event.deckel_id != deckel_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sammlung nicht gefunden")
+    return event
+
+
+def _validate_event(db: DB, deckel, data: EventWrite) -> tuple[str, Decimal]:
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name fehlt")
+    betrag = _euro(data.betrag)
+    if betrag <= 0:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Betrag muss größer als 0 sein")
+    if (data.fuer_mitglied_id is not None
+            and not _mitglied_am_deckel(db, deckel, data.fuer_mitglied_id)):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Das Mitglied gehört nicht zu dieser Teamkasse")
+    return name, betrag
+
+
+@router.get("/{deckel_id}/events")
+def list_events(deckel_id: int, user: CurrentUser, db: DB):
+    """Sammlungen des Deckels samt Buchungsstand — Wart-Sache wie das übrige
+    Verwalten; das einzelne Mitglied sieht seine Belastung in der eigenen
+    History."""
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    return [asdict(e) for e in db.clubdeckel_events.list_for_deckel(deckel_id)]
+
+
+@router.post("/{deckel_id}/events", status_code=status.HTTP_201_CREATED)
+def create_event(deckel_id: int, data: EventWrite, user: CurrentUser, db: DB):
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    name, betrag = _validate_event(db, deckel, data)
+    event = db.clubdeckel_events.create(deckel_id, name, betrag,
+                                        data.fuer_mitglied_id, user.username)
+    return asdict(event)
+
+
+@router.put("/{deckel_id}/events/{event_id}")
+def update_event(deckel_id: int, event_id: int, data: EventUpdate,
+                 user: CurrentUser, db: DB):
+    """Sammlung ändern. Ist schon gebucht, bleibt nur der Name änderbar: Betrag
+    oder ausgenommenes Mitglied nachträglich zu verstellen hieße, dass die Liste
+    etwas anderes behauptet als die bereits gebuchten Zeilen. Wer das ändern
+    will, storniert die Sammlung, korrigiert sie und bucht erneut."""
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    event = _event_im_deckel(db, deckel_id, event_id)
+    name, betrag = _validate_event(db, deckel, data)
+    if event.gebucht_anzahl and (betrag != event.betrag
+                                 or data.fuer_mitglied_id != event.fuer_mitglied_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Die Sammlung ist schon gebucht — Betrag und Ausnahme lassen sich "
+            "erst nach dem Stornieren ändern")
+    if not db.clubdeckel_events.update(event_id, name, betrag,
+                                       data.fuer_mitglied_id, user.username,
+                                       data.expected_version):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Die Sammlung wurde zwischenzeitlich geändert")
+    return asdict(db.clubdeckel_events.get(event_id))
+
+
+@router.delete("/{deckel_id}/events/{event_id}")
+def delete_event(deckel_id: int, event_id: int, user: CurrentUser, db: DB):
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    event = _event_im_deckel(db, deckel_id, event_id)
+    if event.gebucht_anzahl:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Die Sammlung ist gebucht — erst stornieren, dann löschen")
+    db.clubdeckel_events.mark_deleted(event_id, user.username)
+    return {"status": "geloescht"}
+
+
+@router.post("/{deckel_id}/events/{event_id}/buchen")
+def buche_event(deckel_id: int, event_id: int, user: CurrentUser, db: DB):
+    """Bucht die Sammlung auf alle Teilnehmer — wiederholbar: Ein zweiter Klick
+    holt nur nach, wer noch keine aktive Zeile hat (etwa nach einem entfernten
+    Opt-out oder einem Neuzugang im Kader)."""
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    _require_aktiv(deckel)
+    event = _event_im_deckel(db, deckel_id, event_id)
+    gebucht = db.clubdeckel_buchungen.buche_event(
+        deckel_id, deckel.mannschaft_id, event.id, event.name, event.betrag,
+        event.fuer_mitglied_id, user.username)
+    return {"gebucht": gebucht, "event": asdict(db.clubdeckel_events.get(event_id))}
+
+
+@router.post("/{deckel_id}/events/{event_id}/storno")
+def storno_event(deckel_id: int, event_id: int, user: CurrentUser, db: DB):
+    """Nimmt alle Buchungen der Sammlung auf einmal zurück (Soft-Delete). Die
+    Sammlung selbst bleibt stehen und kann korrigiert und neu gebucht werden.
+
+    Ohne _require_aktiv wie das Einzel-Storno: Eine deaktivierte Teamkasse darf
+    keine neuen Buchungen bekommen, ein Fehler von vorher muss trotzdem noch
+    zurücknehmbar sein."""
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    _event_im_deckel(db, deckel_id, event_id)
+    storniert = db.clubdeckel_buchungen.storno_event(deckel_id, event_id,
+                                                     user.username)
+    return {"storniert": storniert,
+            "event": asdict(db.clubdeckel_events.get(event_id))}
+
+
+@router.get("/{deckel_id}/event-opt-out")
+def list_event_opt_outs(deckel_id: int, user: CurrentUser, db: DB):
+    """Wer macht generell bei Sammlungen nicht mit? Gilt für alle Sammlungen
+    dieses Deckels, nicht für eine einzelne."""
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    return db.clubdeckel_events.list_opt_outs(deckel_id)
+
+
+@router.put("/{deckel_id}/event-opt-out/{mitglied_id}")
+def set_event_opt_out(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    if not db.clubdeckel.is_mitglied_in_kader(mitglied_id, deckel.mannschaft_id):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Das Mitglied steht nicht im aktiven Kader der Mannschaft")
+    db.clubdeckel_events.set_opt_out(deckel_id, mitglied_id, user.username)
+    return {"status": "ok"}
+
+
+@router.delete("/{deckel_id}/event-opt-out/{mitglied_id}")
+def revoke_event_opt_out(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
+    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    if not db.clubdeckel_events.revoke_opt_out(deckel_id, mitglied_id, user.username):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kein Opt-out vorhanden")
     return {"status": "entfernt"}
 
 

@@ -150,6 +150,10 @@ Die frühere NiceGUI/SQLite-Variante wurde abgelöst.
   und Beiträgen — eigenes schlankes Ledger, Saldo je Mitglied = Summe der Buchungen
 - Tap-to-Buchen am „Tresen", Artikel in Gruppen mit Verkäufer (Team oder Mitglied),
   monatlicher Mannschaftsbeitrag mit Befreiungen
+- **Sammlungen** *(Schema v114)*: einmalige Umlage auf den ganzen Kader („5 € von allen
+  fürs Geschenk"), gebucht gegen den Club. Wer die Auslage hatte, holt sie sich über den
+  An-/Verkauf zurück. Außen vor bleiben das Mitglied, für das gesammelt wird, und wer per
+  Opt-out generell nicht mitmacht; erneutes Buchen holt nur Nachzügler nach
 - Rechte rein teamintern: Kader-`uebungsleiter`/`betreuer` schalten frei und ernennen
   die Warte (ACL) — **kein globaler Permission-Key, kein Vorstands-Einblick**
 

@@ -22,6 +22,7 @@ from fastapi import HTTPException  # noqa: E402
 
 from app.models.clubdeckel import (  # noqa: E402
     Clubdeckel, ClubdeckelGruppe, ClubdeckelArtikel, ClubdeckelBuchung,
+    ClubdeckelEvent,
 )
 from backend.api import clubdeckel as api  # noqa: E402
 
@@ -69,9 +70,17 @@ def _buchung(**kw):
     base = dict(id=100, deckel_id=7, mitglied_id=11, artikel_id=21, typ='konsum',
                 menge=1, betrag=Decimal('-1.50'), paar_ref=None, beitrag_monat=None,
                 notiz=None, artikel_name='Bier', gegen_name='Team', termin_id=None,
-                **_AUDIT)
+                event_id=None, **_AUDIT)
     base.update(kw)
     return ClubdeckelBuchung(**base)
+
+
+def _event(**kw):
+    """Sammlung des Deckels 7 (#181) – ungebucht, sofern nicht anders gesagt."""
+    base = dict(id=41, deckel_id=7, name='60. Geburtstag Klaus',
+                betrag=Decimal('5.00'), fuer_mitglied_id=None, **_AUDIT)
+    base.update(kw)
+    return ClubdeckelEvent(**base)
 
 
 def _termin(**kw):
@@ -141,6 +150,16 @@ def _db(kader='mitglied', wart=False):
             set_befreiung=lambda *a: None,
             revoke=lambda *a: True,
         ),
+        clubdeckel_events=SimpleNamespace(
+            get=lambda eid: _event(id=eid),
+            list_for_deckel=lambda did: [_event()],
+            create=lambda *a, **k: _event(),
+            update=lambda *a, **k: True,
+            mark_deleted=lambda *a: True,
+            list_opt_outs=lambda did: [],
+            set_opt_out=lambda *a: None,
+            revoke_opt_out=lambda *a: True,
+        ),
         clubdeckel_buchungen=SimpleNamespace(
             get=lambda bid, include_deleted=False: _buchung(id=bid),
             list_for_deckel=lambda did, mitglied_id=None, limit=None,
@@ -151,6 +170,8 @@ def _db(kader='mitglied', wart=False):
             create_einkauf=lambda *a: _buchung(typ='einkauf', betrag=Decimal('20')),
             create_an_verkauf=lambda *a, **k: 'refAV',
             buche_faellige_beitraege=lambda *a, **k: 0,
+            buche_event=lambda *a, **k: 4,
+            storno_event=lambda *a: 4,
             storno=lambda *a: True,
             restore=lambda *a, **k: True,
             salden=lambda did: [],
@@ -1380,3 +1401,142 @@ def test_matrix_ohne_termin_nimmt_den_heutigen_kader():
     result = api.get_matrix(7, _USER, db)
 
     assert [(m['mitglied_id'], m['antwort']) for m in result['mitglieder']] == [(11, None)]
+
+
+# ------------------------------------------------------------ Sammlungen (#181)
+def test_events_sind_wart_sache():
+    """Das einfache Kader-Mitglied sieht die Sammlungsliste nicht — es sieht
+    seine Belastung in der eigenen History."""
+    with pytest.raises(HTTPException) as exc:
+        api.list_events(7, _USER, _db())
+    assert exc.value.status_code == 403
+    assert api.list_events(7, _USER, _db(wart=True))[0]['name'] == '60. Geburtstag Klaus'
+
+
+def test_event_anlegen_ohne_name_422():
+    with pytest.raises(HTTPException) as exc:
+        api.create_event(7, api.EventWrite(name='   ', betrag=5.0),
+                         _USER, _db(wart=True))
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize("betrag", [0.0, -5.0])
+def test_event_anlegen_ohne_positiven_betrag_422(betrag):
+    with pytest.raises(HTTPException) as exc:
+        api.create_event(7, api.EventWrite(name='Geschenk', betrag=betrag),
+                         _USER, _db(wart=True))
+    assert exc.value.status_code == 422
+
+
+def test_event_anlegen_mit_fremdem_mitglied_422():
+    db = _db(wart=True)
+    db.clubdeckel.is_mitglied_in_kader = lambda mid, man: False
+    db.clubdeckel_buchungen.saldo_for_mitglied = lambda did, mid: Decimal('0')
+    with pytest.raises(HTTPException) as exc:
+        api.create_event(7, api.EventWrite(name='Geschenk', betrag=5.0,
+                                           fuer_mitglied_id=99), _USER, db)
+    assert exc.value.status_code == 422
+
+
+def test_event_anlegen_rundet_auf_cent():
+    db = _db(wart=True)
+    gesehen = {}
+    db.clubdeckel_events.create = lambda did, name, betrag, fuer, by: (
+        gesehen.update(name=name, betrag=betrag, fuer=fuer) or _event())
+    api.create_event(7, api.EventWrite(name='  Geschenk  ', betrag=5.005,
+                                       fuer_mitglied_id=11), _USER, db)
+    assert gesehen == {'name': 'Geschenk', 'betrag': Decimal('5.01'), 'fuer': 11}
+
+
+def test_event_anderes_deckels_404():
+    db = _db(wart=True)
+    db.clubdeckel_events.get = lambda eid: _event(id=eid, deckel_id=8)
+    with pytest.raises(HTTPException) as exc:
+        api.delete_event(7, 41, _USER, db)
+    assert exc.value.status_code == 404
+
+
+def test_gebuchtes_event_laesst_nur_den_namen_aendern():
+    db = _db(wart=True)
+    db.clubdeckel_events.get = lambda eid: _event(id=eid, gebucht_anzahl=4)
+    # Name allein: geht durch.
+    api.update_event(7, 41, api.EventUpdate(name='Neuer Anlass', betrag=5.0,
+                                            expected_version=1), _USER, db)
+    # Betrag ändern: nicht mehr, die vier gebuchten Zeilen sagen etwas anderes.
+    with pytest.raises(HTTPException) as exc:
+        api.update_event(7, 41, api.EventUpdate(name='Neuer Anlass', betrag=7.0,
+                                                expected_version=1), _USER, db)
+    assert exc.value.status_code == 409
+    # Ausnahme ändern: ebenso wenig.
+    with pytest.raises(HTTPException) as exc:
+        api.update_event(7, 41, api.EventUpdate(name='Neuer Anlass', betrag=5.0,
+                                                fuer_mitglied_id=11,
+                                                expected_version=1), _USER, db)
+    assert exc.value.status_code == 409
+
+
+def test_update_event_versionskonflikt_409():
+    db = _db(wart=True)
+    db.clubdeckel_events.update = lambda *a, **k: False
+    with pytest.raises(HTTPException) as exc:
+        api.update_event(7, 41, api.EventUpdate(name='X', betrag=5.0,
+                                                expected_version=1), _USER, db)
+    assert exc.value.status_code == 409
+
+
+def test_gebuchtes_event_nicht_loeschbar_409():
+    db = _db(wart=True)
+    db.clubdeckel_events.get = lambda eid: _event(id=eid, gebucht_anzahl=4)
+    with pytest.raises(HTTPException) as exc:
+        api.delete_event(7, 41, _USER, db)
+    assert exc.value.status_code == 409
+
+
+def test_buchen_reicht_event_daten_durch():
+    db = _db(wart=True)
+    db.clubdeckel_events.get = lambda eid: _event(id=eid, fuer_mitglied_id=11)
+    gesehen = {}
+    db.clubdeckel_buchungen.buche_event = lambda did, man, eid, name, betrag, fuer, by: (
+        gesehen.update(did=did, man=man, eid=eid, name=name, betrag=betrag, fuer=fuer)
+        or 4)
+    ergebnis = api.buche_event(7, 41, _USER, db)
+    assert ergebnis['gebucht'] == 4
+    assert gesehen == {'did': 7, 'man': 3, 'eid': 41,
+                       'name': '60. Geburtstag Klaus', 'betrag': Decimal('5.00'),
+                       'fuer': 11}
+
+
+def test_buchen_auf_deaktiviertem_deckel_409():
+    db = _db(wart=True)
+    db.clubdeckel.get = lambda did: _deckel(id=did, aktiv=0)
+    with pytest.raises(HTTPException) as exc:
+        api.buche_event(7, 41, _USER, db)
+    assert exc.value.status_code == 409
+
+
+def test_storno_event_gibt_anzahl_zurueck():
+    assert api.storno_event(7, 41, _USER, _db(wart=True))['storniert'] == 4
+
+
+def test_opt_out_nur_fuer_kader_mitglieder():
+    db = _db(wart=True)
+    db.clubdeckel.is_mitglied_in_kader = lambda mid, man: False
+    with pytest.raises(HTTPException) as exc:
+        api.set_event_opt_out(7, 99, _USER, db)
+    assert exc.value.status_code == 422
+
+
+def test_opt_out_aufheben_ohne_eintrag_404():
+    db = _db(wart=True)
+    db.clubdeckel_events.revoke_opt_out = lambda *a: False
+    with pytest.raises(HTTPException) as exc:
+        api.revoke_event_opt_out(7, 11, _USER, db)
+    assert exc.value.status_code == 404
+
+
+def test_opt_out_setzen_braucht_wart():
+    """Der Opt-out steuert, wer belastet wird — das ist Wart-Sache, nicht die
+    des betroffenen Mitglieds selbst."""
+    with pytest.raises(HTTPException) as exc:
+        api.set_event_opt_out(7, 11, _USER, _db())
+    assert exc.value.status_code == 403

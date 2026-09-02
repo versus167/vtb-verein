@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 113
+SCHEMA_VERSION = 114
 
 
 # ---------------------------------------------------------------------------
@@ -2202,6 +2202,7 @@ _CLUBDECKEL_BEFREIUNG_VALS = ", ".join(
 _CLUBDECKEL_BUCHUNG_COLS = (
     "id, version, deckel_id, mitglied_id, artikel_id, typ, menge, betrag, "
     "paar_ref, beitrag_monat, notiz, artikel_name, gegen_name, termin_id, "
+    "event_id, "
     "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _CLUBDECKEL_BUCHUNG_VALS = ", ".join(
@@ -2632,6 +2633,185 @@ _CLUBDECKEL_FNS = (
     _FN_CLUBDECKEL_ARTIKEL_AUDIT_INSERT, _FN_CLUBDECKEL_ARTIKEL_AUDIT_UPDATE,
     _FN_CLUBDECKEL_BEFREIUNG_AUDIT_INSERT, _FN_CLUBDECKEL_BEFREIUNG_AUDIT_UPDATE,
     _FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT, _FN_CLUBDECKEL_BUCHUNG_AUDIT_UPDATE,
+)
+
+
+# ----------------------------------------------------------------------------
+# Sammlungen/Events der Teamkasse (Schema v114, Ticket #181)
+# ----------------------------------------------------------------------------
+# Ein Event ist eine EINMALIGE Umlage auf den ganzen Kader („60. Geburtstag
+# Klaus: 5 € von allen") — strukturell der Monatsbeitrag ohne Monat. Gebucht
+# wird auf den CLUB: je Teilnehmer eine Zeile typ='event' über −betrag, der
+# Team-Saldo steigt entsprechend. Wer die Auslage hatte, holt sie sich danach
+# über den vorhandenen An-/Verkauf ('einkauf') zurück; es gibt also bewusst
+# kein zweites Geldfluss-Muster.
+#
+# Wer zahlt mit? Der am Buchungstag aktive Kader, MINUS
+#   - clubdeckel_event.fuer_mitglied_id — der, für den gesammelt wird (das
+#     Geburtstagskind zahlt sein eigenes Geschenk nicht), und
+#   - clubdeckel_event_opt_out — der generelle „macht bei Sammlungen nicht
+#     mit"-Haken je Mitglied, gepflegt an der Mitgliederliste der Teamkasse.
+#     Er hängt am DECKEL, nicht am Event: eine dauerhafte Haltung, keine
+#     Einzelfallentscheidung (Muster wie clubdeckel_beitrag_befreiung).
+#
+# Erneutes Buchen ist idempotent und überspringt nur AKTIVE Zeilen — anders als
+# beim Beitrag, wo auch ein Storno den Monat als erledigt gilt. Beim Beitrag
+# heißt Storno „erlassen", weil der Sammellauf sonst automatisch nachbuchen
+# würde; ein Event bucht dagegen immer ein Mensch, und der will nach einem
+# Storno („falscher Betrag") genau das: korrigieren und neu buchen.
+
+_CLUBDECKEL_EVENT_COLS = (
+    "id, version, deckel_id, name, betrag, fuer_mitglied_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_EVENT_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_EVENT_COLS.split(","))
+
+_CLUBDECKEL_EVENT_OPT_OUT_COLS = (
+    "id, version, deckel_id, mitglied_id, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_CLUBDECKEL_EVENT_OPT_OUT_VALS = ", ".join(
+    "NEW." + c.strip() for c in _CLUBDECKEL_EVENT_OPT_OUT_COLS.split(","))
+
+_FN_CLUBDECKEL_EVENT_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_event_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_event_history ({_CLUBDECKEL_EVENT_COLS})
+        VALUES ({_CLUBDECKEL_EVENT_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_CLUBDECKEL_EVENT_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_event_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version IS DISTINCT FROM OLD.version THEN
+            INSERT INTO clubdeckel_event_history ({_CLUBDECKEL_EVENT_COLS})
+            VALUES ({_CLUBDECKEL_EVENT_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_CLUBDECKEL_EVENT_OPT_OUT_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_event_opt_out_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO clubdeckel_event_opt_out_history ({_CLUBDECKEL_EVENT_OPT_OUT_COLS})
+        VALUES ({_CLUBDECKEL_EVENT_OPT_OUT_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_CLUBDECKEL_EVENT_OPT_OUT_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_clubdeckel_event_opt_out_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version IS DISTINCT FROM OLD.version THEN
+            INSERT INTO clubdeckel_event_opt_out_history ({_CLUBDECKEL_EVENT_OPT_OUT_COLS})
+            VALUES ({_CLUBDECKEL_EVENT_OPT_OUT_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+# Eigene Konstante statt Teil von _DDL_CLUBDECKEL: Die Tabellen kamen erst mit
+# v114, die historische Migration v74→v75 darf sie also NICHT anlegen. Geteilt
+# zwischen Frischaufbau und Migration v113→v114 (Fresh == Migriert).
+_DDL_CLUBDECKEL_EVENT = """
+    CREATE TABLE IF NOT EXISTS clubdeckel_event (
+      id               SERIAL PRIMARY KEY,
+      deckel_id        INTEGER NOT NULL REFERENCES clubdeckel(id),
+      name             TEXT NOT NULL,
+      betrag           NUMERIC(10,2) NOT NULL,
+      -- Für wen gesammelt wird; zahlt selbst nicht mit. NULL = niemand
+      -- ausgenommen (z. B. „Kasten für den Kühlschrank").
+      fuer_mitglied_id INTEGER REFERENCES mitglied(id),
+      loesch_ref       TEXT,
+      version          INTEGER NOT NULL DEFAULT 1,
+      created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by       TEXT NOT NULL,
+      deleted_at       TEXT,
+      deleted_by       TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_event_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, name TEXT, betrag NUMERIC(10,2), fuer_mitglied_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_event_opt_out (
+      id          SERIAL PRIMARY KEY,
+      deckel_id   INTEGER NOT NULL REFERENCES clubdeckel(id),
+      mitglied_id INTEGER NOT NULL REFERENCES mitglied(id),
+      loesch_ref  TEXT,
+      version     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by  TEXT NOT NULL,
+      deleted_at  TEXT,
+      deleted_by  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS clubdeckel_event_opt_out_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      deckel_id INTEGER, mitglied_id INTEGER,
+      created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
+      deleted_at TEXT, deleted_by TEXT,
+      PRIMARY KEY (id, version)
+    );
+"""
+
+# event_id an der Buchung + der um 'event' erweiterte typ-CHECK. Wie
+# _CLUBDECKEL_BUCHUNG_TERMIN_FK bewusst NICHT inline in _DDL_CLUBDECKEL: dort
+# entsteht clubdeckel_buchung VOR clubdeckel_event. Der CHECK trägt denselben
+# Namen, den Postgres der Inline-Fassung gibt — sonst sähen frisch und migriert
+# verschieden aus.
+_CLUBDECKEL_BUCHUNG_EVENT_DDL = (
+    "ALTER TABLE clubdeckel_buchung ADD COLUMN IF NOT EXISTS event_id INTEGER",
+    "ALTER TABLE clubdeckel_buchung_history ADD COLUMN IF NOT EXISTS event_id INTEGER",
+    "ALTER TABLE clubdeckel_buchung DROP CONSTRAINT IF EXISTS fk_clubdeckel_buchung_event",
+    "ALTER TABLE clubdeckel_buchung ADD CONSTRAINT fk_clubdeckel_buchung_event "
+    "FOREIGN KEY (event_id) REFERENCES clubdeckel_event(id)",
+    "ALTER TABLE clubdeckel_buchung DROP CONSTRAINT IF EXISTS clubdeckel_buchung_typ_check",
+    "ALTER TABLE clubdeckel_buchung ADD CONSTRAINT clubdeckel_buchung_typ_check "
+    "CHECK (typ IN ('konsum', 'verkauf', 'kauf', 'einkauf', 'zahlung', 'beitrag', 'event'))",
+)
+
+_CLUBDECKEL_EVENT_INDEXES = (
+    ("idx_clubdeckel_event_deckel_id",          "clubdeckel_event(deckel_id)"),
+    ("idx_clubdeckel_event_fuer_mitglied",      "clubdeckel_event(fuer_mitglied_id)"),
+    ("idx_clubdeckel_event_deleted_at",         "clubdeckel_event(deleted_at)"),
+    ("idx_clubdeckel_event_history_id",         "clubdeckel_event_history(id)"),
+    ("idx_clubdeckel_event_opt_out_deckel_id",  "clubdeckel_event_opt_out(deckel_id)"),
+    ("idx_clubdeckel_event_opt_out_mitglied",   "clubdeckel_event_opt_out(mitglied_id)"),
+    ("idx_clubdeckel_event_opt_out_deleted_at", "clubdeckel_event_opt_out(deleted_at)"),
+    ("idx_clubdeckel_event_opt_out_history_id", "clubdeckel_event_opt_out_history(id)"),
+    ("idx_clubdeckel_buchung_event_id",         "clubdeckel_buchung(event_id)"),
+)
+
+_CLUBDECKEL_EVENT_UNIQUE_INDEXES = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_event_opt_out_active "
+    "ON clubdeckel_event_opt_out (deckel_id, mitglied_id) WHERE deleted_at IS NULL",
+    # Ein Mitglied zahlt je Event höchstens einmal. Nur aktive Zeilen: nach dem
+    # Storno darf dasselbe Event erneut gebucht werden (s. Kommentar oben).
+    "CREATE UNIQUE INDEX IF NOT EXISTS uix_clubdeckel_buchung_event "
+    "ON clubdeckel_buchung (deckel_id, mitglied_id, event_id) "
+    "WHERE typ = 'event' AND deleted_at IS NULL",
+)
+
+_CLUBDECKEL_EVENT_TRIGGERS = (
+    ('trig_clubdeckel_event_audit_insert',         'INSERT', 'clubdeckel_event',         'fn_clubdeckel_event_audit_insert'),
+    ('trig_clubdeckel_event_audit_update',         'UPDATE', 'clubdeckel_event',         'fn_clubdeckel_event_audit_update'),
+    ('trig_clubdeckel_event_opt_out_audit_insert', 'INSERT', 'clubdeckel_event_opt_out', 'fn_clubdeckel_event_opt_out_audit_insert'),
+    ('trig_clubdeckel_event_opt_out_audit_update', 'UPDATE', 'clubdeckel_event_opt_out', 'fn_clubdeckel_event_opt_out_audit_update'),
+)
+
+_CLUBDECKEL_EVENT_FNS = (
+    _FN_CLUBDECKEL_EVENT_AUDIT_INSERT, _FN_CLUBDECKEL_EVENT_AUDIT_UPDATE,
+    _FN_CLUBDECKEL_EVENT_OPT_OUT_AUDIT_INSERT, _FN_CLUBDECKEL_EVENT_OPT_OUT_AUDIT_UPDATE,
 )
 
 
@@ -3916,6 +4096,7 @@ class Database:
             111: self._migrate_v110_to_v111,
             112: self._migrate_v111_to_v112,
             113: self._migrate_v112_to_v113,
+            114: self._migrate_v113_to_v114,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8475,6 +8656,41 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 113 WHERE id = 1")
 
+    def _migrate_v113_to_v114(self) -> None:
+        """Sammlungen/Events der Teamkasse (#181).
+
+        Eine einmalige Umlage auf den Kader — „60. Geburtstag Klaus: 5 € von
+        allen". Neu sind clubdeckel_event (Name, Betrag je Kopf, das ausgenommene
+        Mitglied, für das gesammelt wird) und clubdeckel_event_opt_out (der
+        generelle „macht bei Sammlungen nicht mit"-Haken je Mitglied, am DECKEL
+        statt am Event), jeweils mit History und Audit-Triggern.
+
+        An clubdeckel_buchung kommt event_id dazu, und der typ-CHECK bekommt
+        'event'. Die Audit-Funktionen der Buchung müssen mit: Sie sind f-Strings
+        über _CLUBDECKEL_BUCHUNG_COLS — wer nur die Tabelle erweitert, bekommt
+        eine History, die die neue Spalte nie mitschreibt, ohne dass irgendetwas
+        kracht.
+
+        DDL/Funktionen/Indizes geteilt mit dem Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_CLUBDECKEL_EVENT)
+            for sql in _CLUBDECKEL_BUCHUNG_EVENT_DDL:
+                cur.execute(sql)
+            for fn_sql in (*_CLUBDECKEL_EVENT_FNS,
+                           _FN_CLUBDECKEL_BUCHUNG_AUDIT_INSERT,
+                           _FN_CLUBDECKEL_BUCHUNG_AUDIT_UPDATE):
+                cur.execute(fn_sql)
+            for name, ereignis, tabelle, fn in _CLUBDECKEL_EVENT_TRIGGERS:
+                cur.execute(f"CREATE OR REPLACE TRIGGER {name} AFTER {ereignis} "
+                            f"ON {tabelle} FOR EACH ROW EXECUTE FUNCTION {fn}();")
+            for name, ziel in _CLUBDECKEL_EVENT_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {ziel}")
+            for sql in _CLUBDECKEL_EVENT_UNIQUE_INDEXES:
+                cur.execute(sql)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 114 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9832,6 +10048,13 @@ class Database:
         # Teamkasse/Clubdeckel (Schema v75, #98): mannschaftsinterne Strichliste.
         # DDL geteilt mit Migration v74→v75.
         cur.execute(_DDL_CLUBDECKEL)
+        # Sammlungen/Events der Teamkasse (Schema v114, #181): einmalige Umlage
+        # auf den Kader + genereller Opt-out je Mitglied. Die event_id an der
+        # Buchung muss hier stehen und nicht in _DDL_CLUBDECKEL: Sie zeigt auf
+        # clubdeckel_event, das es dort noch nicht gibt. DDL geteilt mit v113→v114.
+        cur.execute(_DDL_CLUBDECKEL_EVENT)
+        for sql in _CLUBDECKEL_BUCHUNG_EVENT_DDL:
+            cur.execute(sql)
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
@@ -10100,7 +10323,7 @@ class Database:
         cur.execute(_FN_TRESOR_EINTRAG_AUDIT_UPDATE)
         cur.execute(_FN_TRESOR_KONTAKT_AUDIT_INSERT)
         cur.execute(_FN_TRESOR_KONTAKT_AUDIT_UPDATE)
-        for fn_sql in _CLUBDECKEL_FNS:
+        for fn_sql in (*_CLUBDECKEL_FNS, *_CLUBDECKEL_EVENT_FNS):
             cur.execute(fn_sql)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
@@ -10671,6 +10894,7 @@ class Database:
             *_TRESOR_TRIGGERS,
             *_TRESOR_KONTAKT_TRIGGERS,
             *_CLUBDECKEL_TRIGGERS,
+            *_CLUBDECKEL_EVENT_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
             *_TERMINE_TRIGGERS,
             *_TERMIN_ZUSAGE_TRIGGERS,
@@ -10804,6 +11028,7 @@ class Database:
             *_TRESOR_INDEXES,
             *_TRESOR_KONTAKT_INDEXES,
             *_CLUBDECKEL_INDEXES,
+            *_CLUBDECKEL_EVENT_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,
@@ -10830,7 +11055,7 @@ class Database:
             cur.execute(sql)
         for sql in _TRESOR_UNIQUE_INDEXES:
             cur.execute(sql)
-        for sql in _CLUBDECKEL_UNIQUE_INDEXES:
+        for sql in (*_CLUBDECKEL_UNIQUE_INDEXES, *_CLUBDECKEL_EVENT_UNIQUE_INDEXES):
             cur.execute(sql)
         for sql in _TERMINE_UNIQUE_INDEXES:
             cur.execute(sql)

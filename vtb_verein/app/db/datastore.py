@@ -94,6 +94,7 @@ from app.db.clubdeckel_gruppe_repository import ClubdeckelGruppeRepository
 from app.db.clubdeckel_artikel_repository import ClubdeckelArtikelRepository
 from app.db.clubdeckel_befreiung_repository import ClubdeckelBefreiungRepository
 from app.db.clubdeckel_buchung_repository import ClubdeckelBuchungRepository
+from app.db.clubdeckel_event_repository import ClubdeckelEventRepository
 from app.db.kalender_abo_repository import KalenderAboRepository
 from app.db.termin_repository import TerminRepository
 from app.db.termin_zusage_repository import TerminZusageRepository
@@ -268,6 +269,7 @@ class VereinsDB:
         self._clubdeckel_artikel_repo = ClubdeckelArtikelRepository(self.conn)
         self._clubdeckel_befreiung_repo = ClubdeckelBefreiungRepository(self.conn)
         self._clubdeckel_buchung_repo = ClubdeckelBuchungRepository(self.conn)
+        self._clubdeckel_event_repo = ClubdeckelEventRepository(self.conn)
 
         # Kalender-Abos (#153): persönlicher ICS-Feed je User
         self._kalender_abo_repo = KalenderAboRepository(self.conn)
@@ -493,6 +495,10 @@ class VereinsDB:
     @property
     def clubdeckel_buchungen(self) -> ClubdeckelBuchungRepository:
         return self._clubdeckel_buchung_repo
+
+    @property
+    def clubdeckel_events(self) -> ClubdeckelEventRepository:
+        return self._clubdeckel_event_repo
 
     # --- Kalender-Abos (#153) ---
     @property

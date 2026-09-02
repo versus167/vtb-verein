@@ -5,7 +5,8 @@ Kader-Rechteableitung (aktiv am Stichtag, Rollen-Stufen), die Wart-ACL inkl.
 Reaktivierung sowie die Ledger-Semantik des korrigierten Modells: Preis-Snapshot,
 Mitglieds-Verkäufer als Nullsummen-Paar (konsum/verkauf), Zahlung als Paar,
 Einkauf ans Team, automatischer Beitragslauf (Monatsfenster, Befreiung,
-storniert = erlassen) und Team-Saldo = −Σ Mitgliedssalden.
+storniert = erlassen), Sammlungen/Events (#181: Teilnehmerkreis, Idempotenz,
+Storno) und Team-Saldo = −Σ Mitgliedssalden.
 
 Läuft nur, wenn ``VTB_TEST_DATABASE_URL`` auf eine (leere) Wegwerf-DB zeigt –
 VereinsDB legt das Schema beim Connect an (Muster wie test_termine_integration).
@@ -62,6 +63,8 @@ def clean(db):
                 "clubdeckel_artikel, clubdeckel_artikel_history, "
                 "clubdeckel_gruppe, clubdeckel_gruppe_history, "
                 "clubdeckel_beitrag_befreiung, clubdeckel_beitrag_befreiung_history, "
+                "clubdeckel_event, clubdeckel_event_history, "
+                "clubdeckel_event_opt_out, clubdeckel_event_opt_out_history, "
                 "clubdeckel_berechtigung, clubdeckel_berechtigung_history, "
                 "clubdeckel, clubdeckel_history, "
                 # Termine hängen seit v97 an den Buchungen (#167). Das CASCADE
@@ -846,7 +849,9 @@ def test_restore_unbekannt(db):
 
 
 def test_loesch_ref_spalten_existieren(db):
-    """Fresh-Schema-Pfad: loesch_ref liegt auf allen 6 Live-Tabellen."""
+    """Fresh-Schema-Pfad: loesch_ref liegt auf allen 8 Live-Tabellen — der
+    komplette Soft-Delete einer Teamkasse läuft als ein Batch über diese Spalte,
+    eine neue Kindtabelle ohne sie fiele stillschweigend aus dem Batch."""
     with db.cursor() as cur:
         cur.execute(
             "SELECT table_name FROM information_schema.columns "
@@ -854,7 +859,8 @@ def test_loesch_ref_spalten_existieren(db):
         tabellen = {r['table_name'] for r in cur.fetchall()}
     assert tabellen == {"clubdeckel", "clubdeckel_buchung", "clubdeckel_artikel",
                         "clubdeckel_gruppe", "clubdeckel_berechtigung",
-                        "clubdeckel_beitrag_befreiung"}
+                        "clubdeckel_beitrag_befreiung",
+                        "clubdeckel_event", "clubdeckel_event_opt_out"}
 
 
 # ------------------------------------------- Termin-Bezug & Matrix (#167, v98)
@@ -1342,3 +1348,223 @@ def test_ersatzbuchung_behaelt_die_uhrzeit(db):
         termin_id=spiel, wert_datum=str(alt['created_at']))
 
     assert str(neu.created_at) == str(alt['created_at'])
+
+
+# ------------------------------------------------------------ Sammlungen (#181)
+def _saldo(db, deckel_id, mitglied_id):
+    return db.clubdeckel_buchungen.saldo_for_mitglied(deckel_id, mitglied_id)
+
+
+def test_event_bucht_kader_ohne_jubilar_und_ohne_opt_out(db):
+    """Der Teilnehmerkreis: aktiver Kader minus der, für den gesammelt wird,
+    minus die generellen Opt-outs. Das Geld landet beim Club."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, bernd = _make_kader_user(db, man, 'spieler', 'Bernd')
+    _, klaus = _make_kader_user(db, man, 'spieler', 'Klaus')      # der Jubilar
+    _, dora = _make_kader_user(db, man, 'spieler', 'Dora')        # macht nie mit
+    _, ex = _make_kader_user(db, man, 'spieler', 'Emil', bis=YESTERDAY)
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    db.clubdeckel_events.set_opt_out(deckel.id, dora, 't')
+
+    event = db.clubdeckel_events.create(deckel.id, "60. Geburtstag Klaus",
+                                        Decimal('5.00'), klaus, 't')
+    gebucht = db.clubdeckel_buchungen.buche_event(
+        deckel.id, man, event.id, event.name, event.betrag,
+        event.fuer_mitglied_id, 't')
+
+    assert gebucht == 2                       # nur Anna und Bernd
+    assert _saldo(db, deckel.id, anna) == Decimal('-5.00')
+    assert _saldo(db, deckel.id, bernd) == Decimal('-5.00')
+    assert _saldo(db, deckel.id, klaus) == Decimal('0')
+    assert _saldo(db, deckel.id, dora) == Decimal('0')
+    assert _saldo(db, deckel.id, ex) == Decimal('0')
+    assert _team_saldo(db, deckel.id) == Decimal('10.00')
+
+
+def test_event_ohne_jubilar_bucht_den_ganzen_kader(db):
+    """fuer_mitglied_id NULL nimmt niemanden aus — `IS DISTINCT FROM NULL`
+    darf nicht versehentlich alle herausfiltern."""
+    man = _make_mannschaft(db)
+    _make_kader_user(db, man, 'spieler', 'Anna')
+    _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "Kasten für den Kühlschrank",
+                                        Decimal('3.00'), None, 't')
+
+    assert db.clubdeckel_buchungen.buche_event(
+        deckel.id, man, event.id, event.name, event.betrag, None, 't') == 2
+
+
+def test_event_zweimal_buchen_holt_nur_nachzuegler(db):
+    """Idempotenz: Der zweite Klick belastet niemanden doppelt, holt aber den
+    ins Boot, dessen Opt-out inzwischen weg ist."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, dora = _make_kader_user(db, man, 'spieler', 'Dora')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    db.clubdeckel_events.set_opt_out(deckel.id, dora, 't')
+    event = db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'),
+                                        None, 't')
+
+    def buchen():
+        return db.clubdeckel_buchungen.buche_event(
+            deckel.id, man, event.id, event.name, event.betrag, None, 't')
+
+    assert buchen() == 1
+    assert buchen() == 0                      # nichts Neues
+    db.clubdeckel_events.revoke_opt_out(deckel.id, dora, 't')
+    assert buchen() == 1                      # jetzt zahlt Dora mit
+    assert _saldo(db, deckel.id, anna) == Decimal('-5.00')
+    assert _saldo(db, deckel.id, dora) == Decimal('-5.00')
+
+
+def test_event_storno_nimmt_alle_zeilen_zurueck_und_erlaubt_neubuchung(db):
+    """Anders als beim Beitrag heißt Storno hier nicht „erlassen": Nach dem
+    Zurücknehmen darf dieselbe Sammlung korrigiert und neu gebucht werden."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'),
+                                        None, 't')
+    db.clubdeckel_buchungen.buche_event(deckel.id, man, event.id, event.name,
+                                        event.betrag, None, 't')
+
+    assert db.clubdeckel_buchungen.storno_event(deckel.id, event.id, 't') == 2
+    assert _saldo(db, deckel.id, anna) == Decimal('0')
+    assert _team_saldo(db, deckel.id) == Decimal('0')
+
+    # Korrigierter Betrag, erneut buchen
+    db.clubdeckel_events.update(event.id, "Geschenk", Decimal('2.00'), None, 't',
+                                event.version)
+    neu = db.clubdeckel_events.get(event.id)
+    assert db.clubdeckel_buchungen.buche_event(
+        deckel.id, man, neu.id, neu.name, neu.betrag, None, 't') == 2
+    assert _saldo(db, deckel.id, anna) == Decimal('-2.00')
+
+
+def test_event_buchung_haelt_namen_als_schnappschuss(db):
+    """Der Anlass steht als Notiz an der Buchung — die History bleibt lesbar,
+    auch wenn die Sammlung später umbenannt oder geprunt wird."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "60. Geburtstag Klaus",
+                                        Decimal('5.00'), None, 't')
+    db.clubdeckel_buchungen.buche_event(deckel.id, man, event.id, event.name,
+                                        event.betrag, None, 't')
+
+    buchung = db.clubdeckel_buchungen.list_for_deckel(deckel.id, mitglied_id=anna)[0]
+    assert buchung.typ == 'event'
+    assert buchung.event_id == event.id
+    assert buchung.notiz == "60. Geburtstag Klaus"
+    assert buchung.gegen_name == 'Team'
+    # Und sie ist über die Volltextsuche der History auffindbar (#129).
+    assert db.clubdeckel_buchungen.list_for_deckel(deckel.id, suche='Geburtstag')
+
+
+def test_event_liste_zeigt_buchungsstand(db):
+    man = _make_mannschaft(db)
+    _make_kader_user(db, man, 'spieler', 'Anna')
+    _make_kader_user(db, man, 'spieler', 'Bernd')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'),
+                                        None, 't')
+
+    offen = db.clubdeckel_events.list_for_deckel(deckel.id)[0]
+    assert (offen.gebucht_anzahl, offen.gebucht_summe) == (0, Decimal('0'))
+
+    db.clubdeckel_buchungen.buche_event(deckel.id, man, event.id, event.name,
+                                        event.betrag, None, 't')
+    gebucht = db.clubdeckel_events.list_for_deckel(deckel.id)[0]
+    assert gebucht.gebucht_anzahl == 2
+    assert gebucht.gebucht_summe == Decimal('10.00')   # positiv, nicht −10
+    assert gebucht.gebucht_am is not None
+
+
+def test_event_liste_loest_jubilar_namen_auf(db):
+    man = _make_mannschaft(db)
+    _, klaus = _make_kader_user(db, man, 'spieler', 'Klaus')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'), klaus, 't')
+
+    assert db.clubdeckel_events.list_for_deckel(deckel.id)[0].fuer_name == 'Klaus Deckeltest'
+
+
+def test_event_opt_out_ist_reaktivierbar_und_einmalig(db):
+    """Muster der Beitragsbefreiung: eine Zeile je (Deckel, Mitglied), erneutes
+    Setzen reaktiviert sie, statt eine zweite anzulegen."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+
+    db.clubdeckel_events.set_opt_out(deckel.id, anna, 't')
+    db.clubdeckel_events.set_opt_out(deckel.id, anna, 't')     # idempotent
+    assert len(db.clubdeckel_events.list_opt_outs(deckel.id)) == 1
+
+    assert db.clubdeckel_events.revoke_opt_out(deckel.id, anna, 't') is True
+    assert db.clubdeckel_events.list_opt_outs(deckel.id) == []
+    assert db.clubdeckel_events.revoke_opt_out(deckel.id, anna, 't') is False
+
+    db.clubdeckel_events.set_opt_out(deckel.id, anna, 't')     # reaktiviert
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM clubdeckel_event_opt_out "
+                    "WHERE deckel_id=%s AND mitglied_id=%s", (deckel.id, anna))
+        assert cur.fetchone()['n'] == 1
+
+
+def test_event_doppelbuchung_wird_hart_verhindert(db):
+    """Der partielle Unique-Index ist die letzte Verteidigungslinie, falls zwei
+    Warte gleichzeitig auf „Buchen" tippen."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'),
+                                        None, 't')
+    db.clubdeckel_buchungen.buche_event(deckel.id, man, event.id, event.name,
+                                        event.betrag, None, 't')
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO clubdeckel_buchung (deckel_id, mitglied_id, typ, "
+                "betrag, event_id, created_by, updated_by) "
+                "VALUES (%s,%s,'event',-5.00,%s,'t','t')",
+                (deckel.id, anna, event.id))
+
+
+def test_event_schreibt_history_und_soft_delete(db):
+    man = _make_mannschaft(db)
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    event = db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'),
+                                        None, 't')
+    db.clubdeckel_events.update(event.id, "Geschenk XL", Decimal('7.00'), None,
+                                't2', event.version)
+    assert db.clubdeckel_events.mark_deleted(event.id, 't3') is True
+    assert db.clubdeckel_events.get(event.id) is None
+
+    with db.cursor() as cur:
+        cur.execute("SELECT version, name, betrag FROM clubdeckel_event_history "
+                    "WHERE id=%s ORDER BY version", (event.id,))
+        stufen = [(r['version'], r['name'], r['betrag']) for r in cur.fetchall()]
+    assert stufen == [(1, 'Geschenk', Decimal('5.00')),
+                      (2, 'Geschenk XL', Decimal('7.00')),
+                      (3, 'Geschenk XL', Decimal('7.00'))]
+
+
+def test_deckel_softdelete_nimmt_sammlungen_mit(db):
+    """Der komplette Soft-Delete der Teamkasse ist ein Batch über loesch_ref —
+    neue Kindtabellen müssen mit, sonst blieben sie aktiv zurück."""
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    deckel = db.clubdeckel.create(man, "Teamkasse", 't')
+    db.clubdeckel_events.create(deckel.id, "Geschenk", Decimal('5.00'), None, 't')
+    db.clubdeckel_events.set_opt_out(deckel.id, anna, 't')
+
+    db.clubdeckel.loesche_komplett(deckel.id, 't')
+    assert db.clubdeckel_events.list_for_deckel(deckel.id) == []
+    assert db.clubdeckel_events.list_opt_outs(deckel.id) == []
+
+    assert db.clubdeckel.restore(deckel.id, 't') == 'ok'
+    assert len(db.clubdeckel_events.list_for_deckel(deckel.id)) == 1
+    assert len(db.clubdeckel_events.list_opt_outs(deckel.id)) == 1

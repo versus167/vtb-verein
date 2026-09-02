@@ -27,7 +27,8 @@ VERWALTEN_ROLLEN = ('betreuer', 'uebungsleiter')
 # Kind-Tabellen eines Deckels (für das Komplett-Löschen/Wiederherstellen, #125).
 # Reihenfolge egal (alles in einer Transaktion); Deckel selbst wird separat behandelt.
 _CHILD_TABLES = ("clubdeckel_buchung", "clubdeckel_artikel", "clubdeckel_gruppe",
-                 "clubdeckel_berechtigung", "clubdeckel_beitrag_befreiung")
+                 "clubdeckel_berechtigung", "clubdeckel_beitrag_befreiung",
+                 "clubdeckel_event", "clubdeckel_event_opt_out")
 
 # Gemeinsame CTE: aktive Kader-Zugehörigkeiten des Users am Stichtag.
 # Erwartet die benannten Parameter %(uid)s (user_id) und %(tag)s (ISO-Datum).
