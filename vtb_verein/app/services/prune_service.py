@@ -260,12 +260,10 @@ class LogRule:
 # Blätter ohne History/Version; stored_name_col aktiviert das Datei-Löschen.
 PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # --- Anhänge (Blätter mit Disk-Datei) ---
-    # Tor 6 wie bei den Kassen-Belegen. Die KASKADE fehlt hier aber weiterhin: Ein
-    # verborgenes Ticket lässt seine Anhänge und Kommentare bewusst aktiv, damit
-    # `restore_ticket` es vollständig zurückbringt (ticket_service.mark_ticket_deleted).
-    # Folge: Tor 4 hält so ein Ticket dauerhaft im Papierkorb. Das sauber zu lösen
-    # braucht eine `loesch_ref` wie bei der Teamkasse (Batch markieren, Restore
-    # reaktiviert genau ihn) – also eine Migration, und deshalb ein eigenes Ticket.
+    # Tor 6 wie bei den Kassen-Belegen. Die Kaskade beim Verbergen sitzt seit v116
+    # in ticket_repository.mark_deleted und läuft über eine `loesch_ref` (#190):
+    # Das Wiederherstellen reaktiviert exakt den Lösch-Batch, deshalb kann hier
+    # kaskadiert werden, ohne den Papierkorb der Tickets zu beschädigen.
     PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
                 stored_name_col="stored_name",
                 parent=ParentRef("ticket", "tickets", "ticket_id")),

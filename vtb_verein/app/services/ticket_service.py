@@ -274,8 +274,14 @@ class TicketService:
         return result
 
     def mark_ticket_deleted(self, ticket_id: int, deleted_by: str) -> bool:
-        """Verbergen: nur das Ticket. Die Anhänge bleiben absichtlich stehen,
-        damit `restore_ticket` es vollständig zurückbringt."""
+        """Verbergen: Ticket samt Kommentaren, Anhängen und Teilnehmern.
+
+        Bis v116 blieben die Kinder absichtlich stehen, damit `restore_ticket` das
+        Ticket vollständig zurückbringt. Die Absicht war richtig, der Weg nicht:
+        Ein aktives Kind hält das verborgene Ticket über Tor 4 des Prune dauerhaft
+        im Papierkorb (#190). Beides zugleich löst die `loesch_ref` im Repository —
+        gemeinsamer Batch beim Verbergen, exakt dieser Batch beim Wiederherstellen.
+        """
         return self._ticket_repo.mark_deleted(ticket_id, deleted_by)
 
     def restore_ticket(self, ticket_id: int, restored_by: str) -> bool:
