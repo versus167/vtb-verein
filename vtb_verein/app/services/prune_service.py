@@ -260,8 +260,15 @@ class LogRule:
 # Blätter ohne History/Version; stored_name_col aktiviert das Datei-Löschen.
 PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # --- Anhänge (Blätter mit Disk-Datei) ---
+    # Tor 6 wie bei den Kassen-Belegen. Die KASKADE fehlt hier aber weiterhin: Ein
+    # verborgenes Ticket lässt seine Anhänge und Kommentare bewusst aktiv, damit
+    # `restore_ticket` es vollständig zurückbringt (ticket_service.mark_ticket_deleted).
+    # Folge: Tor 4 hält so ein Ticket dauerhaft im Papierkorb. Das sauber zu lösen
+    # braucht eine `loesch_ref` wie bei der Teamkasse (Batch markieren, Restore
+    # reaktiviert genau ihn) – also eine Migration, und deshalb ein eigenes Ticket.
     PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
-                stored_name_col="stored_name"),
+                stored_name_col="stored_name",
+                parent=ParentRef("ticket", "tickets", "ticket_id")),
     # Tor 6: Der Beleg darf nicht lange vor der Buchung endgültig verschwinden, an der
     # er hängt – sonst stünde die stornierte Buchung monatelang ohne ihren Kassenbon im
     # Papierkorb. Betrifft auch das Zählprotokoll-PDF, das als normaler Anhang an der
@@ -269,11 +276,15 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
                 stored_name_col="stored_name",
                 parent=ParentRef("kassenbuchung", "kassenbuchungen", "buchung_id")),
-    # Belege gelöschter Rechnungs-Entwürfe. Die Rechnung selbst wird NICHT geprunt
-    # (Finanzdaten, siehe Kopfkommentar) – gelöscht werden kann ein Beleg ohnehin nur
-    # im Entwurf, also bevor irgendetwas freigegeben oder exportiert wurde.
+    # Belege gelöschter Rechnungen. Die Rechnung selbst läuft über `rechnung_alter`
+    # (10 Jahre ab Jahresende) in den Papierkorb und wird dort ganz normal geprunt;
+    # der frühere Vermerk „wird NICHT geprunt" stammt aus der Zeit vor dem
+    # Löschpfad-Inventar und stimmt nicht mehr.
+    # Tor 6 wie bei den Kassen-Belegen: Der Beleg darf nicht lange vor seiner Rechnung
+    # verschwinden. Die Kaskade beim Löschen sitzt in rechnung_repository.soft_delete.
     PruneEntity("rechnung_anhang", "Rechnungs-Belege", "rechnung_anhaenge",
-                stored_name_col="stored_name"),
+                stored_name_col="stored_name",
+                parent=ParentRef("rechnung", "rechnung", "rechnung_id")),
     # --- Schließanlage / Zutritt (Blatt → Wurzel) ---
     # Steht VOR mitglied/abteilung: schluessel_chip hängt an mitglied, tuer_schloss an
     # abteilung. tuer_zutritt_log, tuer_credential, tuer_schloss_status_log sind KEINE

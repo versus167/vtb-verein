@@ -344,9 +344,38 @@ class TestSaldoVortrag:
 class TestParentGate:
     """Tor 6: Ein Blatt darf nicht lange vor seinem Eltern-Datensatz verschwinden."""
 
-    def test_kassen_anhaenge_haengen_an_der_buchung(self):
-        p = _entity("kassenbuchung_anhang").parent
-        assert (p.entity, p.table, p.fk) == ("kassenbuchung", "kassenbuchungen", "buchung_id")
+    def test_alle_anhang_entitaeten_haengen_an_ihrem_vorgang(self):
+        """Genau die drei Anhang-Tabellen haben die Schere (kein History unter Eltern
+        MIT History) – und genau die drei müssen das Tor tragen."""
+        erwartet = {
+            "kassenbuchung_anhang": ("kassenbuchung", "kassenbuchungen", "buchung_id"),
+            "rechnung_anhang": ("rechnung", "rechnung", "rechnung_id"),
+            "ticket_anhang": ("ticket", "tickets", "ticket_id"),
+        }
+        for name, soll in erwartet.items():
+            p = _entity(name).parent
+            assert p is not None, f"{name} ohne Tor 6"
+            assert (p.entity, p.table, p.fk) == soll
+
+    def test_keine_weitere_entitaet_braucht_das_tor(self):
+        """Wächter gegen künftige Blätter: Wer ohne eigene History unter einem
+        Eltern-Datensatz MIT History hängt, hat dieselbe Schere und braucht Tor 6.
+
+        Geprüft wird je KIND, nicht je Beziehung. Ein Anhang taucht auch unter `user`
+        auf (Urheber-Spalte ``hochgeladen_von``), das ist aber ein reiner Tor-4-Wächter
+        und kein Lebenszyklus – der gehört dem Vorgang, an dem der Anhang hängt.
+        """
+        nach_tabelle = {e.table: e for e in PRUNE_REGISTRY}
+        betroffen = {
+            nach_tabelle[c.table].name
+            for eltern in PRUNE_REGISTRY if eltern.history_table
+            for c in eltern.children
+            if c.table in nach_tabelle
+            and nach_tabelle[c.table] is not eltern
+            and nach_tabelle[c.table].history_table is None
+        }
+        ohne_tor = sorted(n for n in betroffen if _entity(n).parent is None)
+        assert ohne_tor == [], f"ohne Tor 6, aber mit derselben Schere: {ohne_tor}"
 
     def test_eltern_entitaet_existiert_wirklich(self):
         """Der Verweis ist ein String – ohne diese Prüfung fiele ein Tippfehler erst
@@ -365,8 +394,13 @@ class TestParentGate:
                 assert order.index(e.name) < order.index(e.parent.entity)
 
     def test_gate_greift_nur_bei_gesetztem_parent(self):
-        ohne = build_original_candidate_ids_sql(_entity("ticket_anhang"), 90, 10, 365)[0]
-        assert "kassenbuchungen p" not in ohne
+        """ticket_kommentar hat History und deshalb kein Tor 6 – die Klausel darf dort
+        gar nicht erst auftauchen."""
+        ent = _entity("ticket_kommentar")
+        assert ent.parent is None
+        sql, params = build_original_candidate_ids_sql(ent, 90, 10, 365)
+        assert " p\nWHERE p.id = " not in sql and "NOT EXISTS (SELECT 1 FROM tickets p" not in sql
+        assert params == [90, 10, 365]
 
     def test_gate_haelt_nur_waehrend_der_elternfrist(self):
         """Kein spiegelbildliches „erst nach dem Eltern-Datensatz" – das wäre mit Tor 4

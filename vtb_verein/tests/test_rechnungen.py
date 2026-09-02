@@ -743,6 +743,103 @@ def test_loeschen_nur_im_entwurf(db):
         assert cur.fetchone()["deleted_at"] is not None     # soft, nicht hart
 
 
+def test_loeschen_nimmt_die_belege_mit(db):
+    """Sonst hielte Tor 4 des Prune die gelöschte Rechnung dauerhaft im Papierkorb:
+    Es fragt nach der physischen Existenz des Belegs, nicht nach seinem deleted_at."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_kask", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball)
+    beleg = _beleg(db, r.id, einreicher)
+
+    db.rechnungen.loeschen(r.id, einreicher)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at, deleted_by FROM rechnung_anhaenge WHERE id=%s",
+                    (beleg.id,))
+        zeile = cur.fetchone()
+    assert zeile["deleted_at"] is not None
+    assert zeile["deleted_by"] == einreicher.username
+
+
+def test_geloeschte_rechnung_wird_endgueltig_loeschbar(db):
+    """Die ganze Kette: Beleg landet im Papierkorb, wird Prune-Kandidat, und erst
+    wenn er physisch weg ist, gibt Tor 4 die Rechnung frei. Ohne Kaskade bliebe der
+    Beleg aktiv – er würde nie Kandidat und die Rechnung nie löschbar."""
+    from dataclasses import replace
+    from app.services.prune_service import PRUNE_REGISTRY, build_original_candidate_count_sql
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_kette", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball)
+    _beleg(db, r.id, einreicher)
+    db.rechnungen.loeschen(r.id, einreicher)
+
+    # 400 Tage vergehen lassen – beide Fenster (90 T Beleg, 365 T History) durch.
+    with db.cursor() as cur:
+        for tabelle in ("rechnung", "rechnung_anhaenge"):
+            cur.execute(f"UPDATE {tabelle} SET deleted_at = deleted_at - "
+                        f"interval '400 days' WHERE deleted_at IS NOT NULL")
+        cur.execute("UPDATE rechnung_history SET "
+                    "created_at = created_at - interval '400 days', "
+                    "updated_at = updated_at - interval '400 days', "
+                    "deleted_at = deleted_at - interval '400 days'")
+
+    def kandidaten(name, hold=0):
+        # keep_min=0: Tor 3 hielte bei so wenigen Zeilen sonst alles zurück und würde
+        # das eigentlich geprüfte Tor überdecken.
+        e = replace(next(x for x in PRUNE_REGISTRY if x.name == name), keep_min=0)
+        sql, params = build_original_candidate_count_sql(e, e.retention_days, 0, 365,
+                                                         parent_hold_days=hold)
+        with db.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return cur.fetchone()["n"]
+
+    assert kandidaten("rechnung_anhang", hold=365) == 1   # ohne Kaskade: 0
+    assert kandidaten("rechnung") == 0                    # Tor 4 – Beleg liegt noch da
+
+    with db.cursor() as cur:                              # einen Lauf später ist er weg
+        cur.execute("DELETE FROM rechnung_anhaenge WHERE rechnung_id=%s", (r.id,))
+    assert kandidaten("rechnung") == 1
+
+
+def test_beleg_wartet_auf_seine_rechnung(db):
+    """Tor 6: Belege haben keine History, ihr Fenster ist darum viel kürzer als das
+    der Rechnung. Ohne das Tor fiele der Beleg 275 Tage vor ihr."""
+    from dataclasses import replace
+    from app.services.prune_service import PRUNE_REGISTRY, build_original_candidate_count_sql
+
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_tor6", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    r = _rechnung(db, einreicher, fussball)
+    _beleg(db, r.id, einreicher)
+    db.rechnungen.loeschen(r.id, einreicher)
+
+    entity = replace(next(x for x in PRUNE_REGISTRY if x.name == "rechnung_anhang"),
+                     keep_min=0)
+
+    def loeschbar():
+        sql, params = build_original_candidate_count_sql(entity, 90, 0, 365,
+                                                         parent_hold_days=365)
+        with db.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return cur.fetchone()["n"]
+
+    def altern(tage):
+        with db.cursor() as cur:
+            for tabelle in ("rechnung", "rechnung_anhaenge"):
+                cur.execute(f"UPDATE {tabelle} SET deleted_at = deleted_at - "
+                            f"make_interval(days => %s) WHERE deleted_at IS NOT NULL",
+                            (tage,))
+
+    altern(100)          # eigene Frist des Belegs (90 T) rum, die der Rechnung nicht
+    assert loeschbar() == 0
+    altern(300)          # zusammen 400 Tage
+    assert loeschbar() == 1
+
+
 def test_beleg_upload_nur_im_entwurf(db):
     from app.services.rechnung_service import KeinZugriffError
 

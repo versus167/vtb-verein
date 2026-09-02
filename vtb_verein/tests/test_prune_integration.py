@@ -361,6 +361,51 @@ def test_prune_loescht_anhang_datensatz_und_datei(db):
     assert not db.anhang_service.existiert(stored)        # Datei von Platte weg
 
 
+def test_ticket_anhang_wartet_auf_sein_ticket(db):
+    """Tor 6: Anhänge haben keine History, ihr Fenster ist darum viel kürzer als das
+    des Tickets. Ohne das Tor fiele der Screenshot 275 Tage vor dem Vorgang, an dem er
+    hängt – der Regelfall ist die Archivierung abgeschlossener Tickets, die beide
+    zusammen in den Papierkorb schiebt.
+
+    Die KASKADE beim Verbergen von Hand fehlt hier weiterhin bewusst (Restore, siehe
+    ticket_service.mark_ticket_deleted); nur die Reihenfolge ist jetzt richtig.
+    """
+    from app.services.prune_service import build_original_candidate_count_sql
+    from dataclasses import replace
+    from app.services.prune_service import PRUNE_REGISTRY
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
+            "VALUES ('tor6u','tor6@x.de','h','admin','t','t') RETURNING id")
+        uid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO tickets (titel,beschreibung,gemeldet_von,created_by,updated_by) "
+            "VALUES ('Tor6','B',%s,'t','t') RETURNING id", (uid,))
+        tid = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO ticket_anhaenge "
+            "(ticket_id,original_name,stored_name,mime_type,dateigroesse,hochgeladen_von) "
+            "VALUES (%s,'shot.png','tor6.png','image/png',6,%s) RETURNING id", (tid, uid))
+        aid = cur.fetchone()["id"]
+
+    # So sieht es nach der Archivierung aus: Kind und Eltern zusammen im Papierkorb.
+    entity = replace(next(e for e in PRUNE_REGISTRY if e.name == "ticket_anhang"),
+                     keep_min=0)
+
+    def loeschbar():
+        sql, params = build_original_candidate_count_sql(entity, 90, 0, 365,
+                                                         parent_hold_days=365)
+        return _count(db, sql, params)
+
+    _soft_delete_plain(db, "ticket_anhaenge", aid, 100)   # eigene Frist (90 T) rum
+    _soft_delete(db, "tickets", tid, 100)                 # Ticket-Fenster (365 T) nicht
+    assert loeschbar() == 0
+
+    _soft_delete(db, "tickets", tid, 400)                 # jetzt sind beide durch
+    assert loeschbar() == 1
+
+
 def _ins_abteilung(db, name="Abt"):
     with db.cursor() as cur:
         cur.execute("INSERT INTO abteilung (name) VALUES (%s) RETURNING id", (name,))
