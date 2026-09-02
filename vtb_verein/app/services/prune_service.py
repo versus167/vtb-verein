@@ -323,6 +323,11 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("tuer_zutritt_log", "chip_id"),
                 )),
     # --- Übungsleiter-Abrechnung (Blatt → Wurzel) ---
+    # In den Papierkorb kommen diese drei auf zwei verschiedenen Wegen (#188):
+    # Abrechnung und Stunden über `ul_abrechnung_alter` (10 Jahre ab Jahresende des
+    # abgerechneten Zeitraums), der Vergütungssatz dagegen über das Ausscheiden seines
+    # Übungsleiters (Kind von `mitglied_austritt_alter`). Vorher waren sie die letzten
+    # ÜL-Zeilen ohne Uhr – und hielten damit jeden je abrechnenden Übungsleiter in Tor 4.
     PruneEntity("ul_stunde", "ÜL-Stunden", "ul_stunde",
                 history_table="ul_stunde_history"),
     PruneEntity("ul_abrechnung", "ÜL-Abrechnungen", "ul_abrechnung",
@@ -469,6 +474,13 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("beitrag_sollstellung", "storno_exportiert_in_export_id"),
                     ChildRef("gebuehr_forderung", "exportiert_in_export_id"),
                     ChildRef("gebuehr_forderung", "storno_exportiert_in_export_id"),
+                    # ÜL-Abrechnungen gehen denselben Weg in den Fibu-Export, ihre
+                    # beiden Export-Spalten sind aber (anders als bei den zwei
+                    # Forderungs-Tabellen) ohne FK angelegt. Ohne diesen Guard könnte
+                    # der Export vor der Abrechnung verschwinden und dort eine
+                    # Export-Nummer zurücklassen, die auf nichts mehr zeigt.
+                    ChildRef("ul_abrechnung", "exportiert_in_export_id"),
+                    ChildRef("ul_abrechnung", "storno_exportiert_in_export_id"),
                     ChildRef("fibu_exporte", "storno_von_export_id"),
                 )),
     PruneEntity("gebuehr", "Gebühren", "gebuehr",
@@ -741,6 +753,16 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
         date_expr=_ab_jahresende("exportiert_am"),
         default_days=DEFAULT_FINANZ_RETENTION_DAYS,
     ),
+    # ÜL-Abrechnungen sind Honorarbelege und gehen in denselben Fibu-Export wie die
+    # Forderungen – also dieselbe Frist, datiert über das Ende des abgerechneten
+    # Zeitraums (nicht über das Einreichen: aufbewahrungspflichtig ist die Leistung).
+    # Die Stunden sind reine Belegzeilen der Abrechnung und wandern mit (#188).
+    ArchiveRule(
+        "ul_abrechnung_alter", "ÜL-Abrechnungen (Aufbewahrung)", "ul_abrechnung",
+        date_expr=_ab_jahresende("zeitraum_bis"),
+        default_days=DEFAULT_FINANZ_RETENTION_DAYS,
+        children=(ChildRef("ul_stunde", "abrechnung_id"),),
+    ),
 
     # --- Ausgeschiedene Mitglieder ---
     # Nur wer ein Austrittsdatum trägt, altert überhaupt (sonst NULL → nie fällig). Die
@@ -760,6 +782,12 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("clubdeckel_berechtigung", "mitglied_id"),
             ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
             ChildRef("clubdeckel_event_opt_out", "mitglied_id"),
+            # Der persönliche Vergütungssatz eines Übungsleiters. Er bekommt bewusst
+            # KEINE eigene Datumsregel: ein Satz hat kein natürliches Enddatum, eine
+            # Alters-Regel würde noch benutzte Sätze archivieren und künftige
+            # Abrechnungen entwerten. Er stirbt mit dem Übungsleiter (#188). Sätze
+            # ohne mitglied_id (allgemeine Sätze der Abteilung) bleiben unberührt.
+            ChildRef("ul_satz", "mitglied_id"),
         ),
     ),
 )
