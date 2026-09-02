@@ -19,6 +19,9 @@ Beispiele:
     python3 tools/vtb_tickets.py status 42 erledigt
     python3 tools/vtb_tickets.py resolve 42 -m "Behoben in abc1234"   # Kommentar + erledigt
     python3 tools/vtb_tickets.py create "Titel" -b "Beschreibung" -p niedrig
+    python3 tools/vtb_tickets.py create "Technik-Ticket" --intern   # nicht öffentlich
+    python3 tools/vtb_tickets.py intern 42            # bestehendes Ticket intern setzen
+    python3 tools/vtb_tickets.py intern 42 --aus      # Kennzeichnung wieder aufheben
 """
 from __future__ import annotations
 
@@ -149,6 +152,9 @@ class Client:
     def post(self, pfad: str, body: dict) -> object:
         return _request("POST", f"{self.base}{pfad}", token=self.token, json_body=body)
 
+    def put(self, pfad: str, body: dict) -> object:
+        return _request("PUT", f"{self.base}{pfad}", token=self.token, json_body=body)
+
     def patch(self, pfad: str, body: dict) -> object:
         return _request("PATCH", f"{self.base}{pfad}", token=self.token, json_body=body)
 
@@ -201,7 +207,8 @@ def render_markdown(tickets: list[dict], ueberschrift: str, mit_abgeschlossen: b
     zeilen.append("")
     for t in tickets:
         kopf = (f"## #{t['id']} · {t['titel']}  "
-                f"[{t['status']} / {t.get('prioritaet', '?')}]")
+                f"[{t['status']} / {t.get('prioritaet', '?')}"
+                f"{' / intern' if t.get('intern') else ''}]")
         zeilen.append(kopf)
         meta = [f"gemeldet von {t.get('gemeldet_von_username', '?')}"]
         if mit_bereich:
@@ -267,7 +274,8 @@ def cmd_pull(client: Client, args) -> None:
 
 def cmd_show(client: Client, args) -> None:
     t = client.get(f"/tickets/{args.id}")
-    print(f"#{t['id']} · {t['titel']}  [{t['status']} / {t.get('prioritaet')}]")
+    print(f"#{t['id']} · {t['titel']}  [{t['status']} / {t.get('prioritaet')}"
+          f"{' / intern' if t.get('intern') else ''}]")
     print(f"gemeldet von {t.get('gemeldet_von_username', '?')}"
           f" · Bereich {t.get('bereich_name')} · Version {t.get('version')}")
     print()
@@ -332,9 +340,37 @@ def cmd_create(client: Client, args) -> None:
         "titel": args.titel,
         "beschreibung": args.beschreibung or "",
         "prioritaet": args.prio,
+        # Intern (#178) = nicht für jeden Angemeldeten lesbar. Für technische
+        # Tickets der Normalfall, deshalb als Flag und nicht als Nachbearbeitung.
+        "intern": bool(args.intern),
         "bereich_id": client.bereich_id(client.cfg["bereich"]),
     })
-    print(f"Ticket #{ticket['id']} angelegt: {ticket['titel']} (Prio {ticket['prioritaet']})")
+    print(f"Ticket #{ticket['id']} angelegt: {ticket['titel']} "
+          f"(Prio {ticket['prioritaet']}{', intern' if ticket.get('intern') else ''})")
+
+
+def cmd_intern(client: Client, args) -> None:
+    """Kennzeichnung eines bestehenden Tickets setzen oder aufheben.
+
+    Das PUT ist ein Voll-Update (TicketWrite), deshalb werden die übrigen Felder
+    aus dem gelesenen Ticket übernommen – wer hier eines vergisst, leert es.
+    """
+    t = client.get(f"/tickets/{args.id}")
+    ziel = not args.aus
+    if bool(t.get("intern")) == ziel:
+        print(f"Ticket #{args.id} ist bereits {'intern' if ziel else 'öffentlich'}.")
+        return
+    client.put(f"/tickets/{args.id}", {
+        "titel": t["titel"],
+        "beschreibung": t.get("beschreibung") or "",
+        "prioritaet": t.get("prioritaet", "normal"),
+        "intern": ziel,
+        "bereich_id": t.get("bereich_id"),
+        "kategorie_id": t.get("kategorie_id"),
+        "faellig_am": t.get("faellig_am"),
+        "expected_version": t["version"],
+    })
+    print(f"Ticket #{args.id}: {'intern' if ziel else 'öffentlich'}")
 
 
 def cmd_resolve(client: Client, args) -> None:
@@ -387,7 +423,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-b", "--beschreibung", help="Beschreibung (Markdown/Text)")
     sp.add_argument("-p", "--prio", default="normal",
                     help=f"eine von: {', '.join(PRIO_RANG)} (Default: normal)")
+    sp.add_argument("--intern", action="store_true",
+                    help="Ticket als intern kennzeichnen (nicht öffentlich lesbar)")
     sp.set_defaults(func=cmd_create)
+
+    sp = sub.add_parser("intern", help="Ticket als intern kennzeichnen (oder aufheben)")
+    sp.add_argument("id", type=int)
+    sp.add_argument("--aus", action="store_true", help="Kennzeichnung aufheben")
+    sp.set_defaults(func=cmd_intern)
 
     sp = sub.add_parser("resolve", help="Optional kommentieren und auf 'erledigt' setzen")
     sp.add_argument("id", type=int)
