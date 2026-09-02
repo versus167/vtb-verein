@@ -111,6 +111,33 @@ class ChildRef:
 
 
 @dataclass(frozen=True)
+class ParentRef:
+    """Eltern-Datensatz, der ein Blatt am Leben hält, bis er selbst so weit ist (Tor 6).
+
+    Gegenrichtung zu ChildRef: ChildRef verhindert, dass ein Eltern-Datensatz VOR seinen
+    Kindern verschwindet. ParentRef verhindert, dass ein Kind LANGE VOR seinem
+    Eltern-Datensatz verschwindet — ein Kassenbeleg soll nicht neun Monate vor der
+    Buchung weg sein, an der er hängt. Die Schere entsteht, weil Anhänge keine History
+    haben: Ihr Fenster ist nur die Papierkorb-Frist, das der Buchung zusätzlich das
+    deutlich längere History-Fenster.
+
+    Bewusst KEIN spiegelbildliches „erst NACH dem Eltern-Datensatz": zusammen mit Tor 4
+    wäre das eine Verklemmung – beide warteten für immer aufeinander. Das Tor hält das
+    Kind nur so lange, wie der Eltern-Datensatz selbst im Papierkorb sitzt und dessen
+    eigene Frist läuft. Danach fallen beide, das Kind einen Lauf früher – die
+    Reihenfolge, die Tor 4 ohnehin erzwingt.
+
+    Ein eigenständig gelöschtes Kind (falsches Foto an einer AKTIVEN Buchung) bleibt
+    unberührt: Dort liegt der Eltern-Datensatz nicht im Papierkorb, das Tor greift nicht,
+    und die kurze eigene Frist des Kindes gilt weiter – ein versehentlich hochgeladenes
+    Dokument soll nicht ein Jahr liegen bleiben.
+    """
+    entity: str                     # Name der Eltern-PruneEntity (liefert deren Fristen)
+    table: str                      # deren Live-Tabelle
+    fk: str                         # Spalte im Kind, die auf parent.id zeigt
+
+
+@dataclass(frozen=True)
 class PruneEntity:
     """Deklarative Beschreibung einer prunebaren Entität.
 
@@ -126,18 +153,48 @@ class PruneEntity:
     # Spalte mit dem Datei-Namen auf der Platte (Anhänge); gesetzt -> beim Prune wird
     # die Datei via AnhangService zusätzlich gelöscht. Domänen-unabhängiger Storage-Layer.
     stored_name_col: Optional[str] = None
+    # Gesetzt, wenn dieses Blatt seinen Eltern-Datensatz nicht deutlich überleben lassen
+    # darf, ohne selbst zu warten (Tor 6, siehe ParentRef). Höchstens einer – mehr hat
+    # bisher keine Entität gebraucht.
+    parent: Optional[ParentRef] = None
     retention_days: int = DEFAULT_RETENTION_DAYS
     keep_min: int = DEFAULT_KEEP_MIN
     history_retention_days: int = DEFAULT_HISTORY_RETENTION_DAYS
 
 
 @dataclass(frozen=True)
+class SaldoVortrag:
+    """Wohin die Summe der archivierten Zeilen wandert, damit ein Saldo nicht springt (#189).
+
+    Nötig überall dort, wo ein Bestand als Summe über die AKTIVEN Zeilen einer
+    Bewegungstabelle gerechnet wird: Archivieren heißt Soft-Delete, die Zeilen fallen
+    aus der Summe – und der Bestand ändert sich, obwohl fachlich nichts passiert ist.
+    Der Vortrag rechnet die Summe der fälligen Zeilen VOR dem Archivieren auf ein
+    Ankerfeld am Eltern-Datensatz (Kasse) und schreibt den Stichtag daneben.
+
+    Damit ist der Vortrag rollierend: Beim nächsten Lauf ist der alte Vortrag schon Teil
+    von ``ziel_col``, dazu kommt nur die neue Tranche. Es bleibt genau EIN Ankerwert je
+    Kasse, keine Kette von Vorträgen.
+    """
+    ziel_table: str                 # Eltern-Tabelle mit dem Ankerfeld, z.B. "kassen"
+    ziel_fk: str                    # Spalte in rule.table, die dorthin zeigt, z.B. "kasse_id"
+    ziel_col: str                   # Ankerfeld, z.B. "anfangsbestand_cent"
+    betrag_expr: str                # vorzeichenbehafteter Betrag je Zeile
+    # Optionales Feld am Eltern-Datensatz, das festhält, AB WANN der Anker gilt. Es
+    # bekommt den Tag nach der letzten mitgenommenen Zeile (``stichtag_expr`` liefert
+    # deren Datum) – nicht den Prune-Cutoff: Fällig wird nach Jahresende, es überleben
+    # also Zeilen aus dem Cutoff-Jahr, und der Cutoff läge fälschlich hinter ihnen.
+    stichtag_col: Optional[str] = None
+    stichtag_expr: Optional[str] = None   # Datum der Zeile, z.B. "buchungsdatum"
+
+
+@dataclass(frozen=True)
 class ArchiveRule:
     """Generische Alters-Archivierung: aktive, datierte Datensätze werden nach Alter
-    (Tage) auf ``deleted_at`` gesetzt (in den Papierkorb verschoben) – erst die Kinder
-    (``children``, Blatt zuerst), dann der Datensatz selbst. Das ist ein reversibler
-    Soft-Delete; das endgültige Entfernen übernimmt danach der reguläre Prune über die
-    passende ``PruneEntity``.
+    (Tage) auf ``deleted_at`` gesetzt (in den Papierkorb verschoben) – erst der
+    Saldovortrag (``vortrag``), dann die Kinder (``children``, Blatt zuerst), dann der
+    Datensatz selbst. Das ist ein reversibler Soft-Delete; das endgültige Entfernen
+    übernimmt danach der reguläre Prune über die passende ``PruneEntity``.
 
     ``date_expr`` ist ein SQL-Ausdruck auf ``table`` (TEXT/ISO oder Timestamp); über den
     Datumsanteil (``LEFT(...,10)``) entscheidet sich die Fälligkeit. Bewusst schlank und
@@ -150,6 +207,8 @@ class ArchiveRule:
     date_expr: str                  # z.B. "COALESCE(NULLIF(ende, ''), beginn)"
     default_days: int = DEFAULT_TERMIN_ALTER_RETENTION_DAYS
     children: tuple[ChildRef, ...] = field(default_factory=tuple)
+    # Gesetzt, wenn das Archivieren einen laufenden Saldo verfälschen würde.
+    vortrag: Optional[SaldoVortrag] = None
 
 
 @dataclass(frozen=True)
@@ -203,8 +262,13 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     # --- Anhänge (Blätter mit Disk-Datei) ---
     PruneEntity("ticket_anhang", "Ticket-Anhänge", "ticket_anhaenge",
                 stored_name_col="stored_name"),
+    # Tor 6: Der Beleg darf nicht lange vor der Buchung endgültig verschwinden, an der
+    # er hängt – sonst stünde die stornierte Buchung monatelang ohne ihren Kassenbon im
+    # Papierkorb. Betrifft auch das Zählprotokoll-PDF, das als normaler Anhang an der
+    # Zähl-Buchung hängt.
     PruneEntity("kassenbuchung_anhang", "Kassen-Anhänge", "kassenbuchung_anhaenge",
-                stored_name_col="stored_name"),
+                stored_name_col="stored_name",
+                parent=ParentRef("kassenbuchung", "kassenbuchungen", "buchung_id")),
     # Belege gelöschter Rechnungs-Entwürfe. Die Rechnung selbst wird NICHT geprunt
     # (Finanzdaten, siehe Kopfkommentar) – gelöscht werden kann ein Beleg ohnehin nur
     # im Entwurf, also bevor irgendetwas freigegeben oder exportiert wurde.
@@ -612,6 +676,9 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
     # Posten. Stammdaten (Kassen, Gebühren, Beitragsregeln, Kategorien) haben bewusst
     # KEINE Regel – die altern nicht, die werden von Hand gelöscht und laufen dann über
     # das Standard-Fenster.
+    # Als einzige Regel mit Saldovortrag: Der Kassenbestand ist die Summe über die
+    # AKTIVEN Buchungen, ein Archivieren würde ihn also um die Summe der archivierten
+    # Zeilen verschieben (#189). Die wandert deshalb vorher in den Anfangsbestand.
     ArchiveRule(
         "kassenbuchung_alter", "Kassenbuchungen (Aufbewahrung)", "kassenbuchungen",
         date_expr=_ab_jahresende("buchungsdatum"),
@@ -620,6 +687,11 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("kassen_zaehlungen", "buchung_id"),
             ChildRef("kassen_zaehlungen", "ausloesende_buchung_id"),
             ChildRef("kassenbuchung_anhaenge", "buchung_id", has_version=False),
+        ),
+        vortrag=SaldoVortrag(
+            ziel_table="kassen", ziel_fk="kasse_id", ziel_col="anfangsbestand_cent",
+            betrag_expr="COALESCE(einnahme_cent, 0) - COALESCE(ausgabe_cent, 0)",
+            stichtag_col="anfangsbestand_ab", stichtag_expr="buchungsdatum",
         ),
     ),
     ArchiveRule(
@@ -810,11 +882,14 @@ def build_original_candidate_ids_sql(
     keep_min: int,
     history_retention_days: int,
     history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS,
+    parent_hold_days: int = 0,
 ) -> tuple[str, list]:
-    """SELECT der IDs aller endgültig löschbaren Original-Datensätze (alle 5 Tore).
+    """SELECT der IDs aller endgültig löschbaren Original-Datensätze (alle 6 Tore).
 
     Einzige Quelle der Tor-Logik – COUNT (Report) und DELETE (Prune) bauen beide darauf
-    auf, damit „Vorschau = Aktion" garantiert ist. Tunables werden explizit übergeben.
+    auf, damit „Vorschau = Aktion" garantiert ist. Tunables werden explizit übergeben;
+    ``parent_hold_days`` ist das Fenster des Eltern-Datensatzes und nur bei Entitäten
+    mit ``parent`` (Tor 6) von Bedeutung.
     """
     params: list = []
     where = [
@@ -842,6 +917,20 @@ def build_original_candidate_ids_sql(
         )
         params.append(history_retention_days)
 
+    if entity.parent:                                     # Tor 6: Eltern-Datensatz wartet
+        # Greift nur, solange der Eltern-Datensatz IM PAPIERKORB liegt und seine eigene
+        # Frist läuft. Ein aktiver Eltern-Datensatz hält nichts fest (eigenständig
+        # gelöschtes Kind), ein bereits entfernter erst recht nicht – deshalb keine
+        # Verklemmung mit Tor 4.
+        p = entity.parent
+        where.append(
+            f"NOT EXISTS (SELECT 1 FROM {p.table} p "
+            f"WHERE p.id = (SELECT ch.{p.fk} FROM {entity.table} ch WHERE ch.id = r.id) "
+            f"AND p.deleted_at IS NOT NULL AND p.deleted_at::text <> '' "
+            f"AND {_ts('p.deleted_at')} >= now() - make_interval(days => %s))"
+        )
+        params.append(parent_hold_days)
+
     sql = (
         "WITH ranked AS ("
         f"  SELECT id, {_ts('deleted_at')} AS del, "
@@ -860,10 +949,12 @@ def build_original_candidate_count_sql(
     keep_min: int,
     history_retention_days: int,
     history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS,
+    parent_hold_days: int = 0,
 ) -> tuple[str, list]:
     """Zahl der endgültig löschbaren Original-Datensätze (zählt das ID-SELECT)."""
     ids_sql, params = build_original_candidate_ids_sql(
-        entity, retention_days, keep_min, history_retention_days, history_ts_cols
+        entity, retention_days, keep_min, history_retention_days, history_ts_cols,
+        parent_hold_days,
     )
     return f"SELECT COUNT(*) AS n FROM ({ids_sql}) c", params
 
@@ -968,6 +1059,58 @@ def build_archive_child_delete_sql(rule: ArchiveRule, child: ChildRef) -> str:
     )
 
 
+def build_archive_vortrag_sum_sql(rule: ArchiveRule) -> str:
+    """Summe (vorzeichenbehaftet), die der nächste Lauf vortragen würde. Param: Stichtag.
+
+    Für den Report – zeigt dem Admin, um welchen Betrag sich der Anker verschiebt,
+    bevor er den Lauf auslöst.
+    """
+    v = rule.vortrag
+    return (
+        f"SELECT COALESCE(SUM({v.betrag_expr}), 0) AS n FROM {rule.table} "
+        f"WHERE {_archive_faellig_where(rule)}"
+    )
+
+
+def build_archive_vortrag_update_sql(rule: ArchiveRule) -> str:
+    """Trägt die Summe der fälligen Zeilen auf den Anker am Eltern-Datensatz vor.
+
+    Muss VOR dem Soft-Delete laufen: ``_archive_faellig_where`` wählt aktive Zeilen,
+    nach dem Archivieren fände die Summe nichts mehr. Der ``version``-Bump ist Absicht
+    – so landet die Verschiebung samt altem Wert im Audit-Trail des Eltern-Datensatzes
+    und ist später nachvollziehbar.
+
+    Benannte Parameter (``actor``, ``stichtag``), weil der Stichtag zweimal vorkommt.
+    """
+    v = rule.vortrag
+    stichtag_select = (
+        f", (MAX(LEFT(({v.stichtag_expr})::text, 10))::date + 1)::text AS stichtag"
+        if v.stichtag_col else ""
+    )
+    # GREATEST statt schlichter Zuweisung: Eine nachträglich rückdatierte Zeile darf den
+    # Stichtag nicht wieder nach hinten ziehen. (PostgreSQL ignoriert NULL in GREATEST,
+    # der erste Vortrag setzt den Wert also sauber.)
+    stichtag_set = (
+        f"{v.stichtag_col} = GREATEST(z.{v.stichtag_col}, q.stichtag),\n            "
+        if v.stichtag_col else ""
+    )
+    return f"""
+        UPDATE {v.ziel_table} z
+        SET {v.ziel_col} = z.{v.ziel_col} + q.summe,
+            {stichtag_set}version = z.version + 1,
+            updated_at = CURRENT_TIMESTAMP,
+            updated_by = %(actor)s
+        FROM (
+            SELECT {v.ziel_fk} AS ziel_id, SUM({v.betrag_expr}) AS summe{stichtag_select}
+            FROM {rule.table}
+            WHERE deleted_at IS NULL
+              AND LEFT(({rule.date_expr})::text, 10) < %(stichtag)s
+            GROUP BY {v.ziel_fk}
+        ) q
+        WHERE z.id = q.ziel_id
+    """
+
+
 class PruneService:
     """Orchestriert die Prune-Registry. Phase 0: ausschließlich Dry-Run-Report.
 
@@ -1009,6 +1152,24 @@ class PruneService:
             cur.execute(sql, tuple(params))
             row = cur.fetchone()
             return int(row["n"]) if row else 0
+
+    @staticmethod
+    def _parent_hold_days(entity: PruneEntity, cfg: dict[str, dict]) -> int:
+        """Wie lange Tor 6 ein Blatt an seinem Eltern-Datensatz festhält.
+
+        Maßstab ist das *wirksame* Fenster des Eltern-Datensatzes – Papierkorb-Frist bzw.
+        History-Fenster, je nachdem was länger bindet. Bewusst aus der Konfiguration
+        gelesen statt als Konstante: Wer die Frist der Buchung verkürzt, verkürzt damit
+        auch die Wartezeit ihres Belegs, sonst liefen die beiden wieder auseinander.
+        """
+        if not entity.parent:
+            return 0
+        c = cfg[entity.parent.entity]
+        eltern = next(e for e in PRUNE_REGISTRY if e.name == entity.parent.entity)
+        tage = c["retention_days"]
+        if eltern.history_table:
+            tage = max(tage, c["history_retention_days"])
+        return tage
 
     def effective_config(self) -> dict[str, dict]:
         """Wirksame Tunables je Entität: Override (falls gesetzt) sonst Code-Default."""
@@ -1145,9 +1306,14 @@ class PruneService:
     def _archive_report_row(self, rule: ArchiveRule) -> dict:
         """Report-Zeile einer Alters-Archivierung: ``archivierbar`` = fällige Datensätze,
         die der nächste Lauf in den Papierkorb verschiebt (reversibel, KEIN Hard-Delete –
-        daher ``loeschbar = 0`` und nicht in ``summe_loeschbar``)."""
+        daher ``loeschbar = 0`` und nicht in ``summe_loeschbar``).
+
+        ``vortrag_cent`` ist der Betrag, den der Lauf auf den Anker vorträgt (None ohne
+        ``SaldoVortrag``) – damit der Admin die Verschiebung vor dem Auslösen sieht."""
         days, is_override = self.archive_retention(rule)
         cutoff = (date.today() - timedelta(days=days)).isoformat()
+        vortrag = (self._count(build_archive_vortrag_sum_sql(rule), [cutoff])
+                   if rule.vortrag else None)
         return {
             "name": rule.name,
             "label": rule.label,
@@ -1163,6 +1329,7 @@ class PruneService:
             "loeschbar": 0,
             "archivierbar": self._count(build_archive_count_sql(rule), [cutoff]),
             "archiviert_statt_geloescht": True,
+            "vortrag_cent": vortrag,
             "history_table": None,
             "history_gesamt": None,
             "history_loeschbar": None,
@@ -1206,7 +1373,7 @@ class PruneService:
             ts_cols = self._history_ts_cols(entity)
             cand_sql, cand_params = build_original_candidate_count_sql(
                 entity, c["retention_days"], c["keep_min"], c["history_retention_days"],
-                ts_cols,
+                ts_cols, self._parent_hold_days(entity, cfg),
             )
             loeschbar = self._count(cand_sql, cand_params)
 
@@ -1306,7 +1473,18 @@ class PruneService:
         for rule in ARCHIVE_REGISTRY:
             days, _ = self.archive_retention(rule)
             cutoff = (date.today() - timedelta(days=days)).isoformat()
+            vortrag_cent = None
             with self._db.cursor() as cur:
+                # Saldovortrag ZUERST: Er summiert über die noch aktiven fälligen Zeilen,
+                # nach dem Soft-Delete unten fände er nichts mehr (#189).
+                if rule.vortrag:
+                    # Auf DEMSELBEN Cursor: self._count() öffnet einen eigenen und würde
+                    # per commit() die laufende Transaktion vorzeitig abschließen.
+                    cur.execute(build_archive_vortrag_sum_sql(rule), (cutoff,))
+                    zeile = cur.fetchone()
+                    vortrag_cent = int(zeile["n"]) if zeile else 0
+                    cur.execute(build_archive_vortrag_update_sql(rule),
+                                {"actor": "SYSTEM-PRUNE", "stichtag": cutoff})
                 for child in rule.children:
                     cur.execute(build_archive_child_delete_sql(rule, child),
                                 ("SYSTEM-PRUNE", cutoff))
@@ -1320,6 +1498,7 @@ class PruneService:
                 "geloescht": 0,
                 "history_geloescht": None,
                 "dateien_geloescht": 0,
+                "vortrag_cent": vortrag_cent,
             })
 
         with self._db.cursor() as cur:
@@ -1338,7 +1517,7 @@ class PruneService:
                 c = cfg[entity.name]
                 ids_sql, params = build_original_candidate_ids_sql(
                     entity, c["retention_days"], c["keep_min"], c["history_retention_days"],
-                    self._history_ts_cols(entity),
+                    self._history_ts_cols(entity), self._parent_hold_days(entity, cfg),
                 )
                 cur.execute(ids_sql, tuple(params))
                 ids = [row["id"] for row in cur.fetchall()]

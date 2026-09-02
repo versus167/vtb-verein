@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 114
+SCHEMA_VERSION = 115
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +85,10 @@ _FN_KASSEN_AUDIT_INSERT = """
     CREATE OR REPLACE FUNCTION fn_kassen_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
     BEGIN
         INSERT INTO kassen_history (
-            id, version, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+            id, version, name, beschreibung, anfangsbestand_cent, anfangsbestand_ab, abteilung_id, sachkonto,
             created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
         ) VALUES (
-            NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id, NEW.sachkonto,
+            NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.anfangsbestand_ab, NEW.abteilung_id, NEW.sachkonto,
             NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
         );
         RETURN NEW;
@@ -100,10 +100,10 @@ _FN_KASSEN_AUDIT_UPDATE = """
     BEGIN
         IF NEW.version != OLD.version THEN
             INSERT INTO kassen_history (
-                id, version, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+                id, version, name, beschreibung, anfangsbestand_cent, anfangsbestand_ab, abteilung_id, sachkonto,
                 created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
             ) VALUES (
-                NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.abteilung_id, NEW.sachkonto,
+                NEW.id, NEW.version, NEW.name, NEW.beschreibung, NEW.anfangsbestand_cent, NEW.anfangsbestand_ab, NEW.abteilung_id, NEW.sachkonto,
                 NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
             );
         END IF;
@@ -4097,6 +4097,7 @@ class Database:
             112: self._migrate_v111_to_v112,
             113: self._migrate_v112_to_v113,
             114: self._migrate_v113_to_v114,
+            115: self._migrate_v114_to_v115,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8691,6 +8692,29 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 114 WHERE id = 1")
 
+    def _migrate_v114_to_v115(self) -> None:
+        """Stichtag am Anfangsbestand einer Kasse (#189).
+
+        Die Alters-Archivierung schiebt Kassenbuchungen nach zehn Jahren in den
+        Papierkorb; der Bestand rechnet aber nur über aktive Buchungen. Ohne
+        Gegenmaßnahme springt der Kassenbestand beim ersten Prune-Lauf um die
+        Summe der archivierten Buchungen. Die Summe wandert deshalb künftig in
+        ``anfangsbestand_cent`` — und damit dieser Wert nicht mehr als „so viel
+        lag am ersten Tag in der Kasse" missverstanden (und von Hand überschrieben)
+        wird, merkt sich ``anfangsbestand_ab``, ab wann er gilt.
+
+        Nur eine neue, nullbare Spalte auf kassen + History. Die Audit-Funktionen
+        müssen mit: Sie zählen ihre Spalten einzeln auf, wer nur die Tabelle
+        erweitert, bekommt eine History, die die neue Spalte nie mitschreibt.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE kassen ADD COLUMN IF NOT EXISTS anfangsbestand_ab TEXT")
+            cur.execute("ALTER TABLE kassen_history ADD COLUMN IF NOT EXISTS anfangsbestand_ab TEXT")
+            cur.execute(_FN_KASSEN_AUDIT_INSERT)
+            cur.execute(_FN_KASSEN_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 115 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9316,6 +9340,11 @@ class Database:
               name                TEXT NOT NULL,
               beschreibung        TEXT,
               anfangsbestand_cent INTEGER NOT NULL DEFAULT 0,
+              -- Stichtag, ab dem der Anfangsbestand gilt. NULL = seit Bestehen der
+              -- Kasse (rein manuell erfasst). Gesetzt wird er nur vom Saldovortrag
+              -- der Alters-Archivierung: dort wandert die Summe der archivierten
+              -- Buchungen in anfangsbestand_cent, damit der Bestand nicht springt.
+              anfangsbestand_ab   TEXT,
               abteilung_id        INTEGER REFERENCES abteilung(id),
               sachkonto           TEXT,
               version             INTEGER NOT NULL DEFAULT 1,
@@ -9334,6 +9363,7 @@ class Database:
               name                TEXT,
               beschreibung        TEXT,
               anfangsbestand_cent INTEGER,
+              anfangsbestand_ab   TEXT,
               abteilung_id        INTEGER,
               sachkonto           TEXT,
               created_at          TEXT,

@@ -104,6 +104,15 @@
             dense color="negative" text-color="white" :label="props.row.loeschbar"
           />
           <span v-else>0</span>
+          <!-- Saldovortrag: Der Betrag der archivierten Zeilen wandert in den
+               Anfangsbestand der Kasse, damit der Bestand nicht springt (#189). -->
+          <div v-if="props.row.vortrag_cent" class="text-caption text-grey-7 q-mt-xs">
+            Vortrag {{ formatEuro(props.row.vortrag_cent) }}
+            <q-tooltip>
+              Dieser Saldo wandert in den Anfangsbestand der jeweiligen Kasse,
+              damit der Kassenbestand unverändert bleibt.
+            </q-tooltip>
+          </div>
         </q-td>
       </template>
 
@@ -219,6 +228,8 @@ const nothingToDelete = computed(() =>
 )
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
+const formatEuro = (cent) => new Intl.NumberFormat('de-DE',
+  { style: 'currency', currency: 'EUR' }).format((cent || 0) / 100)
 
 const filter = ref('')
 

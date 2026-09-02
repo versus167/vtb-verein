@@ -28,7 +28,14 @@
           <div class="text-subtitle1 q-mt-sm" :class="k.bestand_cent < 0 ? 'text-negative' : 'text-positive'">
             {{ formatEuro(k.bestand_cent) }}
           </div>
-          <div class="text-caption text-grey">Anfangsbestand: {{ formatEuro(k.anfangsbestand_cent) }}</div>
+          <div class="text-caption text-grey">
+            Anfangsbestand: {{ formatEuro(k.anfangsbestand_cent) }}
+            <template v-if="k.anfangsbestand_ab"> (Stand {{ formatDatum(k.anfangsbestand_ab) }})</template>
+            <q-tooltip v-if="k.anfangsbestand_ab">
+              Buchungen bis {{ formatDatum(k.anfangsbestand_ab, -1) }} sind nach Ablauf der
+              Aufbewahrungsfrist archiviert; ihr Saldo steckt im Anfangsbestand.
+            </q-tooltip>
+          </div>
         </q-card-section>
 
         <q-separator />
@@ -200,8 +207,8 @@
             outlined
             type="number"
             step="0.01"
-            :disable="!!editingKasseId"
-            :hint="editingKasseId ? 'Anfangsbestand kann nach dem Anlegen nicht geändert werden.' : ''"
+            :disable="anfangsbestandGesperrt"
+            :hint="anfangsbestandHinweis"
           />
         </q-card-section>
         <q-separator />
@@ -354,6 +361,11 @@ const saving = ref(false)
 const editingKasseId = ref(null)
 const editingKasseVersion = ref(null)
 const anfangsbestandEuro = ref(0)
+// Sobald die Kasse exportierte oder archivierte Buchungen hat, ist der Anfangsbestand
+// der Anker des laufenden Bestands und darf nicht mehr angefasst werden (#189). Vorher
+// bleibt er korrigierbar – ein Zahlendreher beim Anlegen soll nicht per Umbuchung
+// geradegerückt werden müssen. Das Backend erzwingt dieselbe Regel.
+const anfangsbestandGesperrt = ref(false)
 const kasseForm = ref({ name: '', beschreibung: '', abteilung_id: null, sachkonto: '' })
 
 const berechtigungDialogOpen = ref(false)
@@ -411,6 +423,22 @@ function formatEuro(cent) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(cent / 100)
 }
 
+/** ISO-Datum als TT.MM.JJJJ; `tageOffset` verschiebt (z. B. -1 für „bis einschließlich"). */
+function formatDatum(iso, tageOffset = 0) {
+  if (!iso) return ''
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  d.setDate(d.getDate() + tageOffset)
+  return d.toLocaleDateString('de-DE')
+}
+
+const anfangsbestandHinweis = computed(() => {
+  if (!editingKasseId.value) return ''
+  return anfangsbestandGesperrt.value
+    ? 'Festgeschrieben: Es gibt exportierte oder archivierte Buchungen. Korrekturen laufen über eine Buchung.'
+    : 'Solange nichts exportiert ist, noch korrigierbar.'
+})
+
 async function loadKassen() {
   loading.value = true
   try {
@@ -434,6 +462,7 @@ function openCreateDialog() {
   editingKasseId.value = null
   editingKasseVersion.value = null
   anfangsbestandEuro.value = 0
+  anfangsbestandGesperrt.value = false
   kasseForm.value = { name: '', beschreibung: '', abteilung_id: null, sachkonto: '' }
   kasseDialogOpen.value = true
 }
@@ -442,6 +471,7 @@ function openEditDialog(kasse) {
   editingKasseId.value = kasse.id
   editingKasseVersion.value = kasse.version
   anfangsbestandEuro.value = kasse.anfangsbestand_cent / 100
+  anfangsbestandGesperrt.value = !!kasse.anfangsbestand_gesperrt
   kasseForm.value = {
     name: kasse.name,
     beschreibung: kasse.beschreibung || '',

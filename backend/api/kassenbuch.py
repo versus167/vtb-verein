@@ -17,6 +17,7 @@ from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
 from app.models.kasse import Kasse, Kassenbuchung, KassenKategorie, EURO_STUECKELUNG_CENT
 from app.services.kassenbuch_service import (
+    AnfangsbestandGesperrtError,
     BuchungGesperrtError,
     NegativerBestandError,
     KeinLesezugriffError,
@@ -132,6 +133,8 @@ def _kassenbuch_error_to_http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, BuchungGesperrtError):
         return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, AnfangsbestandGesperrtError):
+        return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, NegativerBestandError):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, DatumAusserhalbBereichError):
@@ -165,6 +168,9 @@ def list_kassen(user: CurrentUser, db: DB):
     for k in kassen:
         d = asdict(k)
         d["bestand_cent"] = db.kassen.get_bestand_cent(k.id)
+        # Ob der Anfangsbestand noch frei ist, entscheidet über das Eingabefeld in der
+        # Verwaltung (#189) – deshalb hier mitliefern statt es im Client zu raten.
+        d["anfangsbestand_gesperrt"] = db.kassen.ist_anfangsbestand_gesperrt(k.id)
         if is_admin:
             d["darf_lesen"] = True
             d["darf_schreiben"] = True
@@ -205,7 +211,10 @@ def update_kasse(kasse_id: int, data: KasseUpdate, user: CurrentUser, db: DB):
     kasse.abteilung_id = data.abteilung_id
     kasse.sachkonto = data.sachkonto
     kasse.version = data.expected_version
-    ok = db.kassenbuch.update_kasse(kasse, updated_by=user.username)
+    try:
+        ok = db.kassenbuch.update_kasse(kasse, updated_by=user.username)
+    except AnfangsbestandGesperrtError as exc:
+        raise _kassenbuch_error_to_http(exc)
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden.")
     return asdict(db.kassen.get_kasse(kasse_id))
@@ -469,6 +478,7 @@ def kassenbuch_pdf_bericht(
         buchungen=buchungen_pdf,
         anfangsbestand_cent=bericht_daten["anfangsbestand_cent"],
         erstellt_von=user.username,
+        archiviert_bis=bericht_daten["archiviert_bis"],
     )
     kasse_slug = bericht_daten["kasse"].name.lower().replace(" ", "_")
     dateiname = f"kassenbuch_{kasse_slug}_{von}_{bis}.pdf"

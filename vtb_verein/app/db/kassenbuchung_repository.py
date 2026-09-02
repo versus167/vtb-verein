@@ -202,7 +202,22 @@ class KassenbuchungRepository(BaseRepository):
             return True
 
     def mark_kassenbuchung_deleted(self, buchung_id: int, deleted_by: str) -> bool:
-        """Soft-Delete (Stornierung) einer Buchung. History via Trigger.
+        """Soft-Delete (Stornierung) einer Buchung — samt Belegen und Zählprotokoll.
+
+        Die Kaskade ist kein Komfort, sondern Pflicht: Tor 4 des Prune fragt
+        ``NOT EXISTS`` OHNE ``deleted_at``-Filter. Ein aktiv gebliebener Anhang hielte
+        die stornierte Buchung also dauerhaft im Papierkorb fest — sie würde nie
+        endgültig gelöscht, ohne dass irgendwo etwas auffiele. Dieselben Kinder räumt
+        die Alters-Archivierung längst ab (ARCHIVE_REGISTRY, ``kassenbuchung_alter``);
+        hier ist der Handpfad nachgezogen.
+
+        Bewusst NICHT mitgenommen:
+
+        * ``kassen_zaehlungen.ausloesende_buchung_id`` — diese Buchung ist nur der
+          Anlass der Zählung, nicht ihr Träger. Die Zählung hängt an ihrer
+          Differenzbuchung und stirbt mit dieser.
+        * ``beitrag_sollstellung`` / ``gebuehr_forderung`` — die Forderung besteht
+          weiter, storniert wurde nur ihre Bezahlung.
 
         Hinweis: Prüfung auf Export-Sperre ist Aufgabe des Service-Layers.
 
@@ -220,7 +235,27 @@ class KassenbuchungRepository(BaseRepository):
                 """,
                 (deleted_by, buchung_id),
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return False
+            # Anhänge: kein version/History, deshalb ohne Bump.
+            cur.execute(
+                """
+                UPDATE kassenbuchung_anhaenge
+                SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s
+                WHERE buchung_id = %s AND deleted_at IS NULL
+                """,
+                (deleted_by, buchung_id),
+            )
+            cur.execute(
+                """
+                UPDATE kassen_zaehlungen
+                SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s,
+                    version = version + 1
+                WHERE buchung_id = %s AND deleted_at IS NULL
+                """,
+                (deleted_by, buchung_id),
+            )
+            return True
 
     def mark_buchungen_exportiert(
         self, buchung_ids: list[int], export_id: int

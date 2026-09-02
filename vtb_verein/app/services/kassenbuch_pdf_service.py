@@ -105,6 +105,7 @@ def erstelle_kassenbuch_pdf(
     buchungen: list[dict],
     anfangsbestand_cent: int,
     erstellt_von: str = '',
+    archiviert_bis: str = None,
 ) -> bytes:
     """
     Erstellt einen PDF-Bericht für den Kassenbuch-Zeitraum.
@@ -118,6 +119,10 @@ def erstelle_kassenbuch_pdf(
                       exportiert_in_export_id (None = noch offen / nicht endgültig)
     :param anfangsbestand_cent: Bestand zum Beginn des Zeitraums (exkl. erster Tag)
     :param erstellt_von: Benutzername des Erstellers (für Footer)
+    :param archiviert_bis: Letzter Tag, dessen Buchungen nach Ablauf der Aufbewahrungs-
+                           frist archiviert wurden (ISO). Ragt der Zeitraum dahinter
+                           zurück, fehlen dort Buchungen – ihr Saldo steckt stattdessen
+                           im Anfangsbestand. Gesetzt -> Hinweiszeile im Bericht (#189).
     :return: PDF als bytes
     """
     buffer = BytesIO()
@@ -270,6 +275,12 @@ def erstelle_kassenbuch_pdf(
         ('LINEABOVE', (0, 3), (-1, 3), 1, colors.HexColor('#4a90d9')),
     ]))
     story.append(summary_table)
+    if archiviert_bis:
+        story.append(Paragraph(
+            f'Hinweis: Buchungen bis {_fmt_datum(archiviert_bis)} sind nach Ablauf der '
+            f'Aufbewahrungsfrist archiviert und hier nicht mehr einzeln aufgeführt. '
+            f'Ihr Saldo ist im Anfangsbestand enthalten.',
+            style_legend))
     story.append(Spacer(1, 0.4 * cm))
 
     # ------------------------------------------------------------------
