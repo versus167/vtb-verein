@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 115
+SCHEMA_VERSION = 116
 
 
 # ---------------------------------------------------------------------------
@@ -3741,6 +3741,20 @@ _FN_TICKETS_AUDIT_UPDATE = f"""
 """
 
 
+# Batch-Löschung der Tickets (Schema v116, Ticket #190). Verbergen soft-löscht
+# Ticket UND Kinder mit gemeinsamer `loesch_ref`; `restore` reaktiviert exakt
+# diesen Batch, sodass vorher einzeln gelöschte Kommentare gelöscht bleiben.
+# Ohne die Kaskade blieben die Kinder aktiv und hielten das Ticket über Tor 4 des
+# Prune dauerhaft im Papierkorb — es wäre nie endgültig gelöscht worden.
+# Wie beim Clubdeckel (v76) bewusst NICHT in den *_history-Tabellen und nicht in
+# den Audit-Spaltenlisten: reine Buchhaltungsspalte, die Trigger bleiben gültig.
+_TICKET_LOESCH_REF_TABLES = ("tickets", "ticket_kommentare", "ticket_anhaenge",
+                             "ticket_teilnehmer")
+_TICKET_LOESCH_REF_INDEXES = tuple(
+    (f"idx_{t}_loesch_ref", f"{t}(loesch_ref)") for t in _TICKET_LOESCH_REF_TABLES[1:]
+)
+
+
 # ============================================================================
 # Ticket-Erinnerungen: Fristen (Schema v111)
 # ----------------------------------------------------------------------------
@@ -4098,6 +4112,7 @@ class Database:
             113: self._migrate_v112_to_v113,
             114: self._migrate_v113_to_v114,
             115: self._migrate_v114_to_v115,
+            116: self._migrate_v115_to_v116,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8715,6 +8730,61 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 115 WHERE id = 1")
 
+    def _migrate_v115_to_v116(self) -> None:
+        """Verbergen eines Tickets als Batch mit Wiederherstellung (#190).
+
+        Bisher setzte `mark_ticket_deleted` nur das Ticket auf `deleted_at` — die
+        Kommentare, Anhänge und Teilnehmer blieben aktiv, damit `restore_ticket`
+        das Ticket vollständig zurückbringt. Die Absicht war richtig, die Folge
+        nicht: Tor 4 des Prune fragt `NOT EXISTS` OHNE `deleted_at`-Filter, also
+        nach der PHYSISCHEN Existenz einer Kind-Zeile. Ein aktiv gebliebenes Kind
+        hielt das verborgene Ticket damit dauerhaft im Papierkorb — es wurde nie
+        endgültig gelöscht, und niemandem fiel es auf.
+
+        `loesch_ref` löst beides zugleich, wie bei der Teamkasse (v76): Die
+        Kaskade markiert Ticket und Kinder mit derselben UUID, `restore`
+        reaktiviert exakt diesen Batch. Vorher einzeln gelöschte Kommentare
+        bleiben dabei korrekt gelöscht — genau deshalb reicht kein pauschales
+        „alles wieder an".
+
+        Der Bestand wird mitrepariert: Jedes schon verborgene Ticket bekommt
+        nachträglich eine `loesch_ref`, seine noch aktiven Kinder werden
+        nachgezogen. Ohne diesen Schritt blieben genau die Tickets für immer
+        hängen, für die das Ticket geschrieben wurde.
+        """
+        with self.cursor() as cur:
+            for table in _TICKET_LOESCH_REF_TABLES:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS loesch_ref TEXT")
+            for name, ziel in _TICKET_LOESCH_REF_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {ziel}")
+
+            # Bestand: verborgene Tickets ohne Batch-Marker nachziehen. KEIN
+            # version-Bump am Ticket selbst – an ihm ändert sich fachlich nichts,
+            # und `loesch_ref` steht ohnehin nicht in der History; ein Bump
+            # erzeugte nur eine inhaltsgleiche History-Zeile.
+            cur.execute("""
+                UPDATE tickets
+                SET loesch_ref = replace(gen_random_uuid()::text, '-', '')
+                WHERE deleted_at IS NOT NULL AND loesch_ref IS NULL
+            """)
+            # Die Kinder erben Zeitpunkt und Urheber vom Ticket: Sie sind mit ihm
+            # verschwunden, nicht heute. So stimmt auch ihre Prune-Frist.
+            for table, bump in (("ticket_kommentare", True), ("ticket_teilnehmer", True),
+                                ("ticket_anhaenge", False)):
+                # k.version qualifizieren: tickets führt die Spalte auch.
+                version = ", version = k.version + 1" if bump else ""
+                cur.execute(f"""
+                    UPDATE {table} k
+                    SET deleted_at = t.deleted_at, deleted_by = t.deleted_by,
+                        loesch_ref = t.loesch_ref{version}
+                    FROM tickets t
+                    WHERE k.ticket_id = t.id
+                      AND t.deleted_at IS NOT NULL AND t.loesch_ref IS NOT NULL
+                      AND k.deleted_at IS NULL
+                """)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 116 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9642,6 +9712,10 @@ class Database:
               -- kein Mensch – ein aufgedrückter Platzhalter-Benutzer würde
               -- behaupten, jemand hätte es gemeldet, und bekäme dessen
               -- Benachrichtigungen und Leserechte.
+              -- Batch-Marker: Verbergen eines Tickets soft-löscht Ticket UND Kinder
+              -- mit gemeinsamer loesch_ref, restore reaktiviert genau diesen Batch
+              -- (#190). Bewusst NICHT in tickets_history – reine Buchhaltungsspalte.
+              loesch_ref      TEXT,
               gemeldet_von    INTEGER REFERENCES users(id),
               zugewiesen_an   INTEGER REFERENCES users(id),
               faellig_am      TEXT,
@@ -9685,6 +9759,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS ticket_kommentare (
               id            SERIAL PRIMARY KEY,
               ticket_id     INTEGER NOT NULL REFERENCES tickets(id),
+              loesch_ref    TEXT,
               autor_id      INTEGER NOT NULL REFERENCES users(id),
               inhalt        TEXT NOT NULL,
               sichtbarkeit  TEXT NOT NULL DEFAULT 'oeffentlich'
@@ -9719,6 +9794,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS ticket_anhaenge (
               id              SERIAL PRIMARY KEY,
               ticket_id       INTEGER NOT NULL REFERENCES tickets(id),
+              loesch_ref      TEXT,
               kommentar_id    INTEGER REFERENCES ticket_kommentare(id),
               original_name   TEXT NOT NULL,
               stored_name     TEXT UNIQUE,
@@ -9734,6 +9810,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS ticket_teilnehmer (
               id               SERIAL PRIMARY KEY,
               ticket_id        INTEGER NOT NULL REFERENCES tickets(id),
+              loesch_ref       TEXT,
               user_id          INTEGER NOT NULL REFERENCES users(id),
               hinzugefuegt_von INTEGER NOT NULL REFERENCES users(id),
               hinzugefuegt_am  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -11059,6 +11136,7 @@ class Database:
             *_TRESOR_KONTAKT_INDEXES,
             *_CLUBDECKEL_INDEXES,
             *_CLUBDECKEL_EVENT_INDEXES,
+            *_TICKET_LOESCH_REF_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,

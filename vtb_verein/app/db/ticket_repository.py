@@ -5,6 +5,7 @@ ticket_kommentare und ticket_anhaenge.
 Alle Spaltennamen entsprechen der DB-Migration 8->9 (deutsche Namen).
 '''
 
+import uuid
 from typing import Optional
 from app.models.ticket import (
     Ticket, TicketBereich, TicketKategorie,
@@ -265,26 +266,85 @@ class TicketRepository:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    # Kinder, die beim Verbergen mitgehen. `has_version` unterscheidet die Tabellen
+    # mit History (version-Bump nötig, sonst schreibt der Audit-Trigger nichts) von
+    # den Anhängen, die weder version noch History führen.
+    _LOESCH_KINDER = (
+        ("ticket_kommentare", True),
+        ("ticket_teilnehmer", True),
+        ("ticket_anhaenge", False),
+    )
+
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
+        """Verbergen: Ticket UND Kinder als ein Batch mit gemeinsamer `loesch_ref`.
+
+        Die Kaskade ist Pflicht, nicht Komfort: Tor 4 des Prune fragt `NOT EXISTS`
+        OHNE `deleted_at`-Filter, also nach der PHYSISCHEN Existenz einer
+        Kind-Zeile. Ein aktiv gebliebener Kommentar hielte das verborgene Ticket
+        dauerhaft im Papierkorb — es würde nie endgültig gelöscht, ohne dass
+        irgendwo etwas auffiele (#190).
+
+        Die `loesch_ref` macht das trotzdem umkehrbar: `restore` reaktiviert genau
+        diesen Batch. Angefasst werden nur AKTIVE Kinder — ein vorher einzeln
+        gelöschter Kommentar behält sein Löschdatum und bleibt beim
+        Wiederherstellen weg.
+        """
+        ref = uuid.uuid4().hex
         cursor = self.conn.execute(
             "UPDATE tickets SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+            "loesch_ref = %s, "
             "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
             "WHERE id = %s AND deleted_at IS NULL",
-            (deleted_by, deleted_by, id)
+            (deleted_by, ref, deleted_by, id)
         )
+        if cursor.rowcount == 0:
+            self.conn.rollback()
+            return False
+        for table, has_version in self._LOESCH_KINDER:
+            version = ", version = version + 1" if has_version else ""
+            self.conn.execute(
+                f"UPDATE {table} SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+                f"loesch_ref = %s{version} "
+                f"WHERE ticket_id = %s AND deleted_at IS NULL",
+                (deleted_by, ref, id)
+            )
         self.conn.commit()
-        return cursor.rowcount > 0
+        return True
 
     def restore(self, id: int, restored_by: str) -> bool:
-        """Hebt einen Soft-Delete wieder auf (Ticket erscheint wieder in der Liste)."""
+        """Hebt den Soft-Delete auf — Ticket und exakt den Batch seiner `loesch_ref`.
+
+        Über die `loesch_ref` statt über `ticket_id`: Nur die Kinder, die MIT dem
+        Ticket verschwunden sind, kommen zurück. Ein Kommentar, den jemand vorher
+        einzeln gelöscht hat, bleibt gelöscht.
+
+        Tickets, die vor Schema v116 verborgen wurden, haben ihre `loesch_ref`
+        nachträglich aus der Migration bekommen — auch sie kommen also vollständig
+        zurück.
+        """
         cursor = self.conn.execute(
             "UPDATE tickets SET deleted_at = NULL, deleted_by = NULL, "
             "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
-            "WHERE id = %s AND deleted_at IS NOT NULL",
+            "WHERE id = %s AND deleted_at IS NOT NULL RETURNING loesch_ref",
             (restored_by, id)
         )
+        zeile = cursor.fetchone()
+        if zeile is None:
+            self.conn.rollback()
+            return False
+        ref = zeile['loesch_ref']
+        if ref:
+            for table, has_version in self._LOESCH_KINDER:
+                version = ", version = version + 1" if has_version else ""
+                self.conn.execute(
+                    f"UPDATE {table} SET deleted_at = NULL, deleted_by = NULL, "
+                    f"loesch_ref = NULL{version} "
+                    f"WHERE ticket_id = %s AND loesch_ref = %s",
+                    (id, ref)
+                )
+        self.conn.execute("UPDATE tickets SET loesch_ref = NULL WHERE id = %s", (id,))
         self.conn.commit()
-        return cursor.rowcount > 0
+        return True
 
     def get_history(self, ticket_id: int) -> list[dict]:
         cursor = self.conn.execute(

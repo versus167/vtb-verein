@@ -367,8 +367,8 @@ def test_ticket_anhang_wartet_auf_sein_ticket(db):
     hängt – der Regelfall ist die Archivierung abgeschlossener Tickets, die beide
     zusammen in den Papierkorb schiebt.
 
-    Die KASKADE beim Verbergen von Hand fehlt hier weiterhin bewusst (Restore, siehe
-    ticket_service.mark_ticket_deleted); nur die Reihenfolge ist jetzt richtig.
+    Der zweite Weg dorthin ist das Verbergen von Hand, das seit v116 ebenfalls
+    kaskadiert (ticket_repository.mark_deleted, über eine `loesch_ref`).
     """
     from app.services.prune_service import build_original_candidate_count_sql
     from dataclasses import replace
