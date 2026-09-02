@@ -21,6 +21,11 @@ class Kasse:
     """Repräsentiert eine Barkasse des Vereins oder einer Abteilung."""
     name: str
     anfangsbestand_cent: int = 0
+    # Stichtag, ab dem der Anfangsbestand gilt (ISO, YYYY-MM-DD). NULL = seit Bestehen
+    # der Kasse. Gesetzt wird er ausschließlich vom Saldovortrag der Alters-
+    # Archivierung (#189) — nie über die Oberfläche, deshalb schreibt ihn auch das
+    # Repository weder beim Anlegen noch beim Ändern.
+    anfangsbestand_ab: Optional[str] = None
     beschreibung: Optional[str] = None
     abteilung_id: Optional[int] = None
     sachkonto: Optional[str] = None     # FBASC-Feld 00: Sachkonto der Barkasse (für den Fibu-Export)

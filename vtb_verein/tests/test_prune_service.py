@@ -21,9 +21,15 @@ from app.services.prune_service import (
     build_original_candidate_count_sql,
     build_original_candidate_ids_sql,
     build_papierkorb_count_sql,
+    build_archive_vortrag_sum_sql,
+    build_archive_vortrag_update_sql,
     DEFAULT_HISTORY_RETENTION_DAYS,
     _ab_jahresende,
 )
+
+
+def _archive(name: str):
+    return next(r for r in ARCHIVE_REGISTRY if r.name == name)
 
 
 def _entity(name: str) -> PruneEntity:
@@ -280,3 +286,144 @@ class TestJahresendeVerankerung:
         assert finanz, "keine Finanz-Archivregel gefunden"
         for regel in finanz:
             assert "-12-31" in regel.date_expr, f"{regel.name} datiert nicht ab Jahresende"
+
+
+class TestSaldoVortrag:
+    """#189: Archivieren darf einen Bestand, der über aktive Zeilen gerechnet wird,
+    nicht verschieben."""
+
+    def test_nur_die_kassenbuchungen_tragen_vor(self):
+        """Die einzige Regel mit Vortrag – bei allen anderen ist der Anker-Effekt
+        nicht gegeben (kein laufender Saldo über aktive Zeilen)."""
+        mit_vortrag = {r.name for r in ARCHIVE_REGISTRY if r.vortrag}
+        assert mit_vortrag == {"kassenbuchung_alter"}
+
+    def test_vortrag_zielt_auf_den_anfangsbestand(self):
+        v = _archive("kassenbuchung_alter").vortrag
+        assert (v.ziel_table, v.ziel_fk, v.ziel_col) == \
+            ("kassen", "kasse_id", "anfangsbestand_cent")
+        assert v.stichtag_col == "anfangsbestand_ab"
+
+    def test_summe_ist_vorzeichenbehaftet(self):
+        """Einnahme minus Ausgabe – nicht etwa zwei getrennte Summen."""
+        sql = build_archive_vortrag_sum_sql(_archive("kassenbuchung_alter"))
+        assert "SUM(COALESCE(einnahme_cent, 0) - COALESCE(ausgabe_cent, 0))" in sql
+        assert "deleted_at IS NULL" in sql          # nur was auch archiviert wird
+
+    def test_update_addiert_statt_zu_setzen(self):
+        """Rollierend: Der alte Vortrag steckt schon im Anker, es kommt nur die neue
+        Tranche dazu. Ein `=` statt `+=` würde alle früheren Läufe verwerfen."""
+        sql = build_archive_vortrag_update_sql(_archive("kassenbuchung_alter"))
+        assert "SET anfangsbestand_cent = z.anfangsbestand_cent + q.summe" in sql
+
+    def test_update_zaehlt_nur_aktive_faellige_zeilen(self):
+        sql = build_archive_vortrag_update_sql(_archive("kassenbuchung_alter"))
+        assert "WHERE deleted_at IS NULL" in sql
+        assert "-12-31" in sql                      # dieselbe Jahresende-Verankerung
+
+    def test_update_bumpt_version_fuer_den_audit_trail(self):
+        """Ohne version-Bump schriebe der Trigger keine kassen_history-Zeile – die
+        Verschiebung wäre später nicht nachvollziehbar."""
+        sql = build_archive_vortrag_update_sql(_archive("kassenbuchung_alter"))
+        assert "version = z.version + 1" in sql
+        assert "updated_by = %(actor)s" in sql
+
+    def test_stichtag_geht_nie_zurueck(self):
+        """GREATEST: Eine nachträglich rückdatierte Buchung darf den Stichtag nicht
+        hinter bereits archivierte Zeiträume zurückziehen."""
+        sql = build_archive_vortrag_update_sql(_archive("kassenbuchung_alter"))
+        assert "anfangsbestand_ab = GREATEST(z.anfangsbestand_ab, q.stichtag)" in sql
+
+    def test_stichtag_ist_der_tag_nach_der_letzten_zeile(self):
+        """Nicht der Prune-Cutoff: Fällig wird ab Jahresende, Buchungen aus dem
+        Cutoff-Jahr überleben – der Cutoff läge fälschlich hinter ihnen."""
+        sql = build_archive_vortrag_update_sql(_archive("kassenbuchung_alter"))
+        assert "(MAX(LEFT((buchungsdatum)::text, 10))::date + 1)::text AS stichtag" in sql
+
+
+class TestParentGate:
+    """Tor 6: Ein Blatt darf nicht lange vor seinem Eltern-Datensatz verschwinden."""
+
+    def test_alle_anhang_entitaeten_haengen_an_ihrem_vorgang(self):
+        """Genau die drei Anhang-Tabellen haben die Schere (kein History unter Eltern
+        MIT History) – und genau die drei müssen das Tor tragen."""
+        erwartet = {
+            "kassenbuchung_anhang": ("kassenbuchung", "kassenbuchungen", "buchung_id"),
+            "rechnung_anhang": ("rechnung", "rechnung", "rechnung_id"),
+            "ticket_anhang": ("ticket", "tickets", "ticket_id"),
+        }
+        for name, soll in erwartet.items():
+            p = _entity(name).parent
+            assert p is not None, f"{name} ohne Tor 6"
+            assert (p.entity, p.table, p.fk) == soll
+
+    def test_keine_weitere_entitaet_braucht_das_tor(self):
+        """Wächter gegen künftige Blätter: Wer ohne eigene History unter einem
+        Eltern-Datensatz MIT History hängt, hat dieselbe Schere und braucht Tor 6.
+
+        Geprüft wird je KIND, nicht je Beziehung. Ein Anhang taucht auch unter `user`
+        auf (Urheber-Spalte ``hochgeladen_von``), das ist aber ein reiner Tor-4-Wächter
+        und kein Lebenszyklus – der gehört dem Vorgang, an dem der Anhang hängt.
+        """
+        nach_tabelle = {e.table: e for e in PRUNE_REGISTRY}
+        betroffen = {
+            nach_tabelle[c.table].name
+            for eltern in PRUNE_REGISTRY if eltern.history_table
+            for c in eltern.children
+            if c.table in nach_tabelle
+            and nach_tabelle[c.table] is not eltern
+            and nach_tabelle[c.table].history_table is None
+        }
+        ohne_tor = sorted(n for n in betroffen if _entity(n).parent is None)
+        assert ohne_tor == [], f"ohne Tor 6, aber mit derselben Schere: {ohne_tor}"
+
+    def test_eltern_entitaet_existiert_wirklich(self):
+        """Der Verweis ist ein String – ohne diese Prüfung fiele ein Tippfehler erst
+        zur Laufzeit auf, und zwar als StopIteration mitten im Prune-Lauf."""
+        namen = {e.name for e in PRUNE_REGISTRY}
+        for e in PRUNE_REGISTRY:
+            if e.parent:
+                assert e.parent.entity in namen, f"{e.name}: unbekannter Eltern-Verweis"
+
+    def test_kind_steht_vor_dem_eltern_datensatz(self):
+        """Reihenfolge Blatt → Wurzel gilt auch hier: Tor 4 verlangt, dass das Kind
+        zuerst fällt."""
+        order = [e.name for e in PRUNE_REGISTRY]
+        for e in PRUNE_REGISTRY:
+            if e.parent:
+                assert order.index(e.name) < order.index(e.parent.entity)
+
+    def test_gate_greift_nur_bei_gesetztem_parent(self):
+        """ticket_kommentar hat History und deshalb kein Tor 6 – die Klausel darf dort
+        gar nicht erst auftauchen."""
+        ent = _entity("ticket_kommentar")
+        assert ent.parent is None
+        sql, params = build_original_candidate_ids_sql(ent, 90, 10, 365)
+        assert " p\nWHERE p.id = " not in sql and "NOT EXISTS (SELECT 1 FROM tickets p" not in sql
+        assert params == [90, 10, 365]
+
+    def test_gate_haelt_nur_waehrend_der_elternfrist(self):
+        """Kein spiegelbildliches „erst nach dem Eltern-Datensatz" – das wäre mit Tor 4
+        zusammen eine Verklemmung. Das Tor fragt nach deleted_at UND der Frist."""
+        sql, params = build_original_candidate_ids_sql(
+            _entity("kassenbuchung_anhang"), 90, 10, 365, parent_hold_days=365)
+        assert "FROM kassenbuchungen p" in sql
+        assert "p.deleted_at IS NOT NULL" in sql
+        assert ">= now() - make_interval(days => %s)" in sql
+        assert params == [90, 10, 365]
+
+    def test_gate_verknuepft_ueber_den_fremdschluessel(self):
+        sql, _ = build_original_candidate_ids_sql(
+            _entity("kassenbuchung_anhang"), 90, 10, 365, parent_hold_days=365)
+        assert ("p.id = (SELECT ch.buchung_id FROM kassenbuchung_anhaenge ch "
+                "WHERE ch.id = r.id)") in sql
+
+    def test_count_und_ids_bleiben_deckungsgleich(self):
+        """„Vorschau = Aktion" darf durch das neue Tor nicht auseinanderlaufen."""
+        ent = _entity("kassenbuchung_anhang")
+        ids_sql, ids_params = build_original_candidate_ids_sql(ent, 90, 10, 365,
+                                                              parent_hold_days=365)
+        cnt_sql, cnt_params = build_original_candidate_count_sql(ent, 90, 10, 365,
+                                                                parent_hold_days=365)
+        assert ids_sql in cnt_sql
+        assert ids_params == cnt_params

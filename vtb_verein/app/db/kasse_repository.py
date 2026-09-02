@@ -17,6 +17,10 @@ class KasseRepository(BaseRepository):
     - Soft-Delete
     - Bestandsberechnung direkt per SQL (kein Python-Loop)
     - History via DB-Trigger
+
+    ``anfangsbestand_ab`` wird hier bewusst nur gelesen: Der Stichtag gehört dem
+    Saldovortrag der Alters-Archivierung (#189, prune_service) und darf weder beim
+    Anlegen noch beim Ändern einer Kasse aus dem Formular überschrieben werden.
     """
 
     def get_kasse(self, kasse_id: int) -> Kasse:
@@ -24,7 +28,7 @@ class KasseRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+                SELECT id, name, beschreibung, anfangsbestand_cent, anfangsbestand_ab, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen
                 WHERE id = %s AND deleted_at IS NULL
@@ -41,7 +45,7 @@ class KasseRepository(BaseRepository):
         with self.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+                SELECT id, name, beschreibung, anfangsbestand_cent, anfangsbestand_ab, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen
                 WHERE deleted_at IS NULL
@@ -66,7 +70,7 @@ class KasseRepository(BaseRepository):
             kasse_id = cur.fetchone()['id']
             cur.execute(
                 """
-                SELECT id, name, beschreibung, anfangsbestand_cent, abteilung_id, sachkonto,
+                SELECT id, name, beschreibung, anfangsbestand_cent, anfangsbestand_ab, abteilung_id, sachkonto,
                        version, created_at, created_by, updated_at, updated_by
                 FROM kassen WHERE id = %s
                 """,
@@ -124,6 +128,34 @@ class KasseRepository(BaseRepository):
             )
             return cur.rowcount == 1
 
+    def ist_anfangsbestand_gesperrt(self, kasse_id: int) -> bool:
+        """Darf der Anfangsbestand dieser Kasse noch von Hand geändert werden?
+
+        Gesperrt ist er, sobald er nicht mehr allein die Erfassung des Kassenwarts
+        ist, sondern Teil einer Abrechnung:
+
+        * ``anfangsbestand_ab`` ist gesetzt — der Saldovortrag der Alters-
+          Archivierung hat die Summe archivierter Buchungen hineingerechnet. Wer
+          jetzt überschreibt, wirft genau diesen Vortrag weg.
+        * Es gibt exportierte Buchungen — die Kasse ist an die Fibu übergeben, der
+          Anfangsbestand ist Teil des abgerechneten Zahlenwerks. Der Filter fragt
+          bewusst NICHT nach ``deleted_at``: eine stornierte oder archivierte
+          Buchung war trotzdem im Export.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM kassen k
+                WHERE k.id = %s
+                  AND (k.anfangsbestand_ab IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM kassenbuchungen b
+                                  WHERE b.kasse_id = k.id
+                                    AND b.exportiert_in_export_id IS NOT NULL))
+                """,
+                (kasse_id,),
+            )
+            return cur.fetchone() is not None
+
     # -----------------------------------
     # Bestandsberechnung
     # -----------------------------------
@@ -132,8 +164,13 @@ class KasseRepository(BaseRepository):
         """Berechnet den aktuellen Kassenbestand in Cent per SQL.
 
         Anfangsbestand + Summe aller aktiven Einnahmen - Summe aller aktiven Ausgaben.
-        Stornierte (deleted_at IS NOT NULL) und exportierte Buchungen fließen ein,
-        solange sie nicht storniert sind.
+        Stornierte (deleted_at IS NOT NULL) Buchungen fallen raus, exportierte zählen
+        weiter mit.
+
+        Dass nur aktive Zeilen zählen, ist auch der Grund für den Saldovortrag: Die
+        Alters-Archivierung setzt alte Buchungen auf ``deleted_at`` — ohne Vortrag
+        würde der Bestand hier um deren Summe springen (#189). Der Vortrag rechnet
+        sie deshalb in ``anfangsbestand_cent`` hinein, bevor er sie archiviert.
         """
         with self.cursor() as cur:
             cur.execute(
@@ -159,6 +196,11 @@ class KasseRepository(BaseRepository):
         """Berechnet den Kassenbestand bis einschließlich einem bestimmten Datum.
 
         Nützlich für den PDF-Kassenbericht (Anfangsbestand einer Periode).
+
+        Aussagekräftig nur ab ``kassen.anfangsbestand_ab``: Für ein früheres Datum
+        steckt der volle Vortrag im Anfangsbestand, während die Buchungen des
+        Zeitraums längst archiviert sind — der Wert wäre zu hoch. Der Kassenbericht
+        weist deshalb ab dem Stichtag aus (siehe kassenbuch_service).
         """
         with self.cursor() as cur:
             cur.execute(

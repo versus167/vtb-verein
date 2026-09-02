@@ -328,8 +328,19 @@ class RechnungRepository(BaseRepository):
             return cur.rowcount == 1
 
     def soft_delete(self, id: int, deleted_by: str, *, nur_entwurf: bool = True) -> bool:
-        """Löschen (soft). Standard: nur Entwürfe – die Geschäftsstelle darf auch
-        später löschen, solange die Rechnung nicht exportiert wurde."""
+        """Löschen (soft) – samt Belegen. Standard: nur Entwürfe – die Geschäftsstelle
+        darf auch später löschen, solange die Rechnung nicht exportiert wurde.
+
+        Die Belege müssen mit: Tor 4 des Prune fragt ``NOT EXISTS`` OHNE
+        ``deleted_at``-Filter. Ein aktiv gebliebener Beleg hielte die gelöschte Rechnung
+        dauerhaft im Papierkorb fest – sie würde nie endgültig gelöscht, ohne dass
+        irgendwo etwas auffiele. Und weil ``einreichen`` mindestens einen Beleg verlangt,
+        wäre das bei jeder eingereichten Rechnung der Fall. Die Alters-Archivierung räumt
+        dieselben Kinder längst ab (``rechnung_alter``); hier ist der Handpfad nachgezogen.
+
+        Eine Rechnung kennt kein Wiederherstellen, der Batch braucht also keine
+        ``loesch_ref`` wie die Teamkasse – anders als beim Ticket, das ein Restore hat.
+        """
         bed = " AND status='entwurf'" if nur_entwurf else \
               " AND exportiert_in_export_id IS NULL"
         with self.cursor() as cur:
@@ -342,7 +353,18 @@ class RechnungRepository(BaseRepository):
                 """,
                 (deleted_by, deleted_by, id),
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return False
+            # Belege: kein version/History, deshalb ohne Bump.
+            cur.execute(
+                """
+                UPDATE rechnung_anhaenge
+                SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s
+                WHERE rechnung_id=%s AND deleted_at IS NULL
+                """,
+                (deleted_by, id),
+            )
+            return True
 
     def get_history(self, id: int) -> list[dict]:
         with self.cursor() as cur:

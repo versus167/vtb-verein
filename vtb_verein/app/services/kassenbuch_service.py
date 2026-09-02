@@ -50,6 +50,17 @@ class NegativerBestandError(Exception):
     pass
 
 
+class AnfangsbestandGesperrtError(Exception):
+    """Der Anfangsbestand ist nicht mehr frei änderbar (#189).
+
+    Sobald die Kasse exportierte Buchungen hat oder ein Saldovortrag gelaufen ist,
+    ist der Anfangsbestand kein Erfassungswert mehr, sondern der Anker des laufenden
+    Bestands. Ihn zu überschreiben würde den Vortrag verwerfen bzw. den bereits
+    abgerechneten Bestand verschieben.
+    """
+    pass
+
+
 class KeinLesezugriffError(Exception):
     """Wird geworfen wenn der User keinen Lesezugriff auf die Kasse hat."""
     pass
@@ -248,6 +259,21 @@ class KassenbuchService:
         return self._kasse.create_kasse(kasse, created_by)
 
     def update_kasse(self, kasse: Kasse, updated_by: str) -> bool:
+        """Ändert die Kassen-Stammdaten.
+
+        Raises:
+            AnfangsbestandGesperrtError: Wenn der Anfangsbestand geändert werden soll,
+                die Kasse aber schon exportierte Buchungen hat oder ein Saldovortrag
+                gelaufen ist. Alle übrigen Felder bleiben auch dann änderbar.
+        """
+        aktuell = self._kasse.get_kasse(kasse.id)
+        if (kasse.anfangsbestand_cent != aktuell.anfangsbestand_cent
+                and self._kasse.ist_anfangsbestand_gesperrt(kasse.id)):
+            raise AnfangsbestandGesperrtError(
+                "Der Anfangsbestand dieser Kasse ist festgeschrieben – es gibt bereits "
+                "exportierte oder archivierte Buchungen. Korrekturen laufen über eine "
+                "Buchung, nicht über den Anfangsbestand."
+            )
         return self._kasse.update_kasse(kasse, updated_by)
 
     def delete_kasse(self, kasse_id: int, deleted_by: str) -> bool:
@@ -762,7 +788,7 @@ class KassenbuchService:
         return erstelle_kassenbuch_pdf(
             kasse_name=daten["kasse"].name, von_datum=von_datum, bis_datum=bis_datum,
             buchungen=buchungen_pdf, anfangsbestand_cent=daten["anfangsbestand_cent"],
-            erstellt_von=erstellt_von,
+            erstellt_von=erstellt_von, archiviert_bis=daten["archiviert_bis"],
         )
 
     # -----------------------------------
@@ -792,6 +818,16 @@ class KassenbuchService:
         from datetime import timedelta
         vortag = str(date.fromisoformat(von_datum) - timedelta(days=1))
         anfangsbestand_cent = self._kasse.get_bestand_zum_datum_cent(kasse_id, vortag)
+
+        # Reicht der Zeitraum in bereits archivierte Buchungen zurück? Dann fehlen dort
+        # Zeilen, während ihr Saldo im Anfangsbestand steckt – der Bericht muss das sagen,
+        # sonst wirkt er nur unerklärlich lückenhaft (#189). `anfangsbestand_ab` ist der
+        # erste NICHT mehr abgedeckte Tag, archiviert ist also alles bis zum Vortag.
+        archiviert_bis = None
+        if kasse.anfangsbestand_ab:
+            letzter = str(date.fromisoformat(kasse.anfangsbestand_ab) - timedelta(days=1))
+            if von_datum <= letzter:
+                archiviert_bis = letzter
 
         buchungen = self._buchung.list_kassenbuchungen(
             kasse_id, von_datum, bis_datum, include_storniert=include_storniert
@@ -827,6 +863,7 @@ class KassenbuchService:
             "endbestand_cent": laufender_bestand,
             "buchungen": buchungen_mit_bestand,
             "kategorien": kategorien,
+            "archiviert_bis": archiviert_bis,
         }
 
     # -----------------------------------
