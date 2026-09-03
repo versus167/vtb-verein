@@ -253,7 +253,7 @@ async function laden() {
   loading.value = true
   fehler.value = ''
   try {
-    const { data } = await api.get('/spielstaetten/belegung', {
+    const { data } = await api.get('/api/spielstaetten/belegung', {
       params: { von: wochenTage.value[0].iso, bis: wochenTage.value[6].iso },
     })
     plaetze.value = data.plaetze
