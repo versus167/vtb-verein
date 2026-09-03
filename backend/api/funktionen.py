@@ -34,7 +34,18 @@ def _require_verwalten(user):
 
 
 @router.get("")
-def list_funktionen(db: DB):
+def list_funktionen(user: CurrentUser, db: DB):
+    """Funktionskatalog des Vereins – für jeden angemeldeten Benutzer lesbar.
+
+    Bewusst ohne eigenes Recht: Die Liste wird an drei Stellen gebraucht, die
+    hinter verschiedenen Rechten sitzen (Personen-Bearbeitung, Beitragsregeln,
+    Funktionsverwaltung). Ein gemeinsames Leserecht gäbe es nicht, und die reinen
+    Funktionsnamen sind für Angemeldete keine Auskunft, die zu schützen wäre.
+
+    Was hier aber sehr wohl fehlte: `CurrentUser`. Ohne diesen Parameter hing der
+    Endpunkt an keiner Auth-Dependency und beantwortete jede Anfrage aus dem
+    Internet mit 200 – als einzige Route dieser Datei.
+    """
     return [asdict(f) for f in db.funktionen.list_all()]
 
 
