@@ -263,7 +263,7 @@ def delete_bereich(bereich_id: int, user: CurrentUser, db: DB):
             status_code=409,
             detail=f"Bereich enthält noch {anzahl} offene{'s' if anzahl == 1 else ''} Ticket{'s' if anzahl != 1 else ''}. Bitte zuerst abschließen oder einem anderen Bereich zuweisen.",
         )
-    db.tickets.mark_bereich_deleted(bereich_id, deleted_by=user.username)
+    db.ticket_bereiche.mark_deleted(bereich_id, deleted_by=user.username)
 
 
 @router.get("/bereiche/{bereich_id}/berechtigungen")

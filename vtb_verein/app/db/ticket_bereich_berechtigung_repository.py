@@ -269,22 +269,8 @@ class TicketBereichBerechtigungRepository:
         self._conn.commit()
         return cur.rowcount
 
-    def mark_alle_berechtigungen_fuer_bereich_deleted(
-        self, bereich_id: int, deleted_by: str
-    ) -> int:
-        """Soft-Delete aller Berechtigungen eines Bereichs (z.B. bei Bereich-Löschung)."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            UPDATE ticket_bereich_berechtigungen
-            SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = %s,
-                version    = version + 1,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = %s
-            WHERE bereich_id = %s AND deleted_at IS NULL
-            """,
-            (deleted_by, deleted_by, bereich_id),
-        )
-        self._conn.commit()
-        return cur.rowcount
+    # Entfernt: mark_alle_berechtigungen_fuer_bereich_deleted() – hatte nie einen
+    # Aufrufer, und seit die Bereichs-Löschung ihre Rechte selbst mitnimmt
+    # (TicketBereichRepository.mark_deleted) wäre sie eine zweite Kopie derselben
+    # SQL. Die Kaskade gehört in dieselbe Transaktion wie der Parent-Soft-Delete;
+    # ein separat aufrufbarer Helfer lädt genau dazu ein, sie zu vergessen.

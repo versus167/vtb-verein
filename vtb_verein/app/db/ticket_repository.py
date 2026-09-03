@@ -434,16 +434,6 @@ class TicketRepository:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def mark_bereich_deleted(self, id: int, deleted_by: str) -> bool:
-        cursor = self.conn.execute(
-            "UPDATE ticket_bereiche SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
-            "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
-            "WHERE id = %s AND deleted_at IS NULL",
-            (deleted_by, deleted_by, id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
     def _map_bereich(self, row) -> TicketBereich:
         return TicketBereich(
             id=row['id'], name=row['name'], beschreibung=row['beschreibung'],

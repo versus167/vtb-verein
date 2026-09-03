@@ -209,7 +209,19 @@ class ULAbrechnungRepository(BaseRepository):
             return cur.rowcount == 1
 
     def soft_delete(self, id: int, deleted_by: str) -> bool:
-        """Nur Entwürfe (noch nicht eingereicht) löschbar."""
+        """Nur Entwürfe (noch nicht eingereicht) löschbar — samt ihrer Stunden.
+
+        Die Kaskade ist Pflicht, nicht Komfort: Eine Stunde ist eine Belegzeile ihrer
+        Abrechnung und kann sie fachlich nicht überleben. Bliebe sie aktiv, hinge sie
+        an einem gelöschten Parent — die Konsistenzprüfung meldet das, und Tor 4 des
+        Prune (``NOT EXISTS`` OHNE ``deleted_at``-Filter) hielte die Abrechnung
+        dauerhaft im Papierkorb fest, ohne dass irgendwo etwas auffiele.
+
+        Die Alters-Archivierung räumt dieselbe Beziehung längst ab (ARCHIVE_REGISTRY,
+        ``ul_abrechnung_alter`` mit ``ChildRef("ul_stunde", "abrechnung_id")``); hier
+        ist der Handpfad nachgezogen — dasselbe Muster wie bei
+        ``mark_kassenbuchung_deleted``.
+        """
         with self.cursor() as cur:
             cur.execute(
                 """
@@ -220,7 +232,18 @@ class ULAbrechnungRepository(BaseRepository):
                 """,
                 (deleted_by, deleted_by, id),
             )
-            return cur.rowcount == 1
+            if cur.rowcount != 1:
+                return False
+            cur.execute(
+                """
+                UPDATE ul_stunde
+                SET deleted_at=CURRENT_TIMESTAMP, deleted_by=%s,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
+                WHERE abrechnung_id=%s AND deleted_at IS NULL
+                """,
+                (deleted_by, deleted_by, id),
+            )
+            return True
 
     def monatspauschal_zeitraeume(self, mitglied_id: int, abteilung_id: int,
                                   exclude_id: Optional[int] = None) -> list[tuple[str, str]]:
