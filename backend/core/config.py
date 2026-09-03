@@ -5,7 +5,18 @@ _ROOT = Path(__file__).parent.parent.parent  # Repo-Root
 
 
 class Settings:
-    SECRET_KEY: str = os.getenv("VTB_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION")
+    # Signaturschlüssel der Session-Tokens. Der Default ist ein erkennbarer
+    # Platzhalter und steht damit im öffentlichen Quellcode — wer ihn kennt, kann
+    # sich selbst ein gültiges Token für jedes Konto ausstellen. Die App
+    # verweigert deshalb den Start, solange er gilt (s. security.pruefe_signaturschluessel).
+    SECRET_KEY_PLATZHALTER: str = "CHANGE_ME_IN_PRODUCTION"
+    SECRET_KEY: str = os.getenv("VTB_SECRET_KEY", SECRET_KEY_PLATZHALTER)
+    # Länge, ab der ein Schlüssel nicht mehr zu raten ist (token_urlsafe(48) ≈ 64
+    # Zeichen). Darunter gibt es nur eine Warnung, keinen Abbruch: Ein kurzer
+    # Zufallswert ist etwas grundlegend anderes als der öffentlich bekannte
+    # Platzhalter, und eine Instanz beim Deploy dafür anzuhalten wäre die
+    # größere Störung.
+    SECRET_KEY_MIN_LAENGE: int = 32
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("VTB_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h
     DATABASE_URL: str = os.getenv("VTB_DATABASE_URL", "")
@@ -93,6 +104,22 @@ class Settings:
     # Hintergrund-Log-Sync: Default „paarmal am Tag" (alle 6 h) + Backfill-Fenster bei Erstlauf.
     TTLOCK_SYNC_INTERVAL_HOURS: int = int(os.getenv("TTLOCK_SYNC_INTERVAL_HOURS", "6"))
     TTLOCK_LOG_BACKFILL_DAYS: int = int(os.getenv("TTLOCK_LOG_BACKFILL_DAYS", "30"))
+
+    @property
+    def secret_key_fehlt(self) -> bool:
+        """True, wenn kein eigener Signaturschlüssel gesetzt ist.
+
+        Deckt beides ab: gar kein Wert und der Platzhalter aus dem Quellcode.
+        Beide bedeuten dasselbe — die Tokens sind fälschbar.
+        """
+        key = (self.SECRET_KEY or "").strip()
+        return not key or key == self.SECRET_KEY_PLATZHALTER
+
+    @property
+    def secret_key_schwach(self) -> bool:
+        """True, wenn ein eigener Schlüssel gesetzt, aber kürzer als empfohlen ist."""
+        key = (self.SECRET_KEY or "").strip()
+        return not self.secret_key_fehlt and len(key) < self.SECRET_KEY_MIN_LAENGE
 
     @property
     def ttlock_configured(self) -> bool:
