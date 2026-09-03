@@ -73,9 +73,15 @@ Updates migrieren beim Start ebenso automatisch. Im Log steht, was passiert ist:
 
 ```
 Frische Datenbank – Schema v87 wird erstellt …
-Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!
+Standard-Admin erstellt: Username='admin', Passwort='K3nA…' — dieses Passwort
+steht NUR hier im Log. Nach der ersten Anmeldung ändern!
 Schema v87 erfolgreich angelegt.
 ```
+
+Das Startpasswort ist ein **Zufallswert** und steht nur in dieser einen Logzeile —
+also mitschreiben, bevor das Log wegrotiert. Wer es lieber selbst vorgibt, setzt
+`VTB_ADMIN_INITIAL_PASSWORT` **vor** dem ersten Start; dann nennt das Log nur die
+Herkunft, nicht den Wert.
 
 Hinter TLS gehört `VTB_COOKIE_SECURE=true` (Default); für lokale http-Entwicklung
 muss es auf `false`, sonst verwirft der Browser das Session-Cookie und die
@@ -83,8 +89,8 @@ Anmeldung schlägt ohne sichtbaren Grund fehl.
 
 ## 4. Erste Anmeldung
 
-Anmelden mit `admin` / `admin123` — und **als erstes das Passwort ändern**, bevor
-die Instanz von außen erreichbar ist.
+Anmelden mit `admin` und dem Startpasswort aus dem Log (s. o.) — und **als erstes
+das Passwort ändern**, bevor die Instanz von außen erreichbar ist.
 
 ## 5. Vereins-Stammdaten
 

@@ -121,9 +121,11 @@ Code. Hier ist nichts zu tun außer Pflege.
 
 ## Fallen, die beim ersten Aufsetzen zubeißen
 
-- Der **Standard-Admin** (`admin` / `admin123`) wird beim Frischaufbau
-  angelegt; das Log warnt. Bei einer erreichbaren Instanz sofort ändern —
-  besser noch, vor dem ersten Öffnen nach außen.
+- Der **Standard-Admin** (`admin`) wird beim Frischaufbau angelegt; sein
+  Startpasswort ist ein Zufallswert und steht **nur** in der Logzeile, die
+  dabei entsteht — mitschreiben, sonst hilft nur ein neuer Frischaufbau.
+  Alternativ vorher `VTB_ADMIN_INITIAL_PASSWORT` setzen. In beiden Fällen
+  gilt: ändern, bevor die Instanz nach außen aufmacht.
 - **Push-Subscriptions** hängen an Origin und VAPID-Key. Ein späterer
   Domainwechsel entwertet alle Abos, die Nutzer müssen neu zustimmen (das
   Muster kennen wir schon vom Umzug auf `app.vtbchemnitz.de`).
@@ -346,7 +348,8 @@ VTB_VEREIN_KURZ="BSC" VTB_VEREIN_NAME="BSC Rapid Kappel" \
 cd frontend && npx quasar dev                  # Port 9000, Proxy auf 8000 (Node 22)
 ```
 
-Login `admin` / `admin123` (der Standard-Admin aus dem Seed). `VTB_VEREIN_NAME`
+Login `admin` mit dem Startpasswort aus dem Log (der Standard-Admin aus dem
+Seed; s. „Fallen" oben). `VTB_VEREIN_NAME`
 wirkt derzeit nur in PDF-Belegen — in der Oberfläche ist bisher allein das
 Kürzel sichtbar.
 
