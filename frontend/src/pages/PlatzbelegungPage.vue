@@ -3,15 +3,17 @@
     <div class="row items-center q-mb-sm q-gutter-sm">
       <div class="text-h5">Platzbelegung</div>
       <q-space />
+      <q-btn-toggle v-model="modus" :options="MODUS_AUSWAHL" :disable="loading"
+        unelevated rounded dense no-caps toggle-color="primary" class="vtb-segment" />
       <q-btn flat dense round icon="chevron_left" :disable="loading"
-        @click="blaettern(-7)" aria-label="Woche zurück" />
+        @click="blaettern(-7)" aria-label="7 Tage zurück" />
       <q-btn flat dense no-caps :disable="loading" @click="heute" label="Heute" />
       <q-btn flat dense round icon="chevron_right" :disable="loading"
-        @click="blaettern(7)" aria-label="Woche vor" />
+        @click="blaettern(7)" aria-label="7 Tage vor" />
     </div>
 
     <div class="row items-center q-mb-md">
-      <div class="text-subtitle1 text-weight-medium">{{ wochenTitel }}</div>
+      <div class="text-subtitle1 text-weight-medium">{{ zeitraumTitel }}</div>
       <q-space />
       <q-spinner v-if="loading" color="primary" size="20px" />
     </div>
@@ -31,11 +33,11 @@
       an der Spielstätte entscheidet, was hier auftaucht.
     </q-banner>
 
-    <!-- Wochenraster: Plätze als Zeilen, Tage als Spalten. Ab Tablet aufwärts —
+    <!-- Raster: Plätze als Zeilen, die sieben Tage als Spalten. Ab Tablet aufwärts —
          am Handy wären sieben Spalten unlesbar, dort steht die Tagesliste unten. -->
     <div v-else-if="$q.screen.gt.sm" class="belegung-raster">
       <div class="belegung-kopf belegung-ecke"></div>
-      <div v-for="tag in wochenTage" :key="`k-${tag.iso}`"
+      <div v-for="tag in tage" :key="`k-${tag.iso}`"
         class="belegung-kopf" :class="{ 'belegung-heute': tag.istHeute }">
         <div class="text-weight-medium">{{ tag.wochentag }}</div>
         <div class="text-caption">{{ tag.kurz }}</div>
@@ -51,7 +53,7 @@
             </span>
           </div>
         </div>
-        <div v-for="tag in wochenTage" :key="`${platz.id}-${tag.iso}`"
+        <div v-for="tag in tage" :key="`${platz.id}-${tag.iso}`"
           class="belegung-zelle" :class="{ 'belegung-heute': tag.istHeute }">
           <TerminBlock v-for="t in belegungVon(platz.id, tag.iso)" :key="t.id"
             :termin="t" :konflikt="konflikte.has(t.id)" />
@@ -62,7 +64,7 @@
     <!-- Am Handy: Tag für Tag statt Raster. Leere Tage fallen weg, sonst scrollt
          man an fünf Überschriften ohne Inhalt vorbei. -->
     <div v-else>
-      <div v-for="tag in wochenTageMitBelegung" :key="tag.iso" class="q-mb-md">
+      <div v-for="tag in tageMitBelegung" :key="tag.iso" class="q-mb-md">
         <div class="text-weight-medium q-mb-xs" :class="{ 'text-primary': tag.istHeute }">
           {{ tag.wochentag }}, {{ tag.kurz }}
         </div>
@@ -78,15 +80,15 @@
           </q-item>
         </q-list>
       </div>
-      <div v-if="!wochenTageMitBelegung.length && !loading" class="text-grey q-pa-md">
-        In dieser Woche ist kein eigener Platz belegt.
+      <div v-if="!tageMitBelegung.length && !loading" class="text-grey q-pa-md">
+        In diesem Zeitraum ist kein eigener Platz belegt.
       </div>
     </div>
   </q-page>
 </template>
 
 <script setup>
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { QIcon, useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
@@ -105,17 +107,38 @@ const ANNAHME_DAUER_MIN = 90
 const WOCHENTAGE = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag',
   'Samstag', 'Sonntag']
 
+// Zwei Zuschnitte desselben Sieben-Tage-Fensters. „7 Tage" beginnt bei heute und
+// ist die Alltagsfrage des Platzwarts (was steht als Nächstes an?), „Woche" liegt
+// auf Mo–So und passt zu Aushängen und Absprachen, die in Kalenderwochen denken.
+// Die Wahl gilt pro Gerät.
+const MODUS_KEY = 'vtb_platzbelegung_modus'
+const MODUS_AUSWAHL = [
+  { label: '7 Tage', value: 'rollend' },
+  { label: 'Woche', value: 'woche' },
+]
+
 const plaetze = ref([])
 const termine = ref([])
 const loading = ref(false)
 const fehler = ref('')
-const montag = ref(montagVon(new Date()))
+const modus = ref(localStorage.getItem(MODUS_KEY) === 'woche' ? 'woche' : 'rollend')
 
-/** Montag der Woche, in der `d` liegt — der Anker der ganzen Ansicht. */
+// Geblättert wird als Versatz zu heute, nicht als festes Startdatum: Damit wandert
+// das rollende Fenster von selbst mit, wenn die Seite über Mitternacht offen bleibt
+// und der Auto-Refresh nachlädt.
+const versatz = ref(0)
+const heuteDatum = ref(tagesBeginn(new Date()))
+
+/** `d` ohne Uhrzeit — Datumsvergleiche sollen nicht an der Tageszeit hängen. */
+function tagesBeginn(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+
+/** Montag der Woche, in der `d` liegt — der Anker im Wochenmodus. */
 function montagVon(d) {
   const kopie = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  const versatz = (kopie.getDay() + 6) % 7   // Sonntag = 0 → 6
-  kopie.setDate(kopie.getDate() - versatz)
+  const seitMontag = (kopie.getDay() + 6) % 7   // Sonntag = 0 → 6
+  kopie.setDate(kopie.getDate() - seitMontag)
   return kopie
 }
 
@@ -125,21 +148,28 @@ function iso(d) {
   return `${d.getFullYear()}-${m}-${t}`
 }
 
-const heuteIso = iso(new Date())
+const heuteIso = computed(() => iso(heuteDatum.value))
 
-const wochenTage = computed(() => Array.from({ length: 7 }, (_, i) => {
-  const d = new Date(montag.value)
+/** Erster Tag des Fensters: heute bzw. Wochenanfang, um `versatz` verschoben. */
+const startDatum = computed(() => {
+  const d = modus.value === 'woche' ? montagVon(heuteDatum.value) : tagesBeginn(heuteDatum.value)
+  d.setDate(d.getDate() + versatz.value)
+  return d
+})
+
+const tage = computed(() => Array.from({ length: 7 }, (_, i) => {
+  const d = new Date(startDatum.value)
   d.setDate(d.getDate() + i)
   return {
     iso: iso(d),
-    wochentag: WOCHENTAGE[i],
+    wochentag: WOCHENTAGE[(d.getDay() + 6) % 7],
     kurz: `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`,
-    istHeute: iso(d) === heuteIso,
+    istHeute: iso(d) === heuteIso.value,
   }
 }))
 
-const wochenTitel = computed(() => {
-  const t = wochenTage.value
+const zeitraumTitel = computed(() => {
+  const t = tage.value
   return `${t[0].wochentag.slice(0, 2)} ${t[0].kurz} – ${t[6].wochentag.slice(0, 2)} ${t[6].kurz}`
 })
 
@@ -159,8 +189,8 @@ function belegungVon(platzId, tagIso) {
   return nachPlatzUndTag.value.get(`${platzId}|${tagIso}`) || []
 }
 
-const wochenTageMitBelegung = computed(() =>
-  wochenTage.value.filter((tag) => plaetze.value.some((p) => belegungVon(p.id, tag.iso).length)))
+const tageMitBelegung = computed(() =>
+  tage.value.filter((tag) => plaetze.value.some((p) => belegungVon(p.id, tag.iso).length)))
 
 function tagesListe(tagIso) {
   const zeilen = []
@@ -195,7 +225,7 @@ function fenster(t) {
 const konflikte = computed(() => {
   const treffer = new Set()
   for (const platz of plaetze.value) {
-    for (const tag of wochenTage.value) {
+    for (const tag of tage.value) {
       const aktive = belegungVon(platz.id, tag.iso)
         .filter((t) => t.status !== 'abgesagt')
         .map((t) => ({ t, f: fenster(t) }))
@@ -250,11 +280,16 @@ const TerminBlock = (props) => {
 TerminBlock.props = { termin: Object, konflikt: Boolean, flach: Boolean }
 
 async function laden() {
+  // Datum vor dem Laden nachziehen: Bei einer über Nacht offenen Seite zeigte das
+  // rollende Fenster sonst weiter auf gestern.
+  const jetzt = tagesBeginn(new Date())
+  if (jetzt.getTime() !== heuteDatum.value.getTime()) heuteDatum.value = jetzt
+
   loading.value = true
   fehler.value = ''
   try {
     const { data } = await api.get('/api/spielstaetten/belegung', {
-      params: { von: wochenTage.value[0].iso, bis: wochenTage.value[6].iso },
+      params: { von: tage.value[0].iso, bis: tage.value[6].iso },
     })
     plaetze.value = data.plaetze
     termine.value = data.termine
@@ -265,17 +300,23 @@ async function laden() {
   }
 }
 
-function blaettern(tage) {
-  const d = new Date(montag.value)
-  d.setDate(d.getDate() + tage)
-  montag.value = d
+function blaettern(schritt) {
+  versatz.value += schritt
   laden()
 }
 
 function heute() {
-  montag.value = montagVon(new Date())
+  versatz.value = 0
   laden()
 }
+
+// Beim Umschalten zurück auf das aktuelle Fenster: Ein Versatz aus dem einen
+// Zuschnitt sagt im anderen nichts aus, und gemeint ist ohnehin „was ist jetzt".
+watch(modus, (wert) => {
+  localStorage.setItem(MODUS_KEY, wert)
+  versatz.value = 0
+  laden()
+})
 
 onMounted(laden)
 usePageRefresh(laden)
