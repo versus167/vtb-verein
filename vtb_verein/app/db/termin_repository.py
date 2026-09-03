@@ -715,7 +715,8 @@ class TerminRepository(BaseRepository):
         innerhalb des Datumsfensters der Datei und nur für Mannschaften, die darin
         überhaupt vorkommen — ein Teil-Export darf nicht den halben Kalender als
         entfallen melden. Abgesagte Termine bleiben außen vor, die Frage ist dort
-        schon beantwortet.
+        schon beantwortet. `von` schneidet der Aufrufer zusätzlich bei heute ab:
+        Ein gelaufenes Spiel kann nicht mehr entfallen (s. `_entfallene`).
         """
         if not mannschaft_ids:
             return []

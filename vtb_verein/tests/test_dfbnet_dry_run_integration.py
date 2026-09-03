@@ -12,6 +12,7 @@ enthalten Schiedsrichternamen und gehören nicht ins Repo.
 """
 import os
 from contextlib import contextmanager
+from datetime import date, timedelta
 
 import pytest
 
@@ -632,19 +633,33 @@ def test_zaehler_fuers_badge(db, stammdaten):
 
 # ------------------------------------------------ im Export nicht mehr enthalten
 
-# Zweites eigenes Spiel eine Woche später – und ein fremdes Spiel am selben Tag,
-# das im „Export ohne" dafür sorgt, dass das Datumsfenster der Datei gleich bleibt.
-_SPAETER = {'Spielkennung': '900000011', 'Spieldatum': '22.08.2026'}
-_SPAETER_FREMD = {'Spielkennung': '900000012', 'Spieldatum': '22.08.2026',
+# Anders als der Rest der Datei rechnet dieser Block relativ zu heute: „steht
+# nicht mehr im Export" wird nur für Spiele gefragt, die noch bevorstehen – mit
+# dem sonst üblichen festen 15.08.2026 prüften diese Tests ab dem Folgetag nichts
+# mehr. Zwei Spieltage: der erste bleibt in jedem Export stehen und hält damit
+# das Datumsfenster offen, am zweiten verschwindet das eigene Spiel.
+def _tag(plus_tage: int) -> str:
+    return (date.today() + timedelta(days=plus_tage)).strftime('%d.%m.%Y')
+
+
+_FRUEH = {'Spieldatum': _tag(7)}          # Spielkennung 900000001, wie im Default
+_SPAETER = {'Spielkennung': '900000011', 'Spieldatum': _tag(14)}
+# Fremdes Spiel am selben Tag: sorgt im „Export ohne" dafür, dass das
+# Datumsfenster der Datei gleich bleibt.
+_SPAETER_FREMD = {'Spielkennung': '900000012', 'Spieldatum': _tag(14),
                   'Heimmannschaft': 'SV Fremd', 'Gastmannschaft': 'FC Anders'}
 
 
 def _export_voll():
-    return _datei(_zeile(), _zeile(**_SPAETER))
+    return _datei(_zeile(**_FRUEH), _zeile(**_SPAETER))
 
 
 def _export_ohne():
-    return _datei(_zeile(), _zeile(**_SPAETER_FREMD))
+    return _datei(_zeile(**_FRUEH), _zeile(**_SPAETER_FREMD))
+
+
+def _export_nur_erster_tag():
+    return _datei(_zeile(**_FRUEH))
 
 
 def test_vorschau_meldet_die_luecke_vorab(db, stammdaten):
@@ -677,7 +692,7 @@ def test_vorschau_ohne_luecke_bleibt_leer(db, stammdaten):
 def test_vorschau_behauptet_nichts_ausserhalb_des_dateifensters(db, stammdaten):
     """Ein Auszug über eine Woche darf nichts über die nächste sagen."""
     dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
-    assert dfbnet.dry_run(db, _datei(_zeile())).entfallene == []     # nur 15.08.
+    assert dfbnet.dry_run(db, _export_nur_erster_tag()).entfallene == []
 
 
 def test_fehlendes_spiel_wird_gemeldet_aber_nicht_abgesagt(db, stammdaten):
@@ -692,12 +707,36 @@ def test_fehlendes_spiel_wird_gemeldet_aber_nicht_abgesagt(db, stammdaten):
     assert [a.feld for a in _offene(db, verschwunden.id)] == ['entfallen']
 
 
+def test_vergangenes_spiel_ohne_zeile_bleibt_unberuehrt(db, stammdaten):
+    """Was gelaufen ist, kann nicht mehr entfallen.
+
+    DFBnet räumt ältere Spieltage aus dem Vereinsspielplan; ein Spiel von letzter
+    Woche fehlt im nächsten Export ganz normal. Daraus eine Frage an den Betreuer
+    zu machen, hieße, jeden Import mit Altlasten zu beantworten.
+    """
+    vergangen = {'Spielkennung': '900000014', 'Spieldatum': _tag(-7)}
+    vergangen_fremd = {'Spielkennung': '900000015', 'Spieldatum': _tag(-7),
+                       'Heimmannschaft': 'SV Fremd', 'Gastmannschaft': 'FC Anders'}
+    dfbnet.uebernehmen(db, _datei(_zeile(**vergangen), _zeile(**_FRUEH)), actor=_MARKE)
+    alt = db.termine.get_by_extern_ref('900000014', stammdaten['erste'])
+
+    # Datei reicht zeitlich bis in die Vergangenheit zurück – nur das eigene
+    # Spiel von damals steht nicht mehr drin.
+    ohne = _datei(_zeile(**vergangen_fremd), _zeile(**_FRUEH))
+    assert dfbnet.dry_run(db, ohne).entfallene == []
+
+    ergebnis = dfbnet.uebernehmen(db, ohne, actor=_MARKE)
+    assert ergebnis.entfallen == 0
+    assert _offene(db, alt.id) == []
+    assert db.termine.get(alt.id).status == 'geplant'
+
+
 def test_spiel_ausserhalb_des_dateifensters_bleibt_unberuehrt(db, stammdaten):
     """Ein Auszug über eine Woche darf nichts über die nächste behaupten."""
     dfbnet.uebernehmen(db, _export_voll(), actor=_MARKE)
     spaeter = db.termine.get_by_extern_ref('900000011', stammdaten['erste'])
 
-    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)   # nur 15.08.
+    ergebnis = dfbnet.uebernehmen(db, _export_nur_erster_tag(), actor=_MARKE)
     assert ergebnis.entfallen == 0
     assert _offene(db, spaeter.id) == []
 
@@ -725,12 +764,12 @@ def test_wieder_aufgetauchtes_spiel_erledigt_die_meldung(db, stammdaten):
 def test_teil_export_meldet_fremde_mannschaften_nicht_als_entfallen(db, stammdaten):
     """Nur Mannschaften, die im Export vorkommen, werden überhaupt verglichen."""
     dfbnet.uebernehmen(db, _datei(_zeile(**{
-        'Heimmannschaft': 'Testteam DFBnet 2', 'Spielkennung': '900000013'})),
-        actor=_MARKE)
+        **_FRUEH, 'Heimmannschaft': 'Testteam DFBnet 2',
+        'Spielkennung': '900000013'})), actor=_MARKE)
     fremd = db.termine.get_by_extern_ref('900000013', stammdaten['zweite'])
 
     # Export nur für die Erste, im selben Zeitfenster
-    ergebnis = dfbnet.uebernehmen(db, _datei(_zeile()), actor=_MARKE)
+    ergebnis = dfbnet.uebernehmen(db, _export_nur_erster_tag(), actor=_MARKE)
     assert ergebnis.entfallen == 0
     assert _offene(db, fremd.id) == []
 

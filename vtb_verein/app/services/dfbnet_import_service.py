@@ -352,6 +352,12 @@ def _entfallene(db, bericht: ImportBericht) -> list[dict]:
     und nur für Mannschaften, die darin überhaupt vorkommen — sonst meldete ein
     Teil-Export den halben Kalender als entfallen.
 
+    **Vergangenes bleibt unberührt.** Ein Spiel, das schon gelaufen ist, kann
+    nicht mehr entfallen; verschwindet es aus dem Export (DFBnet räumt ältere
+    Spieltage aus dem Vereinsspielplan), ist das eine Eigenheit der Quelle und
+    keine Absage. Der Blick geht deshalb erst ab *jetzt* — sonst stellte jeder
+    Import Fragen zu Spielen, die längst gespielt sind.
+
     Läuft schon in der Vorschau, damit „Vorschau = Aktion" auch für diese Frage
     gilt; geschrieben wird hier nichts (das tut :func:`_entfallene_melden`).
     `gemeldet` sagt, ob die Frage am Termin schon steht — dann tut ein Lauf
@@ -360,6 +366,12 @@ def _entfallene(db, bericht: ImportBericht) -> list[dict]:
     eigene = [b for b in bericht.befunde if b.mannschaft_id]
     von, bis = bericht.zeitraum
     if not eigene or von is None:
+        return []
+    # Gleiche Wandzeit-Schreibweise wie `termine.beginn`, damit der Vergleich ein
+    # simpler String-Vergleich bleibt (ISO sortiert lexikografisch richtig).
+    jetzt = datetime.now().strftime('%Y-%m-%dT%H:%M')
+    von = max(von, jetzt[:10])
+    if von > bis:
         return []
     vorhanden = {(b.mannschaft_id, b.spiel.spielkennung) for b in eigene}
     namen = {b.mannschaft_id: b.mannschaft_name for b in eigene}
@@ -370,6 +382,7 @@ def _entfallene(db, bericht: ImportBericht) -> list[dict]:
          'gemeldet': db.termin_abweichungen.hat_unerledigte(t.id, FELD_ENTFALLEN)}
         for t in db.termine.list_importierte(sorted(namen), von, bis)
         if (t.mannschaft_id, t.extern_ref) not in vorhanden
+        and (t.beginn or '') >= jetzt
     ]
 
 
