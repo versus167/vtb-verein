@@ -117,6 +117,19 @@ class ChildRef:
     # Manche Blatt-Tabellen (z.B. ticket_anhaenge) haben Soft-Delete OHNE version/History –
     # dann darf der Archiv-Kind-Soft-Delete kein `version = version + 1` schreiben.
     has_version: bool = True
+    # Gehört das Kind dem Eltern-Datensatz — kann es ihn fachlich also nicht überleben?
+    # Nur dann zieht der Lauf es nach, sobald die Papierkorb-Frist des Eltern-Datensatzes
+    # abgelaufen ist (Schritt 0c, s. build_nachzug_sql). Ohne das bliebe ein aktives Kind
+    # eines gelöschten Eltern-Datensatzes für immer liegen und hielte ihn über Tor 4
+    # dauerhaft im Papierkorb fest – Tor 1 sammelt nur soft-gelöschte Zeilen ein, ein
+    # aktives Kind kommt also nie an die Reihe.
+    #
+    # Default False, und das ist die Sicherung: Eine Referenz, die den Eltern-Datensatz
+    # nur ERWÄHNT (tickets.gemeldet_von -> users, rechnung.ersteller_user_id -> users),
+    # darf niemals mitsterben – sonst löschte das Entfernen eines Benutzers dessen
+    # Tickets und Rechnungen. Solche Verweise halten ihren Eltern-Datensatz weiter fest;
+    # das ist gewollt, denn der FK verböte dessen Hard-Delete ohnehin.
+    nachziehen: bool = False
 
 
 @dataclass(frozen=True)
@@ -377,7 +390,7 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="ul_stunde_history"),
     PruneEntity("ul_abrechnung", "ÜL-Abrechnungen", "ul_abrechnung",
                 history_table="ul_abrechnung_history",
-                children=(ChildRef("ul_stunde", "abrechnung_id"),)),
+                children=(ChildRef("ul_stunde", "abrechnung_id", nachziehen=True),)),
     PruneEntity("ul_satz", "ÜL-Sätze", "ul_satz",
                 history_table="ul_satz_history"),
     # --- Passwort-Tresor (Blatt → Wurzel) ---
@@ -447,8 +460,8 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("termin", "Termine", "termine",
                 history_table="termine_history",
                 children=(
-                    ChildRef("termin_zusage", "termin_id"),
-                    ChildRef("termin_abweichung", "termin_id"),
+                    ChildRef("termin_zusage", "termin_id", nachziehen=True),
+                    ChildRef("termin_abweichung", "termin_id", nachziehen=True),
                     # Teamkassen-Buchungen (#167) zeigen auf den Termin, an dem sie
                     # entstanden. Sie sind KEIN Kind im Lösch-Sinn – die Referenz hält
                     # den Termin nur über Tor 4 im Papierkorb fest, solange noch eine
@@ -493,10 +506,12 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="sepa_lauf_position_history"),
     PruneEntity("sepa_lauf", "SEPA-Einzugsläufe", "sepa_lauf",
                 history_table="sepa_lauf_history",
-                children=(ChildRef("sepa_lauf_position", "sepa_lauf_id"),)),
+                children=(ChildRef("sepa_lauf_position", "sepa_lauf_id",
+                                   nachziehen=True),)),
     PruneEntity("rechnung", "Rechnungen", "rechnung",
                 history_table="rechnung_history",
-                children=(ChildRef("rechnung_anhaenge", "rechnung_id"),)),
+                children=(ChildRef("rechnung_anhaenge", "rechnung_id",
+                                   has_version=False, nachziehen=True),)),
     PruneEntity("rechnung_kategorie", "Rechnungs-Kategorien", "rechnung_kategorie",
                 history_table="rechnung_kategorie_history",
                 children=(ChildRef("rechnung", "kategorie_id"),)),
@@ -506,11 +521,17 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("kassenbuchung", "Kassenbuchungen", "kassenbuchungen",
                 history_table="kassenbuchungen_history",
                 children=(
+                    # Sollstellung und Forderung sind eigene aufbewahrungspflichtige
+                    # Belege mit eigener Uhr – sie hängen an der Buchung, gehören ihr
+                    # aber nicht. Deshalb kein Nachzug (auch die ArchiveRule lässt sie
+                    # bewusst aus), sie halten die Buchung nur über Tor 4 fest.
                     ChildRef("beitrag_sollstellung", "kassenbuchung_id"),
                     ChildRef("gebuehr_forderung", "kassenbuchung_id"),
-                    ChildRef("kassen_zaehlungen", "ausloesende_buchung_id"),
-                    ChildRef("kassen_zaehlungen", "buchung_id"),
-                    ChildRef("kassenbuchung_anhaenge", "buchung_id"),
+                    ChildRef("kassen_zaehlungen", "ausloesende_buchung_id",
+                             nachziehen=True),
+                    ChildRef("kassen_zaehlungen", "buchung_id", nachziehen=True),
+                    ChildRef("kassenbuchung_anhaenge", "buchung_id",
+                             has_version=False, nachziehen=True),
                 )),
     PruneEntity("kassenbuch_export", "Kassenbuch-Exporte", "kassenbuch_exporte",
                 history_table="kassenbuch_exporte_history",
@@ -576,26 +597,34 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("mitglied", "Mitglieder", "mitglied",
                 history_table="mitglied_history",
                 children=(
+                    # Nachgezogen wird nur, was die Mitgliedschaft selbst ausmacht –
+                    # dieselbe Auswahl, die `mitglied_austritt_alter` mit-archiviert.
+                    # Die Finanz-Kinder (Sollstellung, Forderung, Rechnung, SEPA,
+                    # ÜL-Abrechnung) und die Teamkassen-Bewegungen bleiben bewusst
+                    # außen vor: Sie haben ihre eigene, gleich lange Uhr und dürfen
+                    # nicht entwertet werden, weil das Mitglied weg ist.
                     ChildRef("beitrag_sollstellung", "mitglied_id"),
                     ChildRef("clubdeckel", "zahlungsempfaenger_mitglied_id"),
-                    ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
-                    ChildRef("clubdeckel_berechtigung", "mitglied_id"),
+                    ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id",
+                             nachziehen=True),
+                    ChildRef("clubdeckel_berechtigung", "mitglied_id", nachziehen=True),
                     ChildRef("clubdeckel_buchung", "mitglied_id"),
                     ChildRef("clubdeckel_event", "fuer_mitglied_id"),
-                    ChildRef("clubdeckel_event_opt_out", "mitglied_id"),
+                    ChildRef("clubdeckel_event_opt_out", "mitglied_id",
+                             nachziehen=True),
                     ChildRef("clubdeckel_gruppe", "verkaeufer_mitglied_id"),
                     ChildRef("gebuehr_forderung", "mitglied_id"),
-                    ChildRef("mitglied_abteilung", "mitglied_id"),
-                    ChildRef("mitglied_funktion", "mitglied_id"),
-                    ChildRef("mitglied_kontakt", "mitglied_id"),
-                    ChildRef("mitglied_mannschaft", "mitglied_id"),
+                    ChildRef("mitglied_abteilung", "mitglied_id", nachziehen=True),
+                    ChildRef("mitglied_funktion", "mitglied_id", nachziehen=True),
+                    ChildRef("mitglied_kontakt", "mitglied_id", nachziehen=True),
+                    ChildRef("mitglied_mannschaft", "mitglied_id", nachziehen=True),
                     ChildRef("rechnung", "empfaenger_mitglied_id"),
-                    ChildRef("schluessel_chip", "mitglied_id"),
+                    ChildRef("schluessel_chip", "mitglied_id", nachziehen=True),
                     ChildRef("sepa_lauf_position", "mitglied_id"),   # Finanzdaten: nie geprunt
-                    ChildRef("termin_zusage", "mitglied_id"),
+                    ChildRef("termin_zusage", "mitglied_id", nachziehen=True),
                     ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
                     ChildRef("ul_abrechnung", "mitglied_id"),
-                    ChildRef("ul_satz", "mitglied_id"),
+                    ChildRef("ul_satz", "mitglied_id", nachziehen=True),
                 )),
     # --- Tickets-Domäne (Blatt → Wurzel) ---
     PruneEntity("ticket_teilnehmer", "Ticket-Teilnehmer", "ticket_teilnehmer",
@@ -605,13 +634,15 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                 history_table="ticket_bereich_berechtigungen_history"),
     PruneEntity("ticket_kommentar", "Ticket-Kommentare", "ticket_kommentare",
                 history_table="ticket_kommentare_history",
-                children=(ChildRef("ticket_anhaenge", "kommentar_id"),)),
+                children=(ChildRef("ticket_anhaenge", "kommentar_id",
+                                   has_version=False, nachziehen=True),)),
     PruneEntity("ticket", "Tickets", "tickets",
                 history_table="tickets_history",
                 children=(
-                    ChildRef("ticket_kommentare", "ticket_id"),
-                    ChildRef("ticket_anhaenge", "ticket_id"),
-                    ChildRef("ticket_teilnehmer", "ticket_id"),
+                    ChildRef("ticket_kommentare", "ticket_id", nachziehen=True),
+                    ChildRef("ticket_anhaenge", "ticket_id",
+                             has_version=False, nachziehen=True),
+                    ChildRef("ticket_teilnehmer", "ticket_id", nachziehen=True),
                 )),
     PruneEntity("ticket_kategorie", "Ticket-Kategorien", "ticket_kategorien",
                 history_table="ticket_kategorien_history",
@@ -619,8 +650,12 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("ticket_bereich", "Ticket-Bereiche", "ticket_bereiche",
                 history_table="ticket_bereiche_history",
                 children=(
+                    # Das Ticket selbst überlebt seinen Bereich – es ist der fachliche
+                    # Vorgang, der Bereich nur seine Einsortierung. Die Rechte AUF den
+                    # Bereich sind dagegen ohne ihn sinnlos und werden nachgezogen.
                     ChildRef("tickets", "bereich_id"),
-                    ChildRef("ticket_bereich_berechtigungen", "bereich_id"),
+                    ChildRef("ticket_bereich_berechtigungen", "bereich_id",
+                             nachziehen=True),
                 )),
     # --- Stammdaten (Blatt → Wurzel) ---
     # Individuelle Grants/Denies: hoher Durchsatz (jede Rechteänderung legt die alte Zeile
@@ -1248,6 +1283,68 @@ def build_archive_vortrag_update_sql(rule: ArchiveRule) -> str:
     """
 
 
+# --- Nachzug hängen gebliebener Kinder (ChildRef.nachziehen) -----------------------
+# Warum es diesen Schritt gibt: Tor 4 fragt nach IRGENDEINER Kind-Zeile, egal ob aktiv
+# oder im Papierkorb. Soft-gelöschte Kinder lösen sich mit der Zeit selbst auf (sie sind
+# eigene PruneEntities), ein AKTIVES Kind aber nie – Tor 1 sammelt nur Zeilen mit
+# `deleted_at` ein. Ein aktives Kind eines gelöschten Eltern-Datensatzes hält diesen
+# damit für immer im Papierkorb fest, und weil ein festgehaltener Eltern-Datensatz selbst
+# wieder eine existierende Kind-Zeile ist, pflanzt sich die Blockade nach oben fort.
+#
+# Die Alters-Archivierung heilt das nicht: `_archive_faellig_where` verlangt
+# `deleted_at IS NULL` auf dem Eltern-Datensatz, ein bereits gelöschter ist also nie
+# „fällig" und seine Kinder werden nie eingesammelt. Sie verhindert nur NEUE Fälle auf
+# dem Alterspfad.
+#
+# Zeitpunkt: erst NACH Ablauf der Papierkorb-Frist des Eltern-Datensatzes. Bis dahin ist
+# „Wiederherstellen" ein Versprechen – die Löschpfade lassen die Kinder bewusst aktiv,
+# damit ein restaurierter Datensatz vollständig ist. Danach steht der Eltern-Datensatz
+# ohnehin zum endgültigen Löschen an, und das Versprechen ist abgelaufen. Maßstab ist
+# allein Tor 2 (`retention_days`); `keep_min` ist eine Mengen-Untergrenze, kein
+# Zeitversprechen, und würde den Nachzug sonst unbegrenzt aufschieben.
+def _nachzug_faellige_parents_sql(entity: PruneEntity, child: ChildRef) -> str:
+    """Sub-SELECT: Eltern-Datensätze im Papierkorb, deren Frist abgelaufen ist.
+
+    Param: retention_days. Dieselbe Datums-Bedingung wie Tor 2, damit Nachzug und
+    Hard-Delete-Freigabe nicht auseinanderlaufen.
+    """
+    return (
+        f"SELECT p.{child.parent_col} FROM {entity.table} p "
+        f"WHERE p.deleted_at IS NOT NULL AND p.deleted_at::text <> '' "
+        f"AND {_ts('p.deleted_at')} < now() - make_interval(days => %s)"
+    )
+
+
+def build_nachzug_count_sql(entity: PruneEntity, child: ChildRef) -> str:
+    """Zahl der aktiven Kinder, die der nächste Lauf nachzieht. Param: retention_days."""
+    return (
+        f"SELECT COUNT(*) AS n FROM {child.table} c "
+        f"WHERE (c.deleted_at IS NULL OR c.deleted_at::text = '') "
+        f"AND c.{child.fk} IN ({_nachzug_faellige_parents_sql(entity, child)})"
+    )
+
+
+def build_nachzug_sql(entity: PruneEntity, child: ChildRef) -> str:
+    """Soft-Delete ebendieser Kinder. Params: deleted_by, retention_days.
+
+    Wie beim Archiv-Kind-Soft-Delete bekommen Tabellen ohne ``version``-Spalte
+    (``has_version=False``, z.B. die Anhang-Tabellen) keinen version-Bump.
+    """
+    set_clause = "deleted_at = CURRENT_TIMESTAMP, deleted_by = %s"
+    if child.has_version:
+        set_clause += ", version = version + 1"
+    return (
+        f"UPDATE {child.table} SET {set_clause} "
+        f"WHERE (deleted_at IS NULL OR deleted_at::text = '') "
+        f"AND {child.fk} IN ({_nachzug_faellige_parents_sql(entity, child)})"
+    )
+
+
+def nachzug_kinder(entity: PruneEntity) -> tuple[ChildRef, ...]:
+    """Die Kinder einer Entität, die der Lauf nachzieht (leer = nichts zu tun)."""
+    return tuple(c for c in entity.children if c.nachziehen)
+
+
 class PruneService:
     """Orchestriert die Prune-Registry. Phase 0: ausschließlich Dry-Run-Report.
 
@@ -1307,6 +1404,19 @@ class PruneService:
         if eltern.history_table:
             tage = max(tage, c["history_retention_days"])
         return tage
+
+    def _nachzug_count(self, entity: PruneEntity, cfg: dict[str, dict]) -> Optional[int]:
+        """Wie viele aktive Kinder dieser Entität der nächste Lauf nachzieht.
+
+        ``None`` für Entitäten ohne Nachzug-Kinder – so unterscheidet die UI „hier gibt
+        es nichts nachzuziehen" von „hier ist gerade nichts fällig".
+        """
+        kinder = nachzug_kinder(entity)
+        if not kinder:
+            return None
+        tage = cfg[entity.name]["retention_days"]
+        return sum(self._count(build_nachzug_count_sql(entity, c), [tage])
+                   for c in kinder)
 
     def effective_config(self) -> dict[str, dict]:
         """Wirksame Tunables je Entität: Override (falls gesetzt) sonst Code-Default."""
@@ -1541,6 +1651,7 @@ class PruneService:
         summe_loeschbar = 0
         summe_history = 0
         summe_history_gesamt = 0
+        summe_nachzug = 0
 
         for entity in PRUNE_REGISTRY:
             c = cfg[entity.name]
@@ -1566,6 +1677,9 @@ class PruneService:
                 summe_history += history_loeschbar
                 summe_history_gesamt += history_gesamt
 
+            nachzug = self._nachzug_count(entity, cfg)
+            summe_nachzug += nachzug or 0
+
             summe_loeschbar += loeschbar
             entities.append({
                 "name": entity.name,
@@ -1583,6 +1697,9 @@ class PruneService:
                 "history_table": entity.history_table,
                 "history_gesamt": history_gesamt,
                 "history_loeschbar": history_loeschbar,
+                # Aktive Kinder, die der Lauf in den Papierkorb nachzieht – Soft-Delete,
+                # daher NICHT in summe_loeschbar (s. summe_nachzug).
+                "nachzug": nachzug,
             })
 
         # Alters-Archivierung: fällige datierte Datensätze -> Papierkorb (reversibel,
@@ -1619,13 +1736,16 @@ class PruneService:
             "summe_history_loeschbar": summe_history,
             "summe_history_gesamt": summe_history_gesamt,
             "summe_verwaiste_dateien": datei_row["loeschbar"],
+            "summe_nachzug": summe_nachzug,
         }
 
     def prune(self, dry_run: bool = True) -> dict:
         """Führt die Bereinigung aus (oder zeigt sie als Dry-Run).
 
         ``dry_run=True`` liefert exakt den ``report()``. Bei ``dry_run=False`` wird in EINER
-        Transaktion gelöscht – atomar, bei Fehler vollständiger Rollback. Reihenfolge:
+        Transaktion gelöscht – atomar, bei Fehler vollständiger Rollback. Davor laufen die
+        beiden reversiblen Soft-Delete-Schritte (Alters-Archivierung und Nachzug), jeder in
+        eigener Transaktion. Reihenfolge des Hard-Deletes:
 
           1. History zuerst (datums-only) – ändert keine der Original-Tore (Tor 5 prüft nur
              Zeilen NEUER als der History-Cutoff, die hier nicht angefasst werden).
@@ -1707,6 +1827,29 @@ class PruneService:
                 "vortrag_cent": vortrag_cent,
             })
 
+        # 0c) Nachzug: aktive Kinder, deren Eltern-Datensatz die Papierkorb-Frist hinter
+        #     sich hat, ebenfalls in den Papierkorb. Ohne diesen Schritt hielten sie den
+        #     Eltern-Datensatz über Tor 4 dauerhaft fest (s. build_nachzug_sql). Eigene
+        #     Transaktion, weil es ein reversibler Soft-Delete ist – und NACH der
+        #     Archivierung, damit gerade erst archivierte Zeilen nicht im selben Lauf
+        #     schon wieder eingesammelt werden (sie sind ohnehin nicht alt genug).
+        #     Frisch nachgezogene Kinder sind für den folgenden Hard-Delete noch nicht
+        #     alt genug; der Eltern-Datensatz fällt also frühestens einen Lauf später.
+        nachzug_geloescht: dict[str, int] = {}
+        summe_nachzug = 0
+        with self._db.cursor() as cur:
+            for entity in PRUNE_REGISTRY:
+                kinder = nachzug_kinder(entity)
+                if not kinder:
+                    continue
+                tage = cfg[entity.name]["retention_days"]
+                n = 0
+                for child in kinder:
+                    cur.execute(build_nachzug_sql(entity, child), ("SYSTEM-PRUNE", tage))
+                    n += cur.rowcount
+                nachzug_geloescht[entity.name] = n
+                summe_nachzug += n
+
         with self._db.cursor() as cur:
             # 1) History prunen (datums-only)
             history_geloescht: dict[str, int] = {}
@@ -1756,6 +1899,7 @@ class PruneService:
                     "geloescht": geloescht,
                     "history_geloescht": hist,
                     "dateien_geloescht": 0,  # wird nach Commit gesetzt
+                    "nachzug": nachzug_geloescht.get(entity.name),
                 })
 
         # 4) Dateien NACH dem Commit löschen (best-effort, no-raise im AnhangService).
@@ -1813,4 +1957,5 @@ class PruneService:
             "summe_archiviert": summe_archiviert,
             "summe_history_geloescht": summe_history,
             "summe_dateien_geloescht": summe_dateien,
+            "summe_nachzug": summe_nachzug,
         }

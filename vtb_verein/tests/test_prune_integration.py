@@ -957,3 +957,125 @@ def test_alters_archivierung_laesst_die_buchung_aktiv(db):
         cur.execute("SELECT deleted_at IS NOT NULL AS d FROM clubdeckel_buchung WHERE id=%s",
                     (buchung,))
         assert cur.fetchone()["d"] is False           # … die Buchung bleibt aktiv
+
+
+# --- Nachzug hängen gebliebener Kinder --------------------------------------------
+# Die Konsistenzprüfung fand 126 aktive Kinder an soft-gelöschten Eltern-Datensätzen.
+# Sie verschwanden nie: Tor 4 fragt nach IRGENDEINER Kind-Zeile, Tor 1 sammelt aber nur
+# soft-gelöschte ein – ein aktives Kind kam also nie an die Reihe und hielt seinen
+# Eltern-Datensatz dauerhaft fest. Diese vier Tests decken beide Richtungen ab: dass der
+# Nachzug greift, und dass er nicht zu weit greift.
+
+def _nachzug_zahl(svc, name):
+    return {e["name"]: e for e in svc.report()["entities"]}[name]["nachzug"]
+
+
+def _kontakt_aktiv(db, kid):
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at FROM mitglied_kontakt WHERE id=%s", (kid,))
+        zeile = cur.fetchone()
+        return zeile is not None and zeile["deleted_at"] is None
+
+
+def test_nachzug_loest_die_dauerblockade(db):
+    """Der Kern: ein aktives Kind hielt seinen Eltern-Datensatz für immer im Papierkorb.
+
+    Vorher lief das so: Mitglied gelöscht, Kontakt bleibt aktiv (damit ein Restore
+    vollständig wäre), Tor 4 sieht die Kind-Zeile – und weil den Kontakt nie jemand
+    löscht, wiederholt sich das bei jedem Lauf bis in alle Ewigkeit.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 10, updated_by="t")
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+    _soft_delete(db, "mitglied", m, 60)
+    _age_history(db, "mitglied_history", m, 60)
+
+    # Vorschau meldet den Nachzug, und zwar bevor irgendetwas geschrieben ist
+    assert _nachzug_zahl(svc, "mitglied") == 1
+    assert _kontakt_aktiv(db, k)
+
+    svc.prune(dry_run=False)
+    assert not _kontakt_aktiv(db, k)          # Kontakt jetzt im Papierkorb
+    assert _row_exists(db, "mitglied", m)     # Mitglied noch da: Zeile blockiert Tor 4
+    assert _nachzug_zahl(svc, "mitglied") == 0    # nichts mehr nachzuziehen
+
+    # Nächster Lauf, nachdem auch der Kontakt seine Frist hinter sich hat: Er fällt,
+    # das Mitglied noch nicht – die Kandidaten stehen VOR dem Löschen fest, ein im Lauf
+    # kinderlos gewordener Eltern-Datensatz wird bewusst nicht mitgerissen.
+    _soft_delete(db, "mitglied_kontakt", k, 60)
+    _age_history(db, "mitglied_kontakt_history", k, 60)
+    svc.prune(dry_run=False)
+    assert not _row_exists(db, "mitglied_kontakt", k)
+    assert _row_exists(db, "mitglied", m)
+
+    svc.prune(dry_run=False)                      # Blockade endlich gelöst
+    assert not _row_exists(db, "mitglied", m)
+
+
+def test_nachzug_wartet_die_papierkorb_frist_ab(db):
+    """Bis die Frist läuft, ist „Wiederherstellen" ein Versprechen – Kinder bleiben aktiv.
+
+    Genau deshalb lassen die Löschpfade sie überhaupt stehen; würde der Nachzug sofort
+    greifen, käme ein wiederhergestelltes Mitglied ohne seine Kontakte zurück.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+    _soft_delete(db, "mitglied", m, 10)           # erst 10 von 30 Tagen um
+    _age_history(db, "mitglied_history", m, 10)
+
+    assert _nachzug_zahl(svc, "mitglied") == 0
+    svc.prune(dry_run=False)
+    assert _kontakt_aktiv(db, k)
+
+
+def test_nachzug_laesst_aktive_eltern_in_ruhe(db):
+    """Ein aktives Mitglied ist kein Fall für den Nachzug – nur der Papierkorb zählt."""
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+
+    assert _nachzug_zahl(svc, "mitglied") == 0
+    svc.prune(dry_run=False)
+    assert _kontakt_aktiv(db, k)
+    assert _row_exists(db, "mitglied", m)
+
+
+def test_geloeschter_benutzer_reisst_seine_tickets_nicht_mit(db):
+    """Die Gegenprobe zum Nachzug: `tickets.gemeldet_von` ist eine Urheber-Angabe.
+
+    Sie steht im Konsistenzbericht (7 Fälle) und bleibt dort auch stehen – ein Ticket
+    ist ein eigener Vorgang und darf nicht verschwinden, weil sein Melder gelöscht
+    wurde. Der Verweis hält den Benutzer im Papierkorb fest, und das ist richtig so:
+    der FK verböte dessen endgültiges Löschen ohnehin.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("user", 30, 0, 10, updated_by="t")
+    svc = PruneService(db)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users (username,email,password_hash,role,created_by,updated_by) "
+            "VALUES ('melder','melder@x.de','h','mitglied','t','t') RETURNING id")
+        u = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO tickets (titel,beschreibung,gemeldet_von,created_by,updated_by) "
+            "VALUES ('T','B',%s,'t','t') RETURNING id", (u,))
+        t = cur.fetchone()["id"]
+    _soft_delete(db, "users", u, 60)
+    _age_history(db, "users_history", u, 60)
+
+    assert _nachzug_zahl(svc, "user") is None     # users hat gar keine Nachzug-Kinder
+    svc.prune(dry_run=False)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at FROM tickets WHERE id=%s", (t,))
+        assert cur.fetchone()["deleted_at"] is None    # Ticket unangetastet
+    assert _row_exists(db, "users", u)                 # User bleibt (Tor 4, gewollt)
+

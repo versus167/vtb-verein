@@ -24,6 +24,9 @@ from app.services.prune_service import (
     build_papierkorb_count_sql,
     build_archive_vortrag_sum_sql,
     build_archive_vortrag_update_sql,
+    build_nachzug_count_sql,
+    build_nachzug_sql,
+    nachzug_kinder,
     DEFAULT_HISTORY_RETENTION_DAYS,
     _ab_jahresende,
 )
@@ -528,3 +531,114 @@ class TestTeamkassenAbschluss:
         """Keine Belege im steuerlichen Sinn, aber lange genug für die Rückfrage
         „wieso schulde ich 40 Euro?" — dieselbe Frist wie Termine und Tickets."""
         assert {r.default_days for r in ABSCHLUSS_REGISTRY} == {5 * 365}
+
+
+# --- Nachzug hängen gebliebener Kinder --------------------------------------------
+class TestNachzug:
+    """Der Schritt, der aktive Kinder eines abgelaufenen Papierkorb-Datensatzes einsammelt.
+
+    Ohne ihn hielte jedes solche Kind seinen Eltern-Datensatz über Tor 4 für immer fest;
+    mit ihm darf er auf keinen Fall zu weit greifen. Beide Seiten stehen hier.
+    """
+
+    def test_nachziehen_ist_standardmaessig_aus(self):
+        """Die Sicherung: Wer eine ChildRef ergänzt, löscht nicht versehentlich mit."""
+        assert ChildRef("x", "y").nachziehen is False
+
+    def test_archiv_kinder_werden_auch_nachgezogen(self):
+        """Beide Wege müssen dieselben Kinder als „gehört dem Eltern-Datensatz" ansehen.
+
+        Die ArchiveRule löscht sie auf dem Alterspfad längst mit; liefen die Listen
+        auseinander, hinge das Ergebnis daran, auf welchem Weg der Eltern-Datensatz in
+        den Papierkorb gekommen ist.
+        """
+        for rule in ARCHIVE_REGISTRY:
+            entity = next((e for e in PRUNE_REGISTRY if e.table == rule.table), None)
+            assert entity is not None, rule.table
+            markiert = {(c.table, c.fk) for c in nachzug_kinder(entity)}
+            for child in rule.children:
+                assert (child.table, child.fk) in markiert, \
+                    f"{rule.table} archiviert {child.table}.{child.fk}, zieht es aber nicht nach"
+
+    def test_kein_nachzug_ohne_version_spalte_bleibt_unentdeckt(self):
+        """Kinder ohne ``version`` müssen auch in PRUNE_REGISTRY so markiert sein.
+
+        Das Flag saß bisher nur an den ArchiveRule-Kindern, weil nur die einen
+        Kind-Soft-Delete schrieben. Der Nachzug schreibt ebenfalls einen – ein
+        vergessenes ``has_version=False`` ließe ihn auf der fehlenden Spalte auflaufen.
+        """
+        ohne_version = {"ticket_anhaenge", "kassenbuchung_anhaenge", "rechnung_anhaenge"}
+        for entity in PRUNE_REGISTRY:
+            for child in nachzug_kinder(entity):
+                if child.table in ohne_version:
+                    assert child.has_version is False, f"{entity.table} -> {child.table}"
+
+    def test_fremde_verweise_bleiben_unangetastet(self):
+        """Wer den Eltern-Datensatz nur ERWÄHNT, darf nicht mit ihm sterben.
+
+        Sonst nähme das Löschen eines Benutzers dessen Tickets und Rechnungen mit, und
+        das Löschen eines Mitglieds seine Sollstellungen – Daten, die eine eigene,
+        gleich lange Aufbewahrungsuhr haben.
+        """
+        tabu = {
+            "users": {("tickets", "gemeldet_von"), ("ticket_kommentare", "autor_id"),
+                      ("rechnung", "ersteller_user_id"), ("mitglied", "user_id")},
+            "mitglied": {("beitrag_sollstellung", "mitglied_id"),
+                         ("gebuehr_forderung", "mitglied_id"),
+                         ("rechnung", "empfaenger_mitglied_id"),
+                         ("ul_abrechnung", "mitglied_id"),
+                         ("clubdeckel_buchung", "mitglied_id")},
+            "termine": {("clubdeckel_buchung", "termin_id"),
+                        ("clubdeckel_gruppe", "gilt_ab_termin_id")},
+            "ticket_bereiche": {("tickets", "bereich_id")},
+            "kassenbuchungen": {("beitrag_sollstellung", "kassenbuchung_id"),
+                                ("gebuehr_forderung", "kassenbuchung_id")},
+        }
+        for tabelle, verboten in tabu.items():
+            entity = next(e for e in PRUNE_REGISTRY if e.table == tabelle)
+            markiert = {(c.table, c.fk) for c in nachzug_kinder(entity)}
+            assert markiert & verboten == set(), tabelle
+
+    def test_protokolle_werden_nie_nachgezogen(self):
+        """Dauerprotokolle haben gar kein ``deleted_at`` – ein Nachzug liefe ins Leere."""
+        protokolle = {"tuer_zutritt_log", "access_log", "ticket_zugriff_log",
+                      "tresor_zugriff_log", "tuer_credential", "tuer_schloss_status_log",
+                      "auth_tokens", "user_sessions", "push_subscriptions"}
+        for entity in PRUNE_REGISTRY:
+            assert {c.table for c in nachzug_kinder(entity)} & protokolle == set()
+
+    def test_nachzug_greift_erst_nach_der_papierkorb_frist(self):
+        """Tor-2-Bedingung: bis dahin ist „Wiederherstellen" ein Versprechen."""
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        assert ("NULLIF(p.deleted_at::text, '')::timestamptz "
+                "< now() - make_interval(days => %s)") in build_nachzug_sql(entity, child)
+
+    def test_nachzug_trifft_nur_aktive_kinder(self):
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        sql = build_nachzug_sql(entity, child)
+        assert "WHERE (deleted_at IS NULL OR deleted_at::text = '')" in sql
+
+    def test_vorschau_und_aktion_teilen_die_bedingung(self):
+        """Was der Report zählt, ist genau das, was der Lauf anfasst."""
+        entity = _entity("ul_abrechnung")
+        child = nachzug_kinder(entity)[0]
+        bedingung = ("FROM ul_abrechnung p WHERE p.deleted_at IS NOT NULL "
+                     "AND p.deleted_at::text <> ''")
+        assert bedingung in build_nachzug_count_sql(entity, child)
+        assert bedingung in build_nachzug_sql(entity, child)
+
+    def test_version_bump_nur_wo_es_die_spalte_gibt(self):
+        ticket = _entity("ticket")
+        kommentar = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_kommentare")
+        anhang = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_anhaenge")
+        assert "version = version + 1" in build_nachzug_sql(ticket, kommentar)
+        assert "version" not in build_nachzug_sql(ticket, anhang)
+
+    def test_ul_stunden_werden_nachgezogen(self):
+        """Der größte Posten der Konsistenzprüfung: 101 Stunden hielten jede Abrechnung
+        – und über sie jeden abrechnenden Übungsleiter – dauerhaft im Papierkorb."""
+        assert [(c.table, c.fk) for c in nachzug_kinder(_entity("ul_abrechnung"))] \
+            == [("ul_stunde", "abrechnung_id")]
+
