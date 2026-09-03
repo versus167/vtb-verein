@@ -293,7 +293,16 @@ docker compose build --no-cache # neu bauen
 Beim ersten Start wird automatisch ein Admin-Account angelegt:
 
 - **Username:** `admin`
-- **Passwort:** `admin123`
+- **Passwort:** ein **Zufallswert**, der beim Anlegen einmalig ins Log geschrieben
+  wird (`docker compose logs app` bzw. die Konsole des Dev-Servers):
+
+  ```
+  Standard-Admin erstellt: Username='admin', Passwort='K3nA…' — dieses Passwort
+  steht NUR hier im Log. Nach der ersten Anmeldung ändern!
+  ```
+
+  Wer das Startpasswort selbst vorgeben will, setzt vor dem ersten Start
+  `VTB_ADMIN_INITIAL_PASSWORT`.
 
 ⚠️ **Passwort sofort nach dem ersten Login ändern.**
 

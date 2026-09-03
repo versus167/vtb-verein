@@ -5,6 +5,7 @@ Rewritten 2026-05-18: sqlite3 → psycopg3, single consolidated schema (v15).
 
 import logging
 import os
+import secrets
 import bcrypt
 from contextlib import contextmanager
 
@@ -3980,7 +3981,16 @@ class Database:
     def __init__(self, database_url: str):
         self._database_url = database_url
         self.conn = psycopg.connect(database_url, row_factory=dict_row)
-        self._init_schema()
+        try:
+            self._init_schema()
+        except Exception:
+            # Scheitert der Schema-Aufbau (Migrationsfehler, unbrauchbare Env für
+            # den Seed), bekommt der Aufrufer nie ein Objekt und damit auch nie
+            # die Gelegenheit, close() zu rufen – die Verbindung bliebe bis zum
+            # Prozessende offen. Sie gehört deshalb hier zu, bevor der Fehler
+            # weiterläuft.
+            self.conn.close()
+            raise
 
     @contextmanager
     def cursor(self):
@@ -11313,14 +11323,43 @@ class Database:
             _PERM_TERMINE_GAESTE_VEREINSWEIT,
         }
 
-        pw_hash = bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode()
+        # Startpasswort des Erst-Admins: aus der Env, sonst ein Zufallswert.
+        #
+        # Bis hierher stand an dieser Stelle ein fest verdrahtetes 'admin123' – und
+        # damit in jeder öffentlichen Kopie des Quellcodes. Eine frisch aufgesetzte
+        # Instanz war so lange übernehmbar, bis jemand daran dachte, das Passwort zu
+        # wechseln; die Anmelde-Bremse hilft dagegen nicht, weil das Passwort ja
+        # stimmt. Der Zufallswert steht genau einmal im Log und sonst nirgends.
+        # Wer das Startpasswort lieber selbst vorgibt (z. B. beim automatisierten
+        # Aufsetzen), setzt VTB_ADMIN_INITIAL_PASSWORT.
+        start_passwort = (os.getenv('VTB_ADMIN_INITIAL_PASSWORT') or '').strip()
+        selbst_erzeugt = not start_passwort
+        if selbst_erzeugt:
+            start_passwort = secrets.token_urlsafe(12)
+        # bcrypt verarbeitet höchstens 72 Byte und wirft darüber (seit bcrypt 5).
+        # Der Abbruch hier ist verständlich, der aus dem Schema-Aufbau heraus nicht.
+        elif len(start_passwort.encode('utf-8')) > 72:
+            raise ValueError(
+                "VTB_ADMIN_INITIAL_PASSWORT ist zu lang (mehr als 72 Byte)."
+            )
+        pw_hash = bcrypt.hashpw(start_passwort.encode('utf-8'), bcrypt.gensalt()).decode()
         cur.execute("""
             INSERT INTO users (username, email, password_hash, role, active, created_by, updated_by)
             VALUES (%s, %s, %s, 'admin', 1, 'SYSTEM', 'SYSTEM')
             RETURNING id
         """, ('admin', 'admin@verein.local', pw_hash))
         admin_id = cur.fetchone()['id']
-        logger.warning("Standard-Admin erstellt: Username='admin', Passwort='admin123' - BITTE ÄNDERN!")
+        if selbst_erzeugt:
+            logger.warning(
+                "Standard-Admin erstellt: Username='admin', Passwort='%s' — dieses "
+                "Passwort steht NUR hier im Log. Nach der ersten Anmeldung ändern!",
+                start_passwort,
+            )
+        else:
+            logger.warning(
+                "Standard-Admin erstellt: Username='admin', Passwort aus "
+                "VTB_ADMIN_INITIAL_PASSWORT - BITTE NACH DEM ERSTEN LOGIN ÄNDERN!"
+            )
 
         for perm in _ADMIN_PERMS:
             cur.execute("""

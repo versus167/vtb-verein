@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core import branding
 from backend.core.config import settings
+from backend.core.security import pruefe_signaturschluessel
 from app.config.app_info import APP_NAME, get_app_version
 from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
@@ -62,6 +63,11 @@ async def lifespan(app: FastAPI):
     logging.getLogger("app").handlers = logging.getLogger("uvicorn").handlers
     # Kalender-Feed-Token stehen in der URL und dürfen nicht im Access-Log landen (#153)
     logging.getLogger("uvicorn.access").addFilter(AccessLogTokenFilter())
+
+    # Signaturschlüssel prüfen, bevor irgendetwas anderes passiert: Mit dem
+    # Platzhalter aus dem Quellcode wäre jede Sitzung fälschbar. Lieber gar nicht
+    # starten als angreifbar laufen — Details in core/security.py.
+    pruefe_signaturschluessel()
 
     # DB eagerly initialisieren → Migration läuft hier, nicht beim ersten Request
     from backend.core.db import get_db
