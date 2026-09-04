@@ -5,13 +5,13 @@
 > importierten Datei). Grundlage ist ein Muster-Export des Vereinsspielplans für
 > die Saison 26/27.
 >
-> **Etappe 5 ist angefangen**, entgegen dem früheren Kopf hier: Der eigene
-> Permission-Key `spielstaetten.verwalten` steht (v86, vorher hing die Pflege an
-> `system.config`), die Spielstätten-Stammdaten samt Untergrund ebenfalls
-> (v80/v85, `SpielstaettenPage.vue`), und `termine.spielstaette_id` gibt es an
-> Terminen *und* Serien — Trainings stehen also bereits im Plan. **Es fehlt genau
-> ein Stück: die Belegungsansicht**, die eigene Termine und die fremden Spiele
-> aus der Platzbelegung in einer Sicht zusammenführt.
+> **Etappe 5 ist seit dem 02.09.2026 ebenfalls umgesetzt** (#152, Schema v118,
+> v2026.09.02.242): eigener Permission-Key `spielstaetten.verwalten` (v86, vorher
+> hing die Pflege an `system.config`), Spielstätten-Stammdaten samt Untergrund
+> (v80/v85, `SpielstaettenPage.vue`), `termine.spielstaette_id` an Terminen *und*
+> Serien — und die Belegungsansicht, die eigene Termine und fremde Spiele aus der
+> Platzbelegung in einer Sicht zusammenführt (rollende 7-Tage-Sicht seit .245).
+> Damit sind alle Etappen abgearbeitet; offen bleiben nur die Fragen unten.
 >
 > **Keine Echtdaten im Repo:** Der Export enthält Namen und Ausweisnummern von
 > Schiedsrichtern. Alle Beispiele hier sind gekürzt oder erfunden.
@@ -298,11 +298,10 @@ dem Freitext ein Katalog wird.
 4. ✅ **Abweichungen**: Tabelle (v84), Badge an der Termin-Karte,
    Entscheidungs-Dialog je Feld — dazu „im Export nicht mehr enthalten" als
    eigene Abweichungsart.
-5. **Platzwart-Zugriff** (teils umgesetzt): Permission-Key ✅
-   (`spielstaetten.verwalten`, v86), `spielstaette_id` an Terminen und Serien ✅
-   (v80) — **offen: die Belegungsansicht aus beiden Quellen** (eigene Termine +
-   fremde Spiele aus der Platzbelegung in einer Sicht, gefiltert nach Platz und
-   Zeitraum).
+5. ✅ **Platzwart-Zugriff**: Permission-Key (`spielstaetten.verwalten`, v86),
+   `spielstaette_id` an Terminen und Serien (v80) und die Belegungsansicht aus
+   beiden Quellen — eigene Termine + fremde Spiele aus der Platzbelegung in einer
+   Sicht, gefiltert nach Platz und Zeitraum (#152, Schema v118).
 
 ## Offene Fragen
 

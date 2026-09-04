@@ -9,7 +9,7 @@
 > [`docs/archiv/`](docs/archiv/); Pläne mit offenen Etappen bleiben im
 > Wurzelverzeichnis und sind unten jeweils verlinkt.
 >
-> *Stand des letzten Abgleichs gegen den Code: 2026-08-24.*
+> *Stand des letzten Abgleichs gegen den Code: 2026-09-04.*
 
 ## 🔥 Hohe Priorität
 
@@ -48,11 +48,10 @@ sind nur noch die Reste unten offen. Was jeweils schon fertig ist, steht im Kopf
 Dokuments.
 
 ### Spielplan / Spielstätten — [`DFBNET_IMPORT_PLAN.md`](DFBNET_IMPORT_PLAN.md)
-- [ ] **Belegungsansicht für Plätze** (letztes Stück von Etappe 5): eigene Termine und
-      die fremden Spiele aus der Platzbelegung in *einer* Sicht, filterbar nach Platz und
-      Zeitraum. Die Voraussetzungen stehen bereits — eigenes Recht
-      `spielstaetten.verwalten` (v86) und `spielstaette_id` an Terminen *und* Serien (v80),
-      Trainings sind also schon erfasst.
+Alle fünf Etappen sind umgesetzt; die Belegungsansicht kam zuletzt (#152, Schema v118,
+v2026.09.02.242, rollende 7-Tage-Sicht in .245). Offen sind nur noch die Grundsatzfragen
+im Kopf des Plans — Spielende, Turniere, Importrhythmus, Platzwarte als eigene Rolle.
+Sobald die entschieden sind, gehört das Dokument ins Archiv.
 
 ### Zutrittskontrolle — [`ZUTRITTSKONTROLLE_PLAN.md`](ZUTRITTSKONTROLLE_PLAN.md)
 - [ ] **Phase 5 zu Ende führen**: Zutrittslog vollständig auf Mitglieder auflösen.
@@ -99,10 +98,6 @@ bis .196). Was daraus offen blieb:
       `/api/openapi.json` hängen ohne Auth an der App (`backend/main.py`). Das ist eine
       vollständige Landkarte der Endpunkte für jeden, der die URL kennt. Entscheidung
       nötig: hinter Auth legen, auf Admins beschränken oder in Produktion abschalten.
-- [x] **`VTB_SECRET_KEY`-Länge nicht geprüft** – Default ist der Platzhalter
-      `CHANGE_ME_IN_PRODUCTION` (`backend/core/config.py`), und ein zu kurzer Schlüssel
-      fällt nur als PyJWT-Warnung auf. Beim Start prüfen (≥ 32 Byte) und bei
-      Platzhalter/zu kurz laut abbrechen statt still weiterlaufen.
 - [ ] **Body-Size-Limit im Proxy** setzen (Betriebs-Aufgabe, nicht Code): Die App bricht
       übergroße Uploads jetzt selbst ab, aber erst nachdem sie den Strom gelesen hat.
 
@@ -130,9 +125,10 @@ bis .196). Was daraus offen blieb:
 > nicht über ein dediziertes Feld an der Abteilung.
 
 ### Weitere Module
-- [ ] Trainingsplan-/Hallenplanung (Trainingszeiten, Trainer-Zuordnung) – **teilweise
-      abgedeckt**: Terminserien und Spielstätten gibt es; was fehlt, ist die Sicht *vom
-      Platz/der Halle aus* (s. Belegungsansicht oben)
+- [ ] Trainingsplan-/Hallenplanung (Trainingszeiten, Trainer-Zuordnung) – **weitgehend
+      abgedeckt**: Terminserien, Spielstätten und seit #152 die Belegungsansicht je Platz.
+      Offen bliebe die *Vergabe* selbst — Zeiten zuteilen, statt bestehende Termine nur
+      anzuzeigen; zu klären, ob dafür überhaupt Bedarf besteht
 - [ ] Anwesenheitslisten (Check-in/-out, Statistik je Mitglied) – **Zu-/Absagen** je Termin
       sind da (`termin_zusage`); offen ist die *tatsächliche* Anwesenheit und deren Auswertung
 - [ ] Dokumentenverwaltung pro Mitglied (Verträge, Bescheinigungen, Ablaufdatum-Tracking)
