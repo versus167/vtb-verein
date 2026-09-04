@@ -14,6 +14,7 @@ entschieden hat. Genau das braucht man beim nächsten Umbau.
 |---|---|---|
 | `CLUBDECKEL_PLAN.md` | Teamkasse (mannschaftsinterne Strichliste) | Schema v75/v76, `backend/api/clubdeckel.py`, `TeamkassePage.vue` |
 | `SPIELBETRIEB_PLAN.md` | Termine, Zu-/Absagen, Spielplan-Import (Etappen 1–3) | Schema v68–v70, `backend/api/termine.py`, `TerminePage.vue` |
+| `ZEITRAEUME_PLAN.md` | Zeiträume bei Zuordnungen (Wechsel statt Korrektur, passiv als Funktion) | Schema v105, `mitglied_abteilung`/`mitglied_funktion`, `MitgliedEditDialog.vue` |
 
 **Was hier nicht hingehört:** Pläne mit offenen Etappen. Die bleiben im
 Wurzelverzeichnis, auch wenn der größere Teil schon steht — solange etwas

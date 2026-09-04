@@ -350,8 +350,9 @@ Protokoll-Tabs. Zwei Listen-Tabs, Detail-Drawer/-Seite je Eintrag:
    liefert per-Schloss `darf_*`-Flags; Umhängen der Abteilung nur vereinsweit; account-
    weiter Sync nur vereinsweit (`darf_sync`); Chip-Detail filtert Schlösser/Logs auf den
    Scope. **Datenschutzhinweis** an den Protokoll-Ansichten ✅. **Log-Aufbewahrung** (append-
-   only → alters-basiertes Löschen) wird **ins allgemeine Prune** gezogen statt hier separat
-   gebaut → als TODO in `TODO.md` notiert (Retention-Dauer dort festzulegen).
+   only → alters-basiertes Löschen) läuft **über das allgemeine Prune** statt hier separat
+   gebaut ✅ — `LOG_REGISTRY` in `app/services/prune_service.py`, Frist je Regel auf der
+   Datenbereinigungs-Seite einstellbar.
 4. **Komfort (umgesetzt):** **Self-Service-Sicht** ✅ – `GET /schliessanlage/mein-zugang`
    (eigene Chips, Türen, befristete App-Berechtigungen, letzte eigene Zutritte über das
    verknüpfte Mitglied; kein schliessanlage-Recht nötig, nur eigene Daten) + Card „Mein
