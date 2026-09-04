@@ -12,18 +12,24 @@ from pydantic import BaseModel, Field
 
 from app.models.permission import Permission
 from app.services.prune_service import (
-    ARCHIVE_REGISTRY, DATEI_VERWAIST, LOG_REGISTRY, PRUNE_REGISTRY, PruneService,
+    ABSCHLUSS_REGISTRY, ARCHIVE_REGISTRY, DATEI_VERWAIST, LOG_REGISTRY, PRUNE_REGISTRY,
+    PruneService,
 )
 from ..core.deps import CurrentUser, DB
 from .auth import _client_ip
 
 router = APIRouter(prefix="/prune", tags=["prune"])
 
-# Konfigurierbar sind die Soft-Delete-Bereiche, die Alters-Archivierungen (ArchiveRule),
-# die Protokoll-/Gerätebereiche (LogRule) und die verwaisten Upload-Dateien.
+# Konfigurierbar ist alles, was `PruneService.einstellungen()` als Zeile ausliefert: die
+# Soft-Delete-Bereiche, die Alters-Archivierungen (ArchiveRule), die Alters-Regeln mit
+# Domänen-Wirkung (AbschlussRule), die Protokoll-/Gerätebereiche (LogRule) und die
+# verwaisten Upload-Dateien. Die Mengen MÜSSEN deckungsgleich bleiben — sonst bietet die
+# Seite eine Zeile zum Bearbeiten an, deren Speichern mit 404 scheitert. Genau das war
+# bei ABSCHLUSS_REGISTRY der Fall, von #187 bis v2026.09.04.247.
 _ENTITY_NAMES = (
     {e.name for e in PRUNE_REGISTRY}
     | {r.name for r in ARCHIVE_REGISTRY}
+    | {r.name for r in ABSCHLUSS_REGISTRY}
     | {r.name for r in LOG_REGISTRY}
     | {DATEI_VERWAIST}
 )

@@ -850,6 +850,33 @@ def test_verwaiste_datei_wird_beim_lauf_entfernt(db):
     assert not ziel.exists()
 
 
+def test_jede_angebotene_einstellung_ist_auch_speicherbar(db):
+    """Was die Seite zum Bearbeiten anbietet, muss die API auch annehmen.
+
+    Die Zeilen der Datenbereinigungs-Seite kommen aus `PruneService.einstellungen()`, die
+    Speicher-Erlaubnis aus `_ENTITY_NAMES` in backend/api/prune.py — zwei getrennt
+    gepflegte Mengen über inzwischen fünf Registries. Laufen sie auseinander, zeigt die
+    Seite eine Zeile mit Eingabefeld und Speichern-Knopf, und der Klick darauf endet in
+    „Unbekannte Prune-Entität" (404). Auffallen kann das nur jemandem, der genau diese
+    Zeile anfasst — deshalb hier festgenagelt statt dem Zufall überlassen.
+
+    Genau so war es von #187 (Einführung der AbschlussRule) bis v2026.09.04.247: Beide
+    Teamkassen-Regeln standen im Report, aber nicht in der Allowlist.
+    """
+    import sys
+    from pathlib import Path as _Path
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))  # Repo-Root für backend.*
+    from backend.api.prune import _ENTITY_NAMES
+    from app.services.prune_service import PruneService
+
+    angeboten = {r["name"] for r in PruneService(db).einstellungen()}
+    fehlend = sorted(angeboten - _ENTITY_NAMES)
+    assert not fehlend, (
+        "Die Datenbereinigungs-Seite bietet diese Bereiche zum Bearbeiten an, die API "
+        f"lehnt sie beim Speichern aber mit 404 ab: {', '.join(fehlend)}"
+    )
+
+
 def test_archiv_kinder_kennen_ihre_version_spalte(db):
     """`has_version` steuert, ob der Archiv-Soft-Delete ein `version = version + 1`
     schreibt. Steht es falsch, scheitert der Lauf zur Laufzeit auf einer fehlenden
