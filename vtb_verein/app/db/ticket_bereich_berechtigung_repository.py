@@ -75,30 +75,6 @@ class TicketBereichBerechtigungRepository:
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def list_alle_berechtigungen(self) -> list[dict]:
-        """Alle aktiven Berechtigungen (für Admin-Übersicht), inkl. Namen."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            SELECT tbb.id, tbb.bereich_id, tbb.user_id,
-                   tbb.darf_lesen, tbb.darf_bearbeiten, tbb.darf_schliessen,
-                   tbb.version,
-                   u.username, u.email,
-                   tb.name AS bereich_name
-            FROM ticket_bereich_berechtigungen tbb
-            JOIN users u ON u.id = tbb.user_id
-            JOIN ticket_bereiche tb ON tb.id = tbb.bereich_id
-            WHERE tbb.deleted_at IS NULL
-            ORDER BY tb.name, u.username
-            """,
-        )
-        return [dict(row) for row in cur.fetchall()]
-
-    def user_darf_lesen(self, bereich_id: int, user_id: int) -> bool:
-        """Prüft ob ein User einen Bereich lesen darf."""
-        b = self.get_berechtigung(bereich_id, user_id)
-        return bool(b and b['darf_lesen'])
-
     def user_darf_bearbeiten(self, bereich_id: int, user_id: int) -> bool:
         """Prüft ob ein User Tickets in einem Bereich bearbeiten darf."""
         b = self.get_berechtigung(bereich_id, user_id)
@@ -131,18 +107,6 @@ class TicketBereichBerechtigungRepository:
             for e in self.list_berechtigungen_fuer_user(user_id)
             if e['darf_lesen'] or e['darf_bearbeiten'] or e['darf_schliessen']
         }
-
-    def get_lesbare_bereich_ids(self, user_id: int) -> list[int]:
-        """Gibt alle Bereich-IDs zurück, die ein User lesen darf."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            SELECT bereich_id FROM ticket_bereich_berechtigungen
-            WHERE user_id = %s AND darf_lesen = 1 AND deleted_at IS NULL
-            """,
-            (user_id,),
-        )
-        return [row['bereich_id'] for row in cur.fetchall()]
 
     def list_user_ids_bearbeiten_oder_schliessen(self, bereich_id: int) -> list[int]:
         """User-IDs mit darf_bearbeiten=1 oder darf_schliessen=1 für einen Bereich."""
@@ -229,26 +193,6 @@ class TicketBereichBerechtigungRepository:
             )
         self._conn.commit()
 
-    def mark_berechtigung_deleted(
-        self, bereich_id: int, user_id: int, deleted_by: str
-    ) -> bool:
-        """Soft-Delete einer Berechtigung."""
-        cur = self._conn.cursor()
-        cur.execute(
-            """
-            UPDATE ticket_bereich_berechtigungen
-            SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = %s,
-                version    = version + 1,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = %s
-            WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
-            """,
-            (deleted_by, deleted_by, bereich_id, user_id),
-        )
-        self._conn.commit()
-        return cur.rowcount > 0
-
     def mark_alle_berechtigungen_fuer_user_deleted(
         self, user_id: int, deleted_by: str
     ) -> int:
@@ -269,6 +213,40 @@ class TicketBereichBerechtigungRepository:
         self._conn.commit()
         return cur.rowcount
 
+    def mark_berechtigung_deleted(
+        self, bereich_id: int, user_id: int, deleted_by: str
+    ) -> bool:
+        """Soft-Delete einer Berechtigung.
+
+        Kein öffentlicher Weg – von aussen führt der Pfad über `set_berechtigung` mit
+        allen Flags auf False, das den vorhandenen Eintrag reaktivieren kann, statt am
+        UNIQUE-Index (bereich_id, user_id) aufzulaufen. Genau das ruft hier durch.
+        """
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            UPDATE ticket_bereich_berechtigungen
+            SET deleted_at = CURRENT_TIMESTAMP,
+                deleted_by = %s,
+                version    = version + 1,
+                updated_at = CURRENT_TIMESTAMP,
+                updated_by = %s
+            WHERE bereich_id = %s AND user_id = %s AND deleted_at IS NULL
+            """,
+            (deleted_by, deleted_by, bereich_id, user_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    # Entfernt, weil ohne Aufrufer (Stand 04.09.2026) und jeweils durch etwas
+    # Vorhandenes abgedeckt:
+    #   list_alle_berechtigungen()  – die Admin-Übersicht lädt je Bereich
+    #                                 (list_berechtigungen_fuer_bereich).
+    #   user_darf_lesen()           – Lesen allein gibt es als Recht nicht; gefragt wird
+    #                                 stets „irgendein Recht" (user_hat_bereichsrecht).
+    #   get_lesbare_bereich_ids()   – dieselbe Frage beantwortet
+    #                                 get_bereich_ids_mit_recht() in einem Roundtrip.
+    #
     # Entfernt: mark_alle_berechtigungen_fuer_bereich_deleted() – hatte nie einen
     # Aufrufer, und seit die Bereichs-Löschung ihre Rechte selbst mitnimmt
     # (TicketBereichRepository.mark_deleted) wäre sie eine zweite Kopie derselben

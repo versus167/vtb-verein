@@ -545,8 +545,13 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     # bewusst aus), sie halten die Buchung nur über Tor 4 fest.
                     ChildRef("beitrag_sollstellung", "kassenbuchung_id"),
                     ChildRef("gebuehr_forderung", "kassenbuchung_id"),
-                    ChildRef("kassen_zaehlungen", "ausloesende_buchung_id",
-                             nachziehen=True),
+                    # Zwei Wege zur selben Tabelle, und nur einer ist Eigentum:
+                    # `buchung_id` ist der TRÄGER der Zählung (sie stirbt mit ihrer
+                    # Differenzbuchung), `ausloesende_buchung_id` nur der ANLASS. Die
+                    # auslösende Buchung darf die Zählung deshalb nicht mitnehmen –
+                    # genauso hält es `mark_kassenbuchung_deleted`, das sie im
+                    # Docstring ausdrücklich ausnimmt.
+                    ChildRef("kassen_zaehlungen", "ausloesende_buchung_id"),
                     ChildRef("kassen_zaehlungen", "buchung_id", nachziehen=True),
                     ChildRef("kassenbuchung_anhaenge", "buchung_id",
                              has_version=False, nachziehen=True),
@@ -637,19 +642,24 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_kontakt", "mitglied_id", nachziehen=True),
                     ChildRef("mitglied_mannschaft", "mitglied_id", nachziehen=True),
                     ChildRef("rechnung", "empfaenger_mitglied_id"),
-                    # BEWUSST kein `nachziehen`: Ein Chip ist kein reiner Datensatz,
-                    # sondern wirkt an einem Schloss. Ein Soft-Delete per UPDATE
-                    # entfernt die IC-Karte NICHT aus den Türen – der Chip öffnete
-                    # weiter jede Tür, wäre aber aus der App verschwunden und damit
-                    # auch nicht mehr entziehbar. Genau davor warnt
-                    # `zutritt_service.chip_loeschen`, der einzige zulässige Weg:
-                    # erst die Karte an jedem Schloss löschen, dann den Chip. Scheitert
-                    # ein Schloss, bricht er ab.
+                    # BEWUSST kein `nachziehen`, und zwar weil es nichts brächte:
+                    # `tuer_berechtigung` und `chip_gruppe_zuordnung` haben keinerlei
+                    # Alterungspfad (weder ArchiveRule noch LogRule). Ein nachgezogener
+                    # Chip bliebe also über sein eigenes Tor 4 dauerhaft hängen, würde
+                    # nie hart gelöscht – und hielte damit das Mitglied genauso fest wie
+                    # vorher. Der Nachzug erzeugte nur einen Zwischenzustand: Chip im
+                    # Papierkorb, seine Berechtigungen weiter aktiv.
                     #
-                    # Der Preis ist bekannt: Ein Mitglied mit aktivem Chip bleibt über
-                    # Tor 4 im Papierkorb. Das ist die richtige Fehlerrichtung – der
-                    # Chip bleibt sichtbar und entziehbar, und die Konsistenzprüfung
-                    # meldet die Beziehung als hängenden Verweis, also als Aufgabe.
+                    # Dazu kommt, dass ein Chip nicht nur ein Datensatz ist, sondern als
+                    # IC-Karte am Schloss liegt. Ein Soft-Delete per UPDATE entfernt sie
+                    # dort nicht; das tut allein `zutritt_service.chip_loeschen`, das
+                    # erst die Karte an jedem Schloss löscht und abbricht, wenn eines
+                    # scheitert. Unsichtbar wird dadurch nichts: Die Berechtigungszeile
+                    # bleibt aktiv und steht samt Chipnamen im Schloss-Detail, der
+                    # Credential-Spiegel führt die Karte ohnehin weiter, und entziehen
+                    # lässt sie sich von dort unverändert. Es entstünde ein hängender
+                    # Verweis, den die Konsistenzprüfung als Aufgabe meldet – mehr nicht,
+                    # aber auch nicht weniger.
                     ChildRef("schluessel_chip", "mitglied_id"),
                     ChildRef("sepa_lauf_position", "mitglied_id"),   # Finanzdaten: nie geprunt
                     ChildRef("termin_zusage", "mitglied_id", nachziehen=True),
@@ -897,16 +907,17 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("mitglied_funktion", "mitglied_id"),
             ChildRef("mitglied_mannschaft", "mitglied_id"),
             ChildRef("termin_zusage", "mitglied_id"),
-            # ACHTUNG, bekannte Lücke (Altbestand, nicht aus dem Nachzug): Dieser
-            # Soft-Delete entfernt die IC-Karte NICHT aus den Schlössern – anders als
-            # `zutritt_service.chip_loeschen`, der einzige Weg, der das tut. Der Chip
-            # verschwindet also aus der App, öffnet aber weiter. Die Zeile bleibt
-            # trotzdem stehen, weil sie zehn Jahre nach dem Austritt greift und ihre
-            # Entfernung die Zusage aus #188 bräche (jedes Kind altert, sonst liegt das
-            # Mitglied ewig mit Namen und Adresse im Papierkorb; s.
-            # test_kein_kind_haelt_das_mitglied_mehr_fest). Der Nachzug zieht Chips aus
-            # demselben Grund NICHT nach – er würde dieselbe Lücke von zehn Jahren auf
-            # die Papierkorb-Frist verkürzen (s. PRUNE_REGISTRY, `mitglied`).
+            # Wirkt real nur bei Chips, die nie an einer Tür angelernt waren: Alle
+            # anderen haben eine aktive `tuer_berechtigung`, die auf keinem Weg altert,
+            # und bleiben deshalb über ihr eigenes Tor 4 ewig liegen – das Mitglied
+            # damit auch. Bei ihnen hinterlässt die Zeile nur einen archivierten Chip
+            # mit aktiven Berechtigungen, also einen hängenden Verweis für die
+            # Konsistenzprüfung. Die IC-Karte am Schloss bleibt davon unberührt (das
+            # kann allein `zutritt_service.chip_loeschen`), sie ist aber weder unsichtbar
+            # noch unentziehbar: Berechtigungszeile und Credential-Spiegel führen sie
+            # unverändert. Sauberer wäre, hier nur folgenlose Chips zu archivieren –
+            # solange es das nicht gibt, bleibt die Zeile, weil ihre Entfernung die
+            # Zusage aus #188 bräche (s. test_kein_kind_haelt_das_mitglied_mehr_fest).
             ChildRef("schluessel_chip", "mitglied_id"),
             ChildRef("clubdeckel_berechtigung", "mitglied_id"),
             ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
@@ -1078,7 +1089,7 @@ def build_papierkorb_count_sql(entity: PruneEntity) -> tuple[str, list]:
     """Gesamtzahl im Papierkorb (soft-deleted) – Kontext für den Report."""
     sql = (
         f"SELECT COUNT(*) AS n FROM {entity.table} "
-        f"WHERE deleted_at IS NOT NULL AND deleted_at::text <> ''"
+        f"WHERE {_geloescht()}"
     )
     return sql, []
 
@@ -1087,7 +1098,7 @@ def build_active_count_sql(entity: PruneEntity) -> tuple[str, list]:
     """Zahl der aktiven (nicht gelöschten) Einträge – reines Mengengefühl, wird nie geprunt."""
     sql = (
         f"SELECT COUNT(*) AS n FROM {entity.table} "
-        f"WHERE deleted_at IS NULL OR deleted_at::text = ''"
+        f"WHERE {_aktiv()}"
     )
     return sql, []
 
@@ -1148,7 +1159,7 @@ def build_original_candidate_ids_sql(
         where.append(
             f"NOT EXISTS (SELECT 1 FROM {p.table} p "
             f"WHERE p.id = (SELECT ch.{p.fk} FROM {entity.table} ch WHERE ch.id = r.id) "
-            f"AND p.deleted_at IS NOT NULL AND p.deleted_at::text <> '' "
+            f"AND {_geloescht('p')} "
             f"AND {_ts('p.deleted_at')} >= now() - make_interval(days => %s))"
         )
         params.append(parent_hold_days)
@@ -1158,7 +1169,7 @@ def build_original_candidate_ids_sql(
         f"  SELECT id, {_ts('deleted_at')} AS del, "
         f"         ROW_NUMBER() OVER (ORDER BY {_ts('deleted_at')} DESC NULLS LAST, id DESC) AS rn "
         f"  FROM {entity.table} "
-        "   WHERE deleted_at IS NOT NULL AND deleted_at::text <> '' "
+        f"   WHERE {_geloescht()} "
         ") "
         "SELECT r.id FROM ranked r WHERE " + " AND ".join(where)
     )
@@ -1267,15 +1278,52 @@ def build_archive_parent_delete_sql(rule: ArchiveRule) -> str:
     )
 
 
-def build_archive_child_delete_sql(rule: ArchiveRule, child: ChildRef) -> str:
-    """Soft-Delete der aktiven Kinder fälliger Datensätze (VOR dem Eltern-Soft-Delete).
-    Params: deleted_by, Stichtag. Tabellen ohne version/History (``has_version=False``)
-    bekommen kein version-Bump (sonst SQL-Fehler auf der fehlenden Spalte)."""
+# --- Gemeinsame SQL-Bausteine ------------------------------------------------------
+# `deleted_at` ist historisch teils TEXT (ISO-String, '' = aktiv), teils TIMESTAMPTZ.
+# Der ::text-Vergleich mit '' deckt beide ab und ist bei TIMESTAMPTZ schlicht nie wahr.
+# Als Funktion statt als wiederholtes Literal, damit die Definition von „aktiv" an einer
+# Stelle steht – sie stand vorher an sieben.
+def _aktiv(alias: str = "") -> str:
+    """Prädikat „diese Zeile ist nicht gelöscht"."""
+    p = f"{alias}." if alias else ""
+    return f"({p}deleted_at IS NULL OR {p}deleted_at::text = '')"
+
+
+def _geloescht(alias: str = "") -> str:
+    """Prädikat „diese Zeile liegt im Papierkorb"."""
+    p = f"{alias}." if alias else ""
+    return f"({p}deleted_at IS NOT NULL AND {p}deleted_at::text <> '')"
+
+
+def _kind_soft_delete_set(child: ChildRef, parent_table: Optional[str] = None) -> str:
+    """SET-Klausel für den Soft-Delete eines Kindes. Erster Param: deleted_by.
+
+    Geteilt von Archivierung und Nachzug: Beide schreiben denselben Soft-Delete, nur zu
+    verschiedenen Zeitpunkten. Zwei Kopien liefen beim nächsten Schema-Detail (etwa
+    `updated_at`/`updated_by` mitschreiben) auseinander, und die Abweichung fiele erst
+    Jahre später auf.
+
+    ``has_version=False`` (Anhang-Tabellen ohne History) bekommt kein version-Bump,
+    sonst scheitert das UPDATE an der fehlenden Spalte. ``parent_table`` setzt die
+    Batch-Marke `loesch_ref` aus dem Eltern-Datensatz – nur dort übergeben, wo beide
+    Seiten die Spalte führen (s. ChildRef.loesch_ref).
+    """
     set_clause = "deleted_at = CURRENT_TIMESTAMP, deleted_by = %s"
     if child.has_version:
         set_clause += ", version = version + 1"
+    if parent_table:
+        set_clause += (
+            f", loesch_ref = (SELECT p.loesch_ref FROM {parent_table} p "
+            f"WHERE p.{child.parent_col} = {child.table}.{child.fk})"
+        )
+    return set_clause
+
+
+def build_archive_child_delete_sql(rule: ArchiveRule, child: ChildRef) -> str:
+    """Soft-Delete der aktiven Kinder fälliger Datensätze (VOR dem Eltern-Soft-Delete).
+    Params: deleted_by, Stichtag."""
     return (
-        f"UPDATE {child.table} SET {set_clause} "
+        f"UPDATE {child.table} SET {_kind_soft_delete_set(child)} "
         f"WHERE deleted_at IS NULL AND {child.fk} IN ("
         f"SELECT {child.parent_col} FROM {rule.table} WHERE {_archive_faellig_where(rule)})"
     )
@@ -1392,8 +1440,7 @@ def build_nachzug_count_sql(entity: PruneEntity, child: ChildRef,
     parents_sql, params = _nachzug_faellige_parents_sql(entity, child, gate)
     return (
         f"SELECT COUNT(*) AS n FROM {child.table} c "
-        f"WHERE (c.deleted_at IS NULL OR c.deleted_at::text = '') "
-        f"AND c.{child.fk} IN ({parents_sql})"
+        f"WHERE {_aktiv('c')} AND c.{child.fk} IN ({parents_sql})"
     ), params
 
 
@@ -1404,23 +1451,15 @@ def build_nachzug_sql(entity: PruneEntity, child: ChildRef,
     Wie beim Archiv-Kind-Soft-Delete bekommen Tabellen ohne ``version``-Spalte
     (``has_version=False``, z.B. die Anhang-Tabellen) keinen version-Bump.
     """
-    set_clause = "deleted_at = CURRENT_TIMESTAMP, deleted_by = %s"
-    if child.has_version:
-        set_clause += ", version = version + 1"
-    if child.loesch_ref:
-        # Vom Eltern-Datensatz übernommen, nicht neu erfunden: `restore` sucht seine
-        # Kinder über genau dessen Marke. Ist sie dort NULL (Altbestand vor der
-        # Batch-Marke), bleibt sie hier NULL – dann gab es auch nichts, wohin das Kind
-        # zurückkehren könnte.
-        set_clause += (
-            f", loesch_ref = (SELECT p.loesch_ref FROM {entity.table} p "
-            f"WHERE p.{child.parent_col} = {child.table}.{child.fk})"
-        )
+    # Die Batch-Marke wird vom Eltern-Datensatz übernommen, nicht neu erfunden:
+    # `restore` sucht seine Kinder über genau dessen Marke. Ist sie dort NULL
+    # (Altbestand), bleibt sie hier NULL – dann gab es auch nichts, wohin das Kind
+    # zurückkehren könnte.
+    set_clause = _kind_soft_delete_set(child, entity.table if child.loesch_ref else None)
     parents_sql, params = _nachzug_faellige_parents_sql(entity, child, gate)
     return (
         f"UPDATE {child.table} SET {set_clause} "
-        f"WHERE (deleted_at IS NULL OR deleted_at::text = '') "
-        f"AND {child.fk} IN ({parents_sql})"
+        f"WHERE {_aktiv()} AND {child.fk} IN ({parents_sql})"
     ), params
 
 
@@ -1449,8 +1488,7 @@ def build_nachzug_table_count_sql(table: str, refs: list[tuple],
         params.extend(p)
     return (
         f"SELECT COUNT(*) AS n FROM {table} c "
-        f"WHERE (c.deleted_at IS NULL OR c.deleted_at::text = '') "
-        f"AND ({' OR '.join(teile)})"
+        f"WHERE {_aktiv('c')} AND ({' OR '.join(teile)})"
     ), params
 
 

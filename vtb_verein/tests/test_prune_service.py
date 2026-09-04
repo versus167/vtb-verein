@@ -549,13 +549,20 @@ class TestNachzug:
     # Kinder, die eine ArchiveRule mitnimmt, der Nachzug aber bewusst NICHT. Jede Zeile
     # hier verlangt eine Begründung, warum das Ergebnis vom Weg abhängen darf.
     NUR_ARCHIV = {
-        # Ein Chip wirkt an einem Schloss. Ein Soft-Delete per UPDATE entfernt die
-        # IC-Karte nicht aus den Türen — der Chip öffnet weiter, ist aber aus der App
-        # verschwunden und damit nicht mehr entziehbar. Die ArchiveRule hat diese Lücke
-        # schon (Altbestand, greift zehn Jahre nach dem Austritt); der Nachzug würde sie
-        # auf die Papierkorb-Frist verkürzen und damit erst gefährlich machen. Der
-        # einzige zulässige Weg ist `zutritt_service.chip_loeschen`.
+        # Nachziehen brächte nichts: `tuer_berechtigung` und `chip_gruppe_zuordnung`
+        # altern auf keinem Weg, der Chip bliebe also über sein eigenes Tor 4 hängen und
+        # hielte das Mitglied weiter fest. Übrig bliebe ein archivierter Chip mit aktiven
+        # Berechtigungen. Chips gehören ohnehin über `zutritt_service.chip_loeschen`
+        # weg, das als einziges auch die IC-Karte am Schloss entfernt.
         ("schluessel_chip", "mitglied_id"),
+        # Die auslösende Buchung ist nur der ANLASS der Zählung, ihr Träger ist die
+        # Differenzbuchung (`buchung_id`) – so steht es im Docstring von
+        # mark_kassenbuchung_deleted, das sie ausdrücklich ausnimmt. Die Archivierung
+        # darf sie mitnehmen, weil dort ohnehin alle Buchungen desselben Alters gehen
+        # und Anlass wie Träger gleich alt sind. Der Nachzug feuert dagegen an EINER
+        # gelöschten Buchung – eine einzeln stornierte Buchung risse sonst eine Zählung
+        # mit, deren Träger putzmunter ist.
+        ("kassen_zaehlungen", "ausloesende_buchung_id"),
     }
 
     def test_archiv_kinder_werden_auch_nachgezogen(self):
@@ -577,9 +584,13 @@ class TestNachzug:
                     f"{rule.table} archiviert {child.table}.{child.fk}, zieht es aber nicht nach"
 
     def test_chip_wird_nicht_nachgezogen(self):
-        """Die Ausnahme selbst festnageln – sonst rutscht sie beim nächsten Aufräumen
-        der Registry wieder hinein und macht aus einer Zehn-Jahres-Lücke eine, die nach
-        der Papierkorb-Frist zuschlägt."""
+        """Die Ausnahme festnageln – sie sieht wie eine Lücke aus und ist keine.
+
+        Wer die Registry aufräumt, sieht ein Kind ohne `nachziehen` und ergänzt es
+        reflexhaft. Genau das darf hier nicht passieren: Der Chip käme in den
+        Papierkorb, seine Berechtigungen blieben aktiv, und weil die auf keinem Weg
+        altern, wäre kein einziges Mitglied früher löschbar als vorher.
+        """
         mitglied = next(e for e in PRUNE_REGISTRY if e.table == "mitglied")
         chip = next(c for c in mitglied.children if c.table == "schluessel_chip")
         assert chip.nachziehen is False
