@@ -24,6 +24,7 @@ from app.services.prune_service import (
     build_papierkorb_count_sql,
     build_archive_vortrag_sum_sql,
     build_archive_vortrag_update_sql,
+    GateArgs,
     build_nachzug_count_sql,
     build_nachzug_sql,
     nachzug_kinder,
@@ -545,33 +546,91 @@ class TestNachzug:
         """Die Sicherung: Wer eine ChildRef ergänzt, löscht nicht versehentlich mit."""
         assert ChildRef("x", "y").nachziehen is False
 
+    # Kinder, die eine ArchiveRule mitnimmt, der Nachzug aber bewusst NICHT. Jede Zeile
+    # hier verlangt eine Begründung, warum das Ergebnis vom Weg abhängen darf.
+    NUR_ARCHIV = {
+        # Ein Chip wirkt an einem Schloss. Ein Soft-Delete per UPDATE entfernt die
+        # IC-Karte nicht aus den Türen — der Chip öffnet weiter, ist aber aus der App
+        # verschwunden und damit nicht mehr entziehbar. Die ArchiveRule hat diese Lücke
+        # schon (Altbestand, greift zehn Jahre nach dem Austritt); der Nachzug würde sie
+        # auf die Papierkorb-Frist verkürzen und damit erst gefährlich machen. Der
+        # einzige zulässige Weg ist `zutritt_service.chip_loeschen`.
+        ("schluessel_chip", "mitglied_id"),
+    }
+
     def test_archiv_kinder_werden_auch_nachgezogen(self):
         """Beide Wege müssen dieselben Kinder als „gehört dem Eltern-Datensatz" ansehen.
 
         Die ArchiveRule löscht sie auf dem Alterspfad längst mit; liefen die Listen
         auseinander, hinge das Ergebnis daran, auf welchem Weg der Eltern-Datensatz in
-        den Papierkorb gekommen ist.
+        den Papierkorb gekommen ist. Ausnahmen sind erlaubt, aber nur benannt und
+        begründet (NUR_ARCHIV).
         """
         for rule in ARCHIVE_REGISTRY:
             entity = next((e for e in PRUNE_REGISTRY if e.table == rule.table), None)
             assert entity is not None, rule.table
             markiert = {(c.table, c.fk) for c in nachzug_kinder(entity)}
             for child in rule.children:
+                if (child.table, child.fk) in self.NUR_ARCHIV:
+                    continue
                 assert (child.table, child.fk) in markiert, \
                     f"{rule.table} archiviert {child.table}.{child.fk}, zieht es aber nicht nach"
 
-    def test_kein_nachzug_ohne_version_spalte_bleibt_unentdeckt(self):
-        """Kinder ohne ``version`` müssen auch in PRUNE_REGISTRY so markiert sein.
+    def test_chip_wird_nicht_nachgezogen(self):
+        """Die Ausnahme selbst festnageln – sonst rutscht sie beim nächsten Aufräumen
+        der Registry wieder hinein und macht aus einer Zehn-Jahres-Lücke eine, die nach
+        der Papierkorb-Frist zuschlägt."""
+        mitglied = next(e for e in PRUNE_REGISTRY if e.table == "mitglied")
+        chip = next(c for c in mitglied.children if c.table == "schluessel_chip")
+        assert chip.nachziehen is False
 
-        Das Flag saß bisher nur an den ArchiveRule-Kindern, weil nur die einen
-        Kind-Soft-Delete schrieben. Der Nachzug schreibt ebenfalls einen – ein
-        vergessenes ``has_version=False`` ließe ihn auf der fehlenden Spalte auflaufen.
+    def test_nachzug_ist_transitiv(self):
+        """Ein nachgezogenes Kind darf nicht selbst blockierbar bleiben.
+
+        Wird Kind K nachgezogen, K hat aber ein eigenes Kind, das AKTIV stehen bleibt,
+        dann wandert die Blockade nur eine Ebene tiefer: K wird nie hart gelöscht, also
+        bleibt der Eltern-Datensatz über Tor 4 weiter hängen. Der Nachzug hätte dann
+        Daten entwertet, ohne sein Ziel zu erreichen — die schlechteste aller Welten.
         """
-        ohne_version = {"ticket_anhaenge", "kassenbuchung_anhaenge", "rechnung_anhaenge"}
+        nach_tabelle = {e.table: e for e in PRUNE_REGISTRY}
         for entity in PRUNE_REGISTRY:
             for child in nachzug_kinder(entity):
-                if child.table in ohne_version:
-                    assert child.has_version is False, f"{entity.table} -> {child.table}"
+                kind_entity = nach_tabelle.get(child.table)
+                if kind_entity is None:
+                    continue
+                offen = sorted(k.table for k in kind_entity.children if not k.nachziehen)
+                assert not offen, (
+                    f"{entity.table} zieht {child.table} nach, aber {child.table} "
+                    f"behält aktive Kinder: {', '.join(offen)} — die Blockade wandert "
+                    f"nur eine Ebene tiefer"
+                )
+
+    def test_loesch_ref_nur_wo_beide_seiten_sie_fuehren(self):
+        """Die Batch-Marke wird vom Eltern-Datensatz übernommen – beide brauchen sie.
+
+        Ohne die Marke am Kind findet `restore` es nicht wieder (es sucht ausschliesslich
+        über `loesch_ref`); ohne die Marke am Eltern-Datensatz gäbe es nichts zu
+        übernehmen und das UPDATE liefe auf einer nicht existenten Spalte auf.
+        """
+        mit_marke = {"tickets", "ticket_kommentare", "ticket_teilnehmer",
+                     "ticket_anhaenge", "clubdeckel", "clubdeckel_buchung",
+                     "clubdeckel_artikel", "clubdeckel_gruppe", "clubdeckel_berechtigung",
+                     "clubdeckel_beitrag_befreiung", "clubdeckel_event",
+                     "clubdeckel_event_opt_out"}
+        for entity in PRUNE_REGISTRY:
+            for child in entity.children:
+                if not child.loesch_ref:
+                    continue
+                assert child.table in mit_marke, f"{child.table} führt keine loesch_ref"
+                assert entity.table in mit_marke, \
+                    f"{entity.table} führt keine loesch_ref, kann also keine vererben"
+
+    # `has_version` der Nachzug-Kinder wird NICHT hier geprüft, sondern gegen das echte
+    # Schema: test_prune_integration.py::test_archiv_kinder_kennen_ihre_version_spalte
+    # liest information_schema und deckt seit dem Nachzug beide Listen ab. Eine
+    # hartkodierte Tabellen-Allowlist an dieser Stelle konnte den Fehler, den sie
+    # verhindern sollte, per Konstruktion nicht finden: Eine NEUE Tabelle ohne
+    # `version`-Spalte stand nicht darin und rutschte stillschweigend durch.
 
     def test_fremde_verweise_bleiben_unangetastet(self):
         """Wer den Eltern-Datensatz nur ERWÄHNT, darf nicht mit ihm sterben.
@@ -607,34 +666,67 @@ class TestNachzug:
         for entity in PRUNE_REGISTRY:
             assert {c.table for c in nachzug_kinder(entity)} & protokolle == set()
 
-    def test_nachzug_greift_erst_nach_der_papierkorb_frist(self):
-        """Tor-2-Bedingung: bis dahin ist „Wiederherstellen" ein Versprechen."""
+    GATE = GateArgs(retention_days=30, keep_min=5, history_retention_days=365)
+
+    def test_nachzug_wartet_bis_nur_noch_tor_4_offen_ist(self):
+        """Der Zeitpunkt ist die eigentliche Sicherung des Nachzugs.
+
+        Nach Tor 2 allein wäre er zu früh: Tor 3 (keep_min) und Tor 5 (History) halten
+        den Datensatz oft noch monatelang bis dauerhaft im Papierkorb, und dort ist
+        „Wiederherstellen" ein Versprechen – `restore_mitglied` fasst nur die
+        Eltern-Zeile an, die Kinder müssen also aktiv geblieben sein. Erst wenn einzig
+        die Kind-Zeile das endgültige Löschen verhindert, darf sie fallen.
+        """
         entity = _entity("mitglied")
         child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
-        assert ("NULLIF(p.deleted_at::text, '')::timestamptz "
-                "< now() - make_interval(days => %s)") in build_nachzug_sql(entity, child)
+        sql, params = build_nachzug_sql(entity, child, self.GATE)
+
+        assert "r.del < now() - make_interval(days => %s)" in sql      # Tor 2
+        assert "r.rn > %s" in sql                                      # Tor 3
+        assert "FROM mitglied_history h" in sql                        # Tor 5
+        # Tor 4 ist genau das ausgelassene – sonst fände der Nachzug nie einen Parent,
+        # denn die aktive Kind-Zeile ist ja der Grund, warum er läuft.
+        assert "NOT EXISTS (SELECT 1 FROM mitglied_kontakt c" not in sql
+        assert params[:2] == [30, 5]
 
     def test_nachzug_trifft_nur_aktive_kinder(self):
         entity = _entity("mitglied")
         child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
-        sql = build_nachzug_sql(entity, child)
+        sql, _ = build_nachzug_sql(entity, child, self.GATE)
         assert "WHERE (deleted_at IS NULL OR deleted_at::text = '')" in sql
 
     def test_vorschau_und_aktion_teilen_die_bedingung(self):
         """Was der Report zählt, ist genau das, was der Lauf anfasst."""
         entity = _entity("ul_abrechnung")
         child = nachzug_kinder(entity)[0]
-        bedingung = ("FROM ul_abrechnung p WHERE p.deleted_at IS NOT NULL "
-                     "AND p.deleted_at::text <> ''")
-        assert bedingung in build_nachzug_count_sql(entity, child)
-        assert bedingung in build_nachzug_sql(entity, child)
+        count_sql, count_params = build_nachzug_count_sql(entity, child, self.GATE)
+        update_sql, update_params = build_nachzug_sql(entity, child, self.GATE)
+        # Derselbe Eltern-SELECT in beiden – inklusive derselben Parameter.
+        eltern = update_sql[update_sql.index("WITH ranked"):].rstrip(")")
+        assert eltern in count_sql
+        assert count_params == update_params
 
     def test_version_bump_nur_wo_es_die_spalte_gibt(self):
         ticket = _entity("ticket")
         kommentar = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_kommentare")
         anhang = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_anhaenge")
-        assert "version = version + 1" in build_nachzug_sql(ticket, kommentar)
-        assert "version" not in build_nachzug_sql(ticket, anhang)
+        assert "version = version + 1" in build_nachzug_sql(ticket, kommentar, self.GATE)[0]
+        assert "version = version + 1" not in build_nachzug_sql(ticket, anhang, self.GATE)[0]
+
+    def test_batch_marke_wird_vom_eltern_datensatz_uebernommen(self):
+        """Ohne `loesch_ref` fände `ticket_repository.restore` das Kind nie wieder."""
+        ticket = _entity("ticket")
+        kommentar = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_kommentare")
+        sql, _ = build_nachzug_sql(ticket, kommentar, self.GATE)
+        assert ("loesch_ref = (SELECT p.loesch_ref FROM tickets p "
+                "WHERE p.id = ticket_kommentare.ticket_id)") in sql
+
+    def test_keine_batch_marke_wo_es_keine_gibt(self):
+        """`mitglied` führt keine `loesch_ref` – ein UPDATE darauf liefe auf einer
+        nicht existenten Spalte auf."""
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        assert "loesch_ref" not in build_nachzug_sql(entity, child, self.GATE)[0]
 
     def test_ul_stunden_werden_nachgezogen(self):
         """Der größte Posten der Konsistenzprüfung: 101 Stunden hielten jede Abrechnung

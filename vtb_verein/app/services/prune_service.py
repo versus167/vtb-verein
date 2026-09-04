@@ -130,6 +130,13 @@ class ChildRef:
     # Tickets und Rechnungen. Solche Verweise halten ihren Eltern-Datensatz weiter fest;
     # das ist gewollt, denn der FK verböte dessen Hard-Delete ohnehin.
     nachziehen: bool = False
+    # Trägt das Kind die Batch-Marke `loesch_ref` seines Eltern-Datensatzes (Tickets,
+    # Teamkassen)? Dann MUSS der Nachzug sie mitschreiben. Die Restore-Pfade
+    # (ticket_repository.restore, clubdeckel_repository.restore) finden ihre Kinder
+    # ausschliesslich über diese Marke; ein Kind mit `loesch_ref IS NULL` käme beim
+    # Wiederherstellen des Eltern-Datensatzes nie zurück. Nur setzen, wo BEIDE Seiten
+    # die Spalte führen – der Wert wird vom Eltern-Datensatz übernommen, nicht erfunden.
+    loesch_ref: bool = False
 
 
 @dataclass(frozen=True)
@@ -444,13 +451,24 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("clubdeckel", "Teamkassen", "clubdeckel",
                 history_table="clubdeckel_history",
                 children=(
+                    # Bewegungen und Bestand haben ihre eigene, gleich lange Uhr und
+                    # dürfen nicht entwertet werden, weil der Deckel weg ist – wie
+                    # unter `mitglied`.
                     ChildRef("clubdeckel_buchung", "deckel_id"),
                     ChildRef("clubdeckel_artikel", "deckel_id"),
                     ChildRef("clubdeckel_gruppe", "deckel_id"),
-                    ChildRef("clubdeckel_berechtigung", "deckel_id"),
-                    ChildRef("clubdeckel_beitrag_befreiung", "deckel_id"),
                     ChildRef("clubdeckel_event", "deckel_id"),
-                    ChildRef("clubdeckel_event_opt_out", "deckel_id"),
+                    # Rechte und Opt-outs gehören dagegen dem Deckel und können ihn
+                    # nicht überleben – dieselbe Einstufung wie unter `mitglied`, die
+                    # hier bisher fehlte. `loesche_komplett` setzt die Batch-Marke
+                    # selbst; der Nachzug übernimmt sie vom Deckel, damit `restore`
+                    # den Batch vollständig zurückholt.
+                    ChildRef("clubdeckel_berechtigung", "deckel_id",
+                             nachziehen=True, loesch_ref=True),
+                    ChildRef("clubdeckel_beitrag_befreiung", "deckel_id",
+                             nachziehen=True, loesch_ref=True),
+                    ChildRef("clubdeckel_event_opt_out", "deckel_id",
+                             nachziehen=True, loesch_ref=True),
                 )),
     # --- Spielbetrieb: Mannschafts-Termine (#95, Blatt vor mannschaft) ---
     PruneEntity("termin_zusage", "Termin-Zusagen", "termin_zusage",
@@ -619,7 +637,20 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("mitglied_kontakt", "mitglied_id", nachziehen=True),
                     ChildRef("mitglied_mannschaft", "mitglied_id", nachziehen=True),
                     ChildRef("rechnung", "empfaenger_mitglied_id"),
-                    ChildRef("schluessel_chip", "mitglied_id", nachziehen=True),
+                    # BEWUSST kein `nachziehen`: Ein Chip ist kein reiner Datensatz,
+                    # sondern wirkt an einem Schloss. Ein Soft-Delete per UPDATE
+                    # entfernt die IC-Karte NICHT aus den Türen – der Chip öffnete
+                    # weiter jede Tür, wäre aber aus der App verschwunden und damit
+                    # auch nicht mehr entziehbar. Genau davor warnt
+                    # `zutritt_service.chip_loeschen`, der einzige zulässige Weg:
+                    # erst die Karte an jedem Schloss löschen, dann den Chip. Scheitert
+                    # ein Schloss, bricht er ab.
+                    #
+                    # Der Preis ist bekannt: Ein Mitglied mit aktivem Chip bleibt über
+                    # Tor 4 im Papierkorb. Das ist die richtige Fehlerrichtung – der
+                    # Chip bleibt sichtbar und entziehbar, und die Konsistenzprüfung
+                    # meldet die Beziehung als hängenden Verweis, also als Aufgabe.
+                    ChildRef("schluessel_chip", "mitglied_id"),
                     ChildRef("sepa_lauf_position", "mitglied_id"),   # Finanzdaten: nie geprunt
                     ChildRef("termin_zusage", "mitglied_id", nachziehen=True),
                     ChildRef("tuer_zutritt_log", "mitglied_id"),   # Dauerprotokoll: nie soft-deleted
@@ -635,14 +666,17 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
     PruneEntity("ticket_kommentar", "Ticket-Kommentare", "ticket_kommentare",
                 history_table="ticket_kommentare_history",
                 children=(ChildRef("ticket_anhaenge", "kommentar_id",
-                                   has_version=False, nachziehen=True),)),
+                                   has_version=False, nachziehen=True,
+                                   loesch_ref=True),)),
     PruneEntity("ticket", "Tickets", "tickets",
                 history_table="tickets_history",
                 children=(
-                    ChildRef("ticket_kommentare", "ticket_id", nachziehen=True),
+                    ChildRef("ticket_kommentare", "ticket_id", nachziehen=True,
+                             loesch_ref=True),
                     ChildRef("ticket_anhaenge", "ticket_id",
-                             has_version=False, nachziehen=True),
-                    ChildRef("ticket_teilnehmer", "ticket_id", nachziehen=True),
+                             has_version=False, nachziehen=True, loesch_ref=True),
+                    ChildRef("ticket_teilnehmer", "ticket_id", nachziehen=True,
+                             loesch_ref=True),
                 )),
     PruneEntity("ticket_kategorie", "Ticket-Kategorien", "ticket_kategorien",
                 history_table="ticket_kategorien_history",
@@ -863,6 +897,16 @@ ARCHIVE_REGISTRY: tuple[ArchiveRule, ...] = (
             ChildRef("mitglied_funktion", "mitglied_id"),
             ChildRef("mitglied_mannschaft", "mitglied_id"),
             ChildRef("termin_zusage", "mitglied_id"),
+            # ACHTUNG, bekannte Lücke (Altbestand, nicht aus dem Nachzug): Dieser
+            # Soft-Delete entfernt die IC-Karte NICHT aus den Schlössern – anders als
+            # `zutritt_service.chip_loeschen`, der einzige Weg, der das tut. Der Chip
+            # verschwindet also aus der App, öffnet aber weiter. Die Zeile bleibt
+            # trotzdem stehen, weil sie zehn Jahre nach dem Austritt greift und ihre
+            # Entfernung die Zusage aus #188 bräche (jedes Kind altert, sonst liegt das
+            # Mitglied ewig mit Namen und Adresse im Papierkorb; s.
+            # test_kein_kind_haelt_das_mitglied_mehr_fest). Der Nachzug zieht Chips aus
+            # demselben Grund NICHT nach – er würde dieselbe Lücke von zehn Jahren auf
+            # die Papierkorb-Frist verkürzen (s. PRUNE_REGISTRY, `mitglied`).
             ChildRef("schluessel_chip", "mitglied_id"),
             ChildRef("clubdeckel_berechtigung", "mitglied_id"),
             ChildRef("clubdeckel_beitrag_befreiung", "mitglied_id"),
@@ -1055,6 +1099,7 @@ def build_original_candidate_ids_sql(
     history_retention_days: int,
     history_ts_cols: tuple[str, ...] = HISTORY_TS_COLS,
     parent_hold_days: int = 0,
+    ohne_kind_guard: bool = False,
 ) -> tuple[str, list]:
     """SELECT der IDs aller endgültig löschbaren Original-Datensätze (alle 6 Tore).
 
@@ -1062,6 +1107,11 @@ def build_original_candidate_ids_sql(
     auf, damit „Vorschau = Aktion" garantiert ist. Tunables werden explizit übergeben;
     ``parent_hold_days`` ist das Fenster des Eltern-Datensatzes und nur bei Entitäten
     mit ``parent`` (Tor 6) von Bedeutung.
+
+    ``ohne_kind_guard`` lässt Tor 4 weg und beantwortet damit die Frage des Nachzugs:
+    „Welche Datensätze hält NUR noch eine Kind-Zeile fest?" Genau die – und keine
+    anderen – dürfen ihre Kinder verlieren. Alles davor ist noch Papierkorb im
+    Wortsinn: wiederherstellbar, und ein Restore muss vollständig sein.
     """
     params: list = []
     where = [
@@ -1071,7 +1121,7 @@ def build_original_candidate_ids_sql(
     params.append(retention_days)
     params.append(keep_min)
 
-    for child in entity.children:                         # Tor 4: keine Kind-Referenz
+    for child in (() if ohne_kind_guard else entity.children):   # Tor 4: keine Kind-Referenz
         if child.parent_col == "id":
             cond = "c.{fk} = r.id".format(fk=child.fk)
         else:                                             # Bezug über andere Eltern-Spalte
@@ -1296,36 +1346,60 @@ def build_archive_vortrag_update_sql(rule: ArchiveRule) -> str:
 # „fällig" und seine Kinder werden nie eingesammelt. Sie verhindert nur NEUE Fälle auf
 # dem Alterspfad.
 #
-# Zeitpunkt: erst NACH Ablauf der Papierkorb-Frist des Eltern-Datensatzes. Bis dahin ist
-# „Wiederherstellen" ein Versprechen – die Löschpfade lassen die Kinder bewusst aktiv,
-# damit ein restaurierter Datensatz vollständig ist. Danach steht der Eltern-Datensatz
-# ohnehin zum endgültigen Löschen an, und das Versprechen ist abgelaufen. Maßstab ist
-# allein Tor 2 (`retention_days`); `keep_min` ist eine Mengen-Untergrenze, kein
-# Zeitversprechen, und würde den Nachzug sonst unbegrenzt aufschieben.
-def _nachzug_faellige_parents_sql(entity: PruneEntity, child: ChildRef) -> str:
-    """Sub-SELECT: Eltern-Datensätze im Papierkorb, deren Frist abgelaufen ist.
+# Zeitpunkt: erst wenn den Eltern-Datensatz NUR NOCH Tor 4 aufhält – also alle anderen
+# Tore (Datum, Mindestanzahl, History, Eltern-Fenster) bereits offen sind und einzig die
+# aktive Kind-Zeile das endgültige Löschen verhindert.
+#
+# Tor 2 allein wäre zu früh, und das ist kein Detail: Die Löschpfade lassen die Kinder
+# bewusst aktiv, damit ein Restore einen VOLLSTÄNDIGEN Datensatz zurückgibt
+# (`restore_mitglied` fasst nur die Eltern-Zeile an). Solange Tor 3 (keep_min) oder Tor 5
+# (History) den Datensatz noch halten, ist er weiter im Papierkorb im Wortsinn – ein
+# Nachzug nach Tor 2 lieferte dem Admin dann ein Mitglied ohne Kontaktdaten,
+# Zuordnungen und Funktionen zurück, lautlos. Mit dieser Bedingung dagegen gilt: Wer
+# noch wiederherstellbar ist, behält seine Kinder; wer nur noch an ihnen hängt,
+# verliert sie.
+@dataclass(frozen=True)
+class GateArgs:
+    """Die Tunables einer Entität, wie sie in die Tor-Logik gehen.
 
-    Param: retention_days. Dieselbe Datums-Bedingung wie Tor 2, damit Nachzug und
-    Hard-Delete-Freigabe nicht auseinanderlaufen.
+    Gebündelt, weil der Nachzug seit der Umstellung auf „nur noch Tor 4 offen" dieselben
+    fünf Werte braucht wie der Kandidaten-SELECT – einzeln durchgereicht wären es fünf
+    Parameter an vier Stellen.
     """
-    return (
-        f"SELECT p.{child.parent_col} FROM {entity.table} p "
-        f"WHERE p.deleted_at IS NOT NULL AND p.deleted_at::text <> '' "
-        f"AND {_ts('p.deleted_at')} < now() - make_interval(days => %s)"
+    retention_days: int
+    keep_min: int
+    history_retention_days: int
+    history_ts_cols: tuple = HISTORY_TS_COLS
+    parent_hold_days: int = 0
+
+
+def _nachzug_faellige_parents_sql(entity: PruneEntity, child: ChildRef,
+                                  gate: GateArgs) -> tuple[str, list]:
+    """Sub-SELECT der Eltern-Datensätze, die nur noch Tor 4 aufhält (+ Params)."""
+    assert child.parent_col == "id", (
+        f"Nachzug über abweichende parent_col ({entity.table} -> {child.table}) ist "
+        "nicht abgedeckt: Der Kandidaten-SELECT liefert ids."
+    )
+    return build_original_candidate_ids_sql(
+        entity, gate.retention_days, gate.keep_min, gate.history_retention_days,
+        gate.history_ts_cols, gate.parent_hold_days, ohne_kind_guard=True,
     )
 
 
-def build_nachzug_count_sql(entity: PruneEntity, child: ChildRef) -> str:
-    """Zahl der aktiven Kinder, die der nächste Lauf nachzieht. Param: retention_days."""
+def build_nachzug_count_sql(entity: PruneEntity, child: ChildRef,
+                            gate: GateArgs) -> tuple[str, list]:
+    """Zahl der aktiven Kinder, die der nächste Lauf über DIESE Beziehung nachzieht."""
+    parents_sql, params = _nachzug_faellige_parents_sql(entity, child, gate)
     return (
         f"SELECT COUNT(*) AS n FROM {child.table} c "
         f"WHERE (c.deleted_at IS NULL OR c.deleted_at::text = '') "
-        f"AND c.{child.fk} IN ({_nachzug_faellige_parents_sql(entity, child)})"
-    )
+        f"AND c.{child.fk} IN ({parents_sql})"
+    ), params
 
 
-def build_nachzug_sql(entity: PruneEntity, child: ChildRef) -> str:
-    """Soft-Delete ebendieser Kinder. Params: deleted_by, retention_days.
+def build_nachzug_sql(entity: PruneEntity, child: ChildRef,
+                      gate: GateArgs) -> tuple[str, list]:
+    """Soft-Delete ebendieser Kinder. Params: deleted_by, dann die Tor-Parameter.
 
     Wie beim Archiv-Kind-Soft-Delete bekommen Tabellen ohne ``version``-Spalte
     (``has_version=False``, z.B. die Anhang-Tabellen) keinen version-Bump.
@@ -1333,16 +1407,60 @@ def build_nachzug_sql(entity: PruneEntity, child: ChildRef) -> str:
     set_clause = "deleted_at = CURRENT_TIMESTAMP, deleted_by = %s"
     if child.has_version:
         set_clause += ", version = version + 1"
+    if child.loesch_ref:
+        # Vom Eltern-Datensatz übernommen, nicht neu erfunden: `restore` sucht seine
+        # Kinder über genau dessen Marke. Ist sie dort NULL (Altbestand vor der
+        # Batch-Marke), bleibt sie hier NULL – dann gab es auch nichts, wohin das Kind
+        # zurückkehren könnte.
+        set_clause += (
+            f", loesch_ref = (SELECT p.loesch_ref FROM {entity.table} p "
+            f"WHERE p.{child.parent_col} = {child.table}.{child.fk})"
+        )
+    parents_sql, params = _nachzug_faellige_parents_sql(entity, child, gate)
     return (
         f"UPDATE {child.table} SET {set_clause} "
         f"WHERE (deleted_at IS NULL OR deleted_at::text = '') "
-        f"AND {child.fk} IN ({_nachzug_faellige_parents_sql(entity, child)})"
-    )
+        f"AND {child.fk} IN ({parents_sql})"
+    ), params
 
 
 def nachzug_kinder(entity: PruneEntity) -> tuple[ChildRef, ...]:
     """Die Kinder einer Entität, die der Lauf nachzieht (leer = nichts zu tun)."""
     return tuple(c for c in entity.children if c.nachziehen)
+
+
+def build_nachzug_table_count_sql(table: str, refs: list[tuple],
+                                  gates: dict) -> tuple[str, list]:
+    """Aktive Zeilen EINER Kind-Tabelle, jede genau einmal. Params: retention_days je Ref.
+
+    Je ChildRef zu zählen wäre falsch: Dieselbe Zeile ist teils über zwei Beziehungen
+    erreichbar – ``kassen_zaehlungen`` über ``buchung_id`` UND
+    ``ausloesende_buchung_id``, ``termin_zusage`` über ``termine`` und ``mitglied``,
+    ``ticket_anhaenge`` über ``tickets`` und ``ticket_kommentare``. Der Lauf fasst so
+    eine Zeile einmal an (das zweite UPDATE findet sie nicht mehr aktiv), eine
+    Ref-weise Summe meldete sie aber zweimal. Die Vorschau verspräche dann mehr, als
+    der Lauf tut – und „Vorschau = Aktion" ist die Zusage, auf der die ganze Seite
+    beruht.
+    """
+    teile, params = [], []
+    for entity, child in refs:
+        parents_sql, p = _nachzug_faellige_parents_sql(entity, child, gates[entity.name])
+        teile.append(f"c.{child.fk} IN ({parents_sql})")
+        params.extend(p)
+    return (
+        f"SELECT COUNT(*) AS n FROM {table} c "
+        f"WHERE (c.deleted_at IS NULL OR c.deleted_at::text = '') "
+        f"AND ({' OR '.join(teile)})"
+    ), params
+
+
+def nachzug_refs_nach_tabelle(entities=None) -> dict:
+    """Alle Nachzug-Beziehungen, gruppiert nach Kind-Tabelle: {tabelle: [(entity, child)]}."""
+    gruppen: dict = {}
+    for entity in (entities if entities is not None else PRUNE_REGISTRY):
+        for child in nachzug_kinder(entity):
+            gruppen.setdefault(child.table, []).append((entity, child))
+    return gruppen
 
 
 class PruneService:
@@ -1405,18 +1523,44 @@ class PruneService:
             tage = max(tage, c["history_retention_days"])
         return tage
 
-    def _nachzug_count(self, entity: PruneEntity, cfg: dict[str, dict]) -> Optional[int]:
+    def _gate(self, entity: PruneEntity, cfg: dict[str, dict]) -> GateArgs:
+        """Die Tor-Parameter einer Entität – eine Quelle für Kandidaten und Nachzug."""
+        c = cfg[entity.name]
+        return GateArgs(
+            retention_days=c["retention_days"],
+            keep_min=c["keep_min"],
+            history_retention_days=c["history_retention_days"],
+            history_ts_cols=self._history_ts_cols(entity),
+            parent_hold_days=self._parent_hold_days(entity, cfg),
+        )
+
+    def _nachzug_count(self, entity: PruneEntity, cfg: dict[str, dict],
+                       im_papierkorb: int) -> Optional[int]:
         """Wie viele aktive Kinder dieser Entität der nächste Lauf nachzieht.
 
         ``None`` für Entitäten ohne Nachzug-Kinder – so unterscheidet die UI „hier gibt
         es nichts nachzuziehen" von „hier ist gerade nichts fällig".
+
+        ``im_papierkorb`` ist die Abkürzung, nicht bloß eine Optimierung: Nachgezogen
+        wird nur wegen eines gelöschten Eltern-Datensatzes. Hat die Eltern-Tabelle
+        keinen einzigen, ist die Antwort ohne jede Query 0 – und das ist der Normalfall
+        über die meisten der 20 beteiligten Tabellen.
+
+        Gezählt wird je Kind-TABELLE statt je ChildRef, damit eine über zwei
+        Beziehungen erreichbare Zeile nicht doppelt erscheint (s.
+        ``build_nachzug_table_count_sql``).
         """
         kinder = nachzug_kinder(entity)
         if not kinder:
             return None
-        tage = cfg[entity.name]["retention_days"]
-        return sum(self._count(build_nachzug_count_sql(entity, c), [tage])
-                   for c in kinder)
+        if im_papierkorb == 0:
+            return 0
+        gates = {entity.name: self._gate(entity, cfg)}
+        summe = 0
+        for tabelle, refs in nachzug_refs_nach_tabelle([entity]).items():
+            sql, params = build_nachzug_table_count_sql(tabelle, refs, gates)
+            summe += self._count(sql, params)
+        return summe
 
     def effective_config(self) -> dict[str, dict]:
         """Wirksame Tunables je Entität: Override (falls gesetzt) sonst Code-Default."""
@@ -1677,8 +1821,7 @@ class PruneService:
                 summe_history += history_loeschbar
                 summe_history_gesamt += history_gesamt
 
-            nachzug = self._nachzug_count(entity, cfg)
-            summe_nachzug += nachzug or 0
+            nachzug = self._nachzug_count(entity, cfg, im_papierkorb)
 
             summe_loeschbar += loeschbar
             entities.append({
@@ -1701,6 +1844,17 @@ class PruneService:
                 # daher NICHT in summe_loeschbar (s. summe_nachzug).
                 "nachzug": nachzug,
             })
+
+        # Die Summe wird einmal über alle Kind-Tabellen gezogen statt aus den
+        # Detailzeilen aufaddiert. Eine Zeile kann zu ZWEI Entitäten gehören
+        # (`termin_zusage` zu termine und zu mitglied, `ticket_anhaenge` zu tickets und
+        # zu ticket_kommentare); sie steht dann zu Recht in beiden Detailzeilen, der
+        # Lauf fasst sie aber einmal an. Diese Zahl steht neben dem Knopf und muss sich
+        # am Ergebnis des Laufs messen lassen.
+        gates = {e.name: self._gate(e, cfg) for e in PRUNE_REGISTRY}
+        for tabelle, refs in nachzug_refs_nach_tabelle().items():
+            sql, params = build_nachzug_table_count_sql(tabelle, refs, gates)
+            summe_nachzug += self._count(sql, params)
 
         # Alters-Archivierung: fällige datierte Datensätze -> Papierkorb (reversibel,
         # separat von summe_loeschbar, da KEIN endgültiges Löschen).
@@ -1834,7 +1988,15 @@ class PruneService:
         #     Archivierung, damit gerade erst archivierte Zeilen nicht im selben Lauf
         #     schon wieder eingesammelt werden (sie sind ohnehin nicht alt genug).
         #     Frisch nachgezogene Kinder sind für den folgenden Hard-Delete noch nicht
-        #     alt genug; der Eltern-Datensatz fällt also frühestens einen Lauf später.
+        #     alt genug – und zwar deutlich länger, als „ein Lauf später" klingt: Der
+        #     version-Bump lässt den Audit-Trigger eine History-Zeile mit heutigem
+        #     Datum schreiben, und Tor 5 verlangt, dass die JÜNGSTE History-Zeile
+        #     `history_retention_days` hinter sich hat. Das Kind ist damit erst nach
+        #     einem vollen History-Fenster hart löschbar, der Eltern-Datensatz danach.
+        #     Der Bump bleibt trotzdem: Ohne ihn stünde der Löschvorgang in keiner
+        #     History, und ein Soft-Delete ohne Spur ist das, was die Audit-Trigger
+        #     gerade verhindern sollen. Der Nachzug löst die Blockade also sicher, aber
+        #     nicht schnell — was genügt, denn sie war vorher unendlich.
         nachzug_geloescht: dict[str, int] = {}
         summe_nachzug = 0
         with self._db.cursor() as cur:
@@ -1842,10 +2004,11 @@ class PruneService:
                 kinder = nachzug_kinder(entity)
                 if not kinder:
                     continue
-                tage = cfg[entity.name]["retention_days"]
+                gate = self._gate(entity, cfg)
                 n = 0
                 for child in kinder:
-                    cur.execute(build_nachzug_sql(entity, child), ("SYSTEM-PRUNE", tage))
+                    sql, params = build_nachzug_sql(entity, child, gate)
+                    cur.execute(sql, tuple(["SYSTEM-PRUNE"] + params))
                     n += cur.rowcount
                 nachzug_geloescht[entity.name] = n
                 summe_nachzug += n

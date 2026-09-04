@@ -864,10 +864,17 @@ def test_archiv_kinder_kennen_ihre_version_spalte(db):
         )
         mit_version = {r["table_name"] for r in cur.fetchall()}
 
+    # Nachzug-Kinder laufen in dieselbe Falle: build_nachzug_sql schreibt denselben
+    # Kind-Soft-Delete, nur ausgelöst nach der Papierkorb-Frist statt nach zehn Jahren.
+    # Ein vergessenes has_version=False rollt dort die ganze Nachzug-Transaktion zurück.
+    from app.services.prune_service import PRUNE_REGISTRY, nachzug_kinder
+    kandidaten = [(rule.name, child) for rule in ARCHIVE_REGISTRY for child in rule.children]
+    kandidaten += [(entity.name, child) for entity in PRUNE_REGISTRY
+                   for child in nachzug_kinder(entity)]
+
     falsch = [
-        (rule.name, child.table, child.has_version)
-        for rule in ARCHIVE_REGISTRY
-        for child in rule.children
+        (name, child.table, child.has_version)
+        for name, child in kandidaten
         if child.has_version != (child.table in mit_version)
     ]
     assert not falsch, (
@@ -968,6 +975,97 @@ def test_alters_archivierung_laesst_die_buchung_aktiv(db):
 
 def _nachzug_zahl(svc, name):
     return {e["name"]: e for e in svc.report()["entities"]}[name]["nachzug"]
+
+
+def test_nachzug_schont_noch_wiederherstellbare_datensaetze(db):
+    """Der Nachzug darf keinen Datensatz ausweiden, der noch zurückgeholt werden kann.
+
+    Tor 2 (Papierkorb-Frist) ist abgelaufen, aber Tor 5 hält das Mitglied noch: Seine
+    History ist jünger als `history_retention_days`. In diesem Fenster ist der
+    Papierkorb wörtlich gemeint – `restore_mitglied` fasst nur die Eltern-Zeile an, die
+    Kinder MÜSSEN also aktiv geblieben sein, sonst käme ein Mitglied ohne Kontaktdaten
+    zurück. Genau deshalb wartet der Nachzug, bis NUR NOCH Tor 4 offen ist.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 0, 365, updated_by="t")
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 0, 365, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+    _soft_delete(db, "mitglied", m, 60)      # Frist (30 T) vorbei …
+    # … History NICHT zurückdatiert: Tor 5 hält das Mitglied weiter fest.
+
+    assert _nachzug_zahl(svc, "mitglied") == 0
+    svc.prune(dry_run=False)
+    assert _kontakt_aktiv(db, k), "Kontakt weg, obwohl das Mitglied noch restaurierbar ist"
+
+    # Sobald auch die History abgeflossen ist, hält nur noch der Kontakt – jetzt greift er.
+    _age_history(db, "mitglied_history", m, 400)
+    assert _nachzug_zahl(svc, "mitglied") == 1
+    svc.prune(dry_run=False)
+    assert not _kontakt_aktiv(db, k)
+
+
+def test_nachzug_schont_was_die_mindestanzahl_haelt(db):
+    """Dasselbe für Tor 3: `keep_min` hält die jüngsten Löschungen zurück.
+
+    In einem kleinen Verein ist das faktisch „für immer" – ein Nachzug nach Tor 2 würde
+    diese Datensätze dauerhaft entwertet zurücklassen, obwohl sie nie gelöscht werden.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("mitglied", 30, 10, 1, updated_by="t")
+    db.prune_einstellungen.upsert("mitglied_kontakt", 30, 10, 1, updated_by="t")
+    svc = PruneService(db)
+    m = _ins_mitglied(db)
+    k = _ins_kontakt(db, m)
+    _soft_delete(db, "mitglied", m, 60)
+    _age_history(db, "mitglied_history", m, 60)
+
+    assert _nachzug_zahl(svc, "mitglied") == 0
+    svc.prune(dry_run=False)
+    assert _kontakt_aktiv(db, k)
+
+
+def test_nachzug_uebernimmt_die_batch_marke(db):
+    """Nachgezogene Ticket-Kinder müssen beim Wiederherstellen zurückkommen.
+
+    `ticket_repository.restore` sucht seine Kinder ausschliesslich über die gemeinsame
+    `loesch_ref`. Ein per Nachzug soft-gelöschter Kommentar ohne diese Marke bliebe für
+    immer unsichtbar, auch wenn jemand das Ticket zurückholt.
+    """
+    from app.services.prune_service import PruneService
+    db.prune_einstellungen.upsert("ticket", 30, 0, 1, updated_by="t")
+    svc = PruneService(db)
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO tickets (titel, beschreibung, loesch_ref, "
+                    "created_by, updated_by) "
+                    "VALUES ('T','B','batch-1','t','t') RETURNING id")
+        tid = cur.fetchone()["id"]
+        cur.execute("INSERT INTO users (username,email,password_hash,role,active,"
+                    "created_by,updated_by) VALUES ('batchtester','batch@example.com',"
+                    "'x','mitglied',1,'t','t') RETURNING id")
+        uid = cur.fetchone()["id"]
+        cur.execute("INSERT INTO ticket_kommentare (ticket_id, autor_id, inhalt, "
+                    "created_by, updated_by) VALUES (%s,%s,'K','t','t') RETURNING id",
+                    (tid, uid))
+        kid = cur.fetchone()["id"]
+    _soft_delete(db, "tickets", tid, 60)
+    _age_history(db, "tickets_history", tid, 60)
+
+    svc.prune(dry_run=False)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at, loesch_ref FROM ticket_kommentare WHERE id=%s",
+                    (kid,))
+        zeile = cur.fetchone()
+    assert zeile["deleted_at"] is not None, "Kommentar wurde nicht nachgezogen"
+    assert zeile["loesch_ref"] == "batch-1", \
+        "Batch-Marke fehlt – restore() fände den Kommentar nie wieder"
+
+    assert db.tickets.restore_ticket(tid, "t") is True
+    with db.cursor() as cur:
+        cur.execute("SELECT deleted_at FROM ticket_kommentare WHERE id=%s", (kid,))
+        assert cur.fetchone()["deleted_at"] is None
 
 
 def _kontakt_aktiv(db, kid):
