@@ -8,8 +8,14 @@ der Betreiber über den Admin-Endpunkt.
 from contextlib import contextmanager
 
 from app.services.konsistenz_service import (
+    GEWOLLTE_VERWEISE,
+    KAT_GEWOLLT,
+    _registry_verweise,
+    KAT_NACHZUG,
+    KAT_OFFEN,
     ForeignKey,
     KonsistenzService,
+    kategorie,
     build_fk_catalog_sql,
     build_reparatur_verwaiste_rechte_sql,
     build_softdelete_tables_sql,
@@ -155,11 +161,17 @@ class TestPruefung:
         assert report["geprueft"] == 2
         assert report["alles_konsistent"] is False
         assert report["summe_verletzungen"] == 4          # 3 + 1
-        # auffälligster Befund zuerst
-        assert report["befunde"][0]["child_table"] == "mitglied_abteilung"
-        assert report["befunde"][0]["verletzungen"] == 3
-        assert report["befunde"][0]["beispiel_parent_ids"] == [7, 12]  # DISTINCT-Sample
-        assert report["befunde"][1]["verletzungen"] == 1
+        # Offene zuerst, danach nach Anzahl: `mitglied_abteilung.abteilung_id` steht als
+        # ChildRef ohne Nachzug im PRUNE_REGISTRY (die Zuordnung überlebt ihre Abteilung
+        # bewusst) und ist damit eingeordnet – trotz der größeren Zahl steht sie hinten.
+        # `mitglied_funktion.funktion_id` kennt das Registry nicht: der eine Fall, der
+        # jemanden erfordert.
+        assert report["summe_offen"] == 1
+        assert report["befunde"][0]["child_table"] == "mitglied_funktion"
+        assert report["befunde"][0]["verletzungen"] == 1
+        assert report["befunde"][1]["child_table"] == "mitglied_abteilung"
+        assert report["befunde"][1]["verletzungen"] == 3
+        assert report["befunde"][1]["beispiel_parent_ids"] == [7, 12]  # DISTINCT-Sample
 
     def test_befunde_ohne_verletzung_werden_weggelassen(self):
         soft = {"mitglied_abteilung", "abteilung"}
@@ -202,3 +214,82 @@ class TestReparaturVerwaisteRechte:
         assert result == {"bereinigt": 7}
         # Akteur füllt deleted_by UND updated_by
         assert db._cur.last_params == ("admin", "admin")
+
+
+class TestEinordnung:
+    """Ohne Einordnung ist der Bericht dauerhaft rot und damit wertlos.
+
+    Rund zwei Dutzend hängende Verweise sind erwartet – teils gewollt (Urheber-Angaben),
+    teils vorübergehend (der Prune zieht sie nach). Stünden sie gleichrangig neben einer
+    echten Lücke, fiele die nicht mehr auf.
+    """
+
+    def test_childref_ohne_nachziehen_ist_gewollt(self):
+        """Die Einordnung kommt aus dem PRUNE_REGISTRY, nicht aus einer zweiten Liste.
+
+        Ein ChildRef OHNE ``nachziehen`` ist bereits die Aussage „das Kind erwähnt den
+        Eltern-Datensatz nur und muss ihn überleben" – dieselbe, die der Bericht
+        braucht. Sie hier noch einmal zu pflegen hieße, dieselbe Entscheidung an zwei
+        Orten zu treffen.
+        """
+        for paar in [("tickets", "gemeldet_von"),          # Melder
+                     ("tickets", "zugewiesen_an"),          # Bearbeiter
+                     ("ticket_anhaenge", "hochgeladen_von"),
+                     ("kassenbuchung_anhaenge", "hochgeladen_von"),
+                     ("clubdeckel_buchung", "artikel_id")]:
+            kat, grund = kategorie(*paar)
+            assert kat == KAT_GEWOLLT, paar
+            assert grund, f"{paar} ohne Begründung"
+
+    def test_childref_mit_nachziehen_ist_nachzug(self):
+        assert kategorie("mitglied_kontakt", "mitglied_id")[0] == KAT_NACHZUG
+        assert kategorie("ul_stunde", "abrechnung_id")[0] == KAT_NACHZUG
+
+    def test_offen_heisst_dem_registry_unbekannt(self):
+        """Die einzige Kategorie, die jemanden erfordert: Hier hat noch nie jemand
+        entschieden, ob das Kind seinem Eltern-Datensatz gehört."""
+        assert kategorie("irgendeine_tabelle", "irgendeine_spalte") == (KAT_OFFEN, "")
+
+    def test_handliste_wiederholt_nichts_aus_dem_registry(self):
+        """Ein Override für ein Paar, das das Registry ohnehin kennt, ist tote Konfiguration
+        – und die schlimmere Sorte: Sie sieht nach einer Entscheidung aus und wird nie
+        wieder mit dem Registry abgeglichen."""
+        doppelt = sorted(set(GEWOLLTE_VERWEISE) & set(_registry_verweise()))
+        assert not doppelt, f"Schon im PRUNE_REGISTRY eingeordnet: {doppelt}"
+
+    def test_jede_ausnahme_hat_eine_begruendung(self):
+        leer = [k for k, v in GEWOLLTE_VERWEISE.items() if not (v or "").strip()]
+        assert not leer, f"Ausnahmen ohne Begründung: {leer}"
+
+    def test_gruene_ampel_haengt_an_den_offenen(self):
+        """Ein Bericht voller erwarteter Zeilen ist konsistent – solange nichts offen ist."""
+        soft = {"tickets", "users", "mitglied_kontakt", "mitglied"}
+        fks = [_fk_row("fk_t", "tickets", "gemeldet_von", "users"),
+               _fk_row("fk_mk", "mitglied_kontakt", "mitglied_id", "mitglied")]
+        violations = {
+            ("tickets", "gemeldet_von", "users", "id"): [1, 2, 3, 4, 5, 6, 7],
+            ("mitglied_kontakt", "mitglied_id", "mitglied", "id"): [8, 9, 10],
+        }
+        bericht = KonsistenzService(_FakeDB(soft, fks, violations)).pruefung()
+
+        assert bericht["summe_verletzungen"] == 10
+        assert bericht["summe_offen"] == 0
+        assert bericht["alles_konsistent"] is True
+        assert {b["kategorie"] for b in bericht["befunde"]} == {KAT_GEWOLLT, KAT_NACHZUG}
+
+    def test_ein_offener_befund_faerbt_den_bericht_rot(self):
+        soft = {"tickets", "users", "neue_tabelle", "mitglied"}
+        fks = [_fk_row("fk_t", "tickets", "gemeldet_von", "users"),
+               _fk_row("fk_neu", "neue_tabelle", "parent_id", "mitglied")]
+        violations = {
+            ("tickets", "gemeldet_von", "users", "id"): [1, 2, 3, 4, 5],
+            ("neue_tabelle", "parent_id", "mitglied", "id"): [42, 43, 44],
+        }
+        bericht = KonsistenzService(_FakeDB(soft, fks, violations)).pruefung()
+
+        assert bericht["summe_offen"] == 3
+        assert bericht["alles_konsistent"] is False
+        # Offene zuerst, auch wenn sie die kleinere Zahl tragen – sonst geht der eine
+        # echte Fund zwischen den erwarteten unter.
+        assert bericht["befunde"][0]["child_table"] == "neue_tabelle"
+
