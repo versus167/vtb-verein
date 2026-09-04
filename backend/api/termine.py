@@ -49,6 +49,7 @@ from app.db.termin_abweichung_repository import (
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
 from app.db.termin_serie_repository import VALID_SERIE_TYPEN
 from app.services import dfbnet_import_service as dfbnet
+from app.services import geburtstag_service
 from app.services import termin_notification_service as terminmeldung
 from ..core.deps import CurrentUser, DB
 
@@ -152,6 +153,19 @@ def _darf_vereinsweit_einladen(user) -> bool:
     """
     return user.role == 'admin' or user.has_permission(
         Permission.TERMINE_GAESTE_VEREINSWEIT)
+
+
+def _darf_geburtstage_sehen(db: DB, user, mannschaft_id: int) -> bool:
+    """Geburtstage einer Mannschaft sehen dürfen (#192).
+
+    Ausdrücklich NICHT die Termin-ACL: `termine.verwalten` öffnet zwar jeden
+    Mannschafts-Tab, ist aber kein Recht auf die Geburtsdaten des halben
+    Vereins. Geburtstage sieht, wer selbst im Kader steht — oder wer die
+    Personendaten ohnehin lesen darf (`personen.read`, Admins eingeschlossen).
+    """
+    if user.has_permission(Permission.PERSONEN_READ):
+        return True
+    return db.termine.get_access_for_user(user.id, mannschaft_id) is not None
 
 
 def _zugriff(db: DB, user, mannschaft_id: int) -> Optional[str]:
@@ -266,9 +280,9 @@ def _parse_uhrzeit(wert: str, feld: str) -> None:
         raise HTTPException(422, f"{feld} muss das Format HH:MM haben")
 
 
-def _parse_datum(wert: str, feld: str) -> None:
+def _parse_datum(wert: str, feld: str) -> date:
     try:
-        date.fromisoformat(wert)
+        return date.fromisoformat(wert)
     except (TypeError, ValueError):
         raise HTTPException(422, f"{feld} muss das Format JJJJ-MM-TT haben")
 
@@ -445,6 +459,34 @@ def meine_termine(user: CurrentUser, db: DB,
         von = date.today().isoformat()
     db.termin_serien.materialize_due()   # alle fälligen Serien rollierend nachziehen
     return _enrich_zusagen(db, user, db.termine.list_for_user(user.id, von=von, bis=bis))
+
+
+# ----------------------------------------------------------------- Geburtstage
+@router.get("/geburtstage")
+def geburtstage(user: CurrentUser, db: DB, von: Optional[str] = None,
+                bis: Optional[str] = None, mannschaft_id: Optional[int] = None):
+    """Geburtstage des Kaders im Terminfenster — die Liste, die das Frontend
+    zwischen die Terminkarten mischt (#192).
+
+    Ohne `mannschaft_id` die eigenen Kader-Mannschaften („Meine Termine"), mit
+    `mannschaft_id` genau diese eine. Das Fenster beginnt bei `von` (Vorgabe:
+    heute) und reicht höchstens ein Jahr weit — Geburtstage wiederholen sich,
+    weiter zu blicken brächte nur Dopplungen.
+
+    Gäste sind bewusst außen vor: Wer für einen einzelnen Termin aushilft,
+    bekommt deshalb nicht die Geburtsdaten der Mannschaft zu sehen.
+    """
+    von_datum = _parse_datum(von, "von") if von else date.today()
+    bis_datum = _parse_datum(bis, "bis") if bis else None
+    if mannschaft_id is not None:
+        _require_lesen(db, user, mannschaft_id)
+        if not _darf_geburtstage_sehen(db, user, mannschaft_id):
+            return []
+        ids = [mannschaft_id]
+    else:
+        ids = [m['id'] for m in db.termine.list_mannschaften_for_user(user.id)]
+    return geburtstag_service.geburtstage_im_fenster(
+        db.termine.list_kader_geburtstage(ids), von_datum, bis_datum)
 
 
 # ------------------------------------------------------------------ Erinnerungen
