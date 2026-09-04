@@ -540,6 +540,46 @@ class TerminRepository(BaseRepository):
             )
             return [r['user_id'] for r in cur.fetchall()]
 
+    def list_kader_geburtstage(self, mannschaft_ids: list[int],
+                               stichtag: Optional[str] = None) -> list[dict]:
+        """Kader-Mitglieder der genannten Mannschaften (aktiv am Stichtag) mit
+        hinterlegtem Geburtsdatum — Rohstoff für die Geburtstage in der
+        Terminliste (#192).
+
+        Stichtag ist der HEUTIGE Kader, nicht der am jeweiligen Geburtstag: In
+        der Liste soll stehen, wer jetzt zur Mannschaft gehört. Wer in mehreren
+        der Mannschaften steht, kommt einmal vor (sonst stünde er in „Meine
+        Termine" doppelt); die Namen der Mannschaften stehen dann gesammelt in
+        `mannschaft_name`.
+        """
+        if not mannschaft_ids:
+            return []
+        tag = stichtag or date.today().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT m.id AS mitglied_id, m.vorname, m.nachname, m.geburtsdatum,
+                       string_agg(DISTINCT ma.name, ', ' ORDER BY ma.name) AS mannschaft_name
+                FROM mitglied m
+                JOIN mitglied_mannschaft mm ON mm.mitglied_id = m.id
+                    AND mm.deleted_at IS NULL
+                    AND mm.mannschaft_id = ANY(%(mids)s)
+                    AND mm.von <= %(tag)s AND (mm.bis IS NULL OR mm.bis >= %(tag)s)
+                JOIN mannschaft ma ON ma.id = mm.mannschaft_id AND ma.deleted_at IS NULL
+                WHERE m.deleted_at IS NULL
+                  AND m.geburtsdatum IS NOT NULL AND m.geburtsdatum <> ''
+                GROUP BY m.id, m.vorname, m.nachname, m.geburtsdatum
+                ORDER BY lower(m.nachname), lower(m.vorname)
+                """,
+                {"mids": list(mannschaft_ids), "tag": tag},
+            )
+            return [
+                {"mitglied_id": r['mitglied_id'], "vorname": r['vorname'],
+                 "nachname": r['nachname'], "geburtsdatum": r['geburtsdatum'],
+                 "mannschaft_name": r['mannschaft_name']}
+                for r in cur.fetchall()
+            ]
+
     def list_mannschaften_for_user(self, user_id: int,
                                    stichtag: Optional[str] = None) -> list[dict]:
         """Aktive Mannschaften, in deren Kader der User am Stichtag steht, mit der

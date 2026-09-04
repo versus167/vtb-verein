@@ -34,19 +34,24 @@
     </div>
 
     <q-inner-loading :showing="loading" />
-    <div v-if="!loading && termine.length === 0" class="text-grey text-center q-py-xl">
+    <div v-if="!loading && eintraege.length === 0" class="text-grey text-center q-py-xl">
       Keine Termine{{ vergangene ? '' : ' ab heute' }}.
     </div>
 
-    <!-- Card-Liste (nach beginn sortiert; Datum steckt in der Card) -->
+    <!-- Card-Liste (nach Datum sortiert; Datum steckt in der Card). Zwischen den
+         Terminen stehen die Geburtstage des Kaders (#192) – dieselbe Liste, nur
+         eine flachere Karte. -->
     <div class="column q-gutter-md">
-      <TerminCard v-for="t in termine" :key="t.id" :termin="t"
-        :id="`termin-${t.id}`"
-        :class="{ 'termin--hervorgehoben': hervorgehoben === t.id }"
-        :darf-verwalten="kannVerwalten(t)"
-        @bearbeiten="openEdit" @absagen="setStatus($event, 'absagen')"
-        @reaktivieren="setStatus($event, 'reaktivieren')" @loeschen="confirmDelete"
-        @reload="loadTermine" />
+      <template v-for="e in eintraege" :key="e.key">
+        <TerminCard v-if="e.art === 'termin'" :termin="e.termin"
+          :id="`termin-${e.termin.id}`"
+          :class="{ 'termin--hervorgehoben': hervorgehoben === e.termin.id }"
+          :darf-verwalten="kannVerwalten(e.termin)"
+          @bearbeiten="openEdit" @absagen="setStatus($event, 'absagen')"
+          @reaktivieren="setStatus($event, 'reaktivieren')" @loeschen="confirmDelete"
+          @reload="loadTermine" />
+        <GeburtstagCard v-else :geburtstag="e.geburtstag" />
+      </template>
     </div>
 
     <!-- Termin anlegen/bearbeiten -->
@@ -70,6 +75,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
 import TerminCard from 'components/TerminCard.vue'
+import GeburtstagCard from 'components/GeburtstagCard.vue'
 import TerminFormDialog from 'components/TerminFormDialog.vue'
 import TerminSerienDialog from 'components/TerminSerienDialog.vue'
 import TerminErinnerungDialog from 'components/TerminErinnerungDialog.vue'
@@ -82,6 +88,7 @@ const router = useRouter()
 
 const teams = ref([])
 const termine = ref([])
+const geburtstage = ref([])
 const tab = ref('meine')
 const vergangene = ref(false)
 const loading = ref(false)
@@ -118,8 +125,7 @@ function vonFilter() {
   return heute.toISOString().slice(0, 10)
 }
 
-async function loadTermine() {
-  loading.value = true
+async function ladeTerminliste() {
   try {
     if (tab.value === 'meine') {
       const { data } = await api.get('/api/termine/meine', { params: { von: vonFilter() } })
@@ -132,10 +138,42 @@ async function loadTermine() {
   } catch {
     $q.notify({ type: 'negative', message: 'Fehler beim Laden der Termine' })
     termine.value = []
+  }
+}
+
+// Eigener Aufruf statt eines Felds an der Terminliste: Geburtstage hängen an
+// einer anderen Berechtigung als die Termine (#192) – wer sie nicht sehen darf,
+// bekommt hier eine leere Liste und trotzdem seine Termine. Deshalb auch die
+// stille Fehlerbehandlung: ein Nebenschauplatz soll keine Meldung erzeugen.
+async function ladeGeburtstage() {
+  try {
+    const params = { von: vonFilter() }
+    if (tab.value !== 'meine') params.mannschaft_id = tab.value
+    const { data } = await api.get('/api/termine/geburtstage', { params })
+    geburtstage.value = data
+  } catch {
+    geburtstage.value = []
+  }
+}
+
+async function loadTermine() {
+  loading.value = true
+  try {
+    await Promise.all([ladeTerminliste(), ladeGeburtstage()])
   } finally {
     loading.value = false
   }
 }
+
+// Termine und Geburtstage in einer chronologischen Liste. Geburtstage haben
+// keine Uhrzeit und stehen deshalb vor den Terminen desselben Tages.
+const eintraege = computed(() => [
+  ...termine.value.map(t => (
+    { art: 'termin', key: `t${t.id}`, sortier: t.beginn || '', termin: t })),
+  ...geburtstage.value.map(g => (
+    { art: 'geburtstag', key: `g${g.mitglied_id}-${g.datum}`,
+      sortier: `${g.datum}T00:00`, geburtstag: g })),
+].sort((a, b) => a.sortier.localeCompare(b.sortier)))
 
 // ── Deep-Link aus einer Benachrichtigung: /termine?termin=NN (#158) ──
 // Kein eigener Dialog: Die Zusage-Knöpfe sitzen in der Card selbst. Es genügt

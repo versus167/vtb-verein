@@ -339,3 +339,70 @@ def test_termin_traegt_mannschaftsnamen(db):
                     "WHERE id = %s", (m,))
     t = db.termine.get(neu.id)
     assert t is not None and t.mannschaft_name == 'AH'
+
+
+# ------------------------------------------------------------------ Geburtstage
+def _make_kader_mitglied(db, mannschaft_id, geburtsdatum, nachname="Tester",
+                         rolle='spieler', von=LASTWEEK, bis=None):
+    """Kader-Mitglied mit Geburtsdatum (vorname='Termin' – die clean-Fixture
+    räumt danach auf). Gibt die mitglied_id zurück."""
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mitglied (vorname,nachname,geburtsdatum,zahlungsart,"
+                    "created_by,updated_by) VALUES ('Termin',%s,%s,'lastschrift','t','t') "
+                    "RETURNING id", (nachname, geburtsdatum))
+        mid = cur.fetchone()['id']
+        cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,"
+                    "von,bis,created_by,updated_by) VALUES (%s,%s,%s,%s,%s,'t','t')",
+                    (mid, mannschaft_id, rolle, von, bis))
+    return mid
+
+
+def test_geburtstage_nur_vom_aktiven_kader_und_nur_mit_datum(db):
+    """Grundlage der Geburtstage in der Terminliste (#192): wer am Stichtag im
+    Kader steht und ein Geburtsdatum hinterlegt hat."""
+    m = _make_mannschaft(db, name="Erste")
+    dabei = _make_kader_mitglied(db, m, '1990-05-05', nachname="Aktiv")
+    _make_kader_mitglied(db, m, None, nachname="Ohnedatum")
+    _make_kader_mitglied(db, m, '1990-05-05', nachname="Ausgeschieden", bis=YESTERDAY)
+    _make_kader_mitglied(db, _make_mannschaft(db, name="Zweite"), '1990-05-05',
+                         nachname="Fremd")
+
+    rows = db.termine.list_kader_geburtstage([m])
+    assert [r['mitglied_id'] for r in rows] == [dabei]
+    assert rows[0]['geburtsdatum'] == '1990-05-05'
+    assert rows[0]['mannschaft_name'] == 'Erste'
+
+
+def test_geburtstage_doppelte_kader_zugehoerigkeit_zaehlt_einmal(db):
+    """In „Meine Termine" laufen mehrere Mannschaften zusammen – wer in zweien
+    steht, darf trotzdem nur einmal in der Liste stehen."""
+    erste = _make_mannschaft(db, name="Erste")
+    ah = _make_mannschaft(db, name="AH")
+    mid = _make_kader_mitglied(db, erste, '1990-05-05', nachname="Doppelt")
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id,mannschaft_id,rolle,"
+                    "von,bis,created_by,updated_by) VALUES (%s,%s,'spieler',%s,NULL,'t','t')",
+                    (mid, ah, LASTWEEK))
+
+    rows = db.termine.list_kader_geburtstage([erste, ah])
+    assert len(rows) == 1
+    assert rows[0]['mitglied_id'] == mid
+    assert sorted(rows[0]['mannschaft_name'].split(', ')) == ['AH', 'Erste']
+
+
+def test_geburtstage_soft_geloeschte_bleiben_draussen(db):
+    """Soft-Delete ist hier ein echter Filter: Weder das gelöschte Mitglied noch
+    die gelöste Kader-Zuordnung dürfen noch auftauchen."""
+    m = _make_mannschaft(db, name="Erste")
+    weg = _make_kader_mitglied(db, m, '1990-05-05', nachname="Geloescht")
+    ohne_zuordnung = _make_kader_mitglied(db, m, '1990-06-06', nachname="Ausgetragen")
+    with db.cursor() as cur:
+        cur.execute("UPDATE mitglied SET deleted_at = now(), version = version + 1 "
+                    "WHERE id = %s", (weg,))
+        cur.execute("UPDATE mitglied_mannschaft SET deleted_at = now(), "
+                    "version = version + 1 WHERE mitglied_id = %s", (ohne_zuordnung,))
+    assert db.termine.list_kader_geburtstage([m]) == []
+
+
+def test_geburtstage_ohne_mannschaften(db):
+    assert db.termine.list_kader_geburtstage([]) == []
