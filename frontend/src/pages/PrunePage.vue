@@ -29,6 +29,9 @@
         wiederherstellbar.
         <b>Protokolle, Gerätebindungen und Dateien:</b> kein Papierkorb – hier wird nach
         Alter direkt entfernt.
+        <b>Nachzug</b> (blau): aktive Einträge, die an einem gelöschten Datensatz hängen,
+        dessen Aufbewahrungsfrist abgelaufen ist – sie wandern ebenfalls nur
+        <i>in den Papierkorb</i>. Ohne das hielten sie ihn dauerhaft fest.
       </div>
     </q-banner>
 
@@ -40,6 +43,10 @@
         <span v-if="report.summe_archivierbar">
           · <b>{{ report.summe_archivierbar }}</b> Datensätze werden altersbedingt
           archiviert (Papierkorb).
+        </span>
+        <span v-if="report.summe_nachzug">
+          · <b>{{ report.summe_nachzug }}</b> Einträge werden gelöschten Datensätzen
+          nachgezogen (Papierkorb).
         </span>
         <span v-if="report.summe_verwaiste_dateien">
           · <b>{{ report.summe_verwaiste_dateien }}</b> verwaiste Dateien.
@@ -107,6 +114,22 @@
             dense color="negative" text-color="white" :label="props.row.loeschbar"
           />
           <span v-else>0</span>
+          <!-- Nachzug: hängen gebliebene Kinder dieses Bereichs. Eigener Chip, weil es
+               ein Soft-Delete an einer ANDEREN Tabelle ist – nicht zu verwechseln mit
+               dem, was in diesem Bereich endgültig gelöscht wird. -->
+          <div v-if="props.row.nachzug" class="q-mt-xs">
+            <q-chip
+              dense color="primary" text-color="white" icon="link_off"
+              :label="`+${props.row.nachzug}`"
+            >
+              <q-tooltip>
+                {{ props.row.nachzug }} aktive Einträge hängen an gelöschten
+                {{ props.row.label }}, deren Frist abgelaufen ist. Sie wandern in den
+                Papierkorb (wiederherstellbar) – sonst bliebe dieser Bereich für immer
+                blockiert.
+              </q-tooltip>
+            </q-chip>
+          </div>
           <!-- Saldovortrag: Der Betrag der archivierten Zeilen wandert in den
                Anfangsbestand der Kasse, damit der Bestand nicht springt (#189). -->
           <div v-if="props.row.vortrag_cent" class="text-caption text-grey-7 q-mt-xs">
@@ -181,9 +204,18 @@
 
     <q-dialog v-model="confirmOpen">
       <q-card style="min-width: 360px">
+        <!-- Titel, Symbol und Knopf richten sich danach, was der Lauf TATSÄCHLICH tut.
+             Stehen nur Archivierung und Nachzug an, ist alles daran umkehrbar – die
+             Warnsprache eines unwiderruflichen Vorgangs wäre dann schlicht falsch und
+             ließe den Admin abbrechen oder etwas Falsches erwarten. -->
         <q-card-section class="row items-center">
-          <q-icon name="warning" color="negative" size="sm" class="q-mr-sm" />
-          <span class="text-h6">Endgültig löschen?</span>
+          <q-icon
+            :name="nurPapierkorb ? 'inventory_2' : 'warning'"
+            :color="nurPapierkorb ? 'primary' : 'negative'" size="sm" class="q-mr-sm"
+          />
+          <span class="text-h6">
+            {{ nurPapierkorb ? 'In den Papierkorb verschieben?' : 'Endgültig löschen?' }}
+          </span>
         </q-card-section>
         <q-card-section v-if="report">
           <template v-if="report.summe_loeschbar + report.summe_history_loeschbar > 0">
@@ -197,12 +229,18 @@
             Datensätze in den Papierkorb verschoben – wiederherstellbar, bis der reguläre
             Prune sie später endgültig entfernt.
           </div>
+          <div v-if="report.summe_nachzug" class="q-mt-sm text-primary">
+            Ebenfalls in den Papierkorb: <b>{{ report.summe_nachzug }}</b> aktive
+            Einträge, die an gelöschten Datensätzen mit abgelaufener Frist hängen.
+            Auch das ist wiederherstellbar.
+          </div>
         </q-card-section>
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn
-            color="negative" label="Endgültig löschen" :loading="executing"
-            @click="execute"
+            :color="nurPapierkorb ? 'primary' : 'negative'"
+            :label="nurPapierkorb ? 'In den Papierkorb' : 'Endgültig löschen'"
+            :loading="executing" @click="execute"
           />
         </q-card-actions>
       </q-card>
@@ -224,10 +262,23 @@ const confirmOpen = ref(false)
 const rows = ref([])
 const report = ref(null)
 
+/**
+ * Läuft dieser Durchgang ohne jeden unumkehrbaren Schritt?
+ *
+ * Verwaiste Dateien zählen mit: Sie werden physisch entfernt, nicht in den Papierkorb
+ * gelegt. Archivierung und Nachzug sind dagegen reine Soft-Deletes.
+ */
+const nurPapierkorb = computed(() =>
+  !!report.value &&
+  (report.value.summe_loeschbar + report.value.summe_history_loeschbar
+    + (report.value.summe_verwaiste_dateien || 0)) === 0,
+)
+
 const nothingToDelete = computed(() =>
   !report.value ||
   (report.value.summe_loeschbar + report.value.summe_history_loeschbar
-    + (report.value.summe_archivierbar || 0)) === 0,
+    + (report.value.summe_archivierbar || 0)
+    + (report.value.summe_nachzug || 0)) === 0,
 )
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleString('de-DE') : '–')
@@ -242,6 +293,7 @@ const filter = ref('')
 const nurLoeschbares = ref(true)
 const hatLoeschbares = (r) => (r.loeschbar || 0) > 0
   || (r.archivierbar || 0) > 0
+  || (r.nachzug || 0) > 0
   || (r.history_loeschbar || 0) > 0
 const sichtbareRows = computed(() => (
   !nurLoeschbares.value || filter.value ? rows.value : rows.value.filter(hatLoeschbares)))
@@ -315,6 +367,7 @@ async function execute() {
       type: 'positive',
       message: `Bereinigt: ${data.summe_geloescht} Datensätze, ${data.summe_history_geloescht} History-Zeilen`
         + (data.summe_archiviert ? `, ${data.summe_archiviert} archiviert` : '')
+        + (data.summe_nachzug ? `, ${data.summe_nachzug} nachgezogen` : '')
         + (data.summe_dateien_geloescht ? `, ${data.summe_dateien_geloescht} Dateien` : ''),
     })
     await reload()

@@ -54,14 +54,43 @@ class TicketBereichRepository:
         return cursor.rowcount > 0
 
     def mark_deleted(self, id: int, deleted_by: str) -> bool:
-        cursor = self.conn.execute(
-            "UPDATE ticket_bereiche SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
-            "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
-            "WHERE id = %s AND deleted_at IS NULL",
-            (deleted_by, deleted_by, id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
+        """Soft-Delete des Bereichs — samt der Rechte AUF ihn.
+
+        Die Tickets bleiben bewusst stehen: Ein Ticket ist der fachliche Vorgang, der
+        Bereich nur seine Einsortierung (so auch PRUNE_REGISTRY). Die Berechtigungen
+        dagegen sind ohne ihren Bereich sinnlos. Blieben sie aktiv, hinge ein aktives
+        Kind an einem gelöschten Parent — die Konsistenzprüfung meldet das, und Tor 4
+        des Prune hielte den Bereich dauerhaft im Papierkorb fest.
+
+        Beide UPDATEs teilen sich einen Commit: Ein Bereich ohne seine Rechte oder
+        Rechte ohne ihren Bereich wäre genau der Zwischenzustand, den die Prüfung
+        anschließend anmahnt.
+        """
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE ticket_bereiche SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
+                "WHERE id = %s AND deleted_at IS NULL",
+                (deleted_by, deleted_by, id)
+            )
+            if cur.rowcount == 0:
+                self.conn.rollback()
+                return False
+            cur.execute(
+                "UPDATE ticket_bereich_berechtigungen "
+                "SET deleted_at = CURRENT_TIMESTAMP, deleted_by = %s, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s "
+                "WHERE bereich_id = %s AND deleted_at IS NULL",
+                (deleted_by, deleted_by, id)
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
+        finally:
+            cur.close()
 
     def _map(self, row) -> TicketBereich:
         return TicketBereich(

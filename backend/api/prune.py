@@ -72,8 +72,15 @@ def prune_ausfuehren(request: Request, user: CurrentUser, db: DB, dry_run: bool 
             db.access_log_repository.log(
                 "prune_executed", category="prune",
                 user_id=user.id, username=user.username, ip=_client_ip(request),
+                # Auch die reversiblen Teile protokollieren: Ein Lauf kann
+                # ausschliesslich archivieren oder nachziehen (dann sind beide
+                # Lösch-Summen 0). Ohne sie stünde im Log „0 Datensätze gelöscht",
+                # obwohl Hunderte Zeilen in den Papierkorb gewandert sind – und das
+                # access_log ist der einzige dauerhafte Beleg, wer das ausgelöst hat.
                 detail=f"{ergebnis['summe_geloescht']} Datensätze, "
-                       f"{ergebnis['summe_history_geloescht']} History-Zeilen gelöscht",
+                       f"{ergebnis['summe_history_geloescht']} History-Zeilen gelöscht, "
+                       f"{ergebnis.get('summe_archiviert', 0)} archiviert, "
+                       f"{ergebnis.get('summe_nachzug', 0)} nachgezogen",
             )
         except Exception:
             pass

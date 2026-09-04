@@ -24,6 +24,10 @@ from app.services.prune_service import (
     build_papierkorb_count_sql,
     build_archive_vortrag_sum_sql,
     build_archive_vortrag_update_sql,
+    GateArgs,
+    build_nachzug_count_sql,
+    build_nachzug_sql,
+    nachzug_kinder,
     DEFAULT_HISTORY_RETENTION_DAYS,
     _ab_jahresende,
 )
@@ -528,3 +532,216 @@ class TestTeamkassenAbschluss:
         """Keine Belege im steuerlichen Sinn, aber lange genug für die Rückfrage
         „wieso schulde ich 40 Euro?" — dieselbe Frist wie Termine und Tickets."""
         assert {r.default_days for r in ABSCHLUSS_REGISTRY} == {5 * 365}
+
+
+# --- Nachzug hängen gebliebener Kinder --------------------------------------------
+class TestNachzug:
+    """Der Schritt, der aktive Kinder eines abgelaufenen Papierkorb-Datensatzes einsammelt.
+
+    Ohne ihn hielte jedes solche Kind seinen Eltern-Datensatz über Tor 4 für immer fest;
+    mit ihm darf er auf keinen Fall zu weit greifen. Beide Seiten stehen hier.
+    """
+
+    def test_nachziehen_ist_standardmaessig_aus(self):
+        """Die Sicherung: Wer eine ChildRef ergänzt, löscht nicht versehentlich mit."""
+        assert ChildRef("x", "y").nachziehen is False
+
+    # Kinder, die eine ArchiveRule mitnimmt, der Nachzug aber bewusst NICHT. Jede Zeile
+    # hier verlangt eine Begründung, warum das Ergebnis vom Weg abhängen darf.
+    NUR_ARCHIV = {
+        # Nachziehen brächte nichts: `tuer_berechtigung` und `chip_gruppe_zuordnung`
+        # altern auf keinem Weg, der Chip bliebe also über sein eigenes Tor 4 hängen und
+        # hielte das Mitglied weiter fest. Übrig bliebe ein archivierter Chip mit aktiven
+        # Berechtigungen. Chips gehören ohnehin über `zutritt_service.chip_loeschen`
+        # weg, das als einziges auch die IC-Karte am Schloss entfernt.
+        ("schluessel_chip", "mitglied_id"),
+        # Die auslösende Buchung ist nur der ANLASS der Zählung, ihr Träger ist die
+        # Differenzbuchung (`buchung_id`) – so steht es im Docstring von
+        # mark_kassenbuchung_deleted, das sie ausdrücklich ausnimmt. Die Archivierung
+        # darf sie mitnehmen, weil dort ohnehin alle Buchungen desselben Alters gehen
+        # und Anlass wie Träger gleich alt sind. Der Nachzug feuert dagegen an EINER
+        # gelöschten Buchung – eine einzeln stornierte Buchung risse sonst eine Zählung
+        # mit, deren Träger putzmunter ist.
+        ("kassen_zaehlungen", "ausloesende_buchung_id"),
+    }
+
+    def test_archiv_kinder_werden_auch_nachgezogen(self):
+        """Beide Wege müssen dieselben Kinder als „gehört dem Eltern-Datensatz" ansehen.
+
+        Die ArchiveRule löscht sie auf dem Alterspfad längst mit; liefen die Listen
+        auseinander, hinge das Ergebnis daran, auf welchem Weg der Eltern-Datensatz in
+        den Papierkorb gekommen ist. Ausnahmen sind erlaubt, aber nur benannt und
+        begründet (NUR_ARCHIV).
+        """
+        for rule in ARCHIVE_REGISTRY:
+            entity = next((e for e in PRUNE_REGISTRY if e.table == rule.table), None)
+            assert entity is not None, rule.table
+            markiert = {(c.table, c.fk) for c in nachzug_kinder(entity)}
+            for child in rule.children:
+                if (child.table, child.fk) in self.NUR_ARCHIV:
+                    continue
+                assert (child.table, child.fk) in markiert, \
+                    f"{rule.table} archiviert {child.table}.{child.fk}, zieht es aber nicht nach"
+
+    def test_chip_wird_nicht_nachgezogen(self):
+        """Die Ausnahme festnageln – sie sieht wie eine Lücke aus und ist keine.
+
+        Wer die Registry aufräumt, sieht ein Kind ohne `nachziehen` und ergänzt es
+        reflexhaft. Genau das darf hier nicht passieren: Der Chip käme in den
+        Papierkorb, seine Berechtigungen blieben aktiv, und weil die auf keinem Weg
+        altern, wäre kein einziges Mitglied früher löschbar als vorher.
+        """
+        mitglied = next(e for e in PRUNE_REGISTRY if e.table == "mitglied")
+        chip = next(c for c in mitglied.children if c.table == "schluessel_chip")
+        assert chip.nachziehen is False
+
+    def test_nachzug_ist_transitiv(self):
+        """Ein nachgezogenes Kind darf nicht selbst blockierbar bleiben.
+
+        Wird Kind K nachgezogen, K hat aber ein eigenes Kind, das AKTIV stehen bleibt,
+        dann wandert die Blockade nur eine Ebene tiefer: K wird nie hart gelöscht, also
+        bleibt der Eltern-Datensatz über Tor 4 weiter hängen. Der Nachzug hätte dann
+        Daten entwertet, ohne sein Ziel zu erreichen — die schlechteste aller Welten.
+        """
+        nach_tabelle = {e.table: e for e in PRUNE_REGISTRY}
+        for entity in PRUNE_REGISTRY:
+            for child in nachzug_kinder(entity):
+                kind_entity = nach_tabelle.get(child.table)
+                if kind_entity is None:
+                    continue
+                offen = sorted(k.table for k in kind_entity.children if not k.nachziehen)
+                assert not offen, (
+                    f"{entity.table} zieht {child.table} nach, aber {child.table} "
+                    f"behält aktive Kinder: {', '.join(offen)} — die Blockade wandert "
+                    f"nur eine Ebene tiefer"
+                )
+
+    def test_loesch_ref_nur_wo_beide_seiten_sie_fuehren(self):
+        """Die Batch-Marke wird vom Eltern-Datensatz übernommen – beide brauchen sie.
+
+        Ohne die Marke am Kind findet `restore` es nicht wieder (es sucht ausschliesslich
+        über `loesch_ref`); ohne die Marke am Eltern-Datensatz gäbe es nichts zu
+        übernehmen und das UPDATE liefe auf einer nicht existenten Spalte auf.
+        """
+        mit_marke = {"tickets", "ticket_kommentare", "ticket_teilnehmer",
+                     "ticket_anhaenge", "clubdeckel", "clubdeckel_buchung",
+                     "clubdeckel_artikel", "clubdeckel_gruppe", "clubdeckel_berechtigung",
+                     "clubdeckel_beitrag_befreiung", "clubdeckel_event",
+                     "clubdeckel_event_opt_out"}
+        for entity in PRUNE_REGISTRY:
+            for child in entity.children:
+                if not child.loesch_ref:
+                    continue
+                assert child.table in mit_marke, f"{child.table} führt keine loesch_ref"
+                assert entity.table in mit_marke, \
+                    f"{entity.table} führt keine loesch_ref, kann also keine vererben"
+
+    # `has_version` der Nachzug-Kinder wird NICHT hier geprüft, sondern gegen das echte
+    # Schema: test_prune_integration.py::test_archiv_kinder_kennen_ihre_version_spalte
+    # liest information_schema und deckt seit dem Nachzug beide Listen ab. Eine
+    # hartkodierte Tabellen-Allowlist an dieser Stelle konnte den Fehler, den sie
+    # verhindern sollte, per Konstruktion nicht finden: Eine NEUE Tabelle ohne
+    # `version`-Spalte stand nicht darin und rutschte stillschweigend durch.
+
+    def test_fremde_verweise_bleiben_unangetastet(self):
+        """Wer den Eltern-Datensatz nur ERWÄHNT, darf nicht mit ihm sterben.
+
+        Sonst nähme das Löschen eines Benutzers dessen Tickets und Rechnungen mit, und
+        das Löschen eines Mitglieds seine Sollstellungen – Daten, die eine eigene,
+        gleich lange Aufbewahrungsuhr haben.
+        """
+        tabu = {
+            "users": {("tickets", "gemeldet_von"), ("ticket_kommentare", "autor_id"),
+                      ("rechnung", "ersteller_user_id"), ("mitglied", "user_id")},
+            "mitglied": {("beitrag_sollstellung", "mitglied_id"),
+                         ("gebuehr_forderung", "mitglied_id"),
+                         ("rechnung", "empfaenger_mitglied_id"),
+                         ("ul_abrechnung", "mitglied_id"),
+                         ("clubdeckel_buchung", "mitglied_id")},
+            "termine": {("clubdeckel_buchung", "termin_id"),
+                        ("clubdeckel_gruppe", "gilt_ab_termin_id")},
+            "ticket_bereiche": {("tickets", "bereich_id")},
+            "kassenbuchungen": {("beitrag_sollstellung", "kassenbuchung_id"),
+                                ("gebuehr_forderung", "kassenbuchung_id")},
+        }
+        for tabelle, verboten in tabu.items():
+            entity = next(e for e in PRUNE_REGISTRY if e.table == tabelle)
+            markiert = {(c.table, c.fk) for c in nachzug_kinder(entity)}
+            assert markiert & verboten == set(), tabelle
+
+    def test_protokolle_werden_nie_nachgezogen(self):
+        """Dauerprotokolle haben gar kein ``deleted_at`` – ein Nachzug liefe ins Leere."""
+        protokolle = {"tuer_zutritt_log", "access_log", "ticket_zugriff_log",
+                      "tresor_zugriff_log", "tuer_credential", "tuer_schloss_status_log",
+                      "auth_tokens", "user_sessions", "push_subscriptions"}
+        for entity in PRUNE_REGISTRY:
+            assert {c.table for c in nachzug_kinder(entity)} & protokolle == set()
+
+    GATE = GateArgs(retention_days=30, keep_min=5, history_retention_days=365)
+
+    def test_nachzug_wartet_bis_nur_noch_tor_4_offen_ist(self):
+        """Der Zeitpunkt ist die eigentliche Sicherung des Nachzugs.
+
+        Nach Tor 2 allein wäre er zu früh: Tor 3 (keep_min) und Tor 5 (History) halten
+        den Datensatz oft noch monatelang bis dauerhaft im Papierkorb, und dort ist
+        „Wiederherstellen" ein Versprechen – `restore_mitglied` fasst nur die
+        Eltern-Zeile an, die Kinder müssen also aktiv geblieben sein. Erst wenn einzig
+        die Kind-Zeile das endgültige Löschen verhindert, darf sie fallen.
+        """
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        sql, params = build_nachzug_sql(entity, child, self.GATE)
+
+        assert "r.del < now() - make_interval(days => %s)" in sql      # Tor 2
+        assert "r.rn > %s" in sql                                      # Tor 3
+        assert "FROM mitglied_history h" in sql                        # Tor 5
+        # Tor 4 ist genau das ausgelassene – sonst fände der Nachzug nie einen Parent,
+        # denn die aktive Kind-Zeile ist ja der Grund, warum er läuft.
+        assert "NOT EXISTS (SELECT 1 FROM mitglied_kontakt c" not in sql
+        assert params[:2] == [30, 5]
+
+    def test_nachzug_trifft_nur_aktive_kinder(self):
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        sql, _ = build_nachzug_sql(entity, child, self.GATE)
+        assert "WHERE (deleted_at IS NULL OR deleted_at::text = '')" in sql
+
+    def test_vorschau_und_aktion_teilen_die_bedingung(self):
+        """Was der Report zählt, ist genau das, was der Lauf anfasst."""
+        entity = _entity("ul_abrechnung")
+        child = nachzug_kinder(entity)[0]
+        count_sql, count_params = build_nachzug_count_sql(entity, child, self.GATE)
+        update_sql, update_params = build_nachzug_sql(entity, child, self.GATE)
+        # Derselbe Eltern-SELECT in beiden – inklusive derselben Parameter.
+        eltern = update_sql[update_sql.index("WITH ranked"):].rstrip(")")
+        assert eltern in count_sql
+        assert count_params == update_params
+
+    def test_version_bump_nur_wo_es_die_spalte_gibt(self):
+        ticket = _entity("ticket")
+        kommentar = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_kommentare")
+        anhang = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_anhaenge")
+        assert "version = version + 1" in build_nachzug_sql(ticket, kommentar, self.GATE)[0]
+        assert "version = version + 1" not in build_nachzug_sql(ticket, anhang, self.GATE)[0]
+
+    def test_batch_marke_wird_vom_eltern_datensatz_uebernommen(self):
+        """Ohne `loesch_ref` fände `ticket_repository.restore` das Kind nie wieder."""
+        ticket = _entity("ticket")
+        kommentar = next(c for c in nachzug_kinder(ticket) if c.table == "ticket_kommentare")
+        sql, _ = build_nachzug_sql(ticket, kommentar, self.GATE)
+        assert ("loesch_ref = (SELECT p.loesch_ref FROM tickets p "
+                "WHERE p.id = ticket_kommentare.ticket_id)") in sql
+
+    def test_keine_batch_marke_wo_es_keine_gibt(self):
+        """`mitglied` führt keine `loesch_ref` – ein UPDATE darauf liefe auf einer
+        nicht existenten Spalte auf."""
+        entity = _entity("mitglied")
+        child = next(c for c in nachzug_kinder(entity) if c.table == "mitglied_kontakt")
+        assert "loesch_ref" not in build_nachzug_sql(entity, child, self.GATE)[0]
+
+    def test_ul_stunden_werden_nachgezogen(self):
+        """Der größte Posten der Konsistenzprüfung: 101 Stunden hielten jede Abrechnung
+        – und über sie jeden abrechnenden Übungsleiter – dauerhaft im Papierkorb."""
+        assert [(c.table, c.fk) for c in nachzug_kinder(_entity("ul_abrechnung"))] \
+            == [("ul_stunde", "abrechnung_id")]
+

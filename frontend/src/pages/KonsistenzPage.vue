@@ -24,15 +24,26 @@
     </q-banner>
 
     <div v-if="report" class="q-mb-md">
+      <!-- Maßstab ist `summe_offen`, nicht die Gesamtzahl: Ein Teil der hängenden
+           Verweise ist gewollt (Urheber-Angaben) oder vorübergehend (der Prune zieht
+           sie nach). Stünden sie gleichrangig daneben, wäre der Bericht dauerhaft rot
+           und der eine echte Fund ginge darin unter. -->
       <q-banner v-if="report.alles_konsistent" dense rounded class="bg-green-1 text-green-10">
         <template #avatar><q-icon name="check_circle" color="green-10" /></template>
-        Alles konsistent – {{ report.geprueft }} Beziehungen geprüft, keine hängenden
-        Verweise gefunden.
+        Keine offenen Befunde – {{ report.geprueft }} Beziehungen geprüft.
+        <span v-if="report.summe_verletzungen">
+          {{ report.summe_verletzungen }} hängende Verweise sind eingeordnet und
+          erwartet (siehe Tabelle).
+        </span>
       </q-banner>
       <q-banner v-else dense rounded class="vtb-warnung">
         <template #avatar><q-icon name="warning" /></template>
-        <b>{{ report.summe_verletzungen }}</b> hängende Verweise in
-        <b>{{ report.befunde.length }}</b> von {{ report.geprueft }} geprüften Beziehungen.
+        <b>{{ report.summe_offen }}</b> offene hängende Verweise in
+        <b>{{ offeneBefunde.length }}</b> von {{ report.geprueft }} geprüften Beziehungen.
+        <span v-if="report.summe_verletzungen > report.summe_offen">
+          Weitere {{ report.summe_verletzungen - report.summe_offen }} sind eingeordnet
+          und erwartet.
+        </span>
       </q-banner>
 
       <q-banner
@@ -54,7 +65,7 @@
     </div>
 
     <q-table
-      v-if="report && !report.alles_konsistent"
+      v-if="report && report.befunde.length"
       flat bordered
       :rows="report.befunde"
       :columns="columns"
@@ -73,7 +84,27 @@
 
       <template #body-cell-verletzungen="props">
         <q-td :props="props">
-          <q-chip dense color="negative" text-color="white" :label="props.row.verletzungen" />
+          <q-chip
+            dense text-color="white" :label="props.row.verletzungen"
+            :color="props.row.kategorie === 'offen' ? 'negative' : 'grey-6'"
+          />
+        </q-td>
+      </template>
+
+      <template #body-cell-einordnung="props">
+        <q-td :props="props">
+          <q-chip
+            v-if="props.row.kategorie === 'offen'"
+            dense outline color="negative" icon="error_outline" label="offen"
+          />
+          <q-chip
+            v-else dense outline
+            :color="props.row.kategorie === 'gewollt' ? 'grey-7' : 'primary'"
+            :icon="props.row.kategorie === 'gewollt' ? 'check' : 'schedule'"
+            :label="props.row.kategorie === 'gewollt' ? 'gewollt' : 'Nachzug'"
+          >
+            <q-tooltip>{{ props.row.begruendung }}</q-tooltip>
+          </q-chip>
         </q-td>
       </template>
 
@@ -142,8 +173,14 @@ const verwaisteRechte = computed(() => {
 const columns = [
   { name: 'beziehung', label: 'Beziehung (Kind → Parent)', field: 'child_table', align: 'left' },
   { name: 'verletzungen', label: 'Hängende Verweise', field: 'verletzungen', align: 'right' },
+  { name: 'einordnung', label: 'Einordnung', field: 'kategorie', align: 'left' },
   { name: 'beispiele', label: 'Beispiel-Parent-IDs', field: 'beispiel_parent_ids', align: 'left' },
 ]
+
+// Nur die offenen sind ein Befund im eigentlichen Sinn – die Kopfzeile zählt sie.
+const offeneBefunde = computed(
+  () => report.value?.befunde?.filter((b) => b.kategorie === 'offen') ?? [],
+)
 
 async function reload() {
   loading.value = true

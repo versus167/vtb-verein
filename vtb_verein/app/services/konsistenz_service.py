@@ -22,10 +22,69 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 
 
 # Wie viele Beispiel-Parent-IDs je Befund zurückgegeben werden (Einstieg für die Recherche).
 DEFAULT_SAMPLE_LIMIT = 10
+
+# --- Einordnung der Befunde --------------------------------------------------------
+# Ohne sie ist der Bericht dauerhaft rot und damit wertlos: Ein Teil der hängenden
+# Verweise ist gewollt und verschwindet nie, ein weiterer löst sich von selbst auf.
+# Zwischen zwei Dutzend erwarteten Zeilen fällt die eine neue nicht mehr auf.
+KAT_OFFEN = 'offen'              # echter Befund – hier fehlt eine Kaskade
+KAT_GEWOLLT = 'gewollt'          # bewusst so, löst sich nie auf
+KAT_NACHZUG = 'nachzug'          # vorübergehend, der Prune räumt es weg
+
+# Handpflege NUR für Beziehungen, die das PRUNE_REGISTRY gar nicht kennt (siehe
+# `kategorie`). Normalerweise leer: Steht ein Paar im Registry, ist es dort schon
+# eingeordnet, und eine zweite Liste hier liefe unweigerlich davon weg. Wer hier etwas
+# einträgt, nimmt es dauerhaft aus der Aufmerksamkeit – deshalb mit Begründung.
+GEWOLLTE_VERWEISE: dict[tuple[str, str], str] = {}
+
+
+@lru_cache(maxsize=1)
+def _registry_verweise() -> dict:
+    """(Kind-Tabelle, Kind-Spalte) -> (Eltern-Tabelle, wird nachgezogen?).
+
+    Das PRUNE_REGISTRY hat die Einordnung längst getroffen, mitsamt Begründung im
+    Kommentar: Ein ChildRef MIT ``nachziehen`` sagt „das Kind gehört dem
+    Eltern-Datensatz", einer OHNE sagt „es erwähnt ihn nur und muss ihn überleben".
+    Genau diese beiden Aussagen braucht der Bericht — sie hier noch einmal zu pflegen,
+    hieße dieselbe Entscheidung an zwei Orten zu treffen.
+
+    Der Registry-Inhalt steht zur Importzeit fest, deshalb einmal berechnet.
+    """
+    from app.services.prune_service import PRUNE_REGISTRY
+    verweise: dict = {}
+    for e in PRUNE_REGISTRY:
+        for c in e.children:
+            eltern, bisher = verweise.get((c.table, c.fk), (e.table, False))
+            # Ein einziges `nachziehen` genügt: Dann räumt der Prune die Zeile weg.
+            verweise[(c.table, c.fk)] = (eltern, bisher or c.nachziehen)
+    return verweise
+
+
+def kategorie(child_table: str, child_column: str) -> tuple[str, str]:
+    """(Kategorie, Begründung) für eine Beziehung.
+
+    „offen" heißt damit wörtlich: Diese Beziehung kennt das PRUNE_REGISTRY nicht. Jemand
+    hat eine Tabelle oder Spalte angelegt und nicht entschieden, ob das Kind seinem
+    Eltern-Datensatz gehört. Das ist die einzige Kategorie, die jemanden erfordert.
+    """
+    grund = GEWOLLTE_VERWEISE.get((child_table, child_column))
+    if grund:
+        return KAT_GEWOLLT, grund
+    eintrag = _registry_verweise().get((child_table, child_column))
+    if eintrag is None:
+        return KAT_OFFEN, ""
+    eltern, nachziehen = eintrag
+    if nachziehen:
+        return KAT_NACHZUG, ('Wird vom Prune nachgezogen, sobald der gelöschte '
+                             f'{eltern}-Datensatz nur noch daran hängt.')
+    return KAT_GEWOLLT, (f'Das PRUNE_REGISTRY führt die Beziehung unter „{eltern}" '
+                         'ohne Nachzug: Das Kind erwähnt den Eltern-Datensatz nur und '
+                         'überlebt ihn bewusst.')
 
 
 @dataclass(frozen=True)
@@ -169,6 +228,7 @@ class KonsistenzService:
         fks = self._soft_delete_foreign_keys()
         befunde: list[dict] = []
         summe = 0
+        summe_offen = 0
 
         for fk in fks:
             cnt_sql, cnt_params = build_verletzung_count_sql(fk)
@@ -180,7 +240,10 @@ class KonsistenzService:
             s_sql, s_params = build_verletzung_sample_sql(fk, sample_limit)
             beispiele = [r["parent_id"] for r in self._fetchall(s_sql, s_params)]
 
+            kat, grund = kategorie(fk.child_table, fk.child_column)
             summe += anzahl
+            if kat == KAT_OFFEN:
+                summe_offen += anzahl
             befunde.append({
                 "constraint": fk.constraint,
                 "child_table": fk.child_table,
@@ -189,17 +252,22 @@ class KonsistenzService:
                 "parent_column": fk.parent_column,
                 "verletzungen": anzahl,
                 "beispiel_parent_ids": beispiele,
+                "kategorie": kat,
+                "begruendung": grund,
             })
 
-        # Auffälligste Befunde zuerst.
-        befunde.sort(key=lambda b: b["verletzungen"], reverse=True)
+        # Auffälligste Befunde zuerst – aber die offenen immer vor den eingeordneten,
+        # sonst versteckt sich der eine echte Fund hinter hundert erwarteten Zeilen.
+        befunde.sort(key=lambda b: (b["kategorie"] != KAT_OFFEN, -b["verletzungen"]))
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "geprueft": len(fks),
             "befunde": befunde,
             "summe_verletzungen": summe,
-            "alles_konsistent": summe == 0,
+            # Die Zahl, auf die es ankommt: alles, was NICHT eingeordnet ist.
+            "summe_offen": summe_offen,
+            "alles_konsistent": summe_offen == 0,
         }
 
     # --- Gezielte, einmalige Altlast-Reparaturen ----------------------------------
