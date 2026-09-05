@@ -175,3 +175,34 @@ def test_last_seen_kommt_als_string_neben_last_login(db):
     assert isinstance(zeile['last_seen'], str)
     # Nie angemeldet, aber schon aktiv gewesen: die beiden Felder sind unabhängig.
     assert zeile['last_login'] is None
+
+
+def test_deaktiviertes_konto_faellt_aus_der_liste(db):
+    """Abgeschaltete Zugänge gehören nicht auf die Freischalt-Seite: freischalten
+    geht bei ihnen nicht (das Konto existiert), und ihr Schalter sitzt in der
+    Personenverwaltung. Der Papierkorb ist davon ausgenommen – dort erklärt die
+    Zeile, warum hier nichts mehr geht."""
+    dienst = UserService(db)
+    u = dienst.create(
+        username=_PRAEFIX + 'abgeschaltet', email=f'{_PRAEFIX}abgeschaltet@example.org',
+        role='mitglied', active=True, created_by='tester', password='geheim123',
+        send_magic_link=False)
+    m = db.create_mitglied(
+        Mitglied(vorname='Erika', nachname=_PRAEFIX + 'abgeschaltet', art='mitglied',
+                 eintrittsdatum='2020-01-01', zahlungsart='ueberweisung', user_id=u.id),
+        created_by='tester')
+    assert _zeile(db, m.id)['user_id'] == u.id
+
+    frisch = db.get_user_by_id(u.id)
+    dienst.update(user_id=u.id, username=frisch.username, email=frisch.email,
+                  role=frisch.role, active=False, updated_by='tester',
+                  expected_version=frisch.version)
+    zeilen = personen_api.list_freischaltung(_Freischalter(), db)
+    assert all(z['mitglied_id'] != m.id for z in zeilen)
+
+    # Im Papierkorb ist die Zeile wieder da – sonst verschwände die Person
+    # spurlos, obwohl ihr Konto nur wiederhergestellt werden müsste.
+    with db.conn.cursor() as cur:
+        cur.execute("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s", (u.id,))
+    db.conn.commit()
+    assert _zeile(db, m.id)['zugang_geloescht'] is True
