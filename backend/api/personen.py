@@ -625,7 +625,9 @@ def list_freischaltung(user: CurrentUser, db: DB):
     (#183: der Rollout läuft kaderweise), hinterlegte Mailadressen und der
     Zustand des Kontos samt Login-/Aktivitätszeitpunkt.
 
-    Ausgetretene sind draußen (Ist-Stand heute, vgl. Statistik-Semantik).
+    Ausgetretene sind draußen (Ist-Stand heute, vgl. Statistik-Semantik), ebenso
+    deaktivierte Konten: Für die ist hier nichts mehr zu tun, ihr Schalter sitzt
+    in der Personenverwaltung.
     """
     _require_freischalten(user)
     erlaubt = _freischalt_scope(user, db)
@@ -679,6 +681,12 @@ def list_freischaltung(user: CurrentUser, db: DB):
              WHERE m.deleted_at IS NULL
                AND (safe_to_date(m.austrittsdatum) IS NULL
                     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)
+               -- Abgeschaltete Zugänge gehören nicht auf diese Seite: Freischalten
+               -- geht bei ihnen nicht (das Konto existiert ja), und wieder
+               -- eingeschaltet werden sie in der Personenverwaltung. Konten im
+               -- Papierkorb bleiben dagegen stehen – dort erklärt die Zeile, warum
+               -- hier nichts mehr geht.
+               AND (u.id IS NULL OR u.active = 1 OR u.deleted_at IS NOT NULL)
              ORDER BY m.nachname, m.vorname
             """
         )

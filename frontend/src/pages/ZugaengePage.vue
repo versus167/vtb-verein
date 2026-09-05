@@ -46,6 +46,17 @@
       </div>
     </div>
 
+    <!-- „Mit Zugang" beantwortet beim Rollout vor allem die Frage, wer den Login
+         gar nicht benutzt. Deshalb dort nach letzter Aktivität aufsteigend statt
+         alphabetisch – wer nie da war, steht damit automatisch ganz oben. -->
+    <div v-if="filter === 'mit'" class="text-caption text-grey q-mb-sm">
+      Sortiert nach letzter Aktivität, älteste zuerst.
+      <template v-if="nieAngemeldet">
+        {{ nieAngemeldet }} von {{ mitZugang }} waren noch nie angemeldet – sie stehen oben.
+      </template>
+      <template v-else>Alle haben sich mindestens einmal angemeldet.</template>
+    </div>
+
     <q-list bordered separator>
       <q-item v-for="z in sichtbar" :key="z.mitglied_id" clickable @click="oeffne(z)">
         <q-item-section avatar>
@@ -311,15 +322,28 @@ const mitZugang = computed(
   () => imBlick.value.filter((z) => z.user_id && !z.zugang_geloescht).length,
 )
 
+// Die zweite Zahl, die beim Rollout zählt: Wie viele der verteilten Zugänge hat
+// nie jemand benutzt? Bezugsgröße wie oben – gewählter Kader oder ganzer Verein.
+const nieAngemeldet = computed(
+  () => imBlick.value.filter((z) => z.user_id && !z.zugang_geloescht && !z.last_login).length,
+)
+
 function imKader(z) {
   return (z.mannschaften || []).some((m) => m.id === mannschaftFilter.value)
 }
 
 const kaderText = (z) => (z.mannschaften || []).map((m) => m.name).join(', ')
 
+// Letzte Aktivität als Sortierschlüssel: last_seen ist der letzte Request; für
+// Konten aus der Zeit vor diesem Feld ersatzweise der letzte Login. Wer den Zugang
+// nie benutzt hat, bekommt 0 und steht damit vor allen anderen.
+function aktivitaet(z) {
+  return Date.parse(z.last_seen || z.last_login || '') || 0
+}
+
 const gefiltert = computed(() => {
   const q = (suche.value || '').trim().toLowerCase()
-  return imBlick.value.filter((z) => {
+  const treffer = imBlick.value.filter((z) => {
     const hatZugang = !!z.user_id && !z.zugang_geloescht
     if (filter.value === 'ohne' && hatZugang) return false
     if (filter.value === 'mit' && !hatZugang) return false
@@ -327,6 +351,11 @@ const gefiltert = computed(() => {
     return `${z.vorname} ${z.nachname}`.toLowerCase().includes(q)
       || `${z.nachname} ${z.vorname}`.toLowerCase().includes(q)
   })
+  // Nur „Mit Zugang" wird umsortiert – beim Freischalten (Ansicht „Ohne Zugang")
+  // sucht man Namen, da bleibt die alphabetische Reihenfolge vom Backend richtig.
+  if (filter.value !== 'mit') return treffer
+  return treffer.slice().sort((a, b) => aktivitaet(a) - aktivitaet(b)
+    || `${a.nachname} ${a.vorname}`.localeCompare(`${b.nachname} ${b.vorname}`, 'de'))
 })
 
 const sichtbar = computed(() => gefiltert.value.slice(0, MAX_TREFFER))
@@ -467,7 +496,8 @@ function deaktivieren() {
   $q.dialog({
     title: 'Zugang deaktivieren',
     message: `Zugang von ${name} abschalten? Die Anmeldung ist danach nicht mehr `
-      + 'möglich. Gelöscht wird nichts – das Konto lässt sich später wieder aktivieren.',
+      + 'möglich. Gelöscht wird nichts, aber das Konto verschwindet aus dieser Liste – '
+      + 'wieder einschalten lässt es sich in der Personenverwaltung.',
     cancel: true,
     ok: { label: 'Deaktivieren', color: 'negative' },
   }).onOk(async () => {
