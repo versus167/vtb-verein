@@ -908,9 +908,7 @@ function spaltenFuerFilter() {
     )
   }
   cols.push({ name: 'status', label: 'Status', align: 'center', sortable: true,
-    field: r => (r.mitglied
-      ? (r.mitglied.art === 'gastspieler' ? 'gastspieler' : 'mitglied')
-      : (r.active ? 'aktiv' : 'inaktiv')) })
+    field: statusRang })
   if (istBenutzer) {
     cols.push({ name: 'last_seen', label: 'Zuletzt aktiv', field: 'last_seen', align: 'left', sortable: true })
   }
@@ -1048,6 +1046,19 @@ const zahlungsartOptionen = [
 // geführt; ein Chip kann ihnen zugeordnet werden, anmelden kann sich niemand.
 function ohneZugang(p) {
   return !!p.user_id && !p.email && !p.hat_passwort
+}
+
+// Sortierschlüssel der Status-Spalte. Die Zelle zeigt zwei Dinge: das Zeichen zum
+// Login-Zustand und daneben ggf. den Gastspieler-Chip – also wird auch danach
+// sortiert, erst Login-Zustand, innerhalb davon Gastspieler ans Ende. Damit stehen
+// gleich aussehende Zeilen beieinander, und genau das war kaputt: Der Schlüssel
+// lieferte für jede Zeile mit Mitglied pauschal 'mitglied' und sah den Login gar
+// nicht an. In der Ansicht „Nur Benutzer" (Mitglieder mit Konto) hatten damit fast
+// alle Zeilen denselben Wert – ein Klick auf „Status" sortierte sichtbar nichts.
+function statusRang(p) {
+  // 0 aktiv · 1 inaktiv · 2 Konto ohne Anmeldeweg · 3 Mitglied ohne Konto
+  const login = ohneZugang(p) ? 2 : (p.user_id ? (p.active ? 0 : 1) : 3)
+  return login * 10 + (p.mitglied?.art === 'gastspieler' ? 1 : 0)
 }
 
 function rolleLabel(role) {
