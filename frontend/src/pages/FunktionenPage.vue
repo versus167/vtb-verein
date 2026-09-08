@@ -1,7 +1,7 @@
 <template>
   <q-page padding>
     <div class="row items-center q-mb-md">
-      <q-btn flat round dense icon="arrow_back" :to="{ name: 'einstellungen' }" class="q-mr-sm" />
+      <q-btn flat round dense icon="arrow_back" class="q-mr-sm" @click="zurueck" />
       <div class="text-h5">Funktionen</div>
     </div>
 
@@ -100,6 +100,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { useZurueck } from 'src/composables/useZurueck'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import PermissionMatrix from 'src/components/PermissionMatrix.vue'
@@ -107,6 +108,7 @@ import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 defineOptions({ name: 'FunktionenPage' })
 
 const $q = useQuasar()
+const zurueck = useZurueck({ name: 'einstellungen' })
 
 const funktionen = ref([])
 const loading = ref(false)

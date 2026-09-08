@@ -2,7 +2,7 @@
   <q-page padding>
     <!-- Header -->
     <div class="row items-center q-mb-sm">
-      <q-btn flat round :dense="$q.screen.gt.sm" icon="arrow_back" :to="{ name: 'kassenbuch' }" class="q-mr-sm" />
+      <q-btn flat round :dense="$q.screen.gt.sm" icon="arrow_back" class="q-mr-sm" @click="zurueck" />
       <div class="col">
         <div class="text-h5">{{ kasse?.name ?? 'Kassenbuch' }}</div>
         <div v-if="kasse?.beschreibung" class="text-caption text-grey">{{ kasse.beschreibung }}</div>
@@ -701,10 +701,12 @@ import { useAuthStore } from 'src/stores/auth'
 import AnhangPanel from 'src/components/AnhangPanel.vue'
 import { formatDate, formatDateTime } from 'src/utils/datetime'
 import { aktivesTheme } from 'src/composables/useTheme'
+import { useZurueck } from 'src/composables/useZurueck'
 
 const route = useRoute()
 const $q = useQuasar()
 const auth = useAuthStore()
+const zurueck = useZurueck({ name: 'kassenbuch' })
 
 const kasseId = computed(() => Number(route.params.kasseId))
 // Globaler Kassen-Admin (kassen.verwalten) umgeht die per-Kasse-ACL – wie im Backend.
