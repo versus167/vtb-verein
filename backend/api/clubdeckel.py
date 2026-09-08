@@ -199,6 +199,47 @@ def _require_aktiv(deckel) -> None:
                             "Teamkasse ist deaktiviert — Buchen nicht möglich")
 
 
+def _spitznamen(db: DB, deckel) -> dict[int, str]:
+    """mitglied_id → Spitzname, wie diese Mannschaft ihre Leute nennt (#194).
+
+    Eine Abfrage je Request statt eines Namens-Ausdrucks in jeder der gut
+    zwanzig SQL-Abfragen dieser Domäne: Der Spitzname hängt am Kader
+    (mitglied_mannschaft), und ein Mitglied kann darin mehrere Zeilen haben
+    (Spieler UND Betreuer) — ein JOIN würde die Ergebniszeilen vervielfachen.
+    So bleibt die Regel an einer Stelle.
+    """
+    return db.mannschaft_spitznamen(deckel.mannschaft_id)
+
+
+def _mit_spitznamen(zeilen: list[dict], spitznamen: dict[int, str],
+                    id_feld: str = 'mitglied_id',
+                    name_feld: str = 'mitglied_name',
+                    voll_feld: Optional[str] = None) -> list[dict]:
+    """Anzeigenamen durch den Spitznamen ersetzen, wo es einen gibt.
+
+    Mit `voll_feld` wandert der bürgerliche Name zusätzlich dorthin — aber nur,
+    wenn er verdrängt wurde; sonst bleibt das Feld leer. Wo Platz ist, kann die
+    Oberfläche dann beides zeigen („Basti", darunter klein „Sebastian Schmidt"),
+    und wo keiner ist, nimmt sie einfach `name_feld`. Ob der Platz reicht, ist
+    eine Frage des Layouts und wird deshalb dort entschieden, nicht hier.
+
+    Ein zweiter Grund für `voll_feld`: Die Mitgliedersuche am Tresen filtert über
+    den angezeigten Namen. Ohne den vollen Namen daneben fände „Schmidt"
+    niemanden mehr, sobald das Team Spitznamen vergibt.
+
+    Die eingefrorenen Snapshots der Buchungen (`gegen_name`, `artikel_name`)
+    bleiben bewusst außen vor — sie halten fest, was zum Buchungszeitpunkt galt,
+    und ein Spitzname ist genau das, was sich ändert.
+    """
+    for zeile in zeilen:
+        spitzname = spitznamen.get(zeile.get(id_feld))
+        if voll_feld is not None:
+            zeile[voll_feld] = zeile.get(name_feld) if spitzname else None
+        if spitzname:
+            zeile[name_feld] = spitzname
+    return zeilen
+
+
 def _require_admin(user) -> None:
     """Löschen und Wiederherstellen einer Teamkasse sind app-weit admin-only (#125)."""
     if user.role != 'admin':
@@ -341,7 +382,9 @@ def get_deckel(deckel_id: int, user: CurrentUser, db: DB):
     for a in artikel:
         a['mein_termin_anzahl'] = stats['anzahl'].get(a['id'], 0)
     return {
-        **asdict(deckel),
+        **_mit_spitznamen([asdict(deckel)], _spitznamen(db, deckel),
+                          id_feld='zahlungsempfaenger_mitglied_id',
+                          name_feld='zahlungsempfaenger_name')[0],
         "zugriff": stufe,
         "mein_mitglied_id": mein_mitglied_id,
         "mein_saldo": mein_saldo,
@@ -412,7 +455,8 @@ def list_gruppen(deckel_id: int, user: CurrentUser, db: DB,
     """Die gültigen Gruppen-Stände (#167, v100) — je Gruppe genau einer, nicht
     alle Generationen. Ohne `termin_id` der heute gültige Stand. `gilt_ab_label`
     macht im Katalog sichtbar, seit wann er greift."""
-    _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    spitznamen = _spitznamen(db, deckel)
     gruppen = db.clubdeckel_gruppen.list_stand(deckel_id, termin_id)
     # Welche Spieltage haben schon einen eigenen Stand? Der Katalog markiert sie
     # im Zeitraum-Umschalter, damit sichtbar ist, wo etwas hinterlegt ist.
@@ -420,6 +464,8 @@ def list_gruppen(deckel_id: int, user: CurrentUser, db: DB,
     ergebnis = []
     for g in gruppen:
         d = asdict(g)
+        d['verkaeufer_name'] = (spitznamen.get(g.verkaeufer_mitglied_id)
+                                or d['verkaeufer_name'])
         d['gilt_ab_label'] = (
             'von Anfang an' if g.gilt_ab_termin_id is None
             else _termin_label(db.termine.get(g.gilt_ab_termin_id)))
@@ -544,6 +590,12 @@ def _sortiment(db: DB, deckel_id: int, termin_id: Optional[int] = None,
     nach dem Spiel der Wart für die Beteiligten ein; in der Selbstbedienung
     stünden sie nur im Weg. Sie bleiben Teil des Sortiments — Matrix, Katalog
     und die Gültigkeitsprüfung beim Buchen sehen sie weiterhin.
+
+    Der Verkäufer trägt hier den Spitznamen, wenn die Mannschaft einen vergeben
+    hat (#194): Über die Tresen-Kachel steht „verkauft …", und das ist genau der
+    teaminterne Blick, für den der Spitzname gedacht ist. Weil diese Funktion die
+    einzige Quelle für Tresen, Katalog, Matrix und Buchung ist, greift die Regel
+    damit an einer Stelle für alle vier.
     """
     gruppen = db.clubdeckel_gruppen.list_stand(deckel_id, termin_id)
     if nur_aktive:
@@ -552,6 +604,15 @@ def _sortiment(db: DB, deckel_id: int, termin_id: Optional[int] = None,
         [g.id for g in gruppen], nur_aktive=nur_aktive)
     if nur_tresen:
         artikel = [a for a in artikel if not a['nur_wart']]
+    deckel = db.clubdeckel.get(deckel_id)
+    if deckel is not None:
+        spitznamen = _spitznamen(db, deckel)
+        for g in gruppen:
+            spitzname = spitznamen.get(g.verkaeufer_mitglied_id)
+            if spitzname:
+                g.verkaeufer_name = spitzname
+        _mit_spitznamen(artikel, spitznamen,
+                        id_feld='verkaeufer_mitglied_id', name_feld='verkaeufer_name')
     return gruppen, artikel
 
 
@@ -616,7 +677,9 @@ def _matrix_kader(db: DB, deckel, termin_id: Optional[int]) -> list[dict]:
     """
     if termin_id is None:
         return _kader_liste(db, deckel)
-    return db.termin_zusagen.list_kader_with_zusage(termin_id)
+    return _mit_spitznamen(db.termin_zusagen.list_kader_with_zusage(termin_id),
+                           _spitznamen(db, deckel), name_feld='name',
+                           voll_feld='voller_name')
 
 
 def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
@@ -751,23 +814,28 @@ def delete_artikel(deckel_id: int, artikel_id: int, user: CurrentUser, db: DB):
 @router.get("/{deckel_id}/warte")
 def list_warte(deckel_id: int, user: CurrentUser, db: DB):
     """Wart-Liste — teamintern transparent (jedes Kader-Mitglied sieht sie)."""
-    _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
-    return db.clubdeckel_berechtigungen.list_for_deckel(deckel_id)
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
+    return _mit_spitznamen(db.clubdeckel_berechtigungen.list_for_deckel(deckel_id),
+                           _spitznamen(db, deckel), voll_feld='mitglied_voller_name')
 
 
 def _kader_liste(db: DB, deckel, warte: Optional[set] = None) -> list[dict]:
     """Aktiver Kader der Mannschaft als Namensliste — gemeinsame Grundlage der
     Kandidaten-Auswahl und der Matrix-Zeilen (#167)."""
     heute = date.today().isoformat()
+    spitznamen = _spitznamen(db, deckel)
     kandidaten: dict[int, dict] = {}
     for zuordnung in db.list_mannschaft_kader(deckel.mannschaft_id):
         # list_mannschaft_kader liefert auch abgelaufene Zuordnungen — hier nur
         # der am Stichtag aktive Kader (von/bis-Fenster wie in der Kader-CTE).
         if zuordnung.von > heute or (zuordnung.bis and zuordnung.bis < heute):
             continue
+        voll = f"{zuordnung.mitglied_vorname} {zuordnung.mitglied_nachname}"
+        spitzname = spitznamen.get(zuordnung.mitglied_id)
         eintrag = kandidaten.setdefault(zuordnung.mitglied_id, {
             "mitglied_id": zuordnung.mitglied_id,
-            "name": f"{zuordnung.mitglied_vorname} {zuordnung.mitglied_nachname}",
+            "name": spitzname or voll,
+            "voller_name": voll if spitzname else None,
             "rollen": [],
             "ist_wart": zuordnung.mitglied_id in (warte or set()),
         })
@@ -807,8 +875,9 @@ def revoke_wart(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
 # ---------------------------------------------------------- Beitragsbefreiungen
 @router.get("/{deckel_id}/befreiungen")
 def list_befreiungen(deckel_id: int, user: CurrentUser, db: DB):
-    _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
-    return db.clubdeckel_befreiungen.list_for_deckel(deckel_id)
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
+    return _mit_spitznamen(db.clubdeckel_befreiungen.list_for_deckel(deckel_id),
+                           _spitznamen(db, deckel), voll_feld='mitglied_voller_name')
 
 
 @router.put("/{deckel_id}/befreiungen/{mitglied_id}")
@@ -857,8 +926,10 @@ def list_events(deckel_id: int, user: CurrentUser, db: DB):
     """Sammlungen des Deckels samt Buchungsstand — Wart-Sache wie das übrige
     Verwalten; das einzelne Mitglied sieht seine Belastung in der eigenen
     History."""
-    _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    return [asdict(e) for e in db.clubdeckel_events.list_for_deckel(deckel_id)]
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    return _mit_spitznamen([asdict(e) for e in db.clubdeckel_events.list_for_deckel(deckel_id)],
+                           _spitznamen(db, deckel),
+                           id_feld='fuer_mitglied_id', name_feld='fuer_name')
 
 
 @router.post("/{deckel_id}/events", status_code=status.HTTP_201_CREATED)
@@ -939,8 +1010,9 @@ def storno_event(deckel_id: int, event_id: int, user: CurrentUser, db: DB):
 def list_event_opt_outs(deckel_id: int, user: CurrentUser, db: DB):
     """Wer macht generell bei Sammlungen nicht mit? Gilt für alle Sammlungen
     dieses Deckels, nicht für eine einzelne."""
-    _deckel_mit_stufe(db, user, deckel_id, 'wart')
-    return db.clubdeckel_events.list_opt_outs(deckel_id)
+    deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
+    return _mit_spitznamen(db.clubdeckel_events.list_opt_outs(deckel_id),
+                           _spitznamen(db, deckel), voll_feld='mitglied_voller_name')
 
 
 @router.put("/{deckel_id}/event-opt-out/{mitglied_id}")
@@ -1082,7 +1154,8 @@ def list_buchungen(deckel_id: int, user: CurrentUser, db: DB,
             return []
         buchungen = db.clubdeckel_buchungen.list_for_deckel(
             deckel_id, mitglied_id=mitglied_id, limit=limit, **zeitraum)
-    return [asdict(b) for b in buchungen]
+    return _mit_spitznamen([asdict(b) for b in buchungen], _spitznamen(db, deckel),
+                           voll_feld='mitglied_voller_name')
 
 
 # ------------------------------------------------------- Termine & Matrix (#167)
@@ -1145,6 +1218,7 @@ def get_matrix(deckel_id: int, user: CurrentUser, db: DB,
     for k in _matrix_kader(db, deckel, termin_id):
         eintrag = gebucht.pop(k['mitglied_id'], None)
         zeilen.append({"mitglied_id": k['mitglied_id'], "name": k['name'],
+                       "voller_name": k.get('voller_name'),
                        "im_kader": True, "antwort": k.get('antwort'),
                        "anzahl": eintrag['anzahl'] if eintrag else 0,
                        "betrag": eintrag['betrag'] if eintrag else Decimal("0.00")})
@@ -1152,10 +1226,13 @@ def get_matrix(deckel_id: int, user: CurrentUser, db: DB,
     # sieht auf einen Blick, wer von ihnen noch nichts gebucht hat. Abgesagte
     # rutschen ans Ende, offene dazwischen.
     zeilen.sort(key=lambda z: _ZUSAGE_RANG.get(z['antwort'], 1))
+    _mit_spitznamen(list(gebucht.values()), _spitznamen(db, deckel),
+                    voll_feld='mitglied_voller_name')
     for rest in sorted(gebucht.values(), key=lambda x: x['mitglied_name'].lower()):
         zeilen.append({"mitglied_id": rest['mitglied_id'],
-                       "name": rest['mitglied_name'], "im_kader": False,
-                       "antwort": None,
+                       "name": rest['mitglied_name'],
+                       "voller_name": rest.get('mitglied_voller_name'),
+                       "im_kader": False, "antwort": None,
                        "anzahl": rest['anzahl'], "betrag": rest['betrag']})
     # Spalten: das Sortiment des Ausschnitts (Preis, Bezeichnung und Verkäufer
     # also aus dem Stand dieses Spieltags) PLUS jeder Artikel, der im Ausschnitt
@@ -1188,7 +1265,9 @@ def list_salden(deckel_id: int, user: CurrentUser, db: DB):
     """Deckelstand je Mitglied plus Team-Saldo — teamintern transparent."""
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
     _beitragslauf(db, deckel)
-    salden = db.clubdeckel_buchungen.salden(deckel_id)
+    salden = _mit_spitznamen(db.clubdeckel_buchungen.salden(deckel_id),
+                             _spitznamen(db, deckel),
+                             voll_feld='mitglied_voller_name')
     return {
         "team_saldo": -sum((s['saldo'] for s in salden), Decimal("0.00")),
         "mitglieder": salden,

@@ -40,6 +40,11 @@ class KaderCreate(BaseModel):
     rolle: str = 'spieler'
     von: Optional[str] = None
     bis: Optional[str] = None
+    spitzname: Optional[str] = None
+
+
+class SpitznameUpdate(BaseModel):
+    spitzname: Optional[str] = None
 
 
 class KaderUpdate(BaseModel):
@@ -113,6 +118,25 @@ def _require_kader_write(user, db, mannschaft_id: int):
     ids = _kader_write_ids(user, db)
     if ids is not None and mannschaft_id not in ids:
         raise HTTPException(status_code=403, detail="Keine Berechtigung, diesen Kader zu bearbeiten")
+
+
+SPITZNAME_MAX = 40
+
+
+def _spitzname_or_422(spitzname: Optional[str]) -> Optional[str]:
+    """Spitzname prüfen — leer heißt „keiner", nicht „Fehler".
+
+    Die Länge ist begrenzt, weil der Spitzname in der Teamkasse an die Stelle des
+    Namens tritt: In den Tresen-Kacheln und der Saldenliste steht dafür eine
+    Zeile zur Verfügung, ein Roman darin würde die Fläche sprengen.
+    """
+    wert = (spitzname or '').strip()
+    if len(wert) > SPITZNAME_MAX:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Spitzname darf höchstens {SPITZNAME_MAX} Zeichen haben",
+        )
+    return wert or None
 
 
 def _alter_jahrgang(geburtsdatum):
@@ -253,7 +277,7 @@ def add_kader(mannschaft_id: int, data: KaderCreate, user: CurrentUser, db: DB):
     zuordnungsbeginn_or_400(db, data.mitglied_id, data.von)
     z = db.create_mitglied_mannschaft(
         data.mitglied_id, mannschaft_id, data.rolle, data.von, data.bis,
-        created_by=user.username,
+        created_by=user.username, spitzname=_spitzname_or_422(data.spitzname),
     )
     return asdict(z)
 
@@ -299,6 +323,36 @@ def update_kader(mannschaft_id: int, zuordnung_id: int, data: KaderUpdate,
     if not ok:
         raise HTTPException(status_code=409, detail="Versionskonflikt – bitte Seite neu laden")
     return asdict(db.get_mitglied_mannschaft(zuordnung_id))
+
+
+@router.put("/mannschaften/{mannschaft_id}/spitznamen/{mitglied_id}")
+def set_spitzname(mannschaft_id: int, mitglied_id: int, data: SpitznameUpdate,
+                  user: CurrentUser, db: DB):
+    """Spitznamen eines Kader-Mitglieds setzen oder löschen (#194).
+
+    Adressiert wird das Mitglied, nicht die Zuordnung: Wer Spieler UND Betreuer
+    ist, hat zwei Kader-Zeilen, soll aber einen Spitznamen haben — das
+    Repository schreibt ihn deshalb auf alle aktiven Zuordnungen.
+
+    Bewusst ohne `expected_version`: Ein Spitzname ist ein einzelnes Textfeld
+    ohne Bezug zu Rolle oder Zeitraum, und er hängt an mehreren Zeilen mit je
+    eigener Version. Wer als Letzter speichert, gewinnt.
+
+    Berechtigt sind dieselben, die den Kader pflegen — Betreuer und
+    Übungsleiter der Mannschaft. Ein Personen-Recht ist bewusst nicht nötig:
+    Der Spitzname ist ein Mannschaftsdatum, kein Stammdatum.
+    """
+    _require_kader_write(user, db, mannschaft_id)
+    if db.get_mannschaft(mannschaft_id) is None:
+        raise HTTPException(status_code=404, detail="Mannschaft nicht gefunden")
+    ok = db.set_mitglied_mannschaft_spitzname(
+        mannschaft_id, mitglied_id, _spitzname_or_422(data.spitzname),
+        updated_by=user.username,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Mitglied steht nicht im Kader dieser Mannschaft")
+    return {'mitglied_id': mitglied_id,
+            'spitzname': db.mannschaft_spitznamen(mannschaft_id).get(mitglied_id)}
 
 
 @router.delete("/mannschaften/{mannschaft_id}/mitglieder/{zuordnung_id}", status_code=status.HTTP_204_NO_CONTENT)

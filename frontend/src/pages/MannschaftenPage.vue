@@ -67,7 +67,10 @@
                 <template v-for="z in (kaderByTeam[m.id] ?? [])" :key="z.id">
                   <q-item>
                     <q-item-section>
-                      <q-item-label>{{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}</q-item-label>
+                      <q-item-label>
+                        {{ z.mitglied_nachname }}, {{ z.mitglied_vorname }}
+                        <span v-if="z.spitzname" class="text-grey-7">„{{ z.spitzname }}"</span>
+                      </q-item-label>
                       <q-item-label caption>
                         <q-chip dense size="xs" :color="rolleColor(z.rolle)" text-color="white">{{ rolleLabel(z.rolle) }}</q-chip>
                         <span class="q-ml-xs">{{ z.von }} – {{ z.bis ?? 'heute' }}</span>
@@ -85,6 +88,9 @@
                     class="q-px-md q-pb-sm q-gutter-sm">
                     <q-select v-model="kaderForm.rolle" :options="rolleOptionen" option-value="value" option-label="label"
                       emit-value map-options label="Rolle *" outlined dense />
+                    <q-input v-model="kaderForm.spitzname" label="Spitzname" outlined dense
+                      maxlength="40" counter clearable
+                      hint="Nur in dieser Mannschaft — Teamkasse, Kader und Zusagen zeigen ihn statt des Namens" />
                     <div class="row q-gutter-sm">
                       <q-input v-model="kaderForm.von" label="Von *" outlined dense type="date" class="col" />
                       <q-input v-model="kaderForm.bis" label="Bis" outlined dense type="date" class="col" />
@@ -357,7 +363,8 @@ const kaderFormTeamId = ref(null)
 const kaderSaving = ref(false)
 const editingKaderId = ref(null)
 const editingKaderVersion = ref(null)
-const kaderForm = ref({ mitglied_id: null, rolle: 'spieler', von: '', bis: '' })
+const editingKaderSpitzname = ref(null)   // Ausgangswert, um unnötige PUTs zu sparen
+const kaderForm = ref({ mitglied_id: null, rolle: 'spieler', von: '', bis: '', spitzname: '' })
 
 // Picker zum Sammel-Hinzufügen von Mitgliedern
 const pickerOpen = ref(false)
@@ -429,7 +436,11 @@ async function loadKader(team) {
 function openEditKader(team, z) {
   editingKaderId.value = z.id
   editingKaderVersion.value = z.version
-  kaderForm.value = { mitglied_id: z.mitglied_id, rolle: z.rolle, von: z.von ?? '', bis: z.bis ?? '' }
+  editingKaderSpitzname.value = z.spitzname ?? ''
+  kaderForm.value = {
+    mitglied_id: z.mitglied_id, rolle: z.rolle, von: z.von ?? '', bis: z.bis ?? '',
+    spitzname: z.spitzname ?? '',
+  }
   kaderFormTeamId.value = team.id
 }
 async function saveKader(team) {
@@ -446,6 +457,14 @@ async function saveKader(team) {
         rolle: kaderForm.value.rolle, von: kaderForm.value.von || null,
         bis: kaderForm.value.bis || null, expected_version: editingKaderVersion.value,
       })
+      // Eigener Endpunkt: Der Spitzname gehört dem Mitglied in dieser Mannschaft,
+      // nicht dieser einen Zuordnung — wer Spieler UND Betreuer ist, hat zwei
+      // Zeilen und einen Spitznamen. Nur schicken, wenn er sich geändert hat.
+      const spitzname = (kaderForm.value.spitzname ?? '').trim()
+      if (spitzname !== editingKaderSpitzname.value) {
+        await api.put(`/api/mannschaften/${team.id}/spitznamen/${kaderForm.value.mitglied_id}`,
+          { spitzname })
+      }
     } else {
       await api.post(`/api/mannschaften/${team.id}/mitglieder`, {
         mitglied_id: kaderForm.value.mitglied_id, rolle: kaderForm.value.rolle,

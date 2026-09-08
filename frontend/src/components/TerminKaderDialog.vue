@@ -84,7 +84,13 @@
                   <q-badge v-if="p.gast" color="vtb-gelb" text-color="primary"
                     class="q-ml-xs text-weight-bold">Gast</q-badge>
                 </q-item-label>
-                <q-item-label v-if="p.rollen" caption class="kader-dialog__rolle">{{ p.rollen }}</q-item-label>
+                <!-- Spitzname oben, bürgerlicher Name in der Zeile, die es
+                     ohnehin gibt (#194) — kostet keine zusätzliche Höhe. -->
+                <q-item-label v-if="p.voller_name || p.rollen" caption class="kader-dialog__rolle">
+                  <span v-if="p.voller_name">{{ p.voller_name }}</span>
+                  <span v-if="p.voller_name && p.rollen"> · </span>
+                  <span v-if="p.rollen">{{ p.rollen }}</span>
+                </q-item-label>
                 <q-item-label v-if="p.kommentar" caption class="kader-dialog__rolle text-italic">
                   „{{ p.kommentar }}"
                 </q-item-label>
