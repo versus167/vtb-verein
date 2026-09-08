@@ -293,7 +293,12 @@ const marke = (pfad) => `vtb_nachladen:${pfad}`
 
 export default route(function () {
   const router = createRouter({
-    scrollBehavior: () => ({ left: 0, top: 0 }),
+    // Die Zurück-Geste aus einem offenen Dialog heraus (boot/zurueck.js) landet
+    // als Navigation auf derselben Route hier. Dabei darf die Seite nicht nach
+    // oben springen — der Nutzer wollte nur den Dialog schließen, nicht die
+    // Liste dahinter verlieren.
+    scrollBehavior: (to, from) =>
+      to.fullPath === from.fullPath ? false : { left: 0, top: 0 },
     routes,
     history: createWebHistory(),
   })

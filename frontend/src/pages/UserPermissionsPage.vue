@@ -1,7 +1,7 @@
 <template>
   <q-page padding>
     <div class="row items-center q-mb-md">
-      <q-btn flat round icon="arrow_back" @click="router.push({ name: 'personen' })" />
+      <q-btn flat round icon="arrow_back" @click="zurueck" />
       <div class="text-h5 q-ml-sm">
         Berechtigungen: {{ userData?.username }}
       </div>
@@ -69,12 +69,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { useAuthStore } from 'src/stores/auth'
+import { useZurueck } from 'src/composables/useZurueck'
 import PermissionMatrix from 'src/components/PermissionMatrix.vue'
 
 const $q = useQuasar()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const zurueck = useZurueck({ name: 'personen' })
 
 const canEdit = computed(() => auth.hasPermission('personen.permissions'))
 
