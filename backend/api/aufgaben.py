@@ -12,6 +12,13 @@ Kachel öffnet, und der gehört in die Domäne.
 
 Neue Aufgabenart? Eine Zählfunktion in ihrer Domäne bereitstellen und unten in
 _QUELLEN eintragen; der Schlüssel ist der Routenname im Frontend.
+
+Eine Quelle darf statt einer Zahl auch eine Aufschlüsselung liefern. Nötig wird
+das, wenn hinter einem Nav-Punkt mehrere Aufgabenarten liegen — der Bereich
+Rechnungen hat Reiter, und Freigeben und Exportieren sind verschiedene Rollen
+(#195). Nav und Kachel zeigen weiterhin die Summe; die Aufschlüsselung kommt
+zusätzlich unter `detail` mit und setzt die Zahl im Bereich an den richtigen
+Reiter. Ohne sie stünde am Nav-Punkt eine Zahl, die man drinnen nicht wiederfindet.
 """
 from fastapi import APIRouter
 
@@ -23,7 +30,10 @@ router = APIRouter(prefix="/aufgaben", tags=["aufgaben"])
 
 # (Schlüssel = Routenname im Frontend, Zählfunktion)
 _QUELLEN = (
-    ("rechnungen", lambda user, db: db.rechnungen.anzahl_zur_freigabe(user)),
+    ("rechnungen", lambda user, db: {
+        "freigabe": db.rechnungen.anzahl_zur_freigabe(user),
+        "export": db.rechnungen.anzahl_export_bereit(user),
+    }),
     ("uebungsleiter", anzahl_zu_bestaetigen),
     ("tickets", lambda user, db: db.tickets.anzahl_zustaendig(user)),
     # Termine der nächsten zwei Wochen ohne eigene Meldung (#95-Nachgang). Anders
@@ -43,9 +53,17 @@ def offene_aufgaben(user: CurrentUser, db: DB):
     scheitert, darf den Rest nicht mitreißen: sie zählt dann als 0.
     """
     offen: dict[str, int] = {}
+    detail: dict[str, dict[str, int]] = {}
     for schluessel, zaehle in _QUELLEN:
         try:
-            offen[schluessel] = int(zaehle(user, db))
+            wert = zaehle(user, db)
         except Exception:      # ein Hinweis am Nav-Punkt ist kein Grund für einen 500er
             offen[schluessel] = 0
-    return {"gesamt": sum(offen.values()), "offen": offen}
+            continue
+        if isinstance(wert, dict):
+            teile = {name: int(anzahl) for name, anzahl in wert.items()}
+            detail[schluessel] = teile
+            offen[schluessel] = sum(teile.values())
+        else:
+            offen[schluessel] = int(wert)
+    return {"gesamt": sum(offen.values()), "offen": offen, "detail": detail}

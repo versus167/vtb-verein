@@ -53,11 +53,15 @@ class _AbrRepo:
 
 
 class _RechnungService:
-    def __init__(self, anzahl=0):
+    def __init__(self, anzahl=0, export=0):
         self.anzahl = anzahl
+        self.export = export
 
     def anzahl_zur_freigabe(self, user):
         return self.anzahl
+
+    def anzahl_export_bereit(self, user):
+        return self.export
 
 
 class _TicketService:
@@ -79,9 +83,9 @@ class _TerminRepo:
 
 
 class _DB:
-    def __init__(self, ul=0, rechnungen=0, tickets=0, termine=0):
+    def __init__(self, ul=0, rechnungen=0, tickets=0, termine=0, export=0):
         self.ul_abrechnungen = _AbrRepo(ul)
-        self.rechnungen = _RechnungService(rechnungen)
+        self.rechnungen = _RechnungService(rechnungen, export)
         self.tickets = _TicketService(tickets)
         self.termine = _TerminRepo(termine)
 
@@ -118,7 +122,28 @@ def test_offene_aufgaben_summiert_die_quellen():
     assert offene_aufgaben(user, db) == {
         "gesamt": 14,
         "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4, "termine": 5},
+        "detail": {"rechnungen": {"freigabe": 3, "export": 0}},
     }
+
+
+def test_rechnungen_zaehlen_freigabe_und_export_zusammen():
+    """Ein Nav-Punkt, zwei Aufgabenarten (#195): Die Nav zeigt die Summe …"""
+    db = _DB(rechnungen=3, export=2)
+    assert offene_aufgaben(_User(), db)["offen"]["rechnungen"] == 5
+
+
+def test_aufschluesselung_sagt_wo_die_zahl_herkommt():
+    """… und die Aufschlüsselung setzt sie drinnen an den richtigen Reiter."""
+    db = _DB(rechnungen=3, export=2)
+    assert offene_aufgaben(_User(), db)["detail"]["rechnungen"] == {
+        "freigabe": 3, "export": 2}
+
+
+def test_nur_export_offen_ergibt_trotzdem_einen_hinweis():
+    """Der Fall aus #195: nichts freizugeben, aber ein Export steht bereit."""
+    ergebnis = offene_aufgaben(_User(), _DB(export=2))
+    assert ergebnis["gesamt"] == 2
+    assert ergebnis["offen"]["rechnungen"] == 2
 
 
 def test_termine_werden_fuer_den_angemeldeten_benutzer_gezaehlt():
@@ -147,6 +172,9 @@ def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
     assert offene_aufgaben(user, db) == {
         "gesamt": 3,
         "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1, "termine": 0},
+        # Ohne Zahl auch keine Aufschlüsselung – die Oberfläche zeigt dann nichts,
+        # statt eine erfundene Null an einen Reiter zu hängen.
+        "detail": {},
     }
 
 

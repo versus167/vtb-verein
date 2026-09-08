@@ -315,6 +315,63 @@ def test_anzahl_zur_freigabe_zaehlt_wie_die_liste(db):
                 == len(db.rechnungen.list_zur_freigabe(user, "eingereicht")))
 
 
+def test_anzahl_export_bereit_zaehlt_das_export_delta(db):
+    """Ticket #195: Der Hinweis für den Export zählt genau das, was der nächste
+    Lauf mitnehmen würde — freigegeben und noch nicht gestempelt."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_e195", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    fb_leiter = _user(db, "rtester_fb195",
+                      abteilung_perms=(("rechnungen.freigeben", fussball),))
+    gs = _user(db, "rtester_gs195", perms=("rechnungen.verwalten",))
+
+    assert db.rechnungen.anzahl_export_bereit(gs) == 0
+
+    def eingereicht():
+        r = _rechnung(db, einreicher, fussball)
+        _beleg(db, r.id, einreicher)
+        return db.rechnungen.einreichen(r.id, einreicher)
+
+    erste, zweite = eingereicht(), eingereicht()
+    eingereicht()                                  # bleibt eingereicht
+    assert db.rechnungen.anzahl_export_bereit(gs) == 0   # nichts freigegeben
+
+    db.rechnungen.freigeben(erste.id, gs)
+    db.rechnungen.freigeben(zweite.id, gs)
+    assert db.rechnungen.anzahl_export_bereit(gs) == 2
+    # Und deckungsgleich mit dem, was die Export-Vorschau anbietet — die Zahl am
+    # Nav-Punkt soll zu der Liste passen, die sich dahinter öffnet.
+    assert db.rechnung_export.vorschau()["anzahl"] == 2
+
+    # Gestempelt = aus dem Delta raus. Gestempelt wird über das Repository statt
+    # über einen echten Lauf: Der bräuchte eine vollständige
+    # Fibu-Kontenkonfiguration und prüft etwas anderes.
+    db._rechnung_export_repo.create_export(
+        exportiert_von="gs", dateiname="test.zip", anzahl_rechnungen=1,
+        summe_cent=None, rechnung_ids=[erste.id])
+    assert db.rechnungen.anzahl_export_bereit(gs) == 1
+    assert db.rechnung_export.vorschau()["anzahl"] == 1
+
+
+def test_export_hinweis_nur_fuer_wer_exportieren_darf(db):
+    """Freigeben und Exportieren sind verschiedene Rollen: Wer nur freigibt,
+    sieht den Export-Hinweis nicht — er könnte ihn auch nicht erledigen."""
+    fussball = _abteilung(db, "R-Fussball")
+    einreicher = _user(db, "rtester_e195b", perms=("rechnungen.einreichen",),
+                       abteilungen=(fussball,))
+    fb_leiter = _user(db, "rtester_fb195b",
+                      abteilung_perms=(("rechnungen.freigeben", fussball),))
+    gs = _user(db, "rtester_gs195b", perms=("rechnungen.verwalten",))
+
+    r = _rechnung(db, einreicher, fussball)
+    _beleg(db, r.id, einreicher)
+    db.rechnungen.freigeben(db.rechnungen.einreichen(r.id, einreicher).id, fb_leiter)
+
+    assert db.rechnungen.anzahl_export_bereit(gs) == 1
+    assert db.rechnungen.anzahl_export_bereit(fb_leiter) == 0
+    assert db.rechnungen.anzahl_export_bereit(einreicher) == 0
+
+
 def test_verwaltung_reicht_fuer_anderes_mitglied_ein(db):
     """Ticket #134: Die Geschäftsstelle nimmt Belege auch für Mitglieder ohne
     App-Zugang an – dann geht das Geld an dieses Mitglied, nicht an den Erfasser."""
