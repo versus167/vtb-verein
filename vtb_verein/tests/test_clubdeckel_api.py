@@ -202,6 +202,9 @@ def _db(kader='mitglied', wart=False):
         ),
         get_mannschaft=lambda mid: SimpleNamespace(id=mid, name='Erste'),
         list_mannschaft_kader=lambda mid: [],
+        # Spitznamen der Mannschaft (#194) – Standard: keine vergeben, dann
+        # bleibt überall der volle Name stehen.
+        mannschaft_spitznamen=lambda mid: {},
     )
 
 
@@ -651,6 +654,65 @@ def test_salden_mit_team_saldo():
     result = api.list_salden(7, _USER, db)
     assert result['team_saldo'] == Decimal('10')
     assert len(result['mitglieder']) == 2
+
+
+# ------------------------------------------------------------- Spitznamen (#194)
+def test_salden_zeigen_den_spitznamen_der_mannschaft():
+    db = _db()
+    db.mannschaft_spitznamen = lambda mid: {11: 'Basti'}
+    db.clubdeckel_buchungen.salden = lambda did: [
+        {"mitglied_id": 11, "mitglied_name": "Sebastian Schmidt",
+         "saldo": Decimal('20'), "buchungen": 1},
+        {"mitglied_id": 12, "mitglied_name": "Anna Weber",
+         "saldo": Decimal('-30'), "buchungen": 2},
+    ]
+    result = api.list_salden(7, _USER, db)
+    # Ohne Spitznamen bleibt der volle Name stehen – es gibt keinen Ersatz-Namen.
+    assert [m['mitglied_name'] for m in result['mitglieder']] == ['Basti', 'Anna Weber']
+    # Der bürgerliche Name steht daneben, aber nur wo er verdrängt wurde: Sonst
+    # zeigte die Oberfläche denselben Namen zweimal untereinander.
+    assert [m['mitglied_voller_name'] for m in result['mitglieder']] \
+        == ['Sebastian Schmidt', None]
+
+
+def test_kaderliste_zeigt_den_spitznamen():
+    db = _db(wart=True)
+    db.mannschaft_spitznamen = lambda mid: {11: 'Basti'}
+    db.list_mannschaft_kader = lambda mid: [
+        SimpleNamespace(mitglied_id=11, mitglied_vorname='Sebastian',
+                        mitglied_nachname='Schmidt', rolle='spieler',
+                        von='2020-01-01', bis=None),
+        SimpleNamespace(mitglied_id=12, mitglied_vorname='Anna',
+                        mitglied_nachname='Weber', rolle='spieler',
+                        von='2020-01-01', bis=None),
+    ]
+    kader = api.list_kader_kandidaten(7, _USER, db)
+    assert [k['name'] for k in kader] == ['Anna Weber', 'Basti']
+    assert [k['voller_name'] for k in kader] == [None, 'Sebastian Schmidt']
+
+
+def test_buchungshistory_zeigt_den_spitznamen():
+    db = _db(wart=True)
+    db.mannschaft_spitznamen = lambda mid: {11: 'Basti'}
+    db.clubdeckel_buchungen.list_for_deckel = (
+        lambda did, mitglied_id=None, limit=None, mit_storniert=False, suche=None,
+        von=None, bis=None, termin_id=None: [
+            _buchung(mitglied_id=11, mitglied_name='Sebastian Schmidt')])
+    zeilen = api.list_buchungen(7, _USER, db, alle=True)
+    assert zeilen[0]['mitglied_name'] == 'Basti'
+    assert zeilen[0]['mitglied_voller_name'] == 'Sebastian Schmidt'
+
+
+def test_eingefrorener_gegen_name_bleibt_der_echte_name():
+    """Snapshots halten fest, was zum Buchungszeitpunkt galt – ein Spitzname ist
+    genau das, was sich ändert, und schreibt die History deshalb nicht um."""
+    db = _db(wart=True)
+    db.mannschaft_spitznamen = lambda mid: {11: 'Basti'}
+    db.clubdeckel_buchungen.list_for_deckel = (
+        lambda did, mitglied_id=None, limit=None, mit_storniert=False, suche=None,
+        von=None, bis=None, termin_id=None: [
+            _buchung(mitglied_id=11, gegen_name='Sebastian Schmidt')])
+    assert api.list_buchungen(7, _USER, db, alle=True)[0]['gegen_name'] == 'Sebastian Schmidt'
 
 
 # -------------------------------------------------------------------- Teams-Liste

@@ -782,12 +782,22 @@ class VereinsDB:
         return self._mitglied_mannschaft_repo.get(id)
 
     def create_mitglied_mannschaft(self, mitglied_id: int, mannschaft_id: int, rolle: str,
-                                   von: str, bis: Optional[str], created_by: str) -> MitgliedMannschaft:
-        return self._mitglied_mannschaft_repo.create(mitglied_id, mannschaft_id, rolle, von, bis, created_by)
+                                   von: str, bis: Optional[str], created_by: str,
+                                   spitzname: Optional[str] = None) -> MitgliedMannschaft:
+        return self._mitglied_mannschaft_repo.create(mitglied_id, mannschaft_id, rolle, von, bis,
+                                                     created_by, spitzname)
 
     def update_mitglied_mannschaft(self, id: int, rolle: str, von: str, bis: Optional[str],
                                    updated_by: str, expected_version: int) -> bool:
         return self._mitglied_mannschaft_repo.update(id, rolle, von, bis, updated_by, expected_version)
+
+    def set_mitglied_mannschaft_spitzname(self, mannschaft_id: int, mitglied_id: int,
+                                          spitzname: Optional[str], updated_by: str) -> bool:
+        return self._mitglied_mannschaft_repo.set_spitzname(
+            mannschaft_id, mitglied_id, spitzname, updated_by)
+
+    def mannschaft_spitznamen(self, mannschaft_id: int) -> dict[int, str]:
+        return self._mitglied_mannschaft_repo.spitznamen_for_mannschaft(mannschaft_id)
 
     def mark_mitglied_mannschaft_deleted(self, id: int, deleted_by: str) -> bool:
         return self._mitglied_mannschaft_repo.mark_deleted(id, deleted_by)

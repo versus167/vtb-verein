@@ -300,7 +300,10 @@
                         color="positive" size="14px" class="q-mr-xs">
                         <q-tooltip>Hat für diesen Termin zugesagt</q-tooltip>
                       </q-icon>
-                      <div class="ellipsis">{{ m.name }}</div>
+                      <div class="ellipsis">
+                        {{ m.name }}
+                        <q-tooltip v-if="m.voller_name">{{ m.voller_name }}</q-tooltip>
+                      </div>
                     </div>
                     <div class="text-caption text-grey">
                       {{ fmtEuro(m.betrag) }}
@@ -380,7 +383,10 @@
             <q-item v-for="m in auswMitglieder" :key="m.mitglied_id">
               <q-item-section>
                 <q-item-label>{{ m.name }}</q-item-label>
-                <q-item-label caption>{{ m.anzahl }} Artikel</q-item-label>
+                <q-item-label caption>
+                  <span v-if="m.voller_name">{{ m.voller_name }} · </span>
+                  {{ m.anzahl }} Artikel
+                </q-item-label>
               </q-item-section>
               <q-item-section side>
                 <span class="text-weight-bold">{{ fmtEuro(m.betrag) }}</span>
@@ -399,7 +405,10 @@
               :class="{ 'tt-storniert': b.deleted_at }">
               <q-item-section>
                 <q-item-label>{{ b.mitglied_name }}: {{ buchungText(b) }}</q-item-label>
-                <q-item-label caption>{{ fmtDateTime(b.created_at) }}</q-item-label>
+                <q-item-label caption>
+                  <span v-if="b.mitglied_voller_name">{{ b.mitglied_voller_name }} · </span>
+                  {{ fmtDateTime(b.created_at) }}
+                </q-item-label>
               </q-item-section>
               <q-item-section side>
                 <div class="row items-center q-gutter-sm">
@@ -464,7 +473,10 @@
               <q-item-label :class="{ 'text-weight-bold': s.mitglied_id === deckel.mein_mitglied_id }">
                 {{ s.mitglied_name }}
               </q-item-label>
-              <q-item-label caption>{{ s.buchungen }} Buchungen</q-item-label>
+              <q-item-label caption>
+                <span v-if="s.mitglied_voller_name">{{ s.mitglied_voller_name }} · </span>
+                {{ s.buchungen }} Buchungen
+              </q-item-label>
             </q-item-section>
             <q-item-section side>
               <span class="text-weight-bold"
@@ -637,6 +649,9 @@
                 :style="{ background: avatarColor(m.name) }">{{ initialen(m.name) }}</q-avatar>
               <div class="col" style="min-width: 0">
                 <div class="text-weight-medium ellipsis">{{ m.name }}</div>
+                <div v-if="m.voller_name" class="text-caption text-grey-7 ellipsis">
+                  {{ m.voller_name }}
+                </div>
                 <div class="text-caption text-weight-medium"
                   :class="m.saldo < 0 ? 'text-negative' : 'text-positive'">
                   {{ fmtEuro(m.saldo) }}
@@ -779,6 +794,7 @@
                     class="q-ml-xs" />
                 </q-item-label>
                 <q-item-label caption>
+                  <span v-if="b.mitglied_voller_name">{{ b.mitglied_voller_name }} · </span>
                   {{ fmtDateTime(b.created_at) }} · gebucht von {{ b.created_by }}
                   <template v-if="b.deleted_at">
                     · storniert {{ fmtDateTime(b.deleted_at) }} von {{ b.deleted_by }}
@@ -1195,12 +1211,12 @@ const gruppeOptionen = computed(() => [
 
 const verkaeuferOptionen = computed(() => [
   { label: 'Team', value: null },
-  ...kader.value.map(k => ({ label: k.name, value: k.mitglied_id })),
+  ...kader.value.map(k => ({ label: mitVollemNamen(k), value: k.mitglied_id })),
 ])
 
 // Zahlungs-/Einkaufs-Ziele: aktiver Kader + Ex-Mitglieder mit Restsaldo
 const mitgliedOptionen = computed(() => {
-  const opts = kader.value.map(k => ({ label: k.name, value: k.mitglied_id }))
+  const opts = kader.value.map(k => ({ label: mitVollemNamen(k), value: k.mitglied_id }))
   const bekannt = new Set(opts.map(o => o.value))
   for (const s of salden.value) {
     if (!bekannt.has(s.mitglied_id)) {
@@ -1216,13 +1232,15 @@ const mitgliederListe = computed(() => {
   const list = []
   const seen = new Set()
   for (const k of kader.value) {
-    list.push({ mitglied_id: k.mitglied_id, name: k.name, imKader: true,
+    list.push({ mitglied_id: k.mitglied_id, name: k.name,
+      voller_name: k.voller_name ?? null, imKader: true,
       saldo: saldoMap.get(k.mitglied_id) || 0 })
     seen.add(k.mitglied_id)
   }
   for (const s of salden.value) {
     if (!seen.has(s.mitglied_id)) {
       list.push({ mitglied_id: s.mitglied_id, name: `${s.mitglied_name} (Ex)`,
+        voller_name: s.mitglied_voller_name ?? null,
         imKader: false, saldo: Number(s.saldo) })
     }
   }
@@ -1264,7 +1282,7 @@ function teilnehmerAnzahl(e) {
 }
 
 const fuerOptionen = computed(() =>
-  kader.value.map(k => ({ label: k.name, value: k.mitglied_id })))
+  kader.value.map(k => ({ label: mitVollemNamen(k), value: k.mitglied_id })))
 
 const eventHinweis = computed(() => {
   const f = eventForm.value
@@ -1277,7 +1295,10 @@ const eventHinweis = computed(() => {
 
 const mitgliederGefiltert = computed(() => {
   const q = (mitgliedSuche.value || '').trim().toLowerCase()
-  return q ? mitgliederListe.value.filter(m => m.name.toLowerCase().includes(q))
+  // Auch über den bürgerlichen Namen suchen: Sobald das Team Spitznamen vergibt,
+  // fände „Schmidt" sonst niemanden mehr.
+  return q ? mitgliederListe.value.filter(
+    m => `${m.name} ${m.voller_name ?? ''}`.toLowerCase().includes(q))
     : mitgliederListe.value
 })
 
@@ -1317,8 +1338,16 @@ function jetztLocal() {
 
 const wartKandidaten = computed(() =>
   kader.value.filter(k => !k.ist_wart)
-    .map(k => ({ label: k.name, value: k.mitglied_id })),
+    .map(k => ({ label: mitVollemNamen(k), value: k.mitglied_id })),
 )
+
+// Wo Platz ist, sollen beide Namen stehen: In Auswahllisten und Kacheln hilft
+// der bürgerliche Name denen, die einen Spitznamen (noch) nicht zuordnen können
+// — und beim Buchen auf fremde Rechnung will man sicher sein, wen man erwischt.
+// `voller_name` liefert das Backend nur, wo ein Spitzname ihn verdrängt hat.
+function mitVollemNamen(eintrag) {
+  return eintrag.voller_name ? `${eintrag.name} (${eintrag.voller_name})` : eintrag.name
+}
 
 function fmtEuro(v) {
   return Number(v ?? 0).toLocaleString('de-DE',

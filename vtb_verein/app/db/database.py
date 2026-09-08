@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 118
+SCHEMA_VERSION = 119
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +372,36 @@ _FN_BEITRAGSREGEL_AUDIT_UPDATE = """
                 NEW.bedingung_funktionen, NEW.bedingung_funktion_abteilung_id, NEW.bedingung_abteilung_ids,
                 NEW.ausnahme_funktionen, NEW.ausnahme_funktion_abteilung_id, NEW.ausnahme_abteilung_ids,
                 NEW.bedingung_alter_min, NEW.bedingung_alter_max, NEW.gegenkonto, NEW.steuerschluessel,
+                NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+            );
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_MITGLIED_MANNSCHAFT_AUDIT_INSERT = """
+    CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO mitglied_mannschaft_history (
+            id, version, mitglied_id, mannschaft_id, rolle, spitzname, von, bis,
+            created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+        ) VALUES (
+            NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.spitzname, NEW.von, NEW.bis,
+            NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
+        );
+        RETURN NEW;
+    END; $$;
+"""
+
+_FN_MITGLIED_MANNSCHAFT_AUDIT_UPDATE = """
+    CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO mitglied_mannschaft_history (
+                id, version, mitglied_id, mannschaft_id, rolle, spitzname, von, bis,
+                created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
+            ) VALUES (
+                NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.spitzname, NEW.von, NEW.bis,
                 NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
             );
         END IF;
@@ -4163,6 +4193,7 @@ class Database:
             116: self._migrate_v115_to_v116,
             117: self._migrate_v116_to_v117,
             118: self._migrate_v117_to_v118,
+            119: self._migrate_v118_to_v119,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8893,6 +8924,41 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 118 WHERE id = 1")
 
+    def _migrate_v118_to_v119(self) -> None:
+        """Spitzname je Kader-Zuordnung (#194).
+
+        Wie eine Mannschaft ihre Leute nennt, ist eine mannschaftsinterne
+        Angelegenheit — deshalb hängt der Spitzname am Kader-Eintrag und nicht am
+        Mitglied. Das hat zwei Gründe, und beide sind Rechte-Gründe:
+
+        * Pflegen darf ihn damit genau der, der ihn kennt: Betreuer und
+          Übungsleiter der Mannschaft über das Kader-Schreibrecht, das sie
+          ohnehin haben (backend/api/mannschaften.py::_require_kader_write).
+          Ein Feld am `mitglied` wäre ein Personen-Stammdatum und bräuchte
+          `personen.write` — für die vielen Mitglieder ohne App-Konto bliebe es
+          leer, weil ausgerechnet die Mannschaft es nicht eintragen könnte.
+        * Er kann nicht in die Vereinsunterlagen auswandern. Rechnungen, SEPA,
+          Fibu und Beitragslisten lesen das Mitglied, nie den Kader — ein
+          Spitzname landet dort also gar nicht erst.
+
+        Bewusst KEINE eigene Tabelle: `mitglied_mannschaft` ist bereits
+        soft-delete-, History- und Prune-geführt (PRUNE_REGISTRY-Eintrag samt
+        ChildRefs unter Mannschaft und Mitglied), eine neue Tabelle für ein
+        einzelnes Textfeld brächte nur denselben Apparat noch einmal. Der Preis
+        steht in mitglied_mannschaft_repository.set_spitzname: Wer die
+        Mannschaft verlässt und später zurückkommt, bekommt eine neue Zuordnung
+        und damit einen leeren Spitznamen.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE mitglied_mannschaft ADD COLUMN IF NOT EXISTS spitzname TEXT")
+            cur.execute("ALTER TABLE mitglied_mannschaft_history ADD COLUMN IF NOT EXISTS spitzname TEXT")
+            # Die Audit-Trigger schreiben die neue Spalte erst mit, wenn ihre
+            # Funktionen neu angelegt sind — sonst fehlte sie in jeder History-Zeile.
+            cur.execute(_FN_MITGLIED_MANNSCHAFT_AUDIT_INSERT)
+            cur.execute(_FN_MITGLIED_MANNSCHAFT_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 119 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -10045,6 +10111,7 @@ class Database:
               mitglied_id    INTEGER NOT NULL REFERENCES mitglied(id),
               mannschaft_id  INTEGER NOT NULL REFERENCES mannschaft(id),
               rolle          TEXT NOT NULL,
+              spitzname      TEXT,
               von            TEXT NOT NULL,
               bis            TEXT,
               version        INTEGER NOT NULL DEFAULT 1,
@@ -10063,6 +10130,7 @@ class Database:
               mitglied_id    INTEGER,
               mannschaft_id  INTEGER,
               rolle          TEXT,
+              spitzname      TEXT,
               von            TEXT,
               bis            TEXT,
               created_at     TEXT,
@@ -10475,34 +10543,8 @@ class Database:
         # und Migration denselben Spaltensatz in die History schreiben.
         cur.execute(_FN_MANNSCHAFT_AUDIT_INSERT)
         cur.execute(_FN_MANNSCHAFT_AUDIT_UPDATE)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO mitglied_mannschaft_history (
-                    id, version, mitglied_id, mannschaft_id, rolle, von, bis,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_mitglied_mannschaft_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO mitglied_mannschaft_history (
-                        id, version, mitglied_id, mannschaft_id, rolle, von, bis,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.mitglied_id, NEW.mannschaft_id, NEW.rolle, NEW.von, NEW.bis,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_MITGLIED_MANNSCHAFT_AUDIT_INSERT)
+        cur.execute(_FN_MITGLIED_MANNSCHAFT_AUDIT_UPDATE)
         cur.execute(_FN_GEBUEHR_AUDIT_INSERT)
         cur.execute(_FN_GEBUEHR_AUDIT_UPDATE)
         cur.execute(_FN_GEBUEHR_FORDERUNG_AUDIT_INSERT)

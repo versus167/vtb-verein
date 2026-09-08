@@ -657,9 +657,22 @@ def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
     (Kader oder Gast)."""
     t = _lade_termin(db, termin_id)
     zugriff = _require_lesen_termin(db, user, t)
+    # Spitznamen der Mannschaft (#194): Wer hier steht, ist im Kader — genau der
+    # teaminterne Blick, für den sie gedacht sind. Gäste kommen aus anderen
+    # Mannschaften und behalten deshalb ihren Namen.
+    spitznamen = db.mannschaft_spitznamen(t.mannschaft_id)
+    kader = db.termin_zusagen.list_kader_with_zusage(termin_id)
+    for zeile in kader:
+        spitzname = spitznamen.get(zeile.get('mitglied_id'))
+        # Der bürgerliche Name bleibt daneben stehen, wo er verdrängt wurde — der
+        # Kaderdialog hat die Zeile dafür, und wer neu im Team ist, kann „Basti"
+        # sonst niemandem zuordnen.
+        zeile['voller_name'] = zeile['name'] if spitzname else None
+        if spitzname:
+            zeile['name'] = spitzname
     return {
         "darf_verwalten": zugriff == 'verwalten',
-        "kader": db.termin_zusagen.list_kader_with_zusage(termin_id),
+        "kader": kader,
         "gaeste": db.termin_zusagen.list_gaeste_with_zusage(termin_id),
     }
 
