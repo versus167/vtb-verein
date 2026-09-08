@@ -29,6 +29,13 @@ import { boot } from 'quasar/wrappers'
 // dagegen nur öffentliche API (Prop `modelValue`, Methode `hide()`) und
 // verhält sich in beiden Modi gleich.
 //
+// Fallstrick für Seiten mit Deeplink: Solange ein Dialog offen ist, ist der
+// oberste History-Eintrag unserer, nicht der der Seite. Ein `router.replace`
+// (z. B. um `?ticket=NN` nach dem Öffnen aus der URL zu putzen) trifft dann den
+// falschen Eintrag — der Seiten-Eintrag behält die Query, und jedes Zurück
+// zieht den Deeplink erneut auf. Deshalb gilt: erst die URL aufräumen, dann den
+// Dialog öffnen (siehe TicketsPage.vue::openTicketFromQuery).
+//
 // Bewusst nicht dabei:
 //   * QDrawer — am Desktop ist die Navigationsleiste dauerhaft offen, dort
 //     wären History-Einträge fürs Auf-/Zuklappen nur störend.
