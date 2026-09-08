@@ -218,6 +218,19 @@ def branding_css():
 _BRANDING = branding.basis_pfad(settings.BRANDING_PATH)
 
 
+def sieht_wie_datei_aus(pfad: str) -> bool:
+    """Ist der Pfad eine Datei-Anfrage statt einer Route der SPA?
+
+    Keine Route der Anwendung hat einen Punkt im letzten Pfadsegment (siehe
+    ``frontend/src/router/index.js``) — was so aussieht, meint eine Datei. Fehlt
+    die im Build, ist das ein echtes 404 und nicht die ``index.html``. Sonst
+    quittiert die App jeden Scanner-Griff (``//wp-includes/wlwmanifest.xml``,
+    ``/xmlrpc.php``) mit 200, lädt ihn zum Weitersuchen ein und schiebt dabei
+    jedes Mal die ganze index.html raus.
+    """
+    return "." in pfad.rsplit("/", 1)[-1]
+
+
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
 if _FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
@@ -254,9 +267,12 @@ if _FRONTEND_DIST.is_dir():
             candidate = (_FRONTEND_DIST_RESOLVED / full_path).resolve()
             candidate.relative_to(_FRONTEND_DIST_RESOLVED)  # raises ValueError on traversal
         except (ValueError, OSError):
-            return FileResponse(str(index))
-        if candidate.is_file():
+            candidate = None
+        if candidate is not None and candidate.is_file():
             return FileResponse(str(candidate))
+        # Datei-Anfragen, die es nicht gibt, sind 404 — nicht die SPA.
+        if sieht_wie_datei_aus(full_path):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Nicht gefunden")
         return FileResponse(str(index))
 
 
