@@ -112,11 +112,13 @@ import { onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import { fmtBetrag, fmtDatum, fehlertext, blobFehlertext } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'RechnungenExportPage' })
 
 const $q = useQuasar()
+const aufgaben = useAufgabenStore()
 
 const vorschau = ref({ rechnungen: [], anzahl: 0, summe_cent: 0, hinweise: [], fehler: [] })
 const exporte = ref([])
@@ -153,6 +155,9 @@ async function exportieren() {
     speichereZip(res.data, dateinameAus(res, 'rechnungen-export.zip'))
     $q.notify({ type: 'positive', message: 'Export erstellt' })
     await load()
+    // Der Hinweis an Nav und Reiter soll mit der Tat verschwinden, nicht erst
+    // beim nächsten Refresh (#195) – dasselbe tut die Freigabe-Seite.
+    aufgaben.laden()
   } catch (e) {
     $q.notify({ type: 'negative', multiLine: true, timeout: 8000,
       message: await blobFehlertext(e, 'Export fehlgeschlagen') })
@@ -189,6 +194,9 @@ function zuruecknehmen(e) {
         message: `${data.rechnungen_wieder_offen} Rechnung(en) wieder offen`,
       })
       await load()
+      // Zurückgenommene Rechnungen stehen wieder im Delta – der Hinweis kommt
+      // damit zurück.
+      aufgaben.laden()
     } catch (err) {
       $q.notify({ type: 'negative', message: fehlertext(err, 'Rücknahme fehlgeschlagen') })
     }

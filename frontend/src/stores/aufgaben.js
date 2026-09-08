@@ -26,12 +26,19 @@ function setzeAppBadge(anzahl) {
 export const useAufgabenStore = defineStore('aufgaben', {
   state: () => ({
     offen: {},      // { <Routenname>: Anzahl }
+    // { <Routenname>: { <Aufgabenart>: Anzahl } } – nur für Bereiche mit
+    // mehreren Aufgabenarten hinter einem Nav-Punkt (#195). Nav und Kachel
+    // zeigen weiter die Summe; das hier setzt sie drinnen an den richtigen
+    // Reiter, damit die Zahl von außen auffindbar bleibt.
+    detail: {},
     gesamt: 0,
   }),
 
   getters: {
     // 0 heißt „nichts zu tun" – die Komponenten blenden den Hinweis dann aus.
     anzahl: (state) => (schluessel) => state.offen[schluessel] || 0,
+    // Einzelne Aufgabenart innerhalb eines Bereichs, z. B. anteil('rechnungen', 'export').
+    anteil: (state) => (schluessel, art) => state.detail[schluessel]?.[art] || 0,
   },
 
   actions: {
@@ -39,6 +46,7 @@ export const useAufgabenStore = defineStore('aufgaben', {
       try {
         const { data } = await api.get('/api/aufgaben/offen')
         this.offen = data.offen || {}
+        this.detail = data.detail || {}
         this.gesamt = data.gesamt || 0
         setzeAppBadge(this.gesamt)
       } catch {
@@ -50,6 +58,7 @@ export const useAufgabenStore = defineStore('aufgaben', {
 
     zuruecksetzen() {
       this.offen = {}
+      this.detail = {}
       this.gesamt = 0
       // Auch das Badge weg: nach dem Abmelden klebte sonst die Zahl des
       // Vorgängers am App-Symbol.

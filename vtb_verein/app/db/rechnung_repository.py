@@ -138,6 +138,21 @@ class RechnungRepository(BaseRepository):
     def list_all(self, status: Optional[str] = None) -> list[Rechnung]:
         return self.list_for_abteilungen(None, status)
 
+    def count_freigegeben_offen(self) -> int:
+        """Nur die Anzahl des Export-Deltas – für den Aufgaben-Hinweis (#195).
+
+        Bewusst dieselbe Bedingung wie ``list_freigegeben_offen`` und nicht deren
+        Länge: Der Hinweis läuft bei jedem Refresh mit, die Liste zieht den
+        ganzen Rechnungsstamm mit sich.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS anzahl FROM rechnung r "
+                "WHERE r.deleted_at IS NULL AND r.status = 'freigegeben' "
+                "  AND r.exportiert_in_export_id IS NULL"
+            )
+            return cur.fetchone()["anzahl"]
+
     def list_freigegeben_offen(self) -> list[Rechnung]:
         """Export-Delta: freigegeben und noch in keinem Lauf gestempelt."""
         with self.cursor() as cur:

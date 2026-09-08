@@ -244,6 +244,18 @@ class RechnungService:
             erlaubt, STATUS_EINGEREICHT,
             include_vereinsrechnungen=False, ohne_entwuerfe=True)
 
+    def anzahl_export_bereit(self, user) -> int:
+        """Wie viele freigegebene Rechnungen warten auf den nächsten Export? (#195)
+
+        Zweite Aufgabenart des Bereichs neben der Freigabe: Freigeben und
+        Exportieren sind verschiedene Rollen, und wer nur freigibt, soll den
+        Export-Hinweis nicht sehen. Deshalb 0 ohne `rechnungen.verwalten` — genau
+        das Recht, das auch den Export-Reiter einblendet.
+        """
+        if not self.darf_verwalten(user):
+            return 0
+        return self._rechnung.count_freigegeben_offen()
+
     def list_alle(self, user, status: Optional[str] = None) -> list[Rechnung]:
         if not self.darf_verwalten(user):
             raise KeinZugriffError("Nur mit dem Recht 'rechnungen.verwalten'.")
@@ -364,6 +376,7 @@ class RechnungService:
             aktuell, user, "freigegeben",
             "Deine Rechnung wurde freigegeben und geht mit dem nächsten Export "
             "an die Buchhaltung.")
+        self._benachrichtige_exporteure(aktuell, user)
         return aktuell
 
     def ablehnen(self, rechnung_id: int, user, grund: Optional[str] = None) -> Rechnung:
@@ -662,6 +675,25 @@ class RechnungService:
             f"{self._bezeichnung(r)}\n\nEingereicht von: {ausloeser.username}"
             + (f"\n{r.beschreibung}" if r.beschreibung else ""),
             url=self._url(r.id),
+        )
+
+    def _benachrichtige_exporteure(self, r: Rechnung, ausloeser) -> None:
+        """Gegenstück zu `_benachrichtige_freigeber`: Jetzt wartet der Export (#195).
+
+        Empfänger sind die Halter von `rechnungen.verwalten` — nur sie können
+        exportieren. Wer selbst freigegeben hat, bekommt nichts: Er weiß es
+        gerade, und in Personalunion aus Freigeber und Kassenwart wäre es eine
+        Nachricht über die eigene Aktion.
+        """
+        if self._permission_repo is None:
+            return
+        self._notify(
+            self._permission_repo.list_user_ids_mit_permission(
+                Permission.RECHNUNGEN_VERWALTEN),
+            ausloeser.id,
+            f"🧾 Rechnung #{r.id} ist bereit für den Export",
+            f"{self._bezeichnung(r)}\n\nFreigegeben von: {ausloeser.username}",
+            url="/rechnungen",
         )
 
     def _benachrichtige_ersteller(self, r: Rechnung, ausloeser,

@@ -5,8 +5,14 @@
     <q-tabs v-model="tab" dense align="left" class="text-grey-8 q-mb-sm"
       active-color="primary" indicator-color="primary">
       <q-tab v-if="kannEinreichen" name="meine" icon="receipt_long" label="Meine Rechnungen" />
-      <q-tab v-if="kannFreigeben" name="freigabe" icon="how_to_reg" label="Freigabe" />
-      <q-tab v-if="kannVerwalten" name="export" icon="download" label="Export" />
+      <!-- Der Nav-Punkt zeigt die Summe des Bereichs; hier steht sie an der
+           Stelle, an der man sie erledigen kann (#195). -->
+      <q-tab v-if="kannFreigeben" name="freigabe" icon="how_to_reg" label="Freigabe">
+        <AufgabenBadge :anzahl="aufgaben.anteil('rechnungen', 'freigabe')" class="q-ml-xs" />
+      </q-tab>
+      <q-tab v-if="kannVerwalten" name="export" icon="download" label="Export">
+        <AufgabenBadge :anzahl="aufgaben.anteil('rechnungen', 'export')" class="q-ml-xs" />
+      </q-tab>
       <q-tab v-if="kannVerwalten" name="kategorien" icon="sell" label="Kategorien" />
       <q-tab v-if="kannVerwalten" name="einstellungen" icon="settings" label="Einstellungen" />
     </q-tabs>
@@ -23,6 +29,8 @@
 <script setup>
 import { ref } from 'vue'
 import { useAuthStore } from 'stores/auth'
+import { useAufgabenStore } from 'src/stores/aufgaben'
+import AufgabenBadge from 'src/components/AufgabenBadge.vue'
 import RechnungenMeinePage from 'pages/RechnungenMeinePage.vue'
 import RechnungenFreigabePage from 'pages/RechnungenFreigabePage.vue'
 import RechnungenExportPage from 'pages/RechnungenExportPage.vue'
@@ -32,6 +40,7 @@ import RechnungenEinstellungenPage from 'pages/RechnungenEinstellungenPage.vue'
 defineOptions({ name: 'RechnungenPage' })
 
 const auth = useAuthStore()
+const aufgaben = useAufgabenStore()
 
 // Rechte sind während der Session stabil → einmalig auswerten (wie UebungsleiterPage).
 const kannEinreichen = auth.hasPermission('rechnungen.einreichen')
