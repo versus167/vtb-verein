@@ -1004,19 +1004,25 @@ async function onZuweisungChange(userId) {
 
 // Deep-Link aus einer Push-Nachricht: /tickets?ticket=NN öffnet das Ticket direkt
 // (#117). Einzel-Fetch, damit es auch bei aktivem Listenfilter greift; die Query
-// wird danach entfernt, damit ein Reload den Dialog nicht erneut aufzieht.
+// wird entfernt, damit ein Reload den Dialog nicht erneut aufzieht.
+//
+// Die Reihenfolge ist wichtig: erst die Query weg, dann öffnen. Ein offener
+// Dialog legt seit #193 einen eigenen History-Eintrag an (boot/zurueck.js), und
+// ein router.replace danach träfe diesen statt des Seiten-Eintrags. Der behielte
+// `?ticket=NN`, jedes Zurück landete wieder darauf, der Watcher unten zöge das
+// Ticket erneut auf — man käme aus dem Ticket nicht mehr heraus. TerminePage
+// räumt aus demselben Grund zuerst auf.
 async function openTicketFromQuery() {
   const id = Number(route.query.ticket)
   if (!id) return
+  const q = { ...route.query }
+  delete q.ticket
+  await router.replace({ query: q })
   try {
     const { data } = await api.get(`/api/tickets/${id}`)
     await openDetailDialog(data)
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || `Ticket #${id} nicht gefunden.` })
-  } finally {
-    const q = { ...route.query }
-    delete q.ticket
-    router.replace({ query: q })
   }
 }
 
