@@ -309,6 +309,60 @@ function loadHtml2Canvas() {
   return h2cPromise
 }
 
+// html2canvas 1.4.1 (letzte Fassung, 2022) kennt als Farben nur rgb()/rgba()/
+// hsl()/hsla(). Quasar färbt seine Listeneinträge aber mit
+// `color-mix(in srgb, currentColor 54%, transparent)`, und Chrome löst das im
+// Computed Style zu `color(srgb …)` auf — daran stirbt die komplette Aufnahme
+// mit „unsupported color function“ (#196). Betroffen war praktisch jeder
+// Screenshot am Rechner, weil die Navi-Leiste (lauter `q-item`) immer im Bild
+// hängt; am Handy fiel es nicht auf, weil die Leiste dort zugeklappt ist.
+// Darum im Klon jede Farbe, die html2canvas nicht lesen kann, vorher in ein
+// rgba() übersetzen. Das fängt auch künftige moderne Farbfunktionen
+// (oklch(), lab(), …) ab, ohne dass wir sie einzeln kennen müssen.
+const FARB_EIGENSCHAFTEN = [
+  'color', 'backgroundColor', 'borderTopColor', 'borderRightColor',
+  'borderBottomColor', 'borderLeftColor', 'outlineColor', 'textDecorationColor',
+]
+const LESBARE_FARBE = /^(rgba?|hsla?)\(|^#|^transparent$/i
+
+let farbCtx = null
+const farbCache = new Map()
+
+// Umrechnen über einen 1×1-Canvas: Farbe zeichnen, Pixel zurücklesen. Der
+// naheliegende Weg über die Serialisierung (`ctx.fillStyle` wieder auslesen)
+// hilft nicht — Chrome gibt `color(srgb …)` unverändert zurück.
+function nachRgba(wert) {
+  const gecacht = farbCache.get(wert)
+  if (gecacht) return gecacht
+  if (!farbCtx) {
+    const c = document.createElement('canvas')
+    c.width = c.height = 1
+    farbCtx = c.getContext('2d', { willReadFrequently: true })
+  }
+  farbCtx.clearRect(0, 0, 1, 1)
+  farbCtx.fillStyle = wert
+  farbCtx.fillRect(0, 0, 1, 1)
+  const [r, g, b, a] = farbCtx.getImageData(0, 0, 1, 1).data
+  const rgba = `rgba(${r}, ${g}, ${b}, ${+(a / 255).toFixed(3)})`
+  farbCache.set(wert, rgba)
+  return rgba
+}
+
+// Läuft auf dem Klon, den html2canvas in seinem iframe auswertet — die
+// sichtbare Seite bleibt unberührt.
+function farbenEntschaerfen(klonDoc) {
+  const win = klonDoc.defaultView
+  if (!win) return
+  for (const el of klonDoc.querySelectorAll('*')) {
+    const cs = win.getComputedStyle(el)
+    for (const prop of FARB_EIGENSCHAFTEN) {
+      const wert = cs[prop]
+      if (!wert || LESBARE_FARBE.test(wert)) continue
+      el.style[prop] = nachRgba(wert)
+    }
+  }
+}
+
 function pageBg() {
   const b = getComputedStyle(document.body).backgroundColor
   if (b && b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') return b
@@ -333,6 +387,7 @@ async function captureFullPage() {
       el.id === 'feedback-fab' ||
       el.id === 'ticket-anlegen-dialog' ||
       (el.classList?.contains('q-dialog__backdrop')),
+    onclone: farbenEntschaerfen,
   })
   return new Promise((res) => canvas.toBlob(res, 'image/png'))
 }
@@ -353,8 +408,18 @@ async function doCapture() {
     revokeScreenshot()
     screenshotBlob.value = blob
     screenshotUrl.value  = URL.createObjectURL(blob)
-  } catch {
-    $q.notify({ type: 'warning', message: 'Screenshot fehlgeschlagen – Ticket wird ohne Bild gespeichert.' })
+  } catch (e) {
+    // Grund mitgeben statt ihn zu verschlucken: Der Fehler tritt nur auf echten
+    // Seiten auf, nicht im Test — ohne Meldung tappt man beim nächsten Mal
+    // wieder im Dunkeln (so geschehen bei #196).
+    console.warn('[Ticket] Screenshot fehlgeschlagen:', e)
+    const grund = (e?.message || e?.name || '').slice(0, 120)
+    $q.notify({
+      type: 'warning',
+      message: grund
+        ? `Screenshot fehlgeschlagen (${grund}) – Ticket wird ohne Bild gespeichert.`
+        : 'Screenshot fehlgeschlagen – Ticket wird ohne Bild gespeichert.',
+    })
   } finally {
     capturing.value = false
   }
