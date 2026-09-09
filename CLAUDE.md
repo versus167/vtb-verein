@@ -49,6 +49,17 @@ Code.
 - Neue Permission-Keys als Konstante in `permission.py` ergänzen, im Admin-Seed (`_seed_data`)
   aufnehmen und für Bestands-Admins in der Migration nachziehen (Fresh == Upgrade).
 
+## Frag KI-Jochen! (Ticket-Bereich für Mitgliederfragen)
+- Im Ticket-Bereich „Frag KI-Jochen!" stellen Mitglieder Fragen zur App. Beantwortet werden
+  sie **nicht nebenbei aus einer Coding-Session**, sondern vom Subagent `ki-jochen`
+  (`.claude/agents/ki-jochen.md`, Start über `/jochen`): eigene Identität, öffentlicher
+  Ton für Mitglieder, Recherche aus Code + Wiki, Rückfrage per Status `rueckfrage`.
+- **Antwort schließt das Ticket nicht.** Es bleibt offen, damit nachgefragt werden kann;
+  erledigt wird es erst, wenn seit dem jüngsten Kommentar **14 Tage** Ruhe war — das prüft
+  Jochen bei jedem Lauf mit. Er braucht also gelegentlich einen Lauf, sonst schließt nichts.
+- Der Agent ist read-only außer Ticket-Kommentar/Status und nur in diesem einen Bereich
+  zuständig — Bug-Meldungen gehören weiter in „VTB-App" (s. Ticket-Workflow unten).
+
 ## Wiki (Architektur-/Hintergrundwissen)
 - Unter **`~/wikis/vtb`** liegt ein separat gepflegtes Wiki (eigenes Git-Repo,
   `wiki-skills`-Plugin) mit Hintergrundwissen zu Architekturentscheidungen,
@@ -125,6 +136,8 @@ Code.
 - **Bearbeitete Tickets schließen** (`resolve`), sobald der Fix gemerged/deployed ist —
   nicht schon beim Öffnen des PRs — und dabei vermerken, mit welchem Commit/PR das
   Ticket geklärt wurde.
+- Anderer Bereich per `pull --bereich "<Name>"` (Teiltreffer genügt); der Abzug landet je
+  Bereich in `tickets/<slug>.md`, überschreibt also nicht den `VTB-App`-Schnappschuss.
 - Ohne lokales Python das Script im App-Container ausführen: Script + env z. B. nach
   `/tmp/vtb/tools/` kopieren (`docker cp`), `docker exec vtb-verein python
   /tmp/vtb/tools/vtb_tickets.py …`, den Pull-Abzug anschließend zurück ins Repo
