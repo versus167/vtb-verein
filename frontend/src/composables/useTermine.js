@@ -44,6 +44,11 @@ export function wochentag(iso) {
   return new Date(`${iso}T12:00`).toLocaleDateString('de-DE', { weekday: 'short' })
 }
 
+// „wöchentlich" / „14-täglich" – Takt einer Serie (termin_serie.intervall_wochen).
+export function taktLabel(intervallWochen) {
+  return intervallWochen === 2 ? '14-täglich' : 'wöchentlich'
+}
+
 // „15.07." – Tag/Monat für den Datumsblock der Card.
 export function tagMonat(iso) {
   if (!iso) return ''

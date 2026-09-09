@@ -35,6 +35,9 @@ _WOCHENTAGE_WOECHENTLICH = ('montags', 'dienstags', 'mittwochs', 'donnerstags',
 
 _TYP_LABELS = {'training': 'Training', 'spiel': 'Spiel', 'sonstiges': 'Sonstiges'}
 
+# Takt der Serie im Klartext (termin_serie.intervall_wochen, Schema v121).
+_TAKT_LABELS = {1: 'wöchentlich', 2: '14-täglich'}
+
 # Feld → Klartext in der Abweichungs-Meldung. Gleiche Wortwahl wie im Dialog
 # (ABWEICHUNG_FELDER in frontend/src/composables/useTermine.js), damit die
 # Meldung und das, was der Betreuer dann sieht, dieselbe Sprache sprechen.
@@ -283,12 +286,13 @@ def _fragen_je_termin(db, fragen: list[tuple]) -> list[tuple]:
 
 
 def notify_serie(db, serie, actor_user_id: Optional[int]) -> None:
-    """Informiert den Kader über eine neu angelegte wöchentliche Terminserie
+    """Informiert den Kader über eine neu angelegte Terminserie
     (Stichtag = erster Serientag, frühestens heute)."""
     m_name = _mannschaft_name(db, serie.mannschaft_id)
     wtag = _WOCHENTAGE_WOECHENTLICH[date.fromisoformat(serie.start_datum).weekday()]
     typ = _TYP_LABELS.get(serie.typ, serie.typ)
-    zeilen = [f"{typ} wöchentlich {wtag} um {serie.beginn_zeit} Uhr ({m_name})",
+    takt = _TAKT_LABELS.get(serie.intervall_wochen, f"alle {serie.intervall_wochen} Wochen")
+    zeilen = [f"{typ} {takt} {wtag} um {serie.beginn_zeit} Uhr ({m_name})",
               f"Ab {format_datum(serie.start_datum)}"
               + (f" bis {format_datum(serie.ende_datum)}" if serie.ende_datum else "")]
     if serie.ort:

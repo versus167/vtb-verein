@@ -47,7 +47,7 @@ from app.db.termin_abweichung_repository import (
     FELD_ENTFALLEN, STATUS_OFFEN, STATUS_UEBERNOMMEN, VALID_ENTSCHEIDUNGEN,
 )
 from app.db.termin_zusage_repository import VALID_ANTWORTEN
-from app.db.termin_serie_repository import VALID_SERIE_TYPEN
+from app.db.termin_serie_repository import MAX_INTERVALL_WOCHEN, VALID_SERIE_TYPEN
 from app.services import dfbnet_import_service as dfbnet
 from app.services import geburtstag_service
 from app.services import termin_notification_service as terminmeldung
@@ -114,12 +114,16 @@ class SerieCreate(BaseModel):
     treffpunkt_zeit: Optional[str] = None    # 'HH:MM'
     beschreibung: Optional[str] = None
     start_datum: str                         # 'YYYY-MM-DD' (Anker = Wochentag, später fix)
+    # Takt in Wochen: 1 = wöchentlich, 2 = 14-täglich. Wie der Wochentag nur beim
+    # Anlegen zu haben (fehlt in SerieUpdate) – beides definiert das Datumsraster,
+    # ein nachträglicher Wechsel müsste Instanzen löschen und neu erzeugen.
+    intervall_wochen: int = Field(1, ge=1, le=MAX_INTERVALL_WOCHEN)
     ende_datum: Optional[str] = None         # None = offenes Ende
     benachrichtigen: bool = False            # Opt-in: Kader informieren
 
 
 class SerieUpdate(BaseModel):
-    """Volle Serien-Bearbeitung – nur start_datum/Wochentag bleibt fix."""
+    """Volle Serien-Bearbeitung – Wochentag (start_datum) und Takt bleiben fix."""
     typ: str = 'training'
     beginn_zeit: str
     spielstaette_id: int                     # Pflicht seit v80 (#95)
@@ -858,6 +862,7 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         data.treffpunkt, data.treffpunkt_zeit, data.beschreibung,
         data.start_datum, data.ende_datum, user.username,
         spielstaette_id=data.spielstaette_id,
+        intervall_wochen=data.intervall_wochen,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
     if data.benachrichtigen:

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 120
+SCHEMA_VERSION = 121
 
 
 # ---------------------------------------------------------------------------
@@ -3189,8 +3189,8 @@ _TERMIN_ZUSAGE_TRIGGERS = (
 # ============================================================================
 _TERMIN_SERIE_COLS = (
     "id, version, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id, "
-    "treffpunkt, treffpunkt_zeit, beschreibung, start_datum, ende_datum, materialisiert_bis, "
-    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+    "treffpunkt, treffpunkt_zeit, beschreibung, start_datum, intervall_wochen, ende_datum, "
+    "materialisiert_bis, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
 )
 _TERMIN_SERIE_VALS = ", ".join("NEW." + c.strip() for c in _TERMIN_SERIE_COLS.split(","))
 
@@ -3223,6 +3223,7 @@ _DDL_TERMIN_SERIE = """
       treffpunkt_zeit    TEXT,
       beschreibung       TEXT,
       start_datum        TEXT NOT NULL,
+      intervall_wochen   INTEGER NOT NULL DEFAULT 1,
       ende_datum         TEXT,
       materialisiert_bis TEXT NOT NULL,
       version            INTEGER NOT NULL DEFAULT 1,
@@ -3232,13 +3233,15 @@ _DDL_TERMIN_SERIE = """
       updated_by         TEXT NOT NULL,
       deleted_at         TEXT,
       deleted_by         TEXT,
-      CHECK (typ IN ('training', 'sonstiges'))
+      CHECK (typ IN ('training', 'sonstiges')),
+      CHECK (intervall_wochen IN (1, 2))
     );
     CREATE TABLE IF NOT EXISTS termin_serie_history (
       id INTEGER NOT NULL, version INTEGER NOT NULL,
       mannschaft_id INTEGER, typ TEXT, beginn_zeit TEXT, ende_zeit TEXT,
       ort TEXT, treffpunkt TEXT, treffpunkt_zeit TEXT, beschreibung TEXT,
-      start_datum TEXT, ende_datum TEXT, materialisiert_bis TEXT,
+      start_datum TEXT, intervall_wochen INTEGER, ende_datum TEXT,
+      materialisiert_bis TEXT,
       created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT,
       deleted_at TEXT, deleted_by TEXT,
       PRIMARY KEY (id, version)
@@ -3263,6 +3266,20 @@ _TERMIN_SERIE_FK = (
 _TERMIN_SERIE_TRIGGERS = (
     ('trig_termin_serie_audit_insert', 'INSERT', 'termin_serie', 'fn_termin_serie_audit_insert'),
     ('trig_termin_serie_audit_update', 'UPDATE', 'termin_serie', 'fn_termin_serie_audit_update'),
+)
+
+# Takt der Serie (Schema v121): 1 = wöchentlich, 2 = 14-täglich. Der Bestand ist
+# per Definition wöchentlich, deshalb DEFAULT 1 statt einer Datenmigration. Als
+# Zahl und nicht als Text-Enum, weil der Generator genau damit rechnet
+# (7 * intervall_wochen); ein weiterer Takt wäre später eine reine CHECK-Änderung.
+# Im Frischaufbau steckt die Spalte in _DDL_TERMIN_SERIE (Fresh == Migriert).
+_TERMIN_SERIE_INTERVALL_SQL = (
+    "ALTER TABLE termin_serie ADD COLUMN IF NOT EXISTS intervall_wochen "
+    "INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE termin_serie_history ADD COLUMN IF NOT EXISTS intervall_wochen INTEGER",
+    "ALTER TABLE termin_serie DROP CONSTRAINT IF EXISTS termin_serie_intervall_wochen_check",
+    "ALTER TABLE termin_serie ADD CONSTRAINT termin_serie_intervall_wochen_check "
+    "CHECK (intervall_wochen IN (1, 2))",
 )
 
 
@@ -4219,6 +4236,7 @@ class Database:
             118: self._migrate_v117_to_v118,
             119: self._migrate_v118_to_v119,
             120: self._migrate_v119_to_v120,
+            121: self._migrate_v120_to_v121,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9042,6 +9060,32 @@ class Database:
             )
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 120 WHERE id = 1")
+
+    def _migrate_v120_to_v121(self) -> None:
+        """14-täglicher Takt für Terminserien (#95-Nachgang).
+
+        Der Platzbelegungsplan tauscht mittwochs zwei Mannschaften wochenweise
+        zwischen den beiden Plätzen. Als wöchentliche Serie ist das nicht
+        abbildbar — bisher blieb nur, jede zweite Instanz von Hand umzustellen,
+        und zwar nach jeder Planverlängerung erneut.
+
+        Deshalb `intervall_wochen` an der Serie: 1 = wöchentlich (der Bestand,
+        daher DEFAULT 1 statt Datenmigration), 2 = 14-täglich. Zusammen mit
+        `start_datum` ergibt das Wochentag UND Phase, sodass sich der Tausch als
+        zwei um eine Woche versetzte Serien abbilden lässt.
+
+        Die Audit-Funktion wird neu erzeugt, NACHDEM die History-Tabelle die
+        Spalte hat — sonst schriebe der Trigger weiter den alten Spaltensatz und
+        der Takt fehlte in jeder künftigen History-Zeile (wie bei
+        spielstaette_id in v80). DDL/CHECK sind mit dem Frischaufbau geteilt.
+        """
+        with self.cursor() as cur:
+            for sql in _TERMIN_SERIE_INTERVALL_SQL:
+                cur.execute(sql)
+            cur.execute(_FN_TERMIN_SERIE_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 121 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

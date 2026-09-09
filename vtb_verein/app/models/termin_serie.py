@@ -1,10 +1,12 @@
 """Datenmodell für Terminserien (#95, Schema v70).
 
-Eine Serie ist die wöchentliche Vorlage je Mannschaft (nur training/sonstiges,
+Eine Serie ist die wiederkehrende Vorlage je Mannschaft (nur training/sonstiges,
 keine Spiel-Serien), aus der konkrete `termine`-Instanzen rollierend
-materialisiert werden. `start_datum` ist der Anker und definiert den Wochentag
-(nachträglich nicht änderbar — Wochentagwechsel = Serie löschen + neu anlegen);
-`ende_datum` optional (offenes Ende). `materialisiert_bis` ist das Wasserzeichen
+materialisiert werden. `start_datum` ist der Anker und definiert Wochentag UND
+Phase (nachträglich nicht änderbar — Wochentagwechsel = Serie löschen + neu
+anlegen); `intervall_wochen` den Takt (1 = wöchentlich, 2 = 14-täglich, Schema
+v121) und ist aus demselben Grund ebenfalls fix; `ende_datum` optional
+(offenes Ende). `materialisiert_bis` ist das Wasserzeichen
 des Generators und wird nie rückwärts bewegt, damit gelöschte/abgesagte
 Instanzen nie neu erzeugt werden.
 """
@@ -24,7 +26,8 @@ class TerminSerie:
     treffpunkt: Optional[str]
     treffpunkt_zeit: Optional[str]    # 'HH:MM'
     beschreibung: Optional[str]
-    start_datum: str                  # 'YYYY-MM-DD' (Anker = Wochentag)
+    start_datum: str                  # 'YYYY-MM-DD' (Anker = Wochentag + Phase)
+    intervall_wochen: int             # 1 = wöchentlich, 2 = 14-täglich (fix)
     ende_datum: Optional[str]         # 'YYYY-MM-DD', None = offenes Ende
     materialisiert_bis: str           # 'YYYY-MM-DD' (Wasserzeichen)
     version: int

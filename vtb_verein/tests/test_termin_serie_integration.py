@@ -1,8 +1,9 @@
 """Integrationstests der Terminserien (#95, Schema v70) gegen echtes PostgreSQL.
 
-Prüft Schema (termin_serie + History-Trigger + CHECK + FK auf termine.serie_id),
-die rollierende Materialisierung (Anker-Wochentag, Horizont-/Ende-Kappung,
-Wasserzeichen: keine Duplikate, keine Wiedergänger gelöschter Instanzen) und die
+Prüft Schema (termin_serie + History-Trigger + CHECKs + FK auf termine.serie_id),
+die rollierende Materialisierung (Anker-Wochentag, Takt aus intervall_wochen,
+Horizont-/Ende-Kappung, Wasserzeichen: keine Duplikate, keine Wiedergänger
+gelöschter Instanzen) und die
 Serien-Update-Semantik (nur zukünftige unveränderte geplante Instanzen; Kürzen/
 Verlängern des Endes) sowie das Serien-Löschen (Zukunft weg, Vergangenheit bleibt).
 
@@ -77,6 +78,7 @@ def _make_serie(db, mannschaft_id, start=TOMORROW, ende=None, beginn_zeit="19:00
         kw.get('ort'), kw.get('treffpunkt'), kw.get('treffpunkt_zeit'),
         kw.get('beschreibung'), start, ende, 't',
         spielstaette_id=kw.get('spielstaette_id') or _platz(db),
+        intervall_wochen=kw.get('intervall_wochen', 1),
     )
 
 
@@ -103,6 +105,18 @@ def test_schema_fk_und_check(db):
                 "INSERT INTO termin_serie (mannschaft_id,typ,beginn_zeit,start_datum,"
                 "materialisiert_bis,spielstaette_id,created_by,updated_by) "
                 "VALUES (%s,'spiel','19:00',%s,%s,%s,'t','t')",
+                (mid, TOMORROW, YESTERDAY, _platz(db)))
+
+
+def test_schema_check_intervall_wochen(db):
+    """Nur wöchentlich (1) und 14-täglich (2) – Schema v121."""
+    mid = _make_mannschaft(db)
+    with db.cursor() as cur:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(
+                "INSERT INTO termin_serie (mannschaft_id,typ,beginn_zeit,start_datum,"
+                "intervall_wochen,materialisiert_bis,spielstaette_id,created_by,updated_by) "
+                "VALUES (%s,'training','19:00',%s,3,%s,%s,'t','t')",
                 (mid, TOMORROW, YESTERDAY, _platz(db)))
 
 
@@ -140,6 +154,71 @@ def test_materialisierung_ende_kappung(db):
     inst = _instanzen(db, s.id)
     assert 2 <= len(inst) <= 3
     assert all(r['beginn'][:10] <= ende for r in inst)
+
+
+def test_materialisierung_14_taegig(db):
+    from app.db.termin_serie_repository import HORIZONT_TAGE
+    mid = _make_mannschaft(db)
+    s = _make_serie(db, mid, start=TOMORROW, intervall_wochen=2)
+    n = db.termin_serien.materialize_due([mid])
+    inst = _instanzen(db, s.id)
+    assert n == len(inst) and HORIZONT_TAGE // 14 <= n <= HORIZONT_TAGE // 14 + 1
+    anker = date.fromisoformat(TOMORROW)
+    for r in inst:
+        d = date.fromisoformat(r['beginn'][:10])
+        assert d.weekday() == anker.weekday()
+        assert (d - anker).days % 14 == 0, "Instanz fällt in die falsche Woche"
+
+
+def test_14_taegig_bleibt_phasentreu_nach_kuerzen_und_verlaengern(db):
+    """Der Takt wird gegen den Anker gerechnet, nicht gegen das Wasserzeichen.
+
+    Sonst könnte eine Lücke (Ende gekürzt, später wieder verlängert) die Serie um
+    eine Woche verschieben – zwei versetzte Serien lägen danach übereinander.
+    """
+    mid = _make_mannschaft(db)
+    anker = date.fromisoformat(TOMORROW)
+    s = _make_serie(db, mid, start=TOMORROW, intervall_wochen=2)
+    db.termin_serien.materialize_due([mid])
+    inst = _instanzen(db, s.id)
+    assert len(inst) >= 3
+
+    kurz_ende = inst[0]['beginn'][:10]
+    s = db.termin_serien.get(s.id)
+    assert db.termin_serien.update(s.id, 'training', "19:00", None, None,
+                                   None, None, None, kurz_ende, 't', s.version,
+                                   spielstaette_id=_platz(db))
+    s = db.termin_serien.get(s.id)
+    assert db.termin_serien.update(s.id, 'training', "19:00", None, None,
+                                   None, None, None, None, 't', s.version,
+                                   spielstaette_id=_platz(db))
+    db.termin_serien.materialize_due([mid])
+
+    daten = [r['beginn'][:10] for r in _instanzen(db, s.id)]
+    assert len(daten) == len(set(daten))
+    for tag in daten:
+        assert (date.fromisoformat(tag) - anker).days % 14 == 0
+
+
+def test_versetzte_14_taegige_serien_wechseln_sich_ab(db):
+    """Der Anwendungsfall: zwei Mannschaften tauschen wochenweise den Platz.
+
+    Zwei 14-tägige Serien mit um eine Woche versetztem Anker dürfen sich nie am
+    selben Tag treffen und decken zusammen jede Woche ab.
+    """
+    mid = _make_mannschaft(db)
+    woche_b = (date.fromisoformat(TOMORROW) + timedelta(days=7)).isoformat()
+    a = _make_serie(db, mid, start=TOMORROW, intervall_wochen=2)
+    b = _make_serie(db, mid, start=woche_b, beginn_zeit="20:30", intervall_wochen=2)
+    db.termin_serien.materialize_due([mid])
+
+    tage_a = {r['beginn'][:10] for r in _instanzen(db, a.id)}
+    tage_b = {r['beginn'][:10] for r in _instanzen(db, b.id)}
+    assert tage_a and tage_b
+    assert not (tage_a & tage_b), "beide Serien am selben Tag"
+    zusammen = sorted(date.fromisoformat(t) for t in tage_a | tage_b)
+    abstaende = {(zusammen[i + 1] - zusammen[i]).days for i in range(len(zusammen) - 1)}
+    assert abstaende == {7}, f"Lücke im Wechsel: {abstaende}"
 
 
 def test_geloeschte_instanz_wird_nicht_wiederbelebt(db):
