@@ -7,6 +7,12 @@ Fallback für alles Unbekannte die ``index.html`` auslieferte. Angreifbar war
 daran nichts (es gibt kein WordPress), aber jeder Treffer sah für den Scanner
 nach Fund aus, und die App schob dabei jedes Mal die volle index.html raus.
 
+Nachtrag: Dieselben Logs zeigten kurz darauf einen zweiten Scanner, der die
+Regel unterlief. ``GET /.aws/credentials`` und ``GET /.git/config`` haben keinen
+Punkt im *letzten* Segment und galten damit als Route — 200 mit der index.html,
+für den Scanner also ein Fund. Punkt-Segmente sind deshalb ebenfalls
+Datei-Anfragen.
+
 Getestet wird die Entscheidung selbst, nicht die Route: Die entsteht nur, wenn
 ``frontend_dist/`` existiert — also erst nach dem Frontend-Build im Image.
 """
@@ -36,12 +42,32 @@ def test_datei_anfragen_werden_erkannt(pfad):
 
 
 @pytest.mark.parametrize("pfad", [
+    ".git/config",            # kein Punkt im letzten Segment …
+    ".aws/credentials",
+    ".stripe/",               # … und hier ist das letzte Segment sogar leer
+    "/.git/config",
+    ".ssh/id_rsa",
+    "backend/.env.bak",
+    ".well-known/acme-challenge/xyz",
+])
+def test_punkt_segmente_sind_ebenfalls_datei_anfragen(pfad):
+    """Punktdateien und -verzeichnisse sind nie Routen der SPA.
+
+    ``.well-known`` steht bewusst mit in der Liste: Ein Challenge-File, das es
+    im Build wirklich gibt, liefert der Fallback vorher aus — diese Prüfung
+    greift erst danach und macht aus dem Nicht-Vorhandenen ein ehrliches 404.
+    """
+    assert sieht_wie_datei_aus(pfad) is True
+
+
+@pytest.mark.parametrize("pfad", [
     "",                     # Wurzel
     "personen",
     "kassenbuch/12",
     "users/7/permissions",
     "auth/magic-link",
     "irgendwas/das/es/nicht/gibt",   # unbekannte Route: SPA zeigt ihren 404
+    "termine/2026-09-09",            # Datum in der Route: Punkt-frei, bleibt Route
 ])
 def test_routen_der_spa_bleiben_bei_der_index(pfad):
     assert sieht_wie_datei_aus(pfad) is False

@@ -221,14 +221,28 @@ _BRANDING = branding.basis_pfad(settings.BRANDING_PATH)
 def sieht_wie_datei_aus(pfad: str) -> bool:
     """Ist der Pfad eine Datei-Anfrage statt einer Route der SPA?
 
-    Keine Route der Anwendung hat einen Punkt im letzten Pfadsegment (siehe
-    ``frontend/src/router/index.js``) — was so aussieht, meint eine Datei. Fehlt
-    die im Build, ist das ein echtes 404 und nicht die ``index.html``. Sonst
-    quittiert die App jeden Scanner-Griff (``//wp-includes/wlwmanifest.xml``,
-    ``/xmlrpc.php``) mit 200, lädt ihn zum Weitersuchen ein und schiebt dabei
-    jedes Mal die ganze index.html raus.
+    Zwei Merkmale, beide gelten für keine Route der Anwendung (siehe
+    ``frontend/src/router/index.js``):
+
+    * **Punkt im letzten Segment** — ``/xmlrpc.php``, ``/.env``,
+      ``//wp-includes/wlwmanifest.xml``. Das meint eine Datei; fehlt die im
+      Build, ist das ein echtes 404 und nicht die ``index.html``.
+    * **Ein Segment, das mit einem Punkt beginnt** — ``/.git/config``,
+      ``/.aws/credentials``, ``/.stripe/``. Die haben keinen Punkt im *letzten*
+      Segment und galten deshalb als Route: Der Scanner bekam die index.html
+      mit 200 quittiert, was in seinem Protokoll wie ein Fund aussieht.
+
+    Sonst quittiert die App jeden Scanner-Griff mit 200, lädt ihn zum
+    Weitersuchen ein und schiebt dabei jedes Mal die ganze index.html raus.
+
+    Dateien, die es im Build wirklich gibt, sind davon unberührt: Der Aufrufer
+    liefert sie vorher aus — auch unter ``/.well-known/``, wo genau das der
+    Sinn wäre.
     """
-    return "." in pfad.rsplit("/", 1)[-1]
+    segmente = pfad.split("/")
+    if any(segment.startswith(".") for segment in segmente):
+        return True
+    return "." in segmente[-1]
 
 
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
