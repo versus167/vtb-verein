@@ -11,6 +11,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -96,15 +97,26 @@ app = FastAPI(
 # kostet hier also nichts und ist der eigentliche Gewinn — eingeschleuster Code
 # könnte weder von außen nachladen noch inline ausgeführt werden.
 #
-# Zwei bewusste Zugeständnisse:
+# Drei bewusste Zugeständnisse:
 #   * `style-src` erlaubt 'unsafe-inline'. Vue und Quasar setzen Stil-Attribute,
 #     ohne Nonce/Hash je Response ginge das nicht. Der Hebel für einen Angreifer
 #     ist dort ungleich kleiner als bei Skripten.
 #   * `img-src`/`frame-src` erlauben blob:. Die Anhang-Vorschau baut ihre Bilder
 #     und PDFs aus Blob-URLs (s. AnhangPanel.vue) — ohne das bliebe sie leer.
+#   * `script-src` erlaubt 'wasm-unsafe-eval' (Beleg-Scanner, Ticket #197).
+#     Der Scanner erkennt die Belegkanten mit OpenCV.js, und WebAssembly zu
+#     übersetzen zählt für den Browser als Code-Erzeugung zur Laufzeit — unter
+#     'self' allein bricht das mit einem CSP-Verstoß ab, die Seite bliebe
+#     einfach leer. Bewusst NICHT 'unsafe-eval': das Schlüsselwort erlaubt nur
+#     WebAssembly, nicht eval()/new Function() auf beliebigen Text. Die
+#     Bibliothek selbst kommt weiter nur von uns (frontend/public/vendor/,
+#     kein CDN), und `blob:` bleibt aus script-src heraus — der Lader in
+#     frontend/src/lib/belegScanner.js hängt sie deshalb als normales
+#     <script src> ein und holt den Fortschrittsbalken aus einem
+#     vorgeschalteten fetch, statt ein Blob-Script zu bauen.
 _CSP = "; ".join([
     "default-src 'self'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
@@ -135,6 +147,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+# Antworten komprimieren. Ausschlaggebend war der Beleg-Scanner (#197): dessen
+# OpenCV-Bibliothek ist unkomprimiert 10,9 MB und gepackt 3,4 MB — ein Drittel,
+# einmal je Gerät über Mobilfunk. Der Rest der App profitiert nebenbei, JS und
+# JSON packen ähnlich gut. Unter 1 KB lohnt der Aufwand nicht, deshalb der
+# Mindestwert; bereits komprimierte Formate (JPEG, PNG, PDF) lässt gzip von
+# selbst nahezu unverändert.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.FRONTEND_ORIGINS,
@@ -245,6 +264,19 @@ def sieht_wie_datei_aus(pfad: str) -> bool:
     return "." in segmente[-1]
 
 
+# Ein Jahr, unveränderlich. Gilt nur für /vendor/: dort liegen fremde
+# Bibliotheken, die wir nie im Nachhinein ändern, sondern nur austauschen — und
+# jeder Aufruf hängt `?v=<mtime>` an, ein Austausch ergibt also ohnehin eine
+# neue URL. Ausschlaggebend ist opencv.js für den Beleg-Scanner (#197): ohne
+# das lädt jedes Handy 10,9 MB bei jedem Aufruf neu bzw. fragt zumindest jedes
+# Mal nach. `immutable` erspart auch die Rückfrage.
+_VENDOR_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+def _cache_header(pfad: str) -> dict:
+    return _VENDOR_CACHE if pfad.startswith("vendor/") else {}
+
+
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
 if _FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
@@ -283,7 +315,7 @@ if _FRONTEND_DIST.is_dir():
         except (ValueError, OSError):
             candidate = None
         if candidate is not None and candidate.is_file():
-            return FileResponse(str(candidate))
+            return FileResponse(str(candidate), headers=_cache_header(full_path))
         # Datei-Anfragen, die es nicht gibt, sind 404 — nicht die SPA.
         if sieht_wie_datei_aus(full_path):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Nicht gefunden")

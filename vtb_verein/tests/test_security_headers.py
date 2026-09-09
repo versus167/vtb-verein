@@ -42,8 +42,31 @@ def test_csp_wird_ausgeliefert(client):
 def test_skripte_nur_aus_eigener_herkunft(client):
     """Der eigentliche Gewinn: Eingeschleuster Code kann weder nachladen noch
     inline laufen. Der Build macht das gratis – die index.html enthält kein
-    Inline-Script und keinen Fremd-Host."""
-    assert _direktive(_csp(client), "script-src") == "'self'"
+    Inline-Script und keinen Fremd-Host.
+
+    Einzige Ergänzung ist 'wasm-unsafe-eval' für den Beleg-Scanner; die Herkunft
+    bleibt davon unberührt (s. `test_wasm_erlaubt_aber_kein_eval`)."""
+    assert _direktive(_csp(client), "script-src") == "'self' 'wasm-unsafe-eval'"
+
+
+def test_wasm_erlaubt_aber_kein_eval(client):
+    """Der Beleg-Scanner (#197) erkennt die Belegkanten mit OpenCV.js.
+
+    WebAssembly zu übersetzen zählt dem Browser als Code-Erzeugung zur Laufzeit
+    und braucht deshalb ein eigenes Schlüsselwort. Es erlaubt ausdrücklich NUR
+    WebAssembly — eval() und new Function() auf beliebigen Text bleiben
+    verboten, und die Herkunft bleibt 'self'. Die Bibliothek liegt bei uns
+    unter frontend/public/vendor/, es kommt kein CDN ins Spiel.
+
+    `blob:` bleibt draußen, obwohl der Lader des ERP es bräuchte: Genau darüber
+    baut sich eine XSS-Lücke zu Skriptausführung aus. Der Lader in
+    frontend/src/lib/belegScanner.js hängt die Datei deshalb als normales
+    <script src> ein.
+    """
+    script_src = _direktive(_csp(client), "script-src")
+    assert "'wasm-unsafe-eval'" in script_src
+    assert "blob:" not in script_src
+    assert "'unsafe-eval'" not in _csp(client)
 
 
 def test_keine_fremden_einbettungen_und_objekte(client):

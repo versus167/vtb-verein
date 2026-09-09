@@ -125,10 +125,15 @@
           <div class="text-caption text-grey-7 q-mb-xs">Beleg *</div>
 
           <!-- Bestehende Rechnung: Upload läuft direkt gegen die ID. -->
-          <AnhangPanel v-if="aktuell?.id" :anhaenge="anhaenge"
-            :upload-url="`/api/rechnungen/${aktuell.id}/anhaenge`"
-            :can-upload="istEntwurf" :can-delete="istEntwurf"
-            @uploaded="onUploaded" @deleted="onDeleted" />
+          <template v-if="aktuell?.id">
+            <AnhangPanel :anhaenge="anhaenge"
+              :upload-url="`/api/rechnungen/${aktuell.id}/anhaenge`"
+              :can-upload="istEntwurf" :can-delete="istEntwurf"
+              @uploaded="onUploaded" @deleted="onDeleted" />
+            <q-btn v-if="istEntwurf && scannerMoeglich" outline color="primary"
+              icon="document_scanner" label="Beleg scannen" size="sm" class="q-mt-sm"
+              :loading="scanLaeuft" @click="scannerOffen = true" />
+          </template>
 
           <!-- Neue Rechnung: Datei bis zum Klick vorhalten, damit Anlegen,
                Hochladen und Einreichen ein einziger Schritt bleiben. -->
@@ -151,9 +156,16 @@
             </q-list>
             <input ref="dateiInput" type="file" multiple :accept="BELEG_ACCEPT"
               style="display: none" @change="dateienGewaehlt" />
-            <q-btn outline color="primary" icon="attach_file" label="Beleg wählen"
-              size="sm" @click="dateiInput.click()" />
-            <span class="text-caption text-grey q-ml-sm">{{ BELEG_HINWEIS }}</span>
+            <div class="row items-center q-gutter-sm">
+              <q-btn outline color="primary" icon="attach_file" label="Beleg wählen"
+                size="sm" @click="dateiInput.click()" />
+              <!-- Kamera-Scanner (#197). Nur wo die Kamera überhaupt darf:
+                   getUserMedia gibt es ausschließlich im Secure Context. -->
+              <q-btn v-if="scannerMoeglich" outline color="primary"
+                icon="document_scanner" label="Beleg scannen"
+                size="sm" @click="scannerOffen = true" />
+            </div>
+            <div class="text-caption text-grey q-mt-xs">{{ BELEG_HINWEIS }}</div>
           </div>
 
           <div v-if="error" class="text-negative text-caption q-mt-sm">{{ error }}</div>
@@ -170,6 +182,10 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- Beleg-Scanner (#197). Liegt bewusst neben dem Rechnungs-Dialog und
+         nicht darin: So bleibt das Formular stehen, während gescannt wird. -->
+    <BelegScannenDialog v-model="scannerOffen" @fertig="belegGescannt" />
   </div>
 </template>
 
@@ -181,6 +197,7 @@ import { api } from 'src/boot/axios'
 import { useAuthStore } from 'stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
+import BelegScannenDialog from 'components/BelegScannenDialog.vue'
 import {
   STATUS_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, parseBetrag, fehlertext,
   BELEG_ACCEPT, BELEG_HINWEIS, belegFehler, baueEmpfaengerOptionen, empfaengerText,
@@ -215,6 +232,48 @@ const error = ref('')
 // (bzw. beim Speichern) hochgeladen, sobald es eine ID gibt.
 const neueDateien = ref([])
 const dateiInput = ref(null)
+
+// Beleg-Scanner (#197). getUserMedia gibt es nur im Secure Context — über
+// http (außer localhost) fehlt die Kamera ersatzlos, dann bleibt der Knopf
+// weg statt beim Tippen ins Leere zu laufen.
+const scannerOffen = ref(false)
+const scanLaeuft = ref(false)
+const scannerMoeglich = window.isSecureContext
+  && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+
+/**
+ * Der Scanner liefert den fertigen Beleg als PDF.
+ *
+ * Bei einer schon angelegten Rechnung wandert er sofort in die Anhänge — der
+ * Weg ist derselbe wie beim Hochladen einer Datei. Bei einer noch nicht
+ * angelegten wartet er wie eine gewählte Datei in `neueDateien`, bis es eine
+ * ID gibt. Der Scanner bleibt offen: Wer mehrere Belege hat, scannt weiter.
+ */
+async function belegGescannt(datei) {
+  const meldung = belegFehler(datei)
+  if (meldung) {
+    $q.notify({ type: 'warning', message: meldung })
+    return
+  }
+  if (!aktuell.value?.id) {
+    neueDateien.value.push(datei)
+    return
+  }
+  scanLaeuft.value = true
+  try {
+    const formular = new FormData()
+    formular.append('file', datei)
+    const { data } = await api.post(
+      `/api/rechnungen/${aktuell.value.id}/anhaenge`, formular,
+      { headers: { 'Content-Type': 'multipart/form-data' } })
+    anhaenge.value.push(data)
+    $q.notify({ type: 'positive', message: 'Beleg hinzugefügt.' })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: fehlertext(e, 'Beleg konnte nicht hinzugefügt werden.') })
+  } finally {
+    scanLaeuft.value = false
+  }
+}
 
 const form = ref(leeresFormular())
 
