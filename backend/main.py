@@ -97,36 +97,63 @@ app = FastAPI(
 # kostet hier also nichts und ist der eigentliche Gewinn — eingeschleuster Code
 # könnte weder von außen nachladen noch inline ausgeführt werden.
 #
-# Drei bewusste Zugeständnisse:
+# Zwei bewusste Zugeständnisse:
 #   * `style-src` erlaubt 'unsafe-inline'. Vue und Quasar setzen Stil-Attribute,
 #     ohne Nonce/Hash je Response ginge das nicht. Der Hebel für einen Angreifer
 #     ist dort ungleich kleiner als bei Skripten.
 #   * `img-src`/`frame-src` erlauben blob:. Die Anhang-Vorschau baut ihre Bilder
 #     und PDFs aus Blob-URLs (s. AnhangPanel.vue) — ohne das bliebe sie leer.
-#   * `script-src` erlaubt 'wasm-unsafe-eval' (Beleg-Scanner, Ticket #197).
-#     Der Scanner erkennt die Belegkanten mit OpenCV.js, und WebAssembly zu
-#     übersetzen zählt für den Browser als Code-Erzeugung zur Laufzeit — unter
-#     'self' allein bricht das mit einem CSP-Verstoß ab, die Seite bliebe
-#     einfach leer. Bewusst NICHT 'unsafe-eval': das Schlüsselwort erlaubt nur
-#     WebAssembly, nicht eval()/new Function() auf beliebigen Text. Die
-#     Bibliothek selbst kommt weiter nur von uns (frontend/public/vendor/,
-#     kein CDN), und `blob:` bleibt aus script-src heraus — der Lader in
-#     frontend/src/lib/belegScanner.js hängt sie deshalb als normales
-#     <script src> ein und holt den Fortschrittsbalken aus einem
-#     vorgeschalteten fetch, statt ein Blob-Script zu bauen.
+#
+# `frame-src` erlaubt zusätzlich 'self': Der Beleg-Scanner läuft in einem
+# eingebetteten Dokument gleicher Herkunft (s. _CSP_SCANNER).
 _CSP = "; ".join([
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
     "connect-src 'self'",
-    "frame-src blob:",
+    "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
 ])
+
+# Eigene, lockerere Richtlinie für das Scanner-Dokument (Ticket #197).
+#
+# WARUM ÜBERHAUPT GELOCKERT: Der Scanner erkennt die Belegkanten mit OpenCV.js.
+# Dessen Anbindungsschicht baut Funktionen zur Laufzeit aus Zeichenketten
+# (`new Function(...)` in `createNamedFunction`), und der Single-File-Build holt
+# sein WebAssembly per fetch aus einer `data:`-URI. Gemessen mit Headless-Chrome
+# am 09.09.2026: Unter `script-src 'self'` bricht die Bibliothek sofort mit
+# `EvalError` ab, mit 'wasm-unsafe-eval' ebenso — das Schlüsselwort deckt echtes
+# eval nicht ab. Es läuft erst mit 'unsafe-eval' UND `connect-src data:`.
+#
+# WARUM NUR HIER: 'unsafe-eval' app-weit würde die Härtung überall aufgeben,
+# auch auf den Seiten mit Mitglieder-, Kassen- und Tresordaten. Der Scanner ist
+# deshalb ein eigenes Dokument (frontend/public/beleg-scanner.html), das die App
+# in einem iframe einbettet; die Lockerung endet an dessen Rand. Das Dokument
+# zeigt selbst keine Vereinsdaten — es sieht nur das Kamerabild und schickt das
+# fertige PDF per postMessage nach oben.
+#
+# `frame-ancestors 'self'` statt 'none', sonst dürfte die App es nicht
+# einbetten; passend dazu setzt die Middleware hier X-Frame-Options auf
+# SAMEORIGIN (DENY verbietet auch die eigene Herkunft).
+_CSP_SCANNER = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+])
+
+_SCANNER_PFAD = "/beleg-scanner.html"
 
 # Swagger/ReDoc laden ihr JavaScript von einem CDN — unter `script-src 'self'`
 # blieben beide Seiten weiß. Sie zeigen keine Nutzerdaten, sondern die eigene
@@ -138,12 +165,16 @@ _OHNE_CSP = ("/api/docs", "/api/redoc")
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        scanner = request.url.path == _SCANNER_PFAD
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        # Das Scanner-Dokument wird von der eigenen App eingebettet; DENY
+        # verbietet auch die eigene Herkunft und ließe den Rahmen leer.
+        response.headers["X-Frame-Options"] = "SAMEORIGIN" if scanner else "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         if not request.url.path.startswith(_OHNE_CSP):
-            response.headers["Content-Security-Policy"] = _CSP
+            response.headers["Content-Security-Policy"] = (
+                _CSP_SCANNER if scanner else _CSP)
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)

@@ -1,33 +1,35 @@
 /* ==========================================================================
-   Beleg scannen — Handy-Dokumentenscanner für das Einreichen von Rechnungen.
+   Beleg scannen — Handy-Dokumentenscanner (Ticket #197)
 
    Ablauf:  Kamera (Live-Rahmen um den erkannten Beleg, Auto-Auslöser)
          →  Ecken anpassen (vier Griffe, Lupe unter dem Finger wie bei Google)
          →  Seiten prüfen (Filter Dokument/Schwarz-Weiß/Farbe, drehen, löschen,
             weitere Seite)
-         →  Hochladen: Seiten als JPEG an /api/rechnungen/beleg-scan; der
+         →  Übernehmen: Seiten als JPEG an /api/rechnungen/beleg-scan; der
             Server baut daraus ein PDF und gibt es zurück. Abgelegt wird es
-            nicht hier, sondern mit der Rechnung — s. `onFertig`.
+            nicht hier, sondern mit der Rechnung — das PDF geht per
+            postMessage an die App (s. showDone).
 
    HERKUNFT: Übernommen aus dem X1-ERP (public/js/belege/scan.js, Stand
    09.09.2026), wo dieser Scanner auf Android-Chrome und iPhone-Safari
-   abgenommen wurde. Übernahme-Paket und Begründungen:
-   docs/uebergabe/dokumentenscanner/README.md im ERP-Repo (Ticket #197).
-
-   Der Ablauf, die Konstanten und die Reihenfolge in `loadOpenCv()` sind
-   bewusst unverändert — was hier „umständlich" aussieht, ist meist eine
+   abgenommen wurde. Ablauf, Konstanten und die Reihenfolge in `loadOpenCv()`
+   sind bewusst unverändert — was hier umständlich aussieht, ist meist eine
    bezahlte Lehre. Geändert wurden nur die Anschlüsse an unsere App:
-     * kein CSRF-Token (wir fahren HttpOnly-Cookie + SameSite=strict),
+     * kein CSRF-Token (HttpOnly-Cookie + SameSite=strict),
      * eigener Endpunkt, Antwort ist das PDF statt einer Beleg-ID,
      * „Zur Überweisung" und Projekt-Mappe entfallen (Entscheid Marko),
-     * OpenCV wird als normales <script src> geladen statt als Blob-Script,
-       weil unsere CSP `blob:` in script-src bewusst nicht erlaubt,
-     * `starteScanner()` statt sofort laufender IIFE, mit `stop()` zum
-       Aufräumen — der Scanner lebt in einem Dialog, nicht auf einer Seite.
+     * Material Icons statt Bootstrap-Icons,
+     * OpenCV wird als normales <script src> geladen statt als Blob-Script.
+
+   WARUM EIGENES DOKUMENT statt Teil der Vue-App: OpenCV.js braucht
+   'unsafe-eval' und `connect-src data:` (gemessen, s. backend/main.py). Diese
+   Lockerung soll nicht für die ganze App gelten, sondern an der Kante dieses
+   Rahmens enden. Das Dokument sieht deshalb nur das Kamerabild und kennt
+   keine Vereinsdaten. Genau so ist es auch im ERP gebaut (dort scan.php).
 
    Bildlogik (Erkennung, Entzerrung, Filter) liegt unverändert in
-   public/vendor/scan-detect.js und läuft komplett im Browser mit
-   public/vendor/opencv.js (10,9 MB, einmalig geladen, danach aus dem Cache).
+   scan-detect.js daneben und läuft komplett im Browser mit opencv.js
+   (10,9 MB, einmalig geladen, danach aus dem Browser-Cache).
 
    OpenCV.js-Fallen:
    - Jede cv.Mat muss per delete() freigegeben werden, sonst läuft der
@@ -36,38 +38,10 @@
      Promise auflösen, sonst Endlosschleife. Bereitschaft über calledRun /
      onRuntimeInitialized prüfen.
    ========================================================================== */
-
-/** Pfade der mitgelieferten Bibliotheken. `?v=` kommt aus der Build-Version,
- *  damit ein Austausch eine neue URL ergibt — ausgeliefert werden sie mit
- *  `Cache-Control: immutable` (s. backend/main.py). */
-const VENDOR_OPENCV = '/vendor/opencv.js'
-const VENDOR_DETECT = '/vendor/scan-detect.js'
-
-/** Lädt ein Skript als normales <script src> und wartet auf onload.
- *  Bewusst kein Blob-Script wie im ERP: das bräuchte `blob:` in script-src. */
-function ladeSkript(url) {
-    return new Promise((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = url
-        s.onload = () => resolve()
-        s.onerror = () => reject(new Error('Skript konnte nicht geladen werden: ' + url))
-        document.head.appendChild(s)
-    })
-}
-
-/**
- * Startet den Scanner auf dem bereits im DOM stehenden Markup.
- *
- * @param {object} optionen
- * @param {number} optionen.maxSeiten    Höchstzahl Seiten je Beleg.
- * @param {string} optionen.version      Cache-Schlüssel für die Bibliotheken.
- * @param {function} optionen.onFertig   Bekommt das fertige PDF als File.
- * @returns {{stop: function}} Aufräumen: Kamera aus, Listener ab, Speicher frei.
- */
-export function starteScanner(optionen) {
+(function () {
     'use strict';
 
-    const opts = optionen || {};
+    const UPLOAD_URL = '/api/rechnungen/beleg-scan';
 
     const OUT_LONG_EDGE   = 2400;   // Pixel lange Kante nach der Entzerrung
     const DETECT_SIZE     = 480;    // Analyse-Größe (lange Kante) für den Live-Rahmen
@@ -108,18 +82,22 @@ export function starteScanner(optionen) {
         uploadProgress: $('scnUploadProgress'), uploadBar: $('scnUploadBar'), uploadText: $('scnUploadText'),
         doneTitle: $('scnDoneTitle'), doneText: $('scnDoneText'), next: $('scnNext'),
         toast: $('scnToast'), work: $('scnWork'),
+        close: $('scnClose'), fertig: $('scnFertig'),
     };
-    if (!dom.app) return { stop() {} };
+    if (!dom.app || !window.ScanDetect) return;
     dom.loadingBox = dom.loading.querySelector('.scn-loading-box');
 
-    // Wird in boot() gesetzt, sobald scan-detect.js geladen ist. Alle drei
-    // Benutzungen liegen hinter state.cv, laufen also erst danach.
-    let D = null;
+    const D         = window.ScanDetect;
     // Diagnose in die Browser-Konsole, wenn "scndebug" in der URL steht.
     const DEBUG     = /scndebug/.test(location.search + location.hash);
     const dbg       = (...a) => { if (DEBUG) console.log('[scan]', ...a); };
-    const MAX_PAGES = opts.maxSeiten || 20;
-    const OPENCV    = VENDOR_OPENCV + (opts.version ? '?v=' + encodeURIComponent(opts.version) : '');
+    const MAX_PAGES = parseInt(dom.app.dataset.maxPages, 10) || 20;
+    // Die App haengt die App-Version als ?v= an die Adresse dieses Dokuments.
+    // Sie wandert hier an die Bibliothek weiter, damit ein Austausch trotz
+    // unveraenderlichem Cache eine neue URL ergibt (s. backend/main.py).
+    const VERSION   = new URLSearchParams(location.search).get('v') || '';
+    const OPENCV    = (dom.app.dataset.opencv || '/vendor/opencv.js')
+                      + (VERSION ? '?v=' + encodeURIComponent(VERSION) : '');
 
     const state = {
         cv: null, cvError: null,
@@ -138,8 +116,8 @@ export function starteScanner(optionen) {
         deleteArmed: 0,
         zoom: null,       // { canvas, cw, ch, ox, oy, W, H, s, tx, ty, pointers:Map, pinch, lastTap }
     };
-    // Material Icons (Ligatur als Textinhalt) statt der Bootstrap-Icons des
-    // ERP — die bringt unsere App ohnehin mit, ein zweiter Icon-Font nicht.
+    // Material Icons (Ligatur als Textinhalt) statt Bootstrap-Icons — die
+    // Schrift liegt neben dieser Datei unter /vendor/.
     const FILTER_ICONS = { dokument: 'description', sw: 'contrast', farbe: 'palette' };
     const ZOOM_MAX = 6;
     const ZOOM_TAP = 2.5;
@@ -209,17 +187,29 @@ export function starteScanner(optionen) {
         dom.retry.hidden = !error;
     }
 
+    /** Lädt ein Skript als normales <script src> und wartet auf onload. */
+    function ladeSkript(url) {
+        return new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = url;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error('Scanner-Bibliothek ist beschädigt'));
+            document.head.appendChild(s);
+        });
+    }
+
     /**
      * Zieht die Datei einmal durch und meldet dabei den Fortschritt. Die Bytes
-     * werden verworfen — es geht nur darum, den HTTP-Cache zu füllen und dem
-     * Anwender den Balken zu zeigen.
+     * werden verworfen — es geht nur darum, den HTTP-Cache zu füllen und den
+     * Balken zu zeigen.
      *
      * Das ERP hängt die geladenen Bytes anschließend als Blob-Script ein. Das
-     * geht hier nicht: Unsere CSP erlaubt `blob:` in script-src bewusst nicht,
-     * weil genau darüber sich eine XSS-Lücke zu Skriptausführung ausbaut. Der
-     * zweite Zugriff unten läuft deshalb als normales <script src> und wird aus
-     * dem Cache bedient (die Datei kommt mit `immutable`, s. backend/main.py).
-     * Fällt der Cache aus, lädt sie ein zweites Mal — unschön, aber richtig.
+     * geht hier nicht: `blob:` steht auch in der gelockerten Richtlinie dieses
+     * Dokuments nicht in script-src, weil genau darüber sich eine XSS-Lücke zu
+     * Skriptausführung ausbaut. Der zweite Zugriff unten läuft deshalb als
+     * normales <script src> und wird aus dem Cache bedient (die Datei kommt mit
+     * `immutable`, s. backend/main.py). Fällt der Cache aus, lädt sie ein
+     * zweites Mal — unschön, aber richtig.
      */
     async function waermeCache(url, onProgress) {
         const resp = await fetch(url, { credentials: 'same-origin' });
@@ -255,9 +245,7 @@ export function starteScanner(optionen) {
         });
         setLoading('Scanner startet …', undefined, 1);
         dbg('opencv geladen', bytes, 'Bytes');
-        await ladeSkript(OPENCV).catch(() => {
-            throw new Error('Scanner-Bibliothek ist beschädigt');
-        });
+        await ladeSkript(OPENCV);
         // Bereitschaft: calledRun (Modul fertig) oder onRuntimeInitialized abwarten.
         // cv.then NICHT benutzen (altes Emscripten-Thenable → Endlosschleife).
         const wrapped = await new Promise((resolve, reject) => {
@@ -518,9 +506,6 @@ export function starteScanner(optionen) {
     }
 
     function loop(ts) {
-        // Nach stop() nicht weiterlaufen: Der Scanner lebt in einem Dialog,
-        // und eine weiterlaufende Schleife hielte Canvas und Video am Leben.
-        if (gestoppt) return;
         requestAnimationFrame(loop);
         if (!state.detecting || !state.cv || !state.stream) return;
         if (dom.video.readyState < 2 || !dom.video.videoWidth) return;
@@ -1172,8 +1157,10 @@ export function starteScanner(optionen) {
      *
      * Alle Seiten zusammen, nicht einzeln: Bricht die Übertragung ab, gibt es
      * keinen halben Beleg, und die Seitenreihenfolge hängt nicht am Zufall der
-     * Antwortzeiten. Kein CSRF-Token — wir fahren HttpOnly-Cookie mit
-     * SameSite=strict, `withCredentials` genügt.
+     * Antwortzeiten. Kein CSRF-Token — die App fährt ein HttpOnly-Cookie mit
+     * SameSite=strict, `withCredentials` genügt. Das Cookie gilt auch hier:
+     * Dieses Dokument hat dieselbe Herkunft wie die App, es steckt nur in
+     * einem eigenen Rahmen.
      */
     function xhrUpload(url, fd, onProgress) {
         return new Promise((resolve) => {
@@ -1187,12 +1174,10 @@ export function starteScanner(optionen) {
                     resolve({ ok: true, blob: xhr.response });
                     return;
                 }
-                // Fehler kommen als JSON, die Antwort ist aber ein Blob.
                 let meldung = 'Der Beleg konnte nicht erzeugt werden (HTTP ' + xhr.status + ').';
                 if (xhr.status === 401) meldung = 'Nicht mehr angemeldet — bitte neu anmelden.';
                 try {
-                    const text = await xhr.response.text();
-                    const detail = JSON.parse(text)?.detail;
+                    const detail = JSON.parse(await xhr.response.text())?.detail;
                     if (typeof detail === 'string') meldung = detail;
                 } catch (_) { /* dann bleibt es beim Standardtext */ }
                 resolve({ ok: false, message: meldung });
@@ -1220,7 +1205,7 @@ export function starteScanner(optionen) {
                 fd.append('pages', blob, 'seite-' + (i + 1) + '.jpg');
                 showUploadProgress(0, 'Seite ' + (i + 1) + ' von ' + state.pages.length + ' vorbereitet');
             }
-            const res = await xhrUpload('/api/rechnungen/beleg-scan', fd, (frac) => {
+            const res = await xhrUpload(UPLOAD_URL, fd, (frac) => {
                 showUploadProgress(frac, 'Wird übertragen … ' + Math.round(frac * 100) + ' % von ' + fmtSize(total));
             });
             if (!res || !res.ok) throw new Error((res && res.message) || 'Upload fehlgeschlagen');
@@ -1235,10 +1220,13 @@ export function starteScanner(optionen) {
     }
 
     /**
-     * Der Beleg ist fertig, aber noch nicht abgelegt: Er hängt jetzt am
-     * Rechnungs-Dialog wie eine selbst gewählte Datei und wandert mit dem
-     * Speichern in die Ablage. Deshalb steht hier „übernommen" und nicht
-     * „im Eingang" wie im ERP, und es gibt keinen Link auf einen Beleg.
+     * Der Beleg ist fertig, aber noch nicht abgelegt: Er geht per postMessage
+     * an die App, hängt dort am Rechnungs-Dialog wie eine selbst gewählte Datei
+     * und wandert mit dem Speichern in die Ablage. Deshalb steht hier
+     * „übernommen" und nicht „im Eingang" wie im ERP.
+     *
+     * Ziel-Herkunft ausdrücklich die eigene: Ein `'*'` würde das PDF an jede
+     * Seite ausliefern, die dieses Dokument einbettet.
      */
     function showDone(pdf, seiten) {
         const name = 'beleg-scan-' + new Date().toISOString().slice(0, 10) + '.pdf';
@@ -1249,7 +1237,12 @@ export function starteScanner(optionen) {
             + '. Der Beleg hängt jetzt an der Rechnung und wird mit ihr gespeichert.';
         vibrate([30, 60, 30]);
         showView('done');
-        if (typeof opts.onFertig === 'function') opts.onFertig(datei);
+        try {
+            parent.postMessage({ typ: 'vtb-beleg-scan', datei: datei, seiten: seiten },
+                               location.origin);
+        } catch (e) {
+            toast('Der Beleg konnte nicht an die Rechnung übergeben werden.', 'error');
+        }
     }
 
     function nextBeleg() {
@@ -1275,6 +1268,18 @@ export function starteScanner(optionen) {
     });
     dom.stack.addEventListener('click', () => { if (state.pages.length) { showView('pages'); renderPages(); } });
     dom.retry.addEventListener('click', () => boot());
+
+    // Zurück zur Rechnung. Das Dokument kann sich nicht selbst schließen — es
+    // steckt im Rahmen der App, die den Dialog hält. Also Bescheid sagen.
+    function schliessenMelden() {
+        stopCamera();
+        releaseWakeLock();
+        try {
+            parent.postMessage({ typ: 'vtb-beleg-scan-schliessen' }, location.origin);
+        } catch (_) { /* dann bleibt der Dialog offen, der Nutzer hat den Rahmen-Knopf */ }
+    }
+    dom.close.addEventListener('click', schliessenMelden);
+    dom.fertig.addEventListener('click', schliessenMelden);
 
     dom.cornerCanvas.addEventListener('pointerdown', onCornerDown);
     dom.cornerCanvas.addEventListener('pointermove', onCornerMove);
@@ -1304,25 +1309,21 @@ export function starteScanner(optionen) {
     dom.upload.addEventListener('click', upload);
     dom.next.addEventListener('click', nextBeleg);
 
-    function onResize() {
+    window.addEventListener('resize', () => {
         if (state.view === 'camera') { sizeOverlay(); drawOverlay(); }
         else if (state.view === 'corners' && state.draft) { layoutCornerView(); drawCornerView(); }
         else if (state.view === 'pages' && state.pages[state.current]) { drawPreview(state.pages[state.current]); }
-    }
-    function onVisibility() {
+    });
+    document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
             stopCamera();
             releaseWakeLock();
         } else if (state.view === 'camera' || state.view === 'corners' || state.view === 'pages') {
             startCamera().then(ok => { if (ok) { readyCheck(); if (state.view === 'camera') requestWakeLock(); } });
         }
-    }
-    window.addEventListener('resize', onResize);
-    document.addEventListener('visibilitychange', onVisibility);
+    });
 
     /* ── Start ───────────────────────────────────────────────────────────── */
-
-    let gestoppt = false;
 
     try { state.autoCapture = localStorage.getItem('vtb-scan-auto') !== '0'; } catch (_) { /* egal */ }
     dom.autoToggle.classList.toggle('is-on', state.autoCapture);
@@ -1333,47 +1334,17 @@ export function starteScanner(optionen) {
         dom.loadingBox.classList.remove('is-error');
         const cam = startCamera();
         try {
-            // Die Bildlogik zuerst: sie ist klein und wird ohnehin gebraucht,
-            // bevor die erste Analyse läuft. Danach die 10,9 MB OpenCV.
-            if (!window.ScanDetect) {
-                await ladeSkript(VENDOR_DETECT + (opts.version ? '?v=' + encodeURIComponent(opts.version) : ''));
-            }
-            D = window.ScanDetect;
-            if (!D) throw new Error('Bildlogik konnte nicht geladen werden');
             state.cv = (await loadOpenCv()).mod;
         } catch (e) {
             state.cvError = e;
             setLoading('Scanner konnte nicht geladen werden', (e && e.message ? e.message : String(e)) + ' — Verbindung prüfen und nochmal versuchen.', 0, true);
             return;
         }
-        if (gestoppt) return;
         const ok = await cam;
         if (!ok) return;
         readyCheck();
     }
 
-    /**
-     * Kamera aus, Bildschirmsperre frei, Listener ab, Schleife anhalten.
-     *
-     * Der Scanner sitzt in einem Dialog, der beliebig oft geöffnet wird. Ohne
-     * das liefe nach dem Schließen die Kamera weiter (samt Leuchte und Akku),
-     * und beim nächsten Öffnen hingen die Fenster-Listener doppelt.
-     */
-    function stop() {
-        gestoppt = true;
-        stopCamera();
-        releaseWakeLock();
-        window.removeEventListener('resize', onResize);
-        document.removeEventListener('visibilitychange', onVisibility);
-        for (const p of state.pages) {
-            if (p.cache) p.cache = null;
-        }
-        state.pages = [];
-        state.draft = null;
-    }
-
     requestAnimationFrame(loop);
     boot();
-
-    return { stop };
-}
+})();

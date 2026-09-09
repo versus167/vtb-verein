@@ -2,35 +2,65 @@
    Beleg scannen — Handy-Dokumentenscanner (Ticket #197)
 
    Übernommen aus dem X1-ERP (public/css/belege/scan.css, Stand 09.09.2026).
-   Geändert wurde nur, was an unserer App hängt:
+   Eigenständige Vollbild-Seite, dunkel — ein Sucher ist ein Sucher, das
+   Kamerabild soll die einzige helle Fläche sein. Das gilt in allen drei
+   Themes der App; dieses Dokument nimmt sie bewusst nicht auf.
 
-   * Der Scanner ist bei uns ein Dialog, keine eigenständige Seite. Die
-     Variablen und die Grundeinstellungen sitzen deshalb auf `.scn-app`
-     statt auf `:root`, `html`/`body` bleiben unberührt — sonst nähme der
-     Scanner die ganze SPA mit, sobald er einmal geladen wurde.
-   * Aus dem ERP-Grün wird das Vereinsgelb, aus dem dunklen Grün das
-     Wappenblau: gelbe Fläche mit blauer Schrift ist unser Muster für
-     hervorgehobene Knöpfe (s. System-Mails). Weißer Text auf Gelb wäre
-     unlesbar und ist in der CLAUDE.md ausdrücklich ausgeschlossen.
-   * Beide Farben kommen über `$akzent`/`$flaeche`, also aus den
-     CSS-Variablen des Backends — eine zweite Instanz färbt damit ohne
-     eigenen Build um.
+   Geändert gegenüber dem ERP: Aus dem ERP-Grün wird das Vereinsgelb, aus dem
+   dunklen Grün das Wappenblau. Gelbe Fläche mit blauer Schrift ist unser
+   Muster für hervorgehobene Knöpfe (s. System-Mails); weißer Text auf Gelb
+   wäre unlesbar und ist in der CLAUDE.md ausdrücklich ausgeschlossen. Beide
+   Farben kommen über die CSS-Variablen aus /api/branding.css, die das
+   Dokument im <head> einbindet — eine zweite Instanz färbt damit ohne
+   eigenen Build um. Die Hexwerte hier sind nur der Rückfall.
 
-   Die Oberfläche bleibt bewusst dunkel, in allen drei Themes. Ein Sucher
-   ist ein Sucher: Das Kamerabild soll die einzige helle Fläche sein.
+   Dazu die Symbolschrift: Die App liefert Material Icons unter gehashten
+   Namen aus /assets aus, auf die ein statisches Dokument nicht stabil zeigen
+   kann. Deshalb liegt die Schrift hier daneben unter /vendor/.
    ========================================================================== */
 
-.scn-app {
+@font-face {
+    font-family: 'Material Icons';
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    src: url('/vendor/material-icons.woff2') format('woff2');
+}
+
+.material-icons {
+    font-family: 'Material Icons';
+    font-weight: normal;
+    font-style: normal;
+    display: inline-block;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: normal;
+    word-wrap: normal;
+    white-space: nowrap;
+    direction: ltr;
+    font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+    vertical-align: middle;
+}
+
+
+:root {
     --scn-bg: #0e0e0e;
     --scn-panel: #181818;
     --scn-text: #f5f5f5;
     --scn-muted: #9a9a9a;
-    --scn-green: #{$akzent};
-    --scn-green-dark: #{$flaeche};
+    --scn-green: var(--vtb-akzent, #feeb03);
+    --scn-green-dark: var(--vtb-flaeche, #023a90);
     --scn-danger: #e05555;
     --scn-safe-top: env(safe-area-inset-top, 0px);
     --scn-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
 
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+    margin: 0; padding: 0;
+    height: 100%;
+    overflow: hidden;
     background: var(--scn-bg);
     color: var(--scn-text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -38,12 +68,7 @@
     user-select: none;
     -webkit-user-select: none;
 }
-
-.scn-app *,
-.scn-app *::before,
-.scn-app *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
-.scn-app button { font: inherit; color: inherit; }
+button { font: inherit; color: inherit; }
 
 /* Fest an den Bildschirm geheftet statt 100vh/100dvh: Handy-Browser rechnen
    vh mit eingeklappter Werkzeugleiste, dann liegt die Fußleiste mit dem
@@ -135,7 +160,7 @@
     transition: background .35s, color .35s;
 }
 .scn-status[data-state="found"],
-.scn-status[data-state="found-auto"] { background: rgba(#{$akzent-rgb}, .92); color: var(--scn-green-dark); }
+.scn-status[data-state="found-auto"] { background: rgba(var(--vtb-akzent-rgb, 254, 235, 3), .92); color: var(--scn-green-dark); }
 .scn-status[data-state="paused"] { background: rgba(255, 255, 255, .85); color: #222; }
 .scn-status-bar {
     display: none;
@@ -344,7 +369,7 @@
     backdrop-filter: blur(4px);
     z-index: 2;
 }
-.scn-zoom-btn:active { background: rgba(#{$akzent-rgb}, .9); color: var(--scn-green-dark); }
+.scn-zoom-btn:active { background: rgba(var(--vtb-akzent-rgb, 254, 235, 3), .9); color: var(--scn-green-dark); }
 .scn-preview-busy {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
