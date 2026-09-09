@@ -44,6 +44,11 @@ export function wochentag(iso) {
   return new Date(`${iso}T12:00`).toLocaleDateString('de-DE', { weekday: 'short' })
 }
 
+// „wöchentlich" / „14-täglich" – Takt einer Serie (termin_serie.intervall_wochen).
+export function taktLabel(intervallWochen) {
+  return intervallWochen === 2 ? '14-täglich' : 'wöchentlich'
+}
+
 // „15.07." – Tag/Monat für den Datumsblock der Card.
 export function tagMonat(iso) {
   if (!iso) return ''
@@ -103,7 +108,28 @@ export function useSpielstaettenAuswahl() {
     return [p.name, adresse(p)].filter(Boolean).join(', ')
   }
 
-  return { alle, optionen, laedt, laden, filtern, adresse, ortText }
+  // Stammt der Ortstext unverändert aus den Stammdaten – oder hat jemand
+  // etwas hineingeschrieben („Halle 2, Hintereingang")?
+  function istStammdatenOrt(ort) {
+    const t = (ort || '').trim()
+    return !t || alle.value.some((p) => ortText(p.id) === t)
+  }
+
+  // Neuer Ort-Text nach einem Spielstätten-Wechsel. Die Anschrift kommt aus den
+  // Stammdaten, damit sie am Termin steht, wo sie gebraucht wird (Karten-Link,
+  // Nachricht an den Kader) – bewusst als Kopie: eine später korrigierte
+  // Anschrift soll vergangene Termine nicht rückwirkend umschreiben.
+  //
+  // Verglichen wird gegen die Stammdaten und nicht gegen einen Merker „zuletzt
+  // übernommen": Beim Öffnen eines bestehenden Termins gibt es keinen solchen
+  // Merker, der Text stammt aber trotzdem von dort – sonst bliebe beim Wechsel
+  // des Platzes die Adresse des alten stehen. Von Hand Ergänztes bleibt.
+  function uebernommenerOrt(id, aktuellerOrt) {
+    if (!istStammdatenOrt(aktuellerOrt)) return aktuellerOrt
+    return ortText(id)          // '' bei „Kein Vereinsgelände": Adresse muss weg
+  }
+
+  return { alle, optionen, laedt, laden, filtern, adresse, uebernommenerOrt }
 }
 
 // Ort an die Karten-/Navi-App des Geräts übergeben.

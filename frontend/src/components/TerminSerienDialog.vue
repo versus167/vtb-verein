@@ -29,6 +29,7 @@
                   · {{ s.typ === 'training' ? 'Training' : 'Sonstiges' }}
                 </q-item-label>
                 <q-item-label caption>
+                  {{ taktLabel(s.intervall_wochen) }} ·
                   <span v-if="s.ort">{{ s.ort }} · </span>
                   {{ s.ende_datum ? `bis ${datumLabel(s.ende_datum)}` : 'offenes Ende' }}
                 </q-item-label>
@@ -43,11 +44,11 @@
               </q-item-section>
             </q-item>
 
-            <!-- Inline-Bearbeitung: alles außer Wochentag (start_datum ist fix) -->
+            <!-- Inline-Bearbeitung: alles außer Wochentag und Takt (beide fix) -->
             <div v-if="editId === s.id" class="q-pa-sm q-mb-sm bg-grey-2 rounded-borders">
               <div class="text-caption text-grey-7 q-mb-sm">
                 Änderungen gelten für zukünftige, nicht individuell geänderte Termine.
-                Der Wochentag ist fix – dafür Serie löschen und neu anlegen.
+                Wochentag und Takt sind fix – dafür Serie löschen und neu anlegen.
               </div>
               <div class="q-gutter-sm">
                 <q-select v-model="edit.typ" :options="typOptionen" option-value="value"
@@ -100,7 +101,7 @@
 import { ref, computed } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { wochentag, datumLabel, useSpielstaettenAuswahl } from 'src/composables/useTermine'
+import { wochentag, datumLabel, taktLabel, useSpielstaettenAuswahl } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -130,18 +131,13 @@ const editError = ref('')
 // Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht
 // mit. `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
 const { optionen: spielstaetten, laden: loadSpielstaetten,
-        filtern: filterSpielstaetten, adresse, ortText } = useSpielstaettenAuswahl()
+        filtern: filterSpielstaetten, adresse,
+        uebernommenerOrt } = useSpielstaettenAuswahl()
 
 // Adresse der gewählten Spielstätte übernehmen; von Hand Ergänztes bleibt stehen
 // (wie im Termin-Dialog).
-const zuletztUebernommen = ref('')
 function ortUebernehmen(id) {
-  const text = ortText(id)
-  if (!text) return
-  const aktuell = (edit.value.ort || '').trim()
-  if (aktuell && aktuell !== zuletztUebernommen.value) return
-  edit.value.ort = text
-  zuletztUebernommen.value = text
+  edit.value.ort = uebernommenerOrt(id, edit.value.ort)
 }
 
 async function load() {
@@ -162,7 +158,6 @@ async function load() {
 
 function initEdit(s) {
   editError.value = ''
-  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   edit.value = { typ: s.typ, beginnZeit: s.beginn_zeit, endeZeit: s.ende_zeit ?? '',
                  ort: s.ort ?? '', spielstaetteId: s.spielstaette_id ?? null,
                  treffpunkt: s.treffpunkt ?? '',
@@ -209,7 +204,8 @@ async function saveEdit(s) {
 function confirmDelete(s) {
   $q.dialog({
     title: 'Serie löschen',
-    message: `Serie „${wochentag(s.start_datum)} ${s.beginn_zeit}" wirklich löschen? ` +
+    message: `Serie „${wochentag(s.start_datum)} ${s.beginn_zeit}, ` +
+      `${taktLabel(s.intervall_wochen)}" wirklich löschen? ` +
       'Alle zukünftigen Termine der Serie werden entfernt, vergangene bleiben.',
     cancel: true, persistent: true,
   }).onOk(async () => {

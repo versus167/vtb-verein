@@ -1,4 +1,4 @@
-"""Repository für Terminserien (#95): wöchentliche Vorlage + rollierende Materialisierung.
+"""Repository für Terminserien (#95): wiederkehrende Vorlage + rollierende Materialisierung.
 
 Der Generator erzeugt konkrete `termine`-Instanzen bis zum Horizont (HORIZONT_TAGE)
 und merkt sich das Wasserzeichen `materialisiert_bis` je Serie. Zwei Schutzmechanismen
@@ -6,6 +6,13 @@ gegen Wiedergänger/Duplikate: (1) das Wasserzeichen wird nie rückwärts bewegt
 einzeln gelöschte/abgesagte Instanzen unterhalb werden nie neu erzeugt (auch
 prune-sicher); (2) beim Erzeugen wird jedes Datum übersprungen, an dem die Serie
 bereits eine aktive Instanz hat (relevant nach Kürzen+Wiederverlängern des Endes).
+
+Der Takt steckt in `intervall_wochen` (1 = wöchentlich, 2 = 14-täglich). Gerechnet
+wird ankerbasiert gegen `start_datum`, nicht durch Fortzählen vom Wasserzeichen —
+deshalb bleibt die Phase auch nach Kürzen und Wiederverlängern des Endes erhalten.
+Wie der Wochentag ist der Takt nachträglich NICHT änderbar: ein Taktwechsel müsste
+materialisierte Instanzen verschwinden und andere entstehen lassen, was `update()`
+(schreibt Werte um, erzeugt/löscht nichts) nicht leisten kann und soll.
 
 Serien-Änderungen wirken nur auf zukünftige Instanzen, die noch EXAKT den alten
 Serienwerten entsprechen (IS NOT DISTINCT FROM) und 'geplant' sind — individuell
@@ -26,11 +33,18 @@ HORIZONT_TAGE = 56
 # Serien nur für wiederkehrende Nicht-Spiel-Termine.
 VALID_SERIE_TYPEN = ('training', 'sonstiges')
 
-_COLS = ("id, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id, treffpunkt, "
-         "treffpunkt_zeit, beschreibung, start_datum, ende_datum, materialisiert_bis, "
-         "version, created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
+# Größter erlaubter Takt in Wochen (1 = wöchentlich … MAX = jede n-te Woche).
+# Deckungsgleich mit dem CHECK auf termin_serie.intervall_wochen (Schema v121);
+# beides zusammen ändern, wenn ein weiterer Takt dazukommt.
+MAX_INTERVALL_WOCHEN = 2
 
-# Änderbare Fachfelder der Serie (start_datum/Wochentag bewusst NICHT dabei).
+_COLS = ("id, mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id, treffpunkt, "
+         "treffpunkt_zeit, beschreibung, start_datum, intervall_wochen, ende_datum, "
+         "materialisiert_bis, version, created_at, created_by, updated_at, updated_by, "
+         "deleted_at, deleted_by")
+
+# Änderbare Fachfelder der Serie (start_datum/Wochentag und intervall_wochen
+# bewusst NICHT dabei — beide definieren das Datumsraster, siehe Modul-Docstring).
 _EDIT_FIELDS = ('typ', 'beginn_zeit', 'ende_zeit', 'ort', 'spielstaette_id', 'treffpunkt',
                 'treffpunkt_zeit', 'beschreibung', 'ende_datum')
 
@@ -56,6 +70,7 @@ def _map(row) -> TerminSerie:
         spielstaette_id=row['spielstaette_id'], treffpunkt=row['treffpunkt'],
         treffpunkt_zeit=row['treffpunkt_zeit'],
         beschreibung=row['beschreibung'], start_datum=row['start_datum'],
+        intervall_wochen=row['intervall_wochen'],
         ende_datum=row['ende_datum'], materialisiert_bis=row['materialisiert_bis'],
         version=row['version'], created_at=row['created_at'], created_by=row['created_by'],
         updated_at=row['updated_at'], updated_by=row['updated_by'],
@@ -63,19 +78,25 @@ def _map(row) -> TerminSerie:
     )
 
 
-def _wochen_daten(start: str, von_exkl: str, bis_inkl: str) -> list[str]:
-    """Wöchentliche Seriendaten (Anker `start`) im Fenster (von_exkl, bis_inkl]."""
+def _serien_daten(start: str, von_exkl: str, bis_inkl: str,
+                  intervall_wochen: int = 1) -> list[str]:
+    """Seriendaten im Takt `intervall_wochen` (Anker `start`), Fenster (von_exkl, bis_inkl].
+
+    Ankerbasiert statt fortzählend: Das Ergebnis hängt allein an `start` und dem
+    Takt, nie am Wasserzeichen. Nur so trifft eine 14-tägige Serie nach einer
+    Lücke (Ende gekürzt, später verlängert) wieder dieselben Wochen."""
     anker = date.fromisoformat(start)
-    von = max(date.fromisoformat(von_exkl), anker - timedelta(days=7))
+    schritt = 7 * intervall_wochen
+    von = max(date.fromisoformat(von_exkl), anker - timedelta(days=schritt))
     bis = date.fromisoformat(bis_inkl)
-    # erstes k mit anker + 7k > von
-    k = max(0, (von - anker).days // 7 + 1)
+    # erstes k mit anker + schritt*k > von
+    k = max(0, (von - anker).days // schritt + 1)
     daten = []
-    d = anker + timedelta(days=7 * k)
+    d = anker + timedelta(days=schritt * k)
     while d <= bis:
         if d > date.fromisoformat(von_exkl):
             daten.append(d.isoformat())
-        d += timedelta(days=7)
+        d += timedelta(days=schritt)
     return daten
 
 
@@ -108,7 +129,7 @@ class TerminSerieRepository(BaseRepository):
                ende_zeit: Optional[str], ort: Optional[str], treffpunkt: Optional[str],
                treffpunkt_zeit: Optional[str], beschreibung: Optional[str],
                start_datum: str, ende_datum: Optional[str], created_by: str,
-               *, spielstaette_id: int) -> TerminSerie:
+               *, spielstaette_id: int, intervall_wochen: int = 1) -> TerminSerie:
         """Serie anlegen; Wasserzeichen = gestern (Instanzen frühestens ab heute).
         Materialisiert wird separat (materialize_due) — die API ruft das direkt danach."""
         gestern = (date.today() - timedelta(days=1)).isoformat()
@@ -117,13 +138,14 @@ class TerminSerieRepository(BaseRepository):
                 """
                 INSERT INTO termin_serie (mannschaft_id, typ, beginn_zeit, ende_zeit,
                     ort, spielstaette_id, treffpunkt, treffpunkt_zeit, beschreibung,
-                    start_datum, ende_datum, materialisiert_bis, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    start_datum, intervall_wochen, ende_datum, materialisiert_bis,
+                    created_by, updated_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (mannschaft_id, typ, beginn_zeit, ende_zeit, ort, spielstaette_id,
-                 treffpunkt, treffpunkt_zeit, beschreibung, start_datum, ende_datum,
-                 gestern, created_by, created_by),
+                 treffpunkt, treffpunkt_zeit, beschreibung, start_datum,
+                 intervall_wochen, ende_datum, gestern, created_by, created_by),
             )
             new_id = cur.fetchone()['id']
         return self.get(new_id)
@@ -158,7 +180,8 @@ class TerminSerieRepository(BaseRepository):
                 )
                 if cur.rowcount == 0:      # parallele Anfrage hat schon geclaimt
                     continue
-                for d in _wochen_daten(s.start_datum, s.materialisiert_bis, ziel):
+                for d in _serien_daten(s.start_datum, s.materialisiert_bis, ziel,
+                                       s.intervall_wochen):
                     cur.execute(
                         """
                         INSERT INTO termine (mannschaft_id, serie_id, typ, beginn, ende,

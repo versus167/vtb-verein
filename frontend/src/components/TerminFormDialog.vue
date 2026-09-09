@@ -42,13 +42,17 @@
         <q-input v-model="form.beschreibung" label="Beschreibung" outlined dense type="textarea" autogrow />
         <!-- Serien nur beim Anlegen und nicht für Spiele -->
         <template v-if="!form.id && form.typ !== 'spiel'">
-          <q-toggle v-model="form.wiederholen" label="Wöchentlich wiederholen" dense />
+          <q-toggle v-model="form.wiederholen" label="Wiederholen" dense />
           <template v-if="form.wiederholen">
+            <q-btn-toggle v-model="form.intervallWochen" spread unelevated toggle-color="primary"
+              :options="[{ label: 'Wöchentlich', value: 1 }, { label: '14-täglich', value: 2 }]" />
             <q-input v-model="form.serieEnde" label="Wiederholen bis (optional)"
               outlined dense type="date" clearable />
             <div class="text-caption text-grey-7">
-              Termine werden rollierend 8 Wochen im Voraus erzeugt; der Wochentag
-              ergibt sich aus dem Datum oben.
+              Termine werden rollierend 8 Wochen im Voraus erzeugt; Wochentag
+              <template v-if="form.intervallWochen === 2">und Startwoche ergeben</template>
+              <template v-else>ergibt</template>
+              sich aus dem Datum oben.
             </div>
           </template>
         </template>
@@ -103,19 +107,13 @@ const form = ref({})
 // `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
 const { optionen: spielstaetten, laedt: ladeSpielstaetten,
         laden: loadSpielstaetten, filtern: filterSpielstaetten,
-        adresse, ortText } = useSpielstaettenAuswahl()
+        adresse, uebernommenerOrt } = useSpielstaettenAuswahl()
 
-// Adresse der gewählten Spielstätte in das Ort-Feld übernehmen. Überschrieben
-// wird nur, was leer ist oder noch von einer früheren Auswahl stammt — von Hand
-// Ergänztes („Halle 2, Hintereingang") bleibt stehen.
-const zuletztUebernommen = ref('')
+// Adresse der gewählten Spielstätte in das Ort-Feld übernehmen — auch beim
+// Wechsel an einem bestehenden Termin. Von Hand Ergänztes bleibt stehen
+// (Regel in useSpielstaettenAuswahl).
 function ortUebernehmen(id) {
-  const text = ortText(id)
-  if (!text) return
-  const aktuell = (form.value.ort || '').trim()
-  if (aktuell && aktuell !== zuletztUebernommen.value) return
-  form.value.ort = text
-  zuletztUebernommen.value = text
+  form.value.ort = uebernommenerOrt(id, form.value.ort)
 }
 
 function leeresFormular() {
@@ -123,13 +121,13 @@ function leeresFormular() {
            datum: new Date().toISOString().slice(0, 10), zeit: '', endeZeit: '',
            ort: '', spielstaetteId: null,
            treffpunkt: '', treffpunktZeit: '', gegner: '', heimAuswaerts: 'heim',
-           beschreibung: '', wiederholen: false, serieEnde: '', benachrichtigen: false }
+           beschreibung: '', wiederholen: false, intervallWochen: 1, serieEnde: '',
+           benachrichtigen: false }
 }
 
 watch(open, (offen) => {
   if (!offen) return
   loadSpielstaetten()
-  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   const t = props.termin
   form.value = t
     ? { id: t.id, version: t.version, typ: t.typ,
@@ -156,7 +154,7 @@ async function save() {
   formError.value = ''
   try {
     if (!f.id && f.wiederholen && f.typ !== 'spiel') {
-      // Wöchentliche Serie statt Einzeltermin
+      // Serie statt Einzeltermin
       await api.post(`/api/termine/mannschaften/${props.mannschaftId}/serien`, {
         typ: f.typ,
         beginn_zeit: f.zeit,
@@ -167,6 +165,7 @@ async function save() {
         treffpunkt_zeit: f.treffpunktZeit || null,
         beschreibung: f.beschreibung || null,
         start_datum: f.datum,
+        intervall_wochen: f.intervallWochen,
         ende_datum: f.serieEnde || null,
         benachrichtigen: f.benachrichtigen,
       })

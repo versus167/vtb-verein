@@ -170,13 +170,24 @@ def test_notify_serie(gesendet):
     serie = SimpleNamespace(mannschaft_id=5, typ='training', beginn_zeit='18:30',
                             ort='Halle 1', treffpunkt=None, treffpunkt_zeit=None,
                             beschreibung=None, start_datum='2026-07-21',
-                            ende_datum='2026-12-15')
+                            intervall_wochen=1, ende_datum='2026-12-15')
     tn.notify_serie(db, serie, actor_user_id=1)
     _, title, message, _url = gesendet[0]
     assert title == 'Neue Terminserie – Erste'
     assert 'Training wöchentlich dienstags um 18:30 Uhr (Erste)' in message
     assert 'Ab Di., 21.07.2026 bis Di., 15.12.2026' in message
     assert 'Ort: Halle 1' in message
+
+
+def test_notify_serie_nennt_den_14_taegigen_takt(gesendet):
+    """Sonst kündigte die Nachricht ein wöchentliches Training an, das 14-täglich ist."""
+    db = _StubDB(kader_user_ids=[2], users={2: SimpleNamespace(id=2, active=True)})
+    serie = SimpleNamespace(mannschaft_id=5, typ='training', beginn_zeit='18:30',
+                            ort=None, treffpunkt=None, treffpunkt_zeit=None,
+                            beschreibung=None, start_datum='2026-07-21',
+                            intervall_wochen=2, ende_datum=None)
+    tn.notify_serie(db, serie, actor_user_id=1)
+    assert 'Training 14-täglich dienstags um 18:30 Uhr (Erste)' in gesendet[0][2]
 
 
 # ------------------------------------------- Offene Fragen aus dem Import (#95)
@@ -263,7 +274,8 @@ def test_notify_serie_verlinkt_nur_die_liste(gesendet):
     db = _StubDB(kader_user_ids=[2], users={2: SimpleNamespace(id=2, active=True)})
     serie = SimpleNamespace(mannschaft_id=5, typ='training', beginn_zeit='18:30',
                             ort=None, treffpunkt=None, treffpunkt_zeit=None,
-                            beschreibung=None, start_datum='2026-07-21', ende_datum=None)
+                            beschreibung=None, start_datum='2026-07-21',
+                            intervall_wochen=1, ende_datum=None)
     tn.notify_serie(db, serie, actor_user_id=1)
     assert gesendet[0][3] == '/termine'
 
