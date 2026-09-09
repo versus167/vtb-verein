@@ -131,18 +131,13 @@ const editError = ref('')
 // Auswahlliste inkl. „Kein Vereinsgelände"; „Nicht erfasst" liefert die API nicht
 // mit. `spielstaetten` ist die gefilterte Sicht (Tippsuche), nicht die Rohliste.
 const { optionen: spielstaetten, laden: loadSpielstaetten,
-        filtern: filterSpielstaetten, adresse, ortText } = useSpielstaettenAuswahl()
+        filtern: filterSpielstaetten, adresse,
+        uebernommenerOrt } = useSpielstaettenAuswahl()
 
 // Adresse der gewählten Spielstätte übernehmen; von Hand Ergänztes bleibt stehen
 // (wie im Termin-Dialog).
-const zuletztUebernommen = ref('')
 function ortUebernehmen(id) {
-  const text = ortText(id)
-  if (!text) return
-  const aktuell = (edit.value.ort || '').trim()
-  if (aktuell && aktuell !== zuletztUebernommen.value) return
-  edit.value.ort = text
-  zuletztUebernommen.value = text
+  edit.value.ort = uebernommenerOrt(id, edit.value.ort)
 }
 
 async function load() {
@@ -163,7 +158,6 @@ async function load() {
 
 function initEdit(s) {
   editError.value = ''
-  zuletztUebernommen.value = ''   // bestehende Orte gelten als von Hand gesetzt
   edit.value = { typ: s.typ, beginnZeit: s.beginn_zeit, endeZeit: s.ende_zeit ?? '',
                  ort: s.ort ?? '', spielstaetteId: s.spielstaette_id ?? null,
                  treffpunkt: s.treffpunkt ?? '',
