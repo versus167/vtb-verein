@@ -21,6 +21,8 @@
     <div class="text-caption text-grey q-mb-md">
       Wer wann auf welchem eigenen Platz ist — über alle Mannschaften hinweg.
       Abgesagte Termine bleiben stehen: Sie sagen, dass der Platz doch frei ist.
+      <template v-if="hatEigene">Die eigenen Mannschaften sind hervorgehoben;
+        anklicken bearbeitet den Termin.</template>
     </div>
 
     <q-banner v-if="fehler" dense class="bg-negative text-white q-mb-md">
@@ -84,6 +86,10 @@
         In diesem Zeitraum ist kein eigener Platz belegt.
       </div>
     </div>
+
+    <!-- Bearbeiten direkt im Plan: derselbe Dialog wie auf der Termine-Seite.
+         `mannschaft-id` braucht er nicht — hier wird nur bearbeitet, nie angelegt. -->
+    <TerminFormDialog v-model="formOpen" :termin="formTermin" @saved="laden" />
   </q-page>
 </template>
 
@@ -93,6 +99,7 @@ import { QIcon, useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import { aktivesTheme } from 'src/composables/useTheme'
+import TerminFormDialog from 'components/TerminFormDialog.vue'
 
 defineOptions({ name: 'PlatzbelegungPage' })
 
@@ -247,9 +254,14 @@ const konflikte = computed(() => {
  * Als Render-Funktion statt eigener Datei — der Block ist reine Darstellung dieser
  * einen Seite und hätte anderswo keinen Nutzen. `flach` lässt den Rahmen weg, weil
  * er in der Handy-Liste schon in einem q-item steckt.
+ *
+ * Termine eigener Mannschaften sind hervorgehoben und — wenn man sie verwalten darf
+ * — anklickbar. Beides entscheidet das Backend je Termin (`eigen`, `darf_verwalten`),
+ * nicht die Anzeige: Die Kader-ACL gehört nicht ins Frontend.
  */
 const TerminBlock = (props) => {
   const t = props.termin
+  const editierbar = !!t.darf_verwalten
   const abgesagt = t.status === 'abgesagt'
   const zeit = (t.beginn || '').slice(11, 16)
     + (t.ende ? `–${t.ende.slice(11, 16)}` : '')
@@ -273,11 +285,32 @@ const TerminBlock = (props) => {
     class: ['belegung-block', {
       'belegung-block--flach': props.flach,
       'belegung-block--abgesagt': abgesagt,
+      'belegung-block--eigen': !!t.eigen,
       'belegung-block--konflikt': props.konflikt,
+      'belegung-block--editierbar': editierbar,
     }],
+    ...(editierbar ? {
+      role: 'button',
+      tabindex: 0,
+      title: `${titel} bearbeiten`,
+      onClick: () => bearbeiten(t),
+      onKeydown: (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bearbeiten(t) }
+      },
+    } : {}),
   }, zeilen)
 }
 TerminBlock.props = { termin: Object, konflikt: Boolean, flach: Boolean }
+
+// ── Bearbeiten (nur eigene bzw. mit termine.verwalten) ──
+const formOpen = ref(false)
+const formTermin = ref(null)
+const hatEigene = computed(() => termine.value.some((t) => t.eigen))
+
+function bearbeiten(t) {
+  formTermin.value = t
+  formOpen.value = true
+}
 
 async function laden() {
   // Datum vor dem Laden nachziehen: Bei einer über Nacht offenen Seite zeigte das
@@ -388,8 +421,35 @@ usePageRefresh(laden)
   text-decoration: line-through;
 }
 
+/* Eigene Mannschaft: VTB-Blau am Rand (semantisch über `primary`, der einzige
+   erlaubte Blauton) UND ein kräftigerer Grundton plus fettere Schrift. Die Farbe
+   allein trüge nicht — im Theme „VTB" liegt der Plan selbst auf Wappenblau, dort
+   erkennt man den Block am Ton und am Gewicht. Steht VOR --konflikt, damit die
+   Warnung den Rand behält: Ein Konflikt ist die wichtigere Aussage. */
+.belegung-block--eigen {
+  border-left-color: var(--q-primary);
+  background: rgba(128, 128, 128, 0.26);
+}
+
+.belegung-block--eigen .belegung-team {
+  font-weight: 600;
+}
+
 .belegung-block--konflikt {
   border-left-color: var(--q-negative);
+}
+
+.belegung-block--editierbar {
+  cursor: pointer;
+}
+
+.belegung-block--editierbar:hover {
+  background: rgba(128, 128, 128, 0.34);
+}
+
+.belegung-block--editierbar:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
 }
 
 .belegung-zeit {

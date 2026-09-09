@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from app.models.permission import Permission
 from app.models.spielstaette import Spielstaette
 from ..core.deps import CurrentUser, DB
+from .termine import darf_alle_verwalten
 
 router = APIRouter(prefix="/spielstaetten", tags=["spielstaetten"])
 
@@ -54,17 +55,43 @@ def _require_verwalten(user) -> None:
                             "Keine Berechtigung, Spielstätten zu verwalten")
 
 
-def _require_belegung(user) -> None:
+def _termin_acl(db: DB, user) -> tuple[bool, dict]:
+    """(darf alle Termine verwalten, eigene Kader-Mannschaften → Zugriffsstufe).
+
+    EINE Abfrage für den ganzen Plan. Die Kader-ACL je Termin einzeln zu befragen
+    wären in einer Wochenansicht dutzende Abfragen für dieselbe Antwort — die
+    Zugehörigkeit gilt für das Fenster, nicht für den einzelnen Termin.
+
+    Die Kader-Liste wird auch für Verwalter aller Termine geladen: Sie beantwortet
+    nicht nur „darf ändern", sondern auch „ist meine Mannschaft", und die
+    Hervorhebung im Plan will ein Admin genauso wie ein Betreuer.
+    """
+    return (darf_alle_verwalten(user),
+            {m['id']: m['zugriff']
+             for m in db.termine.list_mannschaften_for_user(user.id)})
+
+
+def _require_belegung(user, alle_termine: bool, eigene: dict) -> None:
     """Den Belegungsplan darf lesen, wer ihn braucht — ohne Umweg über zwei Rechte.
 
     `spielstaetten.belegung` ist das gemeinte Recht (Platzwart). Wer die Plätze pflegt
     oder ohnehin alle Termine verwaltet, sieht denselben Plan; ihm dafür ein zweites
     Recht zuzuteilen wäre Verwaltungsarbeit ohne Erkenntnisgewinn. Dasselbe Muster wie
     `system.config` bei den Stammdaten oben.
+
+    Dazu die Kader-ACL: Wer die Termine mindestens einer Mannschaft verwaltet
+    (Betreuer/Übungsleiter), sieht den Plan ebenfalls und bearbeitet darin seine
+    eigenen Termine. Vorher war das ein Widerspruch — dieselbe Person durfte den
+    Termin auf der Termine-Seite ändern, kam aber an den Plan nicht heran, in dem
+    die Platzfrage überhaupt erst sichtbar wird. Personenbezogenes steht dort
+    nicht (Mannschaft, Zeit, Gegner), siehe permission.py::SPIELSTAETTEN_BELEGUNG.
+    Reine Kader-Zugehörigkeit (Spieler) reicht bewusst NICHT: Sie beantwortet die
+    Frage „wann ist mein Training" über „Meine Termine", nicht über den Platzplan.
     """
     if not (user.has_permission(Permission.SPIELSTAETTEN_BELEGUNG)
             or user.has_permission(Permission.SPIELSTAETTEN_VERWALTEN)
-            or user.has_permission(Permission.TERMINE_VERWALTEN)):
+            or alle_termine
+            or 'verwalten' in eigene.values()):
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Keine Berechtigung für den Belegungsplan")
 
@@ -122,14 +149,26 @@ def belegung(user: CurrentUser, db: DB, von: str, bis: str):
     Konflikt zu erkennen statt nur als Nebeneinander.
 
     Steht VOR den `/{spielstaette_id}`-Routen: Sonst führe „belegung" als ID ins Leere.
+
+    Je Termin kommen zwei Merker mit, damit die Anzeige nicht raten muss:
+    `darf_verwalten` schaltet die Bearbeitung im Plan frei (dieselbe Kader-ACL wie
+    auf der Termine-Seite), `eigen` markiert die Termine der eigenen Mannschaften.
+    Ein Termin ohne Mannschaft ist keins von beidem.
     """
-    _require_belegung(user)
+    alle_termine, eigene = _termin_acl(db, user)
+    _require_belegung(user, alle_termine, eigene)
     von, bis = _fenster(von, bis)
     return {
         "von": von,
         "bis": bis,
         "plaetze": [asdict(s) for s in db.spielstaetten.list_eigene()],
-        "termine": [asdict(t) for t in db.termine.belegung(von, bis)],
+        "termine": [
+            asdict(t) | {
+                "darf_verwalten": alle_termine or eigene.get(t.mannschaft_id) == 'verwalten',
+                "eigen": t.mannschaft_id in eigene,
+            }
+            for t in db.termine.belegung(von, bis)
+        ],
     }
 
 

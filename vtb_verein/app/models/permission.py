@@ -121,7 +121,11 @@ class Permission:
     # Abteilung, und eine halbe Belegung wäre schlimmer als keine – sie zeigte einen
     # Platz als frei, den eine andere Abteilung belegt. Personenbezogene Daten
     # enthält der Plan keine (Mannschaft, Zeit, Gegner).
-    # Wer `spielstaetten.verwalten` oder `termine.verwalten` hat, sieht ihn ohnehin
+    # Wer `spielstaetten.verwalten` oder `termine.verwalten` hat, sieht ihn ohnehin —
+    # ebenso, wer über die Kader-ACL die Termine mindestens einer Mannschaft
+    # verwaltet (Betreuer/Übungsleiter): Er darf den Termin ohnehin ändern und
+    # braucht dafür den Platz im Blick. Dieses Recht ist deshalb nur noch für die
+    # gedacht, die KEINE Termine verwalten — den reinen Platzwart.
     # (siehe backend/api/spielstaetten.py::_require_belegung).
     SPIELSTAETTEN_BELEGUNG = 'spielstaetten.belegung'
 

@@ -124,7 +124,8 @@
           </q-item>
 
           <q-item
-            v-if="auth.hasPermission('spielstaetten.belegung')
+            v-if="hatBelegungZugriff
+              || auth.hasPermission('spielstaetten.belegung')
               || auth.hasPermission('spielstaetten.verwalten')
               || auth.hasPermission('termine.verwalten')"
             clickable
@@ -442,6 +443,9 @@ const { refreshing, hasHandler, triggerRefresh } = useRefreshControl()
 const hatKassenZugriff = ref(false)
 const hatTresorZugriff = ref(false)
 const hatTermineZugriff = ref(false)
+// Belegungsplan: nur für Kader-VERWALTER (Betreuer/ÜL), nicht für reine Spieler —
+// dieselbe Grenze wie im Backend (spielstaetten.py::_require_belegung).
+const hatBelegungZugriff = ref(false)
 const hatMannschaftenZugriff = ref(false)
 const hatTeamkasseZugriff = ref(false)
 
@@ -470,8 +474,10 @@ async function loadTermineZugriff() {
   try {
     const { data } = await api.get('/api/termine/mannschaften')
     hatTermineZugriff.value = data.length > 0
+    hatBelegungZugriff.value = data.some((m) => m.zugriff === 'verwalten')
   } catch {
     hatTermineZugriff.value = false
+    hatBelegungZugriff.value = false
   }
 }
 
@@ -514,6 +520,7 @@ async function onLogout() {
   hatKassenZugriff.value = false
   hatTresorZugriff.value = false
   hatTermineZugriff.value = false
+  hatBelegungZugriff.value = false
   hatMannschaftenZugriff.value = false
   hatTeamkasseZugriff.value = false
   aufgaben.zuruecksetzen()

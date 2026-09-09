@@ -137,14 +137,19 @@ class SerieUpdate(BaseModel):
 
 
 # ----------------------------------------------------------------- Authorisierung
-def _darf_alle_verwalten(user) -> bool:
+def darf_alle_verwalten(user) -> bool:
+    """Termine ALLER Mannschaften verwalten (Admin oder `termine.verwalten`).
+
+    Öffentlich, weil der Belegungsplan dieselbe Frage stellt und die Regel nicht
+    ein zweites Mal formuliert werden soll (backend/api/spielstaetten.py).
+    """
     return user.role == 'admin' or user.has_permission(Permission.TERMINE_VERWALTEN)
 
 
 def _require_alle_verwalten(user) -> None:
     """Für vereinsweite Einstellungen (Erinnerungs-Vorlauf): Die Kader-ACL hilft
     hier nicht weiter – die Zeile gilt für alle Mannschaften."""
-    if not _darf_alle_verwalten(user):
+    if not darf_alle_verwalten(user):
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Keine Berechtigung, Termine zu verwalten")
 
@@ -175,7 +180,7 @@ def _darf_geburtstage_sehen(db: DB, user, mannschaft_id: int) -> bool:
 def _zugriff(db: DB, user, mannschaft_id: int) -> Optional[str]:
     """Effektive Stufe auf die Termine einer Mannschaft: 'verwalten' | 'lesen' | None.
     termine.verwalten/Admin => 'verwalten', sonst entscheidet der Kader."""
-    if _darf_alle_verwalten(user):
+    if darf_alle_verwalten(user):
         return 'verwalten'
     return db.termine.get_access_for_user(user.id, mannschaft_id)
 
@@ -414,7 +419,7 @@ def list_meine_mannschaften(user: CurrentUser, db: DB):
     die eigenen ein: Wer alle Termine verwalten darf, will trotzdem nicht bei
     jedem Aufruf 30 Mannschafts-Tabs sehen.
     """
-    if not _darf_alle_verwalten(user):
+    if not darf_alle_verwalten(user):
         return [m | {"eigen": True} for m in db.termine.list_mannschaften_for_user(user.id)]
     eigene = {m['id'] for m in db.termine.list_mannschaften_for_user(user.id)}
     return [m | {"eigen": m['id'] in eigene} for m in db.termine.list_all_mannschaften()]

@@ -2,6 +2,15 @@
   <q-dialog v-model="open" persistent :position="$q.screen.lt.sm ? 'bottom' : 'standard'">
     <q-card :style="$q.screen.lt.sm ? 'width:100%;border-radius:16px 16px 0 0' : 'min-width:440px'">
       <q-card-section class="text-h6">{{ form.id ? 'Termin bearbeiten' : 'Neuer Termin' }}</q-card-section>
+      <!-- Serieninstanz: Der Hinweis steht VOR den Feldern, weil er die Entscheidung
+           betrifft, ob man hier oder an der Serie ändern sollte. -->
+      <q-card-section v-if="ausSerie" class="q-pt-none">
+        <q-banner dense class="bg-blue-1 text-blue-10 rounded-borders">
+          <template #avatar><q-icon name="repeat" /></template>
+          Dieser Termin gehört zu einer Serie. Änderungen gelten nur für ihn —
+          spätere Änderungen an der Serie greifen bei ihm dann nicht mehr.
+        </q-banner>
+      </q-card-section>
       <q-card-section class="q-gutter-sm q-pt-none">
         <q-select v-model="form.typ" :options="typOptionen" option-value="value" option-label="label"
           emit-value map-options label="Typ *" outlined dense />
@@ -85,6 +94,12 @@ const props = defineProps({
   mannschaftId: { type: [Number, String], default: null },
 })
 const emit = defineEmits(['update:modelValue', 'saved'])
+
+// Instanz einer Terminserie: Ein Einzel-Update löst sie aus der Serie (das
+// Serien-Update fasst nur Instanzen an, die den Serienwerten noch exakt
+// entsprechen — siehe termin_serie_repository.py). Das sollte man wissen, bevor
+// man hier statt an der Serie ändert.
+const ausSerie = computed(() => !!props.termin?.serie_id)
 
 const $q = useQuasar()
 const open = computed({

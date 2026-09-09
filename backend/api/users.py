@@ -114,7 +114,9 @@ PERMISSION_GROUPS = [
              'Spielstätten pflegen (Plätze, Hallen)'),
             # Reines Leserecht für Platzwarte: Wer wann auf welchem eigenen Platz
             # ist, quer über alle Mannschaften. Die beiden Rechte darüber schließen
-            # es ein (backend/api/spielstaetten.py::_require_belegung).
+            # es ein, ebenso die Kader-Rollen Betreuer/Übungsleiter — für die
+            # braucht es das Recht also nicht mehr
+            # (backend/api/spielstaetten.py::_require_belegung).
             (Permission.SPIELSTAETTEN_BELEGUNG,
              'Belegungsplan der eigenen Plätze ansehen'),
         ],
