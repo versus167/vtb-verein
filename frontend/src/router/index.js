@@ -237,11 +237,12 @@ const routes = [
         path: 'platzbelegung',
         name: 'platzbelegung',
         component: () => import('pages/PlatzbelegungPage.vue'),
-        // ODER-Liste: `spielstaetten.belegung` ist das gemeinte Recht, die beiden
-        // anderen schließen es ein (backend/api/spielstaetten.py::_require_belegung).
-        meta: { title: 'Platzbelegung',
-                permission: ['spielstaetten.belegung', 'spielstaetten.verwalten',
-                             'termine.verwalten'] },
+        // Kein meta.permission: Neben `spielstaetten.belegung` (und den beiden
+        // Rechten, die es einschließen) kommt auch herein, wer über die Kader-ACL
+        // Termine verwaltet — das kann der Guard nicht wissen. Die Entscheidung
+        // fällt im Backend (spielstaetten.py::_require_belegung), die Seite zeigt
+        // ein 403 als Hinweis.
+        meta: { title: 'Platzbelegung' },
       },
       {
         // Kein meta.permission: der Zugriff ist ACL-basiert (Kader-Zugehörigkeit
