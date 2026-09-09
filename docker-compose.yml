@@ -77,11 +77,25 @@ services:
           cpus: '0.25'
           memory: 128M
 
-  # Hintergrund-Sync der Schließanlage (Inventar + IC-Karten + Logs, paarmal täglich).
-  # Eigener Sidecar statt In-Process-Scheduler: kein Worker-Duplikations-Problem, robust
-  # über die Restart-Policy. Nutzt dasselbe Image wie vtb-verein (kein zweiter Build).
-  # Intervall über TTLOCK_SYNC_INTERVAL_HOURS (Default 6 = 4×/Tag). Läuft erst nach dem
-  # App-Start (Migrationen), idle wenn kein TTLock-Konto konfiguriert ist.
+  # Hintergrund-Sync der Schließanlage (Inventar + IC-Karten + Logs). Eigener Sidecar statt
+  # In-Process-Scheduler: kein Worker-Duplikations-Problem, robust über die Restart-Policy.
+  # Nutzt dasselbe Image wie vtb-verein (kein zweiter Build). Läuft erst nach dem App-Start
+  # (Migrationen), idle wenn kein TTLock-Konto konfiguriert ist.
+  #
+  # Zwei Takte (#61), beide in der App einstellbar (Schließanlage → Einstellungen): der
+  # volle Lauf im Stundentakt, dazwischen nur die Logs im Minutentakt. Alarme (Sabotage,
+  # mehrfach falscher Passcode) hängen allein am Log-Sync und sind damit binnen Minuten
+  # draußen, während Inventar/IC-Karten/Credentials im ruhigen Takt bleiben — die teuren
+  # Cloud-Abfragen werden also NICHT häufiger.
+  #
+  # Der Container tickt deshalb nur noch stumpf alle TTLOCK_TICK_MINUTES (Default 5) und
+  # fragt mit --wenn-faellig in der DB nach, ob etwas dran ist; eine Änderung in der App
+  # greift beim nächsten Tick, ohne Neustart. Der Tick ist die Auflösung des Ganzen: Ein
+  # Log-Takt kann nie enger wirken als er.
+  #
+  # Bewusst kein TT-Lock-Callback/Webhook: der bräuchte einen öffentlich erreichbaren
+  # HTTPS-Endpunkt (neue Angriffsfläche) und ist pro Developer-App global, also nicht
+  # sauber zwischen Dev und Prod trennbar.
   zutritt-sync:
     image: vtb-verein:latest
     container_name: vtb-zutritt-sync
@@ -100,11 +114,12 @@ services:
       TZ: ${VTB_TZ:-Europe/Berlin}
     command: >
       sh -c '
-      H="$${TTLOCK_SYNC_INTERVAL_HOURS:-6}";
-      echo "[zutritt-sync] gestartet – Intervall $${H}h";
+      T="$${TTLOCK_TICK_MINUTES:-5}";
+      [ "$$T" -ge 1 ] 2>/dev/null || T=5;
+      echo "[zutritt-sync] gestartet – Tick alle $${T}min, Takt kommt aus der App";
       while true; do
-        python tools/zutritt_sync.py || echo "[zutritt-sync] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
-        sleep "$$(( H * 3600 ))";
+        python tools/zutritt_sync.py --wenn-faellig || echo "[zutritt-sync] Lauf fehlgeschlagen – Retry beim nächsten Tick";
+        sleep "$$(( T * 60 ))";
       done'
     restart: unless-stopped
     deploy:

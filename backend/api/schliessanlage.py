@@ -27,7 +27,11 @@ from pydantic import BaseModel
 from app.services.anhang_service import DateiZuGrossError
 
 from app.models.permission import Permission
-from app.models.schliessanlage import SchliessanlageEinstellungen
+from app.models.schliessanlage import (
+    SchliessanlageEinstellungen,
+    SYNC_INTERVALL_STUNDEN_MIN, SYNC_INTERVALL_STUNDEN_MAX,
+    LOGS_INTERVALL_MINUTEN_MIN, LOGS_INTERVALL_MINUTEN_MAX,
+)
 from app.models.ticket import TicketPrioritaet
 from app.services.zutritt_service import ZutrittNichtKonfiguriertError, notify_alarme
 from app.services.zutritt_import_service import ImportFehler, run_import
@@ -209,10 +213,13 @@ class GruppeChipIn(BaseModel):
 
 
 class EinstellungenIn(BaseModel):
-    """Stammdaten des Bereichs: Akku-Überwachung. Bereich = None schaltet sie ab."""
+    """Stammdaten des Bereichs: Akku-Überwachung (Bereich = None schaltet sie ab)
+    und der Takt des Hintergrund-Syncs."""
     akku_ticket_bereich_id: Optional[int] = None
     akku_ticket_schwelle: int = 20
     akku_ticket_prioritaet: str = TicketPrioritaet.NORMAL
+    sync_intervall_stunden: int = 4
+    logs_intervall_minuten: int = 15
 
 
 # --- Status / Sync ----------------------------------------------------------
@@ -382,7 +389,8 @@ def einstellungen_lesen(user: CurrentUser, db: DB):
 @router.put("/einstellungen")
 def einstellungen_speichern(data: EinstellungenIn, user: CurrentUser, db: DB):
     """Stammdaten speichern. Der Ticket-Bereich ist der Ein-/Aus-Schalter der
-    Akku-Überwachung: ohne ihn wird kein Ticket erzeugt."""
+    Akku-Überwachung: ohne ihn wird kein Ticket erzeugt. Der Takt greift beim
+    nächsten Tick des Sync-Sidecars, ohne Neustart."""
     if not user.has_permission_global(Permission.SCHLIESSANLAGE_VERWALTEN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Keine Berechtigung: Schließanlage verwalten (vereinsweit)")
@@ -392,6 +400,16 @@ def einstellungen_speichern(data: EinstellungenIn, user: CurrentUser, db: DB):
     if data.akku_ticket_prioritaet not in TicketPrioritaet.ALL:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Unbekannte Priorität.")
+    if not SYNC_INTERVALL_STUNDEN_MIN <= data.sync_intervall_stunden <= SYNC_INTERVALL_STUNDEN_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Voller Sync muss zwischen {SYNC_INTERVALL_STUNDEN_MIN} und "
+                   f"{SYNC_INTERVALL_STUNDEN_MAX} Stunden liegen.")
+    if not LOGS_INTERVALL_MINUTEN_MIN <= data.logs_intervall_minuten <= LOGS_INTERVALL_MINUTEN_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Log-Sync muss zwischen {LOGS_INTERVALL_MINUTEN_MIN} und "
+                   f"{LOGS_INTERVALL_MINUTEN_MAX} Minuten liegen.")
     if data.akku_ticket_bereich_id is not None:
         bereich = db.tickets.get_bereich(data.akku_ticket_bereich_id)
         if bereich is None or bereich.deleted_at:
@@ -401,6 +419,8 @@ def einstellungen_speichern(data: EinstellungenIn, user: CurrentUser, db: DB):
         akku_ticket_bereich_id=data.akku_ticket_bereich_id,
         akku_ticket_schwelle=data.akku_ticket_schwelle,
         akku_ticket_prioritaet=data.akku_ticket_prioritaet,
+        sync_intervall_stunden=data.sync_intervall_stunden,
+        logs_intervall_minuten=data.logs_intervall_minuten,
     )
     return asdict(db.schliessanlage_einstellungen.update(e, user.username))
 

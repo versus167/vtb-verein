@@ -155,6 +155,10 @@ class TTLockKonto:
     refresh_token: Optional[str] = None
     token_expires_at: Optional[str] = None
     letzter_sync_at: Optional[str] = None
+    # Takt-Merker des Sync-Sidecars (#61) – getrennt vom angezeigten `letzter_sync_at`,
+    # weil an ihnen die Fälligkeit der beiden Läufe hängt.
+    letzter_voll_sync_at: Optional[str] = None
+    letzter_log_sync_at: Optional[str] = None
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -203,18 +207,34 @@ class TuerSchloss:
 
 
 
+# Grenzen des Sync-Takts (#61). Die Untergrenzen schützen die TTLock-Cloud vor einem
+# versehentlich sehr engen Takt, die Obergrenzen den Verein vor einer Anlage, die sich
+# faktisch nicht mehr meldet: Bei 6 h ist ein Alarm im ungünstigsten Fall sechs Stunden
+# alt, bevor ihn jemand sieht.
+SYNC_INTERVALL_STUNDEN_MIN, SYNC_INTERVALL_STUNDEN_MAX = 1, 6
+LOGS_INTERVALL_MINUTEN_MIN, LOGS_INTERVALL_MINUTEN_MAX = 5, 240
+
+
 @dataclass
 class SchliessanlageEinstellungen:
     """Stammdaten des Bereichs Schließanlage (Single-Row, id=1).
 
-    Bisher nur die Akku-Überwachung: Wohin eine automatische Meldung geht und ab
-    welchem Ladestand sie fällig ist. `akku_ticket_bereich_id` ist gleichzeitig der
-    Ein-/Aus-Schalter – ohne Bereich wird kein Ticket erzeugt.
+    Zwei Dinge: die Akku-Überwachung – wohin eine automatische Meldung geht und ab
+    welchem Ladestand sie fällig ist (`akku_ticket_bereich_id` ist gleichzeitig der
+    Ein-/Aus-Schalter, ohne Bereich wird kein Ticket erzeugt) – und der Takt des
+    Hintergrund-Syncs.
+
+    Der Takt hat zwei Werte, weil der Sync zwei verschieden teure Hälften hat: Der
+    volle Lauf spiegelt Inventar, IC-Karten und Credentials und prüft Soll gegen Ist;
+    der Log-Lauf holt nur die Zutrittslogs – und damit die Alarme. Deshalb kann der
+    Log-Takt eng sein, ohne dass die teuren Abfragen häufiger laufen.
     """
     id: int = 1
     akku_ticket_bereich_id: Optional[int] = None
     akku_ticket_schwelle: int = 20
     akku_ticket_prioritaet: str = "normal"
+    sync_intervall_stunden: int = 4
+    logs_intervall_minuten: int = 15
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

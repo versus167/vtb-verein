@@ -1,13 +1,15 @@
 """Repository für die Stammdaten des Bereichs Schließanlage (Single-Row, id=1).
 
-Hält bisher nur die Akku-Überwachung: Ticket-Bereich, Schwelle, Priorität. Aufbau
-wie `fibu_einstellungen` – eine Zeile, die nie gelöscht wird, jede Änderung per
+Hält die Akku-Überwachung (Ticket-Bereich, Schwelle, Priorität) und den Takt des
+Hintergrund-Syncs (voller Lauf in Stunden, Log-Lauf in Minuten). Aufbau wie
+`fibu_einstellungen` – eine Zeile, die nie gelöscht wird, jede Änderung per
 Audit-Trigger in `schliessanlage_einstellungen_history`.
 """
 from app.models.schliessanlage import SchliessanlageEinstellungen
 from app.db.base_repository import BaseRepository
 
 _COLS = """id, akku_ticket_bereich_id, akku_ticket_schwelle, akku_ticket_prioritaet,
+           sync_intervall_stunden, logs_intervall_minuten,
            version, created_at, created_by, updated_at, updated_by"""
 
 
@@ -32,11 +34,13 @@ class SchliessanlageEinstellungenRepository(BaseRepository):
                 """
                 UPDATE schliessanlage_einstellungen
                 SET akku_ticket_bereich_id=%s, akku_ticket_schwelle=%s,
-                    akku_ticket_prioritaet=%s,
+                    akku_ticket_prioritaet=%s, sync_intervall_stunden=%s,
+                    logs_intervall_minuten=%s,
                     version=version+1, updated_at=CURRENT_TIMESTAMP, updated_by=%s
                 WHERE id = 1
                 """,
                 (e.akku_ticket_bereich_id, e.akku_ticket_schwelle,
-                 e.akku_ticket_prioritaet, updated_by),
+                 e.akku_ticket_prioritaet, e.sync_intervall_stunden,
+                 e.logs_intervall_minuten, updated_by),
             )
         return self.get()

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 119
+SCHEMA_VERSION = 120
 
 
 # ---------------------------------------------------------------------------
@@ -1253,6 +1253,12 @@ _DDL_ZUTRITT_TABLES = """
       refresh_token    TEXT,
       token_expires_at TEXT,
       letzter_sync_at  TEXT,
+      -- Takt-Merker des Sync-Sidecars (#61): wann lief zuletzt ein VOLLER Lauf
+      -- (Inventar/IC/Credentials/Logs) und wann zuletzt ein Log-Lauf? Getrennt von
+      -- `letzter_sync_at` (= irgendein erfolgreicher Sync, das zeigt die Seite an),
+      -- weil daran die Fälligkeit der beiden Takte hängt.
+      letzter_voll_sync_at TEXT,
+      letzter_log_sync_at  TEXT,
       version          INTEGER NOT NULL DEFAULT 1,
       created_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by       TEXT,
@@ -1509,7 +1515,7 @@ _ZUTRITT_TRIGGERS = (
 # ============================================================================
 # Akku-Überwachung → Ticket (Schema v110)
 # ----------------------------------------------------------------------------
-# Der Inventar-Sync bringt viermal am Tag den Akkustand jedes Schlosses herein –
+# Der Inventar-Sync bringt mehrmals am Tag den Akkustand jedes Schlosses herein –
 # gelesen hat ihn bisher nur, wer zufällig auf die Seite schaute. Unter einer
 # einstellbaren Schwelle legt die App jetzt selbst ein internes Ticket an. Zwei Teile:
 #
@@ -1534,12 +1540,27 @@ _ZUTRITT_AKKU_TICKET_SQL = (
     "ALTER TABLE tuer_schloss_history ADD COLUMN IF NOT EXISTS akku_ticket_id INTEGER",
 )
 
+def _env_int_begrenzt(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Ganzzahl aus der Env, auf [minimum, maximum] begrenzt; Unsinn ergibt `default`.
+
+    Nur für Migrations-Startwerte gedacht — im laufenden Betrieb steht der Wert
+    in der DB.
+    """
+    try:
+        wert = int(os.getenv(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, wert))
+
+
 _DDL_SCHLIESSANLAGE_EINSTELLUNGEN = """
     CREATE TABLE IF NOT EXISTS schliessanlage_einstellungen (
       id                     INTEGER PRIMARY KEY DEFAULT 1,
       akku_ticket_bereich_id INTEGER,
       akku_ticket_schwelle   INTEGER NOT NULL DEFAULT 20,
       akku_ticket_prioritaet TEXT NOT NULL DEFAULT 'normal',
+      sync_intervall_stunden INTEGER NOT NULL DEFAULT 4,
+      logs_intervall_minuten INTEGER NOT NULL DEFAULT 15,
       version                INTEGER NOT NULL DEFAULT 1,
       created_at             TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by             TEXT,
@@ -1553,6 +1574,8 @@ _DDL_SCHLIESSANLAGE_EINSTELLUNGEN = """
       akku_ticket_bereich_id INTEGER,
       akku_ticket_schwelle   INTEGER,
       akku_ticket_prioritaet TEXT,
+      sync_intervall_stunden INTEGER,
+      logs_intervall_minuten INTEGER,
       created_at             TEXT,
       created_by             TEXT,
       updated_at             TEXT,
@@ -1564,6 +1587,7 @@ _DDL_SCHLIESSANLAGE_EINSTELLUNGEN = """
 
 _SCHLIESSANLAGE_EINSTELLUNGEN_COLS = (
     "id, version, akku_ticket_bereich_id, akku_ticket_schwelle, akku_ticket_prioritaet, "
+    "sync_intervall_stunden, logs_intervall_minuten, "
     "created_at, created_by, updated_at, updated_by"
 )
 _SCHLIESSANLAGE_EINSTELLUNGEN_VALS = ", ".join(
@@ -4194,6 +4218,7 @@ class Database:
             117: self._migrate_v116_to_v117,
             118: self._migrate_v117_to_v118,
             119: self._migrate_v118_to_v119,
+            120: self._migrate_v119_to_v120,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -8958,6 +8983,65 @@ class Database:
             cur.execute(_FN_MITGLIED_MANNSCHAFT_AUDIT_UPDATE)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 119 WHERE id = 1")
+
+    def _migrate_v119_to_v120(self) -> None:
+        """Sync-Takt der Schließanlage wird in der App eingestellt (#61).
+
+        Sicherheits-Alarme der Schlösser (Sabotage, mehrfach falscher Passcode)
+        kommen ausschließlich über den Log-Sync herein — bis dahin weiß die App
+        nichts von ihnen. Wie schnell sie ankommen, hing bisher an
+        `TTLOCK_SYNC_INTERVAL_HOURS` in der `.env`: änderbar nur für den, der an
+        die Datei und an einen Container-Neustart kommt. Das ist die falsche
+        Hürde für eine Frage, die der Verein beantworten sollte.
+
+        Deshalb zwei Spalten neben der Akku-Schwelle, mit demselben Recht
+        (`schliessanlage.verwalten`) und derselben History:
+
+        * `sync_intervall_stunden` — Takt des vollen Laufs (Inventar, IC-Karten,
+          Credential-Mirror, Soll-Ist-Abgleich, Akku-Tickets, Logs).
+        * `logs_intervall_minuten` — Takt des reinen Log-Laufs dazwischen. Der
+          holt nur Zutrittslogs und trägt damit die Alarme, ohne die teuren
+          Inventar-Abfragen mitzuziehen.
+
+        Der Sidecar ruft dafür `tools/zutritt_sync.py --wenn-faellig` in einem
+        festen kurzen Takt; entschieden wird gegen die beiden neuen Merker in
+        `ttlock_konto` (`letzter_voll_sync_at`, `letzter_log_sync_at`). Die
+        bestehende Spalte `letzter_sync_at` bleibt, was sie war: der Zeitpunkt
+        des letzten erfolgreichen Syncs für die Anzeige auf der Seite.
+
+        Bestehende Installationen behalten ihren Takt: Der Startwert kommt aus
+        der bisher gesetzten Env, auf den erlaubten Bereich begrenzt. Ab dann
+        ist die DB die Wahrheit und die Env nur noch der Startwert eines
+        Frischaufbaus.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE schliessanlage_einstellungen ADD COLUMN IF NOT EXISTS "
+                        "sync_intervall_stunden INTEGER NOT NULL DEFAULT 4")
+            cur.execute("ALTER TABLE schliessanlage_einstellungen ADD COLUMN IF NOT EXISTS "
+                        "logs_intervall_minuten INTEGER NOT NULL DEFAULT 15")
+            cur.execute("ALTER TABLE schliessanlage_einstellungen_history ADD COLUMN IF NOT EXISTS "
+                        "sync_intervall_stunden INTEGER")
+            cur.execute("ALTER TABLE schliessanlage_einstellungen_history ADD COLUMN IF NOT EXISTS "
+                        "logs_intervall_minuten INTEGER")
+            cur.execute("ALTER TABLE ttlock_konto ADD COLUMN IF NOT EXISTS letzter_voll_sync_at TEXT")
+            cur.execute("ALTER TABLE ttlock_konto ADD COLUMN IF NOT EXISTS letzter_log_sync_at TEXT")
+            # Ohne neu angelegte Audit-Funktionen fehlten die beiden Spalten in
+            # jeder künftigen History-Zeile.
+            cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_SCHLIESSANLAGE_EINSTELLUNGEN_AUDIT_UPDATE)
+            # Startwert aus der bisherigen Env übernehmen (Grenzen wie in
+            # app/models/schliessanlage.py: 1–6 h bzw. 5–240 min). Bewusst ohne
+            # version-Bump: Das ist keine Änderung durch einen Menschen und
+            # gehört nicht in die History.
+            stunden = _env_int_begrenzt("TTLOCK_SYNC_INTERVAL_HOURS", 4, 1, 6)
+            minuten = _env_int_begrenzt("TTLOCK_LOGS_INTERVAL_MINUTES", 15, 5, 240)
+            cur.execute(
+                "UPDATE schliessanlage_einstellungen "
+                "SET sync_intervall_stunden = %s, logs_intervall_minuten = %s WHERE id = 1",
+                (stunden, minuten),
+            )
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 120 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:

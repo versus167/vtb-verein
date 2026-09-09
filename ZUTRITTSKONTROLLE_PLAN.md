@@ -645,8 +645,11 @@ Bereich Zuständigen.
   2026-06-30:** Management-Command (`tools/zutritt_sync.py`) ruft Inventar-/IC-Card-/
   Log-Sync für alle aktiven Schlösser; robust, kein Worker-Duplikations-Problem. **Deployment:**
   eigener **docker-compose-Sidecar `zutritt-sync`** (gleiches Image wie `vtb-verein`, kein
-  zweiter Build) mit Schleife `python tools/zutritt_sync.py; sleep TTLOCK_SYNC_INTERVAL_HOURS`
-  (Default 6 h = 4×/Tag), `depends_on: vtb-verein (healthy)` damit die Migrationen durch sind,
+  zweiter Build). Er tickt alle `TTLOCK_TICK_MINUTES` (Default 5) und ruft
+  `zutritt_sync.py --wenn-faellig`; welcher Lauf fällig ist, entscheidet der in der App
+  eingestellte Takt (voller Lauf 1–6 h, Log-Lauf 5–240 min, #61) gegen die Merker
+  `letzter_voll_sync_at`/`letzter_log_sync_at` in `ttlock_konto`.
+  `depends_on: vtb-verein (healthy)` damit die Migrationen durch sind,
   `restart: unless-stopped`. Für Bare-Metal alternativ Host-Cron/systemd-Timer auf denselben
   Command. Derselbe Sync-Pfad bedient den on-demand-Button „Jetzt synchronisieren".
 - ~~**TTLock-Dev-Account-Freischaltung** (clientId/clientSecret) + **EU-Endpoint**

@@ -8,13 +8,13 @@ den regulären TicketService – inklusive Benachrichtigung an die im Bereich Zu
 
 Zwei Dinge entscheiden, ob überhaupt etwas passiert:
 
-  * **Ein Ticket je Entladung, nicht je Lauf.** Der Sync läuft alle sechs Stunden; ohne
-    Gedächtnis stünden nach einer Woche 28 gleichlautende Tickets im Bereich. Deshalb
-    merkt sich das Schloss die Nummer seiner offenen Meldung (`akku_ticket_id`), und
-    erst wenn der Akku wieder deutlich über der Schwelle liegt – also nach einem
-    Batteriewechsel –, ist der Merker frei für die nächste Meldung. Bewusst nicht am
-    Ticket-Status festgemacht: Ein zu früh geschlossenes Ticket würde sonst sechs
-    Stunden später als neues wieder auftauchen.
+  * **Ein Ticket je Entladung, nicht je Lauf.** Der Sync läuft mehrmals am Tag (Takt
+    einstellbar unter Schließanlage → Einstellungen); ohne Gedächtnis stünden nach einer
+    Woche Dutzende gleichlautende Tickets im Bereich. Deshalb merkt sich das Schloss die
+    Nummer seiner offenen Meldung (`akku_ticket_id`), und erst wenn der Akku wieder
+    deutlich über der Schwelle liegt – also nach einem Batteriewechsel –, ist der Merker
+    frei für die nächste Meldung. Bewusst nicht am Ticket-Status festgemacht: Ein zu früh
+    geschlossenes Ticket würde sonst beim nächsten Lauf als neues wieder auftauchen.
   * **Ohne Ticket-Bereich passiert nichts.** Der Bereich ist der Ein-/Aus-Schalter der
     Funktion (Bereich Schließanlage → Einstellungen).
 

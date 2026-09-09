@@ -352,7 +352,7 @@ class ZutrittService:
 
     # --- Ist-Spiegel des Schlosses nachziehen -------------------------------
     # Der Abgleich prüft das Soll gegen den gespiegelten Ist-Stand, den der Sync
-    # viermal am Tag holt. Nach einem geglückten Schreibvorgang wissen wir es besser
+    # mehrmals am Tag holt. Nach einem geglückten Schreibvorgang wissen wir es besser
     # als der Spiegel – und sagen es ihm, statt bis zum nächsten Sync eine Abweichung
     # stehen zu lassen, die wir gerade beseitigt haben. Autoritativ bleibt der Sync:
     # Er ersetzt die Kartenliste je Schloss und meldet jede Abweichung wieder, die
@@ -1207,7 +1207,11 @@ class ZutrittService:
                     letztes_event_at=_ms_to_iso(newest_ld),
                     letztes_event_type=newest_rt,
                 )
-        self.konto_repo.touch_sync(datetime.now(timezone.utc).isoformat())
+        jetzt_iso = datetime.now(timezone.utc).isoformat()
+        self.konto_repo.touch_sync(jetzt_iso)
+        # Eigener Merker: Am Log-Sync hängt der enge Takt des Sidecars (#61) – der
+        # angezeigte `letzter_sync_at` bewegt sich auch bei reinen Inventar-Läufen.
+        self.konto_repo.touch_log_sync(jetzt_iso)
         logger.info("Log-Sync: %d neue Zutrittslog-Einträge (%d Alarme).",
                     total_new, len(alarme))
         return {"neu": total_new, "alarme": alarme}
