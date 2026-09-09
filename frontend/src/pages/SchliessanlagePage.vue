@@ -6,7 +6,7 @@
       synchronisiert werden.
     </q-banner>
 
-    <!-- Soll-Ist-Abgleich: Der Sync holt viermal am Tag das Ist herein – hier steht,
+    <!-- Soll-Ist-Abgleich: Der Sync holt mehrmals am Tag das Ist herein – hier steht,
          wo es vom Soll abweicht. „sperre_offen" ist der ernste Fall: ein gesperrter
          Chip, der am Schloss noch öffnet; darüber gehen auch Meldungen an die Admins. -->
     <q-banner v-if="abgleich.befunde.length" dense rounded class="q-mb-md"
@@ -500,6 +500,27 @@
             hint="z. B. 20 – gemeldet wird bei 20 % und darunter" />
           <q-select v-model="einst.akku_ticket_prioritaet" :options="prioritaetOptionen"
             emit-value map-options label="Priorität des Tickets" outlined dense />
+        </q-card-section>
+
+        <q-separator class="q-my-sm" />
+
+        <q-card-section class="q-pb-none">
+          <div class="text-subtitle2 text-weight-bold">Sync-Takt</div>
+          <div class="text-caption text-grey-7">
+            Wie oft die App bei der Schließanlage nachfragt. Der volle Lauf spiegelt
+            Inventar, Chips und Berechtigungen und prüft Soll gegen Ist. Der Log-Lauf
+            dazwischen holt nur die Zutritte – und damit die Alarme: Ein enger Log-Takt
+            meldet Sabotage und mehrfach falsche Passcodes schneller, ohne die übrigen
+            Abfragen häufiger zu machen. Änderungen greifen ohne Neustart.
+          </div>
+        </q-card-section>
+        <q-card-section class="q-gutter-sm">
+          <q-input v-model.number="einst.sync_intervall_stunden" type="number" min="1" max="6"
+            label="Voller Lauf alle … Stunden" outlined dense
+            hint="1 bis 6 – Standard 4" />
+          <q-input v-model.number="einst.logs_intervall_minuten" type="number" min="5" max="240"
+            label="Nur Zutritte alle … Minuten" outlined dense
+            hint="5 bis 240 – Standard 15; feiner als der Container-Tick (5 min) wirkt nicht" />
         </q-card-section>
         <q-card-actions align="right">
           <q-btn unelevated rounded no-caps color="primary" label="Speichern"
@@ -1593,10 +1614,14 @@ async function loadAbteilungen() {
   catch { abteilungen.value = [] }
 }
 
-// ── Einstellungen (Akku-Überwachung) ─────────────────────────────────────────
-// Wohin die automatische Akku-Meldung geht und ab wann. Nur für vereinsweite
-// Verwalter sichtbar (status.darf_einstellungen), deshalb lazy beim ersten Öffnen.
-const einst = ref({ akku_ticket_bereich_id: null, akku_ticket_schwelle: 20, akku_ticket_prioritaet: 'normal' })
+// ── Einstellungen (Akku-Überwachung + Sync-Takt) ─────────────────────────────
+// Wohin die automatische Akku-Meldung geht und ab wann, und in welchem Takt der
+// Hintergrund-Sync läuft. Nur für vereinsweite Verwalter sichtbar
+// (status.darf_einstellungen), deshalb lazy beim ersten Öffnen.
+const einst = ref({
+  akku_ticket_bereich_id: null, akku_ticket_schwelle: 20, akku_ticket_prioritaet: 'normal',
+  sync_intervall_stunden: 4, logs_intervall_minuten: 15,
+})
 const einstSpeichern = ref(false)
 const bereichOptionen = ref([])
 let einstGeladen = false
@@ -1617,6 +1642,8 @@ async function loadEinstellungen() {
       akku_ticket_bereich_id: e.akku_ticket_bereich_id,
       akku_ticket_schwelle: e.akku_ticket_schwelle,
       akku_ticket_prioritaet: e.akku_ticket_prioritaet,
+      sync_intervall_stunden: e.sync_intervall_stunden,
+      logs_intervall_minuten: e.logs_intervall_minuten,
     }
     bereichOptionen.value = bereiche
     einstGeladen = true
@@ -1631,6 +1658,8 @@ async function saveEinstellungen() {
       akku_ticket_bereich_id: einst.value.akku_ticket_bereich_id ?? null,
       akku_ticket_schwelle: einst.value.akku_ticket_schwelle ?? 20,
       akku_ticket_prioritaet: einst.value.akku_ticket_prioritaet || 'normal',
+      sync_intervall_stunden: einst.value.sync_intervall_stunden ?? 4,
+      logs_intervall_minuten: einst.value.logs_intervall_minuten ?? 15,
     })
     $q.notify({ type: 'positive', message: 'Einstellungen gespeichert' })
     await loadStatus()          // die Schwelle färbt auch die Akku-Anzeige

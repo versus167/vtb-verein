@@ -329,6 +329,7 @@ class FakeCredentialRepo:
 class FakeKontoRepo:
     def __init__(self):
         self.synced = []
+        self.log_synced = []
 
     def get(self):
         return None
@@ -338,6 +339,9 @@ class FakeKontoRepo:
 
     def touch_sync(self, when_iso, **k):
         self.synced.append(when_iso)
+
+    def touch_log_sync(self, when_iso, **k):
+        self.log_synced.append(when_iso)
 
 
 class FakeMitgliedForLog:

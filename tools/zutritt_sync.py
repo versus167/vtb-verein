@@ -17,10 +17,15 @@ internes Ticket im dafür konfigurierten Bereich (Bereich Schließanlage → Ein
 TTLock-Zugangsdaten kommen aus der Env/.env (TTLOCK_CLIENT_ID/SECRET/USERNAME/PASSWORD),
 die DB aus VTB_DATABASE_URL.
 
-Beispiele (Cron, z. B. alle 6 h):
+Beispiele:
   ./venv/bin/python tools/zutritt_sync.py                 # Inventar + Logs
-  ./venv/bin/python tools/zutritt_sync.py --logs-only     # nur Logs
+  ./venv/bin/python tools/zutritt_sync.py --logs-only     # nur Logs (trägt die Alarme)
   ./venv/bin/python tools/zutritt_sync.py --backfill-days 7
+  ./venv/bin/python tools/zutritt_sync.py --wenn-faellig  # so ruft der Sidecar
+
+`--wenn-faellig` ist der Sidecar-Modus: Der Container tickt alle paar Minuten, das
+Skript schaut in der DB nach, ob nach dem in der App eingestellten Takt ein voller Lauf
+oder ein Log-Lauf dran ist, und beendet sich sonst still (app/services/zutritt_takt.py).
 """
 import argparse
 import os
@@ -35,12 +40,15 @@ try:
 except Exception:
     pass
 
+from datetime import datetime, timezone
+
 from app.db.datastore import VereinsDB
 from app.services.zutritt_service import (
     ZutrittService, ZutrittNichtKonfiguriertError, notify_alarme,
 )
 from app.services import zutritt_abgleich_service
 from app.services import schloss_akku_service
+from app.services import zutritt_takt
 
 
 def main() -> int:
@@ -51,12 +59,20 @@ def main() -> int:
     ap.add_argument('--backfill-days', type=int, default=30,
                     help='Zeitfenster beim Erstlauf je Schloss (default 30)')
     ap.add_argument('--quiet', action='store_true', help='nur Fehler ausgeben')
+    ap.add_argument('--wenn-faellig', action='store_true', dest='wenn_faellig',
+                    help='nur laufen, wenn der in der App eingestellte Takt es verlangt '
+                         '(Modus des Sync-Sidecars); sonst still beenden')
     args = ap.parse_args()
 
     if not args.database_url:
         print("FEHLER: VTB_DATABASE_URL fehlt (Env/.env oder --database-url).", file=sys.stderr)
         return 2
     if not ZutrittService.is_configured():
+        # Im Sidecar-Modus ist ein nicht eingerichtetes TTLock-Konto kein Fehler,
+        # sondern der Normalfall eines Vereins ohne Schließanlage – bei einem Tick
+        # alle paar Minuten wäre die Fehlermeldung reines Log-Rauschen.
+        if args.wenn_faellig:
+            return 0
         print("FEHLER: Kein vollständiges TTLock-Konto in der Env "
               "(TTLOCK_CLIENT_ID/CLIENT_SECRET/USERNAME/PASSWORD).", file=sys.stderr)
         return 2
@@ -67,6 +83,27 @@ def main() -> int:
     def log(msg):
         if not args.quiet:
             print(msg)
+
+    voller_lauf = not (args.logs_only or args.inventar_only)
+    if args.wenn_faellig:
+        # Der Takt steht in der App (Schließanlage → Einstellungen), die Merker im
+        # ttlock_konto. Ist nichts fällig, endet der Tick ohne Ausgabe – sonst
+        # stünden im Container-Log ein paar hundert Zeilen „nichts zu tun" am Tag.
+        e = db.schliessanlage_einstellungen.get()
+        konto = db.ttlock_konto.get()
+        faellig = zutritt_takt.faelliger_lauf(
+            datetime.now(timezone.utc),
+            letzter_voll_sync_at=getattr(konto, 'letzter_voll_sync_at', None),
+            letzter_log_sync_at=getattr(konto, 'letzter_log_sync_at', None),
+            sync_intervall_stunden=e.sync_intervall_stunden,
+            logs_intervall_minuten=e.logs_intervall_minuten,
+        )
+        if faellig is None:
+            return 0
+        voller_lauf = faellig == zutritt_takt.VOLL
+        args.logs_only = not voller_lauf
+        log(f"▶ {'Voller Lauf' if voller_lauf else 'Log-Lauf'} fällig "
+            f"(Takt: alle {e.sync_intervall_stunden} h bzw. {e.logs_intervall_minuten} min).")
 
     try:
         if not args.logs_only:
@@ -104,6 +141,11 @@ def main() -> int:
     except ZutrittNichtKonfiguriertError as e:
         print(f"FEHLER: {e}", file=sys.stderr)
         return 2
+    if voller_lauf:
+        # Erst hier, nach einem vollständig durchgelaufenen Lauf: Ein abgebrochener
+        # Lauf soll den großen Takt nicht weiterstellen, sonst fiele der Abgleich
+        # bei jedem Fehler eine ganze Runde aus.
+        db.ttlock_konto.touch_voll_sync(datetime.now(timezone.utc).isoformat())
     return 0
 
 

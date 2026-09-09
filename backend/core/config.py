@@ -101,8 +101,10 @@ class Settings:
     TTLOCK_CLIENT_SECRET: str = os.getenv("TTLOCK_CLIENT_SECRET", "")
     TTLOCK_USERNAME: str = os.getenv("TTLOCK_USERNAME", "")
     TTLOCK_PASSWORD: str = os.getenv("TTLOCK_PASSWORD", "")
-    # Hintergrund-Log-Sync: Default „paarmal am Tag" (alle 6 h) + Backfill-Fenster bei Erstlauf.
-    TTLOCK_SYNC_INTERVAL_HOURS: int = int(os.getenv("TTLOCK_SYNC_INTERVAL_HOURS", "6"))
+    # Der Sync-Takt steht NICHT hier, sondern in der DB (schliessanlage_einstellungen)
+    # und damit in der App unter Schließanlage → Einstellungen (#61).
+    # TTLOCK_SYNC_INTERVAL_HOURS/TTLOCK_LOGS_INTERVAL_MINUTES sind nur noch der
+    # Startwert, den die Migration v119→v120 einmalig übernimmt.
     TTLOCK_LOG_BACKFILL_DAYS: int = int(os.getenv("TTLOCK_LOG_BACKFILL_DAYS", "30"))
 
     @property

@@ -1,6 +1,6 @@
 """Soll-Ist-Abgleich der IC-Karten: Was bei uns steht, gegen das, was am Schloss liegt.
 
-Der Sync holt viermal am Tag das Ist herein — Inventar, Karten, Credential-Mirror,
+Der Sync holt mehrmals am Tag das Ist herein — Inventar, Karten, Credential-Mirror,
 Logs —, aber verglichen hat es bisher niemand. Er zieht nur nach, was die Cloud über
 die Karten sagt, die *da* sind; wonach nicht gefragt wird, fällt durch:
 
@@ -269,8 +269,8 @@ def melde_sperrluecken(db) -> int:
     """Über NEUE Sperr-Lücken benachrichtigen; Zahl der erreichten Empfänger.
 
     Läuft am Ende des Syncs, wenn das Ist frisch ist. Gemeldet wird nur, was sich seit
-    der letzten Meldung geändert hat – der Sync läuft alle sechs Stunden, und eine Lücke,
-    die eine Woche offen steht, darf keine 28 Nachrichten erzeugen. Auch die Entwarnung
+    der letzten Meldung geändert hat – der Sync läuft mehrmals am Tag, und eine Lücke,
+    die eine Woche offen steht, darf keine Nachricht je Lauf erzeugen. Auch die Entwarnung
     (leere Signatur) wird protokolliert, sonst bliebe ein zweites Auftreten derselben
     Lücke später stumm. Das Gedächtnis ist das Zugriffsprotokoll: eine Zeile je Meldung
     und Empfänger, mit derselben Aufbewahrung wie die übrigen Schließanlagen-Ereignisse.
