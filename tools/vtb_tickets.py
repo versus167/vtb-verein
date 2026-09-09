@@ -13,6 +13,7 @@ Konfiguration (Vorrang: echte Umgebungsvariablen > tools/tickets.local.env):
 Beispiele:
     python3 tools/vtb_tickets.py pull               # offene Tickets -> tickets/vtb-app.md
     python3 tools/vtb_tickets.py pull --all         # inkl. erledigt/abgelehnt
+    python3 tools/vtb_tickets.py pull --bereich "Frag KI-Jochen!"   # -> tickets/frag-ki-jochen.md
     python3 tools/vtb_tickets.py pull --meine       # "Nur meine" wie in der App -> tickets/meine.md
     python3 tools/vtb_tickets.py show 42
     python3 tools/vtb_tickets.py comment 42 "Gefixt in $(git rev-parse --short HEAD)" --intern
@@ -29,6 +30,7 @@ import argparse
 import http.cookiejar
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -44,8 +46,8 @@ _OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_COOKIE
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / "tools" / "tickets.local.env"
-OUT_FILE = ROOT / "tickets" / "vtb-app.md"
-MEINE_FILE = ROOT / "tickets" / "meine.md"
+TICKET_DIR = ROOT / "tickets"
+MEINE_FILE = TICKET_DIR / "meine.md"
 
 GUELTIGE_STATUS = [
     "offen", "in_pruefung", "eingeplant", "rueckfrage", "erledigt", "abgelehnt",
@@ -180,6 +182,12 @@ class Client:
         return bool(rechte.get("ist_admin")), bereiche
 
     def bereich_id(self, name: str) -> int:
+        return self.bereich(name)["id"]
+
+    def bereich(self, name: str) -> dict:
+        """Bereich per Namen auflösen (Teiltreffer erlaubt, eindeutig sein muss er).
+        Gibt den ganzen Datensatz zurück, damit Aufrufer mit dem *kanonischen*
+        Namen weiterarbeiten können statt mit der Eingabe des Nutzers."""
         bereiche = self.get("/tickets/bereiche") or []
         exakt = [b for b in bereiche if b["name"].lower() == name.lower()]
         treffer = exakt or [b for b in bereiche if name.lower() in b["name"].lower()]
@@ -189,12 +197,22 @@ class Client:
         if len(treffer) > 1:
             namen = ", ".join(b["name"] for b in treffer)
             raise ApiError(f"Bereich '{name}' ist mehrdeutig: {namen}")
-        return treffer[0]["id"]
+        return treffer[0]
 
 
 # --------------------------------------------------------------------------- #
 # Formatierung
 # --------------------------------------------------------------------------- #
+def bereich_datei(name: str) -> Path:
+    """Abzugsdatei je Bereich: „VTB-App" -> tickets/vtb-app.md (wie bisher),
+    „Frag KI-Jochen!" -> tickets/frag-ki-jochen.md. So überschreibt ein zweiter
+    Bereich den Abzug des ersten nicht."""
+    slug = (name.lower()
+            .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss"))
+    slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+    return TICKET_DIR / f"{slug or 'bereich'}.md"
+
+
 def _prio_sort(t: dict) -> tuple:
     return (PRIO_RANG.get(t.get("prioritaet"), 9), t.get("id") or 0)
 
@@ -255,10 +273,11 @@ def cmd_pull(client: Client, args) -> None:
             ueberschrift += " – Admin: sieht alle Tickets"
         ziel, mit_bereich = MEINE_FILE, True
     else:
-        bid = client.bereich_id(client.cfg["bereich"])
+        b = client.bereich(args.bereich or client.cfg["bereich"])
+        bereich, bid = b["name"], b["id"]
         tickets = client.get(f"/tickets/?bereich_id={bid}") or []
-        ueberschrift = f"Bereich „{client.cfg['bereich']}“"
-        ziel, mit_bereich = OUT_FILE, False
+        ueberschrift = f"Bereich „{bereich}“"
+        ziel, mit_bereich = bereich_datei(bereich), False
 
     if not args.all:
         tickets = [t for t in tickets if t.get("status") not in ABGESCHLOSSEN]
@@ -397,6 +416,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--meine", action="store_true",
                     help="wie der App-Filter 'Nur meine' (selbst gemeldet / zugewiesen / "
                          "eigener Bereich), bereichsübergreifend -> tickets/meine.md")
+    sp.add_argument("--bereich", help="Bereichsname statt VTB_TICKETS_BEREICH "
+                                      "(Teiltreffer genügt, z.B. 'jochen')")
     sp.set_defaults(func=cmd_pull)
 
     sp = sub.add_parser("show", help="Einzelnes Ticket mit Kommentaren anzeigen")
@@ -454,6 +475,14 @@ def main() -> None:
             args.all = True
         if "--meine" in tokens:
             args.meine = True
+        # '--bereich Frag KI-Jochen!' steckt im Blob unquotiert: alles bis zum
+        # nächsten Flag als Namen nehmen (Teiltreffer genügt ohnehin).
+        for blob in extra:
+            if "--bereich" in blob and not args.bereich:
+                rest = re.split(r"\s+--", blob.split("--bereich", 1)[1])[0]
+                rest = rest.strip().strip('"').strip("'")
+                if rest:
+                    args.bereich = rest
     elif extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     cfg = get_config()
