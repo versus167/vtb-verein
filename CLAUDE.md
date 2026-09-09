@@ -55,6 +55,15 @@ Code.
   Berechtigungslogik und "warum ist das so"-Fragen. Kein Ersatz für diese Datei oder
   den Code, sondern ergänzendes Kontextwissen, das sonst nur in Köpfen oder verstreuten
   Notizen steckt.
+- **Warum getrennt und nicht im Hauptrepo** (bewusst so, nicht "noch nicht integriert"):
+  (1) Die Wiki-History *ist* das Operations-Log (ein Commit je Ingest/Update, `Wiki-Op:`-Trailer)
+  und würde sich mit dem Release-Workflow (Feature-Branch, `--no-ff`-Merge, `VERSION`-Bump)
+  vermischen. (2) Das Wiki setzt `core.hooksPath = bin/hooks` — repo-weit; im Hauptrepo liefe
+  jeder Code-Commit durch die Wiki-Gates, und der Hook löst seine Pfade über
+  `git rev-parse --show-toplevel` auf, zeigte also aufs falsche Root. (3) `raw/` hält
+  eingefrorene Kopien von Repo-Dateien, auf deren Zeilenbereiche alle Fußnoten zeigen —
+  Original und Kopie im selben Baum laden dazu ein, die lebende Datei zu zitieren, womit die
+  Zeilenangaben still veralten.
 - **Vor folgenden Aufgaben zuerst per `wiki-query` nachschauen:** Fragen zur
   Berechtigungslogik über das hier Beschriebene hinaus, Architektur-/Designentscheidungen,
   die nicht offensichtlich aus dem Code hervorgehen, "warum wurde X so gelöst?"-Fragen.
