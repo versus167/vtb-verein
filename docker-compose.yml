@@ -26,6 +26,15 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # Protokolle ins Journal statt in eine Container-Datei: Ein `docker compose up -d`
+    # erzeugt den Container neu und nimmt sein Log mit — genau dann, wenn man es zum
+    # Nachsehen bräuchte (10.09.2026: der Lauf mit den SMTP-Fehlern war nach dem
+    # nächsten Deploy weg). Im Journal überleben die Zeilen und rotieren dort
+    # zeitgesteuert: `journalctl CONTAINER_NAME=vtb-termin-erinnerung --since "2 days ago"`.
+    # `docker logs` funktioniert mit diesem Treiber weiter.
+    # Auf Hosts ohne systemd (Docker Desktop) VTB_LOG_DRIVER=json-file setzen.
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
 
   vtb-verein:
     build:
@@ -60,6 +69,8 @@ services:
       - ./uploads:/app/uploads
 
     restart: unless-stopped
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
 
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health').read()"]
@@ -122,6 +133,8 @@ services:
         sleep "$$(( T * 60 ))";
       done'
     restart: unless-stopped
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
     deploy:
       resources:
         limits:
@@ -158,6 +171,8 @@ services:
         sleep "$$(( H * 3600 ))";
       done'
     restart: unless-stopped
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
     deploy:
       resources:
         limits:
@@ -189,12 +204,16 @@ services:
     command: >
       sh -c '
       H="$${TERMIN_ERINNERUNG_INTERVAL_HOURS:-24}";
-      echo "[termin-erinnerung] gestartet – Intervall $${H}h";
+      T="$${TERMIN_ERINNERUNG_TICK_MINUTES:-30}";
+      [ "$$T" -ge 1 ] 2>/dev/null || T=30;
+      echo "[termin-erinnerung] gestartet – Intervall $${H}h, Tick $${T}min";
       while true; do
-        python tools/termin_erinnerung_lauf.py || echo "[termin-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
-        sleep "$$(( H * 3600 ))";
+        python tools/termin_erinnerung_lauf.py --wenn-faellig || echo "[termin-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Tick";
+        sleep "$$(( T * 60 ))";
       done'
     restart: unless-stopped
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
     deploy:
       resources:
         limits:
@@ -226,12 +245,16 @@ services:
     command: >
       sh -c '
       H="$${TICKET_ERINNERUNG_INTERVAL_HOURS:-24}";
-      echo "[ticket-erinnerung] gestartet – Intervall $${H}h";
+      T="$${TICKET_ERINNERUNG_TICK_MINUTES:-30}";
+      [ "$$T" -ge 1 ] 2>/dev/null || T=30;
+      echo "[ticket-erinnerung] gestartet – Intervall $${H}h, Tick $${T}min";
       while true; do
-        python tools/ticket_erinnerung_lauf.py || echo "[ticket-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Intervall";
-        sleep "$$(( H * 3600 ))";
+        python tools/ticket_erinnerung_lauf.py --wenn-faellig || echo "[ticket-erinnerung] Lauf fehlgeschlagen – Retry beim nächsten Tick";
+        sleep "$$(( T * 60 ))";
       done'
     restart: unless-stopped
+    logging:
+      driver: ${VTB_LOG_DRIVER:-journald}
     deploy:
       resources:
         limits:
