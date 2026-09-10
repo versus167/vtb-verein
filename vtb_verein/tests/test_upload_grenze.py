@@ -109,3 +109,53 @@ def test_import_grenze_ist_groesser_als_die_anhang_grenze():
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+# --- Eine Quelle für die Grenze -------------------------------------------
+#
+# Anlass: Die Anhang-Grenze stieg serverseitig von 10 auf 20 MB, aber das
+# Frontend lehnte weiter bei 10 ab — AnhangPanel.vue trug die Zahl als
+# Prop-Default ein zweites Mal. Auf der Rechnungsseite standen danach beide
+# Werte nebeneinander: neue Rechnung nahm 20 MB, bestehende verweigerte bei 10.
+# Deshalb kommt die Grenze jetzt aus max_upload_mb() und geht über
+# /api/app-info ans Frontend, statt dort noch einmal geschrieben zu stehen.
+
+def test_grenze_kommt_aus_der_env(monkeypatch):
+    from app.services.anhang_service import max_upload_mb
+    monkeypatch.setenv("VTB_MAX_UPLOAD_MB", "35")
+    assert max_upload_mb() == 35
+
+
+def test_unsinnige_env_faellt_auf_den_standard(monkeypatch):
+    """Eine kaputte Env soll die App nicht am Start hindern.
+
+    Ohne Rückfall stünde hier ein ValueError beim Import des Datastores — und
+    die ganze App liefe wegen eines Tippfehlers in einer Zahl nicht mehr an.
+    """
+    from app.services.anhang_service import STANDARD_MAX_MB, max_upload_mb
+    for wert in ("", "viel", "0", "-5"):
+        monkeypatch.setenv("VTB_MAX_UPLOAD_MB", wert)
+        assert max_upload_mb() == STANDARD_MAX_MB, wert
+
+
+def test_app_info_meldet_dieselbe_grenze(monkeypatch):
+    """Das Frontend fragt den Server, statt die Zahl zu kennen.
+
+    Genau diese Verbindung fehlte: Solange sie fehlt, kann das Frontend
+    ablehnen, was der Server längst annähme (oder umgekehrt).
+    """
+    from fastapi.testclient import TestClient
+    from app.services.anhang_service import max_upload_mb
+    from backend.main import app
+
+    daten = TestClient(app).get("/api/app-info").json()
+    assert daten["max_upload_mb"] == max_upload_mb()
+    assert "application/pdf" in daten["upload_typen"]
+
+
+def test_anhang_service_nimmt_die_env_grenze(monkeypatch):
+    """Ohne ausdrücklichen Wert zieht der Dienst sie selbst — sonst müsste
+    jeder Aufrufer daran denken, und einer vergisst es."""
+    from app.services.anhang_service import AnhangService
+    monkeypatch.setenv("VTB_MAX_UPLOAD_MB", "17")
+    assert AnhangService("/tmp/vtb-grenze-test").max_mb == 17

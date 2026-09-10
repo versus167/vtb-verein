@@ -5,7 +5,22 @@
 import { computed, ref } from 'vue'
 import { api } from 'src/boot/axios'
 
-export const appInfo = ref({ name: '', version: '', source_url: '', verein_kurz: '', verein_name: '' })
+export const appInfo = ref({
+  name: '', version: '', source_url: '', verein_kurz: '', verein_name: '',
+  max_upload_mb: 0, upload_typen: [],
+})
+
+// Anhang-Grenze in MB, wie der Server sie meldet. Bewusst EINE Quelle: Solange
+// das AnhangPanel seine eigene Zahl als Prop-Default trug, lief sie von der
+// Server-Einstellung weg — der Server nahm 20 MB, das Panel lehnte bei 10 ab.
+// Der Rückfallwert gilt nur, solange /api/app-info noch nicht geantwortet hat;
+// er ist absichtlich klein, damit im Zweifel der Server ablehnt und nicht wir
+// etwas durchwinken, das er gleich zurückweist.
+export const maxUploadMb = computed(() => appInfo.value.max_upload_mb || 10)
+
+// Erlaubte Upload-Typen als accept-Attribut („image/jpeg,image/png,…").
+export const uploadAccept = computed(() =>
+  (appInfo.value.upload_typen || []).join(','))
 
 // Vereinsname für die Login-Seite. Solange nichts geladen ist, bleibt die Zeile
 // leer – lieber kurz kein Name als der eines fremden Vereins.

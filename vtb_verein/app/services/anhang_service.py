@@ -6,13 +6,36 @@ TicketService today, prepared for KassenbuchService (Belege) later.
 
 Env-Vars (read by caller, passed into __init__):
   VTB_UPLOAD_PATH   – Speicherpfad (default: uploads/)
-  VTB_MAX_UPLOAD_MB – Max. Dateigröße in MB (default: 20)
+  VTB_MAX_UPLOAD_MB – Max. Dateigröße in MB (s. max_upload_mb())
 """
 import io
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+STANDARD_MAX_MB = 20
+
+
+def max_upload_mb() -> int:
+    """Anhang-Grenze in MB aus der Env — die eine Quelle dafür.
+
+    Sie wird an drei Stellen gebraucht: hier beim Anlegen des Dienstes, im
+    Endpunkt, der prüft, und im Frontend, das dem Nutzer vorab sagt, was passt.
+    Das Frontend bekommt sie über /api/app-info, statt sie ein zweites Mal
+    hinzuschreiben — genau daran ist es schon einmal auseinandergelaufen: Der
+    Server nahm 20 MB, das AnhangPanel lehnte weiter bei 10 ab, weil dort eine
+    eigene Zahl als Prop-Default stand.
+
+    Unsinnige Werte fallen auf den Standard zurück, statt die App mit einer
+    kaputten Env gar nicht erst starten zu lassen.
+    """
+    try:
+        wert = int(os.getenv('VTB_MAX_UPLOAD_MB', str(STANDARD_MAX_MB)))
+    except ValueError:
+        return STANDARD_MAX_MB
+    return wert if wert > 0 else STANDARD_MAX_MB
 
 ERLAUBTE_MIME_TYPEN: set[str] = {
     'image/jpeg',
@@ -33,7 +56,8 @@ class DateiZuGrossError(Exception):
 
 class AnhangService:
 
-    def __init__(self, upload_path: str, max_mb: int = 20):
+    def __init__(self, upload_path: str, max_mb: int | None = None):
+        max_mb = max_upload_mb() if max_mb is None else max_mb
         self._upload_path = Path(upload_path)
         self._max_bytes = max_mb * 1024 * 1024
         self._upload_path.mkdir(parents=True, exist_ok=True)
