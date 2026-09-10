@@ -11,6 +11,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -102,6 +103,9 @@ app = FastAPI(
 #     ist dort ungleich kleiner als bei Skripten.
 #   * `img-src`/`frame-src` erlauben blob:. Die Anhang-Vorschau baut ihre Bilder
 #     und PDFs aus Blob-URLs (s. AnhangPanel.vue) — ohne das bliebe sie leer.
+#
+# `frame-src` erlaubt zusätzlich 'self': Der Beleg-Scanner läuft in einem
+# eingebetteten Dokument gleicher Herkunft (s. _CSP_SCANNER).
 _CSP = "; ".join([
     "default-src 'self'",
     "script-src 'self'",
@@ -109,12 +113,47 @@ _CSP = "; ".join([
     "img-src 'self' data: blob:",
     "font-src 'self'",
     "connect-src 'self'",
-    "frame-src blob:",
+    "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
 ])
+
+# Eigene, lockerere Richtlinie für das Scanner-Dokument (Ticket #197).
+#
+# WARUM ÜBERHAUPT GELOCKERT: Der Scanner erkennt die Belegkanten mit OpenCV.js.
+# Dessen Anbindungsschicht baut Funktionen zur Laufzeit aus Zeichenketten
+# (`new Function(...)` in `createNamedFunction`), und der Single-File-Build holt
+# sein WebAssembly per fetch aus einer `data:`-URI. Gemessen mit Headless-Chrome
+# am 09.09.2026: Unter `script-src 'self'` bricht die Bibliothek sofort mit
+# `EvalError` ab, mit 'wasm-unsafe-eval' ebenso — das Schlüsselwort deckt echtes
+# eval nicht ab. Es läuft erst mit 'unsafe-eval' UND `connect-src data:`.
+#
+# WARUM NUR HIER: 'unsafe-eval' app-weit würde die Härtung überall aufgeben,
+# auch auf den Seiten mit Mitglieder-, Kassen- und Tresordaten. Der Scanner ist
+# deshalb ein eigenes Dokument (frontend/public/beleg-scanner.html), das die App
+# in einem iframe einbettet; die Lockerung endet an dessen Rand. Das Dokument
+# zeigt selbst keine Vereinsdaten — es sieht nur das Kamerabild und schickt das
+# fertige PDF per postMessage nach oben.
+#
+# `frame-ancestors 'self'` statt 'none', sonst dürfte die App es nicht
+# einbetten; passend dazu setzt die Middleware hier X-Frame-Options auf
+# SAMEORIGIN (DENY verbietet auch die eigene Herkunft).
+_CSP_SCANNER = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+])
+
+_SCANNER_PFAD = "/beleg-scanner.html"
 
 # Swagger/ReDoc laden ihr JavaScript von einem CDN — unter `script-src 'self'`
 # blieben beide Seiten weiß. Sie zeigen keine Nutzerdaten, sondern die eigene
@@ -126,15 +165,26 @@ _OHNE_CSP = ("/api/docs", "/api/redoc")
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
+        scanner = request.url.path == _SCANNER_PFAD
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        # Das Scanner-Dokument wird von der eigenen App eingebettet; DENY
+        # verbietet auch die eigene Herkunft und ließe den Rahmen leer.
+        response.headers["X-Frame-Options"] = "SAMEORIGIN" if scanner else "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         if not request.url.path.startswith(_OHNE_CSP):
-            response.headers["Content-Security-Policy"] = _CSP
+            response.headers["Content-Security-Policy"] = (
+                _CSP_SCANNER if scanner else _CSP)
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+# Antworten komprimieren. Ausschlaggebend war der Beleg-Scanner (#197): dessen
+# OpenCV-Bibliothek ist unkomprimiert 10,9 MB und gepackt 3,4 MB — ein Drittel,
+# einmal je Gerät über Mobilfunk. Der Rest der App profitiert nebenbei, JS und
+# JSON packen ähnlich gut. Unter 1 KB lohnt der Aufwand nicht, deshalb der
+# Mindestwert; bereits komprimierte Formate (JPEG, PNG, PDF) lässt gzip von
+# selbst nahezu unverändert.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.FRONTEND_ORIGINS,
@@ -245,6 +295,39 @@ def sieht_wie_datei_aus(pfad: str) -> bool:
     return "." in segmente[-1]
 
 
+# Ein Jahr, unveränderlich — aber nur für die beiden zugekauften Brocken, die
+# wir nie im Nachhinein bearbeiten, sondern höchstens als Ganzes austauschen.
+# Ausschlaggebend ist opencv.js für den Beleg-Scanner (#197): ohne das lädt
+# jedes Handy 10,9 MB bei jedem Aufruf neu bzw. fragt zumindest jedes Mal nach.
+# `immutable` erspart auch die Rückfrage. Der Scanner hängt die App-Version als
+# `?v=` an die Bibliothek, ein Austausch ergibt also eine neue Adresse; die
+# Symbolschrift steht ohne `?v=` in beleg-scan.css, was vertretbar ist — eine
+# Icon-Schrift wird ersetzt, nicht editiert.
+_VENDOR_IMMUTABLE = frozenset({
+    "vendor/opencv.js",
+    "vendor/material-icons.woff2",
+})
+_CACHE_IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+# Alles andere unter /vendor/ ist EIGENER Code (beleg-scan.js, scan-detect.js,
+# beleg-scan.css) und ändert sich mit jedem Fix. beleg-scanner.html bindet ihn
+# ohne `?v=` ein und kann das auch nicht nachrüsten: Ein Inline-Bootstrap, der
+# die Version aus der eigenen Adresse anhängt, scheitert an `script-src 'self'`
+# (s. _CSP_SCANNER, kein 'unsafe-inline' für Skripte). Unveränderlich
+# ausgeliefert erreichte ein Scanner-Fix bestehende Browser also ein Jahr lang
+# nicht. Deshalb hier die Pflicht-Rückfrage: Sie kostet bei 60 KB ein 304 und
+# sonst nichts, und FileResponse liefert ETag und Last-Modified dafür mit.
+_CACHE_REVALIDATE = {"Cache-Control": "public, max-age=0, must-revalidate"}
+
+
+def _cache_header(pfad: str) -> dict:
+    if pfad in _VENDOR_IMMUTABLE:
+        return _CACHE_IMMUTABLE
+    if pfad.startswith("vendor/"):
+        return _CACHE_REVALIDATE
+    return {}
+
+
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
 if _FRONTEND_DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="assets")
@@ -283,7 +366,7 @@ if _FRONTEND_DIST.is_dir():
         except (ValueError, OSError):
             candidate = None
         if candidate is not None and candidate.is_file():
-            return FileResponse(str(candidate))
+            return FileResponse(str(candidate), headers=_cache_header(full_path))
         # Datei-Anfragen, die es nicht gibt, sind 404 — nicht die SPA.
         if sieht_wie_datei_aus(full_path):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Nicht gefunden")

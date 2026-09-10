@@ -114,6 +114,7 @@ from app.services.ticket_service import TicketService
 from app.services.rechnung_service import RechnungService
 from app.services.rechnung_export_service import RechnungExportService
 from app.services.anhang_service import AnhangService
+from app.services.scan_pdf_service import ScanPdfService
 
 
 class VereinsDB:
@@ -184,8 +185,12 @@ class VereinsDB:
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
-            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '10')),
+            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '20')),
         )
+
+        # Zustandsloser Bauer fuer Beleg-Scans (#197) — haelt weder Verbindung
+        # noch Datei, deshalb ohne Parameter und ohne Repository.
+        self._scan_pdf_service = ScanPdfService()
 
         self._kassenbuch_service = KassenbuchService(
             kasse_repo=self._kasse_repo,
@@ -410,6 +415,10 @@ class VereinsDB:
     @property
     def anhang_service(self) -> AnhangService:
         return self._anhang_service
+
+    @property
+    def scan_pdf_service(self) -> ScanPdfService:
+        return self._scan_pdf_service
 
     @property
     def tickets(self) -> TicketService:

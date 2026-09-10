@@ -6,7 +6,7 @@ TicketService today, prepared for KassenbuchService (Belege) later.
 
 Env-Vars (read by caller, passed into __init__):
   VTB_UPLOAD_PATH   – Speicherpfad (default: uploads/)
-  VTB_MAX_UPLOAD_MB – Max. Dateigröße in MB (default: 10)
+  VTB_MAX_UPLOAD_MB – Max. Dateigröße in MB (default: 20)
 """
 import io
 import logging
@@ -33,7 +33,7 @@ class DateiZuGrossError(Exception):
 
 class AnhangService:
 
-    def __init__(self, upload_path: str, max_mb: int = 10):
+    def __init__(self, upload_path: str, max_mb: int = 20):
         self._upload_path = Path(upload_path)
         self._max_bytes = max_mb * 1024 * 1024
         self._upload_path.mkdir(parents=True, exist_ok=True)

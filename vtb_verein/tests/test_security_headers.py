@@ -42,8 +42,78 @@ def test_csp_wird_ausgeliefert(client):
 def test_skripte_nur_aus_eigener_herkunft(client):
     """Der eigentliche Gewinn: Eingeschleuster Code kann weder nachladen noch
     inline laufen. Der Build macht das gratis – die index.html enthält kein
-    Inline-Script und keinen Fremd-Host."""
+    Inline-Script und keinen Fremd-Host.
+
+    Kein eval, in keiner Form. Der Beleg-Scanner braucht es, bekommt es aber
+    nur in seinem eigenen Dokument (s. die Scanner-Tests unten)."""
     assert _direktive(_csp(client), "script-src") == "'self'"
+    assert "eval" not in _csp(client)
+
+
+# --- Beleg-Scanner: gelockert, aber nur dort (Ticket #197) ------------------
+#
+# Der Scanner erkennt die Belegkanten mit OpenCV.js. Dessen Anbindungsschicht
+# baut Funktionen zur Laufzeit aus Zeichenketten und holt das WebAssembly aus
+# einer data:-URI. Gemessen mit Headless-Chrome am 09.09.2026: Unter
+# `script-src 'self'` bricht die Bibliothek mit EvalError ab, mit
+# 'wasm-unsafe-eval' ebenso — das Schlüsselwort deckt echtes eval nicht ab.
+# Sie läuft erst mit 'unsafe-eval' UND `connect-src data:`.
+#
+# Deshalb liegt der Scanner in einem eigenen Dokument, das die App einbettet.
+# Diese Tests halten fest, dass die Lockerung genau dort endet.
+
+SCANNER = "/beleg-scanner.html"
+
+
+def test_scanner_dokument_darf_eval(client):
+    """Ohne diese beiden Lockerungen startet OpenCV.js gar nicht."""
+    csp = _csp(client, SCANNER)
+    assert "'unsafe-eval'" in _direktive(csp, "script-src")
+    assert "data:" in _direktive(csp, "connect-src")
+
+
+def test_scanner_lockerung_gilt_nirgends_sonst(client):
+    """Die Kernaussage dieser Bauweise: Der Rest der App bleibt streng.
+
+    Sonst hätte man sich das eigene Dokument sparen und die Richtlinie gleich
+    überall aufmachen können — auch auf den Seiten mit Mitglieder-, Kassen-
+    und Tresordaten.
+    """
+    for pfad in ("/api/health", "/", "/rechnungen"):
+        csp = _csp(client, pfad)
+        assert "eval" not in csp, pfad
+        assert "data:" not in _direktive(csp, "connect-src"), pfad
+
+
+def test_scanner_bleibt_ohne_blob_und_fremde_herkunft(client):
+    """Auch die gelockerte Richtlinie gibt nur das Nötige her.
+
+    `blob:` bleibt draußen, obwohl der Lader des ERP es bräuchte — genau
+    darüber baut sich eine XSS-Lücke zu Skriptausführung aus. Der Lader in
+    public/vendor/beleg-scan.js hängt die Bibliothek deshalb als normales
+    <script src> ein.
+    """
+    script_src = _direktive(_csp(client, SCANNER), "script-src")
+    assert "blob:" not in script_src
+    assert "http" not in script_src  # kein CDN, die Bibliothek liegt bei uns
+
+
+def test_scanner_darf_nur_von_uns_eingebettet_werden(client):
+    """Der Rahmen ist die Grenze der Lockerung — fremde Seiten dürfen das
+    Dokument nicht einbetten, sonst liehen sie sich unsere Kamera-Erlaubnis.
+
+    Passend dazu erlaubt die App-Richtlinie `frame-src 'self'`, sonst bliebe
+    der Rahmen leer.
+    """
+    assert _direktive(_csp(client, SCANNER), "frame-ancestors") == "'self'"
+    assert client.get(SCANNER).headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert "'self'" in _direktive(_csp(client), "frame-src")
+
+
+def test_uebrige_seiten_bleiben_uneinbettbar(client):
+    """Für alles andere gilt weiter: gar kein Rahmen, von niemandem."""
+    assert _direktive(_csp(client), "frame-ancestors") == "'none'"
+    assert client.get("/api/health").headers["X-Frame-Options"] == "DENY"
 
 
 def test_keine_fremden_einbettungen_und_objekte(client):

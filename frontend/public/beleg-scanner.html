@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+    <meta name="theme-color" content="#0e0e0e">
+    <title>Beleg scannen</title>
+    <!--
+        Eigenständiges Dokument, kein Teil der Vue-App (Ticket #197).
+
+        Grund: OpenCV.js braucht 'unsafe-eval' und `connect-src data:` — gemessen,
+        s. backend/main.py. Diese Lockerung soll nicht für die ganze App gelten.
+        Sie hängt deshalb allein an diesem Pfad, und die App bettet das Dokument
+        in einem iframe ein. Hier gibt es keine Vereinsdaten zu sehen, nur das
+        Kamerabild; das fertige PDF geht per postMessage nach oben.
+
+        Diese Datei liegt bewusst unter public/ und läuft nicht durch den
+        Vue-Build: Ein gebündeltes Modul wäre Teil der App und stünde damit
+        wieder unter deren Richtlinie.
+
+        Das Markup entspricht scan.php aus dem Übergabe-Paket; die IDs sind der
+        Anschluss für beleg-scan.js und dürfen sich nicht ändern. Weggefallen
+        sind „Zur Überweisung" und die Projekt-Mappe (Entscheid Marko), die
+        Bootstrap-Icons sind Material Icons geworden.
+    -->
+    <link rel="stylesheet" href="/api/branding.css">
+    <link rel="stylesheet" href="/vendor/beleg-scan.css">
+</head>
+<body>
+<div class="scn-app" id="scnApp" data-max-pages="20" data-opencv="/vendor/opencv.js">
+
+    <!-- 1) Kamera: Live-Rahmen um den erkannten Beleg -->
+    <section class="scn-view is-active" id="scnViewCamera">
+        <header class="scn-head">
+            <button type="button" class="scn-icon-btn" id="scnClose" title="Scannen abbrechen">
+                <i class="material-icons">arrow_back</i>
+            </button>
+            <h1><i class="material-icons">photo_camera</i> Beleg scannen</h1>
+            <button type="button" class="scn-icon-btn is-on" id="scnAutoToggle"
+                    title="Auto-Auslöser: löst aus, sobald der Beleg ruhig im Bild liegt" aria-pressed="true">
+                <i class="material-icons">auto_fix_high</i>
+            </button>
+        </header>
+        <div class="scn-stage" id="scnStage">
+            <video id="scnVideo" playsinline muted autoplay></video>
+            <canvas id="scnOverlay" class="scn-overlay"></canvas>
+            <div class="scn-status" id="scnStatus" data-state="search">
+                <i class="material-icons">search</i><span>Beleg ins Bild halten</span>
+                <b class="scn-status-bar"><i id="scnStatusFill"></i></b>
+            </div>
+            <div class="scn-loading" id="scnLoading">
+                <div class="scn-loading-box">
+                    <i class="material-icons scn-spin">hourglass_top</i>
+                    <div class="scn-loading-text" id="scnLoadingText">Scanner wird geladen …</div>
+                    <div class="scn-progress"><div id="scnProgressBar"></div></div>
+                    <div class="scn-loading-hint" id="scnLoadingHint">Einmalig ca. 11 MB, danach bleibt er im Browser gespeichert.</div>
+                    <button type="button" class="scn-btn scn-btn-ghost scn-btn-small" id="scnRetry" hidden>
+                        <i class="material-icons">refresh</i> Nochmal versuchen
+                    </button>
+                </div>
+            </div>
+            <div class="scn-flash" id="scnFlash"></div>
+        </div>
+        <footer class="scn-bar">
+            <div class="scn-bar-side">
+                <button type="button" class="scn-icon-btn" id="scnFlip" title="Kamera wechseln">
+                    <i class="material-icons">cameraswitch</i>
+                </button>
+                <button type="button" class="scn-icon-btn is-torch" id="scnTorch" hidden
+                        title="Blitz (Taschenlampe) ein/aus" aria-pressed="false">
+                    <i class="material-icons">flash_on</i>
+                </button>
+            </div>
+            <button type="button" class="scn-shutter" id="scnShutter" disabled aria-label="Aufnehmen"><span></span></button>
+            <button type="button" class="scn-stack" id="scnStack" hidden title="Zu den aufgenommenen Seiten">
+                <canvas id="scnStackThumb" width="56" height="72"></canvas>
+                <span class="scn-stack-count" id="scnStackCount">1</span>
+                <span class="scn-stack-label">Weiter</span>
+            </button>
+        </footer>
+    </section>
+
+    <!-- 2) Ecken anpassen: vier Griffe, Lupe unter dem Finger -->
+    <section class="scn-view" id="scnViewCorners">
+        <header class="scn-head">
+            <button type="button" class="scn-icon-btn" id="scnCornersBack" title="Verwerfen und neu aufnehmen">
+                <i class="material-icons">arrow_back</i>
+            </button>
+            <h1><i class="material-icons">crop_free</i> Ecken anpassen</h1>
+            <button type="button" class="scn-icon-btn" id="scnCornersFull" title="Ganzes Bild verwenden">
+                <i class="material-icons">aspect_ratio</i>
+            </button>
+        </header>
+        <div class="scn-stage scn-stage-corners" id="scnCornerStage">
+            <canvas id="scnCornerCanvas"></canvas>
+            <div class="scn-loupe" id="scnLoupe" hidden><canvas id="scnLoupeCanvas"></canvas></div>
+        </div>
+        <div class="scn-hint" id="scnCornerHint">
+            <i class="material-icons">touch_app</i> Ecken ziehen — die Lupe zeigt die Kante genau.
+        </div>
+        <footer class="scn-bar scn-bar-actions">
+            <button type="button" class="scn-btn scn-btn-ghost" id="scnCornersRetake">
+                <i class="material-icons">photo_camera</i> Neu aufnehmen
+            </button>
+            <button type="button" class="scn-btn scn-btn-primary" id="scnCornersApply">
+                <i class="material-icons">check</i> Übernehmen
+            </button>
+        </footer>
+    </section>
+
+    <!-- 3) Seiten prüfen: Filter, drehen, weitere Seite, übernehmen -->
+    <section class="scn-view" id="scnViewPages">
+        <header class="scn-head">
+            <button type="button" class="scn-icon-btn" id="scnPagesBack" title="Weitere Seite aufnehmen">
+                <i class="material-icons">photo_camera</i>
+            </button>
+            <h1><i class="material-icons">collections</i> <span id="scnPagesTitle">Beleg prüfen</span></h1>
+            <div class="scn-head-group">
+                <button type="button" class="scn-icon-btn" id="scnPageCorners" title="Ecken dieser Seite anpassen">
+                    <i class="material-icons">crop_free</i>
+                </button>
+                <button type="button" class="scn-icon-btn" id="scnRotate" title="Um 90° drehen">
+                    <i class="material-icons">rotate_right</i>
+                </button>
+                <button type="button" class="scn-icon-btn scn-icon-danger" id="scnPageDelete" title="Diese Seite löschen">
+                    <i class="material-icons">delete</i>
+                </button>
+            </div>
+        </header>
+        <!-- Vorschau: fertige Seite in voller Auflösung, mit zwei Fingern oder
+             Doppeltipp zoombar -->
+        <div class="scn-preview" id="scnPreview">
+            <div class="scn-preview-zoom" id="scnPreviewZoom"></div>
+            <button type="button" class="scn-zoom-btn" id="scnZoomBtn" title="Vergrößern">
+                <i class="material-icons">zoom_in</i>
+            </button>
+            <div class="scn-preview-busy" id="scnPreviewBusy" hidden><i class="material-icons scn-spin">hourglass_top</i></div>
+        </div>
+        <div class="scn-thumbs" id="scnThumbs"></div>
+        <div class="scn-options">
+            <label class="scn-select scn-select-filter" for="scnFilter" title="Bildfilter">
+                <i class="material-icons" id="scnFilterIcon">description</i>
+                <select id="scnFilter">
+                    <option value="dokument">Dokument</option>
+                    <option value="sw">Schwarz-Weiß</option>
+                    <option value="farbe">Farbe</option>
+                </select>
+                <i class="material-icons scn-select-arrow">expand_more</i>
+            </label>
+        </div>
+        <footer class="scn-bar scn-bar-actions">
+            <button type="button" class="scn-btn scn-btn-ghost" id="scnAddPage">
+                <i class="material-icons">add</i> Seite
+            </button>
+            <button type="button" class="scn-btn scn-btn-primary" id="scnUpload">
+                <i class="material-icons">cloud_upload</i> Übernehmen
+            </button>
+        </footer>
+        <div class="scn-upload-progress" id="scnUploadProgress" hidden>
+            <div class="scn-upload-box">
+                <div class="scn-progress"><div id="scnUploadBar"></div></div>
+                <span id="scnUploadText">Wird übertragen …</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 4) Fertig -->
+    <section class="scn-view scn-view-done" id="scnViewDone">
+        <div class="scn-done">
+            <div class="scn-done-icon"><i class="material-icons">check_circle</i></div>
+            <h2 id="scnDoneTitle">Beleg übernommen</h2>
+            <p id="scnDoneText"></p>
+            <button type="button" class="scn-btn scn-btn-primary scn-btn-big" id="scnNext">
+                <i class="material-icons">photo_camera</i> Nächster Beleg
+            </button>
+            <button type="button" class="scn-btn scn-btn-ghost" id="scnFertig">
+                <i class="material-icons">done</i> Fertig, zurück zur Rechnung
+            </button>
+        </div>
+    </section>
+
+    <div class="scn-toast" id="scnToast" hidden></div>
+    <canvas id="scnWork" hidden></canvas>
+</div>
+<script src="/vendor/scan-detect.js"></script>
+<script src="/vendor/beleg-scan.js"></script>
+</body>
+</html>
