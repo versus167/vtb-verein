@@ -23,7 +23,6 @@ from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
 from app.models.rechnung import STATUS_FILTER_WERTE
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
-from app.services.scan_pdf_service import ScanFehlerError, zu_gross_meldung
 from app.services.rechnung_service import (
     BelegFehltError,
     BetragFehltError,
@@ -286,73 +285,6 @@ def empfaenger_mitglieder(user: CurrentUser, db: DB):
         return db.rechnungen.empfaenger_mitglieder(user)
     except Exception as exc:
         raise _fehler_zu_http(exc)
-
-
-# ---------------------------------------------------------------------------
-# Beleg-Scanner (vor /{rechnung_id}!)
-# ---------------------------------------------------------------------------
-
-@router.post("/beleg-scan")
-async def beleg_scan(user: CurrentUser, db: DB,
-                     pages: list[UploadFile] = File(...)):
-    """Gescannte Seiten zu einem Beleg-PDF zusammensetzen (Ticket #197).
-
-    Bewusst zustandslos: Der Endpunkt legt nichts ab, sondern gibt das fertige
-    PDF zurück. Der Dialog hält es dann wie eine selbst gewählte Datei und lädt
-    es beim Speichern über den normalen Anhang-Weg hoch. Das hat drei Gründe:
-
-    * Beim Anlegen einer neuen Rechnung gibt es noch keine ID, an der ein
-      Anhang hängen könnte — der Scanner soll aber vor dem Speichern nutzbar
-      sein, sonst müsste man den Entwurf vorab anlegen.
-    * Es braucht keine Zwischenablage-Tabelle und damit keinen weiteren
-      Eintrag im PRUNE_REGISTRY.
-    * Das PDF geht als PDF durch ``AnhangService`` und wird dort **nicht**
-      angefasst; nur Bilder laufen durch ``bild_zu_jpeg`` (1800 px / Q80).
-      Die volle Scan-Auflösung bleibt so erhalten.
-
-    Alle Seiten kommen in *einem* Request. Eine Schleife über Einzel-Uploads
-    wäre nicht gleichwertig: Bei einem Abbruch bliebe ein halber Beleg zurück,
-    und die Seitenreihenfolge hinge am Zufall der Antwortzeiten.
-    """
-    if not user.has_permission(Permission.RECHNUNGEN_EINREICHEN):
-        raise HTTPException(status_code=403,
-                            detail="Nur mit dem Recht 'rechnungen.einreichen'.")
-
-    dienst = db.scan_pdf_service
-    if len(pages) > dienst.max_seiten:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Mehr als {dienst.max_seiten} Seiten je Beleg sind nicht vorgesehen.")
-
-    seiten: list[bytes] = []
-    try:
-        for datei in pages:
-            seiten.append(await lese_upload(datei, dienst.max_seite_bytes))
-    except DateiZuGrossError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-    # Gegen die Anhang-Grenze prüfen, BEVOR gebaut wird. Das PDF wiegt praktisch
-    # so viel wie die Summe der JPEGs (die wandern unverändert als DCTDecode
-    # hinein), die Summe ist hier also schon eine belastbare Vorhersage.
-    grenze = db.anhang_service.max_bytes
-    meldung = zu_gross_meldung(sum(len(s) for s in seiten), grenze)
-    if meldung:
-        raise HTTPException(status_code=422, detail=meldung)
-
-    try:
-        pdf = dienst.baue(seiten)
-    except ScanFehlerError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-    # Nachkontrolle am fertigen PDF: Die Vorhersage oben ist gut, aber nicht
-    # exakt (PDF-Gerüst, und ein PNG unter den Seiten kodiert ReportLab neu).
-    # Was hier durchgeht, muss beim Speichern durch den Anhang-Weg passen —
-    # sonst wäre die Arbeit doch umsonst gewesen.
-    meldung = zu_gross_meldung(len(pdf), grenze, was="Das fertige PDF")
-    if meldung:
-        raise HTTPException(status_code=422, detail=meldung)
-
-    return Response(content=pdf, media_type="application/pdf")
 
 
 @router.get("")

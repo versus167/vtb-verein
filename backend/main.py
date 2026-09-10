@@ -20,6 +20,7 @@ from backend.core import branding
 from backend.core.config import settings
 from backend.core.security import pruefe_signaturschluessel
 from app.config.app_info import APP_NAME, get_app_version
+from app.services.anhang_service import ERLAUBTE_MIME_TYPEN, max_upload_mb
 from backend.api.auth import router as auth_router
 from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
@@ -36,6 +37,7 @@ from backend.api.mannschaften import router as mannschaften_router
 from backend.api.funktionen import router as funktionen_router
 from backend.api.kassenbuch import router as kassenbuch_router
 from backend.api.rechnungen import router as rechnungen_router
+from backend.api.scan import router as scan_router
 from backend.api.tickets import router as tickets_router
 from backend.api.imports import router as imports_router
 from backend.api.berichte import router as berichte_router
@@ -209,6 +211,7 @@ app.include_router(mannschaften_router, prefix="/api")
 app.include_router(funktionen_router, prefix="/api")
 app.include_router(kassenbuch_router, prefix="/api")
 app.include_router(rechnungen_router, prefix="/api")
+app.include_router(scan_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(imports_router, prefix="/api")
 app.include_router(berichte_router, prefix="/api")
@@ -240,9 +243,18 @@ def app_info():
     ``verein_kurz`` ist das Kürzel vor dem Mannschaftsnamen – das Frontend baut
     daraus den Spieltitel („VTB AH – SV X"), ohne den Verein fest zu verdrahten.
     ``verein_name`` trägt die Login-Seite. Beides ist öffentlich, weil die
-    Login-Seite vor der Anmeldung wissen muss, für welchen Verein sie steht."""
+    Login-Seite vor der Anmeldung wissen muss, für welchen Verein sie steht.
+
+    ``max_upload_mb``/``upload_typen`` sind die Anhang-Grenzen, damit das
+    Frontend sie nicht ein zweites Mal hinschreiben muss. Genau daran ist es
+    schon auseinandergelaufen: Der Server nahm 20 MB, das AnhangPanel lehnte
+    weiter bei 10 ab, weil dort eine eigene Zahl als Prop-Default stand. Beides
+    ist keine Auskunft, die schützenswert wäre — es steht ohnehin in jeder
+    Fehlermeldung des Uploads."""
     return {"name": APP_NAME, "version": get_app_version(), "source_url": settings.SOURCE_URL,
-            "verein_kurz": settings.VEREIN_KURZ, "verein_name": settings.VEREIN_NAME}
+            "verein_kurz": settings.VEREIN_KURZ, "verein_name": settings.VEREIN_NAME,
+            "max_upload_mb": max_upload_mb(),
+            "upload_typen": sorted(ERLAUBTE_MIME_TYPEN)}
 
 
 @app.get("/api/branding.css", include_in_schema=False)

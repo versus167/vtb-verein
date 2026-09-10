@@ -5,7 +5,7 @@
          →  Ecken anpassen (vier Griffe, Lupe unter dem Finger wie bei Google)
          →  Seiten prüfen (Filter Dokument/Schwarz-Weiß/Farbe, drehen, löschen,
             weitere Seite)
-         →  Übernehmen: Seiten als JPEG an /api/rechnungen/beleg-scan; der
+         →  Übernehmen: Seiten als JPEG an /api/scan/beleg-pdf; der
             Server baut daraus ein PDF und gibt es zurück. Abgelegt wird es
             nicht hier, sondern mit der Rechnung — das PDF geht per
             postMessage an die App (s. showDone).
@@ -16,7 +16,8 @@
    sind bewusst unverändert — was hier umständlich aussieht, ist meist eine
    bezahlte Lehre. Geändert wurden nur die Anschlüsse an unsere App:
      * kein CSRF-Token (HttpOnly-Cookie + SameSite=strict),
-     * eigener Endpunkt, Antwort ist das PDF statt einer Beleg-ID,
+     * eigener, fachneutraler Endpunkt (Rechnungen, Tickets und Kasse teilen
+       ihn), Antwort ist das PDF statt einer Beleg-ID,
      * „Zur Überweisung" und Projekt-Mappe entfallen (Entscheid Marko),
      * Material Icons statt Bootstrap-Icons,
      * OpenCV wird als normales <script src> geladen statt als Blob-Script.
@@ -41,7 +42,6 @@
 (function () {
     'use strict';
 
-    const UPLOAD_URL = '/api/rechnungen/beleg-scan';
 
     const OUT_LONG_EDGE   = 2400;   // Pixel lange Kante nach der Entzerrung
     const DETECT_SIZE     = 480;    // Analyse-Größe (lange Kante) für den Live-Rahmen
@@ -98,11 +98,19 @@
     const VERSION   = new URLSearchParams(location.search).get('v') || '';
     const OPENCV    = (dom.app.dataset.opencv || '/vendor/opencv.js')
                       + (VERSION ? '?v=' + encodeURIComponent(VERSION) : '');
-    // Anhang-Grenze in MB, ebenfalls aus der Adresse (die App kennt sie als
-    // BELEG_MAX_MB). Der Rückfallwert greift nur, wenn jemand dieses Dokument
-    // von Hand aufruft; dann ist die Warnung eben grober.
+    // Anhang-Grenze in MB, ebenfalls aus der Adresse. Die App kennt sie aus
+    // /api/app-info, damit sie nirgends ein zweites Mal geschrieben steht. Der
+    // Rückfallwert greift nur, wenn jemand dieses Dokument von Hand aufruft;
+    // dann ist die Warnung eben grober.
     const MAX_MB    = parseInt(new URLSearchParams(location.search).get('max'), 10) || 20;
     const MAX_BYTES = MAX_MB * 1024 * 1024;
+    // Hier entsteht nur das PDF — wohin es danach abgelegt wird, entscheidet
+    // die einbettende Fläche selbst (sie bekommt es per postMessage und lädt
+    // es über ihren eigenen Anhang-Weg hoch). Der Pfad ist deshalb fest und
+    // muss es auch sein: Er lag einmal unter /api/rechnungen/ und verlangte
+    // damit 'rechnungen.einreichen' — weshalb Tickets und Kasse den Scanner
+    // nicht benutzen konnten. Jetzt liegt er neutral unter /api/scan/.
+    const UPLOAD_URL = '/api/scan/beleg-pdf';
 
     const state = {
         cv: null, cvError: null,

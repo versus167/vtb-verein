@@ -113,7 +113,7 @@ from app.models.user import User
 from app.services.ticket_service import TicketService
 from app.services.rechnung_service import RechnungService
 from app.services.rechnung_export_service import RechnungExportService
-from app.services.anhang_service import AnhangService
+from app.services.anhang_service import AnhangService, max_upload_mb
 from app.services.scan_pdf_service import ScanPdfService
 
 
@@ -185,7 +185,7 @@ class VereinsDB:
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
-            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '20')),
+            max_mb=max_upload_mb(),
         )
 
         # Zustandsloser Bauer fuer Beleg-Scans (#197) — haelt weder Verbindung

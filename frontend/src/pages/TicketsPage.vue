@@ -437,6 +437,7 @@
                   :upload-url="`/api/tickets/${selectedTicket.id}/anhaenge`"
                   :can-upload="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
                   :can-delete="!isAbgeschlossen(selectedTicket) && !selectedIstGeloescht"
+                  foto
                   @uploaded="onAnhangUploaded"
                   @deleted="onAnhangDeleted"
                 />

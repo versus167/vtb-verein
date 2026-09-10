@@ -56,7 +56,13 @@
           <!-- Miniaturen bereits erfasster Bilder -->
           <div v-if="fotos.length" class="row q-gutter-sm">
             <div v-for="f in fotos" :key="f.id" class="vtb-foto-thumb">
-              <img :src="f.url" />
+              <!-- Ein PDF hat keine Miniatur; statt eines kaputten <img> eine
+                   Kachel mit Symbol und Dateiname. -->
+              <img v-if="f.type.startsWith('image/')" :src="f.url" />
+              <div v-else class="vtb-foto-thumb__datei" :title="f.name">
+                <q-icon name="picture_as_pdf" size="26px" />
+                <span>{{ f.name }}</span>
+              </div>
               <q-btn round dense size="sm" icon="close" color="negative"
                 class="vtb-foto-thumb__x" @click="removeFoto(f.id)" />
             </div>
@@ -84,7 +90,11 @@
             </div>
             <div v-if="kameraFehler" class="text-negative text-caption q-mt-xs">{{ kameraFehler }}</div>
           </div>
-          <input ref="fileInput" type="file" accept="image/*" multiple class="hidden" @change="dateiGewaehlt" />
+          <!-- Typen vom Server (/api/app-info), damit hier nicht enger gefiltert
+               wird als der Upload später zulässt: Am bestehenden Ticket ging PDF
+               längst, nur beim Anlegen nicht. -->
+          <input ref="fileInput" type="file" :accept="uploadAccept" multiple
+            class="hidden" @change="dateiGewaehlt" />
         </template>
 
         <q-input v-model="form.beschreibung" label="Beschreibung" outlined dense
@@ -130,9 +140,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { useKamera } from 'src/composables/useKamera'
+import { ladeAppInfo, maxUploadMb, uploadAccept } from 'src/composables/useAppInfo'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -200,15 +212,12 @@ watch(mitScreenshot, (mit) => {
 const fotos = ref([])
 let fotoSeq = 0
 
-// Live-Kamera (Rückkamera). getUserMedia gibt es nur im Secure Context.
-const kameraAktiv    = ref(false)
-const kameraFehler   = ref('')
-const videoEl        = ref(null)
-const fileInput      = ref(null)
-let   kameraStream   = null
-const kameraMoeglich = computed(
-  () => window.isSecureContext && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-)
+// Live-Kamera (Rückkamera) — Ablauf in useKamera, weil das AnhangPanel am
+// bestehenden Ticket dieselbe braucht.
+const {
+  kameraAktiv, kameraFehler, videoEl, kameraMoeglich, kameraStarten, kameraStoppen, schnappschuss,
+} = useKamera()
+const fileInput = ref(null)
 
 function addFoto(blob, name, type) {
   fotos.value.push({
@@ -233,45 +242,10 @@ function revokeFotos() {
   fotos.value = []
 }
 
-async function kameraStarten() {
-  kameraFehler.value = ''
-  try {
-    kameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-    kameraAktiv.value = true
-    await nextTick()
-    if (videoEl.value) {
-      // muted zwingend als Property (Vue setzt das Attribut nicht zuverlässig) –
-      // ohne muted blockt die Autoplay-Policy den Start.
-      videoEl.value.muted = true
-      videoEl.value.srcObject = kameraStream
-      await videoEl.value.play()
-    }
-  } catch (e) {
-    kameraStoppen()
-    kameraFehler.value = 'Kamera nicht verfügbar: ' + (e?.message || e?.name || 'unbekannt')
-  }
-}
-
-function kameraStoppen() {
-  if (kameraStream) {
-    kameraStream.getTracks().forEach(t => t.stop())
-    kameraStream = null
-  }
-  if (videoEl.value) videoEl.value.srcObject = null
-  kameraAktiv.value = false
-}
-
 // Auslösen fügt ein Bild hinzu, lässt die Kamera aber laufen — so kann man
 // mehrere Fotos hintereinander schießen; „Fertig" beendet die Kamera.
 async function ausloesen() {
-  const video = videoEl.value
-  if (!video || !video.videoWidth || !video.videoHeight) return
-  const canvas = document.createElement('canvas')
-  canvas.width  = video.videoWidth
-  canvas.height = video.videoHeight
-  canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
-  // Canvas liefert rohe Pixel ohne EXIF/HEIC → immer aufrecht stehendes JPEG.
-  const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85))
+  const blob = await schnappschuss()
   if (blob) addFoto(blob, '', 'image/jpeg')
 }
 
@@ -282,9 +256,16 @@ function dateiWaehlen() {
 function dateiGewaehlt(e) {
   const files = Array.from(e.target.files || [])
   e.target.value = ''  // gleiche Datei(en) erneut wählbar machen
+  const erlaubt = uploadAccept.value.split(',').filter(Boolean)
   for (const file of files) {
-    if (!file.type.startsWith('image/')) {
-      $q.notify({ type: 'warning', message: `„${file.name}" ist kein Bild – übersprungen.` })
+    if (erlaubt.length && !erlaubt.includes(file.type)) {
+      $q.notify({ type: 'warning',
+        message: `„${file.name}" hat ein nicht unterstütztes Format – übersprungen.` })
+      continue
+    }
+    if (file.size > maxUploadMb.value * 1024 * 1024) {
+      $q.notify({ type: 'warning',
+        message: `„${file.name}" ist größer als ${maxUploadMb.value} MB – übersprungen.` })
       continue
     }
     addFoto(file, file.name, file.type)
@@ -530,6 +511,7 @@ async function onSave() {
 
 onMounted(() => {
   loadBereiche()
+  ladeAppInfo()
   messeViewport()
   window.visualViewport?.addEventListener('resize', messeViewport)
   window.addEventListener('resize', messeViewport)

@@ -45,19 +45,60 @@
       <input
         ref="fileInput"
         type="file"
-        accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+        :accept="uploadAccept"
         style="display: none"
         @change="onFileSelected"
       />
-      <q-btn
-        outline
-        color="primary"
-        icon="attach_file"
-        label="Anhang hochladen"
-        size="sm"
-        :loading="uploading"
-        @click="fileInput.click()"
-      />
+      <div class="row items-center q-gutter-sm">
+        <q-btn
+          outline
+          color="primary"
+          icon="attach_file"
+          label="Anhang hochladen"
+          size="sm"
+          :loading="uploading"
+          @click="fileInput.click()"
+        />
+        <!-- Foto aufnehmen (#111) und Beleg scannen (#197) sind zwei
+             verschiedene Werkzeuge: Das Foto zeigt, was im Sucher steht (eine
+             kaputte Tür), der Scanner sucht Belegkanten und baut ein PDF.
+             Beide nur, wo die Kamera überhaupt darf — getUserMedia gibt es
+             ausschließlich im Secure Context. -->
+        <q-btn
+          v-if="foto && kameraMoeglich"
+          outline
+          color="primary"
+          icon="photo_camera"
+          label="Foto aufnehmen"
+          size="sm"
+          :loading="uploading"
+          @click="kameraStarten"
+        />
+        <q-btn
+          v-if="scannen && scannerMoeglich"
+          outline
+          color="primary"
+          icon="document_scanner"
+          label="Beleg scannen"
+          size="sm"
+          :loading="uploading"
+          @click="scannerOffen = true"
+        />
+      </div>
+
+      <!-- Live-Kamera. Steht unter den Knöpfen statt in einem eigenen Dialog,
+           damit die schon hochgeladenen Anhänge sichtbar bleiben — man sieht,
+           was man ergänzt. -->
+      <div v-if="kameraAktiv" class="q-mt-sm">
+        <video ref="videoEl" class="vtb-feedback-video" playsinline muted></video>
+        <div class="vtb-btn-reihe q-mt-sm">
+          <q-btn no-caps icon="camera" color="primary" unelevated label="Auslösen"
+            :loading="uploading" @click="ausloesen" />
+          <q-btn no-caps icon="check" color="grey" outline label="Fertig" @click="kameraStoppen" />
+        </div>
+      </div>
+      <div v-if="kameraFehler" class="text-negative text-caption q-mt-xs">{{ kameraFehler }}</div>
+      <BelegScannenDialog v-if="scannen" v-model="scannerOffen" @fertig="onDateiGewaehlt" />
       <span class="text-caption text-grey q-ml-sm">max. {{ maxMb }} MB · JPEG, PNG, GIF, WebP, PDF</span>
     </div>
 
@@ -112,16 +153,29 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
+import { ladeAppInfo, maxUploadMb, uploadAccept } from 'src/composables/useAppInfo'
+import { useKamera } from 'src/composables/useKamera'
+import BelegScannenDialog from 'components/BelegScannenDialog.vue'
 
 const props = defineProps({
   anhaenge: { type: Array, default: () => [] },
   uploadUrl: { type: String, required: true },
   canUpload: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
-  maxMb: { type: Number, default: 10 },
+  // Keine eigene Zahl mehr: Die Grenze kommt aus /api/app-info, damit sie nicht
+  // von der Server-Einstellung abdriftet — genau das war sie (Panel 10 MB,
+  // Server 20 MB). Wer sie hier setzt, engt bewusst weiter ein.
+  maxMb: { type: Number, default: 0 },
+  // Beleg-Scanner anbieten (Kantenerkennung, Entzerrung, PDF). Für Flächen, an
+  // die Papier kommt: Rechnungen und Kasse. Bei Tickets bewusst aus — dort will
+  // man knipsen, nicht scannen.
+  scannen: { type: Boolean, default: false },
+  // Schnappschuss anbieten (das Bild, das im Sucher steht). Für Flächen, an die
+  // man etwas zeigt statt es einzureichen — Tickets.
+  foto: { type: Boolean, default: false },
   // Zusätzliche Query-Parameter für den Upload (nicht für Löschen/Download).
   // Bewusst nicht an uploadUrl angehängt: daraus baut das Löschen seine URL.
   uploadParams: { type: Object, default: () => ({}) },
@@ -132,6 +186,35 @@ const emit = defineEmits(['uploaded', 'deleted'])
 const $q = useQuasar()
 const fileInput = ref(null)
 const uploading = ref(false)
+
+// Beleg-Scanner (#197). getUserMedia gibt es nur im Secure Context — über http
+// (außer localhost) fehlt die Kamera ersatzlos, dann bleibt der Knopf weg,
+// statt beim Tippen ins Leere zu laufen.
+const scannerOffen = ref(false)
+const scannerMoeglich = window.isSecureContext
+  && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+
+// Server-Grenze, sofern die Fläche keine engere vorgibt.
+const grenzeMb = computed(() => props.maxMb || maxUploadMb.value)
+
+// Schnappschuss (#111). Derselbe Ablauf wie im Ticket-Anlegen-Dialog.
+const {
+  kameraAktiv, kameraFehler, videoEl, kameraMoeglich, kameraStarten, kameraStoppen, schnappschuss,
+} = useKamera()
+
+// Auslösen lädt sofort hoch — anders als beim Anlegen, wo es noch keine ID
+// gibt und die Bilder warten müssen. Die Kamera läuft weiter, damit man
+// mehrere Aufnahmen hintereinander machen kann; „Fertig" beendet sie.
+async function ausloesen() {
+  const blob = await schnappschuss()
+  if (!blob) return
+  const stempel = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  await onDateiGewaehlt(new File([blob], `foto-${stempel}.jpg`, { type: 'image/jpeg' }))
+}
+
+onBeforeUnmount(kameraStoppen)
+
+onMounted(ladeAppInfo)
 
 const previewOpen = ref(false)
 const previewLoading = ref(false)
@@ -202,13 +285,18 @@ function formatGroesse(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+// Gewählte Datei und gescannter Beleg gehen denselben Weg — der Scanner liefert
+// ein fertiges PDF, das sich von einer selbst gewählten Datei nicht unterscheidet.
 async function onFileSelected(event) {
   const file = event.target.files?.[0]
   if (!file) return
   event.target.value = ''
+  await onDateiGewaehlt(file)
+}
 
-  if (file.size > props.maxMb * 1024 * 1024) {
-    $q.notify({ type: 'warning', message: `Datei zu groß (max. ${props.maxMb} MB).` })
+async function onDateiGewaehlt(file) {
+  if (file.size > grenzeMb.value * 1024 * 1024) {
+    $q.notify({ type: 'warning', message: `Datei zu groß (max. ${grenzeMb.value} MB).` })
     return
   }
 

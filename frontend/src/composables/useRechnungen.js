@@ -1,5 +1,7 @@
 // Geteilte Helfer für die Rechnungs-Seiten (Meine, Freigabe, Export).
 // Farben bewusst semantisch (blue-grey/orange/positive/negative) – kein Fremd-Blau.
+import { computed } from 'vue'
+import { maxUploadMb, uploadAccept } from 'src/composables/useAppInfo'
 
 export const STATUS_CHIPS = {
   entwurf: { label: 'Entwurf', color: 'blue-grey' },
@@ -116,16 +118,21 @@ export async function blobFehlertext(e, fallback) {
 
 // Beleg-Auswahl: identisch zu AnhangPanel, damit die vorgehaltene Auswahl im
 // Einreich-Dialog dieselben Dateien akzeptiert wie der spätere Upload.
-export const BELEG_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
-export const BELEG_MAX_MB = 20
-export const BELEG_HINWEIS = `max. ${BELEG_MAX_MB} MB · JPEG, PNG, GIF, WebP, PDF`
+//
+// Grenze und Typen kommen aus /api/app-info, nicht aus einer Zahl an dieser
+// Stelle: Genau so war es schon einmal auseinandergelaufen — der Server nahm
+// 20 MB, das AnhangPanel lehnte mit seinem eigenen Default bei 10 ab.
+export const BELEG_ACCEPT = computed(() => uploadAccept.value)
+export const BELEG_HINWEIS = computed(() =>
+  `max. ${maxUploadMb.value} MB · JPEG, PNG, GIF, WebP, PDF`)
 
 export function belegFehler(datei) {
-  if (!BELEG_ACCEPT.split(',').includes(datei.type)) {
+  const typen = uploadAccept.value.split(',').filter(Boolean)
+  if (typen.length && !typen.includes(datei.type)) {
     return `„${datei.name}“ hat ein nicht unterstütztes Format.`
   }
-  if (datei.size > BELEG_MAX_MB * 1024 * 1024) {
-    return `„${datei.name}“ ist größer als ${BELEG_MAX_MB} MB.`
+  if (datei.size > maxUploadMb.value * 1024 * 1024) {
+    return `„${datei.name}“ ist größer als ${maxUploadMb.value} MB.`
   }
   return null
 }
