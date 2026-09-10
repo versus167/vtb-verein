@@ -549,6 +549,7 @@
             :upload-url="`/api/kassen/${kasseId}/buchungen/${anhangBuchung?.id}/anhaenge`"
             :can-upload="kannSchreiben && !!anhangBuchung && !anhangBuchung.deleted_at && !anhangBuchung.exportiert_in_export_id"
             :can-delete="kannSchreiben"
+            scannen
             @uploaded="onAnhangUploaded"
             @deleted="onAnhangDeleted"
           />

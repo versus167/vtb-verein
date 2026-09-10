@@ -125,15 +125,10 @@
           <div class="text-caption text-grey-7 q-mb-xs">Beleg *</div>
 
           <!-- Bestehende Rechnung: Upload läuft direkt gegen die ID. -->
-          <template v-if="aktuell?.id">
-            <AnhangPanel :anhaenge="anhaenge"
-              :upload-url="`/api/rechnungen/${aktuell.id}/anhaenge`"
-              :can-upload="istEntwurf" :can-delete="istEntwurf"
-              @uploaded="onUploaded" @deleted="onDeleted" />
-            <q-btn v-if="istEntwurf && scannerMoeglich" outline color="primary"
-              icon="document_scanner" label="Beleg scannen" size="sm" class="q-mt-sm"
-              :loading="scanLaeuft" @click="scannerOffen = true" />
-          </template>
+          <AnhangPanel v-if="aktuell?.id" :anhaenge="anhaenge"
+            :upload-url="`/api/rechnungen/${aktuell.id}/anhaenge`"
+            :can-upload="istEntwurf" :can-delete="istEntwurf" scannen
+            @uploaded="onUploaded" @deleted="onDeleted" />
 
           <!-- Neue Rechnung: Datei bis zum Klick vorhalten, damit Anlegen,
                Hochladen und Einreichen ein einziger Schritt bleiben. -->
@@ -237,42 +232,26 @@ const dateiInput = ref(null)
 // http (außer localhost) fehlt die Kamera ersatzlos, dann bleibt der Knopf
 // weg statt beim Tippen ins Leere zu laufen.
 const scannerOffen = ref(false)
-const scanLaeuft = ref(false)
 const scannerMoeglich = window.isSecureContext
   && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
 
 /**
- * Der Scanner liefert den fertigen Beleg als PDF.
+ * Der Scanner liefert den fertigen Beleg als PDF — hier nur für die noch nicht
+ * angelegte Rechnung.
  *
- * Bei einer schon angelegten Rechnung wandert er sofort in die Anhänge — der
- * Weg ist derselbe wie beim Hochladen einer Datei. Bei einer noch nicht
- * angelegten wartet er wie eine gewählte Datei in `neueDateien`, bis es eine
- * ID gibt. Der Scanner bleibt offen: Wer mehrere Belege hat, scannt weiter.
+ * Sobald es eine ID gibt, übernimmt das AnhangPanel den Scanner samt Upload;
+ * dieser Weg hier ist der Fall *ohne* ID, in dem es noch kein Upload-Ziel gibt.
+ * Der Beleg wartet dann wie eine selbst gewählte Datei in `neueDateien`, bis
+ * das Speichern Anlegen und Hochladen in einem Schritt erledigt. Der Scanner
+ * bleibt offen: Wer mehrere Belege hat, scannt weiter.
  */
-async function belegGescannt(datei) {
+function belegGescannt(datei) {
   const meldung = belegFehler(datei)
   if (meldung) {
     $q.notify({ type: 'warning', message: meldung })
     return
   }
-  if (!aktuell.value?.id) {
-    neueDateien.value.push(datei)
-    return
-  }
-  scanLaeuft.value = true
-  try {
-    const formular = new FormData()
-    formular.append('file', datei)
-    const { data } = await api.post(
-      `/api/rechnungen/${aktuell.value.id}/anhaenge`, formular,
-      { headers: { 'Content-Type': 'multipart/form-data' } })
-    anhaenge.value.push(data)
-    $q.notify({ type: 'positive', message: 'Beleg hinzugefügt.' })
-  } catch (e) {
-    $q.notify({ type: 'negative', message: fehlertext(e, 'Beleg konnte nicht hinzugefügt werden.') })
-  } finally {
-    scanLaeuft.value = false
-  }
+  neueDateien.value.push(datei)
 }
 
 const form = ref(leeresFormular())
