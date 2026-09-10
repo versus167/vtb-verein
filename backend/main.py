@@ -295,17 +295,37 @@ def sieht_wie_datei_aus(pfad: str) -> bool:
     return "." in segmente[-1]
 
 
-# Ein Jahr, unveränderlich. Gilt nur für /vendor/: dort liegen fremde
-# Bibliotheken, die wir nie im Nachhinein ändern, sondern nur austauschen — und
-# jeder Aufruf hängt `?v=<mtime>` an, ein Austausch ergibt also ohnehin eine
-# neue URL. Ausschlaggebend ist opencv.js für den Beleg-Scanner (#197): ohne
-# das lädt jedes Handy 10,9 MB bei jedem Aufruf neu bzw. fragt zumindest jedes
-# Mal nach. `immutable` erspart auch die Rückfrage.
-_VENDOR_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+# Ein Jahr, unveränderlich — aber nur für die beiden zugekauften Brocken, die
+# wir nie im Nachhinein bearbeiten, sondern höchstens als Ganzes austauschen.
+# Ausschlaggebend ist opencv.js für den Beleg-Scanner (#197): ohne das lädt
+# jedes Handy 10,9 MB bei jedem Aufruf neu bzw. fragt zumindest jedes Mal nach.
+# `immutable` erspart auch die Rückfrage. Der Scanner hängt die App-Version als
+# `?v=` an die Bibliothek, ein Austausch ergibt also eine neue Adresse; die
+# Symbolschrift steht ohne `?v=` in beleg-scan.css, was vertretbar ist — eine
+# Icon-Schrift wird ersetzt, nicht editiert.
+_VENDOR_IMMUTABLE = frozenset({
+    "vendor/opencv.js",
+    "vendor/material-icons.woff2",
+})
+_CACHE_IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+# Alles andere unter /vendor/ ist EIGENER Code (beleg-scan.js, scan-detect.js,
+# beleg-scan.css) und ändert sich mit jedem Fix. beleg-scanner.html bindet ihn
+# ohne `?v=` ein und kann das auch nicht nachrüsten: Ein Inline-Bootstrap, der
+# die Version aus der eigenen Adresse anhängt, scheitert an `script-src 'self'`
+# (s. _CSP_SCANNER, kein 'unsafe-inline' für Skripte). Unveränderlich
+# ausgeliefert erreichte ein Scanner-Fix bestehende Browser also ein Jahr lang
+# nicht. Deshalb hier die Pflicht-Rückfrage: Sie kostet bei 60 KB ein 304 und
+# sonst nichts, und FileResponse liefert ETag und Last-Modified dafür mit.
+_CACHE_REVALIDATE = {"Cache-Control": "public, max-age=0, must-revalidate"}
 
 
 def _cache_header(pfad: str) -> dict:
-    return _VENDOR_CACHE if pfad.startswith("vendor/") else {}
+    if pfad in _VENDOR_IMMUTABLE:
+        return _CACHE_IMMUTABLE
+    if pfad.startswith("vendor/"):
+        return _CACHE_REVALIDATE
+    return {}
 
 
 # Frontend statisch ausliefern (Produktion: nach `quasar build`)
