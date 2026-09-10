@@ -17,17 +17,34 @@
     Nachricht schickt.
   -->
   <q-dialog v-model="offen" persistent maximized transition-show="fade" transition-hide="fade">
-    <!-- v-if statt v-show: Beim Schließen soll das Dokument wirklich
-         verschwinden. Das beendet den Kamerastream zuverlässiger als jedes
-         Aufräumen von Hand — der Browser reißt beim Entladen alles ab. -->
-    <iframe
-      v-if="modelValue"
-      ref="rahmen"
-      class="beleg-scanner-rahmen"
-      :src="quelle"
-      title="Beleg scannen"
-      allow="camera; fullscreen"
-    />
+    <!--
+      Die Hülle ist NICHT schmückendes Beiwerk, sie ist Pflicht: Quasar macht
+      den Dialog-Inhalt über `.q-dialog__inner > div` bedienbar und gibt ihm
+      dort auch seine Größe. Beide Regeln treffen ein <div> — ein <iframe> als
+      direktes Kind trifft keine davon.
+
+      Ohne sie erbt der Rahmen `pointer-events: none`, jeder Tipp fällt auf den
+      Backdrop durch, und weil der Dialog `persistent` ist, spielt Quasar seine
+      Wackel-Animation ab. Auf dem Gerät sieht das aus, als reagiere kein
+      einziger Knopf und das Bild „zucke" nur — genau so gemeldet in #197.
+
+      Verräterisch war das nicht, weil der Rahmen vorher `100vw/100vh` trug und
+      damit zufällig richtig aussah. Die Größe kommt jetzt von Quasar (100dvh),
+      was am Handy auch die Browserleiste richtig berücksichtigt.
+
+      v-if statt v-show: Beim Schließen soll das Dokument wirklich verschwinden.
+      Das beendet den Kamerastream zuverlässiger als jedes Aufräumen von Hand —
+      der Browser reißt beim Entladen alles ab.
+    -->
+    <div v-if="modelValue" class="beleg-scanner-huelle">
+      <iframe
+        ref="rahmen"
+        class="beleg-scanner-rahmen"
+        :src="quelle"
+        title="Beleg scannen"
+        allow="camera; fullscreen"
+      />
+    </div>
   </q-dialog>
 </template>
 
@@ -92,13 +109,21 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Der Dialog gibt die volle Fläche her; das Dokument darin bringt sein eigenes
-   Layout mit (position: fixed, inset: 0). */
+/* Größe und Bedienbarkeit der Hülle kommen von Quasar (s. Kommentar oben);
+   hier steht nur, was Quasar nicht setzt. `overflow: hidden` gegen Quasars
+   `overflow: auto` — das Dokument im Rahmen scrollt selbst und soll keine
+   zweite Bildlaufleiste bekommen. */
+.beleg-scanner-huelle {
+  overflow: hidden;
+  background: #0e0e0e;
+}
+
+/* Das Dokument darin bringt sein eigenes Layout mit (position: fixed, inset: 0)
+   und füllt schlicht die Hülle. */
 .beleg-scanner-rahmen {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   border: 0;
   display: block;
-  background: #0e0e0e;
 }
 </style>
