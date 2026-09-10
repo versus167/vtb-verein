@@ -168,26 +168,33 @@ def build_erinnerung(termin, vorlauf: int, mannschaft_name: Optional[str] = None
 
 
 # --------------------------------------------------------------------- Versand
-def _versenden(db, user_ids: list[int], titel: str, text: str, url: str) -> int:
-    """An die aktiven Konten aus `user_ids` schicken; gibt die Zahl der Erreichten
-    zurück. Ein Fehler bei einem Empfänger stoppt den Lauf nicht.
+def _versenden(db, user_ids: list[int], titel: str, text: str, url: str) -> tuple[int, int]:
+    """An die aktiven Konten aus `user_ids` schicken; gibt (erreicht, versucht) zurück.
+    Ein Fehler bei einem Empfänger stoppt den Lauf nicht.
+
+    Die zweite Zahl trennt zwei Fälle, die beide „niemand erreicht" ergeben, aber
+    Gegenteiliges bedeuten: Steht sie auf 0, gab es niemanden zum Anschreiben
+    (gesperrte Konten) — daran ändert auch der nächste Lauf nichts. Ist sie größer
+    als 0 und trotzdem niemand erreicht, ist die Zustellung gescheitert, und der
+    Aufrufer lässt die Stufe offen.
 
     Bewusst synchron (wie bei den Ticket-Erinnerungen): Der Lauf ist ein
     kurzlebiger Prozess, der einen Hintergrund-Pool beim Beenden mitrisse.
     """
     from app.services.notification_service import NotificationService
-    erreicht = 0
+    erreicht = versucht = 0
     for user_id in dict.fromkeys(user_ids):
         user = db.users.get_by_id(user_id)
         if not (user and user.active):
             continue
+        versucht += 1
         try:
             if NotificationService.send_notification(user, titel, text,
                                                      push_service=db.push, url=url):
                 erreicht += 1
         except Exception:
             logger.exception("Termin-Erinnerung an %s fehlgeschlagen.", user.username)
-    return erreicht
+    return erreicht, versucht
 
 
 def einstellungen(db) -> TerminErinnerungEinstellungen:
@@ -236,20 +243,35 @@ def erinnern(db, *, jetzt: Optional[datetime] = None) -> dict:
     termine = anstehende_termine(db, einst, jetzt)
     bereits = db.access_log_repository.letzte_je_detail(EVENT_ERINNERUNG)
     erinnert = empfaenger_gesamt = 0
-    for termin, stufe, vorlauf in faellige(termine, bereits, einst, jetzt):
-        offene = db.termin_zusagen.list_offene_user_ids(termin.id)
-        if not offene:
-            # Alle haben gemeldet – dann gibt es nichts zu erinnern, und die Stufe
-            # bleibt bewusst unvermerkt: Nimmt jemand morgen seine Antwort zurück,
-            # darf ihn die Erinnerung noch erreichen.
-            continue
-        titel, text = build_erinnerung(termin, vorlauf)
-        erreicht = _versenden(db, offene, titel, text,
-                              terminmeldung.termin_url(termin.id))
-        db.access_log_repository.log(EVENT_ERINNERUNG, category=_KATEGORIE,
-                                     detail=schluessel(termin.id, stufe))
-        erinnert += 1
-        empfaenger_gesamt += erreicht
+    # Alle Mails des Laufs über eine Anmeldung – sonst meldet sich jede einzeln an
+    # und der Mailserver hält den Lauf für einen Angriff (s. email_service).
+    from app.services.email_service import sammel_verbindung
+    with sammel_verbindung():
+        for termin, stufe, vorlauf in faellige(termine, bereits, einst, jetzt):
+            offene = db.termin_zusagen.list_offene_user_ids(termin.id)
+            if not offene:
+                # Alle haben gemeldet – dann gibt es nichts zu erinnern, und die Stufe
+                # bleibt bewusst unvermerkt: Nimmt jemand morgen seine Antwort zurück,
+                # darf ihn die Erinnerung noch erreichen.
+                continue
+            titel, text = build_erinnerung(termin, vorlauf)
+            erreicht, versucht = _versenden(db, offene, titel, text,
+                                            terminmeldung.termin_url(termin.id))
+            if versucht and not erreicht:
+                # Angeschrieben, aber niemanden erreicht: Zustellung gescheitert
+                # (Mailserver weg). Stufe NICHT vermerken, damit der nächste Lauf sie
+                # nachholt – am 10.09.2026 kostete das umgekehrte Verhalten zwei
+                # Erinnerungen endgültig. Bleibt der Kreis dauerhaft unerreichbar,
+                # versucht es der Lauf täglich neu; das endet mit dem Termin.
+                # Gab es dagegen NIEMANDEN zum Anschreiben (nur gesperrte Konten),
+                # gilt die Stufe als erledigt – daran ändert kein weiterer Lauf etwas.
+                logger.warning("Termin-Erinnerung #%s Stufe %s: niemand erreicht – "
+                               "Stufe bleibt offen.", termin.id, stufe)
+                continue
+            db.access_log_repository.log(EVENT_ERINNERUNG, category=_KATEGORIE,
+                                         detail=schluessel(termin.id, stufe))
+            erinnert += 1
+            empfaenger_gesamt += erreicht
 
     if erinnert:
         logger.info("Termin-Erinnerungen: %d Termin(e) mit offenen Meldungen, "

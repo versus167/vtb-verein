@@ -18,6 +18,12 @@ Benachrichtigungen über den Kanal, den der Empfänger eingestellt hat.
 
 Die DB kommt aus VTB_DATABASE_URL (Env/.env).
 
+`--wenn-faellig` ist der Sidecar-Modus: Der Container tickt in kurzen Abständen,
+gelaufen wird aber nur, wenn seit dem letzten Lauf genug Zeit vergangen ist
+(`TERMIN_ERINNERUNG_INTERVAL_HOURS`, Vorgabe 24). Ohne das löste jeder Deploy einen
+zusätzlichen Lauf aus, weil die Schleife im Container mit dem Lauf beginnt und
+erst danach schläft.
+
 Beispiele:
   ./venv/bin/python tools/termin_erinnerung_lauf.py
   ./venv/bin/python tools/termin_erinnerung_lauf.py --trocken
@@ -25,6 +31,7 @@ Beispiele:
 import argparse
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'vtb_verein'))
@@ -36,6 +43,7 @@ except Exception:
     pass
 
 from app.db.datastore import VereinsDB
+from app.services import lauf_takt
 from app.services import termin_erinnerung_service as erinnerung
 from app.services.termin_notification_service import format_wandzeit, termin_titel
 
@@ -65,12 +73,26 @@ def _trockenlauf(db, log) -> None:
             f"({termin.mannschaft_name}): {len(offene)} ohne Meldung")
 
 
+def _intervall_stunden() -> int:
+    """Abstand zweier Läufe in Stunden – dieselbe Env-Variable, die der Sidecar für
+    seinen Takt liest. Unsinnige Werte fallen auf die Vorgabe zurück, damit ein
+    Tippfehler in der `.env` nicht den ganzen Lauf abschaltet."""
+    try:
+        stunden = int(os.environ.get('TERMIN_ERINNERUNG_INTERVAL_HOURS', '24'))
+    except ValueError:
+        return 24
+    return stunden if stunden >= 1 else 24
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Erinnerung an fehlende Termin-Meldungen")
     ap.add_argument('--database-url', default=os.environ.get('VTB_DATABASE_URL'))
     ap.add_argument('--trocken', action='store_true',
                     help='nur anzeigen, was fällig wäre – nichts verschicken')
     ap.add_argument('--quiet', action='store_true', help='nur Fehler ausgeben')
+    ap.add_argument('--wenn-faellig', action='store_true', dest='wenn_faellig',
+                    help=f'nur laufen, wenn seit dem letzten Lauf '
+                         f'{_intervall_stunden()} h vergangen sind (Sidecar-Modus)')
     args = ap.parse_args()
 
     if not args.database_url:
@@ -87,9 +109,21 @@ def main() -> int:
         if args.trocken:
             _trockenlauf(db, log)
             return 0
+        if args.wenn_faellig:
+            # Nichts zu tun heißt: still enden. Sonst stünden im Container-Log ein
+            # paar hundert Zeilen „noch nicht fällig" am Tag.
+            stunden = _intervall_stunden()
+            if not lauf_takt.ist_faellig(lauf_takt.letzter_lauf(db, 'termin_erinnerung_lauf'),
+                                         datetime.now(timezone.utc),
+                                         timedelta(hours=stunden)):
+                return 0
+            log(f"▶ Termin-Erinnerungen fällig (Takt: alle {stunden} h).")
         res = erinnerung.erinnern(db)
         log(f"✓ {res['erinnert']} von {res['anstehend']} anstehenden Termin(en) erinnert, "
             f"{res['empfaenger']} Empfänger erreicht.")
+        # Erst hier vermerken: Ein Lauf, der unterwegs abstürzt, gilt als nicht
+        # gelaufen und wird beim nächsten Tick wiederholt.
+        lauf_takt.vermerken(db, 'termin_erinnerung_lauf')
     except Exception as e:                      # noqa: BLE001 – Lauf soll sprechen, nicht crashen
         print(f"FEHLER: {e}", file=sys.stderr)
         return 1

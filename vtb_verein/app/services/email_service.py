@@ -2,10 +2,81 @@
 E-Mail-Service für Versand von Magic-Links und anderen E-Mails
 """
 import smtplib
+import threading
+from contextlib import contextmanager
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 from app.config.email_config import EmailConfig
+
+
+# ── Eine Anmeldung für viele Mails ──────────────────────────────────────────
+# Bis v2026.09.10.265 baute JEDE Mail ihre eigene Verbindung auf und meldete sich
+# neu an. Ein Erinnerungslauf sind damit ein Dutzend Anmeldungen in Sekunden von
+# derselben IP — für Googles Missbrauchsschutz sieht das aus wie jemand, der
+# Zugangsdaten durchprobiert. Die Quittung war am 10.09.2026 eine gesperrte
+# Anmeldung (534 5.7.9 WebLoginRequired), bis der Verein sie im Browser wieder
+# freischaltete; IONOS drosselt dasselbe Muster über sein Verbindungslimit.
+#
+# Die Sitzung hängt am Thread, nicht am Prozess: Die Hintergrund-Versender der App
+# (NotificationService.send_notification_async) laufen in einem Pool und bekommen
+# jeder ihre eigene Verbindung — geteilt würde eine SMTP-Verbindung sonst über
+# Thread-Grenzen benutzt, wofür smtplib nicht gebaut ist.
+_SITZUNG = threading.local()
+
+
+def _verbindung_oeffnen() -> smtplib.SMTP:
+    """Angemeldete SMTP-Verbindung nach der Konfiguration.
+
+    Port 465 spricht implizites TLS und braucht ``SMTP_SSL``; mit ``SMTP`` plus
+    ``starttls()`` liefe man dort in den Timeout, weil der Server die
+    Klartext-Begrüßung nie beantwortet. Alles andere (587) verbindet im Klartext
+    und hebt per STARTTLS hoch, sofern ``SMTP_USE_TLS`` gesetzt ist.
+    """
+    server_name = EmailConfig.get_smtp_server()
+    port = EmailConfig.get_smtp_port()
+    timeout = EmailConfig.get_smtp_timeout()
+    if port == 465:
+        server = smtplib.SMTP_SSL(server_name, port, timeout=timeout)
+    else:
+        server = smtplib.SMTP(server_name, port, timeout=timeout)
+        if EmailConfig.get_use_tls():
+            server.starttls()
+    server.login(EmailConfig.get_smtp_username(), EmailConfig.get_smtp_password())
+    return server
+
+
+@contextmanager
+def sammel_verbindung():
+    """Alle Mails dieses Blocks über EINE Anmeldung schicken.
+
+    Gedacht für die Sidecar-Läufe (Termin- und Ticket-Erinnerungen), die in einem
+    Rutsch an ein Dutzend Leute schreiben. Verschachtelbar: Ist schon eine Sitzung
+    offen, benutzt der innere Block sie mit und schließt sie nicht.
+
+    Scheitert der Verbindungsaufbau, läuft der Block trotzdem — die einzelnen
+    Mails bauen dann wie früher jede ihre eigene Verbindung auf und scheitern
+    einzeln mit ihrer eigenen Meldung. So bleibt ein Lauf mit kaputtem Mailserver
+    das, was er vorher war, statt zusätzlich anders auszusehen.
+    """
+    if getattr(_SITZUNG, 'smtp', None) is not None or not EmailConfig.is_configured():
+        yield
+        return
+    try:
+        _SITZUNG.smtp = _verbindung_oeffnen()
+    except Exception as e:                      # noqa: BLE001 – Lauf soll weiterlaufen
+        print(f"❌ SMTP-Verbindung fehlgeschlagen: {e}")
+        _SITZUNG.smtp = None
+        yield
+        return
+    try:
+        yield
+    finally:
+        smtp, _SITZUNG.smtp = _SITZUNG.smtp, None
+        try:
+            smtp.quit()
+        except Exception:                       # noqa: BLE001 – Abmelden darf scheitern
+            pass
 
 
 # ── Farbrechnung für das Mail-Design ────────────────────────────────────────
@@ -248,6 +319,29 @@ Viele Grüße,
         )
     
     @staticmethod
+    def _zustellen(msg, to: str) -> None:
+        """Nachricht abschicken — über die offene Sammelverbindung, sonst über eine
+        eigene (mit Timeout, damit ein hängender Mailserver den aufrufenden Request
+        nicht endlos blockiert).
+
+        Eine Sammelverbindung kann mitten im Lauf wegbrechen: Mailserver trennen
+        nach Leerlauf oder nach einer Höchstzahl Nachrichten je Verbindung. Dann
+        wird EINMAL neu aufgebaut und erneut zugestellt — scheitert auch das, ist
+        es ein echter Fehler und der Aufrufer meldet ihn.
+        """
+        absender = EmailConfig.get_mail_from()
+        smtp = getattr(_SITZUNG, 'smtp', None)
+        if smtp is None:
+            with _verbindung_oeffnen() as server:
+                server.sendmail(absender, to, msg.as_string())
+            return
+        try:
+            smtp.sendmail(absender, to, msg.as_string())
+        except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError):
+            _SITZUNG.smtp = smtp = _verbindung_oeffnen()
+            smtp.sendmail(absender, to, msg.as_string())
+
+    @staticmethod
     def _send_email(
         to: str, 
         subject: str, 
@@ -281,26 +375,7 @@ Viele Grüße,
                 html_part = MIMEText(html_body, 'html', 'utf-8')
                 msg.attach(html_part)
             
-            # SMTP-Verbindung aufbauen (mit Timeout, damit ein hängender
-            # Mailserver den aufrufenden Request nicht endlos blockiert)
-            with smtplib.SMTP(
-                EmailConfig.get_smtp_server(),
-                EmailConfig.get_smtp_port(),
-                timeout=EmailConfig.get_smtp_timeout()
-            ) as server:
-                if EmailConfig.get_use_tls():
-                    server.starttls()
-                
-                server.login(
-                    EmailConfig.get_smtp_username(),
-                    EmailConfig.get_smtp_password()
-                )
-                
-                server.sendmail(
-                    EmailConfig.get_mail_from(),
-                    to,
-                    msg.as_string()
-                )
+            EmailService._zustellen(msg, to)
             
             print(f"✅ E-Mail erfolgreich gesendet an {to}")
             return True

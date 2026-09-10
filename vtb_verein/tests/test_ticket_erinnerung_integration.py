@@ -193,6 +193,25 @@ class TestLauf:
         assert db.access_log_repository.letzte_je_detail(erin.EVENT_ERINNERUNG).keys() == {
             str(szenario["ticket"].id)}
 
+    def test_gescheiterte_zustellung_laesst_die_mahnung_offen(self, db, szenario,
+                                                              monkeypatch):
+        """Ausgefallener Mailserver: nicht vermerken, sonst ist die Mahnung weg.
+
+        Dieselbe Regel wie im Termin-Lauf – Anlass war der gesperrte SMTP-Login vom
+        10.09.2026, bei dem vermerkte Erinnerungen niemanden erreichten.
+        """
+        self._alt_machen(db, szenario["ticket"].id, 5)
+        monkeypatch.setattr(ns.NotificationService, "send_notification",
+                            staticmethod(lambda *a, **k: False))
+
+        assert erin.erinnern(db)["unbeachtet"]["erinnert"] == 0
+        assert db.access_log_repository.letzte_je_detail(erin.EVENT_ERINNERUNG) == {}
+
+        # Sobald die Zustellung wieder geht, kommt sie nach.
+        monkeypatch.setattr(ns.NotificationService, "send_notification",
+                            staticmethod(lambda *a, **k: True))
+        assert erin.erinnern(db)["unbeachtet"]["erinnert"] == 1
+
     def test_zweiter_lauf_am_selben_tag_schweigt(self, db, szenario):
         """Sonst käme dieselbe Mahnung bei jedem Tick erneut."""
         self._alt_machen(db, szenario["ticket"].id, 5)
