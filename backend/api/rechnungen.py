@@ -23,7 +23,7 @@ from backend.core.deps import CurrentUser, DB
 from app.models.permission import Permission
 from app.models.rechnung import STATUS_FILTER_WERTE
 from app.services.anhang_service import DateitypNichtErlaubtError, DateiZuGrossError
-from app.services.scan_pdf_service import ScanFehlerError
+from app.services.scan_pdf_service import ScanFehlerError, zu_gross_meldung
 from app.services.rechnung_service import (
     BelegFehltError,
     BetragFehltError,
@@ -331,10 +331,26 @@ async def beleg_scan(user: CurrentUser, db: DB,
     except DateiZuGrossError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
+    # Gegen die Anhang-Grenze prüfen, BEVOR gebaut wird. Das PDF wiegt praktisch
+    # so viel wie die Summe der JPEGs (die wandern unverändert als DCTDecode
+    # hinein), die Summe ist hier also schon eine belastbare Vorhersage.
+    grenze = db.anhang_service.max_bytes
+    meldung = zu_gross_meldung(sum(len(s) for s in seiten), grenze)
+    if meldung:
+        raise HTTPException(status_code=422, detail=meldung)
+
     try:
         pdf = dienst.baue(seiten)
     except ScanFehlerError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+    # Nachkontrolle am fertigen PDF: Die Vorhersage oben ist gut, aber nicht
+    # exakt (PDF-Gerüst, und ein PNG unter den Seiten kodiert ReportLab neu).
+    # Was hier durchgeht, muss beim Speichern durch den Anhang-Weg passen —
+    # sonst wäre die Arbeit doch umsonst gewesen.
+    meldung = zu_gross_meldung(len(pdf), grenze, was="Das fertige PDF")
+    if meldung:
+        raise HTTPException(status_code=422, detail=meldung)
 
     return Response(content=pdf, media_type="application/pdf")
 

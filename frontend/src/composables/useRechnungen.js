@@ -117,7 +117,7 @@ export async function blobFehlertext(e, fallback) {
 // Beleg-Auswahl: identisch zu AnhangPanel, damit die vorgehaltene Auswahl im
 // Einreich-Dialog dieselben Dateien akzeptiert wie der spätere Upload.
 export const BELEG_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
-export const BELEG_MAX_MB = 10
+export const BELEG_MAX_MB = 20
 export const BELEG_HINWEIS = `max. ${BELEG_MAX_MB} MB · JPEG, PNG, GIF, WebP, PDF`
 
 export function belegFehler(datei) {

@@ -34,6 +34,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { appInfo, ladeAppInfo } from 'src/composables/useAppInfo'
+import { BELEG_MAX_MB } from 'src/composables/useRechnungen'
 
 defineOptions({ name: 'BelegScannenDialog' })
 
@@ -48,11 +49,18 @@ const offen = computed({
   set: (wert) => emit('update:modelValue', wert),
 })
 
-// Die App-Version wandert als ?v= weiter an die OpenCV-Bibliothek, damit ein
-// Austausch trotz unveränderlichem Cache eine neue Adresse ergibt.
+// Zwei Werte wandern über die Adresse ins Dokument, weil es als statische Datei
+// weder Build noch Store kennt:
+//   v   – die App-Version, die es an die OpenCV-Bibliothek weiterreicht, damit
+//         ein Austausch trotz unveränderlichem Cache eine neue Adresse ergibt.
+//   max – die Anhang-Grenze in MB. So bleibt sie EINE Konstante (BELEG_MAX_MB)
+//         statt einer zweiten, die im statischen Dokument still veraltet. Der
+//         Scanner warnt damit vor dem Hochladen statt danach.
 const quelle = computed(() => {
-  const v = appInfo.value.version
-  return '/beleg-scanner.html' + (v ? `?v=${encodeURIComponent(v)}` : '')
+  const p = new URLSearchParams()
+  if (appInfo.value.version) p.set('v', appInfo.value.version)
+  p.set('max', String(BELEG_MAX_MB))
+  return `/beleg-scanner.html?${p}`
 })
 
 /**

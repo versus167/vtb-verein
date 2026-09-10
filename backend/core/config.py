@@ -23,9 +23,11 @@ class Settings:
     UPLOAD_PATH: str = os.getenv("VTB_UPLOAD_PATH", str(_ROOT / "vtb_verein" / "uploads"))
 
     # Obergrenze für Import-Dateien (CSV/Excel: Mitglieder, Spielplan, Zutrittslog).
-    # Bewusst getrennt von VTB_MAX_UPLOAD_MB (Anhänge, 10 MB) und deutlich
+    # Bewusst getrennt von VTB_MAX_UPLOAD_MB (Anhänge, 20 MB) und etwas
     # großzügiger: Ein Jahresexport des Zutrittslogs ist größer als ein Belegfoto,
     # und ein zu enges Limit fällt erst beim Import auf, wenn man es eilig hat.
+    # (Der Abstand war früher größer; die Anhang-Grenze ist mit dem Beleg-Scanner
+    # von 10 auf 20 MB gewachsen, s. #197.)
     # Sie soll nicht den Alltag begrenzen, sondern verhindern, dass ein einzelner
     # Upload den Prozess über sein Speicherlimit drückt.
     MAX_IMPORT_MB: int = int(os.getenv("VTB_MAX_IMPORT_MB", "25"))

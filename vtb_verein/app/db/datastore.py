@@ -185,7 +185,7 @@ class VereinsDB:
 
         self._anhang_service = AnhangService(
             upload_path=upload_path,
-            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '10')),
+            max_mb=int(os.getenv('VTB_MAX_UPLOAD_MB', '20')),
         )
 
         # Zustandsloser Bauer fuer Beleg-Scans (#197) — haelt weder Verbindung

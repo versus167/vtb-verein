@@ -14,6 +14,7 @@ from app.services.scan_pdf_service import (
     LANGE_KANTE_MM,
     ScanFehlerError,
     ScanPdfService,
+    zu_gross_meldung,
 )
 
 
@@ -193,3 +194,98 @@ def test_png_geht_auch(dienst):
     Image.new("RGB", (800, 1000), (10, 20, 30)).save(puffer, format="PNG")
     pdf = dienst.baue([puffer.getvalue()])
     assert pdf.startswith(b"%PDF-")
+
+
+# --- Formatprüfung ---------------------------------------------------------
+#
+# Der Scanner selbst kann nur JPEG (oder, als Spec-Fallback, PNG) liefern: Er
+# fasst nie eine Datei an, sondern kodiert Canvas-Pixel mit
+# `toBlob(…, 'image/jpeg', 0.86)`. Der Endpunkt nimmt aber entgegen, was ihm
+# geschickt wird — deshalb prüft der Dienst nach, statt es zu glauben.
+
+@pytest.mark.parametrize("format_name", ["GIF", "TIFF", "BMP", "WEBP"])
+def test_fremde_bildformate_werden_abgelehnt(dienst, format_name):
+    """Lesbar heißt nicht erlaubt.
+
+    Pillow öffnet all das anstandslos, und ohne Prüfung landete es im PDF —
+    aber nicht so, wie der Docstring es zusagt: ReportLab dekodiert diese
+    Formate und kodiert sie neu, statt die Bytes durchzureichen.
+    """
+    puffer = io.BytesIO()
+    Image.new("RGB", (800, 1000), (90, 90, 90)).save(puffer, format=format_name)
+    with pytest.raises(ScanFehlerError) as e:
+        dienst.baue([puffer.getvalue()])
+    assert format_name in str(e.value)
+
+
+def test_meldung_nennt_die_betroffene_seite(dienst):
+    """Bei mehreren Seiten muss klar sein, welche klemmt."""
+    puffer = io.BytesIO()
+    Image.new("RGB", (800, 1000), (90, 90, 90)).save(puffer, format="GIF")
+    with pytest.raises(ScanFehlerError) as e:
+        dienst.baue([jpeg(800, 1000), jpeg(800, 1000), puffer.getvalue()])
+    assert "Seite 3" in str(e.value)
+
+
+def test_heic_kann_gar_nicht_erst_ankommen():
+    """Dokumentiert, warum iPhone-HEIC hier kein Thema ist.
+
+    Nicht der Dienst hält HEIC ab, sondern die Bauweise des Scanners: Er liest
+    keine Dateien, sondern kodiert Canvas-Pixel selbst. Das Kamerarollen-Format
+    des Geräts spielt deshalb keine Rolle. Dieser Test hält die Voraussetzung
+    dafür fest — gäbe es je einen Datei-Auswähler im Scanner, käme HEIC durch
+    die Tür und diese Annahme wäre still falsch.
+    """
+    from pathlib import Path
+    wurzel = Path(__file__).resolve().parents[2]
+    scanner = (wurzel / "frontend/public/beleg-scanner.html").read_text(encoding="utf-8")
+    js = (wurzel / "frontend/public/vendor/beleg-scan.js").read_text(encoding="utf-8")
+    assert 'type="file"' not in scanner
+    assert "FileReader" not in js
+    assert "toBlob(res, 'image/jpeg'" in js
+
+
+# --- Anhang-Grenze ---------------------------------------------------------
+#
+# Der Endpunkt gibt nur das PDF zurück; abgelegt wird es erst beim Speichern
+# der Rechnung. Reißt es dort VTB_MAX_UPLOAD_MB, war alles umsonst — deshalb
+# fällt die Entscheidung vorher. Geprüft wird sie hier als reine Funktion, ohne
+# HTTP und Anmeldung (gleiche Bauart wie test_spa_fallback_404.py).
+
+MB = 1024 * 1024
+
+
+def test_passendes_pdf_meldet_nichts():
+    assert zu_gross_meldung(19 * MB, 20 * MB) is None
+
+
+def test_genau_auf_der_grenze_geht_noch_durch():
+    """`größer als` heißt größer, nicht `größer oder gleich` — sonst scheiterte
+    ausgerechnet der Beleg, der exakt passt."""
+    assert zu_gross_meldung(20 * MB, 20 * MB) is None
+
+
+def test_zu_grosses_pdf_wird_gemeldet():
+    meldung = zu_gross_meldung(21 * MB, 20 * MB)
+    assert meldung is not None
+    assert "21.0 MB" in meldung
+    assert "20 MB" in meldung
+
+
+def test_meldung_nennt_den_ausweg():
+    """Eine Grenze ohne Handlungsanweisung hilft niemandem auf dem Handy.
+
+    Der Filter ist der wirksamste Hebel: „Dokument" wiegt rund ein Fünftel von
+    „Farbe" — damit passt selbst ein voller 20-Seiten-Scan bequem.
+    """
+    meldung = zu_gross_meldung(30 * MB, 20 * MB)
+    assert "Dokument" in meldung and "Farbe" in meldung
+    assert "Weniger Seiten" in meldung
+
+
+def test_bezeichnung_laesst_sich_setzen():
+    """Vor dem Bau wiegt der Endpunkt die Seiten, danach das fertige PDF —
+    die Meldung soll sagen, welches von beidem klemmt."""
+    assert zu_gross_meldung(30 * MB, 20 * MB).startswith("Der Beleg")
+    assert zu_gross_meldung(30 * MB, 20 * MB, was="Das fertige PDF").startswith(
+        "Das fertige PDF")

@@ -29,11 +29,51 @@ LANGE_KANTE_MM = 297.0
 MAX_SEITEN = 20
 MAX_SEITE_BYTES = 12 * 1024 * 1024
 
-ERLAUBTE_TYPEN = ("image/jpeg", "image/png")
+# Pillow-Formatnamen (``Image.format``), nicht MIME-Typen.
+#
+# Warum genau diese zwei — und warum kein HEIC, obwohl iPhones so fotografieren:
+# Der Scanner fasst nie eine *Datei* an. Es gibt in beleg-scanner.html keinen
+# Datei-Auswähler und keinen Galerie-Weg; die Pixel kommen aus getUserMedia über
+# ein <video> in ein <canvas>, und kodiert wird erst dort mit
+# ``toBlob(…, 'image/jpeg', 0.86)``. Das Format bestimmt also der Browser beim
+# Kodieren, nicht das Gerät beim Fotografieren. Laut HTML-Spec kann dabei nur
+# zweierlei herauskommen: der angeforderte Typ (image/jpeg, den jeder Browser
+# einschließlich iOS-Safari kann) oder der Pflicht-Fallback image/png.
+#
+# Die Prüfung ist trotzdem nötig, denn der Endpunkt nimmt entgegen, was ihm
+# geschickt wird — nicht nur, was unser Scanner schickt. Ohne sie ginge auch
+# TIFF oder GIF durch, und dann bricht die Zusage oben im Docstring: ReportLab
+# dekodiert so etwas und kodiert es neu, statt die Bytes durchzureichen.
+ERLAUBTE_FORMATE = ("JPEG", "PNG")
 
 
 class ScanFehlerError(ValueError):
     """Übergebene Seiten taugen nicht für ein PDF."""
+
+
+def zu_gross_meldung(groesse: int, grenze: int, was: str = "Der Beleg") -> str | None:
+    """Meldung, wenn ``groesse`` die Anhang-Grenze reißt — sonst ``None``.
+
+    Der Scan-Endpunkt gibt nur das PDF zurück; abgelegt wird es erst beim
+    Speichern der Rechnung, über den normalen Anhang-Weg. Dort gilt
+    ``VTB_MAX_UPLOAD_MB``. Ohne eine Prüfung *vorher* liefe der Scan durch, das
+    PDF käme zurück, und erst der spätere Upload lehnte ab — der Nutzer hätte
+    dann 20 Seiten fotografiert und hochgeladen, um am Ende nichts zu haben.
+
+    Die Meldung nennt deshalb nicht nur die Grenze, sondern auch den Ausweg:
+    Filter „Dokument" wiegt rund ein Fünftel von „Farbe" (gemessen an
+    2400-px-Seiten: ~180 KB gegen ~950 KB).
+
+    Eigene Funktion statt einer Prüfung im Endpunkt, damit die Entscheidung
+    testbar ist, ohne HTTP und Anmeldung nachzubauen — gleiche Bauart wie
+    ``sieht_wie_datei_aus`` in backend/main.py.
+    """
+    if groesse <= grenze:
+        return None
+    grenze_mb = grenze / 1024 / 1024
+    return (f"{was} ist mit {groesse / 1024 / 1024:.1f} MB größer als die erlaubten "
+            f"{grenze_mb:.0f} MB. Weniger Seiten, oder Filter „Dokument“ statt "
+            f"„Farbe“ — das wiegt etwa ein Fünftel.")
 
 
 class ScanPdfService:
@@ -121,9 +161,16 @@ class ScanPdfService:
                     # ReportLab unverändert weiter.
                     with Image.open(io.BytesIO(inhalt)) as bild:
                         breite_px, hoehe_px = bild.size
+                        bild_format = bild.format
                 except Exception as exc:  # defekte oder fremde Datei
                     raise ScanFehlerError(
                         f"Seite {nr} ist kein lesbares Bild.") from exc
+
+                if bild_format not in ERLAUBTE_FORMATE:
+                    erlaubt = " oder ".join(ERLAUBTE_FORMATE)
+                    raise ScanFehlerError(
+                        f"Seite {nr} ist {bild_format or 'unbekannt'}, "
+                        f"erwartet wird {erlaubt}.")
 
                 seite = self.seitenmass_pt(breite_px, hoehe_px)
                 c.setPageSize(seite)

@@ -98,6 +98,11 @@
     const VERSION   = new URLSearchParams(location.search).get('v') || '';
     const OPENCV    = (dom.app.dataset.opencv || '/vendor/opencv.js')
                       + (VERSION ? '?v=' + encodeURIComponent(VERSION) : '');
+    // Anhang-Grenze in MB, ebenfalls aus der Adresse (die App kennt sie als
+    // BELEG_MAX_MB). Der Rückfallwert greift nur, wenn jemand dieses Dokument
+    // von Hand aufruft; dann ist die Warnung eben grober.
+    const MAX_MB    = parseInt(new URLSearchParams(location.search).get('max'), 10) || 20;
+    const MAX_BYTES = MAX_MB * 1024 * 1024;
 
     const state = {
         cv: null, cvError: null,
@@ -1204,6 +1209,17 @@
                 total += blob.size;
                 fd.append('pages', blob, 'seite-' + (i + 1) + '.jpg');
                 showUploadProgress(0, 'Seite ' + (i + 1) + ' von ' + state.pages.length + ' vorbereitet');
+            }
+            // Wiegen, bevor es losgeht. Der Server prüft dasselbe noch einmal
+            // (er hat die verbindliche Grenze), aber hier ist der Nutzer noch
+            // bei seinen Seiten: Er kann eine löschen oder den Filter wechseln,
+            // ohne dass erst alles über die Mobilfunkleitung gegangen ist.
+            if (total > MAX_BYTES) {
+                const filterHinweis = dom.filter.value === 'farbe'
+                    ? ' Filter „Dokument“ statt „Farbe“ wiegt etwa ein Fünftel.'
+                    : ' Am besten eine Seite löschen.';
+                throw new Error('Der Beleg ist mit ' + fmtSize(total) + ' größer als die '
+                                + 'erlaubten ' + MAX_MB + ' MB.' + filterHinweis);
             }
             const res = await xhrUpload(UPLOAD_URL, fd, (frac) => {
                 showUploadProgress(frac, 'Wird übertragen … ' + Math.round(frac * 100) + ' % von ' + fmtSize(total));
