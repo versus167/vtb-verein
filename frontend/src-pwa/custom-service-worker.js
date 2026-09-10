@@ -18,11 +18,35 @@ cleanupOutdatedCaches()
 
 // Non-SSR fallbacks to index.html
 // Production SSR fallbacks to offline.html (except for dev)
+//
+// ACHTUNG bei der denylist: NavigationRoute fängt JEDE Navigation ab, und eine
+// iframe-Navigation ist eine. Alles, was hier nicht ausgenommen ist, bekommt
+// die precachte index.html — samt der Header, mit denen sie im Cache liegt.
+//
+// Genau daran ist der Beleg-Scanner (#197) gescheitert: Er ist eine
+// eigenständige Seite unter public/ und keine SPA-Route. Die App bettet ihn in
+// einem iframe ein, der Fallback beantwortete diese Navigation mit index.html,
+// und deren `frame-ancestors 'none'` / `X-Frame-Options: DENY` ließen Chrome
+// den Rahmen blockieren — der Nutzer sah nur eine leere Fehlerseite.
+//
+// Unsichtbar war das, weil es nur im gebauten PROD-Stand mit registriertem
+// Service Worker auftritt: Im Dev-Build greift der Block hier gar nicht, und
+// jeder Abruf mit curl geht am Service Worker vorbei und liefert die richtige
+// Datei mit den richtigen Headern.
+//
+// Das Muster steht bewusst ohne `$`: NavigationRoute prüft die denylist gegen
+// `pathname + search`, und die App hängt ein `?v=<Version>` an die Adresse.
+const NICHT_UEBER_DIE_SPA = [
+  new RegExp(process.env.PWA_SERVICE_WORKER_REGEX),
+  /workbox-(.)*\.js$/,
+  /^\/beleg-scanner\.html/,
+]
+
 if (process.env.PROD) {
   registerRoute(
     new NavigationRoute(
       createHandlerBoundToURL(process.env.PWA_FALLBACK_HTML),
-      { denylist: [new RegExp(process.env.PWA_SERVICE_WORKER_REGEX), /workbox-(.)*\.js$/] }
+      { denylist: NICHT_UEBER_DIE_SPA }
     )
   )
 }
