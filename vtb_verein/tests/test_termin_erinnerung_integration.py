@@ -239,6 +239,28 @@ class TestLauf:
         assert erin.erinnern(db)["erinnert"] == 0
         assert gesendet == []
 
+    def test_niemand_erreicht_laesst_die_stufe_offen(self, db, team, monkeypatch):
+        """Ausgefallener Mailserver: Die Stufe darf NICHT als verschickt gelten.
+
+        Am 10.09.2026 vermerkte der Lauf zwei Stufen, während der SMTP-Login gesperrt
+        war und genau ein Empfänger (über Push) erreicht wurde — die Erinnerungen
+        waren damit endgültig weg statt nur aufgeschoben.
+        """
+        monkeypatch.setattr(ns.NotificationService, "send_notification",
+                            staticmethod(lambda *a, **k: False))
+        assert erin.erinnern(db) == {"anstehend": 1, "erinnert": 0, "empfaenger": 0}
+        with db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM access_log WHERE event_type=%s",
+                        (erin.EVENT_ERINNERUNG,))
+            assert cur.fetchone()["n"] == 0
+
+        # Der nächste Lauf holt sie nach, sobald wieder jemand erreichbar ist.
+        raus = []
+        monkeypatch.setattr(ns.NotificationService, "send_notification",
+                            staticmethod(lambda user, *a, **k: bool(raus.append(user.id)) or True))
+        assert erin.erinnern(db)["erinnert"] == 1
+        assert raus == [team["user_id"]]
+
     def test_wer_gemeldet_hat_hoert_nichts(self, db, team, gesendet):
         db.termin_zusagen.set_antwort(team["termin"].id, team["mitglied_id"], 'zu',
                                       None, 't')

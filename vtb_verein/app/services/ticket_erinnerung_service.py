@@ -170,22 +170,26 @@ def _empfaenger_ids(eintraege) -> list[int]:
     return [e['user_id'] if isinstance(e, dict) else e for e in eintraege]
 
 
-def _versenden(db, user_ids: list[int], titel: str, text: str, url: str) -> int:
-    """An die aktiven Konten aus `user_ids` schicken; gibt die Zahl der Erreichten
-    zurück. Ein Fehler bei einem Empfänger stoppt den Lauf nicht."""
+def _versenden(db, user_ids: list[int], titel: str, text: str, url: str) -> tuple[int, int]:
+    """An die aktiven Konten aus `user_ids` schicken; gibt (erreicht, versucht) zurück.
+    Ein Fehler bei einem Empfänger stoppt den Lauf nicht.
+
+    Zur zweiten Zahl siehe den gleichnamigen Helfer im Termin-Lauf: Sie trennt
+    „niemanden zum Anschreiben" von „Zustellung gescheitert"."""
     from app.services.notification_service import NotificationService
-    erreicht = 0
+    erreicht = versucht = 0
     for user_id in user_ids:
         user = db.user_repository.get_by_id(user_id)
         if not (user and user.active):
             continue
+        versucht += 1
         try:
             if NotificationService.send_notification(user, titel, text,
                                                      push_service=db.push, url=url):
                 erreicht += 1
         except Exception:
             logger.exception("Ticket-Erinnerung an %s fehlgeschlagen.", user.username)
-    return erreicht
+    return erreicht, versucht
 
 
 def _einstellungen(db) -> TicketErinnerungEinstellungen:
@@ -210,8 +214,16 @@ def _lauf(db, *, faellig: list[tuple], event: str, empfaenger_je_ticket,
         if not empfaenger:
             continue          # niemand zuständig – dann mahnt hier auch niemanden etwas
         titel, text = text_je_ticket(ticket, tage)
-        erreicht = _versenden(db, empfaenger, titel, text,
-                              f"/tickets?ticket={ticket.id}")
+        erreicht, versucht = _versenden(db, empfaenger, titel, text,
+                                        f"/tickets?ticket={ticket.id}")
+        if versucht and not erreicht:
+            # Angeschrieben, aber nicht zugestellt (Mailserver weg): NICHT vermerken,
+            # damit die Mahnung nachkommt. Sonst kostet ein Ausfall sie endgültig –
+            # dieselbe Regel wie beim Termin-Lauf. Waren dagegen alle Zuständigen
+            # gesperrt, gilt sie als erledigt.
+            logger.warning("Ticket-Mahnung #%s (%s): niemand erreicht – bleibt offen.",
+                           ticket.id, event)
+            continue
         db.access_log_repository.log(event, category=_KATEGORIE, detail=str(ticket.id))
         tickets += 1
         empfaenger_gesamt += erreicht
@@ -227,6 +239,13 @@ def erinnern(db, *, jetzt: Optional[datetime] = None) -> dict:
     jetzt = jetzt or datetime.now(timezone.utc)
     einst = _einstellungen(db)
 
+    # Alle Mails des Laufs über eine Anmeldung (s. email_service.sammel_verbindung).
+    from app.services.email_service import sammel_verbindung
+    with sammel_verbindung():
+        return _erinnern(db, einst, jetzt)
+
+
+def _erinnern(db, einst, jetzt: datetime) -> dict:
     unbeachtet = db.tickets.list_unbeachtet()
     faellig_u = faellige_unbeachtete(
         unbeachtet, db.access_log_repository.letzte_je_detail(EVENT_ERINNERUNG),
