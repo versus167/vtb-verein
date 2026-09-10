@@ -372,6 +372,35 @@ body.body--dark .vtb-feedback-shot {
   top: 2px;
   right: 2px;
 }
+// Nicht-Bild-Anhang (PDF): Ein <img> bliebe hier kaputt, also Symbol plus
+// abgeschnittener Dateiname auf getönter Fläche.
+.vtb-foto-thumb__datei {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+  background: rgba($flaeche-rgb, .1);
+  color: $flaeche;
+  text-align: center;
+}
+.vtb-foto-thumb__datei span {
+  font-size: 9px;
+  line-height: 1.1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+// Auf dunklem Grund wäre Wappenblau auf 10 % Wappenblau kaum zu lesen —
+// gleiche Umbiegung wie bei .vtb-icon: aufgehelltes Blau, kräftigere Tönung.
+body.body--dark .vtb-foto-thumb__datei {
+  background: rgba($vtb-blau-hell, 0.16);
+  color: $vtb-blau-hell;
+}
 body.body--dark .vtb-foto-thumb {
   border-color: $vtb-navy-linie;
 }
