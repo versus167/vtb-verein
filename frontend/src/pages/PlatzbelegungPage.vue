@@ -1,29 +1,37 @@
 <template>
   <q-page padding :class="`page--${aktivesTheme}`">
-    <div class="row items-center q-mb-sm q-gutter-sm">
-      <div class="text-h5">Platzbelegung</div>
-      <q-space />
-      <q-btn-toggle v-model="modus" :options="MODUS_AUSWAHL" :disable="loading"
-        unelevated rounded dense no-caps toggle-color="primary" class="vtb-segment" />
-      <q-btn flat dense round icon="chevron_left" :disable="loading"
-        @click="blaettern(-7)" aria-label="7 Tage zurück" />
-      <q-btn flat dense no-caps :disable="loading" @click="heute" label="Heute" />
-      <q-btn flat dense round icon="chevron_right" :disable="loading"
-        @click="blaettern(7)" aria-label="7 Tage vor" />
+    <!-- Kopf: am Handy Titel und Steuerung untereinander. Sieben Bedienelemente
+         in einer Zeile brachen dort mitten im Segment-Umschalter um, was nach
+         kaputtem Layout aussah statt nach Umbruch. -->
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+      <div class="col-12 col-sm">
+        <div class="text-h5">Platzbelegung</div>
+      </div>
+      <div class="col-12 col-sm-auto row items-center no-wrap">
+        <q-btn flat dense round icon="chevron_left" :disable="loading"
+          @click="blaettern(-7)" aria-label="7 Tage zurück" />
+        <q-btn flat dense no-caps :disable="loading" @click="heute" label="Heute" />
+        <q-btn flat dense round icon="chevron_right" :disable="loading"
+          @click="blaettern(7)" aria-label="7 Tage vor" />
+        <q-space />
+        <q-btn-toggle v-model="modus" :options="MODUS_AUSWAHL" :disable="loading"
+          unelevated rounded dense no-caps toggle-color="primary" class="vtb-segment q-ml-sm" />
+      </div>
     </div>
 
-    <div class="row items-center q-mb-md">
+    <div class="row items-center q-mb-sm">
       <div class="text-subtitle1 text-weight-medium">{{ zeitraumTitel }}</div>
       <q-space />
       <q-spinner v-if="loading" color="primary" size="20px" />
     </div>
 
-    <div class="text-caption text-grey q-mb-md">
-      Wer wann auf welchem eigenen Platz ist — über alle Mannschaften hinweg.
-      Abgesagte Termine bleiben stehen: Sie sagen, dass der Platz doch frei ist.
-      <template v-if="hatEigene">Die eigenen Mannschaften sind hervorgehoben;
-        anklicken bearbeitet den Termin.</template>
-    </div>
+    <!-- Der Hinweis erklärt die Ansicht einmal; am Handy kostete er vier Zeilen
+         vom ersten Bildschirm und steht deshalb eingeklappt. -->
+    <div v-if="$q.screen.gt.xs" class="text-caption text-grey q-mb-md">{{ hinweis }}</div>
+    <q-expansion-item v-else dense dense-toggle icon="info" label="Was der Plan zeigt"
+      class="q-mb-sm" header-class="text-caption text-grey">
+      <div class="text-caption text-grey q-pb-sm q-pl-sm">{{ hinweis }}</div>
+    </q-expansion-item>
 
     <q-banner v-if="fehler" dense class="bg-negative text-white q-mb-md">
       {{ fehler }}
@@ -63,24 +71,45 @@
       </template>
     </div>
 
-    <!-- Am Handy: Tag für Tag statt Raster. Leere Tage fallen weg, sonst scrollt
-         man an fünf Überschriften ohne Inhalt vorbei. -->
+    <!-- Am Handy: Tag für Tag statt Raster, und innerhalb des Tages Platz für
+         Platz. Leere Tage fallen weg, sonst scrollt man an fünf Überschriften
+         ohne Inhalt vorbei. -->
     <div v-else>
-      <div v-for="tag in tageMitBelegung" :key="tag.iso" class="q-mb-md">
-        <div class="text-weight-medium q-mb-xs" :class="{ 'text-primary': tag.istHeute }">
+      <div v-for="tag in tageMitBelegung" :key="tag.iso" class="belegung-tag">
+        <div class="belegung-tag-kopf" :class="{ 'belegung-tag-kopf--heute': tag.istHeute }">
           {{ tag.wochentag }}, {{ tag.kurz }}
         </div>
-        <q-list bordered separator class="rounded-borders">
-          <q-item v-for="eintrag in tagesListe(tag.iso)" :key="`${eintrag.platz.id}-${eintrag.termin.id}`">
-            <q-item-section>
-              <q-item-label caption>{{ eintrag.platz.name }}</q-item-label>
-              <q-item-label>
-                <TerminBlock :termin="eintrag.termin"
-                  :konflikt="konflikte.has(eintrag.termin.id)" flach />
-              </q-item-label>
-            </q-item-section>
-          </q-item>
-        </q-list>
+        <template v-for="gruppe in tagesGruppen(tag.iso)" :key="gruppe.platz.id">
+          <div class="belegung-platz-kopf">{{ gruppe.platz.name }}</div>
+          <div v-for="zeile in gruppe.zeilen" :key="zeile.schluessel" class="belegung-zeile">
+            <div class="belegung-zeit-spalte">
+              <span class="row items-center no-wrap">
+                {{ zeile.zeit }}
+                <q-icon v-if="zeile.konflikt" name="warning" color="negative"
+                  size="14px" class="q-ml-xs" />
+              </span>
+              <span v-if="zeile.marker" class="belegung-marker">{{ zeile.marker }}</span>
+            </div>
+            <div class="belegung-teams">
+              <span v-for="t in zeile.termine" :key="t.id"
+                class="belegung-chip"
+                :class="{
+                  'belegung-chip--eigen': !!t.eigen,
+                  'belegung-chip--abgesagt': t.status === 'abgesagt',
+                  'belegung-chip--konflikt': zeile.gemischt && konflikte.has(t.id),
+                  'belegung-chip--editierbar': !!t.darf_verwalten,
+                }"
+                :role="t.darf_verwalten ? 'button' : undefined"
+                :tabindex="t.darf_verwalten ? 0 : undefined"
+                :title="t.darf_verwalten ? `${terminTitel(t)} bearbeiten` : undefined"
+                @click="t.darf_verwalten && bearbeiten(t)"
+                @keydown.enter.prevent="t.darf_verwalten && bearbeiten(t)"
+                @keydown.space.prevent="t.darf_verwalten && bearbeiten(t)">
+                {{ terminTitel(t) }}
+              </span>
+            </div>
+          </div>
+        </template>
       </div>
       <div v-if="!tageMitBelegung.length && !loading" class="text-grey q-pa-md">
         In diesem Zeitraum ist kein eigener Platz belegt.
@@ -199,12 +228,24 @@ function belegungVon(platzId, tagIso) {
 const tageMitBelegung = computed(() =>
   tage.value.filter((tag) => plaetze.value.some((p) => belegungVon(p.id, tag.iso).length)))
 
-function tagesListe(tagIso) {
-  const zeilen = []
-  for (const platz of plaetze.value) {
-    for (const termin of belegungVon(platz.id, tagIso)) zeilen.push({ platz, termin })
-  }
-  return zeilen.sort((a, b) => a.termin.beginn.localeCompare(b.termin.beginn))
+// ── Darstellung eines Termins (Raster wie Handy-Liste teilen sich das) ──
+
+function zeitfenster(t) {
+  const von = (t.beginn || '').slice(11, 16)
+  return t.ende ? `${von}–${t.ende.slice(11, 16)}` : von
+}
+
+function terminTitel(t) {
+  return [t.mannschaft_name || 'Ohne Mannschaft', t.gegner ? `vs. ${t.gegner}` : null]
+    .filter(Boolean).join(' ')
+}
+
+/** Alles außer Mannschaft und Zeit: „Spiel", „Sonstiges", „abgesagt". */
+function markerVon(t) {
+  const teile = []
+  if (t.typ !== 'training') teile.push(t.typ === 'spiel' ? 'Spiel' : 'Sonstiges')
+  if (t.status === 'abgesagt') teile.push('abgesagt')
+  return teile.join(' · ')
 }
 
 function minuten(zeitstempel) {
@@ -249,11 +290,57 @@ const konflikte = computed(() => {
 })
 
 /**
+ * Ein Tag für die Handy-Ansicht: Plätze als Zwischenüberschrift, darunter je
+ * Zeitfenster eine Zeile.
+ *
+ * Zusammengefasst wird, was sich nur in der Mannschaft unterscheidet. Acht
+ * Nachwuchsteams, die um 16:15 auf denselben Platz gehen, waren vorher acht
+ * Einträge à drei Zeilen mit achtmal demselben Platznamen und achtmal derselben
+ * Uhrzeit — genau das machte die Seite am Handy unlesbar lang.
+ *
+ * Typ und Status gehören zum Schlüssel: Ein abgesagtes Training darf nicht in
+ * derselben Zeile stehen wie ein laufendes, sonst behauptete die Zeile etwas
+ * Falsches darüber, ob der Platz frei ist.
+ */
+function tagesGruppen(tagIso) {
+  const gruppen = []
+  for (const platz of plaetze.value) {
+    const eintraege = belegungVon(platz.id, tagIso)
+    if (!eintraege.length) continue
+    // Map statt Sortieren: `belegungVon` liefert schon nach Beginn sortiert,
+    // die Einfügereihenfolge erhält das.
+    const zeilen = new Map()
+    for (const t of eintraege) {
+      const schluessel = `${t.beginn}|${t.ende || ''}|${t.typ}|${t.status}`
+      if (!zeilen.has(schluessel)) {
+        zeilen.set(schluessel, {
+          schluessel, zeit: zeitfenster(t), marker: markerVon(t), termine: [],
+        })
+      }
+      zeilen.get(schluessel).termine.push(t)
+    }
+    // Das Warndreieck steht an der Uhrzeit statt an jedem Kürzel: Gleiches
+    // Zeitfenster heißt gleiche Überschneidungsmenge, die Antwort fällt für alle
+    // Termine der Zeile gleich aus. Acht Kürzel einzeln zu markieren wiederholte
+    // also nur dieselbe Aussage — und genau diese Wiederholung war das Problem.
+    // `gemischt` ist der Notausgang, falls die Konfliktregel je feiner wird:
+    // Dann tragen die betroffenen Kürzel zusätzlich ihren roten Streifen.
+    for (const zeile of zeilen.values()) {
+      const betroffen = zeile.termine.filter((t) => konflikte.value.has(t.id)).length
+      zeile.konflikt = betroffen > 0
+      zeile.gemischt = betroffen > 0 && betroffen < zeile.termine.length
+    }
+    gruppen.push({ platz, zeilen: [...zeilen.values()] })
+  }
+  return gruppen
+}
+
+/**
  * Ein Termin im Raster: Zeit, Mannschaft, bei Spielen der Gegner.
  *
  * Als Render-Funktion statt eigener Datei — der Block ist reine Darstellung dieser
- * einen Seite und hätte anderswo keinen Nutzen. `flach` lässt den Rahmen weg, weil
- * er in der Handy-Liste schon in einem q-item steckt.
+ * einen Seite und hätte anderswo keinen Nutzen. Die Handy-Liste nutzt ihn nicht:
+ * Dort steht dieselbe Information zusammengefasst in einer Zeile.
  *
  * Termine eigener Mannschaften sind hervorgehoben und — wenn man sie verwalten darf
  * — anklickbar. Beides entscheidet das Backend je Termin (`eigen`, `darf_verwalten`),
@@ -263,27 +350,20 @@ const TerminBlock = (props) => {
   const t = props.termin
   const editierbar = !!t.darf_verwalten
   const abgesagt = t.status === 'abgesagt'
-  const zeit = (t.beginn || '').slice(11, 16)
-    + (t.ende ? `–${t.ende.slice(11, 16)}` : '')
-  const titel = [t.mannschaft_name || 'Ohne Mannschaft', t.gegner ? `vs. ${t.gegner}` : null]
-    .filter(Boolean).join(' ')
+  const titel = terminTitel(t)
+  const marker = markerVon(t)
   const zeilen = [
     h('div', { class: 'belegung-zeit row items-center no-wrap' }, [
-      h('span', zeit),
+      h('span', zeitfenster(t)),
       props.konflikt ? h(QIcon, {
         name: 'warning', color: 'negative', size: '14px', class: 'q-ml-xs',
       }) : null,
     ]),
     h('div', { class: 'belegung-team' }, titel),
   ]
-  if (t.typ !== 'training') {
-    zeilen.push(h('div', { class: 'belegung-typ text-caption' },
-      t.typ === 'spiel' ? 'Spiel' : 'Sonstiges'))
-  }
-  if (abgesagt) zeilen.push(h('div', { class: 'belegung-typ text-caption' }, 'abgesagt'))
+  if (marker) zeilen.push(h('div', { class: 'belegung-typ text-caption' }, marker))
   return h('div', {
     class: ['belegung-block', {
-      'belegung-block--flach': props.flach,
       'belegung-block--abgesagt': abgesagt,
       'belegung-block--eigen': !!t.eigen,
       'belegung-block--konflikt': props.konflikt,
@@ -300,12 +380,20 @@ const TerminBlock = (props) => {
     } : {}),
   }, zeilen)
 }
-TerminBlock.props = { termin: Object, konflikt: Boolean, flach: Boolean }
+TerminBlock.props = { termin: Object, konflikt: Boolean }
 
 // ── Bearbeiten (nur eigene bzw. mit termine.verwalten) ──
 const formOpen = ref(false)
 const formTermin = ref(null)
 const hatEigene = computed(() => termine.value.some((t) => t.eigen))
+
+const hinweis = computed(() => [
+  'Wer wann auf welchem eigenen Platz ist — über alle Mannschaften hinweg.',
+  'Abgesagte Termine bleiben stehen: Sie sagen, dass der Platz doch frei ist.',
+  hatEigene.value
+    ? 'Die eigenen Mannschaften sind hervorgehoben; anklicken bearbeitet den Termin.'
+    : null,
+].filter(Boolean).join(' '))
 
 function bearbeiten(t) {
   formTermin.value = t
@@ -408,14 +496,6 @@ usePageRefresh(laden)
   margin-bottom: 0;
 }
 
-.belegung-block--flach {
-  border-left: none;
-  background: none;
-  padding: 0;
-  margin: 0;
-  font-size: 0.9rem;
-}
-
 .belegung-block--abgesagt {
   opacity: 0.55;
   text-decoration: line-through;
@@ -462,5 +542,100 @@ usePageRefresh(laden)
 
 .belegung-typ {
   opacity: 0.75;
+}
+
+/* ── Handy: Tagesliste ──────────────────────────────────────────────────────
+   Bewusst ohne q-list/q-item: Deren 48px Mindesthöhe und 16px Seitenpolster
+   sind Tippziel-Maße für Menüzeilen. Hier steht je Zeile eine Uhrzeit und ein
+   paar Mannschaftskürzel — sieben Tage ergaben damit eine Seite von über
+   viertausend Pixeln Höhe. */
+.belegung-tag {
+  margin-bottom: 14px;
+}
+
+.belegung-tag-kopf {
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.belegung-tag-kopf--heute {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.belegung-platz-kopf {
+  font-size: 0.78rem;
+  opacity: 0.7;
+  margin: 6px 0 1px 2px;
+}
+
+.belegung-zeile {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0 2px 8px;
+  border-left: 2px solid rgba(128, 128, 128, 0.3);
+}
+
+.belegung-zeit-spalte {
+  flex: 0 0 auto;
+  min-width: 82px;
+  padding-top: 3px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.belegung-marker {
+  display: block;
+  font-weight: 400;
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.belegung-teams {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 5px;
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+
+/* Kein `nowrap`: Bei einem Spiel steht der Gegner mit im Kürzel, und der passt
+   am Handy nicht immer in eine Zeile. */
+.belegung-chip {
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgba(128, 128, 128, 0.14);
+  overflow-wrap: anywhere;
+}
+
+.belegung-chip--abgesagt {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* Wie im Raster: eigene Mannschaft am kräftigeren Grundton und am Gewicht, die
+   Farbe allein trägt in den dunklen Themes nicht. --konflikt steht danach und
+   übernimmt den Randstreifen. */
+.belegung-chip--eigen {
+  font-weight: 600;
+  background: rgba(128, 128, 128, 0.28);
+  box-shadow: inset 2px 0 0 var(--q-primary);
+}
+
+.belegung-chip--konflikt {
+  box-shadow: inset 2px 0 0 var(--q-negative);
+}
+
+.belegung-chip--editierbar {
+  cursor: pointer;
+}
+
+.belegung-chip--editierbar:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
 }
 </style>
