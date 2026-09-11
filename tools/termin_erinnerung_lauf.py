@@ -24,6 +24,15 @@ gelaufen wird aber nur, wenn seit dem letzten Lauf genug Zeit vergangen ist
 zusätzlichen Lauf aus, weil die Schleife im Container mit dem Lauf beginnt und
 erst danach schläft.
 
+WANN am Tag gelaufen wird, sagt die Uhrzeit aus denselben Einstellungen
+(Vorgabe 7 Uhr): Vor ihr läuft nichts, und der Abstand zählt ab ihr — sonst bliebe
+ein nach einer Störung verspäteter Lauf für immer zur falschen Zeit stehen
+(s. lauf_takt). Genau getroffen wird sie nie, der Lauf startet beim ersten Tick
+danach (`TERMIN_ERINNERUNG_TICK_MINUTES`, Vorgabe 30).
+
+Ohne `--wenn-faellig` läuft er sofort — Uhrzeit und Abstand gelten dann nicht.
+Ein solcher Lauf von Hand verschiebt den täglichen aber nicht.
+
 Beispiele:
   ./venv/bin/python tools/termin_erinnerung_lauf.py
   ./venv/bin/python tools/termin_erinnerung_lauf.py --trocken
@@ -31,7 +40,7 @@ Beispiele:
 import argparse
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'vtb_verein'))
@@ -92,7 +101,8 @@ def main() -> int:
     ap.add_argument('--quiet', action='store_true', help='nur Fehler ausgeben')
     ap.add_argument('--wenn-faellig', action='store_true', dest='wenn_faellig',
                     help=f'nur laufen, wenn seit dem letzten Lauf '
-                         f'{_intervall_stunden()} h vergangen sind (Sidecar-Modus)')
+                         f'{_intervall_stunden()} h vergangen sind und die in der App '
+                         f'eingestellte Uhrzeit erreicht ist (Sidecar-Modus)')
     args = ap.parse_args()
 
     if not args.database_url:
@@ -113,11 +123,14 @@ def main() -> int:
             # Nichts zu tun heißt: still enden. Sonst stünden im Container-Log ein
             # paar hundert Zeilen „noch nicht fällig" am Tag.
             stunden = _intervall_stunden()
+            # Ortszeit, nicht UTC: Die Wunschstunde meint die Uhr an der Wand.
+            # `astimezone()` ohne Argument nimmt die Zone des Containers (TZ).
+            stunde = erinnerung.einstellungen(db).lauf_stunde
             if not lauf_takt.ist_faellig(lauf_takt.letzter_lauf(db, 'termin_erinnerung_lauf'),
-                                         datetime.now(timezone.utc),
-                                         timedelta(hours=stunden)):
+                                         datetime.now().astimezone(),
+                                         timedelta(hours=stunden), stunde):
                 return 0
-            log(f"▶ Termin-Erinnerungen fällig (Takt: alle {stunden} h).")
+            log(f"▶ Termin-Erinnerungen fällig (Takt: alle {stunden} h ab {stunde}:00).")
         res = erinnerung.erinnern(db)
         log(f"✓ {res['erinnert']} von {res['anstehend']} anstehenden Termin(en) erinnert, "
             f"{res['empfaenger']} Empfänger erreicht.")

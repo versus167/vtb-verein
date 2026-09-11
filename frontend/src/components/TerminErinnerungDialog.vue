@@ -10,8 +10,9 @@
 
       <q-card-section>
         <div class="text-body2 q-mb-md">
-          Einmal täglich sieht die App nach, zu welchen Terminen noch Meldungen fehlen,
-          und erinnert genau die daran – Kader wie eingeladene Gäste, jeder nur zu
+          Einmal täglich sieht die App zur eingestellten Zeit nach, zu welchen
+          Terminen noch Meldungen fehlen, und erinnert genau die daran – Kader wie
+          eingeladene Gäste, jeder nur zu
           seinen eigenen offenen Terminen. Wer zu-, ab- oder „vielleicht" gesagt hat,
           hört nichts.
           <span class="text-grey-8">
@@ -52,6 +53,23 @@
           <q-toggle v-model="einstellungen.spieltag_aktiv"
             :disable="!einstellungen.aktiv" />
         </div>
+
+        <q-separator class="q-my-md" />
+
+        <div class="row items-center no-wrap q-col-gutter-md">
+          <div class="col">
+            <div class="text-subtitle1">Wann am Tag</div>
+            <div class="text-caption text-grey-8">
+              Ab dieser vollen Stunde läuft die App los – auf die Minute genau geht es
+              nicht, sie sieht nur alle paar Minuten nach. Vor allem für die Spieltags-
+              Stufe wichtig: Was erst nach dem Anpfiff losgeht, erreicht das Spiel nicht
+              mehr. Eine Änderung greift ab dem nächsten Tag.
+            </div>
+          </div>
+          <q-select v-model="einstellungen.lauf_stunde" :options="STUNDEN" dense outlined
+            emit-value map-options label="Uhrzeit" style="min-width: 110px"
+            :disable="!einstellungen.aktiv" />
+        </div>
       </q-card-section>
 
       <q-card-actions align="right">
@@ -74,6 +92,11 @@ import { api } from 'src/boot/axios'
 // hat sich vertippt.
 const MAX_TAGE = 28
 
+// Volle Stunden, wie im Backend (lauf_stunde, 0–23). Minuten gibt es bewusst nicht:
+// Der Sidecar tickt nur alle paar Minuten, alles Feinere wäre gelogen.
+const STUNDEN = Array.from({ length: 24 },
+  (_, h) => ({ label: `${String(h).padStart(2, '0')}:00`, value: h }))
+
 const props = defineProps({ modelValue: { type: Boolean, default: false } })
 const emit = defineEmits(['update:modelValue'])
 
@@ -84,7 +107,7 @@ const open = computed({
 })
 
 const einstellungen = ref({ aktiv: true, erste_stufe_tage: 3, zweite_stufe_tage: 1,
-                            spieltag_aktiv: true })
+                            spieltag_aktiv: true, lauf_stunde: 7 })
 const loading = ref(false)
 const saving = ref(false)
 
@@ -111,6 +134,7 @@ async function speichern() {
       erste_stufe_tage: e.erste_stufe_tage,
       zweite_stufe_tage: e.zweite_stufe_tage,
       spieltag_aktiv: e.spieltag_aktiv,
+      lauf_stunde: e.lauf_stunde,
     })
     $q.notify({ type: 'positive', message: 'Erinnerungen gespeichert.' })
     open.value = false

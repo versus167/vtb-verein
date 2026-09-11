@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 121
+SCHEMA_VERSION = 122
 
 
 # ---------------------------------------------------------------------------
@@ -3878,6 +3878,9 @@ _TICKET_LOESCH_REF_INDEXES = tuple(
 # einstellungen): je Priorität eine Frist, dazu der Wiederholungsabstand und ein
 # Aus-Schalter je Erinnerungsart. Frist 0 schaltet eine einzelne Priorität ab –
 # der Verein kann also niedrige Tickets in Ruhe lassen und hohe eng führen.
+# Dazu (v122) `lauf_stunde`: die volle Stunde, ab der der tägliche Lauf frühestens
+# startet (Ortszeit des Containers, s. lauf_takt) – vorher war das die zufällige
+# Uhrzeit des ersten Laufs nach dem Update.
 _DDL_TICKET_ERINNERUNG_EINSTELLUNGEN = """
     CREATE TABLE IF NOT EXISTS ticket_erinnerung_einstellungen (
       id                           INTEGER PRIMARY KEY DEFAULT 1,
@@ -3893,6 +3896,8 @@ _DDL_TICKET_ERINNERUNG_EINSTELLUNGEN = """
       stillstand_tage_normal       INTEGER NOT NULL DEFAULT 28,
       stillstand_tage_niedrig      INTEGER NOT NULL DEFAULT 28,
       stillstand_wiederholung_tage INTEGER NOT NULL DEFAULT 14,
+      lauf_stunde                  INTEGER NOT NULL DEFAULT 7
+                                   CHECK (lauf_stunde BETWEEN 0 AND 23),
       version                      INTEGER NOT NULL DEFAULT 1,
       created_at                   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by                   TEXT,
@@ -3915,6 +3920,7 @@ _DDL_TICKET_ERINNERUNG_EINSTELLUNGEN = """
       stillstand_tage_normal       INTEGER,
       stillstand_tage_niedrig      INTEGER,
       stillstand_wiederholung_tage INTEGER,
+      lauf_stunde                  INTEGER,
       created_at                   TEXT,
       created_by                   TEXT,
       updated_at                   TEXT,
@@ -3929,7 +3935,7 @@ _TICKET_ERINNERUNG_EINSTELLUNGEN_COLS = (
     "unbeachtet_tage_normal, unbeachtet_tage_niedrig, unbeachtet_wiederholung_tage, "
     "stillstand_aktiv, stillstand_tage_sicherheit, stillstand_tage_hoch, "
     "stillstand_tage_normal, stillstand_tage_niedrig, stillstand_wiederholung_tage, "
-    "created_at, created_by, updated_at, updated_by"
+    "lauf_stunde, created_at, created_by, updated_at, updated_by"
 )
 _TICKET_ERINNERUNG_EINSTELLUNGEN_VALS = ", ".join(
     "NEW." + c.strip() for c in _TICKET_ERINNERUNG_EINSTELLUNGEN_COLS.split(","))
@@ -3977,6 +3983,9 @@ _TICKET_ERINNERUNG_EINSTELLUNGEN_TRIGGERS = (
 # will, setzt die zweite auf 0. Dazu (v113) die Spieltags-Stufe: am Termintag
 # selbst erinnert der Lauf nur noch zu SPIELEN und nur vor dem Anpfiff – beim
 # Training ist die kurzfristige Meldung meist egal, beim Spiel zählt jeder Kopf.
+# Und (v122) `lauf_stunde`: die volle Stunde, ab der der tägliche Lauf frühestens
+# startet (Ortszeit des Containers, s. lauf_takt). Gerade die Spieltags-Stufe hängt
+# daran – ein Lauf nach dem Anpfiff erreicht das Spiel nicht mehr.
 _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
     CREATE TABLE IF NOT EXISTS termin_erinnerung_einstellungen (
       id                    INTEGER PRIMARY KEY DEFAULT 1,
@@ -3984,6 +3993,8 @@ _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
       erste_stufe_tage      INTEGER NOT NULL DEFAULT 3,
       zweite_stufe_tage     INTEGER NOT NULL DEFAULT 1,
       spieltag_aktiv        BOOLEAN NOT NULL DEFAULT TRUE,
+      lauf_stunde           INTEGER NOT NULL DEFAULT 7
+                            CHECK (lauf_stunde BETWEEN 0 AND 23),
       version               INTEGER NOT NULL DEFAULT 1,
       created_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       created_by            TEXT,
@@ -3998,6 +4009,7 @@ _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
       erste_stufe_tage      INTEGER,
       zweite_stufe_tage     INTEGER,
       spieltag_aktiv        BOOLEAN,
+      lauf_stunde           INTEGER,
       created_at            TEXT,
       created_by            TEXT,
       updated_at            TEXT,
@@ -4009,7 +4021,7 @@ _DDL_TERMIN_ERINNERUNG_EINSTELLUNGEN = """
 
 _TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS = (
     "id, version, aktiv, erste_stufe_tage, zweite_stufe_tage, spieltag_aktiv, "
-    "created_at, created_by, updated_at, updated_by"
+    "lauf_stunde, created_at, created_by, updated_at, updated_by"
 )
 _TERMIN_ERINNERUNG_EINSTELLUNGEN_VALS = ", ".join(
     "NEW." + c.strip() for c in _TERMIN_ERINNERUNG_EINSTELLUNGEN_COLS.split(","))
@@ -4237,6 +4249,7 @@ class Database:
             119: self._migrate_v118_to_v119,
             120: self._migrate_v119_to_v120,
             121: self._migrate_v120_to_v121,
+            122: self._migrate_v121_to_v122,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9086,6 +9099,50 @@ class Database:
             cur.execute(_FN_TERMIN_SERIE_AUDIT_UPDATE)
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 121 WHERE id = 1")
+
+    def _migrate_v121_to_v122(self) -> None:
+        """Uhrzeit der Erinnerungsläufe (#95-/#179-Nachgang).
+
+        Bisher stand nur der Abstand zweier Läufe fest (`*_INTERVAL_HOURS`,
+        Vorgabe 24 h). WANN am Tag gelaufen wird, ergab sich daraus nicht: Der
+        Takt hing am ersten Lauf nach dem Update und blieb auf dessen zufälliger
+        Uhrzeit stehen. Für die Spieltags-Stufe ist das keine Kleinigkeit – sie
+        geht nur raus, solange der Anpfiff noch bevorsteht (v113), fällt der Lauf
+        also nachmittags, fällt sie für Vormittagsspiele ersatzlos aus.
+
+        Deshalb `lauf_stunde` in beiden Erinnerungs-Einstellungen: Der Lauf
+        startet frühestens zu dieser vollen Stunde (Ortszeit des Containers), und
+        der Abstand zählt ab ihr statt ab der tatsächlichen Startzeit – ein
+        verspäteter Lauf zieht den nächsten damit nicht mit (s. lauf_takt).
+        Vorgabe 7: früh genug vor dem ersten Anpfiff, spät genug, dass niemand
+        nachts eine Push-Nachricht bekommt.
+
+        Die Uhrzeit steht in der App und nicht in der Env, weil sie den Verein
+        betrifft und nicht den Betrieb – anders als die Frequenz, die weiter im
+        Container-Takt bleibt.
+
+        Die Audit-Funktionen werden neu erzeugt, NACHDEM beide History-Tabellen
+        die Spalte haben: Sie sind f-Strings über die `*_COLS`-Konstanten, und wer
+        nur die Tabelle erweitert, bekommt eine History, die die neue Spalte nie
+        mitschreibt, ohne dass irgendetwas kracht (dieselbe Falle wie in v113).
+
+        DDL/CHECK geteilt mit dem Frischaufbau (Fresh == Migriert); den
+        Constraint-Namen vergibt Postgres in beiden Pfaden gleich.
+        """
+        with self.cursor() as cur:
+            for tabelle in ('termin_erinnerung_einstellungen',
+                            'ticket_erinnerung_einstellungen'):
+                cur.execute(f"ALTER TABLE {tabelle} ADD COLUMN IF NOT EXISTS "
+                            f"lauf_stunde INTEGER NOT NULL DEFAULT 7 "
+                            f"CHECK (lauf_stunde BETWEEN 0 AND 23)")
+                cur.execute(f"ALTER TABLE {tabelle}_history "
+                            f"ADD COLUMN IF NOT EXISTS lauf_stunde INTEGER")
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_TERMIN_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+            cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_INSERT)
+            cur.execute(_FN_TICKET_ERINNERUNG_EINSTELLUNGEN_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 122 WHERE id = 1")
 
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
