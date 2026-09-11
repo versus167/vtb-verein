@@ -7,6 +7,9 @@ migriert. Danach muss dieselbe Zeile mit denselben Vorgaben dastehen und die
 History wieder mitschreiben; ein Frischaufbau, der die Migration überholt,
 fiele genau hier auf.
 
+v122 hängt die Uhrzeit des Laufs an dieselbe Tabelle – und in derselben Migration
+auch an die der Ticket-Erinnerungen; deshalb steht der Ticket-Teil hier mit.
+
 v113 hängt die Spieltags-Stufe an dieselbe Tabelle. Dort steckt der zweite
 Fallstrick: Die Audit-Funktionen sind f-Strings über die Spaltenliste. Wer nur die
 Tabelle erweitert und die Funktionen stehen lässt, bekommt eine History, die die
@@ -19,6 +22,7 @@ import os
 import sys
 from pathlib import Path
 
+import psycopg
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # Repo-Root für backend.*
@@ -62,6 +66,7 @@ def _zuruecksetzen(db) -> None:
     """
     db._database._migrate_v111_to_v112()
     db._database._migrate_v112_to_v113()
+    db._database._migrate_v121_to_v122()
     with db.cursor() as cur:
         cur.execute("DELETE FROM termin_erinnerung_einstellungen_history")
         cur.execute("DELETE FROM termin_erinnerung_einstellungen")
@@ -192,3 +197,91 @@ def test_v113_ist_wiederholbar(db, auf_v112):
     db._database._migrate_v112_to_v113()
     # Kein Reset auf die Vorgabe – ADD COLUMN IF NOT EXISTS lässt die Spalte in Ruhe.
     assert db.termin_erinnerung_einstellungen.get().spieltag_aktiv is False
+
+
+# --------------------------------------------------------------- v121 → v122
+# Die Uhrzeit hängt an BEIDEN Erinnerungs-Einstellungen und kommt aus einer
+# einzigen Migration – der Ticket-Teil wird deshalb hier mitgeprüft.
+_V121_COLS = ("id, version, aktiv, erste_stufe_tage, zweite_stufe_tage, spieltag_aktiv, "
+              "created_at, created_by, updated_at, updated_by")
+
+_BEIDE = ('termin_erinnerung_einstellungen', 'ticket_erinnerung_einstellungen')
+
+
+@pytest.fixture()
+def auf_v121(db):
+    """`lauf_stunde` aus beiden Tabellen entfernen UND die Audit-Funktionen der
+    Termin-Tabelle zurückdrehen (die Ticket-Seite prüft dieselbe Mechanik)."""
+    vals = ", ".join("NEW." + c.strip() for c in _V121_COLS.split(","))
+    with db.cursor() as cur:
+        for tabelle in _BEIDE:
+            cur.execute(f"ALTER TABLE {tabelle} DROP COLUMN IF EXISTS lauf_stunde")
+            cur.execute(f"ALTER TABLE {tabelle}_history DROP COLUMN IF EXISTS lauf_stunde")
+        for ereignis in ("insert", "update"):
+            wache = ("IF NEW.version != OLD.version THEN" if ereignis == "update"
+                     else "IF true THEN")
+            cur.execute(f"""
+                CREATE OR REPLACE FUNCTION fn_termin_erinnerung_einst_audit_{ereignis}()
+                RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    {wache}
+                        INSERT INTO termin_erinnerung_einstellungen_history
+                            ({_V121_COLS})
+                        VALUES ({vals});
+                    END IF;
+                    RETURN NEW;
+                END; $$;
+            """)
+    yield
+    _zuruecksetzen(db)
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM ticket_erinnerung_einstellungen_history")
+        cur.execute("UPDATE ticket_erinnerung_einstellungen SET lauf_stunde = 7, "
+                    "version = 1 WHERE id = 1")
+        cur.execute("DELETE FROM ticket_erinnerung_einstellungen_history")
+
+
+def test_v122_ergaenzt_die_uhrzeit_in_beiden_tabellen(db, auf_v121):
+    for tabelle in _BEIDE:
+        assert 'lauf_stunde' not in _spalten(db, tabelle)
+
+    db._database._migrate_v121_to_v122()
+
+    # Vorgabe 7 Uhr: früh genug vor dem ersten Anpfiff, spät genug für den Schlaf.
+    assert db.termin_erinnerung_einstellungen.get().lauf_stunde == 7
+    assert db.ticket_erinnerung_einstellungen.get().lauf_stunde == 7
+    for tabelle in _BEIDE:
+        assert 'lauf_stunde' in _spalten(db, f'{tabelle}_history')
+    with db.cursor() as cur:
+        cur.execute("SELECT version FROM schema_version WHERE id = 1")
+        assert cur.fetchone()['version'] == 122
+
+
+def test_v122_zieht_die_audit_funktionen_nach(db, auf_v121):
+    """Derselbe Fallstrick wie in v113: History ohne die neue Spalte, ganz ohne Fehler."""
+    db._database._migrate_v121_to_v122()
+    db.termin_erinnerung_einstellungen.update(
+        TerminErinnerungEinstellungen(lauf_stunde=5), 'chef')
+    with db.cursor() as cur:
+        cur.execute("SELECT lauf_stunde FROM termin_erinnerung_einstellungen_history "
+                    "ORDER BY version DESC LIMIT 1")
+        assert cur.fetchone()['lauf_stunde'] == 5
+
+
+def test_v122_haelt_unmoegliche_uhrzeiten_draussen(db, auf_v121):
+    """Der CHECK gehört zur Spalte und muss aus der Migration genauso kommen wie
+    aus dem Frischaufbau – sonst stünde in der einen Instanz 25 Uhr in der Zeile."""
+    db._database._migrate_v121_to_v122()
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with db.cursor() as cur:
+            cur.execute("UPDATE termin_erinnerung_einstellungen SET lauf_stunde = 24 "
+                        "WHERE id = 1")
+
+
+def test_v122_ist_wiederholbar(db, auf_v121):
+    db._database._migrate_v121_to_v122()
+    db.termin_erinnerung_einstellungen.update(
+        TerminErinnerungEinstellungen(lauf_stunde=5), 'chef')
+    db._database._migrate_v121_to_v122()
+    # Kein Reset auf die Vorgabe – ADD COLUMN IF NOT EXISTS lässt die Spalte in Ruhe.
+    assert db.termin_erinnerung_einstellungen.get().lauf_stunde == 5

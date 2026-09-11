@@ -128,9 +128,10 @@
       <!-- ── Erinnerungen ── -->
       <q-tab-panel name="erinnerungen" class="q-pa-none">
         <div class="text-body2 q-mb-md">
-          Einmal täglich sieht die App nach, welche offenen Tickets liegen bleiben, und
-          erinnert die Verantwortlichen daran – zugewiesen ist das der Zugewiesene, sonst
-          alle, die im Bereich bearbeiten oder schließen dürfen.
+          Einmal täglich sieht die App zur eingestellten Zeit nach, welche offenen
+          Tickets liegen bleiben, und erinnert die Verantwortlichen daran – zugewiesen
+          ist das der Zugewiesene, sonst alle, die im Bereich bearbeiten oder schließen
+          dürfen.
           <span class="text-grey-8">
             Die Fristen gelten je Priorität; <strong>0 Tage</strong> heißt „diese
             Priorität nicht erinnern".
@@ -199,6 +200,21 @@
                 />
               </div>
             </div>
+          </q-card-section>
+        </q-card>
+
+        <q-card flat bordered class="q-mb-md">
+          <q-card-section class="row items-center no-wrap q-col-gutter-md">
+            <div class="col">
+              <div class="text-subtitle1">Wann am Tag</div>
+              <div class="text-caption text-grey-8">
+                Ab dieser vollen Stunde läuft die App los – auf die Minute genau geht es
+                nicht, sie sieht nur alle paar Minuten nach. Eine Änderung greift ab dem
+                nächsten Tag; gilt für beide Erinnerungsarten.
+              </div>
+            </div>
+            <q-select v-model="erinnerung.lauf_stunde" :options="STUNDEN" dense outlined
+                      emit-value map-options label="Uhrzeit" style="min-width: 110px" />
           </q-card-section>
         </q-card>
 
@@ -310,6 +326,11 @@ const PRIORITAETEN = [
   { key: 'normal',     label: 'Normal' },
   { key: 'niedrig',    label: 'Niedrig' },
 ]
+// Volle Stunden, wie im Backend (lauf_stunde, 0–23). Minuten gibt es bewusst nicht:
+// Der Sidecar tickt nur alle paar Minuten, alles Feinere wäre gelogen.
+const STUNDEN = Array.from({ length: 24 },
+  (_, h) => ({ label: `${String(h).padStart(2, '0')}:00`, value: h }))
+
 const erinnerung = ref({
   unbeachtet_aktiv: true,
   unbeachtet_tage_sicherheit: 1, unbeachtet_tage_hoch: 1,
@@ -319,6 +340,7 @@ const erinnerung = ref({
   stillstand_tage_sicherheit: 3, stillstand_tage_hoch: 7,
   stillstand_tage_normal: 28, stillstand_tage_niedrig: 28,
   stillstand_wiederholung_tage: 14,
+  lauf_stunde: 7,
 })
 
 async function loadAll() {
@@ -499,7 +521,8 @@ async function saveErinnerung() {
     // Nur die Felder, die der Server kennt: `id`, `version` und die Zeitstempel
     // kommen beim Lesen mit, gehören aber nicht ins Schreib-Schema.
     const daten = { unbeachtet_aktiv: erinnerung.value.unbeachtet_aktiv,
-                    stillstand_aktiv: erinnerung.value.stillstand_aktiv }
+                    stillstand_aktiv: erinnerung.value.stillstand_aktiv,
+                    lauf_stunde: erinnerung.value.lauf_stunde }
     for (const art of ['unbeachtet', 'stillstand']) {
       for (const p of PRIORITAETEN) daten[`${art}_tage_${p.key}`] = erinnerung.value[`${art}_tage_${p.key}`]
       daten[`${art}_wiederholung_tage`] = erinnerung.value[`${art}_wiederholung_tage`]

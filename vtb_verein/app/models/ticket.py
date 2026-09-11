@@ -148,6 +148,10 @@ class TicketErinnerungEinstellungen:
     Je Priorität eine Frist in Tagen, dazu der Abstand der Wiederholungen und ein
     Schalter je Art. **Frist 0 schaltet die einzelne Priorität ab** – niedrige
     Tickets dürfen in Ruhe liegen, sicherheitsrelevante nicht.
+
+    `lauf_stunde` (v122) ist die volle Stunde, ab der der tägliche Mahnlauf
+    frühestens startet — Ortszeit des Containers. Minuten gibt es bewusst nicht,
+    denn der Sidecar tickt nur alle paar Minuten (s. lauf_takt).
     """
     id: int = 1
 
@@ -164,6 +168,8 @@ class TicketErinnerungEinstellungen:
     stillstand_tage_normal: int = 28
     stillstand_tage_niedrig: int = 28
     stillstand_wiederholung_tage: int = 14
+
+    lauf_stunde: int = 7
 
     version: int = 1
     created_at: Optional[str] = None

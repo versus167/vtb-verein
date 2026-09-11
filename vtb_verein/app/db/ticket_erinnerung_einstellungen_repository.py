@@ -11,13 +11,14 @@ _COLS = """id,
            unbeachtet_tage_normal, unbeachtet_tage_niedrig, unbeachtet_wiederholung_tage,
            stillstand_aktiv, stillstand_tage_sicherheit, stillstand_tage_hoch,
            stillstand_tage_normal, stillstand_tage_niedrig, stillstand_wiederholung_tage,
-           version, created_at, created_by, updated_at, updated_by"""
+           lauf_stunde, version, created_at, created_by, updated_at, updated_by"""
 
 _SETZBAR = (
     "unbeachtet_aktiv", "unbeachtet_tage_sicherheit", "unbeachtet_tage_hoch",
     "unbeachtet_tage_normal", "unbeachtet_tage_niedrig", "unbeachtet_wiederholung_tage",
     "stillstand_aktiv", "stillstand_tage_sicherheit", "stillstand_tage_hoch",
     "stillstand_tage_normal", "stillstand_tage_niedrig", "stillstand_wiederholung_tage",
+    "lauf_stunde",
 )
 
 

@@ -72,6 +72,11 @@ class TerminErinnerungEinstellungen:
     Dazu die Spieltags-Stufe (v113): am Termintag selbst wird nur noch zu SPIELEN
     erinnert und nur vor dem Anpfiff. Beim Training ist die kurzfristige Meldung
     meist egal, beim Spiel zählt jeder Kopf.
+
+    `lauf_stunde` (v122) ist die volle Stunde, ab der der tägliche Lauf frühestens
+    startet — Ortszeit des Containers. Sie entscheidet gerade über die Spieltags-
+    Stufe: Ein Lauf nach dem Anpfiff erreicht das Spiel nicht mehr. Minuten gibt es
+    bewusst nicht, denn der Sidecar tickt nur alle paar Minuten (s. lauf_takt).
     """
     id: int = 1
 
@@ -79,6 +84,7 @@ class TerminErinnerungEinstellungen:
     erste_stufe_tage: int = 3
     zweite_stufe_tage: int = 1
     spieltag_aktiv: bool = True
+    lauf_stunde: int = 7
 
     version: int = 1
     created_at: Optional[str] = None

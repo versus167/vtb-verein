@@ -514,6 +514,9 @@ class ErinnerungEinstellungenWrite(BaseModel):
     # Am Termintag selbst – nur zu Spielen und nur vor dem Anpfiff (kein Vorlauf,
     # daher ein Schalter und keine Tageszahl).
     spieltag_aktiv: bool = True
+    # Volle Stunde, ab der der tägliche Lauf frühestens startet (Ortszeit des
+    # Servers). Keine Minuten: Der Sidecar tickt nur alle paar Minuten.
+    lauf_stunde: int = Field(7, ge=0, le=23)
 
 
 @router.get("/erinnerung-einstellungen")
@@ -529,7 +532,8 @@ def erinnerung_einstellungen_speichern(data: ErinnerungEinstellungenWrite,
                                        user: CurrentUser, db: DB):
     """Vorlauf speichern. Stufe 0 heißt: diese Stufe nicht erinnern – der obere
     Schalter schaltet den ganzen Lauf ab, `spieltag_aktiv` nur die Stufe am
-    Termintag."""
+    Termintag. `lauf_stunde` greift erst beim nächsten Lauf: Der heutige ist dann
+    schon vermerkt, die neue Uhrzeit gilt ab morgen (s. lauf_takt)."""
     _require_alle_verwalten(user)
     einstellungen = TerminErinnerungEinstellungen(**data.model_dump())
     return asdict(db.termin_erinnerung_einstellungen.update(

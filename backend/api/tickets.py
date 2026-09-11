@@ -401,6 +401,9 @@ class ErinnerungEinstellungenWrite(BaseModel):
     stillstand_tage_normal: int = Field(28, ge=0, le=FRIST_MAX_TAGE)
     stillstand_tage_niedrig: int = Field(28, ge=0, le=FRIST_MAX_TAGE)
     stillstand_wiederholung_tage: int = Field(14, ge=1, le=FRIST_MAX_TAGE)
+    # Volle Stunde, ab der der tägliche Mahnlauf frühestens startet (Ortszeit des
+    # Servers). Keine Minuten: Der Sidecar tickt nur alle paar Minuten.
+    lauf_stunde: int = Field(7, ge=0, le=23)
 
 
 @router.get("/erinnerung-einstellungen")
@@ -415,7 +418,9 @@ def erinnerung_einstellungen_lesen(user: CurrentUser, db: DB):
 def erinnerung_einstellungen_speichern(data: ErinnerungEinstellungenWrite,
                                        user: CurrentUser, db: DB):
     """Fristen speichern. Frist 0 heißt: diese Priorität gar nicht mahnen — der
-    Schalter je Erinnerungsart schaltet den ganzen Zweig ab."""
+    Schalter je Erinnerungsart schaltet den ganzen Zweig ab. `lauf_stunde` greift
+    erst beim nächsten Lauf: Der heutige ist dann schon vermerkt, die neue Uhrzeit
+    gilt ab morgen (s. lauf_takt)."""
     _require_bereiche_verwalten(user)
     einstellungen = TicketErinnerungEinstellungen(**data.model_dump())
     return asdict(db.ticket_erinnerung_einstellungen.update(

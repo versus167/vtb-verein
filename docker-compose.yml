@@ -187,7 +187,8 @@ services:
   # melden sich schon selbst; hier geht es um die, die es danach vergessen haben.
   # Gleicher Sidecar-Ansatz wie die übrigen Läufe. Intervall über
   # TERMIN_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag); den Vorlauf (Vorgabe 3 und
-  # 1 Tag) stellt der Verein in der App ein (Termine → Erinnerungen).
+  # 1 Tag) und die Uhrzeit (Vorgabe 7 Uhr, TZ des Containers) stellt der Verein in der
+  # App ein (Termine → Erinnerungen). Der Tick ist die Genauigkeit der Uhrzeit.
   termin-erinnerung:
     image: vtb-verein:latest
     container_name: vtb-termin-erinnerung
@@ -228,7 +229,8 @@ services:
   # nichts mehr passiert ist. Anlegen/Zuweisen/Kommentieren melden sich schon selbst;
   # hier geht es um das, was danach kommt. Gleicher Sidecar-Ansatz wie die übrigen Läufe.
   # Intervall über TICKET_ERINNERUNG_INTERVAL_HOURS (Default 24 = 1×/Tag); die Fristen
-  # je Priorität stellt der Verein in der App ein (Tickets → Verwaltung → Erinnerungen).
+  # je Priorität und die Uhrzeit (Vorgabe 7 Uhr, TZ des Containers) stellt der Verein in
+  # der App ein (Tickets → Verwaltung → Erinnerungen).
   ticket-erinnerung:
     image: vtb-verein:latest
     container_name: vtb-ticket-erinnerung
