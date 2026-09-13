@@ -244,6 +244,15 @@
              Tages-Ausschnitt hätte hier nichts zu bestimmen. -->
         <TerminWahl v-model="buchenTermin" :termine="termine"
           :laufend-id="laufendTerminId" label="Buchen auf" />
+        <q-toggle v-if="matrix?.artikel.length" v-model="nurOhneTresen" dense size="sm"
+          class="q-mt-sm"
+          :label="`Nur ohne Tresen-Buchung (${ohneTresen.length}, davon ${ohneTresenZugesagt} zugesagt)`">
+          <q-tooltip>
+            Zeigt nur, wer bei diesem Termin noch keinen Strich am Tresen hat.
+            Artikel, die nur der Wart bucht (z. B. Wäsche), zählen nicht mit.
+            „Zugesagt" sind die mit Zusage zum Termin (grüner Haken).
+          </q-tooltip>
+        </q-toggle>
 
         <div v-if="!termine.length" class="text-grey q-mt-md">
           Diese Mannschaft hat noch keine Termine — lege im Bereich „Termine"
@@ -256,6 +265,9 @@
           </div>
         </template>
         <template v-else>
+          <div v-if="nurOhneTresen && !matrixZeilen.length" class="text-grey q-mt-md">
+            Alle haben bei diesem Termin schon etwas am Tresen gebucht.
+          </div>
           <!-- Gitter scrollt in sich selbst; die erste Spalte bleibt stehen,
                sonst weiß am Handy niemand mehr, wessen Zeile er antippt.
                Die q-card gibt die Fläche vor — die klebende Spalte erbt sie und
@@ -292,7 +304,7 @@
                 <!-- Zugesagte stehen oben (#167): So findet der Wart die Leute,
                      die da sind, und sieht, wer von ihnen noch nichts gebucht
                      hat. Abgesagte sind gedämpft und stehen unten. -->
-                <tr v-for="m in matrix.mitglieder" :key="m.mitglied_id"
+                <tr v-for="m in matrixZeilen" :key="m.mitglied_id"
                   :class="{ 'tt-matrix__abgesagt': m.antwort === 'ab' }">
                   <th class="tt-matrix__name">
                     <div class="row items-center no-wrap">
@@ -1566,6 +1578,35 @@ function zelle(mitgliedId, artikelId) {
   return matrix.value?.zellen?.[`${mitgliedId}:${artikelId}`] || { anzahl: 0 }
 }
 
+// Filter „Nur ohne Tresen-Buchung": Wer bei diesem Termin noch keinen Strich
+// auf einen Tresen-Artikel hat. Wart-Artikel wie „Wäsche" zählen nicht — die
+// trägt der Wart ohnehin nach dem Spiel für alle ein.
+const nurOhneTresen = ref(false)
+// Wem der Wart bei aktivem Filter selbst etwas bucht, der bleibt stehen, bis
+// Filter oder Termin wechseln. Sonst verschwände die Zeile beim ersten Tipp,
+// und ein zweiter Strich oder das Zurücknehmen wären nicht mehr erreichbar.
+const ohneTresenBehalten = ref(new Set())
+
+function tresenStriche(m) {
+  return (matrix.value?.artikel || [])
+    .filter(a => !a.nur_wart)
+    .reduce((n, a) => n + (zelle(m.mitglied_id, a.id).anzahl || 0), 0)
+}
+
+const ohneTresen = computed(() =>
+  (matrix.value?.mitglieder || []).filter(m => tresenStriche(m) === 0))
+// Getrennt gezählt: Wer zugesagt hat, ist wahrscheinlich da und hat bloß noch
+// nicht getippt — die übrigen waren womöglich gar nicht beim Termin.
+const ohneTresenZugesagt = computed(() =>
+  ohneTresen.value.filter(m => m.antwort === 'zu').length)
+
+const matrixZeilen = computed(() => {
+  const alle = matrix.value?.mitglieder || []
+  if (!nurOhneTresen.value) return alle
+  return alle.filter(m => tresenStriche(m) === 0
+    || ohneTresenBehalten.value.has(m.mitglied_id))
+})
+
 // ------------------------------------------------ Zeitraum des Katalogs (#167)
 // Auswahl: „Aktuell" plus die Spieltage. Ein Punkt markiert die Spieltage, für
 // die schon ein eigener Stand hinterlegt ist.
@@ -1674,6 +1715,7 @@ async function loadAuswertung() {
 }
 
 async function matrixBuchen(mitglied, artikel) {
+  if (nurOhneTresen.value) ohneTresenBehalten.value.add(mitglied.mitglied_id)
   saving.value = true
   try {
     await api.post(`${BASE}/${deckel.value.id}/konsum`, {
@@ -1786,6 +1828,7 @@ watch(stornosZeigen, loadAlleBuchungen)  // #127: Ein-/Ausblenden neu laden
 watch(historyMitglied, loadAlleBuchungen)  // #129: Mitglieder-Filter neu laden
 watch(historySuche, loadAlleBuchungen)     // #129: Volltextsuche (Input debounced)
 watch(buchenTermin, loadMatrix)                            // #167
+watch([nurOhneTresen, buchenTermin], () => ohneTresenBehalten.value.clear())
 watch(auswTermin, loadAuswertung)                          // #167
 
 // #129: Klick auf ein Mitglied in der Mannschaftsliste → gefilterte History
