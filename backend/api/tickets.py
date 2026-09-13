@@ -484,6 +484,8 @@ def list_tickets(
     # Ungelesen-Markierung (#179): EIN Roundtrip für die ganze Liste statt einer
     # Abfrage je Zeile – die Liste ist der heißeste Pfad des Ticketbereichs.
     ungelesen = db.tickets.ids_ungelesen(user)
+    # Mitkommentiert (#206): zählt im Filter „Nur meine" – ebenfalls ein Roundtrip.
+    kommentiert = db.tickets.ids_kommentiert(user.id)
 
     result = []
     for t in tickets:
@@ -492,6 +494,7 @@ def list_tickets(
         d['zugewiesen_an_username'] = user_lookup.get(t.zugewiesen_an) if t.zugewiesen_an else None
         d['bereich_name'] = bereiche_lookup.get(t.bereich_id) if t.bereich_id else None
         d['ungelesen'] = t.id in ungelesen
+        d['kommentiert'] = t.id in kommentiert
         result.append(d)
     return result
 
@@ -771,6 +774,11 @@ def list_kommentare(ticket_id: int, user: CurrentUser, db: DB):
 @router.post("/{ticket_id}/kommentare", status_code=201)
 def create_kommentar(ticket_id: int, data: KommentarWrite, user: CurrentUser, db: DB):
     ticket = _get_ticket_or_404(ticket_id, db)
+    # Wer kommentiert, wird ab da über das Ticket benachrichtigt (#206) – ohne
+    # diese Prüfung könnte sich jeder per Kommentar in ein internes Ticket
+    # einschreiben und es über die Meldungen mitlesen.
+    if not _can_read(ticket, user, db):
+        raise HTTPException(status_code=403, detail="Kein Lesezugriff auf dieses Ticket.")
     if ticket.status in ('erledigt', 'abgelehnt'):
         raise HTTPException(status_code=403, detail="Kommentare zu abgeschlossenen Tickets sind nicht möglich.")
     if data.sichtbarkeit == 'intern' and not _can_change_status(ticket, user, db):

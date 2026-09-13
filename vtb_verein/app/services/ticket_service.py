@@ -116,7 +116,8 @@ class TicketService:
         return self._berechtigung_repo.list_user_ids_bearbeiten_oder_schliessen(bereich_id)
 
     def _ticket_empfaenger(self, ticket: Ticket) -> list[int]:
-        """Ersteller + Zugewiesener + Teilnehmer + Bereich-User (bearbeiten/schliessen)."""
+        """Ersteller + Zugewiesener + Teilnehmer + Kommentatoren + Bereich-User
+        (bearbeiten/schliessen)."""
         ids = []
         if ticket.gemeldet_von:
             ids.append(ticket.gemeldet_von)
@@ -124,8 +125,33 @@ class TicketService:
             ids.append(ticket.zugewiesen_an)
         for t in self._teilnehmer_repo.list_by_ticket(ticket.id):
             ids.append(t.user_id)
+        ids += self._kommentator_ids(ticket)
         ids += self._bereich_user_ids(ticket.bereich_id)
         return ids
+
+    def _kommentator_ids(self, ticket: Ticket) -> list[int]:
+        """Wer mitkommentiert hat, bleibt auf dem Laufenden (#206).
+
+        Abgeleitet aus den Kommentaren statt als eigene Teilnahme gespeichert –
+        so zählen auch Kommentare von vor der Einführung, ohne Nachtrag. Bei einem
+        internen Ticket (#178) nur, wer es weiterhin lesen darf: Wer seither sein
+        Bereichsrecht verloren hat, liest sonst über die Meldungen weiter mit.
+        """
+        ids = self._kommentar_repo.list_autor_ids(ticket.id)
+        if not ticket.intern:
+            return ids
+        return [uid for uid in ids if self._darf_internes_ticket_lesen(ticket, uid)]
+
+    def _darf_internes_ticket_lesen(self, ticket: Ticket, user_id: int) -> bool:
+        """Leserecht an einem internen Ticket – Gegenstück zu ``_can_read`` im
+        API-Router (backend/api/tickets.py), dort mit geladenem User-Objekt."""
+        if user_id in (ticket.gemeldet_von, ticket.zugewiesen_an):
+            return True
+        if ticket.bereich_id and self._berechtigung_repo.user_hat_bereichsrecht(
+                ticket.bereich_id, user_id):
+            return True
+        user = self._user_repo.get_by_id(user_id)
+        return bool(user and user.role == 'admin')
 
     def _actor_id(self, username: str) -> Optional[int]:
         """Konvertiert Username-String in User-ID für Ausschluss-Logik."""
@@ -170,6 +196,11 @@ class TicketService:
                     for b in self._berechtigung_repo.list_berechtigungen_fuer_user(user.id)
                     if b.get("darf_bearbeiten") or b.get("darf_schliessen")]
         return self._ticket_repo.ids_ungelesen_fuer(user.id, bereiche)
+
+    def ids_kommentiert(self, user_id: int) -> set[int]:
+        """Tickets, an denen dieser Benutzer mitkommentiert hat – sie zählen im
+        Listenfilter „Nur meine" mit (#206)."""
+        return self._kommentar_repo.ticket_ids_mit_kommentar_von(user_id)
 
     def list_unbeachtet(self) -> list[Ticket]:
         """Offene Tickets, die noch KEIN Verantwortlicher geöffnet hat (#179).

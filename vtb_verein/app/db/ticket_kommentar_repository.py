@@ -44,6 +44,25 @@ class TicketKommentarRepository:
             )
         return [self._map(row) for row in cursor.fetchall()]
 
+    def list_autor_ids(self, ticket_id: int) -> list[int]:
+        """Wer hat an diesem Ticket mitgeschrieben? Gelöschte Kommentare zählen
+        nicht – wer seinen einzigen Beitrag zurückzieht, ist wieder raus (#206)."""
+        cursor = self.conn.execute(
+            "SELECT DISTINCT autor_id FROM ticket_kommentare "
+            "WHERE ticket_id = %s AND autor_id IS NOT NULL AND deleted_at IS NULL",
+            (ticket_id,)
+        )
+        return [row['autor_id'] for row in cursor.fetchall()]
+
+    def ticket_ids_mit_kommentar_von(self, autor_id: int) -> set[int]:
+        """Tickets, an denen dieser Benutzer (noch sichtbar) kommentiert hat (#206)."""
+        cursor = self.conn.execute(
+            "SELECT DISTINCT ticket_id FROM ticket_kommentare "
+            "WHERE autor_id = %s AND deleted_at IS NULL",
+            (autor_id,)
+        )
+        return {row['ticket_id'] for row in cursor.fetchall()}
+
     def create(self, kommentar: TicketKommentar, created_by: str) -> TicketKommentar:
         cursor = self.conn.execute(
             "INSERT INTO ticket_kommentare "

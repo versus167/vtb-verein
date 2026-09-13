@@ -68,6 +68,9 @@ class _FakeTicketService:
     def ids_ungelesen(self, user):
         return set()          # Ungelesen-Markierung (#179) – hier nicht Gegenstand
 
+    def ids_kommentiert(self, user_id):
+        return set()          # Mitkommentiert (#206) – hier nicht Gegenstand
+
     def get_bereiche(self):
         return [TicketBereich(id=BEREICH, name="Bereich")]
 
