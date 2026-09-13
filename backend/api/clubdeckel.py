@@ -656,10 +656,10 @@ def _stand_termin(db: DB, deckel, ab_termin_id: Optional[int]) -> Optional[int]:
     return termin.id
 
 
-# Reihenfolge der Matrix-Zeilen nach Zusage: zugesagt zuerst, abgesagt zuletzt.
-# `sort` ist stabil, die alphabetische Sortierung bleibt innerhalb der Gruppen
-# also erhalten.
-_ZUSAGE_RANG = {'zu': 0, 'vielleicht': 1, None: 1, 'ab': 2}
+# Reihenfolge der Matrix-Zeilen nach Zusage: zugesagt, vielleicht, ohne Antwort,
+# abgesagt (#205). `sort` ist stabil, die alphabetische Sortierung bleibt
+# innerhalb der Gruppen also erhalten.
+_ZUSAGE_RANG = {'zu': 0, 'vielleicht': 1, None: 2, 'ab': 3}
 
 
 def _matrix_kader(db: DB, deckel, termin_id: Optional[int]) -> list[dict]:
@@ -1294,9 +1294,9 @@ def get_matrix(deckel_id: int, user: CurrentUser, db: DB,
                        "anzahl": eintrag['anzahl'] if eintrag else 0,
                        "betrag": eintrag['betrag'] if eintrag else Decimal("0.00")})
     # Zusagen zuerst: Der Wart sucht am Tresen die Leute, die da sind — und
-    # sieht auf einen Blick, wer von ihnen noch nichts gebucht hat. Abgesagte
-    # rutschen ans Ende, offene dazwischen.
-    zeilen.sort(key=lambda z: _ZUSAGE_RANG.get(z['antwort'], 1))
+    # sieht auf einen Blick, wer von ihnen noch nichts gebucht hat. Danach wie
+    # im Termin-Kader: vielleicht, ohne Antwort, abgesagt ganz unten.
+    zeilen.sort(key=lambda z: _ZUSAGE_RANG.get(z['antwort'], 2))
     _mit_spitznamen(list(gebucht.values()), _spitznamen(db, deckel),
                     voll_feld='mitglied_voller_name')
     for rest in sorted(gebucht.values(), key=lambda x: x['mitglied_name'].lower()):
