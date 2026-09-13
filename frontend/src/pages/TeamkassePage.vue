@@ -1985,13 +1985,14 @@ function toggleArtikelAktivStand(a, v) {
 /** Wurde beim gewählten Spieltag schon gebucht? Dann fragen, ob die vorhandenen
  *  Striche mit umgestellt werden sollen (#167) — der klassische Fall „zu spät
  *  eingetragen, es wurde schon getippt". Ohne Buchungen keine Rückfrage.
- *  Liefert `null`, wenn der Nutzer abbricht. */
-async function _uebernahmeFrage() {
+ *  `bezug` ist `{ gruppe_id }` oder `{ artikel_id }`: Gezählt wird dann genau,
+ *  was das Speichern umstellen würde. Liefert `null`, wenn der Nutzer abbricht. */
+async function _uebernahmeFrage(bezug) {
   if (!katalogTermin.value) return false
   let stand
   try {
     const { data } = await api.get(`${BASE}/${deckel.value.id}/sortiment-status`,
-      { params: { termin_id: katalogTermin.value } })
+      { params: { termin_id: katalogTermin.value, ...bezug } })
     stand = data
   } catch { return false }
   if (!stand.buchungen) return false
@@ -2017,7 +2018,7 @@ async function _uebernahmeFrage() {
 }
 
 async function _saveArtikelStand(a, patch) {
-  const uebernehmen = await _uebernahmeFrage()
+  const uebernehmen = await _uebernahmeFrage({ artikel_id: a.id })
   if (uebernehmen === null) { loadKatalog(); return }
   saving.value = true
   try {
@@ -2028,7 +2029,7 @@ async function _saveArtikelStand(a, patch) {
       bestand_uebernehmen: uebernehmen,
       ...patch,
     })
-    _meldeUmstellung(data)
+    _meldeUmstellung(data, uebernehmen)
     await Promise.all([loadKatalog(), loadDeckel()])
   } catch (e) {
     fehler(e, 'Speichern fehlgeschlagen')
@@ -2038,10 +2039,14 @@ async function _saveArtikelStand(a, patch) {
   }
 }
 
-function _meldeUmstellung(data) {
+function _meldeUmstellung(data, uebernehmen) {
   if (data?.umgestellt) {
     $q.notify({ type: 'positive', timeout: 2500,
       message: `${data.umgestellt} bestehende Buchung(en) umgestellt` })
+  } else if (uebernehmen) {
+    // Umstellen war gewünscht, hat aber nichts getroffen — nicht still schlucken.
+    $q.notify({ type: 'warning', timeout: 4000,
+      message: 'Gespeichert, aber keine bestehende Buchung umgestellt' })
   }
 }
 
@@ -2074,7 +2079,7 @@ async function saveStand() {
     dialogError.value = 'Name ist erforderlich.'
     return
   }
-  const uebernehmen = await _uebernahmeFrage()
+  const uebernehmen = await _uebernahmeFrage({ gruppe_id: g.id })
   if (uebernehmen === null) return
   saving.value = true
   dialogError.value = ''
@@ -2085,7 +2090,7 @@ async function saveStand() {
       ab_termin_id: katalogTermin.value ?? null, expected_version: g.version,
       bestand_uebernehmen: uebernehmen,
     })
-    _meldeUmstellung(data)
+    _meldeUmstellung(data, uebernehmen)
     standDialog.value = false
     await Promise.all([loadKatalog(), loadDeckel()])
   } catch (e) {

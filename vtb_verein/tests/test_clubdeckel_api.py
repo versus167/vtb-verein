@@ -185,6 +185,7 @@ def _db(kader='mitglied', wart=False):
                 'gesamt': Decimal('0')},
             # Umstellen auf einen neuen Sortiments-Stand (#167, v100)
             konsum_je_artikel=lambda did, tid, aids: [],
+            konsum_der_gruppe=lambda did, tid, stamm: [],
             zaehle_konsum_fuer_termin=lambda did, tid: {
                 'anzahl': 0, 'betrag': Decimal('0')},
         ),
@@ -1282,22 +1283,48 @@ def test_sortiment_status_ohne_termin_ist_leer():
 
 
 def test_sortiment_status_reicht_den_termin_durch():
+    """Der Katalog liest `buchungen` — mit und ohne Termin derselbe Schlüssel.
+    Lieferte der Endpunkt hier `anzahl`, käme die Rückfrage nie."""
     db = _db(wart=True)
     gesehen = {}
     db.clubdeckel_buchungen.zaehle_konsum_fuer_termin = (
         lambda did, tid: gesehen.update(tid=tid) or {"anzahl": 3, "betrag": Decimal('4.50')})
 
-    assert api.sortiment_status(7, _USER, db, termin_id=55)['anzahl'] == 3
+    assert api.sortiment_status(7, _USER, db, termin_id=55) == {
+        "buchungen": 3, "betrag": Decimal('4.50')}
     assert gesehen == {"tid": 55}
+
+
+def _strich(id=100, artikel_id=21, bezeichnung='Bier', menge=2, betrag='-3.00'):
+    """Konsum-Strich wie aus konsum_der_gruppe."""
+    return {"id": id, "mitglied_id": 11, "artikel_id": artikel_id, "menge": menge,
+            "betrag": Decimal(betrag), "created_at": '2026-08-16T15:30',
+            "artikel_bezeichnung": bezeichnung}
+
+
+def test_sortiment_status_zaehlt_was_die_gruppe_umstellen_wuerde():
+    """Gezählt wird, was das Speichern tatsächlich umstellt: Striche am Stand
+    und solche an einer älteren Generation, die über den Namen zu ihm finden —
+    nicht aber ein Strich, dessen Artikel es im Stand nicht mehr gibt."""
+    db = _db(wart=True)
+    gesehen = {}
+    db.clubdeckel_buchungen.konsum_der_gruppe = (
+        lambda did, tid, stamm: gesehen.update(tid=tid, stamm=stamm) or [
+            _strich(id=1, artikel_id=21),
+            _strich(id=2, artikel_id=20, betrag='-1.50'),        # ältere Generation
+            _strich(id=3, artikel_id=19, bezeichnung='Wein')])   # gibt es nicht mehr
+
+    stand = api.sortiment_status(7, _USER, db, termin_id=55, gruppe_id=31)
+
+    assert stand == {"buchungen": 2, "betrag": Decimal('4.50')}
+    assert gesehen == {"tid": 55, "stamm": 31}
 
 
 def _uebernahme_db():
     """Wart-DB mit einer bestehenden Buchung beim Ziel-Termin."""
     db = _db(wart=True)
     db.termine.get_laufenden = lambda mid, jetzt=None: _termin(id=55)
-    db.clubdeckel_buchungen.konsum_je_artikel = lambda did, tid, aids: [
-        {"id": 100, "mitglied_id": 11, "artikel_id": 21, "menge": 2,
-         "created_at": '2026-08-16T15:30'}]
+    db.clubdeckel_buchungen.konsum_der_gruppe = lambda did, tid, stamm: [_strich()]
     return db
 
 
@@ -1360,6 +1387,51 @@ def test_verkaeuferwechsel_am_bestehenden_stand_stellt_um():
         expected_version=1), _USER, db)
 
     assert storniert == [100] and gebucht == [42]
+    assert ergebnis['umgestellt'] == 1
+
+
+def test_verkaeuferwechsel_holt_striche_der_aelteren_generation_mit():
+    """Der Wäsche-Fall: Gebucht wurde am geerbten Stand, dann entstand für den
+    Spieltag ein eigener — ohne Umstellen. Die Striche zeigen noch auf den
+    Artikel der älteren Generation (20) und müssen trotzdem gefunden werden."""
+    db = _uebernahme_db()
+    db.clubdeckel_gruppen.get = lambda gid: _gruppe(id=gid, gilt_ab_termin_id=55)
+    db.clubdeckel_buchungen.konsum_der_gruppe = (
+        lambda did, tid, stamm: [_strich(artikel_id=20)])
+    db.clubdeckel_artikel.get_mit_verkaeufer = lambda aid: _artikel_mv(
+        id=aid, verkaeufer_mitglied_id=42)
+    storniert, gebucht = [], []
+    db.clubdeckel_buchungen.storno = lambda bid, by: storniert.append(bid) or True
+    db.clubdeckel_buchungen.create_konsum = (
+        lambda did, mid, aid, aname, menge, preis, verk, by, termin_id=None,
+        wert_datum=None: gebucht.append((aid, verk)) or _buchung())
+
+    ergebnis = api.update_gruppe(7, 31, api.GruppeUpdate(
+        name='Getränke', verkaeufer_mitglied_id=42, bestand_uebernehmen=True,
+        expected_version=1), _USER, db)
+
+    assert storniert == [100] and gebucht == [(21, 42)]
+    assert ergebnis['umgestellt'] == 1
+
+
+def test_artikel_am_eigenen_stand_stellt_nur_seine_striche_um():
+    """Hat der Spieltag schon einen eigenen Stand, wird der Artikel an Ort und
+    Stelle geändert — die Striche der übrigen Artikel bleiben unberührt."""
+    db = _uebernahme_db()
+    db.clubdeckel_gruppen.get = lambda gid: _gruppe(id=gid, gilt_ab_termin_id=55)
+    db.clubdeckel_artikel.list_fuer_gruppen = lambda gids, nur_aktive=False: [
+        _artikel_mv(id=21, name='Bier'), _artikel_mv(id=22, name='Cola')]
+    db.clubdeckel_buchungen.konsum_der_gruppe = lambda did, tid, stamm: [
+        _strich(id=100, artikel_id=21), _strich(id=101, artikel_id=22,
+                                                bezeichnung='Cola')]
+    storniert = []
+    db.clubdeckel_buchungen.storno = lambda bid, by: storniert.append(bid) or True
+
+    ergebnis = api.update_artikel(7, 21, api.ArtikelUpdate(
+        name='Bier', preis=2.0, gruppe_id=31, ab_termin_id=55,
+        bestand_uebernehmen=True, expected_version=1), _USER, db)
+
+    assert storniert == [100]
     assert ergebnis['umgestellt'] == 1
 
 
