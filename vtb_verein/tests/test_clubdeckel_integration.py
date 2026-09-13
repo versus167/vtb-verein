@@ -1350,6 +1350,50 @@ def test_ersatzbuchung_behaelt_die_uhrzeit(db):
     assert str(neu.created_at) == str(alt['created_at'])
 
 
+def test_verkaeuferwechsel_stellt_striche_eines_aelteren_standes_um(db):
+    """Der Wäsche-Fall über die API: Beim Spiel galt noch der geerbte Stand mit
+    dem falschen Verkäufer. Wird für das Spiel erst ein eigener Stand angelegt,
+    ohne umzustellen, hängen die Striche an der älteren Generation — eine
+    zweite Änderung mit Umstellen muss sie trotzdem finden."""
+    from types import SimpleNamespace
+    from backend.api import clubdeckel as api
+    admin = SimpleNamespace(id=1, username='admin', role='admin',
+                            has_permission=lambda p: True)
+    man = _make_mannschaft(db)
+    _, anna = _make_kader_user(db, man, 'spieler', 'Anna')
+    _, falsch = _make_kader_user(db, man, 'spieler', 'Bernd')
+    _, richtig = _make_kader_user(db, man, 'spieler', 'Clara')
+    deckel = db.clubdeckel.create(man, 'Kasse', 't')
+    spiel = _make_termin(db, man, _wandzeit(-30), _wandzeit(60), typ='spiel')
+    g = db.clubdeckel_gruppen.create(deckel.id, 'Wäsche', falsch, 1, 0, 't')
+    waesche = db.clubdeckel_artikel.create(deckel.id, g.id, 'Wäsche', Decimal('2.00'),
+                                           1, 0, 't', nur_wart=1)
+    db.clubdeckel_buchungen.create_konsum(
+        deckel.id, anna, waesche.id, 'Wäsche', 1, Decimal('2.00'), falsch, 't',
+        termin_id=spiel)
+    eigener = api.update_gruppe(deckel.id, g.id, api.GruppeUpdate(
+        name='Wäsche', verkaeufer_mitglied_id=richtig, ab_termin_id=spiel,
+        expected_version=g.version), admin, db)
+    assert eigener['id'] != g.id          # neue Generation, Strich blieb an der alten
+    assert _saldo(db, deckel.id, falsch) == Decimal('2.00')
+
+    stand = api.sortiment_status(deckel.id, admin, db, termin_id=spiel,
+                                 gruppe_id=eigener['id'])
+    ergebnis = api.update_gruppe(deckel.id, eigener['id'], api.GruppeUpdate(
+        name='Wäsche', verkaeufer_mitglied_id=richtig, ab_termin_id=spiel,
+        bestand_uebernehmen=True, expected_version=eigener['version']), admin, db)
+
+    assert stand['buchungen'] == 1 and stand['betrag'] == Decimal('2.00')
+    assert ergebnis['umgestellt'] == 1
+    assert _saldo(db, deckel.id, anna) == Decimal('-2.00')
+    assert _saldo(db, deckel.id, falsch) == Decimal('0')
+    assert _saldo(db, deckel.id, richtig) == Decimal('2.00')
+    # Der Ersatzstrich hängt am Artikel des gültigen Standes.
+    offen = db.clubdeckel_buchungen.konsum_der_gruppe(deckel.id, spiel, g.id)
+    assert [b['artikel_id'] for b in offen] == [
+        a['id'] for a in db.clubdeckel_artikel.list_fuer_gruppen([eigener['id']])]
+
+
 # ------------------------------------------------------------ Sammlungen (#181)
 def _saldo(db, deckel_id, mitglied_id):
     return db.clubdeckel_buchungen.saldo_for_mitglied(deckel_id, mitglied_id)

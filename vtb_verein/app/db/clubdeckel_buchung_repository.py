@@ -263,12 +263,38 @@ class ClubdeckelBuchungRepository(BaseRepository):
             return []
         with self.cursor() as cur:
             cur.execute(
-                "SELECT id, mitglied_id, artikel_id, menge, created_at "
+                "SELECT id, mitglied_id, artikel_id, menge, betrag, created_at "
                 "FROM clubdeckel_buchung "
                 "WHERE deckel_id = %s AND termin_id = %s AND typ = 'konsum' "
                 "  AND deleted_at IS NULL AND artikel_id = ANY(%s) "
                 "ORDER BY created_at, id",
                 (deckel_id, termin_id, list(artikel_ids)),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    def konsum_der_gruppe(self, deckel_id: int, termin_id: int,
+                          stamm_id: int) -> list[dict]:
+        """Aktive Konsum-Buchungen eines Termins auf Artikel IRGENDEINER
+        Generation einer Gruppe (#167) — nicht nur des gerade gültigen Standes.
+
+        Ein Strich hängt am Stand, der beim Buchen galt. Ist für den Termin
+        seither ein eigener Stand entstanden, ohne dass umgestellt wurde, zeigen
+        die Striche noch auf die Artikel der älteren Generation. `artikel_bezeichnung`
+        ist deshalb der HEUTIGE Name dieses Artikels (nicht der Buchungs-Snapshot):
+        Über ihn findet der Aufrufer die Kopie im gültigen Stand, denn die Kopie
+        trägt den Namen ihres Originals.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT b.id, b.mitglied_id, b.artikel_id, b.menge, b.betrag, "
+                "       b.created_at, a.name AS artikel_bezeichnung "
+                "FROM clubdeckel_buchung b "
+                "JOIN clubdeckel_artikel a ON a.id = b.artikel_id "
+                "JOIN clubdeckel_gruppe g ON g.id = a.gruppe_id "
+                "WHERE b.deckel_id = %s AND b.termin_id = %s AND b.typ = 'konsum' "
+                "  AND b.deleted_at IS NULL AND COALESCE(g.stamm_id, g.id) = %s "
+                "ORDER BY b.created_at, b.id",
+                (deckel_id, termin_id, stamm_id),
             )
             return [dict(r) for r in cur.fetchall()]
 

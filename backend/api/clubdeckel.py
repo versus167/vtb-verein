@@ -515,6 +515,9 @@ def update_gruppe(deckel_id: int, gruppe_id: int, data: GruppeUpdate,
     alt = _gruppe_im_deckel(db, deckel_id, gruppe_id)
     name = _validate_gruppe(db, deckel, data)
     ab_termin = _stand_termin(db, deckel, data.ab_termin_id)
+    # Vor der Änderung ermitteln — danach gibt es den angezeigten Stand so nicht mehr.
+    striche = (_umzustellende_striche(db, deckel_id, ab_termin, alt)
+               if data.bestand_uebernehmen else [])
     if ab_termin == alt.gilt_ab_termin_id:
         # Derselbe Spieltag: den vorhandenen Stand bearbeiten, keine Generation.
         if not db.clubdeckel_gruppen.update(gruppe_id, name,
@@ -525,9 +528,8 @@ def update_gruppe(deckel_id: int, gruppe_id: int, data: GruppeUpdate,
                                 "Die Gruppe wurde zwischenzeitlich geändert")
         # Auch hier kann es etwas umzustellen geben: Ein geänderter VERKÄUFER
         # verschiebt die Gegenbuchung, und die hängt an jedem einzelnen Strich.
-        umgestellt = (_bestand_uebernehmen(
-            db, deckel_id, ab_termin, _eigene_abbildung(db, gruppe_id),
-            user.username) if data.bestand_uebernehmen else 0)
+        umgestellt = _bestand_uebernehmen(db, deckel_id, ab_termin, striche,
+                                          None, user.username)
         return {**asdict(db.clubdeckel_gruppen.get(gruppe_id)),
                 "umgestellt": umgestellt}
     ergebnis = db.clubdeckel_gruppen.neue_generation(
@@ -536,9 +538,8 @@ def update_gruppe(deckel_id: int, gruppe_id: int, data: GruppeUpdate,
     if ergebnis is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Gruppe nicht gefunden")
     neue_gruppe_id, abbildung = ergebnis
-    umgestellt = (_bestand_uebernehmen(db, deckel_id, ab_termin, abbildung,
-                                       user.username)
-                  if data.bestand_uebernehmen else 0)
+    umgestellt = _bestand_uebernehmen(db, deckel_id, ab_termin, striche,
+                                      abbildung, user.username)
     return {**asdict(db.clubdeckel_gruppen.get(neue_gruppe_id)),
             "umgestellt": umgestellt}
 
@@ -655,13 +656,6 @@ def _stand_termin(db: DB, deckel, ab_termin_id: Optional[int]) -> Optional[int]:
     return termin.id
 
 
-def _eigene_abbildung(db: DB, gruppe_id: int) -> dict:
-    """Artikel einer Gruppe auf sich selbst abgebildet — für das Umstellen an
-    einem BESTEHENDEN Stand, wo keine Kopien entstehen."""
-    return {a['id']: a['id']
-            for a in db.clubdeckel_artikel.list_fuer_gruppen([gruppe_id])}
-
-
 # Reihenfolge der Matrix-Zeilen nach Zusage: zugesagt zuerst, abgesagt zuletzt.
 # `sort` ist stabil, die alphabetische Sortierung bleibt innerhalb der Gruppen
 # also erhalten.
@@ -682,8 +676,65 @@ def _matrix_kader(db: DB, deckel, termin_id: Optional[int]) -> list[dict]:
                            voll_feld='voller_name')
 
 
+def _nur_artikel(gruppe, termin_id: Optional[int], artikel_id: int) -> Optional[int]:
+    """Betrifft eine Artikel-Änderung nur die Striche DIESES Artikels (#167)?
+
+    Nur, wenn der Spieltag schon einen eigenen Stand hat — dann wird der Artikel
+    an Ort und Stelle geändert. Ist der Stand bloß geerbt, entsteht eine neue
+    Generation der ganzen Gruppe; dann gehören alle Striche der Gruppe mit auf
+    den neuen Stand, sonst stünden sie in der Matrix als zweite Spalte daneben."""
+    if gruppe is None or gruppe.gilt_ab_termin_id == termin_id:
+        return artikel_id
+    return None
+
+
+def _umzustellende_striche(db: DB, deckel_id: int, termin_id: Optional[int],
+                           gruppe, artikel_id: Optional[int] = None) -> list[dict]:
+    """Welche schon gebuchten Striche eines Spieltags eine Änderung am Stand
+    betrifft (#167). Einzige Quelle für die Rückfrage (sortiment-status) UND das
+    Umstellen — sonst fragte die Oberfläche nach Strichen, die dann gar nicht
+    umgestellt werden, oder umgekehrt.
+
+    `gruppe` ist der angezeigte Stand VOR der Änderung; `stand_artikel_id` an
+    jedem Strich nennt den Artikel dieses Standes, zu dem er gehört. Gesucht wird
+    über alle Generationen der Gruppe: Wurde für den Spieltag schon einmal ein
+    eigener Stand angelegt, ohne umzustellen, hängen die Striche noch an den
+    Artikeln der älteren Generation. Die finden über die Bezeichnung zu ihrer
+    Kopie — eine andere Verbindung zwischen den Generationen gibt es nicht.
+    Passt keine (umbenannt, gelöscht, doppelt vergeben), bleibt der Strich, wo er
+    ist: Man kann nicht auf ein Produkt umbuchen, das es so nicht mehr gibt.
+    """
+    if termin_id is None:
+        return []
+    if gruppe is None:
+        # Artikel ohne Gruppe hat keine Generationen — es gibt nur ihn selbst.
+        return [dict(b, stand_artikel_id=b['artikel_id'])
+                for b in db.clubdeckel_buchungen.konsum_je_artikel(
+                    deckel_id, termin_id, [artikel_id])]
+    stand = {a['id']: a['name']
+             for a in db.clubdeckel_artikel.list_fuer_gruppen([gruppe.id])}
+    je_name: dict[str, list[int]] = {}
+    for aid, name in stand.items():
+        je_name.setdefault(name, []).append(aid)
+    striche = []
+    for b in db.clubdeckel_buchungen.konsum_der_gruppe(
+            deckel_id, termin_id, gruppe.stamm_id or gruppe.id):
+        if b['artikel_id'] in stand:
+            ziel = b['artikel_id']
+        else:
+            treffer = je_name.get(b['artikel_bezeichnung'], [])
+            if len(treffer) != 1:
+                continue
+            ziel = treffer[0]
+        if artikel_id is not None and ziel != artikel_id:
+            continue
+        striche.append(dict(b, stand_artikel_id=ziel))
+    return striche
+
+
 def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
-                         abbildung: dict, benutzer: str) -> int:
+                         striche: list[dict], abbildung: Optional[dict],
+                         benutzer: str) -> int:
     """Schon gebuchte Striche dieses Spieltags auf den neuen Stand umstellen (#167).
 
     Umgesetzt als STORNO + Neubuchung gegen den neuen Artikel, nicht als
@@ -695,18 +746,18 @@ def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
     stornierten Zeilen nachvollziehbar, und die Ersatzbuchung übernimmt die
     Uhrzeit der ursprünglichen.
 
-    Artikel, die es im neuen Stand nicht mehr gibt (gelöscht), stehen NICHT in
-    der Abbildung — ihre Buchungen bleiben unangetastet. Etwas anderes ginge
-    auch nicht: Man kann einen Strich nicht auf ein Produkt umbuchen, das es
-    nicht mehr gibt.
+    `striche` kommen aus _umzustellende_striche (vor der Änderung ermittelt).
+    `abbildung` führt vom alten Stand auf die neue Generation; None heißt, der
+    Stand wurde an Ort und Stelle geändert und die Artikel-ids bleiben. Artikel,
+    die es in der neuen Generation nicht gibt, stehen nicht in der Abbildung —
+    ihre Striche bleiben unangetastet.
     """
-    if termin_id is None or not abbildung:
+    if termin_id is None:
         return 0
-    alte = db.clubdeckel_buchungen.konsum_je_artikel(
-        deckel_id, termin_id, list(abbildung.keys()))
     umgestellt = 0
-    for b in alte:
-        neu_id = abbildung.get(b['artikel_id'])
+    for b in striche:
+        neu_id = (b['stand_artikel_id'] if abbildung is None
+                  else abbildung.get(b['stand_artikel_id']))
         if neu_id is None:
             continue
         # Kein Überspringen bei neu_id == alt: Wird ein BESTEHENDER Stand
@@ -727,14 +778,33 @@ def _bestand_uebernehmen(db: DB, deckel_id: int, termin_id: Optional[int],
 
 @router.get("/{deckel_id}/sortiment-status")
 def sortiment_status(deckel_id: int, user: CurrentUser, db: DB,
-                     termin_id: Optional[int] = None):
+                     termin_id: Optional[int] = None,
+                     gruppe_id: Optional[int] = None,
+                     artikel_id: Optional[int] = None):
     """Wurde bei diesem Spieltag schon gebucht (#167)? Der Katalog fragt das,
     bevor er einen Stand ändert — die Rückfrage „bestehende Striche umstellen?"
-    soll nur kommen, wenn es wirklich etwas umzustellen gibt."""
+    soll nur kommen, wenn es wirklich etwas umzustellen gibt.
+
+    Mit `gruppe_id` bzw. `artikel_id` zählt genau das, was die Änderung daran
+    umstellen würde (dieselbe Auswahl wie beim Speichern). Ohne beides die
+    Striche des ganzen Spieltags."""
     _deckel_mit_stufe(db, user, deckel_id, 'wart')
     if termin_id is None:
         return {"buchungen": 0, "betrag": Decimal("0.00")}
-    return db.clubdeckel_buchungen.zaehle_konsum_fuer_termin(deckel_id, termin_id)
+    if artikel_id is None and gruppe_id is None:
+        stand = db.clubdeckel_buchungen.zaehle_konsum_fuer_termin(deckel_id, termin_id)
+        return {"buchungen": stand['anzahl'], "betrag": stand['betrag']}
+    if artikel_id is not None:
+        artikel = _artikel_im_deckel(db, deckel_id, artikel_id)
+        gruppe = (_gruppe_im_deckel(db, deckel_id, artikel.gruppe_id)
+                  if artikel.gruppe_id else None)
+        striche = _umzustellende_striche(db, deckel_id, termin_id, gruppe,
+                                         _nur_artikel(gruppe, termin_id, artikel_id))
+    else:
+        striche = _umzustellende_striche(db, deckel_id, termin_id,
+                                         _gruppe_im_deckel(db, deckel_id, gruppe_id))
+    return {"buchungen": len(striche),
+            "betrag": sum((-b['betrag'] for b in striche), Decimal("0.00"))}
 
 
 @router.post("/{deckel_id}/artikel", status_code=status.HTTP_201_CREATED)
@@ -771,8 +841,13 @@ def update_artikel(deckel_id: int, artikel_id: int, data: ArtikelUpdate,
     name, preis = _validate_artikel(db, deckel_id, data)
     gruppe = _gruppe_im_deckel(db, deckel_id, alt.gruppe_id) if alt.gruppe_id else None
     ab_termin = _stand_termin(db, deckel, data.ab_termin_id)
+    # Vor der Änderung ermitteln: Danach trägt der Artikel womöglich schon den
+    # neuen Namen, und ältere Generationen fänden nicht mehr zu ihm.
+    striche = (_umzustellende_striche(db, deckel_id, ab_termin, gruppe,
+                                      _nur_artikel(gruppe, ab_termin, artikel_id))
+               if data.bestand_uebernehmen else [])
     ziel_id, erwartete_version = artikel_id, data.expected_version
-    abbildung: dict = {}
+    abbildung: Optional[dict] = None
     if gruppe is not None and ab_termin != gruppe.gilt_ab_termin_id:
         ergebnis = db.clubdeckel_gruppen.neue_generation(
             gruppe.id, ab_termin, gruppe.name, gruppe.verkaeufer_mitglied_id,
@@ -790,15 +865,11 @@ def update_artikel(deckel_id: int, artikel_id: int, data: ArtikelUpdate,
                                         nur_wart=1 if data.nur_wart else 0):
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Der Artikel wurde zwischenzeitlich geändert")
-    # Ohne neue Generation (Änderung an einem bestehenden Stand) betrifft das
-    # Umstellen nur diesen einen Artikel — auf sich selbst abgebildet.
-    if not abbildung:
-        abbildung = {artikel_id: artikel_id}
     # Erst NACH dem Ändern umstellen: Sonst würden die Striche auf den noch
-    # unveränderten Artikel umgebucht und trügen weiter den alten Preis.
-    umgestellt = (_bestand_uebernehmen(db, deckel_id, ab_termin, abbildung,
-                                       user.username)
-                  if data.bestand_uebernehmen else 0)
+    # unveränderten Artikel umgebucht und trügen weiter den alten Preis. Ohne
+    # neue Generation (abbildung None) bleiben die Artikel-ids, wie sie sind.
+    umgestellt = _bestand_uebernehmen(db, deckel_id, ab_termin, striche,
+                                      abbildung, user.username)
     return {**asdict(db.clubdeckel_artikel.get(ziel_id)), "umgestellt": umgestellt}
 
 
