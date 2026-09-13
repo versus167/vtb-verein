@@ -1486,8 +1486,8 @@ def test_get_deckel_zaehlt_die_striche_des_laufenden_termins():
 
 # ------------- Reihenfolge der Matrix nach Zusage zum Termin (#167) ----------
 def test_matrix_stellt_zusagen_nach_oben():
-    """Der Wart sucht am Tresen die Leute, die da sind — zugesagt zuerst,
-    abgesagt zuletzt, alphabetisch innerhalb der Gruppen."""
+    """Der Wart sucht am Tresen die Leute, die da sind — zugesagt, vielleicht,
+    ohne Antwort, abgesagt (#205), alphabetisch innerhalb der Gruppen."""
     db = _db(wart=True)
     db.termin_zusagen.list_kader_with_zusage = lambda tid: [
         {"mitglied_id": 1, "name": 'Anna Abgesagt', "antwort": 'ab'},
@@ -1495,13 +1495,15 @@ def test_matrix_stellt_zusagen_nach_oben():
         {"mitglied_id": 3, "name": 'Clara Dabei', "antwort": 'zu'},
         {"mitglied_id": 4, "name": 'Dora Dabei', "antwort": 'zu'},
         {"mitglied_id": 5, "name": 'Emil Vielleicht', "antwort": 'vielleicht'},
+        {"mitglied_id": 6, "name": 'Fritz Offen', "antwort": None},
     ]
 
     result = api.get_matrix(7, _USER, db, termin_id=55)
 
     assert [m['name'] for m in result['mitglieder']] == [
         'Clara Dabei', 'Dora Dabei',            # zugesagt
-        'Bernd Offen', 'Emil Vielleicht',       # offen/vielleicht
+        'Emil Vielleicht',                      # vielleicht
+        'Bernd Offen', 'Fritz Offen',           # ohne Antwort
         'Anna Abgesagt',                        # abgesagt
     ]
     assert result['mitglieder'][0]['antwort'] == 'zu'

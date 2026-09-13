@@ -303,14 +303,25 @@
               <tbody>
                 <!-- Zugesagte stehen oben (#167): So findet der Wart die Leute,
                      die da sind, und sieht, wer von ihnen noch nichts gebucht
-                     hat. Abgesagte sind gedämpft und stehen unten. -->
+                     hat. Danach wie im Termin-Kader vielleicht, ohne Antwort,
+                     abgesagt — alle ohne Zusage gedämpft (#205). Wer nicht im
+                     Kader ist, steht nur wegen einer Buchung hier, war also da. -->
                 <tr v-for="m in matrixZeilen" :key="m.mitglied_id"
-                  :class="{ 'tt-matrix__abgesagt': m.antwort === 'ab' }">
+                  :class="{ 'tt-matrix__gedaempft': m.im_kader && m.antwort !== 'zu' }">
                   <th class="tt-matrix__name">
                     <div class="row items-center no-wrap">
                       <q-icon v-if="m.antwort === 'zu'" name="check_circle"
                         color="positive" size="14px" class="q-mr-xs">
                         <q-tooltip>Hat für diesen Termin zugesagt</q-tooltip>
+                      </q-icon>
+                      <!-- Symbole wie im Termin (ANTWORTEN aus useTermine) -->
+                      <q-icon v-else-if="m.antwort === 'vielleicht'" name="help"
+                        color="warning" size="14px" class="q-mr-xs">
+                        <q-tooltip>Hat mit „Vielleicht" geantwortet</q-tooltip>
+                      </q-icon>
+                      <q-icon v-else-if="m.antwort === 'ab'" name="thumb_down"
+                        color="negative" size="14px" class="q-mr-xs">
+                        <q-tooltip>Hat für diesen Termin abgesagt</q-tooltip>
                       </q-icon>
                       <div class="ellipsis">
                         {{ m.name }}
@@ -2679,8 +2690,8 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
 .tt-matrix__artikel {
   font-weight: 600;
 }
-// Abgesagte bleiben bedienbar (jemand kommt doch), treten aber zurück.
-.tt-matrix__abgesagt {
+// Wer nicht zugesagt hat, bleibt bedienbar (jemand kommt doch), tritt aber zurück.
+.tt-matrix__gedaempft {
   opacity: 0.55;
 }
 .tt-matrix__add {

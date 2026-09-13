@@ -609,7 +609,7 @@ const loading = ref(false)
 // ── Filter ─────────────────────────────────────────────────────────────────
 const filterBereich = ref(null)
 const filterStatus = ref(null)
-const filterNurMeine = ref(true)   // Standardansicht: nur eigene/zuständige Tickets
+const filterNurMeine = ref(true)   // Standardansicht: eigene, zuständige und mitkommentierte Tickets
 const filterMitAbgeschlossenen = ref(false)
 // Ungelesen (#179): offene Tickets aus meinen Bereichen oder mir zugewiesen, in die
 // ich noch nie hineingesehen habe. Kommt fertig vom Server – ob etwas gelesen ist,
@@ -753,6 +753,7 @@ const filteredTickets = computed(() => {
   if (filterNurMeine.value) result = result.filter(t =>
     t.gemeldet_von === currentUserId.value ||
     t.zugewiesen_an === currentUserId.value ||
+    t.kommentiert ||   // mitkommentiert (#206) – dazu gibt es auch die Meldungen
     !!_bereichFlags(t).darf_bearbeiten
   )
   if (filterNurUngelesen.value) result = result.filter(t => t.ungelesen)
@@ -1216,9 +1217,9 @@ async function sendKommentar() {
     neuerKommentar.value = ''
     kommentarIntern.value = false
     const cnt = (selectedTicket.value.kommentar_count || 0) + 1
-    selectedTicket.value = { ...selectedTicket.value, kommentar_count: cnt }
+    selectedTicket.value = { ...selectedTicket.value, kommentar_count: cnt, kommentiert: true }
     const idx = tickets.value.findIndex(t => t.id === selectedTicket.value.id)
-    if (idx >= 0) tickets.value[idx] = { ...tickets.value[idx], kommentar_count: cnt }
+    if (idx >= 0) tickets.value[idx] = { ...tickets.value[idx], kommentar_count: cnt, kommentiert: true }
   } catch (e) {
     $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler beim Senden.' })
   } finally {

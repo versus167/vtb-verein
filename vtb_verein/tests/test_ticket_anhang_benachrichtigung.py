@@ -49,13 +49,15 @@ def _service(anhang_service, ticket=None):
     ticket = ticket or Ticket(id=5, titel="Automat kaputt", bereich_id=1,
                               gemeldet_von=10, zugewiesen_an=11)
     ticket_repo = SimpleNamespace(get=lambda tid: ticket if tid == ticket.id else None)
+    # Mitkommentierende (#206) – eigener Test in test_ticket_kommentatoren.py
+    kommentar_repo = SimpleNamespace(list_autor_ids=lambda tid: [])
     teilnehmer_repo = SimpleNamespace(
         list_by_ticket=lambda tid: [SimpleNamespace(user_id=12)])
     berechtigung_repo = SimpleNamespace(
         list_user_ids_bearbeiten_oder_schliessen=lambda bid: [11, 13])
     user_repo = SimpleNamespace(
         get_by_id=lambda uid: SimpleNamespace(id=uid, username=f"u{uid}", active=True))
-    return TicketService(ticket_repo, None, _AnhangRepo(), None, None,
+    return TicketService(ticket_repo, kommentar_repo, _AnhangRepo(), None, None,
                          teilnehmer_repo, berechtigung_repo, user_repo,
                          anhang_service=anhang_service)
 
