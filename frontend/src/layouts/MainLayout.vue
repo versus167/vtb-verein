@@ -344,6 +344,9 @@
         <q-btn flat dense label="OK" @click="dismissBanner" />
       </template>
     </q-banner>
+
+    <!-- In der installierten App: Push empfehlen (Mail-Links landen oft im Browser) -->
+    <PushHinweisBanner />
   </q-layout>
 </template>
 
@@ -357,6 +360,7 @@ import { api } from 'src/boot/axios'
 import AufgabenBadge from 'src/components/AufgabenBadge.vue'
 import FeedbackFab from 'src/components/FeedbackFab.vue'
 import PushStatusButton from 'src/components/PushStatusButton.vue'
+import PushHinweisBanner from 'src/components/PushHinweisBanner.vue'
 import { useRefreshControl, installAutoRefresh, registerGlobalRefresh } from 'src/composables/useRefresh'
 import { appInfo, ladeAppInfo, versionLabel } from 'src/composables/useAppInfo'
 import { THEME_AUSWAHL, setTheme, themeWahl, themeIcon, themeLabel } from 'src/composables/useTheme'
