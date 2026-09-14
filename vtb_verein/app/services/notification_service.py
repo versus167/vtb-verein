@@ -23,6 +23,29 @@ logger = logging.getLogger(__name__)
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="notify")
 
 
+# Mail-Apps öffnen Links am Handy oft in ihrem eigenen Browser statt in der
+# installierten App, auf dem iPhone ausnahmslos. Zuverlässig in die App führt nur
+# der Tipp auf eine Push-Nachricht – darauf weist die Mail hin.
+_PUSH_TIPP = ("Tipp: Am Handy öffnen Links aus Mails oft im Browser statt in der App. "
+              "Mit Push-Benachrichtigungen landest du direkt in der App – einschalten "
+              "über die Glocke auf der Übersicht.")
+
+
+def _mit_link(message: str, url: str, push_tipp: bool = False) -> str:
+    """Text-Nachricht mit direktem Link aufs Ziel (Ticket, Termin, Rechnung).
+
+    Push navigiert die relative URL selbst am Origin; E-Mail und Matrix sind reiner
+    Text und brauchen die absolute URL, damit sie im Client klickbar ist (beide
+    linkifizieren bloße URLs). url='/' heißt „kein spezielles Ziel" – dann ohne Link.
+    `push_tipp` hängt den Hinweis auf Push an (nur zusammen mit einem Link).
+    """
+    if not url or url == '/':
+        return message
+    absolute = EmailConfig.get_base_url().rstrip('/') + url
+    text = f"{message}\n\n🔗 {absolute}"
+    return f"{text}\n\n{_PUSH_TIPP}" if push_tipp else text
+
+
 class NotificationService:
     """Zentrale Service für Versand von Benachrichtigungen"""
 
@@ -65,7 +88,8 @@ class NotificationService:
                 ok = EmailService.send_text_email(
                     recipient_email=user.email,
                     subject=title,
-                    body=message
+                    # Hat Push ein Gerät erreicht, nutzt der Empfänger es schon.
+                    body=_mit_link(message, url, push_tipp=not push_ok)
                 )
                 if ok:
                     logger.info(f"Benachrichtigung an {user.username} via email versendet")
@@ -80,15 +104,9 @@ class NotificationService:
             main_ok = push_ok or send_email()
         elif user.preferred_contact == 'matrix' and user.matrix_id:
             try:
-                # Deep-Link (#123): anders als Push (relative URL, die die SW am
-                # Origin navigiert) braucht die Matrix-Textnachricht die absolute
-                # URL, damit sie im Client klickbar ist. Matrix linkifiziert bloße
-                # URLs automatisch. url='/' (kein spezielles Ziel) bleibt ohne Link.
-                matrix_message = message
-                if url and url != '/':
-                    absolute = EmailConfig.get_base_url().rstrip('/') + url
-                    matrix_message = f"{message}\n\n🔗 {absolute}"
-                main_ok = MatrixService.send_notification(user.matrix_id, title, matrix_message)
+                # Deep-Link (#123), s. _mit_link.
+                main_ok = MatrixService.send_notification(user.matrix_id, title,
+                                                          _mit_link(message, url))
                 if main_ok:
                     logger.info(f"Benachrichtigung an {user.username} via matrix versendet")
             except Exception as e:

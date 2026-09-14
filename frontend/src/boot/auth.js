@@ -2,6 +2,7 @@ import { boot } from 'quasar/wrappers'
 import { useAuthStore } from 'src/stores/auth'
 import { pinia } from 'src/boot/pinia'
 import { api } from 'src/boot/axios'
+import { merkeZiel } from 'src/router/nach-login'
 
 export default boot(async ({ router }) => {
   // useAuthStore() benötigt eine aktive Pinia-Instanz
@@ -11,6 +12,8 @@ export default boot(async ({ router }) => {
   // Navigation nicht ohne Guard durchläuft
   router.beforeEach((to) => {
     if (to.meta.requiresAuth && !auth.isAuthenticated) {
+      // z. B. Link aus einer Erinnerungs-Mail: nach dem Login dorthin weiter
+      merkeZiel(to.fullPath)
       return { name: 'login' }
     }
     if (to.name === 'login' && auth.isAuthenticated) {
