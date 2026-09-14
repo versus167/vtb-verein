@@ -5,6 +5,9 @@
   "display": "standalone",
   "orientation": "portrait",
   "start_url": "/",
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
   "background_color": "#feeb03",
   "theme_color": "#feeb03",
   "icons": [

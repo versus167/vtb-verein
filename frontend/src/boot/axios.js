@@ -2,6 +2,7 @@ import { boot } from 'quasar/wrappers'
 import axios from 'axios'
 import { pinia } from 'src/boot/pinia'
 import { useAuthStore } from 'src/stores/auth'
+import { merkeZiel } from 'src/router/nach-login'
 
 // withCredentials: das HttpOnly-Session-Cookie (Ticket #48) wird automatisch
 // mitgeschickt. Dev (Quasar-Proxy) wie Prod (SPA-Mount) sind same-origin, daher
@@ -17,6 +18,10 @@ export default boot(({ app, router }) => {
       if (error.response?.status === 401) {
         const auth = useAuthStore(pinia)
         auth.logout()
+        // Abgelaufene Sitzung auf einer App-Seite (etwa per Link aus einer Mail
+        // geöffnet): nach dem erneuten Login dorthin zurück.
+        const aktuell = router.currentRoute.value
+        if (aktuell.meta.requiresAuth) merkeZiel(aktuell.fullPath)
         router.push({ name: 'login' }).catch(() => {})
       }
       return Promise.reject(error)

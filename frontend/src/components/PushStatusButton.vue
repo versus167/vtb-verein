@@ -15,9 +15,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useQuasar } from 'quasar'
-import { usePush } from 'src/composables/usePush'
+import { usePush, pushStand } from 'src/composables/usePush'
 
 const $q = useQuasar()
 const push = usePush()
@@ -54,6 +54,9 @@ async function onVisibilityChange () {
     subscribed.value = await push.isSubscribed()
   }
 }
+
+// Anderswo umgeschaltet (z. B. über den Push-Hinweis): Symbol nachziehen.
+watch(pushStand, refreshState)
 
 async function onToggle () {
   if (!supported.value || configured.value === false) {

@@ -1,4 +1,10 @@
+import { ref } from 'vue'
 import { api } from 'src/boot/axios'
+
+// Zählt jede An-/Abmeldung dieses Geräts hoch. Mehrere Stellen schalten Push
+// (Glocke in der Kopfzeile, Hinweis-Banner, Profil) — wer den Zustand anzeigt,
+// beobachtet das und liest neu, statt bis zum nächsten Tab-Wechsel falsch zu stehen.
+export const pushStand = ref(0)
 
 // base64url (VAPID applicationServerKey) → Uint8Array, wie von PushManager verlangt.
 function urlBase64ToUint8Array (base64String) {
@@ -61,6 +67,7 @@ export function usePush () {
     }
     const json = sub.toJSON()
     await api.post('/api/push/subscribe', { endpoint: sub.endpoint, keys: json.keys })
+    pushStand.value++
     return true
   }
 
@@ -72,6 +79,7 @@ export function usePush () {
         await api.post('/api/push/unsubscribe', { endpoint: sub.endpoint })
       } finally {
         await sub.unsubscribe()
+        pushStand.value++
       }
     }
     return true

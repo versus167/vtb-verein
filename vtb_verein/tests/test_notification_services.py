@@ -213,6 +213,54 @@ class TestNotificationService:
         assert body == 'message'
         assert '🔗' not in body
 
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_email_enthaelt_deeplink(self, mock_email):
+        """Auch die E-Mail führt direkt zum Ziel (Erinnerungen an Tickets/Termine):
+        absolute URL am Textende, wie bei Matrix. Push behält die relative URL und
+        den unveränderten Text."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='email')
+        push = MagicMock()
+        push.send_to_user.return_value = 1
+
+        with patch.dict(os.environ, {'BASE_URL': 'https://app.vtbchemnitz.de/'}):
+            NotificationService.send_notification(
+                user, 'Test', 'message', push_service=push, url='/termine?termin=7')
+
+        body = mock_email.send_text_email.call_args.kwargs['body']
+        assert body.startswith('message')
+        # Push hat zugestellt → Link am Ende, kein Push-Tipp
+        assert body.endswith('https://app.vtbchemnitz.de/termine?termin=7')
+        push.send_to_user.assert_called_once_with(user.id, 'Test', 'message', '/termine?termin=7')
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_email_ohne_push_mit_tipp(self, mock_email):
+        """Erreicht Push kein Gerät, empfiehlt die Mail Push – Mail-Links öffnen am
+        Handy oft im Browser statt in der App."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='email')
+        push = MagicMock()
+        push.send_to_user.return_value = 0
+
+        with patch.dict(os.environ, {'BASE_URL': 'https://app.vtbchemnitz.de'}):
+            NotificationService.send_notification(
+                user, 'Test', 'message', push_service=push, url='/tickets?ticket=42')
+
+        body = mock_email.send_text_email.call_args.kwargs['body']
+        link = body.index('https://app.vtbchemnitz.de/tickets?ticket=42')
+        tipp = body.index('Push-Benachrichtigungen')
+        assert link < tipp
+
+    @patch('app.services.notification_service.EmailService')
+    def test_send_notification_email_ohne_ziel_kein_link(self, mock_email):
+        """Ohne spezielles Ziel (url='/') bleibt der E-Mail-Text unverändert."""
+        mock_email.send_text_email.return_value = True
+        user = self._create_test_user(preferred_contact='email')
+
+        NotificationService.send_notification(user, 'Test', 'message')
+
+        assert mock_email.send_text_email.call_args.kwargs['body'] == 'message'
+
     @patch('app.services.notification_service.MatrixService')
     @patch('app.services.notification_service.EmailService')
     def test_send_notification_push_additiv_zu_matrix(self, mock_email, mock_matrix):
