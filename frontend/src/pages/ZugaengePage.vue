@@ -24,6 +24,29 @@
           <template #prepend><q-icon name="search" /></template>
         </q-input>
       </div>
+      <!-- Abteilung, Funktion und Mannschaft greifen gemeinsam (UND): So lässt sich
+           beim Rollout genau die Gruppe eingrenzen, die gerade drankommt – etwa
+           „Übungsleiter im Fußball". -->
+      <div v-if="abteilungOptionen.length" class="col-6 col-sm-auto">
+        <q-select
+          v-model="abteilungFilter" :options="abteilungOptionen"
+          option-value="id" option-label="label" emit-value map-options
+          label="Abteilung" outlined dense clearable
+          style="min-width: 160px"
+        >
+          <template #prepend><q-icon name="category" /></template>
+        </q-select>
+      </div>
+      <div v-if="funktionOptionen.length" class="col-6 col-sm-auto">
+        <q-select
+          v-model="funktionFilter" :options="funktionOptionen"
+          option-value="id" option-label="label" emit-value map-options
+          label="Funktion" outlined dense clearable
+          style="min-width: 160px"
+        >
+          <template #prepend><q-icon name="badge" /></template>
+        </q-select>
+      </div>
       <div v-if="mannschaftOptionen.length" class="col-12 col-sm-auto">
         <q-select
           v-model="mannschaftFilter" :options="mannschaftOptionen"
@@ -85,6 +108,9 @@
           </q-item-label>
           <q-item-label v-if="z.mannschaften?.length" caption lines="1">
             <q-icon name="groups" size="14px" class="q-mr-xs" />{{ kaderText(z) }}
+          </q-item-label>
+          <q-item-label v-if="z.funktionen?.length" caption lines="1">
+            <q-icon name="badge" size="14px" class="q-mr-xs" />{{ funktionText(z) }}
           </q-item-label>
           <!-- Login ≠ Aktivität: „angemeldet" ist der letzte echte Login, „aktiv"
                der letzte Request. Beim Rollout ist genau das die Frage – hat die
@@ -278,6 +304,8 @@ const loading = ref(false)
 const suche = ref('')
 const filter = ref('ohne')
 const mannschaftFilter = ref(null)
+const abteilungFilter = ref(null)
+const funktionFilter = ref(null)
 const dialogOpen = ref(false)
 const aktuell = ref(null)
 const mail = ref(null)
@@ -312,11 +340,30 @@ const mannschaftOptionen = computed(() => {
     .sort((a, b) => a.label.localeCompare(b.label, 'de'))
 })
 
-// Bezugsgröße für den Zähler oben: bei gewählter Mannschaft deren Kader, sonst
-// der ganze Verein. „12 von 18 freigeschaltet" ist beim Rollout die Zahl, die zählt.
-const imBlick = computed(() => (mannschaftFilter.value == null
-  ? zeilen.value
-  : zeilen.value.filter((z) => imKader(z))))
+// Wie bei den Mannschaften: nur anbieten, was in der (gescopten) Liste vorkommt.
+const abteilungOptionen = computed(() => {
+  const nachId = new Map()
+  for (const z of zeilen.value) {
+    for (const a of z.abteilungs_liste || []) nachId.set(a.id, { id: a.id, label: a.name })
+  }
+  return [...nachId.values()].sort((a, b) => a.label.localeCompare(b.label, 'de'))
+})
+
+// Funktion nach Key, nicht nach Key+Abteilung: „alle Übungsleiter" ist selbst eine
+// Rollout-Gruppe, und die Abteilung grenzt der eigene Filter daneben ein.
+const funktionOptionen = computed(() => {
+  const nachKey = new Map()
+  for (const z of zeilen.value) {
+    for (const f of z.funktionen || []) nachKey.set(f.key, { id: f.key, label: f.name })
+  }
+  return [...nachKey.values()].sort((a, b) => a.label.localeCompare(b.label, 'de'))
+})
+
+// Bezugsgröße für den Zähler oben: die per Abteilung/Funktion/Mannschaft gewählte
+// Gruppe, sonst der ganze Verein. „12 von 18 freigeschaltet" ist beim Rollout die
+// Zahl, die zählt.
+const imBlick = computed(() => zeilen.value.filter((z) => imKader(z)
+  && inAbteilung(z) && hatFunktion(z)))
 
 const mitZugang = computed(
   () => imBlick.value.filter((z) => z.user_id && !z.zugang_geloescht).length,
@@ -329,10 +376,29 @@ const nieAngemeldet = computed(
 )
 
 function imKader(z) {
+  if (mannschaftFilter.value == null) return true
   return (z.mannschaften || []).some((m) => m.id === mannschaftFilter.value)
 }
 
+function inAbteilung(z) {
+  if (abteilungFilter.value == null) return true
+  return (z.abteilungs_liste || []).some((a) => a.id === abteilungFilter.value)
+}
+
+// Mit gewählter Abteilung muss die Funktion auch dort gelten: „Übungsleiter ·
+// Fußball" soll nicht den Handball-Übungsleiter zeigen, der nebenbei Fußball-
+// mitglied ist. Vereinsweite Funktionen (ohne Abteilung) zählen überall.
+function hatFunktion(z) {
+  if (funktionFilter.value == null) return true
+  return (z.funktionen || []).some((f) => f.key === funktionFilter.value
+    && (abteilungFilter.value == null || f.abteilung_id == null
+      || f.abteilung_id === abteilungFilter.value))
+}
+
 const kaderText = (z) => (z.mannschaften || []).map((m) => m.name).join(', ')
+
+const funktionText = (z) => (z.funktionen || [])
+  .map((f) => (f.abteilung ? `${f.name} (${f.abteilung})` : f.name)).join(', ')
 
 // Letzte Aktivität als Sortierschlüssel: last_seen ist der letzte Request; für
 // Konten aus der Zeit vor diesem Feld ersatzweise der letzte Login. Wer den Zugang
