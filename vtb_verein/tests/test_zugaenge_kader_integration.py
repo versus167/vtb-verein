@@ -55,6 +55,14 @@ def clean(db):
     alle Integrationstests."""
     def weg():
         with db.conn.cursor() as cur:
+            cur.execute("DELETE FROM mitglied_funktion_history WHERE funktion LIKE %s", (_PRAEFIX + '%',))
+            cur.execute("DELETE FROM mitglied_funktion WHERE funktion LIKE %s", (_PRAEFIX + '%',))
+            cur.execute("DELETE FROM mitglied_abteilung_history WHERE abteilung_id IN "
+                        "(SELECT id FROM abteilung WHERE name LIKE %s)", (_PRAEFIX + '%',))
+            cur.execute("DELETE FROM mitglied_abteilung WHERE abteilung_id IN "
+                        "(SELECT id FROM abteilung WHERE name LIKE %s)", (_PRAEFIX + '%',))
+            cur.execute("DELETE FROM funktion_history WHERE key LIKE %s", (_PRAEFIX + '%',))
+            cur.execute("DELETE FROM funktion WHERE key LIKE %s", (_PRAEFIX + '%',))
             cur.execute("DELETE FROM mitglied_mannschaft_history WHERE mannschaft_id IN "
                         "(SELECT id FROM mannschaft WHERE name LIKE %s)", (_PRAEFIX + '%',))
             cur.execute("DELETE FROM mitglied_mannschaft WHERE mannschaft_id IN "
@@ -206,3 +214,36 @@ def test_deaktiviertes_konto_faellt_aus_der_liste(db):
         cur.execute("UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = %s", (u.id,))
     db.conn.commit()
     assert _zeile(db, m.id)['zugang_geloescht'] is True
+
+
+def test_abteilungen_kommen_als_liste_und_als_text(db):
+    """Der Abteilungsfilter braucht IDs, die Zeile zeigt weiter den Text – beides
+    aus derselben Menge."""
+    m = _mitglied(db, 'abteilungen')
+    handball = db.create_abteilung(Abteilung(name=_PRAEFIX + 'handball'), created_by='tester')
+    fussball = db.create_abteilung(Abteilung(name=_PRAEFIX + 'fussball'), created_by='tester')
+    db.create_mitglied_abteilung(m.id, handball.id, _VORJAHR, None, 'tester')
+    db.create_mitglied_abteilung(m.id, fussball.id, _VORJAHR, None, 'tester')
+    zeile = _zeile(db, m.id)
+    assert [a['id'] for a in zeile['abteilungs_liste']] == [fussball.id, handball.id]
+    assert zeile['abteilungen'] == f'{_PRAEFIX}fussball, {_PRAEFIX}handball'
+    assert _zeile(db, _mitglied(db, 'ohneabt').id)['abteilungs_liste'] == []
+
+
+def test_heutige_funktionen_mit_name_und_abteilung(db):
+    """Funktionen sind neben dem Kader die zweite Rollout-Gruppe: am heutigen Tag,
+    mit Anzeigenamen aus dem Stammsatz und der Abteilung, in der sie gelten."""
+    m = _mitglied(db, 'funktion')
+    abt = db.create_abteilung(Abteilung(name=_PRAEFIX + 'turnen'), created_by='tester')
+    db.funktionen.create(_PRAEFIX + 'ul', 'Übungsleiter', None, 'tester')
+    db.create_mitglied_funktion(m.id, abt.id, _PRAEFIX + 'ul', _VORJAHR, None, 'tester')
+    db.create_mitglied_funktion(m.id, None, _PRAEFIX + 'alt', _VORJAHR, _GESTERN, 'tester')
+    db.create_mitglied_funktion(m.id, None, _PRAEFIX + 'bald', _MORGEN, None, 'tester')
+    db.create_mitglied_funktion(m.id, None, _PRAEFIX + 'ohnestamm', _VORJAHR, None, 'tester')
+    funktionen = _zeile(db, m.id)['funktionen']
+    assert [(f['key'], f['name'], f['abteilung_id'], f['abteilung']) for f in funktionen] == [
+        # Ohne Stammsatz bleibt der Key als Name stehen.
+        (_PRAEFIX + 'ohnestamm', _PRAEFIX + 'ohnestamm', None, None),
+        (_PRAEFIX + 'ul', 'Übungsleiter', abt.id, _PRAEFIX + 'turnen'),
+    ]
+    assert _zeile(db, _mitglied(db, 'ohnefkt').id)['funktionen'] == []

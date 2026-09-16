@@ -622,7 +622,8 @@ def list_freischaltung(user: CurrentUser, db: DB):
     ohne Bankdaten, Beiträge oder Adressen zu sehen. Geliefert wird nur, was für
     die Entscheidung „wer bekommt einen Login und an welche Adresse" nötig ist –
     Name, Jahrgang (unterscheidet Namensvettern), Abteilungen, Mannschaften
-    (#183: der Rollout läuft kaderweise), hinterlegte Mailadressen und der
+    (#183: der Rollout läuft kaderweise), heutige Funktionen (ebenfalls eine
+    Rollout-Gruppe), hinterlegte Mailadressen und der
     Zustand des Kontos samt Login-/Aktivitätszeitpunkt.
 
     Ausgetretene sind draußen (Ist-Stand heute, vgl. Statistik-Semantik), ebenso
@@ -641,10 +642,14 @@ def list_freischaltung(user: CurrentUser, db: DB):
                    u.id AS user_id, u.username, u.email, u.active, u.last_login,
                    u.last_seen,
                    (u.id IS NOT NULL AND u.deleted_at IS NOT NULL) AS zugang_geloescht,
-                   (SELECT string_agg(DISTINCT a.name, ', ' ORDER BY a.name)
-                      FROM mitglied_abteilung ma
-                      JOIN abteilung a ON a.id = ma.abteilung_id
-                     WHERE ma.mitglied_id = m.id AND ma.deleted_at IS NULL) AS abteilungen,
+                   -- Als Liste mit ID, damit das Frontend danach filtern kann; der
+                   -- Anzeigetext `abteilungen` entsteht unten daraus (gleiche Menge).
+                   (SELECT json_agg(ab ORDER BY ab.name)
+                      FROM (SELECT DISTINCT a.id, a.name
+                              FROM mitglied_abteilung ma
+                              JOIN abteilung a ON a.id = ma.abteilung_id
+                             WHERE ma.mitglied_id = m.id
+                               AND ma.deleted_at IS NULL) ab) AS abteilungs_liste,
                    -- Kader am heutigen Tag (#183): Beim Rollout geht das Freischalten
                    -- mannschaftsweise, die Abteilung allein ist dafür zu grob. DISTINCT,
                    -- weil dieselbe Mannschaft mehrfach am Mitglied hängen kann (zwei
@@ -659,6 +664,22 @@ def list_freischaltung(user: CurrentUser, db: DB):
                                AND mm.von <= CURRENT_DATE::text
                                AND (mm.bis IS NULL
                                     OR mm.bis >= CURRENT_DATE::text)) k) AS mannschaften,
+                   -- Funktionen am heutigen Tag: Neben dem Kader sind Funktionen
+                   -- (Übungsleiter, Abteilungsleitung …) die zweite Gruppe, die beim
+                   -- Rollout gemeinsam drankommt. mitglied_funktion verweist per Text-Key;
+                   -- ohne Stammsatz bleibt der Key als Name stehen (wie in Personen).
+                   (SELECT json_agg(fu ORDER BY fu.name, fu.abteilung)
+                      FROM (SELECT DISTINCT mf.funktion AS key,
+                                   COALESCE(fk.name, mf.funktion) AS name,
+                                   mf.abteilung_id, fa.name AS abteilung
+                              FROM mitglied_funktion mf
+                              LEFT JOIN funktion fk ON fk.key = mf.funktion
+                                                   AND fk.deleted_at IS NULL
+                              LEFT JOIN abteilung fa ON fa.id = mf.abteilung_id
+                             WHERE mf.mitglied_id = m.id AND mf.deleted_at IS NULL
+                               AND mf.von <= CURRENT_DATE::text
+                               AND (mf.bis IS NULL
+                                    OR mf.bis >= CURRENT_DATE::text)) fu) AS funktionen,
                    (SELECT json_agg(json_build_object(
                                'wert', k.wert,
                                'primaer', k.ist_primaer,
@@ -698,6 +719,9 @@ def list_freischaltung(user: CurrentUser, db: DB):
             continue
         r['mails'] = r['mails'] or []
         r['mannschaften'] = r['mannschaften'] or []
+        r['funktionen'] = r['funktionen'] or []
+        r['abteilungs_liste'] = r['abteilungs_liste'] or []
+        r['abteilungen'] = ', '.join(a['name'] for a in r['abteilungs_liste']) or None
         r['einladung_zuletzt'] = _ts_iso(r['einladung_zuletzt'])
         r['last_login'] = _ts_iso(r['last_login'])
         r['last_seen'] = _ts_iso(r['last_seen'])
