@@ -168,6 +168,23 @@ export function abweichungWert(feld, wert) {
   return wert
 }
 
+// Quasar-Notify nach dem Speichern: sagt dem Auslöser, ob „Team benachrichtigen"
+// jemanden erreicht hat. Die Zahl zählt angestoßene Empfänger (ohne ihn selbst);
+// 0 ist eine Warnung, sonst glaubt man, das Team sei informiert.
+export function speicherMeldung(antwort, erfolg) {
+  const n = antwort?.benachrichtigt
+  if (n === null || n === undefined) return { type: 'positive', message: erfolg }
+  if (antwort.benachrichtigung_ohne_aenderung) {
+    return { type: 'warning', message: `${erfolg} – nichts geändert, daher keine Nachricht` }
+  }
+  if (n === 0) {
+    return { type: 'warning', timeout: 8000,
+             message: `${erfolg} – niemand benachrichtigt: kein Kader-Mitglied mit Benutzerkonto` }
+  }
+  return { type: 'positive',
+           message: `${erfolg} – ${n} ${n === 1 ? 'Person' : 'Personen'} benachrichtigt` }
+}
+
 // Verwalter-Aktionen (Absagen/Reaktivieren/Löschen) – geteilt zwischen
 // TerminePage und Dashboard-Widget. `reload` wird nach jeder Änderung gerufen.
 export function useTerminAktionen(reload) {
@@ -186,12 +203,12 @@ export function useTerminAktionen(reload) {
       cancel: true, persistent: true,
     }).onOk(async (auswahl) => {
       try {
-        await api.post(`/api/termine/${t.id}/${aktion}`, {
+        const { data } = await api.post(`/api/termine/${t.id}/${aktion}`, {
           expected_version: t.version,
           benachrichtigen: auswahl.includes('benachrichtigen'),
         })
         await reload()
-        $q.notify({ type: 'positive', message: absagen ? 'Termin abgesagt' : 'Termin reaktiviert' })
+        $q.notify(speicherMeldung(data, absagen ? 'Termin abgesagt' : 'Termin reaktiviert'))
       } catch (e) {
         $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Fehler' })
       }

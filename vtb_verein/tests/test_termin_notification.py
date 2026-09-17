@@ -126,8 +126,9 @@ def test_notify_termin_empfaengerkreis(gesendet):
         3: SimpleNamespace(id=3, active=False),   # inaktiv → übersprungen
     }
     db = _StubDB(kader_user_ids=[1, 2, 2, 3, 4], users=users)  # 4 = kein User mehr
-    tn.notify_termin(db, _termin(ort='Halle 1'), tn.AKTION_NEU, actor_user_id=1)
+    anzahl = tn.notify_termin(db, _termin(ort='Halle 1'), tn.AKTION_NEU, actor_user_id=1)
     assert [c[0] for c in gesendet] == [2]
+    assert anzahl == 1   # Rückmeldung zählt nur tatsächlich angestoßene Empfänger
     uid, title, message, _url = gesendet[0]
     assert title == 'Neuer Termin – Erste'
     assert 'Training am Mi., 22.07.2026 18:30 (Erste)' in message

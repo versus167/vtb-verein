@@ -102,7 +102,7 @@ def notify_calls(monkeypatch):
     monkeypatch.setattr(
         api.terminmeldung, 'notify_termin',
         lambda db, termin, aktion, actor_user_id, aenderungen=None:
-            calls.append((aktion, actor_user_id, aenderungen)))
+            calls.append((aktion, actor_user_id, aenderungen)) or 7)
     return calls
 
 
@@ -121,28 +121,43 @@ def test_create_mit_flag_benachrichtigt(notify_calls):
     db = _DB(None)
     data = api.TerminCreate(beginn='2026-07-22T18:30', benachrichtigen=True,
                                 spielstaette_id=_PLATZ_ID)
-    api.create_termin(5, data, _ADMIN, db)
+    antwort = api.create_termin(5, data, _ADMIN, db)
     assert notify_calls == [(tn.AKTION_NEU, _ADMIN.id, None)]
+    assert antwort['benachrichtigt'] == 7   # Empfängerzahl als Rückmeldung
 
 
 def test_create_ohne_flag_schweigt(notify_calls):
-    api.create_termin(5, api.TerminCreate(beginn='2026-07-22T18:30', spielstaette_id=_PLATZ_ID), _ADMIN, _DB(None))
+    antwort = api.create_termin(5, api.TerminCreate(beginn='2026-07-22T18:30', spielstaette_id=_PLATZ_ID), _ADMIN, _DB(None))
     assert notify_calls == []
+    assert antwort['benachrichtigt'] is None
 
 
 def test_update_mit_flag_meldet_diff(notify_calls):
     t = _termin()
     db = _DB(t)
-    api.update_termin(t.id, _update_payload(t, True, ort='Halle 2'), _ADMIN, db)
+    antwort = api.update_termin(t.id, _update_payload(t, True, ort='Halle 2'), _ADMIN, db)
     aktion, actor, aenderungen = notify_calls[0]
     assert aktion == tn.AKTION_GEAENDERT and actor == _ADMIN.id
     assert aenderungen == ['Ort: Halle 1 → Halle 2']
+    assert antwort['benachrichtigt'] == 7
+    assert antwort['benachrichtigung_ohne_aenderung'] is False
+
+
+def test_update_beschreibung_meldet_diff(notify_calls):
+    """Die Bemerkung steht auf der Karte nur klein – geändert wird sie trotzdem gemeldet."""
+    t = _termin()
+    api.update_termin(t.id, _update_payload(t, True, beschreibung='Halle zu, draußen'),
+                      _ADMIN, _DB(t))
+    assert notify_calls[0][2] == ['Beschreibung: – → Halle zu, draußen']
 
 
 def test_update_noop_schweigt_trotz_flag(notify_calls):
     t = _termin()
-    api.update_termin(t.id, _update_payload(t, True), _ADMIN, _DB(t))
+    antwort = api.update_termin(t.id, _update_payload(t, True), _ADMIN, _DB(t))
     assert notify_calls == []
+    # Der Dialog soll „nichts geändert" sagen können statt „niemand da"
+    assert antwort['benachrichtigt'] == 0
+    assert antwort['benachrichtigung_ohne_aenderung'] is True
 
 
 def test_update_ohne_flag_schweigt(notify_calls):

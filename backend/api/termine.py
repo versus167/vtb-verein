@@ -453,9 +453,11 @@ def create_termin(mannschaft_id: int, data: TerminCreate, user: CurrentUser, db:
         data.treffpunkt, data.treffpunkt_zeit, data.gegner, data.heim_auswaerts,
         data.beschreibung, user.username, spielstaette_id=data.spielstaette_id,
     )
+    benachrichtigt = None
     if data.benachrichtigen:
-        terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU, user.id)
-    return asdict(t)
+        benachrichtigt = terminmeldung.notify_termin(db, t, terminmeldung.AKTION_NEU,
+                                                     user.id)
+    return {**asdict(t), "benachrichtigt": benachrichtigt}
 
 
 # ---------------------------------------------------------------- Meine Termine
@@ -558,12 +560,18 @@ def update_termin(termin_id: int, data: TerminUpdate, user: CurrentUser, db: DB)
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
     neu = db.termine.get(termin_id)
+    # Rückmeldung an den Dialog: None = nicht gewünscht, sonst Zahl der
+    # Empfänger; 0 ohne Änderung heißt „nichts zu melden", nicht „niemand da".
+    benachrichtigt, ohne_aenderung = None, False
     if data.benachrichtigen:
         aenderungen = terminmeldung.diff_termin(t, neu)
-        if aenderungen:   # No-Op-Speichern erzeugt keine Nachricht
-            terminmeldung.notify_termin(db, neu, terminmeldung.AKTION_GEAENDERT,
-                                        user.id, aenderungen)
-    return asdict(neu)
+        if aenderungen:
+            benachrichtigt = terminmeldung.notify_termin(
+                db, neu, terminmeldung.AKTION_GEAENDERT, user.id, aenderungen)
+        else:   # No-Op-Speichern erzeugt keine Nachricht
+            benachrichtigt, ohne_aenderung = 0, True
+    return {**asdict(neu), "benachrichtigt": benachrichtigt,
+            "benachrichtigung_ohne_aenderung": ohne_aenderung}
 
 
 def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
@@ -579,11 +587,12 @@ def _set_status(termin_id: int, neuer_status: str, data: TerminAktion,
     if not ok:
         raise HTTPException(409, "Versionskonflikt – bitte Seite neu laden")
     neu = db.termine.get(termin_id)
+    benachrichtigt = None
     if data.benachrichtigen:
         aktion = (terminmeldung.AKTION_ABGESAGT if neuer_status == 'abgesagt'
                   else terminmeldung.AKTION_REAKTIVIERT)
-        terminmeldung.notify_termin(db, neu, aktion, user.id)
-    return asdict(neu)
+        benachrichtigt = terminmeldung.notify_termin(db, neu, aktion, user.id)
+    return {**asdict(neu), "benachrichtigt": benachrichtigt}
 
 
 @router.post("/{termin_id}/absagen")
@@ -874,9 +883,10 @@ def create_serie(mannschaft_id: int, data: SerieCreate, user: CurrentUser, db: D
         intervall_wochen=data.intervall_wochen,
     )
     db.termin_serien.materialize_due([mannschaft_id])   # Instanzen sofort erzeugen
+    benachrichtigt = None
     if data.benachrichtigen:
-        terminmeldung.notify_serie(db, s, user.id)
-    return asdict(db.termin_serien.get(s.id))
+        benachrichtigt = terminmeldung.notify_serie(db, s, user.id)
+    return {**asdict(db.termin_serien.get(s.id)), "benachrichtigt": benachrichtigt}
 
 
 @router.put("/serien/{serie_id}")

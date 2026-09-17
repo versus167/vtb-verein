@@ -175,12 +175,18 @@ def _mannschaft_name(db, mannschaft_id: int) -> str:
 
 
 def _send(db, user_ids: list[int], exclude_user_id: Optional[int],
-          title: str, message: str, url: str = '/') -> None:
+          title: str, message: str, url: str = '/') -> int:
     """Lädt die Empfänger im Request-Thread und stößt den Versand im
     Hintergrund an; der Auslöser selbst und inaktive User werden übersprungen.
     `url` ist das Ziel beim Klick auf die Nachricht (Push-Deep-Link bzw. Link
-    in der E-Mail)."""
+    in der E-Mail).
+
+    Rückgabe: Zahl der angestoßenen Empfänger – nicht der Zustellungen (die
+    laufen im Hintergrund). Sie geht als Rückmeldung an den Auslöser: Ohne sie
+    sieht niemand, dass „Team benachrichtigen" mangels Konten im Kader ins Leere
+    lief."""
     from app.services.notification_service import NotificationService
+    anzahl = 0
     for uid in dict.fromkeys(user_ids):
         if uid == exclude_user_id:
             continue
@@ -188,13 +194,15 @@ def _send(db, user_ids: list[int], exclude_user_id: Optional[int],
         if user and user.active:
             NotificationService.send_notification_async(user, title, message,
                                                         push_service=db.push, url=url)
+            anzahl += 1
+    return anzahl
 
 
 def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
-                  aenderungen: Optional[list[str]] = None) -> None:
+                  aenderungen: Optional[list[str]] = None) -> int:
     """Informiert den aktiven Kader (Stichtag = Termin-Datum) und die Gäste des
     Termins. Bei AKTION_GEAENDERT gehören die `aenderungen` (aus diff_termin)
-    in die Nachricht, sonst die Termin-Details."""
+    in die Nachricht, sonst die Termin-Details. Rückgabe: Zahl der Empfänger."""
     m_name = _mannschaft_name(db, termin.mannschaft_id)
     title = f"{_TITEL.get(aktion, aktion)} – {m_name}"
     zeilen = [f"{termin_titel(termin, m_name)} am {format_wandzeit(termin.beginn)} ({m_name})"]
@@ -208,8 +216,8 @@ def notify_termin(db, termin, aktion: str, actor_user_id: Optional[int],
         zeilen += ["", "Der abgesagte Termin findet wieder statt."]
     user_ids = db.termine.list_kader_user_ids(termin.mannschaft_id, termin.beginn[:10])
     user_ids += db.termin_zusagen.list_user_ids_mit_zusage(termin.id)   # Gäste
-    _send(db, user_ids, actor_user_id, title, "\n".join(zeilen),
-          url=termin_url(termin.id))
+    return _send(db, user_ids, actor_user_id, title, "\n".join(zeilen),
+                 url=termin_url(termin.id))
 
 
 def notify_einladung(db, termin, mitglied_ids: list[int],
@@ -285,7 +293,7 @@ def _fragen_je_termin(db, fragen: list[tuple]) -> list[tuple]:
     return list(gebuendelt.items())
 
 
-def notify_serie(db, serie, actor_user_id: Optional[int]) -> None:
+def notify_serie(db, serie, actor_user_id: Optional[int]) -> int:
     """Informiert den Kader über eine neu angelegte Terminserie
     (Stichtag = erster Serientag, frühestens heute)."""
     m_name = _mannschaft_name(db, serie.mannschaft_id)
@@ -304,5 +312,5 @@ def notify_serie(db, serie, actor_user_id: Optional[int]) -> None:
         zeilen.append(f"Beschreibung: {serie.beschreibung}")
     stichtag = max(serie.start_datum, date.today().isoformat())
     user_ids = db.termine.list_kader_user_ids(serie.mannschaft_id, stichtag)
-    _send(db, user_ids, actor_user_id, f"Neue Terminserie – {m_name}", "\n".join(zeilen),
-          url=termin_url())
+    return _send(db, user_ids, actor_user_id, f"Neue Terminserie – {m_name}",
+                 "\n".join(zeilen), url=termin_url())

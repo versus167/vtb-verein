@@ -85,7 +85,7 @@
 import { ref, computed, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
-import { uhrzeit, useSpielstaettenAuswahl } from 'src/composables/useTermine'
+import { uhrzeit, useSpielstaettenAuswahl, speicherMeldung } from 'src/composables/useTermine'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -170,7 +170,7 @@ async function save() {
   try {
     if (!f.id && f.wiederholen && f.typ !== 'spiel') {
       // Serie statt Einzeltermin
-      await api.post(`/api/termine/mannschaften/${props.mannschaftId}/serien`, {
+      const { data } = await api.post(`/api/termine/mannschaften/${props.mannschaftId}/serien`, {
         typ: f.typ,
         beginn_zeit: f.zeit,
         ende_zeit: f.endeZeit || null,
@@ -186,7 +186,7 @@ async function save() {
       })
       open.value = false
       emit('saved')
-      $q.notify({ type: 'positive', message: 'Serie angelegt' })
+      $q.notify(speicherMeldung(data, 'Serie angelegt'))
       return
     }
     const payload = {
@@ -202,14 +202,12 @@ async function save() {
       beschreibung: f.beschreibung || null,
       benachrichtigen: f.benachrichtigen,
     }
-    if (f.id) {
-      await api.put(`/api/termine/${f.id}`, { ...payload, expected_version: f.version })
-    } else {
-      await api.post(`/api/termine/mannschaften/${props.mannschaftId}`, payload)
-    }
+    const { data } = f.id
+      ? await api.put(`/api/termine/${f.id}`, { ...payload, expected_version: f.version })
+      : await api.post(`/api/termine/mannschaften/${props.mannschaftId}`, payload)
     open.value = false
     emit('saved')
-    $q.notify({ type: 'positive', message: 'Gespeichert' })
+    $q.notify(speicherMeldung(data, 'Gespeichert'))
   } catch (e) {
     formError.value = e.response?.data?.detail || 'Fehler beim Speichern'
   } finally {
