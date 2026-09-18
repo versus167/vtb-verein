@@ -32,8 +32,8 @@
 
         <!-- Screenshot nur für App-Tickets über den Feedback-Button: bei anderen
              Bereichen ist ein Abbild der App-Oberfläche nutzlos. Wird beim Öffnen
-             aufgenommen, aber erst eingeblendet, sobald „VTB-App" als Bereich
-             gewählt ist. -->
+             aufgenommen, aber erst eingeblendet, sobald der dafür markierte
+             Bereich gewählt ist (Haken in der Ticket-Verwaltung). -->
         <template v-if="zeigeScreenshot">
           <div v-if="screenshotUrl">
             <img :src="screenshotUrl" class="vtb-feedback-shot" />
@@ -181,15 +181,21 @@ const bereiche  = ref([])
 const screenshotBlob = ref(null)
 const screenshotUrl  = ref(null)
 
-const vtbAppBereichId = ref(null)
+// Welcher Bereich das Bildschirmfoto anbietet, entscheidet ein Haken in der
+// Ticket-Verwaltung (`screenshot_hinweis`, Schema v123). Vorher wurde der Name
+// nach „vtb-app" durchsucht — das brach still, sobald jemand umbenannte, und
+// war in einer zweiten Instanz von vornherein falsch.
+const screenshotBereichId = ref(null)
 const form = ref({ titel: '', bereich_id: null, beschreibung: '', intern: false })
 
-const istVtbApp = computed(
-  () => vtbAppBereichId.value != null && form.value.bereich_id === vtbAppBereichId.value,
+const istScreenshotBereich = computed(
+  () => screenshotBereichId.value != null
+    && form.value.bereich_id === screenshotBereichId.value,
 )
 
-// Screenshot-Sektion nur, wenn der Aufrufer sie erlaubt und „VTB-App" gewählt ist.
-const zeigeScreenshot = computed(() => props.withScreenshot && istVtbApp.value)
+// Screenshot-Sektion nur, wenn der Aufrufer sie erlaubt und der dafür markierte
+// Bereich gewählt ist.
+const zeigeScreenshot = computed(() => props.withScreenshot && istScreenshotBereich.value)
 // Foto/Upload sonst, sobald irgendein Bereich gewählt ist.
 const zeigeFotoBereich = computed(() => form.value.bereich_id != null && !zeigeScreenshot.value)
 
@@ -416,8 +422,8 @@ async function loadBereiche() {
   try {
     const { data } = await api.get('/api/tickets/bereiche')
     bereiche.value = data
-    const vtbApp = data.find(b => b.name.toLowerCase().includes('vtb-app') || b.name.toLowerCase().includes('vtb app'))
-    vtbAppBereichId.value = vtbApp ? vtbApp.id : null
+    const screenshotBereich = data.find(b => b.screenshot_hinweis)
+    screenshotBereichId.value = screenshotBereich ? screenshotBereich.id : null
     // Bereich nur vorwählen, wenn es genau einen gibt.
     defaultBereichId = data.length === 1 ? data[0].id : null
   } catch {

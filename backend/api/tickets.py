@@ -83,6 +83,11 @@ class KommentarWrite(BaseModel):
 class BereichWrite(BaseModel):
     name: str
     beschreibung: Optional[str] = None
+    # Sonderrollen des Bereichs (v123): Anlaufstelle auf der Hilfeseite bzw.
+    # Screenshot-Angebot im Melde-Dialog. Default False, damit ein Aufruf ohne
+    # die Felder nichts einschaltet.
+    hilfe_hinweis: bool = False
+    screenshot_hinweis: bool = False
 
 
 class BereichUpdate(BereichWrite):
@@ -224,7 +229,9 @@ def list_bereiche(user: CurrentUser, db: DB):
 @router.post("/bereiche", status_code=201)
 def create_bereich(data: BereichWrite, user: CurrentUser, db: DB):
     _require_bereiche_verwalten(user)
-    bereich = TicketBereich(name=data.name, beschreibung=data.beschreibung)
+    bereich = TicketBereich(name=data.name, beschreibung=data.beschreibung,
+                            hilfe_hinweis=data.hilfe_hinweis,
+                            screenshot_hinweis=data.screenshot_hinweis)
     return asdict(db.tickets.create_bereich(bereich, created_by=user.username))
 
 
@@ -237,6 +244,8 @@ def update_bereich(bereich_id: int, data: BereichUpdate, user: CurrentUser, db: 
         raise HTTPException(status_code=404, detail=f"Bereich {bereich_id} nicht gefunden.")
     bereich.name = data.name
     bereich.beschreibung = data.beschreibung
+    bereich.hilfe_hinweis = data.hilfe_hinweis
+    bereich.screenshot_hinweis = data.screenshot_hinweis
     bereich.version = data.expected_version
     ok = db.tickets.update_bereich(bereich, updated_by=user.username)
     if not ok:

@@ -233,6 +233,18 @@
         <q-card-section class="q-gutter-sm">
           <q-input v-model="bereichForm.name" label="Name *" outlined autofocus />
           <q-input v-model="bereichForm.beschreibung" label="Beschreibung" outlined type="textarea" rows="2" />
+          <!-- Sonderrollen (v123): Beides hing früher am Bereichsnamen und brach,
+               sobald jemand umbenannte — oder in einer zweiten Instanz von vornherein. -->
+          <q-toggle v-model="bereichForm.hilfe_hinweis" label="Anlaufstelle für App-Fragen" />
+          <div class="text-caption text-grey q-ml-sm q-mb-sm">
+            Wird auf der Seite „Erste Schritte“ als der Bereich genannt, in dem Mitglieder
+            Fragen zur App stellen sollen. Die Beschreibung steht dort mit dabei.
+          </div>
+          <q-toggle v-model="bereichForm.screenshot_hinweis" label="Bildschirmfoto beim Melden anbieten" />
+          <div class="text-caption text-grey q-ml-sm">
+            Für den Bereich, in dem App-Fehler landen: Der Melde-Dialog hängt dann
+            automatisch ein Bild des Bildschirms an.
+          </div>
         </q-card-section>
         <q-separator />
         <q-card-actions align="right">
@@ -312,7 +324,9 @@ const addUserSelected = ref(null)
 // Bereich-Dialog
 const bereichDialogOpen = ref(false)
 const editBereich = ref(null)
-const bereichForm = ref({ name: '', beschreibung: '' })
+const bereichForm = ref({
+  name: '', beschreibung: '', hilfe_hinweis: false, screenshot_hinweis: false,
+})
 
 // Kategorie-Dialog
 const kategorieDialogOpen = ref(false)
@@ -431,7 +445,12 @@ async function setFlag(bereichId, userRow, flag, value) {
 // ── Bereiche ───────────────────────────────────────────────────────────────
 function openBereichDialog(b = null) {
   editBereich.value = b
-  bereichForm.value = { name: b?.name ?? '', beschreibung: b?.beschreibung ?? '' }
+  bereichForm.value = {
+    name: b?.name ?? '',
+    beschreibung: b?.beschreibung ?? '',
+    hilfe_hinweis: b?.hilfe_hinweis ?? false,
+    screenshot_hinweis: b?.screenshot_hinweis ?? false,
+  }
   bereichDialogOpen.value = true
 }
 

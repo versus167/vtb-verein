@@ -48,9 +48,15 @@ class TicketPrioritaet:
 
 @dataclass
 class TicketBereich:
+    # hilfe_hinweis/screenshot_hinweis markieren den Bereich für zwei Stellen, die
+    # ihn früher am Namen erkennen mussten: den Anlaufstellen-Hinweis am Fuß der
+    # Hilfeseite und das Screenshot-Angebot im Melde-Dialog. Beides hängt damit an
+    # einer Einstellung statt an der Schreibweise „VTB-App" (s. database.py v123).
     id: Optional[int] = field(default=None)
     name: str = field(default='')
     beschreibung: Optional[str] = field(default=None)
+    hilfe_hinweis: bool = field(default=False)
+    screenshot_hinweis: bool = field(default=False)
     version: int = field(default=1)
     created_at: Optional[str] = field(default=None)
     deleted_at: Optional[str] = field(default=None)
