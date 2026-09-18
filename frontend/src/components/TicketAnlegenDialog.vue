@@ -306,11 +306,25 @@ function loadHtml2Canvas() {
 // Darum im Klon jede Farbe, die html2canvas nicht lesen kann, vorher in ein
 // rgba() übersetzen. Das fängt auch künftige moderne Farbfunktionen
 // (oklch(), lab(), …) ab, ohne dass wir sie einzeln kennen müssen.
-const FARB_EIGENSCHAFTEN = [
-  'color', 'backgroundColor', 'borderTopColor', 'borderRightColor',
-  'borderBottomColor', 'borderLeftColor', 'outlineColor', 'textDecorationColor',
-]
+// Die Liste war zuerst handgeschrieben (color, backgroundColor, border*Color,
+// outlineColor, textDecorationColor) — und ging ein zweites Mal schief: Übrig
+// blieben `-webkit-text-fill-color`, `-webkit-text-stroke-color` und
+// `text-emphasis-color`, allesamt `currentColor`-Erben, die html2canvas auf
+// seinen EIGENEN Ersatzelementen für `::before`/`::after` ausliest
+// (`___html2canvas___pseudoelement_*`). Deshalb wird die Liste jetzt aus dem
+// Computed Style abgeleitet statt geraten: alles, was auf „color" endet, plus
+// die SVG-Pendants. Einmal pro Aufnahme ermittelt — die Namen sind für alle
+// Elemente dieselben.
 const LESBARE_FARBE = /^(rgba?|hsla?)\(|^#|^transparent$/i
+
+function farbEigenschaften(cs) {
+  const namen = []
+  for (let i = 0; i < cs.length; i++) {
+    const p = cs[i]
+    if (/color$/i.test(p) || p === 'fill' || p === 'stroke') namen.push(p)
+  }
+  return namen
+}
 
 let farbCtx = null
 const farbCache = new Map()
@@ -340,12 +354,13 @@ function nachRgba(wert) {
 function farbenEntschaerfen(klonDoc) {
   const win = klonDoc.defaultView
   if (!win) return
+  const eigenschaften = farbEigenschaften(win.getComputedStyle(klonDoc.documentElement))
   for (const el of klonDoc.querySelectorAll('*')) {
     const cs = win.getComputedStyle(el)
-    for (const prop of FARB_EIGENSCHAFTEN) {
-      const wert = cs[prop]
+    for (const prop of eigenschaften) {
+      const wert = cs.getPropertyValue(prop)
       if (!wert || LESBARE_FARBE.test(wert)) continue
-      el.style[prop] = nachRgba(wert)
+      el.style.setProperty(prop, nachRgba(wert))
     }
   }
 }
