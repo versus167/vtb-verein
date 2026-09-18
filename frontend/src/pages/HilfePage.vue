@@ -250,23 +250,28 @@
         <div class="col-12 col-sm-auto">
           <q-btn unelevated no-caps color="primary" icon="confirmation_number"
             label="Ticket aufmachen" class="full-width"
-            @click="router.push({ name: 'tickets' })" />
+            @click="ticketOffen = true" />
         </div>
       </q-card-section>
     </q-card>
+
+    <!-- Direkt hier statt Sprung auf /tickets: Wer eine Frage hat, soll sie
+         stellen können, ohne erst den Bereich zu suchen. Vorgewählt ist die
+         Anlaufstelle aus der Ticket-Verwaltung; fehlt sie, wählt man selbst. -->
+    <TicketAnlegenDialog v-model="ticketOffen" :bereich-id="hilfeBereich?.id ?? null" />
   </q-page>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAuthStore } from 'src/stores/auth'
 import { api } from 'src/boot/axios'
 import ProfilPanel from 'components/ProfilPanel.vue'
 import HilfeAnmelden from 'components/HilfeAnmelden.vue'
+import TicketAnlegenDialog from 'components/TicketAnlegenDialog.vue'
 
 const auth = useAuthStore()
-const router = useRouter()
+const ticketOffen = ref(false)
 
 // Die Wege stehen als Daten da, nicht als acht Absätze im Template: Es sind
 // gleichförmige Einträge, und einer kommt erfahrungsgemäß immer noch dazu.
