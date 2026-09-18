@@ -30,6 +30,15 @@ const routes = [
         meta: { title: 'Mein Profil' },
       },
       {
+        // Ohne meta.permission – die Einstiegshilfe ist für jeden da, der sich
+        // anmelden kann (wie profile/tickets). Was drinsteht, filtert die Seite
+        // selbst über hasPermission.
+        path: 'hilfe',
+        name: 'hilfe',
+        component: () => import('pages/HilfePage.vue'),
+        meta: { title: 'Erste Schritte' },
+      },
+      {
         path: 'abteilungen',
         name: 'abteilungen',
         component: () => import('pages/AbteilungenPage.vue'),

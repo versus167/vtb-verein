@@ -148,6 +148,15 @@
               flat
               dense
               size="sm"
+              label="Probleme beim Anmelden?"
+              icon="help_outline"
+              no-caps
+              @click="hilfeOffen = true"
+            />
+            <q-btn
+              flat
+              dense
+              size="sm"
               label="App neu laden"
               icon="refresh"
               no-caps
@@ -157,6 +166,26 @@
         </q-card-section>
       </q-card>
     </div>
+
+    <!-- Ohne festes `dark` (anders als die Login-Karte darüber): So folgt die
+         Karte dem gewählten Erscheinungsbild — im VTB-Look dunkelblau wie der
+         Rest der Anmeldeseite, in „Hell" weiß. Fest verdrahtet wäre sie in einem
+         der drei Fälle dunkel auf dunkel. -->
+    <q-dialog v-model="hilfeOffen">
+      <q-card class="login-hilfe-karte">
+        <q-card-section class="row items-center q-pb-none">
+          <div class="text-h6">Anmelden — so geht's</div>
+          <q-space />
+          <q-btn flat round dense icon="close" v-close-popup aria-label="Schließen" />
+        </q-card-section>
+        <q-card-section class="scroll login-hilfe-inhalt">
+          <HilfeAnmelden />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn flat no-caps label="Verstanden" color="primary" v-close-popup />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <div v-if="appVersion" class="login-version">{{ appVersion }}</div>
   </div>
@@ -170,11 +199,14 @@ import { api } from 'src/boot/axios'
 import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInfo'
 import { zurUebersicht } from 'src/router/nach-login'
 import { pruefeMailadresse } from 'src/utils/email'
+import HilfeAnmelden from 'components/HilfeAnmelden.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 
 const tab = ref('magic')
+
+const hilfeOffen = ref(false)
 
 const appVersion = versionLabel
 
@@ -349,6 +381,16 @@ async function onRequestMagicLink() {
 
 .login-btn {
   border-radius: 12px;
+}
+
+/* Hilfe-Dialog: eigene Breite, damit der Text am Desktop nicht über die volle
+   Fensterbreite läuft, und gedeckelte Höhe fürs Handy (der Inhalt scrollt). */
+.login-hilfe-karte {
+  width: 560px;
+  max-width: 92vw;
+}
+.login-hilfe-inhalt {
+  max-height: 65vh;
 }
 
 /* Fehlermeldungen in Gelb auf der blauen Karte */

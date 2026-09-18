@@ -66,6 +66,10 @@
             </div>
             <q-separator />
             <q-list style="min-width: 230px">
+              <q-item clickable v-close-popup :to="{ name: 'hilfe' }">
+                <q-item-section avatar><q-icon name="help_outline" /></q-item-section>
+                <q-item-section>Erste Schritte</q-item-section>
+              </q-item>
               <q-item clickable v-close-popup :to="{ name: 'profile' }">
                 <q-item-section avatar><q-icon name="person" /></q-item-section>
                 <q-item-section>Mein Profil</q-item-section>

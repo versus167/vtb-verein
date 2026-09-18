@@ -93,6 +93,12 @@
       <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="sonstiges" icon="more_horiz" title="Sonstiges" caption="Import, Bereinigen, Fibu, Protokoll" />
       </div>
+
+      <!-- Für jeden sichtbar, aber bewusst als letzte Kachel: Wer die App täglich
+           nutzt, soll seine Fachbereiche oben behalten. -->
+      <div class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="hilfe" icon="help_outline" title="Erste Schritte" caption="Kurzanleitung zur App" />
+      </div>
     </div>
   </q-page>
 </template>
