@@ -151,6 +151,10 @@ const props = defineProps({
   // Feedback-Button: Screenshot der App-Oberfläche anbieten. Aus dem Ticketbereich
   // heraus (false) ergibt ein Abbild der Ticketliste keinen Sinn – dort nur Fotos.
   withScreenshot: { type: Boolean, default: false },
+  // Bereich vorwählen, z. B. die Anlaufstelle für App-Fragen, wenn der Dialog von
+  // der Hilfeseite kommt. Ohne Angabe gilt die alte Regel (nur bei genau einem
+  // Bereich); umwählen kann man in beiden Fällen.
+  bereichId: { type: Number, default: null },
 })
 const emit = defineEmits(['update:modelValue', 'created'])
 
@@ -450,7 +454,9 @@ async function loadBereiche() {
 watch(dialogOpen, async (offen) => {
   if (!offen) return
   aufraeumen()
-  form.value = { titel: '', bereich_id: defaultBereichId, beschreibung: '', intern: false }
+  form.value = {
+    titel: '', bereich_id: props.bereichId ?? defaultBereichId, beschreibung: '', intern: false,
+  }
   internManuell.value = false
   error.value = ''
   kameraFehler.value = ''
