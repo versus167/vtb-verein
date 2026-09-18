@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 122
+SCHEMA_VERSION = 123
 
 
 # ---------------------------------------------------------------------------
@@ -3850,6 +3850,21 @@ _FN_TICKETS_AUDIT_UPDATE = f"""
     END; $$;
 """
 
+# Dieselbe Begründung eine Ebene tiefer: Seit v123 tragen die Bereiche zwei Flags
+# (`hilfe_hinweis`, `screenshot_hinweis`), und die Spaltenliste wird im Frischaufbau
+# wie in der Migration gebraucht. Standen die Funktionen weiter inline im Frischaufbau,
+# bekäme ein migrierter Bestand die Spalten in `ticket_bereiche`, aber eine History,
+# die sie nie mitschreibt — lautlos, denn fehlende Spalten im INSERT sind kein Fehler.
+_TICKET_BEREICH_COLS = (
+    "id, version, name, beschreibung, hilfe_hinweis, screenshot_hinweis, "
+    "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by"
+)
+_TICKET_BEREICH_VALS = ", ".join(
+    "NEW." + c.strip() for c in _TICKET_BEREICH_COLS.split(","))
+
+_FN_TICKET_BEREICHE_AUDIT_INSERT, _FN_TICKET_BEREICHE_AUDIT_UPDATE = _audit_fns(
+    "ticket_bereiche", _TICKET_BEREICH_COLS, _TICKET_BEREICH_VALS)
+
 
 # Batch-Löschung der Tickets (Schema v116, Ticket #190). Verbergen soft-löscht
 # Ticket UND Kinder mit gemeinsamer `loesch_ref`; `restore` reaktiviert exakt
@@ -4250,6 +4265,7 @@ class Database:
             120: self._migrate_v119_to_v120,
             121: self._migrate_v120_to_v121,
             122: self._migrate_v121_to_v122,
+            123: self._migrate_v122_to_v123,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9144,6 +9160,52 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 122 WHERE id = 1")
 
+    def _migrate_v122_to_v123(self) -> None:
+        """Ticket-Bereiche tragen ihre Sonderrolle selbst (Hilfeseite / Screenshot).
+
+        Zwei Stellen mussten „ihren" Bereich bisher am Namen erkennen: der
+        Melde-Dialog schaltete das Screenshot-Angebot über
+        `name.toLowerCase().includes('vtb-app')`, und der Anlaufstellen-Hinweis am
+        Fuß der neuen Hilfeseite hätte es genauso mit „Frag KI-Jochen!" tun müssen.
+        Beides ist in einer Zweitinstanz schlicht falsch — der Seed legt bewusst nur
+        „Allgemein" an, jeder Verein schneidet seine Bereiche selbst zu. Und schon
+        innerhalb dieser Instanz war es brüchig: Ein umbenannter Bereich verlor die
+        Screenshot-Funktion, ohne dass irgendwo etwas gemeldet wurde.
+
+        Statt dessen zwei Flags am Bereich, gepflegt in der Ticket-Verwaltung.
+        Beide `DEFAULT FALSE`: Eine frische Instanz bewirbt keinen Bereich, bis ein
+        Admin einen markiert.
+
+        Der Backfill bildet die alte Namensregel ein letztes Mal nach, damit dieser
+        Instanz beim Update nichts wegbricht, was sie heute hat. Bewusst OHNE
+        `version`-Bump — das ist Schema-Nachzug, kein fachlicher Vorgang; ein
+        History-Eintrag „jemand hat den Bereich geändert" wäre schlicht gelogen.
+
+        Die Audit-Funktionen werden neu erzeugt, NACHDEM die History-Tabelle die
+        Spalten hat: Sie sind f-Strings über `_TICKET_BEREICH_COLS`, und wer nur die
+        Tabellen erweitert, bekommt eine History, die die neuen Spalten nie
+        mitschreibt, ohne dass irgendetwas kracht (dieselbe Falle wie in v113/v122).
+        """
+        with self.cursor() as cur:
+            for spalte in ('hilfe_hinweis', 'screenshot_hinweis'):
+                cur.execute(f"ALTER TABLE ticket_bereiche ADD COLUMN IF NOT EXISTS "
+                            f"{spalte} BOOLEAN NOT NULL DEFAULT FALSE")
+                cur.execute(f"ALTER TABLE ticket_bereiche_history "
+                            f"ADD COLUMN IF NOT EXISTS {spalte} BOOLEAN")
+            cur.execute(_FN_TICKET_BEREICHE_AUDIT_INSERT)
+            cur.execute(_FN_TICKET_BEREICHE_AUDIT_UPDATE)
+            cur.execute("""
+                UPDATE ticket_bereiche SET screenshot_hinweis = TRUE
+                 WHERE deleted_at IS NULL
+                   AND (lower(name) LIKE '%vtb-app%' OR lower(name) LIKE '%vtb app%')
+            """)
+            cur.execute("""
+                UPDATE ticket_bereiche SET hilfe_hinweis = TRUE
+                 WHERE deleted_at IS NULL AND lower(name) LIKE '%jochen%'
+            """)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 123 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9998,9 +10060,11 @@ class Database:
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ticket_bereiche (
-              id            SERIAL PRIMARY KEY,
-              name          TEXT NOT NULL,
-              beschreibung  TEXT,
+              id                 SERIAL PRIMARY KEY,
+              name               TEXT NOT NULL,
+              beschreibung       TEXT,
+              hilfe_hinweis      BOOLEAN NOT NULL DEFAULT FALSE,
+              screenshot_hinweis BOOLEAN NOT NULL DEFAULT FALSE,
               version       INTEGER NOT NULL DEFAULT 1,
               created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by    TEXT NOT NULL,
@@ -10016,6 +10080,8 @@ class Database:
               version       INTEGER NOT NULL,
               name          TEXT,
               beschreibung  TEXT,
+              hilfe_hinweis      BOOLEAN,
+              screenshot_hinweis BOOLEAN,
               created_at    TEXT,
               created_by    TEXT,
               updated_at    TEXT,
@@ -11046,34 +11112,8 @@ class Database:
                 RETURN NEW;
             END; $$;
         """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_ticket_bereiche_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                INSERT INTO ticket_bereiche_history (
-                    id, version, name, beschreibung,
-                    created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                ) VALUES (
-                    NEW.id, NEW.version, NEW.name, NEW.beschreibung,
-                    NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                );
-                RETURN NEW;
-            END; $$;
-        """)
-        cur.execute("""
-            CREATE OR REPLACE FUNCTION fn_ticket_bereiche_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-            BEGIN
-                IF NEW.version != OLD.version THEN
-                    INSERT INTO ticket_bereiche_history (
-                        id, version, name, beschreibung,
-                        created_at, created_by, updated_at, updated_by, deleted_at, deleted_by
-                    ) VALUES (
-                        NEW.id, NEW.version, NEW.name, NEW.beschreibung,
-                        NEW.created_at, NEW.created_by, NEW.updated_at, NEW.updated_by, NEW.deleted_at, NEW.deleted_by
-                    );
-                END IF;
-                RETURN NEW;
-            END; $$;
-        """)
+        cur.execute(_FN_TICKET_BEREICHE_AUDIT_INSERT)
+        cur.execute(_FN_TICKET_BEREICHE_AUDIT_UPDATE)
         cur.execute("""
             CREATE OR REPLACE FUNCTION fn_ticket_kategorien_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
             BEGIN

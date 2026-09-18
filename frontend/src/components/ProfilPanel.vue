@@ -3,6 +3,7 @@
     <q-expansion-item
       expand-separator
       :duration="180"
+      :default-opened="offen"
       header-class="profil-panel__kopf"
       expand-icon-class="profil-panel__pfeil"
     >
@@ -31,6 +32,11 @@ defineProps({
   titel: { type: String, required: true },
   // Kurzfassung im Kopf, damit man zugeklappt schon sieht, was drinsteckt.
   info: { type: String, default: '' },
+  // Aufgeklappt starten. Default zu: Im Profil sind es viele Panels, da wäre ein
+  // offenes irreführend. Die Hilfeseite öffnet damit ihr erstes Kapitel.
+  // (Als Prop, weil `default-opened` als Fallthrough-Attribut an der q-card
+  // landen würde statt am q-expansion-item.)
+  offen: { type: Boolean, default: false },
 })
 </script>
 

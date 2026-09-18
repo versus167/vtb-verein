@@ -15,7 +15,8 @@ class TicketBereichRepository:
 
     def get(self, id: int) -> Optional[TicketBereich]:
         cursor = self.conn.execute(
-            "SELECT id, name, beschreibung, version, created_at, deleted_at, deleted_by "
+            "SELECT id, name, beschreibung, hilfe_hinweis, screenshot_hinweis, "
+            "version, created_at, deleted_at, deleted_by "
             "FROM ticket_bereiche WHERE id = %s",
             (id,)
         )
@@ -25,30 +26,36 @@ class TicketBereichRepository:
     def list_all(self, include_deleted: bool = False) -> list[TicketBereich]:
         if include_deleted:
             cursor = self.conn.execute(
-                "SELECT id, name, beschreibung, version, created_at, deleted_at, deleted_by "
+                "SELECT id, name, beschreibung, hilfe_hinweis, screenshot_hinweis, "
+            "version, created_at, deleted_at, deleted_by "
                 "FROM ticket_bereiche ORDER BY name"
             )
         else:
             cursor = self.conn.execute(
-                "SELECT id, name, beschreibung, version, created_at, deleted_at, deleted_by "
+                "SELECT id, name, beschreibung, hilfe_hinweis, screenshot_hinweis, "
+            "version, created_at, deleted_at, deleted_by "
                 "FROM ticket_bereiche WHERE deleted_at IS NULL ORDER BY name"
             )
         return [self._map(row) for row in cursor.fetchall()]
 
     def create(self, bereich: TicketBereich, created_by: str) -> TicketBereich:
         cursor = self.conn.execute(
-            "INSERT INTO ticket_bereiche (name, beschreibung, created_by, updated_by) VALUES (%s, %s, %s, %s) RETURNING id",
-            (bereich.name, bereich.beschreibung, created_by, created_by)
+            "INSERT INTO ticket_bereiche (name, beschreibung, hilfe_hinweis, screenshot_hinweis, "
+            "created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (bereich.name, bereich.beschreibung, bereich.hilfe_hinweis,
+             bereich.screenshot_hinweis, created_by, created_by)
         )
         self.conn.commit()
         return self.get(cursor.fetchone()['id'])
 
     def update(self, bereich: TicketBereich, updated_by: str) -> bool:
         cursor = self.conn.execute(
-            "UPDATE ticket_bereiche SET name = %s, beschreibung = %s, version = version + 1, "
+            "UPDATE ticket_bereiche SET name = %s, beschreibung = %s, hilfe_hinweis = %s, "
+            "screenshot_hinweis = %s, version = version + 1, "
             "updated_at = CURRENT_TIMESTAMP, updated_by = %s "
             "WHERE id = %s AND version = %s AND deleted_at IS NULL",
-            (bereich.name, bereich.beschreibung, updated_by, bereich.id, bereich.version)
+            (bereich.name, bereich.beschreibung, bereich.hilfe_hinweis,
+             bereich.screenshot_hinweis, updated_by, bereich.id, bereich.version)
         )
         self.conn.commit()
         return cursor.rowcount > 0
@@ -95,6 +102,7 @@ class TicketBereichRepository:
     def _map(self, row) -> TicketBereich:
         return TicketBereich(
             id=row['id'], name=row['name'], beschreibung=row['beschreibung'],
+            hilfe_hinweis=row['hilfe_hinweis'], screenshot_hinweis=row['screenshot_hinweis'],
             version=row['version'], created_at=row['created_at'],
             deleted_at=row['deleted_at'], deleted_by=row['deleted_by']
         )
