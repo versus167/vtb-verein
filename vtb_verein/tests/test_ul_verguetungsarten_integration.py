@@ -327,16 +327,17 @@ def test_export_rechnet_monatspauschale_im_einzelmonat(db):
     assert float(_ul_positionen(db)[aid]['betrag_soll']) == 150.0
 
 
-def test_export_laesst_abrechnungen_ohne_verguetung_aussen_vor(db):
-    """Reiner Stundennachweis: Die Auszahlung läuft außerhalb der App, es darf
-    also gar keine Kreditor-Buchung entstehen – auch keine über 0,00 €."""
+def test_export_bucht_abrechnungen_ohne_verguetung_mit_0_euro(db):
+    """Reiner Stundennachweis: Die Auszahlung läuft außerhalb der App, aber die
+    Abrechnung geht als 0,00-€-Kreditorbuchung mit in den Export (PDF-Aufstellung
+    hängt dran) – sie soll nicht spurlos verschwinden."""
     with _cur(db) as cur:
         mitglied_id, abteilung_id = _stammdaten(cur)
         aid = _abrechnung(cur, mitglied_id, abteilung_id, von='2026-06-01',
                           bis='2026-06-30', art='ohne_verguetung', satz=0.0)
         _stunde(cur, aid, '2026-06-02', 2.0)
 
-    assert aid not in _ul_positionen(db)
+    assert float(_ul_positionen(db)[aid]['betrag_soll']) == 0.0
 
 
 # ---------------------------------------------------------------------------

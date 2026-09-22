@@ -349,6 +349,16 @@ class TestGegenbuchungsGrund:
         assert p.buchungstext.endswith('Wagner, Annett')
         assert p.buchungstext.startswith('ÜL-Honorar Aerobic')
 
+    def test_ul_honorar_buchungstext_enthaelt_zeitraum(self):
+        # Der Kontoauszug soll ohne Blick in die Abrechnung zeigen, für welchen
+        # Zeitraum gezahlt wird – auch bei der 0,00-€-Buchung ohne Vergütung.
+        svc, _ = _service(neu=[_ul_row(quelle_name='Aerobic',
+                                       periode='2026-01-01 – 2026-03-31',
+                                       vorname='Annett', nachname='Wagner',
+                                       betrag_soll=0.0, verguetungsart='ohne_verguetung')])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.buchungstext == 'ÜL-Honorar Aerobic 2026-01-01 – 2026-03-31 Wagner, Annett'
+
 
 class TestAufloesung:
     def test_debitor_konto_basis_plus_nummer(self):
@@ -630,6 +640,16 @@ class TestUlHonorar:
         svc, _ = _service(neu=[_ul_row(betrag_soll=0.0)])
         fehler = svc.vorschau()['fehler']
         assert len(fehler) == 1 and 'kein Honorar' in fehler[0]['problem']
+
+    def test_ohne_verguetung_0_euro_ist_kein_fehler(self):
+        # Reiner Stundennachweis (verguetungsart='ohne_verguetung'): 0,00 € ist hier
+        # gewollt, nicht die Fehlermeldung eines fehlenden Satzes.
+        svc, _ = _service(neu=[_ul_row(betrag_soll=0.0, verguetungsart='ohne_verguetung')])
+        v = svc.vorschau()
+        assert v['fehler'] == []
+        p = v['forderungen'][0]
+        assert p.betrag == 0.0
+        assert p.dokument  # Aufstellung hängt trotzdem dran
 
     def test_validierung_fehlende_mitgliedsnummer(self):
         svc, _ = _service(neu=[_ul_row(mitgliedsnummer=None)])

@@ -34,7 +34,8 @@ LIZENZ_KLASSIFIKATIONEN = (LIZENZ_MIT, LIZENZ_OHNE)
 # Vergütungsart der Vereinbarung – bestimmt die Betragsformel (#84).
 #   stundensatz     Betrag = erfasste Stunden × Satz (€/h)          [Default, Altbestand]
 #   monatspauschale Betrag = Satz (€/Monat) × noch nicht vergütete Monate im Zeitraum
-#   ohne_verguetung kein Betrag; reine Aufzeichnung, kein Fibu-Export
+#   ohne_verguetung kein Betrag; reine Aufzeichnung – geht als 0,00-€-Kreditorbuchung
+#                   MIT PDF-Aufstellung in den Fibu-Export (Auszahlung bleibt außen vor)
 VERGUETUNG_STUNDENSATZ = 'stundensatz'
 VERGUETUNG_MONATSPAUSCHALE = 'monatspauschale'
 VERGUETUNG_OHNE = 'ohne_verguetung'

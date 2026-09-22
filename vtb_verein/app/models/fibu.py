@@ -101,3 +101,7 @@ class FibuExportPosition:
     mandatsdatum: Optional[str] = None  # Feld 48 (ISO)
     mailadresse: Optional[str] = None  # Feld 59 (Mailadresse Personenkonto)
     kontoinhaber: Optional[str] = None  # Feld 70 (abweichender Kontoinhaber zur IBAN)
+    # Nur bei quelle_typ='ul_abrechnung' gesetzt (Snapshot der Abrechnung): unterscheidet
+    # in der Validierung die gewollte 0,00-€-Buchung ('ohne_verguetung') von einem
+    # fehlenden Stammdatensatz (Stundensatz ohne hinterlegten Satz).
+    verguetungsart: Optional[str] = None
