@@ -29,6 +29,8 @@ Buchungslogik:
   (Haben, Kontenart 'K') = einstellungen.ul_kreditor_konto_basis + Mitgliedsnummer; Betrag =
   Summe der Termin-Stunden × eingefrorenem Satz, Kostenstelle aus der Abteilung, kein
   Lastschrifteinzug. Der Storno-Pfad dreht Soll↔Haben wie bei den Debitor-Posten.
+  verguetungsart='ohne_verguetung' bucht bewusst 0,00 € statt außen vor zu bleiben – die
+  PDF-Aufstellung liegt trotzdem bei, damit die Fibu jeden Stundennachweis sieht.
 - Abteilungs-getragene Posten (zahler_typ='abteilung', z.B. Schiedsrichter-Beiträge):
   erzeugen ZWEI Zeilen mit demselben Erlöskonto, getauschter Kostenstelle und gleicher
   Belegnummer (sich ausgleichendes OPOS-Paar auf dem Debitor → kein SEPA-Einzug):
@@ -63,6 +65,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from app.models.fibu import FibuExport, FibuExportPosition, FibuEinstellungen
+from app.models.ul_stunden import VERGUETUNG_OHNE
 from app.services import fibu_formatter
 from app.services.ul_stunden_service import ULStundenService
 
@@ -569,6 +572,7 @@ class FibuExportService:
             bic=row.get('bic'),
             mailadresse=row.get('email'),
             kontoinhaber=abw_kontoinhaber,
+            verguetungsart=row.get('verguetungsart'),
         )
 
     @staticmethod
@@ -596,7 +600,10 @@ class FibuExportService:
                                     else "ÜL ohne Mitgliedsnummer")
                 if not p.gegenkonto:
                     probleme.append("ÜL-Aufwandskonto nicht gesetzt (Fibu-Einstellungen)")
-                if p.betrag <= 0:
+                # 0,00 € ist bei 'ohne_verguetung' gewollt (reiner Stundennachweis ohne
+                # Auszahlung) – nur bei den anderen Arten ist es ein fehlender Satz/
+                # fehlende Stunden und soll als Fehler auffallen statt zu verschwinden.
+                if p.betrag <= 0 and p.verguetungsart != VERGUETUNG_OHNE:
                     probleme.append("kein Honorar (keine Stunden oder Vergütungssatz 0)")
             else:
                 if p.konto is None:

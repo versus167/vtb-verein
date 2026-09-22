@@ -76,10 +76,11 @@ _SQL_GEBUEHR = """
 # Einreichen und friert es ein – ein Kalendermonat wird nur einmal vergütet, auch wenn
 # zwei Abrechnungen in ihn hineinragen. Diese Abgrenzung braucht die Nachbarzeilen und
 # hat hier deshalb nichts zu suchen; hier steht nur die Multiplikation.
-# 'ohne_verguetung' fällt schon über {cond} heraus.
+# 'ohne_verguetung' bucht bewusst 0,00 € (s. _COND_UL_NEU) – verguetungsart wird mit
+# ausgewählt, damit der Service diese 0 von einem fehlenden Stammdatensatz unterscheiden kann.
 _SQL_UL = """
     SELECT 'ul_abrechnung' AS quelle_typ, a.id AS quelle_id,
-           a.zeitraum_von || ' – ' || a.zeitraum_bis AS periode,
+           a.zeitraum_von || ' – ' || a.zeitraum_bis AS periode, a.verguetungsart,
            CASE a.verguetungsart
              WHEN 'monatspauschale'
                THEN COALESCE(a.verguetung_pro_stunde, 0) * COALESCE(a.verguetung_monate, 0)
@@ -115,17 +116,17 @@ _COND_STORNO = ("{p}.exportiert_in_export_id IS NOT NULL "
 # ÜL: nur bestätigte Abrechnungen sind exportierbar. Eine exportierte Abrechnung ist
 # gegen Statuswechsel/Löschen gesperrt (siehe ul_abrechnung_repository), daher kann der
 # Storno-Zweig faktisch nur über einen ganzen Gegenbuchungs-Lauf greifen.
-# Zwei Gruppen bleiben draußen, weil bei ihnen nichts zu zahlen ist und eine
-# 0,00-€-Kreditorbuchung die Fibu nur zumüllt:
-#   - 'ohne_verguetung': reine Stundennachweise, die Auszahlung läuft außerhalb der
-#     App (Honorarvertrag, Lohnbuchhaltung).
-#   - Monatspauschalen ohne offenen Monat: Der Zeitraum liegt vollständig in Monaten,
-#     die eine frühere Abrechnung schon vergütet hat (Nachtrag im laufenden Monat).
-# Ein Stundensatz ohne hinterlegten Satz wird dagegen weiter mit 0,00 € exportiert –
-# das ist ein fehlender Stammdatensatz und soll auffallen, nicht verschwinden.
+# 'ohne_verguetung' geht MIT: als 0,00-€-Kreditorbuchung, an der die PDF-Aufstellung
+# hängt (_belege im Service baut sie für jede Position mit `dokument`, unabhängig vom
+# Betrag) – die Fibu bekommt damit lückenlos jeden Stundennachweis zu sehen, auch wenn
+# nichts fließt. Nur eine Gruppe bleibt draußen, weil es dort wirklich nichts zu
+# berichten gibt: Monatspauschalen ohne offenen Monat, deren Zeitraum vollständig in
+# Monaten liegt, die eine frühere Abrechnung schon vergütet hat (Nachtrag im laufenden
+# Monat). Ein Stundensatz ohne hinterlegten Satz wird weiter mit 0,00 € exportiert –
+# das ist ein fehlender Stammdatensatz und soll als Validierungsfehler auffallen, nicht
+# verschwinden (der Service unterscheidet das über verguetungsart, s. _validieren).
 _COND_UL_NEU = ("a.exportiert_in_export_id IS NULL AND a.deleted_at IS NULL "
                 "AND a.status = 'bestaetigt' "
-                "AND a.verguetungsart <> 'ohne_verguetung' "
                 "AND NOT (a.verguetungsart = 'monatspauschale' "
                 "         AND COALESCE(a.verguetung_monate, 0) = 0)")
 _COND_UL_STORNO = ("a.exportiert_in_export_id IS NOT NULL "
