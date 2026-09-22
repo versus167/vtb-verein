@@ -72,14 +72,13 @@
             inputmode="decimal" suffix="€" :disable="!istEntwurf" class="q-mb-sm"
             :error="!!betragFehler" :error-message="betragFehler" />
 
-          <!-- Abteilung nur zeigen, wenn es überhaupt etwas zu wählen gibt -->
-          <q-select v-if="abteilungen.length > 1" v-model="form.abteilung_id"
+          <!-- Auch bei genau einer Abteilung ein Auswahlfeld: „Ohne Abteilung (Verein)"
+               muss erreichbar bleiben, sonst kann niemand mit exakt einer Abteilung
+               je eine Vereinsrechnung einreichen. -->
+          <q-select v-if="abteilungen.length" v-model="form.abteilung_id"
             :options="abteilungsOptionen" option-value="id" option-label="name"
             emit-value map-options outlined dense label="Abteilung"
             :disable="!istEntwurf" class="q-mb-sm" />
-          <div v-else-if="abteilungen.length === 1" class="text-caption text-grey q-mb-sm">
-            Abteilung: {{ abteilungen[0].name }}
-          </div>
           <div v-else class="text-caption text-grey q-mb-sm">
             Ohne Abteilung – die Geschäftsstelle gibt diese Rechnung frei.
           </div>
@@ -346,7 +345,7 @@ function neu() {
   neueDateien.value = []
   error.value = ''
   form.value = leeresFormular()
-  // Genau eine Abteilung → ohne Auswahlfeld vorbelegen.
+  // Genau eine Abteilung → als Vorschlag vorbelegen (umstellbar auf „Verein").
   if (abteilungen.value.length === 1) form.value.abteilung_id = abteilungen.value[0].id
   dialogOpen.value = true
 }
