@@ -235,6 +235,11 @@
               </q-item-section>
             </q-item>
           </q-list>
+          <div v-if="meineMehr" class="text-center q-mt-sm">
+            <q-btn flat no-caps color="primary" icon="expand_more"
+              :label="`${MEINE_SCHRITT} weitere laden`" :loading="meineLaedt"
+              @click="mehrMeineBuchungen" />
+          </div>
         </template>
       </div>
 
@@ -1120,6 +1125,14 @@ const tab = ref('tresen')
 const verwaltenTab = ref('mannschaft')
 
 const meineBuchungen = ref([])
+// Eigene Buchungen seitenweise (#207): Standard 25, „Mehr laden" erweitert um
+// je 25. Das Limit wächst mit, damit Auto-Refresh und Neuladen nach einer
+// Buchung den aufgeklappten Umfang behalten.
+const MEINE_SCHRITT = 25
+const MEINE_MAX = 500  // Obergrenze des Backends
+const meineLimit = ref(MEINE_SCHRITT)
+const meineMehr = ref(false)
+const meineLaedt = ref(false)
 const salden = ref([])
 const teamSaldo = ref(0)
 const katalog = ref([])
@@ -1495,9 +1508,19 @@ async function loadDeckel() {
 async function loadMeineBuchungen() {
   if (!deckel.value) return
   try {
-    const { data } = await api.get(`${BASE}/${deckel.value.id}/buchungen`, { params: { limit: 10 } })
+    const { data } = await api.get(`${BASE}/${deckel.value.id}/buchungen`,
+      { params: { limit: meineLimit.value } })
     meineBuchungen.value = data
-  } catch { meineBuchungen.value = [] }
+    // Volle Seite = es könnte mehr geben; eine Anfrage zu viel ist billiger
+    // als ein Zähl-Endpunkt.
+    meineMehr.value = data.length >= meineLimit.value && meineLimit.value < MEINE_MAX
+  } catch { meineBuchungen.value = []; meineMehr.value = false }
+}
+
+async function mehrMeineBuchungen() {
+  meineLimit.value = Math.min(meineLimit.value + MEINE_SCHRITT, MEINE_MAX)
+  meineLaedt.value = true
+  try { await loadMeineBuchungen() } finally { meineLaedt.value = false }
 }
 
 async function loadSalden() {
@@ -1822,6 +1845,7 @@ watch(selectedTeamId, async (id) => {
   verwaltenTab.value = 'mannschaft'
   historyMitglied.value = null
   historySuche.value = ''
+  meineLimit.value = MEINE_SCHRITT
   // Termine gehören zur Mannschaft — der Ausschnitt des alten Teams passt nicht.
   termine.value = []
   laufendTerminId.value = null
