@@ -32,6 +32,13 @@ export const useAuthStore = defineStore('auth', {
       this._applyUser(data)
     },
 
+    // Login-Code aus der Login-Mail (#208) – für die installierte App, die den
+    // Link aus der Mail nicht abbekommt (der öffnet den Browser).
+    async loginWithCode(kennung, code, remember = false) {
+      const { data } = await api.post('/api/auth/magic-link/code', { kennung, code, remember })
+      this._applyUser(data)
+    },
+
     _applyUser(data) {
       // Server setzt das Session-Cookie; hier nur die User-Infos übernehmen.
       this.user = { id: data.id, username: data.username, display_name: data.display_name, role: data.role, permissions: data.permissions }

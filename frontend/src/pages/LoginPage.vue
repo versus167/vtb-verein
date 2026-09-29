@@ -130,6 +130,17 @@
                     unelevated
                   />
                 </q-form>
+                <div class="text-center">
+                  <q-btn
+                    flat
+                    dense
+                    size="sm"
+                    no-caps
+                    label="Ich habe schon einen Code"
+                    :disable="loading || !magicKennung.trim()"
+                    @click="zurCodeEingabe"
+                  />
+                </div>
               </div>
 
               <div v-else class="text-center q-gutter-md">
@@ -139,7 +150,53 @@
                   Falls es dazu ein Konto gibt, haben wir den Login-Link an die dort hinterlegte
                   E-Mail-Adresse geschickt. Bitte prüfe auch deinen Spam-Ordner.
                 </div>
-                <q-btn flat label="Nochmal versuchen" color="vtb-gelb" no-caps @click="magicSent = false" />
+                <!-- Login-Code (#208): Der Link aus der Mail öffnet am Handy den
+                     Browser, nicht die installierte App. Den Code tippt man dort
+                     ein, wo man angemeldet sein will. -->
+                <div class="text-body2 login-hint">
+                  In der Mail steht auch ein <strong>6-stelliger Code</strong> – gib ihn hier ein,
+                  dann bist du direkt in der App angemeldet.
+                </div>
+                <q-form @submit.prevent="onLoginWithCode" class="q-gutter-md">
+                  <q-input
+                    v-model="loginCode"
+                    label="Code aus der E-Mail"
+                    outlined
+                    dark
+                    color="vtb-gelb"
+                    inputmode="numeric"
+                    autocomplete="one-time-code"
+                    maxlength="7"
+                    input-class="text-center login-code-input"
+                    no-error-icon
+                    lazy-rules="ondemand"
+                    :disable="loading"
+                    :rules="[codeRule]"
+                  >
+                    <template #prepend>
+                      <q-icon name="pin" />
+                    </template>
+                  </q-input>
+
+                  <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben (30 Tage)" :disable="loading" />
+
+                  <div v-if="errorMsg" class="login-error text-center text-body2">
+                    {{ errorMsg }}
+                  </div>
+
+                  <q-btn
+                    type="submit"
+                    label="Mit Code anmelden"
+                    color="vtb-gelb"
+                    text-color="primary"
+                    no-caps
+                    class="full-width login-btn text-weight-bold"
+                    size="lg"
+                    :loading="loading"
+                    unelevated
+                  />
+                </q-form>
+                <q-btn flat label="Neuen Link anfordern" color="vtb-gelb" no-caps @click="zurAnforderung" />
               </div>
             </q-tab-panel>
           </q-tab-panels>
@@ -233,6 +290,36 @@ const rememberMe = ref(false)
 
 const magicKennung = ref('')
 const magicSent = ref(false)
+const loginCode = ref('')
+
+// Wer zum Mail-Programm wechselt, verlässt die App – am Handy wird sie dabei
+// gern beendet und startet danach frisch. Damit man trotzdem wieder bei der
+// Code-Eingabe landet, merkt sich das Gerät die offene Anforderung, so lange
+// der Code gilt (15 Minuten, s. LOGIN_CODE_MINUTEN im Backend).
+const OFFEN_KEY = 'vtb_login_code_offen'
+const CODE_GUELTIG_MS = 15 * 60 * 1000
+
+function merkeOffeneAnforderung () {
+  try {
+    localStorage.setItem(OFFEN_KEY, JSON.stringify({ kennung: magicKennung.value, seit: Date.now() }))
+  } catch { /* ohne Speicher geht's auch, nur ohne Wiedereinstieg */ }
+}
+
+function vergissOffeneAnforderung () {
+  try { localStorage.removeItem(OFFEN_KEY) } catch { /* egal */ }
+}
+
+onMounted(() => {
+  try {
+    const offen = JSON.parse(localStorage.getItem(OFFEN_KEY) || 'null')
+    if (offen?.kennung && Date.now() - offen.seit < CODE_GUELTIG_MS) {
+      magicKennung.value = offen.kennung
+      magicSent.value = true
+    } else if (offen) {
+      vergissOffeneAnforderung()
+    }
+  } catch { /* kaputter Eintrag – normal starten */ }
+})
 
 const loading = ref(false)
 const errorMsg = ref('')
@@ -278,12 +365,46 @@ async function onRequestMagicLink() {
   loading.value = true
   try {
     await api.post('/api/auth/magic-link/request', { kennung: magicKennung.value })
+    loginCode.value = ''
     magicSent.value = true
+    merkeOffeneAnforderung()
   } catch (err) {
     errorMsg.value = err.response?.data?.detail || 'Anfrage fehlgeschlagen'
   } finally {
     loading.value = false
   }
+}
+
+function zurCodeEingabe () {
+  errorMsg.value = ''
+  loginCode.value = ''
+  magicSent.value = true
+}
+
+function zurAnforderung () {
+  errorMsg.value = ''
+  magicSent.value = false
+  vergissOffeneAnforderung()
+}
+
+function codeRule (value) {
+  const ziffern = (value ?? '').replace(/\s/g, '')
+  return /^\d{6}$/.test(ziffern) || 'Bitte die 6 Ziffern aus der E-Mail eingeben.'
+}
+
+async function onLoginWithCode() {
+  errorMsg.value = ''
+  loading.value = true
+  try {
+    await auth.loginWithCode(magicKennung.value, loginCode.value, rememberMe.value)
+  } catch (err) {
+    errorMsg.value = err.response?.data?.detail || 'Anmeldung fehlgeschlagen'
+    loading.value = false
+    return
+  }
+  vergissOffeneAnforderung()
+  // Wie beim Passwort-Login: erst fertig, wenn die Übersicht steht (#157).
+  await zurUebersicht(router)
 }
 </script>
 
@@ -371,8 +492,10 @@ async function onRequestMagicLink() {
 }
 
 /* Versions-Angabe fest in der sichtbaren Bildschirmecke (dunkel, liegt auf Gelb) */
+/* absolute statt fixed: Der Code-Bildschirm (#208) ist höher als ein Handy-
+   Display – fest am Viewport stünde die Nummer mitten über der Karte. */
 .login-version {
-  position: fixed;
+  position: absolute;
   right: 16px;
   bottom: 10px;
   font-size: 11px;
@@ -397,6 +520,15 @@ async function onRequestMagicLink() {
 .login-error {
   font-weight: 600;
   color: $akzent;
+}
+
+/* Code-Feld: groß und gesperrt wie in der Mail, damit man Ziffer für Ziffer
+   abgleichen kann. :deep, weil input-class am inneren <input> landet. */
+:deep(.login-code-input) {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 1.5rem;
+  font-weight: bold;
+  letter-spacing: 0.3em;
 }
 
 /* Eingabefelder: weichere Ecken, Rahmen in Gelb */

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 124
+SCHEMA_VERSION = 125
 
 
 # ---------------------------------------------------------------------------
@@ -4267,6 +4267,7 @@ class Database:
             122: self._migrate_v121_to_v122,
             123: self._migrate_v122_to_v123,
             124: self._migrate_v123_to_v124,
+            125: self._migrate_v124_to_v125,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9237,6 +9238,29 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 124 WHERE id = 1")
 
+    def _migrate_v124_to_v125(self) -> None:
+        """Login-Code zum Login-Link (Ticket #208): `auth_tokens.code_*`.
+
+        Ein Link aus der Mail öffnet am Handy den Browser, nicht die installierte
+        App – deren Cookie-Speicher ist getrennt, die Anmeldung landet also am
+        falschen Ort. Deshalb trägt dieselbe Mail zusätzlich einen 6-stelligen Code,
+        den man in der App eintippt. Code und Link hängen an DERSELBEN Zeile:
+        Wer eins von beiden einlöst, setzt `used_at` und verbraucht damit auch das
+        andere.
+
+        Die History bekommt die Spalten bewusst nicht: `code_versuche` zählt ohne
+        `version`-Bump hoch (wie `used_at`), und der Code-Hash ist nach 15 Minuten
+        ohnehin wertlos – er hat in der dauerhaft aufbewahrten Historie nichts zu
+        suchen.
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS code_hash TEXT")
+            cur.execute("ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS code_expires_at TEXT")
+            cur.execute("ALTER TABLE auth_tokens ADD COLUMN IF NOT EXISTS "
+                        "code_versuche INTEGER NOT NULL DEFAULT 0")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 125 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -9759,6 +9783,9 @@ class Database:
               token_type  TEXT NOT NULL CHECK(token_type IN ('magic_link', 'remember_me')),
               expires_at  TEXT NOT NULL,
               used_at     TEXT,
+              code_hash       TEXT,
+              code_expires_at TEXT,
+              code_versuche   INTEGER NOT NULL DEFAULT 0,
               version     INTEGER NOT NULL DEFAULT 1,
               created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )

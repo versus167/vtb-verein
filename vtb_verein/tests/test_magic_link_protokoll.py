@@ -63,7 +63,8 @@ def _db(user=None):
     return SimpleNamespace(
         access_log_repository=log,
         get_user_by_kennung=lambda kennung: user,
-        auth_token_repository=SimpleNamespace(create_token=lambda **kw: 'tok'),
+        auth_token_repository=SimpleNamespace(
+            create_magic_link_mit_code=lambda **kw: ('tok', '123456')),
     )
 
 

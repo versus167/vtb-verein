@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import smtplib
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
@@ -438,6 +440,19 @@ class MagicLinkValidate(BaseModel):
     remember: bool = False
 
 
+class MagicLinkCode(BaseModel):
+    """Login-Code aus der Mail, in der App eingetippt (Ticket #208).
+
+    Die Kennung braucht es, weil ein 6-stelliger Code allein nicht eindeutig ist –
+    er gilt nur zusammen mit dem Konto, an das die Mail ging.
+    """
+    kennung: str = Field(..., max_length=254)
+    # Etwas Luft über die 6 Ziffern: Leerzeichen aus „483 912" werden erst im
+    # Endpunkt entfernt.
+    code: str = Field(..., max_length=20)
+    remember: bool = False
+
+
 # Rate-Limiting für Magic-Link-Anforderungen (Ticket #48) – gegen Mail-Bombing
 # und Brute-Force/Enumeration. Gezählt wird über das Zugriffsprotokoll (access_log),
 # das ohnehin jeden 'magic_link_request' festhält – kein Extra-State, übersteht Neustarts.
@@ -446,20 +461,48 @@ MAGIC_LINK_MAX_PER_IP = 5          # max. Anfragen je IP im Fenster → danach 4
 MAGIC_LINK_USER_WINDOW_MIN = 60    # Zeitfenster für das Pro-Empfänger-Limit
 MAGIC_LINK_MAX_PER_USER = 3        # max. Mails an dieselbe Adresse im Fenster
 
+# Login-Code (Ticket #208): 6 Ziffern = 1 Mio. Möglichkeiten. Tragbar nur, weil
+# ein Code kurz lebt und je Mail nur wenige Versuche hat – die Chance, ihn zu
+# erraten, liegt damit bei 5 : 1.000.000 je angeforderter Mail.
+LOGIN_CODE_MINUTEN = 15            # Gültigkeit des Codes (der Link bleibt 7 Tage)
+LOGIN_CODE_MAX_VERSUCHE = 5        # Fehlversuche je Mail, danach ist der Code tot
+LOGIN_CODE_IP_WINDOW_MIN = 15      # Zeitfenster für das Pro-IP-Limit
+LOGIN_CODE_MAX_PER_IP = 10         # max. Fehlversuche je IP im Fenster → danach 429
+
+
+def _login_code_hash(code: str) -> str:
+    """HMAC des Login-Codes mit dem Server-Geheimnis.
+
+    Ein nackter SHA-256 wäre bei 10^6 Möglichkeiten sofort zurückgerechnet – wer
+    die DB lesen kann, hätte dann 15 Minuten lang jeden offenen Code. Mit dem
+    Geheimnis aus der Env reicht die DB allein dafür nicht.
+    """
+    return hmac.new(settings.SECRET_KEY.encode("utf-8"), code.encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
 
 def _smtp_configured() -> bool:
     return bool(settings.SMTP_USERNAME and settings.SMTP_PASSWORD)
 
 
-def _send_magic_link_email(recipient: str, username: str, token: str) -> None:
+def _send_magic_link_email(recipient: str, username: str, token: str,
+                           code: str | None = None) -> None:
     base_url = settings.BASE_URL.rstrip("/")
     magic_url = f"{base_url}/auth/magic-link?token={token}"
     kurz = settings.VEREIN_KURZ
     subject = f"Login-Link für {kurz} Vereinsverwaltung"
 
+    code_text = ""
+    if code:
+        code_text = (
+            f"Du nutzt die installierte App? Dann gib dort diesen Code ein:\n\n"
+            f"    {code[:3]} {code[3:]}\n\n"
+            f"Der Code ist {LOGIN_CODE_MINUTEN} Minuten gültig.\n\n"
+        )
     text = (
         f"Hallo {username},\n\n"
         f"hier ist dein Login-Link:\n\n{magic_url}\n\n"
+        f"{code_text}"
         "Wichtig: Der Link ist 7 Tage gültig und funktioniert nur ein einziges Mal.\n"
         "Danach forderst du dir in der App einfach einen neuen Login-Link an.\n\n"
         f"Die App erreichst du jederzeit unter:\n{base_url}\n\n"
@@ -477,6 +520,8 @@ def _send_magic_link_email(recipient: str, username: str, token: str) -> None:
         button_url=magic_url,
         hints=EmailService._MAGIC_LINK_HINTS,
         preheader=f"Dein Login-Link für die {kurz} Vereinsverwaltung – 7 Tage gültig, einmal nutzbar.",
+        code=code,
+        code_minuten=LOGIN_CODE_MINUTEN,
     )
 
     msg = MIMEMultipart("alternative")
@@ -585,15 +630,16 @@ def request_magic_link(data: MagicLinkRequest, request: Request, db=Depends(get_
         should_send = False
 
     if should_send:
-        token = db.auth_token_repository.create_token(
+        token, code = db.auth_token_repository.create_magic_link_mit_code(
             user_id=user.id,
-            token_type="magic_link",
+            code_hash_fn=_login_code_hash,
             expires_days=7,
+            code_minuten=LOGIN_CODE_MINUTEN,
         )
         try:
             # Empfänger ist immer die am Konto hinterlegte Adresse, nicht die
             # eingetippte Kennung – die kann ein Benutzername sein.
-            _send_magic_link_email(user.email, user.username, token)
+            _send_magic_link_email(user.email, user.username, token, code)
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"E-Mail-Versand fehlgeschlagen: {exc}")
 
@@ -617,8 +663,66 @@ def validate_magic_link(data: MagicLinkValidate, request: Request, response: Res
         raise HTTPException(status_code=401, detail="Benutzer nicht gefunden oder inaktiv")
 
     _log_access(db, request, "magic_link_login", user_id=user.id, username=user.username)
+    return _mail_login_session(db, request, response, user, data.remember)
+
+
+@router.post("/magic-link/code", response_model=SessionUser)
+def validate_login_code(data: MagicLinkCode, request: Request, response: Response, db=Depends(get_db)):
+    """Login mit dem Code aus der Login-Mail (Ticket #208).
+
+    Für die installierte App: Der Link aus der Mail öffnet am Handy den Browser,
+    und dessen Cookie sieht die App nicht. Den Code tippt man dort ein, wo man
+    angemeldet sein will. Code und Link teilen sich eine Zeile – was zuerst
+    eingelöst wird, verbraucht beides.
+
+    Jeder Fehlschlag – unbekannte Kennung, falscher, abgelaufener oder gesperrter
+    Code – bekommt dieselbe Antwort; sonst ließe sich hier erfragen, welche
+    Konten es gibt.
+    """
+    ip = _client_ip(request)
+    now = datetime.now(timezone.utc)
+    fehler = HTTPException(status_code=401, detail="Code falsch oder abgelaufen")
+
+    # Pro-IP-Gate: Die 5 Versuche je Mail bremsen das Raten an EINEM Konto; das
+    # hier bremst das Durchprobieren vieler Konten von einer Quelle aus.
+    if ip and db.access_log_repository.count(
+        event_type="magic_code_failed",
+        ip=ip,
+        since=(now - timedelta(minutes=LOGIN_CODE_IP_WINDOW_MIN)).isoformat(),
+    ) >= LOGIN_CODE_MAX_PER_IP:
+        _log_access(db, request, "magic_link_rate_limited", detail=f"code · {data.kennung}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Versuche. Bitte versuche es später erneut.",
+        )
+
+    kennung = data.kennung.strip()
+    code = "".join(data.code.split())
+    user = db.get_user_by_kennung(kennung) if kennung else None
+    if not user or not user.active or not (code.isdigit() and len(code) == 6):
+        _log_access(
+            db, request, "magic_code_failed",
+            user_id=user.id if user else None,
+            username=user.username if user else None,
+            detail=f"{'no_match' if not user or not user.active else 'format'} · {data.kennung}",
+        )
+        raise fehler
+
+    if not db.auth_token_repository.loese_code_ein(
+        user.id, _login_code_hash(code), LOGIN_CODE_MAX_VERSUCHE,
+    ):
+        _log_access(db, request, "magic_code_failed", user_id=user.id,
+                    username=user.username, detail=f"falsch · {data.kennung}")
+        raise fehler
+
+    _log_access(db, request, "magic_code_login", user_id=user.id, username=user.username)
+    return _mail_login_session(db, request, response, user, data.remember)
+
+
+def _mail_login_session(db, request: Request, response: Response, user, remember: bool) -> SessionUser:
+    """Session anlegen und Cookie setzen – gemeinsam für Login-Link und Login-Code."""
     db.update_last_login(user.id)
-    expire = timedelta(days=30) if data.remember else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = timedelta(days=30) if remember else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     sid = db.user_session_repository.create_session(
         user_id=user.id,
         expires_at=datetime.now(timezone.utc) + expire,

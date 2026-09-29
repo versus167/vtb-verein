@@ -2,7 +2,7 @@
 Repository für das Zugriffsprotokoll (`access_log`).
 
 Append-only Log für Anmelde- und Aktivitätsereignisse, getrennt nach `category`:
-'auth' (login_success, login_failed, logout, magic_link_*), 'page' (Seitenaufrufe),
+'auth' (login_success, login_failed, logout, magic_link_*, magic_code_*), 'page' (Seitenaufrufe),
 'schliessanlage' und Übriges.
 
 **Aufbewahrung steht NICHT hier.** Sie läuft für alle Kategorien über das

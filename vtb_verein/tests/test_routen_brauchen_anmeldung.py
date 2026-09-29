@@ -40,6 +40,9 @@ OEFFENTLICH: dict[tuple[str, str], str] = {
         "verraten; eigene Limits pro IP und pro Empfänger.",
     ("POST", "/api/auth/magic-link/validate"):
         "Login-Link einlösen – der Token IST hier der Nachweis (Single-Use, 7 Tage).",
+    ("POST", "/api/auth/magic-link/code"):
+        "Login-Code aus derselben Mail einlösen (#208) – für die installierte App, "
+        "die den Link nicht abbekommt. 15 Minuten, 5 Versuche je Mail, IP-Bremse.",
     ("GET", "/api/kalender/{token}.ics"):
         "ICS-Feed für Kalender-Clients, die sich nicht anmelden können. Der Token "
         "in der URL ist das Geheimnis (256 Bit, nur als Hash gespeichert).",
