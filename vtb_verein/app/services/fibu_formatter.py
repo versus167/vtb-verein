@@ -69,6 +69,7 @@ def felder(p: FibuExportPosition) -> list[str]:
     f[2] = _betrag(p.betrag)            # Betrag
     f[3] = p.soll_haben                 # S/H
     f[4] = _clean(p.belegnummer)        # Belegnummer (OPOS)
+    f[5] = _clean(p.belegnummer2)       # Belegnummer 2 (intern: Kennung des Postens)
     f[6] = _clean(p.steuerschluessel)   # Steuerschlüssel (i.d.R. leer)
     if p.kostenstelle is not None:      # Kostenträger (08) nur mit Kostenstelle (07)
         f[7] = _clean(p.kostenstelle)

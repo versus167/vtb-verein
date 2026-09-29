@@ -28,9 +28,13 @@ _SQL_BEITRAG = """
            COALESCE(r.abteilung_id, bed.einzel_abteilung_id) AS abteilung_id,
            COALESCE(a.kostenstelle, abed.kostenstelle) AS abteilung_kostenstelle,
            COALESCE(bed.anzahl_abteilungen > 1, FALSE) AS abteilung_mehrdeutig,
-           NULL::integer AS quelle_kostenstelle, NULL::integer AS quelle_kostentraeger
+           NULL::integer AS quelle_kostenstelle, NULL::integer AS quelle_kostentraeger,
+           COALESCE(ex.belegnummer_schema, 'sprechend') AS belegnummer_schema
     FROM beitrag_sollstellung s
     JOIN mitglied m ON m.id = s.mitglied_id
+    -- Belegnummer-Schema des Laufs, mit dem die Forderung hinausging (s. v124);
+    -- noch nicht exportiert → neues Schema.
+    LEFT JOIN fibu_exporte ex ON ex.id = s.exportiert_in_export_id
     JOIN beitragsregel r ON r.id = s.beitragsregel_id
     LEFT JOIN abteilung a ON a.id = r.abteilung_id
     LEFT JOIN LATERAL (
@@ -57,9 +61,13 @@ _SQL_GEBUEHR = """
            g.abteilung_id, a.kostenstelle AS abteilung_kostenstelle,
            -- Gebühren haben keine Funktions-/Abteilungs-Bedingung → nie mehrdeutig.
            FALSE AS abteilung_mehrdeutig,
-           g.kostenstelle AS quelle_kostenstelle, g.kostentraeger AS quelle_kostentraeger
+           g.kostenstelle AS quelle_kostenstelle, g.kostentraeger AS quelle_kostentraeger,
+           COALESCE(ex.belegnummer_schema, 'sprechend') AS belegnummer_schema
     FROM gebuehr_forderung f
     JOIN mitglied m ON m.id = f.mitglied_id
+    -- Belegnummer-Schema des Laufs, mit dem die Forderung hinausging (s. v124);
+    -- noch nicht exportiert → neues Schema.
+    LEFT JOIN fibu_exporte ex ON ex.id = f.exportiert_in_export_id
     JOIN gebuehr g ON g.id = f.gebuehr_id
     LEFT JOIN abteilung a ON a.id = g.abteilung_id
     WHERE {cond}
@@ -135,7 +143,7 @@ _COND_UL_STORNO = ("a.exportiert_in_export_id IS NOT NULL "
 
 _EXPORT_COLS = """id, exportiert_am, exportiert_von, dateiname, format,
                   anzahl_positionen, summe_cent, storno_von_export_id,
-                  version, created_at, created_by, deleted_at, deleted_by"""
+                  belegnummer_schema, version, created_at, created_by, deleted_at, deleted_by"""
 
 
 def _map_export(row) -> FibuExport:

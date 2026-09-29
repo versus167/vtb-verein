@@ -21,6 +21,7 @@ class FibuExport:
     anzahl_positionen: int = 0
     summe_cent: int = 0
     storno_von_export_id: Optional[int] = None  # gesetzt → dieser Lauf bucht einen früheren gegen
+    belegnummer_schema: str = "sprechend"       # 'id' (B<id>/G<id>, Läufe vor v124) | 'sprechend'
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None
@@ -77,7 +78,8 @@ class FibuExportPosition:
     gegenkonto: Optional[str] = None   # Feld 01 Erlöskonto (Sachkonto)
     betrag: float = 0.0                # Feld 02 (immer positiv)
     soll_haben: str = "S"              # Feld 03 'S' | 'H'
-    belegnummer: str = ""              # Feld 04
+    belegnummer: str = ""              # Feld 04 (OPOS-Schlüssel, z.B. 'Beitrag-26Q3')
+    belegnummer2: Optional[str] = None  # Feld 05 (intern: Kennung des Postens, z.B. 'B48213')
     steuerschluessel: Optional[str] = None  # Feld 06 (i.d.R. leer = Automatikkonto)
     kostenstelle: Optional[int] = None     # Feld 07
     kostentraeger: Optional[int] = None    # Feld 08

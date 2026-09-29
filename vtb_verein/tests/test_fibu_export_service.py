@@ -14,7 +14,7 @@ from app.models.fibu import FibuEinstellungen, FibuExportPosition, FibuExport
 from app.models.ul_stunden import ULAbrechnung, ULStunde
 from app.services import fibu_formatter as ff
 from app.services.fibu_export_service import (
-    FibuExportService, FibuExportFehler, personenkonto, beleg_dateiname)
+    FibuExportService, FibuExportFehler, personenkonto, beleg_dateiname, belegnummer)
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ class TestFormatterFelder:
         assert f[2] == '10,00'        # Betrag mit Komma
         assert f[3] == 'S'            # Soll/Haben
         assert f[4] == 'B1'           # Belegnummer
+        assert f[5] == ''             # Belegnummer 2 (nur bei sprechender Belegnummer)
         assert f[7] == '12'           # Kostenstelle
         assert f[8] == '1'            # Kostenträger
         assert f[10] == '31.12.2026'  # Belegdatum TT.MM.JJJJ
@@ -289,7 +290,7 @@ class TestBuchungstext:
     def test_name_steht_hinter_der_bezeichnung(self):
         svc, _ = _service(neu=[_row(vorname='Anna', nachname='Müller')])
         p = svc.vorschau()['forderungen'][0]
-        assert p.buchungstext == 'Vereinsbeitrag 2026-Q4 Müller, Anna'
+        assert p.buchungstext == 'Vereinsbeitrag 2026-Q4 Müller, Anna (B1)'
 
     def test_bezeichnung_bleibt_ohne_namen(self):
         """Die Bezeichnung trägt die Vorschau-Liste – dort steht der Name schon
@@ -299,18 +300,18 @@ class TestBuchungstext:
 
     def test_ohne_vorname_nur_nachname(self):
         svc, _ = _service(neu=[_row(vorname=None, nachname='Müller')])
-        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 Müller'
+        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 Müller (B1)'
 
-    def test_ohne_namen_kein_leerzeichen_am_ende(self):
+    def test_ohne_namen_kein_doppeltes_leerzeichen(self):
         svc, _ = _service(neu=[_row(vorname=None, nachname=None)])
-        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4'
+        assert svc.vorschau()['forderungen'][0].buchungstext == 'Vereinsbeitrag 2026-Q4 (B1)'
 
     def test_gegenbuchung_traegt_den_namen_ebenso(self):
         """Sonst ließe sich die Gegenbuchung im Kontoauszug nicht zuordnen."""
         svc, _ = _service(gegen=[_row(vorname='Anna', nachname='Müller',
                                       quelle_status='storniert')])
         assert svc.vorschau()['gegenbuchungen'][0].buchungstext \
-            == 'Storno Vereinsbeitrag 2026-Q4 Müller, Anna'
+            == 'Storno Vereinsbeitrag 2026-Q4 Müller, Anna (B1)'
 
 
 class TestGegenbuchungsGrund:
@@ -360,6 +361,57 @@ class TestGegenbuchungsGrund:
         assert p.buchungstext == 'ÜL-Honorar Aerobic 2026-01-01 – 2026-03-31 Wagner, Annett'
 
 
+class TestBelegnummer:
+    """Feld 04 steht über die hmd im Lastschrifttext und ist zugleich der
+    OPOS-Schlüssel: sprechend je Zeitraum/Datum, alte Läufe behalten B<id>/G<id>."""
+
+    @pytest.mark.parametrize('zeitraum, erwartet', [
+        ('2026-Q3', 'Beitrag-26Q3'), ('2026-H2', 'Beitrag-26H2'),
+        ('2026-09', 'Beitrag-2609'), ('2026', 'Beitrag-26'),
+    ])
+    def test_beitrag_nach_zeitraum(self, zeitraum, erwartet):
+        assert belegnummer(_row(quelle_id=7, periode=zeitraum)) == (erwartet, 'B7')
+
+    def test_gebuehr_nach_belegdatum(self):
+        assert belegnummer(_row(quelle_typ='gebuehr', quelle_id=9, periode=None,
+                                belegdatum='2026-09-26')) == ('Gebuehr-260926', 'G9')
+
+    def test_ohne_zeitraum_oder_datum_bleibt_die_kennung(self):
+        assert belegnummer(_row(quelle_id=7, periode='irgendwas')) == ('B7', 'B7')
+        assert belegnummer(_row(quelle_typ='gebuehr', quelle_id=9,
+                                belegdatum=None)) == ('G9', 'G9')
+
+    def test_lauf_vor_v124_behaelt_die_alte_nummer(self):
+        """Sonst gliche die Gegenbuchung einer schon eingelesenen Forderung
+        nichts mehr aus – und ein Re-Download lieferte eine andere Datei."""
+        assert belegnummer(_row(quelle_id=7, belegnummer_schema='id')) == ('B7', 'B7')
+
+    def test_kennung_in_feld_05_und_im_buchungstext(self):
+        svc, _ = _service(neu=[_row(quelle_id=7)])
+        p = svc.vorschau()['forderungen'][0]
+        assert p.belegnummer2 == 'B7'
+        assert p.buchungstext.endswith('(B7)')
+        assert ff.felder(p)[5] == 'B7'
+
+    def test_alte_nummer_ohne_zusaetze(self):
+        svc, _ = _service(gegen=[_row(quelle_id=7, belegnummer_schema='id',
+                                      quelle_status='storniert')])
+        p = svc.vorschau()['gegenbuchungen'][0]
+        assert p.belegnummer == 'B7' and p.belegnummer2 is None
+        assert p.buchungstext == 'Storno Vereinsbeitrag 2026-Q4 Müller, Anna'
+
+    def test_beitraege_eines_zeitraums_teilen_die_nummer(self):
+        svc, _ = _service(neu=[_row(quelle_id=1), _row(quelle_id=2, quelle_name='Abteilung')])
+        f = svc.vorschau()['forderungen']
+        assert f[0].belegnummer == f[1].belegnummer == 'Beitrag-26Q4'
+        assert (f[0].belegnummer2, f[1].belegnummer2) == ('B1', 'B2')
+
+    def test_ul_honorar_bleibt_u_id(self):
+        svc, _ = _service(neu=[_row(quelle_typ='ul_abrechnung', quelle_id=3,
+                                    quelle_name='Aerobic')])
+        assert svc.vorschau()['forderungen'][0].belegnummer == 'U3'
+
+
 class TestAufloesung:
     def test_debitor_konto_basis_plus_nummer(self):
         svc, _ = _service(neu=[_row(mitgliedsnummer=5)])
@@ -371,9 +423,9 @@ class TestAufloesung:
                           gegen=[_row(quelle_typ='gebuehr', quelle_id=9, gegenkonto='4100')])
         v = svc.vorschau()
         assert v['forderungen'][0].soll_haben == 'S'
-        assert v['forderungen'][0].belegnummer == 'B7'
+        assert v['forderungen'][0].belegnummer == 'Beitrag-26Q4'
         assert v['gegenbuchungen'][0].soll_haben == 'H'
-        assert v['gegenbuchungen'][0].belegnummer == 'G9'
+        assert v['gegenbuchungen'][0].belegnummer == 'Gebuehr-260621'
 
     def test_gegenkonto_fallback_auf_default(self):
         svc, _ = _service(neu=[_row(gegenkonto=None)])
@@ -516,7 +568,7 @@ class TestAbteilungUmbuchung:
         assert ein.konto == gegen.konto == 70005
         assert ein.gegenkonto == gegen.gegenkonto == '4000'
         assert ein.betrag == gegen.betrag == 30.0
-        assert ein.belegnummer == gegen.belegnummer == 'B1'
+        assert ein.belegnummer == gegen.belegnummer == 'Beitrag-26Q4'
 
     def test_export_rendert_zwei_zeilen_mit_getauschter_kostenstelle(self):
         svc, stub = _service(neu=[_abt_row(quelle_id=1)])
