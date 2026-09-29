@@ -52,6 +52,15 @@ Konten-Auflösung:
 - Lastschrift-Kennzeichen (Feld 36) + Mandatsdaten nur bei zahlungsart='lastschrift'.
   Mandatsreferenz (Feld 47) = mitglied.sepa_mandatsref (Altsystem-Import), sonst
   automatisch = Mitgliedsnummer; Mandatsdatum (Feld 48) sonst = Eintrittsdatum.
+- Belegnummer (Feld 04) = OPOS-Schlüssel und über die hmd Teil des Lastschrifttexts, daher
+  sprechend: Beitrag „Beitrag-<Zeitraum>" (26Q3, 26H2, 2609, 26), Gebühr „Gebuehr-<JJMMTT>"
+  (Belegdatum). Alle Beiträge eines Mitglieds im selben Zeitraum teilen sich damit EINEN
+  offenen Posten auf seinem Debitor – gewollt; die hmd verträgt beliebig viele Buchungen
+  auf dieselbe Belegnummer (auch Nachberechnungen auf ein schon ausgeglichenes Quartal,
+  mit dem Verein geklärt 2026-09-29). Die Kennung des Postens (B<id>/G<id>) wandert
+  in Feld 05 (intern) und ans Ende des Buchungstexts. Posten, deren Forderung mit einem Lauf
+  vor v124 hinausging (belegnummer_schema='id'), behalten B<id>/G<id>, sonst gliche ihre
+  Gegenbuchung nichts mehr aus. ÜL-Honorare bleiben U<id> (kein Lastschrifteinzug).
 - Belegdatum (Feld 10) = Abrechnungsdatum (Beitrag: created_at der Sollstellung,
   Gebühr: forderung.datum); Fälligkeit (Feld 11) = Belegdatum + NETTOTAGE (10).
 """
@@ -179,6 +188,35 @@ def _buchungstext(bezeichnung: str, person: str, grund: Optional[str] = None) ->
     """
     teile = [grund, bezeichnung, person]
     return " ".join(t for t in teile if t).strip()
+
+
+# Zeitraum-Label der Sollstellung ('2026-Q3', '2026-H2', '2026-09', '2026'), vgl.
+# beitrags_service.zeitraum_label.
+_ZEITRAUM = re.compile(r'^\d{2}(\d{2})(?:-(Q[1-4]|H[12]|\d{2}))?$')
+
+
+def _zeitraum_kurz(zeitraum: Optional[str]) -> Optional[str]:
+    """'2026-Q3' → '26Q3', '2026-H2' → '26H2', '2026-09' → '2609', '2026' → '26';
+    Unbekanntes → None."""
+    m = _ZEITRAUM.match((zeitraum or '').strip())
+    return f"{m.group(1)}{m.group(2) or ''}" if m else None
+
+
+def belegnummer(row: dict) -> tuple[str, str]:
+    """(Belegnummer für Feld 04, Kennung des Postens) einer Beitrags-/Gebühren-Rohzeile.
+
+    Die Kennung B<id>/G<id> ist die alte Belegnummer. Sie bleibt Feld 04, wenn die
+    Forderung mit einem Lauf vor v124 exportiert wurde – Gegenbuchung und Re-Download
+    müssen dann dieselbe Nummer tragen wie die eingelesene Forderung – und als
+    Rückfall, wenn sich kein Zeitraum/Datum ablesen lässt."""
+    kennung = f"{'B' if row['quelle_typ'] == 'beitrag' else 'G'}{row['quelle_id']}"
+    if row.get('belegnummer_schema', 'sprechend') != 'sprechend':
+        return kennung, kennung
+    if row['quelle_typ'] == 'beitrag':
+        kurz = _zeitraum_kurz(row.get('periode'))
+        return (f"Beitrag-{kurz}" if kurz else kennung), kennung
+    datum = _date_only(row.get('belegdatum'))
+    return (f"Gebuehr-{datum[2:4]}{datum[5:7]}{datum[8:10]}" if datum else kennung), kennung
 
 
 def personenkonto(basis: Optional[int], mitgliedsnummer: Optional[int]) -> Optional[int]:
@@ -439,7 +477,7 @@ class FibuExportService:
                          if row.get('quelle_kostentraeger') is not None
                          else einst.default_kostentraeger)
 
-        prefix = 'B' if row['quelle_typ'] == 'beitrag' else 'G'
+        beleg, kennung = belegnummer(row)
         periode = row.get('periode')
         bezeichnung = row.get('quelle_name') or ''
         if periode:
@@ -485,13 +523,17 @@ class FibuExportService:
             gegenkonto=gegenkonto,
             betrag=row.get('betrag_soll') or 0.0,
             soll_haben='S' if art == 'forderung' else 'H',
-            belegnummer=f"{prefix}{row['quelle_id']}",
+            belegnummer=beleg,
+            belegnummer2=kennung if beleg != kennung else None,
             steuerschluessel=steuerschluessel,
             kostenstelle=kostenstelle,
             kostentraeger=kostentraeger,
             belegdatum=belegdatum,
             faelligkeitsdatum=faelligkeitsdatum,
-            buchungstext=_buchungstext(bezeichnung, person, grund),
+            # Die Belegnummer nennt nur noch den Zeitraum; die Kennung hinten führt
+            # von der Kontoauszugszeile zurück zum einzelnen Posten in der App.
+            buchungstext=(_buchungstext(bezeichnung, person, grund)
+                          + (f" ({kennung})" if beleg != kennung else "")),
             lastschrifteinzug=1 if (ist_lastschrift and iban and mandatsref) else None,
             suchname=str(nummer) if nummer is not None else '',
             nachname=nachname,

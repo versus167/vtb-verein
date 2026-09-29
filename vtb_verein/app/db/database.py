@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
-SCHEMA_VERSION = 123
+SCHEMA_VERSION = 124
 
 
 # ---------------------------------------------------------------------------
@@ -28,11 +28,11 @@ _FN_FIBU_EXPORTE_AUDIT_INSERT = """
     BEGIN
         INSERT INTO fibu_exporte_history (
             id, version, exportiert_am, exportiert_von, dateiname, format,
-            anzahl_positionen, summe_cent, storno_von_export_id,
+            anzahl_positionen, summe_cent, storno_von_export_id, belegnummer_schema,
             created_at, created_by, deleted_at, deleted_by
         ) VALUES (
             NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
-            NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
+            NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id, NEW.belegnummer_schema,
             NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
         );
         RETURN NEW;
@@ -46,11 +46,11 @@ _FN_FIBU_EXPORTE_AUDIT_UPDATE = """
         IF NEW.version != OLD.version THEN
             INSERT INTO fibu_exporte_history (
                 id, version, exportiert_am, exportiert_von, dateiname, format,
-                anzahl_positionen, summe_cent, storno_von_export_id,
+                anzahl_positionen, summe_cent, storno_von_export_id, belegnummer_schema,
                 created_at, created_by, deleted_at, deleted_by
             ) VALUES (
                 NEW.id, NEW.version, NEW.exportiert_am, NEW.exportiert_von, NEW.dateiname, NEW.format,
-                NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id,
+                NEW.anzahl_positionen, NEW.summe_cent, NEW.storno_von_export_id, NEW.belegnummer_schema,
                 NEW.created_at, NEW.created_by, NEW.deleted_at, NEW.deleted_by
             );
         END IF;
@@ -4266,6 +4266,7 @@ class Database:
             121: self._migrate_v120_to_v121,
             122: self._migrate_v121_to_v122,
             123: self._migrate_v122_to_v123,
+            124: self._migrate_v123_to_v124,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9206,6 +9207,36 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 123 WHERE id = 1")
 
+    def _migrate_v123_to_v124(self) -> None:
+        """Sprechende Fibu-Belegnummern: `fibu_exporte.belegnummer_schema`.
+
+        Beiträge gehen seit v124 als „Beitrag-26Q3", Gebühren als „Gebuehr-260926"
+        in Feld 04 statt als B<id>/G<id> – die Nummer landet über die hmd im
+        Lastschrifttext. Feld 04 ist aber auch der OPOS-Schlüssel: Eine Gegenbuchung
+        gleicht nur aus, wenn sie DIESELBE Nummer trägt wie ihre Forderung. Welche
+        das war, entscheidet der Lauf, mit dem die Forderung hinausging – deshalb
+        das Kennzeichen am Lauf-Header und nicht am Posten.
+
+        Bestandsläufe bekommen 'id' (sie sind mit B<id>/G<id> eingelesen, und auch
+        ein Re-Download muss dieselbe Datei liefern), neue Läufe per Default
+        'sprechend'. Das ADD COLUMN mit DEFAULT 'id' füllt den Bestand, danach wird
+        der Default umgestellt – ohne `version`-Bump, das ist Schema-Nachzug.
+
+        Die Audit-Funktionen werden neu erzeugt, NACHDEM die History-Tabelle die
+        Spalte hat (dieselbe Falle wie in v113/v122/v123).
+        """
+        with self.cursor() as cur:
+            cur.execute("ALTER TABLE fibu_exporte ADD COLUMN IF NOT EXISTS "
+                        "belegnummer_schema TEXT NOT NULL DEFAULT 'id'")
+            cur.execute("ALTER TABLE fibu_exporte ALTER COLUMN belegnummer_schema "
+                        "SET DEFAULT 'sprechend'")
+            cur.execute("ALTER TABLE fibu_exporte_history ADD COLUMN IF NOT EXISTS "
+                        "belegnummer_schema TEXT")
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_INSERT)
+            cur.execute(_FN_FIBU_EXPORTE_AUDIT_UPDATE)
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 124 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -10654,6 +10685,8 @@ class Database:
               anzahl_positionen   INTEGER NOT NULL DEFAULT 0,
               summe_cent          INTEGER NOT NULL DEFAULT 0,
               storno_von_export_id INTEGER REFERENCES fibu_exporte(id),
+              -- 'id' = B<id>/G<id> (Läufe vor v124) | 'sprechend' = Beitrag-26Q3/Gebuehr-260926
+              belegnummer_schema  TEXT NOT NULL DEFAULT 'sprechend',
               version             INTEGER NOT NULL DEFAULT 1,
               created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               created_by          TEXT NOT NULL,
@@ -10672,6 +10705,7 @@ class Database:
               anzahl_positionen   INTEGER,
               summe_cent          INTEGER,
               storno_von_export_id INTEGER,
+              belegnummer_schema  TEXT,
               created_at          TEXT,
               created_by          TEXT,
               deleted_at          TEXT,
