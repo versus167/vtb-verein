@@ -54,6 +54,10 @@
             <div class="login-error text-body2">
               {{ errorMsg }}
             </div>
+            <!-- Link und Code aus derselben Mail sind eins (#208) -->
+            <div class="text-body2 login-hint">
+              Schon mit dem Code aus der Mail angemeldet? Dann ist der Link damit verbraucht.
+            </div>
             <q-btn
               unelevated
               color="vtb-gelb"

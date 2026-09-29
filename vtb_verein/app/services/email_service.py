@@ -154,6 +154,8 @@ class EmailService:
         button_url: str,
         hints: list,
         preheader: str,
+        code: str = None,
+        code_minuten: int = 15,
     ) -> str:
         """
         Rendert eine E-Mail im Look der Login-Seite: Logo auf der Akzentfarbe,
@@ -175,6 +177,9 @@ class EmailService:
             button_url: Ziel des Buttons (wird auch als Fallback-Link gezeigt)
             hints: Hinweiszeilen unter dem Button (dürfen HTML enthalten)
             preheader: Vorschautext im Posteingang (in der Mail unsichtbar)
+            code: optionaler Login-Code (Ticket #208) – steht groß unter dem
+                Button, für die installierte App, die den Link nicht abbekommt
+            code_minuten: Gültigkeit des Codes für den Hinweistext
         """
         flaeche = EmailConfig.get_mail_farbe_flaeche()
         akzent = EmailConfig.get_mail_farbe_akzent()
@@ -195,6 +200,20 @@ class EmailService:
             logo_html = (
                 f'<img src="{base_url}/icons/logo-512.png" alt="{verein_name}" width="150"'
                 f' style="display: block; width: 150px; height: auto; margin: 0 auto;">'
+            )
+        code_html = ""
+        if code:
+            # Monospace + Lücke in der Mitte: 6 Ziffern am Stück liest man am
+            # Handy leicht falsch ab.
+            code_html = (
+                f'<p style="margin: 22px 0 0; font-size: 14px; line-height: 1.5;'
+                f' text-align: center; color: #ffffff;">'
+                f'Du nutzt die installierte App? Dann gib dort diesen Code ein:</p>'
+                f'<div style="margin: 10px 0 0; text-align: center; font-family: \'Courier New\','
+                f' Courier, monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px;'
+                f' color: {auf_flaeche};">{code[:3]}&nbsp;{code[3:]}</div>'
+                f'<p style="margin: 6px 0 0; font-size: 13px; text-align: center;'
+                f' color: {text_75};">Der Code ist {code_minuten} Minuten gültig.</p>'
             )
         hints_html = "".join(
             f'<p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5;'
@@ -232,6 +251,7 @@ class EmailService:
                                     </td>
                                 </tr>
                             </table>
+                            {code_html}
                             {hints_html}
                             <p style="margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: {text_75};">
                                 Falls der Button nicht funktioniert, öffne diesen Link:<br>

@@ -212,3 +212,60 @@ def test_vtb_mail_bleibt_unveraendert():
     assert 'VTB Vereinsverwaltung' in vtb
     for farbe in ('#023a90', '#feeb03', '#a6bad8', '#c0cee3', '#8c8102'):
         assert farbe in html, f'{farbe} fehlt — die VTB-Optik hat sich verschoben'
+
+
+# ── Login-Code (Ticket #208) ────────────────────────────────────────────────
+# Die installierte App am Handy bekommt den Link nicht ab (er öffnet den
+# Browser). Deshalb steht in der Login-Mail zusätzlich ein Code zum Abtippen.
+
+def test_login_code_steht_gut_lesbar_in_der_mail():
+    with patch.dict(os.environ, {'BASE_URL': APP_URL}):
+        html = EmailService.render_vtb_email(
+            headline='Dein Login-Link', username='tester', intro_html='Text',
+            button_label='Los', button_url=f'{APP_URL}/x', hints=[], preheader='V',
+            code='483912', code_minuten=15)
+    # Mit Lücke in der Mitte – 6 Ziffern am Stück liest man leicht falsch ab.
+    assert '483&nbsp;912' in html
+    assert 'installierte App' in html
+    assert '15 Minuten gültig' in html
+
+
+def test_ohne_code_kein_codeblock():
+    """Einladungs-Mails tragen keinen Code – dort darf auch kein Hinweis stehen."""
+    assert 'installierte App' not in _render()
+
+
+def test_backend_login_mail_traegt_den_code_auch_als_text(monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from backend.api import auth as auth_api
+
+    monkeypatch.setattr(auth_api.settings, 'BASE_URL', APP_URL, raising=False)
+    monkeypatch.setattr(auth_api.settings, 'SMTP_PORT', 587, raising=False)
+    gesendet = {}
+
+    class _FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def starttls(self):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def sendmail(self, sender, recipient, body):
+            gesendet['body'] = body
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(auth_api.smtplib, 'SMTP', _FakeSMTP)
+    auth_api._send_magic_link_email('tester@example.org', 'tester', 'tok123', '483912')
+
+    msg = message_from_string(gesendet['body'])
+    teile = {teil.get_content_type(): teil.get_payload(decode=True).decode('utf-8')
+             for teil in msg.walk() if teil.get_content_type().startswith('text/')}
+    assert '483 912' in teile['text/plain']
+    assert '483&nbsp;912' in teile['text/html']

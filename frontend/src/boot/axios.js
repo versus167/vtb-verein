@@ -15,7 +15,12 @@ export default boot(({ app, router }) => {
   api.interceptors.response.use(
     (response) => response,
     (error) => {
-      if (error.response?.status === 401) {
+      // 401 von den Anmelde-Endpunkten heißt „Nachweis falsch" (Passwort, Link,
+      // Code), nicht „Sitzung abgelaufen" – die Seite zeigt den Fehler selbst.
+      // Sonst landet ein verbrauchter Login-Link wortlos auf /login und meldet
+      // eine im Browser noch gültige Sitzung obendrein lokal ab (#208).
+      const anmeldung = /^\/api\/auth\/(login|magic-link\/)/.test(error.config?.url ?? '')
+      if (error.response?.status === 401 && !anmeldung) {
         const auth = useAuthStore(pinia)
         auth.logout()
         // Abgelaufene Sitzung auf einer App-Seite (etwa per Link aus einer Mail

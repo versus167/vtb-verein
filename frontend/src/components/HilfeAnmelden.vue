@@ -15,6 +15,13 @@
         Du bekommst eine Mail mit einem Link, der dich direkt hineinlässt — kein Passwort nötig.
         Der Link gilt <b>7 Tage</b> und lässt sich <b>einmal</b> verwenden.
       </p>
+      <p>
+        <b>Mit der installierten App am Handy</b> öffnet der Link oft den Browser statt
+        der App — du wärst dann im Browser angemeldet, nicht in der App. Dafür steht in
+        derselben Mail ein <b>6-stelliger Code</b>: Den tippst du in der App ein, direkt
+        unter „E-Mail unterwegs!". Der Code gilt <b>15 Minuten</b>. Link und Code gehören
+        zusammen — wer eins davon benutzt, hat beide verbraucht.
+      </p>
       <p class="text-caption text-grey">
         Die Mail geht immer an die Adresse, die im Verein hinterlegt ist — nie an die,
         die du gerade eintippst. So kann niemand sonst einen Link auf dein Konto anfordern.
