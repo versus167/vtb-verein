@@ -109,11 +109,14 @@ def main() -> int:
         if not args.logs_only:
             res = svc.inventar_sync()
             log(f"✓ Inventar-Sync: {res['schloesser']} Schloss/Schlösser gespiegelt.")
-            res = svc.ic_cards_sync()
+            # Die IC-Karten je Schloss nur einmal abrufen: Import und Credential-Mirror
+            # teilen sich die Listen (die TTLock-API ist monatlich kontingentiert).
+            ic_karten: dict = {}
+            res = svc.ic_cards_sync(ic_karten)
             log(f"✓ IC-Card-Import: {res['chips_neu']} Chips neu, "
                 f"{res['berechtigungen_neu']} Berechtigungen neu, "
                 f"{res['berechtigungen_akt']} aktualisiert.")
-            res = svc.credentials_sync()
+            res = svc.credentials_sync(ic_karten)
             log(f"✓ Credential-Mirror: {res['credentials']} Credentials gespiegelt "
                 f"(Fingerprints/Passcodes/eKeys/IC).")
             # Das Ist ist jetzt frisch – erst hier ist der Soll-Ist-Vergleich eine Aussage.
