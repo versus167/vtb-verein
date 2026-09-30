@@ -633,6 +633,28 @@ def test_ic_cards_sync_importiert_chip_und_berechtigung_idempotent():
     assert res2["chips_neu"] == 0 and res2["berechtigungen_neu"] == 0
 
 
+def test_voller_lauf_fragt_ic_karten_nur_einmal_je_schloss_ab():
+    """Import und Credential-Mirror teilen sich die IC-Liste – die TTLock-API ist
+    monatlich kontingentiert, ein zweiter Abruf je Schloss wäre verschenkt."""
+    fake = FakeClient()
+    aufrufe = []
+    original = fake.ic_cards
+    fake.ic_cards = lambda lock_id, **k: (aufrufe.append(lock_id), original(lock_id, **k))[1]
+    svc = _cred_service(fake)
+    svc.inventar_sync()
+    fake.cards_by_lock[30392116] = [
+        {"cardId": 42, "cardName": "Chip blau", "cardNumber": "818229331",
+         "startDate": 0, "endDate": 0}]
+
+    ic_karten = {}
+    svc.ic_cards_sync(ic_karten)
+    svc.credentials_sync(ic_karten)
+
+    assert aufrufe == [30392116]
+    ic = [c for c in svc.credential_repo.list_for_schloss(1) if c.typ == CRED_IC]
+    assert len(ic) == 1 and ic[0].detail == "818229331"
+
+
 # --- Credential-Mirror (read-only Inventar je Schloss) ----------------------
 def _cred_service(fake_client):
     return ZutrittService(

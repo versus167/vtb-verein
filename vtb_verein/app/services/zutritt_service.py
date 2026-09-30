@@ -965,14 +965,21 @@ class ZutrittService:
                     gruppe_id, len(chips))
         return {**ergebnis, "geloescht": True}
 
-    def ic_cards_sync(self) -> dict:
+    def ic_cards_sync(self, ic_karten: Optional[dict[int, list[dict]]] = None) -> dict:
         """Bereits am Schloss (per BLE) angelernte IC-Karten aus der Cloud spiegeln:
         fehlende Chips anlegen, Berechtigungen (Chip↔Schloss) anlegen bzw. cardId/Status
-        nachziehen. Read-only gegenüber dem Schloss (keine Cloud-Writes), idempotent."""
+        nachziehen. Read-only gegenüber dem Schloss (keine Cloud-Writes), idempotent.
+
+        `ic_karten` (Schloss-id → Kartenliste) sammelt die abgerufenen Listen ein, damit
+        `credentials_sync` im selben Lauf nicht noch einmal je Schloss fragen muss — die
+        TTLock-API ist monatlich kontingentiert."""
         client = self._client()
         neu_chips = neu_ber = akt_ber = 0
         for s in self.schloss_repo.list_all(nur_aktive=True, nur_ttlock=True):
-            for card in client.ic_cards(s.ttlock_lock_id).get("list", []):
+            karten = self._fetch_all_pages(client.ic_cards, s.ttlock_lock_id)
+            if ic_karten is not None:
+                ic_karten[s.id] = karten
+            for card in karten:
                 cn = str(card.get("cardNumber") or "").strip()
                 if not cn:
                     continue
@@ -1067,12 +1074,15 @@ class ZutrittService:
             gueltig_bis=_ms_to_iso(it.get("endDate")),
             gesehen_am=gesehen_am, raw=it)
 
-    def credentials_sync(self) -> dict:
+    def credentials_sync(self, ic_karten: Optional[dict[int, list[dict]]] = None) -> dict:
         """Read-only: alle am Schloss eingerichteten Credential-Typen (Fingerprints,
         Passcodes, App-/eKeys, IC-Karten) aus der Cloud spiegeln. Pro Schloss+Typ wird die
         Cloud-Liste autoritativ ersetzt (am Schloss entfernte Credentials verschwinden auch
         lokal). Schlägt ein Typ-Abruf fehl (z. B. Modell ohne Fingerprint-Sensor), bleibt der
-        bisherige Mirror DIESES Typs unangetastet. Keine Cloud-Writes, idempotent."""
+        bisherige Mirror DIESES Typs unangetastet. Keine Cloud-Writes, idempotent.
+
+        Liegen die IC-Karten eines Schlosses schon aus `ic_cards_sync` vor (`ic_karten`),
+        werden sie übernommen statt erneut abgerufen."""
         if self.credential_repo is None:
             return {"credentials": 0}
         client = self._client()
@@ -1086,6 +1096,10 @@ class ZutrittService:
         )
         for s in self.schloss_repo.list_all(nur_aktive=True, nur_ttlock=True):
             for typ, fetch, build in spezifikation:
+                if typ == CRED_IC and ic_karten is not None and s.id in ic_karten:
+                    rows = [build(s.id, it, now_iso) for it in ic_karten[s.id]]
+                    total += self.credential_repo.replace_for_schloss_typ(s.id, typ, rows)
+                    continue
                 try:
                     items = self._fetch_all_pages(fetch, s.ttlock_lock_id)
                 except TTLockError as e:

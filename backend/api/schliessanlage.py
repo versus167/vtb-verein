@@ -337,8 +337,9 @@ def sync(request: Request, user: CurrentUser, db: DB,
         ergebnis = {}
         if not logs_only:
             ergebnis.update(db.zutritt.inventar_sync())
-            ergebnis.update(db.zutritt.ic_cards_sync())
-            ergebnis.update(db.zutritt.credentials_sync())
+            ic_karten: dict = {}     # IC-Listen nur einmal je Schloss abrufen (API-Kontingent)
+            ergebnis.update(db.zutritt.ic_cards_sync(ic_karten))
+            ergebnis.update(db.zutritt.credentials_sync(ic_karten))
         ergebnis.update(db.zutritt.logs_sync(backfill_days=backfill_days))
     except ZutrittNichtKonfiguriertError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
