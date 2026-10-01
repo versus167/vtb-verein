@@ -40,15 +40,32 @@ def pruefe_signaturschluessel() -> None:
                        settings.SECRET_KEY_MIN_LAENGE)
 
 
+# Laufzeit einer Session mit „Angemeldet bleiben". Ohne Haken gilt fest
+# VTB_TOKEN_EXPIRE_MINUTES. Mit Haken ist es seit #211 ein *Leerlauf*-Fenster:
+# Wer die App nutzt, bekommt rechtzeitig ein neues Token (s. core/deps.py).
+REMEMBER_ME_LIFETIME = timedelta(days=30)
+
+
+def session_lifetime(remember: bool) -> timedelta:
+    """Laufzeit einer neuen Session – je nach Haken „Angemeldet bleiben"."""
+    if remember:
+        return REMEMBER_ME_LIFETIME
+    return timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+
 def create_access_token(
     user_id: int,
     expires_delta: Optional[timedelta] = None,
     session_id: Optional[str] = None,
+    remember: bool = False,
 ) -> str:
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     payload = {"sub": str(user_id), "exp": expire}
+    if remember:
+        # „Angemeldet bleiben" – nur solche Sessions verlängern sich bei Nutzung (#211).
+        payload["rem"] = True
     if session_id is not None:
         # Serverseitige Session-ID – ermöglicht Geräteliste + Abmelden (Ticket #24).
         payload["sid"] = session_id
@@ -56,6 +73,22 @@ def create_access_token(
         payload,
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
+    )
+
+
+def set_session_cookie(response, token: str, max_age: int) -> None:
+    """Setzt das Session-JWT als HttpOnly-Cookie (für JS unlesbar).
+
+    Aufrufer: die Login-Pfade und die Verlängerung bei Nutzung (#211, main.py).
+    """
+    response.set_cookie(
+        key=settings.COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+        path="/",
     )
 
 

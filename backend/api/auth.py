@@ -11,7 +11,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from ..core.db import get_db, get_db as _get_db
-from ..core.security import create_access_token
+from ..core.security import create_access_token, session_lifetime, set_session_cookie
 from ..core.deps import CurrentUser, CurrentSessionId, DB
 from ..core.config import settings
 from ..core.validation import mailadresse_or_422
@@ -182,19 +182,6 @@ def _klarname(db, user) -> str:
     return user.username
 
 
-def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
-    """Setzt das Session-JWT als HttpOnly-Cookie (für JS unlesbar)."""
-    response.set_cookie(
-        key=settings.COOKIE_NAME,
-        value=token,
-        max_age=max_age,
-        httponly=True,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-        path="/",
-    )
-
-
 def _clear_session_cookie(response: Response) -> None:
     """Löscht das Session-Cookie (Logout) – Attribute müssen zum Setzen passen."""
     response.delete_cookie(
@@ -248,16 +235,16 @@ def login(
             detail="Falscher Benutzername oder Passwort",
         )
     _log_access(db, request, "login_success", user_id=user.id, username=user.username)
-    expire = timedelta(days=30) if remember_me else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = session_lifetime(remember_me)
     sid = db.user_session_repository.create_session(
         user_id=user.id,
         expires_at=datetime.now(timezone.utc) + expire,
         user_agent=request.headers.get("user-agent"),
         ip=_client_ip(request),
     )
-    token = create_access_token(user.id, expires_delta=expire, session_id=sid)
+    token = create_access_token(user.id, expires_delta=expire, session_id=sid, remember=remember_me)
     db.update_last_login(user.id)
-    _set_session_cookie(response, token, max_age=int(expire.total_seconds()))
+    set_session_cookie(response, token, max_age=int(expire.total_seconds()))
     return SessionUser(
         id=user.id,
         username=user.username,
@@ -722,15 +709,15 @@ def validate_login_code(data: MagicLinkCode, request: Request, response: Respons
 def _mail_login_session(db, request: Request, response: Response, user, remember: bool) -> SessionUser:
     """Session anlegen und Cookie setzen – gemeinsam für Login-Link und Login-Code."""
     db.update_last_login(user.id)
-    expire = timedelta(days=30) if remember else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = session_lifetime(remember)
     sid = db.user_session_repository.create_session(
         user_id=user.id,
         expires_at=datetime.now(timezone.utc) + expire,
         user_agent=request.headers.get("user-agent"),
         ip=_client_ip(request),
     )
-    token = create_access_token(user.id, expires_delta=expire, session_id=sid)
-    _set_session_cookie(response, token, max_age=int(expire.total_seconds()))
+    token = create_access_token(user.id, expires_delta=expire, session_id=sid, remember=remember)
+    set_session_cookie(response, token, max_age=int(expire.total_seconds()))
     return SessionUser(
         id=user.id,
         username=user.username,

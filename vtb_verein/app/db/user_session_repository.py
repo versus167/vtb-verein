@@ -92,7 +92,7 @@ class UserSessionRepository:
         with self.db.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, user_id, sid, expires_at, revoked_at
+                SELECT id, user_id, sid, expires_at, revoked_at, created_at
                 FROM user_sessions
                 WHERE sid = %s
                   AND revoked_at IS NULL
@@ -113,6 +113,25 @@ class UserSessionRepository:
                        OR last_seen_at::timestamptz < now() - interval '1 minute')
                 """,
                 (sid,),
+            )
+            return cur.rowcount == 1
+
+    def extend_session(self, sid: str, expires_at: datetime) -> bool:
+        """Schiebt das Ablaufdatum einer aktiven Session hinaus (#211).
+
+        Wie ``touch_session`` ohne Versions-Bump: Eine Verlängerung ist kein
+        fachlicher Änderungsstand, der in die History gehört. Widerrufene oder
+        bereits abgelaufene Sessions bleiben tot.
+        """
+        with self.db.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE user_sessions SET expires_at = %s
+                WHERE sid = %s
+                  AND revoked_at IS NULL
+                  AND expires_at::timestamptz > now()
+                """,
+                (expires_at.isoformat(), sid),
             )
             return cur.rowcount == 1
 
