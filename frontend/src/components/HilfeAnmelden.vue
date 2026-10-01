@@ -45,14 +45,15 @@
       <template #avatar><q-icon name="schedule" /></template>
       <div class="text-weight-bold">Der wichtigste Haken: „Angemeldet bleiben“</div>
       <div>
-        Ohne diesen Haken wirst du schon nach <b>24 Stunden</b> wieder abgemeldet — mit Haken
-        erst nach <b>30 Tagen</b>. Wer sich ständig neu anmelden muss, hat meistens einfach den
-        Haken nicht gesetzt. Es gibt ihn beim Passwort-Login <i>und</i> beim Öffnen eines
-        Login-Links.
+        Ohne diesen Haken wirst du nach <b>24 Stunden</b> wieder abgemeldet, egal wie viel du
+        die App benutzt. Mit Haken bleibst du angemeldet, solange du die App benutzt — erst
+        wenn du sie <b>30 Tage</b> lang gar nicht öffnest, musst du dich neu anmelden. Wer
+        sich ständig neu anmelden muss, hat meistens einfach den Haken nicht gesetzt. Es gibt
+        ihn beim Passwort-Login <i>und</i> beim Öffnen eines Login-Links.
       </div>
       <div class="text-caption q-mt-xs">
-        Auf fremden oder geteilten Geräten besser weglassen. Die 30 Tage verlängern sich
-        übrigens nicht durch Benutzen — danach meldest du dich einmal neu an.
+        Auf fremden oder geteilten Geräten besser weglassen — oder dort nach dem Benutzen
+        abmelden.
       </div>
     </q-banner>
 

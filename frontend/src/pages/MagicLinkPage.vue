@@ -21,7 +21,7 @@
             <div class="text-body2 login-hint">
               Klicke auf „Einloggen“, um fortzufahren.
             </div>
-            <q-checkbox v-model="rememberMe" dark label="30 Tage eingeloggt bleiben" />
+            <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben" />
             <q-btn
               unelevated
               color="vtb-gelb"

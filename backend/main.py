@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core import branding
 from backend.core.config import settings
-from backend.core.security import pruefe_signaturschluessel
+from backend.core.security import pruefe_signaturschluessel, set_session_cookie
 from app.config.app_info import APP_NAME, get_app_version
 from app.services.anhang_service import ERLAUBTE_MIME_TYPEN, max_upload_mb
 from backend.api.auth import router as auth_router
@@ -180,6 +180,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+class SessionVerlaengerungMiddleware(BaseHTTPMiddleware):
+    """Setzt das bei Nutzung neu ausgestellte Session-Cookie (#211).
+
+    Ausgestellt wird es in `core/deps.py::get_current_user`, das es nur in
+    `request.state` ablegt – hier landet es an jeder Antwort, auch an Downloads
+    und Streams. Setzt oder löscht der Endpunkt das Session-Cookie selbst
+    (Logout), hat das Vorrang.
+    """
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        neu = getattr(request.state, "session_cookie", None)
+        if neu is not None:
+            praefix = f"{settings.COOKIE_NAME}=".encode("latin-1")
+            schon_gesetzt = any(
+                name == b"set-cookie" and wert.startswith(praefix)
+                for name, wert in response.raw_headers
+            )
+            if not schon_gesetzt:
+                token, max_age = neu
+                set_session_cookie(response, token, max_age=max_age)
+        return response
+
+app.add_middleware(SessionVerlaengerungMiddleware)
 # Antworten komprimieren. Ausschlaggebend war der Beleg-Scanner (#197): dessen
 # OpenCV-Bibliothek ist unkomprimiert 10,9 MB und gepackt 3,4 MB — ein Drittel,
 # einmal je Gerät über Mobilfunk. Der Rest der App profitiert nebenbei, JS und

@@ -69,7 +69,7 @@
                   </template>
                 </q-input>
 
-                <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben (30 Tage)" :disable="loading" />
+                <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben" :disable="loading" />
 
                 <div v-if="errorMsg" class="login-error text-center text-body2">
                   {{ errorMsg }}
@@ -178,7 +178,7 @@
                     </template>
                   </q-input>
 
-                  <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben (30 Tage)" :disable="loading" />
+                  <q-checkbox v-model="rememberMe" dark label="Angemeldet bleiben" :disable="loading" />
 
                   <div v-if="errorMsg" class="login-error text-center text-body2">
                     {{ errorMsg }}
