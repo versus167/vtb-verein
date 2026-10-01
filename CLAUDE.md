@@ -61,7 +61,7 @@ Code.
   zuständig — Bug-Meldungen gehören weiter in „VTB-App" (s. Ticket-Workflow unten).
 
 ## Wiki (Architektur-/Hintergrundwissen)
-- Unter **`~/wikis/vtb`** liegt ein separat gepflegtes Wiki (eigenes Git-Repo,
+- Unter **`~/wikis/vtb-wiki`** liegt ein separat gepflegtes Wiki (eigenes Git-Repo,
   `wiki-skills`-Plugin) mit Hintergrundwissen zu Architekturentscheidungen,
   Berechtigungslogik und "warum ist das so"-Fragen. Kein Ersatz für diese Datei oder
   den Code, sondern ergänzendes Kontextwissen, das sonst nur in Köpfen oder verstreuten
