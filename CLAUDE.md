@@ -118,6 +118,8 @@ Code.
 ## Release-/Commit-Workflow
 - **Nur nach ausdrücklicher Rücksprache committen** — nie selbstständig. Auf `master` erst
   einen Feature-Branch anlegen.
+- **Jede Änderung in einen eigenen Commit** (ein Thema je Commit, nichts gemeinsam
+  gemischt). **Mergen nur nach ausdrücklicher Aufforderung.**
 - Merge nach `master` per `git merge --no-ff` mit Titel `Merge: <Beschreibung> (#NN) (vVERSION)`.
 - Bei jedem master-Merge die `VERSION`-Datei auf `YYYY.MM.DD.N` bumpen (laufende Nr. `N`
   hochzählen). Anzeige `v.…` über `/api/app-info`.
