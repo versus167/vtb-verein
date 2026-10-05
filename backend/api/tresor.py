@@ -144,6 +144,12 @@ def _principal_exists(db: DB, typ: str, pid: int) -> bool:
 
 
 def _client_ip(request: Request) -> Optional[str]:
+    # Gleiche Logik wie backend.api.auth._client_ip (Duplikat bewusst, siehe
+    # dort): X-Real-IP wird vom Reverse-Proxy überschrieben und ist im
+    # Gegensatz zu X-Forwarded-For nicht client-vorbelegbar.
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip()

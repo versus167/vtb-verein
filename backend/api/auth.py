@@ -18,7 +18,16 @@ from ..core.validation import mailadresse_or_422
 
 
 def _client_ip(request: Request) -> str | None:
-    """Client-IP – berücksichtigt X-Forwarded-For hinter dem Reverse-Proxy."""
+    """Client-IP hinter dem Reverse-Proxy.
+
+    Nginx Proxy Manager überschreibt X-Real-IP immer mit $remote_addr – im
+    Gegensatz zu X-Forwarded-For, das der Client selbst vorbelegen kann und
+    der Proxy nur anhängt. X-Real-IP first, XFF nur als Fallback (z.B. für
+    andere Setups), sonst die Socket-IP.
+    """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
         return fwd.split(",")[0].strip()
