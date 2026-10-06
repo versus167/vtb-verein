@@ -47,6 +47,12 @@ class Settings:
     FARBE_FLAECHE: str = os.getenv("VTB_FARBE_FLAECHE", "")
     FARBE_AKZENT: str = os.getenv("VTB_FARBE_AKZENT", "")
     HOST: str = os.getenv("VTB_HOST", "0.0.0.0")
+    # Reverse-Proxys, deren X-Real-IP/X-Forwarded-For geglaubt wird (IPs oder
+    # CIDR, kommagetrennt). Leer = jedem Absender glauben; dann kann, wer den
+    # Backend-Port direkt erreicht, seine IP frei wählen (s. core/client_ip.py).
+    TRUSTED_PROXIES: list[str] = [
+        e.strip() for e in os.getenv("VTB_TRUSTED_PROXIES", "").split(",") if e.strip()
+    ]
     PORT: int = int(os.getenv("VTB_PORT", "8000"))
     FRONTEND_ORIGINS: list[str] = os.getenv(
         "VTB_FRONTEND_ORIGINS", "http://localhost:9000,http://localhost:8080"

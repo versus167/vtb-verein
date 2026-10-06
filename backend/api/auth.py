@@ -15,23 +15,7 @@ from ..core.security import create_access_token, session_lifetime, set_session_c
 from ..core.deps import CurrentUser, CurrentSessionId, DB
 from ..core.config import settings
 from ..core.validation import mailadresse_or_422
-
-
-def _client_ip(request: Request) -> str | None:
-    """Client-IP hinter dem Reverse-Proxy.
-
-    Nginx Proxy Manager überschreibt X-Real-IP immer mit $remote_addr – im
-    Gegensatz zu X-Forwarded-For, das der Client selbst vorbelegen kann und
-    der Proxy nur anhängt. X-Real-IP first, XFF nur als Fallback (z.B. für
-    andere Setups), sonst die Socket-IP.
-    """
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else None
+from ..core.client_ip import client_ip as _client_ip
 
 
 def _ts_iso(v):

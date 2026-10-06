@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
 from ..core.validation import mailadresse_or_422
+from ..core.client_ip import client_ip as _client_ip
 from ..core import vault_crypto
 
 router = APIRouter(prefix="/tresor", tags=["tresor"])
@@ -141,19 +142,6 @@ def _principal_exists(db: DB, typ: str, pid: int) -> bool:
         except KeyError:
             return False
     return False
-
-
-def _client_ip(request: Request) -> Optional[str]:
-    # Gleiche Logik wie backend.api.auth._client_ip (Duplikat bewusst, siehe
-    # dort): X-Real-IP wird vom Reverse-Proxy überschrieben und ist im
-    # Gegensatz zu X-Forwarded-For nicht client-vorbelegbar.
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else None
 
 
 # ----------------------------------------------------------------------- Status
