@@ -10,8 +10,12 @@
     </div>
 
     <q-card flat bordered class="q-pa-md q-mb-md">
+      <!-- Bewusst ohne `accept` (#212): Mobile Dateiauswahlen filtern nach MIME-Typ,
+           und den vergibt beim DFBnet-Download der Browser bzw. das Handy – oft als
+           Excel- oder Binärtyp. Die Datei war dann in „Downloads" ausgegraut. Ob sie
+           passt, entscheidet ohnehin der Parser; die Vorschau meldet es verständlich. -->
       <q-file v-model="datei" outlined dense label="Spielplan-Datei (CSV aus dem DFBnet)"
-        accept=".csv,.txt" :disable="busy"
+        :disable="busy"
         @update:model-value="bericht = null; zugeordnet = {}; angelegt = {}">
         <template #prepend><q-icon name="attach_file" /></template>
       </q-file>
