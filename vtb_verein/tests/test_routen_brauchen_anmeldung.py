@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 
 # Repo-Wurzel für den backend.*-Import ergänzen (backend/ ist kein app-Paket).
 _ROOT = Path(__file__).resolve().parents[2]
@@ -73,13 +73,24 @@ def _dependency_calls(dependant) -> set:
 
 
 def _routen():
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
+    # Seit FastAPI 0.16x stehen eingebundene Router als Wrapper in app.routes.
+    # iter_route_contexts liefert die effektiven Routen: Pfad mit Präfix und ein
+    # Dependency-Baum, der auch die Abhängigkeiten aus include_router enthält.
+    for route in iter_route_contexts(app.routes):
+        if not isinstance(route.original_route, APIRoute):
             continue
         if route.path in _STATISCH:
             continue
         for methode in sorted(route.methods - {"HEAD", "OPTIONS"}):
             yield methode, route.path, route
+
+
+def test_routen_aus_eingebundenen_routern_werden_gesehen():
+    """Gegenprobe: Sähe _routen() die Router-Routen nicht, liefen die Tests hier
+    still grün – geprüft würde dann nur, was direkt an der App hängt."""
+    pfade = {(methode, pfad) for methode, pfad, _ in _routen()}
+    assert ("GET", "/api/aufgaben/offen") in pfade
+    assert len(pfade) > 100
 
 
 def test_jede_route_verlangt_anmeldung_oder_steht_auf_der_liste():

@@ -3,6 +3,9 @@
 # Test-Framework
 pytest>=8.0.0
 pytest-cov>=4.1.0
+# HTTP-Client für fastapi/starlette.testclient – seit Starlette 1.10 httpx2;
+# das alte httpx (kommt transitiv über python-telegram-bot) ist dort deprecated.
+httpx2>=2.0.0
 
 # Code-Qualität
 pylint>=3.0.0

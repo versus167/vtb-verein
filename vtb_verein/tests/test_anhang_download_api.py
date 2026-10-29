@@ -260,17 +260,29 @@ def test_buchung_einer_fremden_kasse_ist_nicht_erreichbar(tmp_path):
 
 
 # ------------------------------------------------------------- Regressionen
+def _alle_pfade() -> list[str]:
+    """Effektive Pfade aller Routen (mit Router-Präfix).
+
+    Seit FastAPI 0.16x stehen eingebundene Router als Wrapper in app.routes –
+    wer dort direkt nach `.path` sucht, findet nichts, und ein „existiert nicht
+    mehr"-Test liefe still grün. Daher iter_route_contexts und eine Gegenprobe.
+    """
+    from fastapi.routing import iter_route_contexts
+    from backend.main import app
+    pfade = [r.path or '' for r in iter_route_contexts(app.routes)]
+    assert '/api/aufgaben/offen' in pfade, "Router-Routen fehlen – Introspektion kaputt?"
+    return pfade
+
+
 def test_sammel_endpunkt_fuer_uploads_existiert_nicht_mehr():
     """Solange `/api/uploads/{stored_name}` erreichbar ist, sind alle Prüfungen
     darüber wirkungslos – der Weg daran vorbei muss zu bleiben."""
-    from backend.main import app
-    pfade = [getattr(r, 'path', '') for r in app.routes]
+    pfade = _alle_pfade()
     assert not [p for p in pfade if p.startswith('/api/uploads')]
 
 
 def test_jeder_anhang_download_haengt_unter_seinem_elternobjekt():
-    from backend.main import app
-    downloads = sorted(p for p in (getattr(r, 'path', '') for r in app.routes)
+    downloads = sorted(p for p in _alle_pfade()
                        if p.endswith('/anhaenge/{anhang_id}/datei'))
     assert downloads == [
         '/api/kassen/{kasse_id}/buchungen/{buchung_id}/anhaenge/{anhang_id}/datei',
