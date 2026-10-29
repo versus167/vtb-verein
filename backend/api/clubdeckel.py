@@ -159,7 +159,7 @@ def _parse_datum(datum: Optional[str]) -> Optional[str]:
     try:
         datetime.fromisoformat(datum)
     except ValueError:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Ungültiges Datum")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Ungültiges Datum")
     return datum
 
 
@@ -286,7 +286,7 @@ def _termin_fuer_buchung(db: DB, deckel, termin_id: Optional[int],
     if termin_id is not None:
         termin = db.termine.get(termin_id)
         if termin is None or termin.mannschaft_id != deckel.mannschaft_id:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Termin gehört nicht zu dieser Mannschaft")
         return termin.id
     if ohne_termin:
@@ -401,16 +401,16 @@ def update_deckel(deckel_id: int, data: DeckelUpdate, user: CurrentUser, db: DB)
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
     name = data.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name fehlt")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name fehlt")
     beitrag = None
     if data.beitrag is not None:
         beitrag = _euro(data.beitrag)
         if beitrag < 0:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Beitrag darf nicht negativ sein")
     ze = data.zahlungsempfaenger_mitglied_id
     if ze is not None and not _mitglied_am_deckel(db, deckel, ze):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Zahlungsempfänger gehört nicht zu dieser Teamkasse")
     # Vor einer Beitragsänderung offene Monate noch zum ALTEN Satz abschließen;
     # der (evtl. neue) Beitrag greift erst ab dem Folgemonat (siehe update()).
@@ -478,10 +478,10 @@ def list_gruppen(deckel_id: int, user: CurrentUser, db: DB,
 def _validate_gruppe(db: DB, deckel, data: GruppeWrite) -> str:
     name = data.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name fehlt")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name fehlt")
     v = data.verkaeufer_mitglied_id
     if v is not None and not _mitglied_am_deckel(db, deckel, v):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Verkäufer gehört nicht zu dieser Teamkasse")
     return name
 
@@ -562,7 +562,7 @@ def delete_gruppe(deckel_id: int, gruppe_id: int, user: CurrentUser, db: DB):
     _gruppe_im_deckel(db, deckel_id, gruppe_id)
     if db.clubdeckel_gruppen.has_active_artikel(gruppe_id):
         # Sonst würden die Artikel still zu „ohne Gruppe" = Team-Verkauf.
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Gruppe enthält noch Artikel — bitte zuerst verschieben "
                             "oder löschen")
     db.clubdeckel_gruppen.mark_deleted(gruppe_id, user.username)
@@ -632,10 +632,10 @@ def list_artikel(deckel_id: int, user: CurrentUser, db: DB, alle: bool = False,
 def _validate_artikel(db: DB, deckel_id: int, data: ArtikelWrite) -> tuple[str, Decimal]:
     name = data.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name fehlt")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name fehlt")
     preis = _euro(data.preis)
     if preis <= 0:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Preis muss größer 0 sein")
     if data.gruppe_id is not None:
         _gruppe_im_deckel(db, deckel_id, data.gruppe_id)
@@ -651,7 +651,7 @@ def _stand_termin(db: DB, deckel, ab_termin_id: Optional[int]) -> Optional[int]:
         return laufend.id if laufend else None
     termin = db.termine.get(ab_termin_id)
     if termin is None or termin.mannschaft_id != deckel.mannschaft_id:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Termin gehört nicht zu dieser Mannschaft")
     return termin.id
 
@@ -929,7 +929,7 @@ def list_kader_kandidaten(deckel_id: int, user: CurrentUser, db: DB):
 def set_wart(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
     if not db.clubdeckel.is_mitglied_in_kader(mitglied_id, deckel.mannschaft_id):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Das Mitglied steht nicht im aktiven Kader der Mannschaft")
     db.clubdeckel_berechtigungen.set_wart(deckel_id, mitglied_id, user.username)
     return {"status": "ok"}
@@ -955,7 +955,7 @@ def list_befreiungen(deckel_id: int, user: CurrentUser, db: DB):
 def set_befreiung(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'verwalten')
     if not db.clubdeckel.is_mitglied_in_kader(mitglied_id, deckel.mannschaft_id):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Das Mitglied steht nicht im aktiven Kader der Mannschaft")
     db.clubdeckel_befreiungen.set_befreiung(deckel_id, mitglied_id, user.username)
     return {"status": "ok"}
@@ -980,14 +980,14 @@ def _event_im_deckel(db: DB, deckel_id: int, event_id: int):
 def _validate_event(db: DB, deckel, data: EventWrite) -> tuple[str, Decimal]:
     name = data.name.strip()
     if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Name fehlt")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name fehlt")
     betrag = _euro(data.betrag)
     if betrag <= 0:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Betrag muss größer als 0 sein")
     if (data.fuer_mitglied_id is not None
             and not _mitglied_am_deckel(db, deckel, data.fuer_mitglied_id)):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Das Mitglied gehört nicht zu dieser Teamkasse")
     return name, betrag
 
@@ -1090,7 +1090,7 @@ def list_event_opt_outs(deckel_id: int, user: CurrentUser, db: DB):
 def set_event_opt_out(deckel_id: int, mitglied_id: int, user: CurrentUser, db: DB):
     deckel, _ = _deckel_mit_stufe(db, user, deckel_id, 'wart')
     if not db.clubdeckel.is_mitglied_in_kader(mitglied_id, deckel.mannschaft_id):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Das Mitglied steht nicht im aktiven Kader der Mannschaft")
     db.clubdeckel_events.set_opt_out(deckel_id, mitglied_id, user.username)
     return {"status": "ok"}
@@ -1117,14 +1117,14 @@ def _ziel_mitglied(db: DB, user, deckel, stufe: str,
     eigenes = db.clubdeckel.get_kader_mitglied_id(user.id, deckel.mannschaft_id)
     if ziel_mitglied_id is None or ziel_mitglied_id == eigenes:
         if eigenes is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Du stehst nicht im aktiven Kader dieser Mannschaft")
         return eigenes
     if _STUFEN_RANG[stufe] < _STUFEN_RANG['wart']:
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             "Nur Warte dürfen für andere Mitglieder buchen")
     if not _mitglied_am_deckel(db, deckel, ziel_mitglied_id):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Mitglied gehört nicht zu dieser Teamkasse")
     return ziel_mitglied_id
 
@@ -1139,7 +1139,7 @@ def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
     deckel, stufe = _deckel_mit_stufe(db, user, deckel_id, 'mitglied')
     _require_aktiv(deckel)
     if not 1 <= data.menge <= 99:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Menge muss zwischen 1 und 99 liegen")
     artikel = db.clubdeckel_artikel.get_mit_verkaeufer(data.artikel_id)
     if artikel is None or artikel['deckel_id'] != deckel_id:
@@ -1147,7 +1147,7 @@ def buche_konsum(deckel_id: int, data: KonsumCreate, user: CurrentUser, db: DB):
                             "Artikel nicht in dieser Teamkasse gefunden")
     if not artikel['aktiv'] or not (artikel['gruppe_aktiv'] if
                                     artikel['gruppe_aktiv'] is not None else 1):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Dieser Artikel ist nicht mehr im Angebot")
     # Wart-Artikel steht nicht am Tresen (#167) — die Schranke hängt deshalb an
     # der STUFE, nicht am Ziel: Auch für sich selbst darf ihn nur ein Wart
@@ -1352,14 +1352,14 @@ def buche_zahlung(deckel_id: int, data: ZahlungCreate, user: CurrentUser, db: DB
     _require_aktiv(deckel)
     betrag = _euro(data.betrag)
     if betrag <= 0:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Betrag muss größer 0 sein")
     if data.von_mitglied_id == data.an_mitglied_id:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Zahlung braucht zwei verschiedene Mitglieder")
     for mid in (data.von_mitglied_id, data.an_mitglied_id):
         if not _mitglied_am_deckel(db, deckel, mid):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Mitglied gehört nicht zu dieser Teamkasse")
     datum = _parse_datum(data.datum)
     methode = _METHODE_LABEL.get(data.methode or '')
@@ -1382,17 +1382,17 @@ def buche_an_verkauf(deckel_id: int, data: AnVerkaufCreate, user: CurrentUser, d
     _require_aktiv(deckel)
     betrag = _euro(data.betrag)
     if betrag <= 0:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Betrag muss größer 0 sein")
     if not _mitglied_am_deckel(db, deckel, data.mitglied_id):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Mitglied gehört nicht zu dieser Teamkasse")
     if data.gegen_mitglied_id is not None:
         if data.gegen_mitglied_id == data.mitglied_id:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Gegenkonto muss ein anderes Mitglied sein")
         if not _mitglied_am_deckel(db, deckel, data.gegen_mitglied_id):
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 "Gegen-Mitglied gehört nicht zu dieser Teamkasse")
     datum = _parse_datum(data.datum)
     ergebnis = db.clubdeckel_buchungen.create_an_verkauf(
@@ -1428,7 +1428,7 @@ def restore_buchung(deckel_id: int, buchung_id: int, user: CurrentUser, db: DB):
     if buchung is None or buchung.deckel_id != deckel_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Buchung nicht gefunden")
     if buchung.deleted_at is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "Buchung ist nicht storniert")
     db.clubdeckel_buchungen.restore(buchung_id, user.username)
     return {"status": "wiederhergestellt"}

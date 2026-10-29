@@ -275,7 +275,7 @@ docker compose build --no-cache # neu bauen
 3. **Backend** (Service-Layer liegt unter `vtb_verein/`, daher `PYTHONPATH`):
    ```bash
    python -m venv venv && source venv/bin/activate
-   pip install -r vtb_verein/requirements.txt -r backend/requirements.txt
+   pip install --require-hashes -r requirements-dev.lock
    PYTHONPATH=vtb_verein python -m uvicorn backend.main:app --reload --port 8000
    ```
    Das Schema wird beim Start **automatisch** auf die aktuelle Version migriert.

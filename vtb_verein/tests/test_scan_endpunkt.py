@@ -21,12 +21,16 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from fastapi.routing import iter_route_contexts  # noqa: E402
+
 from backend.main import app  # noqa: E402
 
 
 def _route(pfad):
-    for r in app.routes:
-        if getattr(r, "path", None) == pfad:
+    # Seit FastAPI 0.16x stehen eingebundene Router als Wrapper in app.routes;
+    # die effektiven Routen (mit Präfix) liefert erst iter_route_contexts.
+    for r in iter_route_contexts(app.routes):
+        if r.path == pfad:
             return r
     return None
 

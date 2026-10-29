@@ -17,10 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Python-Dependencies
-COPY vtb_verein/requirements.txt vtb_verein/requirements.txt
-COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r vtb_verein/requirements.txt -r backend/requirements.txt
+# Python-Dependencies – aus dem Lock (feste Versionen + Hashes), nicht aus den
+# requirements.txt: Die haben nur Untergrenzen, und ein Bau ohne Cache zöge sonst
+# ungetestet die neuesten Stände. Neu sperren: tools/abhaengigkeiten_sperren.sh
+COPY requirements.lock requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # Anwendungscode
 COPY vtb_verein/ ./vtb_verein/
