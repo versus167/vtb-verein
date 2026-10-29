@@ -286,6 +286,10 @@
           >
             <q-item-section avatar><q-icon name="more_horiz" /></q-item-section>
             <q-item-section>Sonstiges</q-item-section>
+            <q-item-section side>
+              <!-- Datensätze, die im Fibu-Export auf den nächsten Lauf warten. -->
+              <AufgabenBadge :anzahl="aufgaben.anzahl('sonstiges')" />
+            </q-item-section>
           </q-item>
 
           <q-item

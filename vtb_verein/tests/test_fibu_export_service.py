@@ -518,6 +518,28 @@ class TestAufloesung:
 
 
 # ---------------------------------------------------------------------------
+# Anzahl offen (Badge-Hinweis)
+# ---------------------------------------------------------------------------
+
+class TestAnzahlOffen:
+    def test_stimmt_mit_der_vorschau_ueberein(self):
+        """Die Badge-Zahl ist die Anzahl Positionen der Vorschau: normale Posten
+        einzeln, abteilungs-getragene als Soll/Haben-Paar, ÜL-Honorar einzeln."""
+        svc, _ = _service(
+            neu=[_row(quelle_id=1),
+                 _row(quelle_id=2, zahler_typ='abteilung'),
+                 _ul_row(quelle_id=3)],
+            gegen=[_row(quelle_id=4, quelle_status='storniert')],
+        )
+        v = svc.vorschau()
+        assert svc.anzahl_offen() == len(v['forderungen']) + len(v['gegenbuchungen']) == 5
+
+    def test_leer_ohne_offene_posten(self):
+        svc, _ = _service()
+        assert svc.anzahl_offen() == 0
+
+
+# ---------------------------------------------------------------------------
 # Validierung
 # ---------------------------------------------------------------------------
 

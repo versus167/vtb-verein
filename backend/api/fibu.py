@@ -36,6 +36,18 @@ def _export_service(db) -> FibuExportService:
     })
 
 
+def anzahl_offen(user, db) -> int:
+    """Positionen, die auf den nächsten Export warten – für den Aufgaben-Hinweis.
+
+    Bewusst hier und nicht im Aufgaben-Router: die Zahl an Kachel und Nav muss
+    zu der Vorschau passen, die sich dahinter öffnet – also dieselbe Scope-Regel
+    (fibu.export). Wer das Recht nicht hat, bekommt 0 und sieht keinen Hinweis.
+    """
+    if not user.has_permission(Permission.FIBU_EXPORT):
+        return 0
+    return FibuExportService(db).anzahl_offen()
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------

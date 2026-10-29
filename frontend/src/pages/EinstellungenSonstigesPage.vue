@@ -16,7 +16,8 @@
       </div>
 
       <div v-if="auth.hasPermission('fibu.export')" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="fibu-export" icon="account_balance" title="Fibu-Export" caption="Buchungen exportieren" />
+        <SettingsTile to="fibu-export" icon="account_balance" title="Fibu-Export" caption="Buchungen exportieren"
+          :badge="aufgaben.anzahl('sonstiges')" />
       </div>
 
       <div v-if="darfSpielstaetten" class="col-6 col-sm-4 col-md-3">
@@ -39,11 +40,14 @@
 <script setup>
 import { computed } from 'vue'
 import { useAuthStore } from 'src/stores/auth'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 import SettingsTile from 'src/components/SettingsTile.vue'
 
 defineOptions({ name: 'EinstellungenSonstigesPage' })
 
 const auth = useAuthStore()
+// Badge an der Fibu-Export-Kachel: Datensätze, die auf den nächsten Lauf warten.
+const aufgaben = useAufgabenStore()
 
 // `system.config` bleibt als Obermenge gültig – siehe
 // backend/api/spielstaetten.py::_require_verwalten.

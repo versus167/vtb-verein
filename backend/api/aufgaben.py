@@ -24,6 +24,7 @@ from fastapi import APIRouter
 
 from backend.core.deps import CurrentUser, DB
 from backend.api.ul_stunden import anzahl_zu_bestaetigen
+from backend.api.fibu import anzahl_offen as anzahl_fibu_offen
 
 router = APIRouter(prefix="/aufgaben", tags=["aufgaben"])
 
@@ -41,6 +42,9 @@ _QUELLEN = (
     # der Betreuer auf die Antwort, und ohne Zahl vergisst man sie genau so lange,
     # bis die Erinnerung kommt.
     ("termine", lambda user, db: db.termine.anzahl_offene_meldungen(user.id)),
+    # Fibu-Export: Datensätze, die auf den nächsten Lauf warten. Der Schlüssel ist
+    # der Nav-Punkt „Sonstiges", unter dem der Export liegt.
+    ("sonstiges", anzahl_fibu_offen),
 )
 
 

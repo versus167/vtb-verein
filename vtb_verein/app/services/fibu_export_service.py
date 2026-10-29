@@ -280,6 +280,22 @@ class FibuExportService:
         return {'forderungen': forderungen, 'gegenbuchungen': gegenbuchungen,
                 'fehler': _dedup_fehler(fehler)}
 
+    def anzahl_offen(self) -> int:
+        """Nur die Zahl für den Nav-Hinweis: wie viele Positionen der nächste
+        Export enthielte – ohne sie zu rendern oder zu validieren.
+
+        Dieselbe Expansion wie in vorschau(): abteilungs-getragene Posten
+        (zahler_typ='abteilung') ergeben ein Soll/Haben-Paar (s. _positionen_fuer_row).
+        """
+        anzahl = 0
+        for row in (self.db.fibu_exporte.list_neue_positionen()
+                    + self.db.fibu_exporte.list_gegenbuchungen()):
+            if row['quelle_typ'] != 'ul_abrechnung' and row.get('zahler_typ') == 'abteilung':
+                anzahl += 2
+            else:
+                anzahl += 1
+        return anzahl
+
     def exportieren(self, erstellt_von: str) -> tuple[FibuExport, ExportDatei]:
         """Führt den Export-Lauf aus: validiert, rendert die Datei (ggf. mit Belegen),
         stempelt die Quellzeilen."""

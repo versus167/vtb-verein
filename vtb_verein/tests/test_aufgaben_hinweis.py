@@ -82,12 +82,29 @@ class _TerminRepo:
         return self.anzahl
 
 
+class _FibuExporteRepo:
+    """Fake des FibuExportRepository: liefert Rohzeilen für die Zählung."""
+
+    def __init__(self, neu=(), gegen=()):
+        self._neu, self._gegen = list(neu), list(gegen)
+        self.aufrufe = 0
+
+    def list_neue_positionen(self):
+        self.aufrufe += 1
+        return self._neu
+
+    def list_gegenbuchungen(self):
+        return self._gegen
+
+
 class _DB:
-    def __init__(self, ul=0, rechnungen=0, tickets=0, termine=0, export=0):
+    def __init__(self, ul=0, rechnungen=0, tickets=0, termine=0, export=0,
+                 fibu_neu=(), fibu_gegen=()):
         self.ul_abrechnungen = _AbrRepo(ul)
         self.rechnungen = _RechnungService(rechnungen, export)
         self.tickets = _TicketService(tickets)
         self.termine = _TerminRepo(termine)
+        self.fibu_exporte = _FibuExporteRepo(fibu_neu, fibu_gegen)
 
 
 # ------------------------------------------------------- ÜL-Bestätigungen
@@ -121,7 +138,8 @@ def test_offene_aufgaben_summiert_die_quellen():
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
         "gesamt": 14,
-        "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4, "termine": 5},
+        "offen": {"rechnungen": 3, "uebungsleiter": 2, "tickets": 4, "termine": 5,
+                  "sonstiges": 0},
         "detail": {"rechnungen": {"freigabe": 3, "export": 0}},
     }
 
@@ -153,11 +171,43 @@ def test_termine_werden_fuer_den_angemeldeten_benutzer_gezaehlt():
     assert db.termine.aufrufe == [42]
 
 
+# ----------------------------------------------------------- Fibu-Export
+
+def test_fibu_ohne_exportrecht_kein_hinweis():
+    """Kein fibu.export → 0, ohne das Repository überhaupt zu fragen."""
+    db = _DB(fibu_neu=[{'quelle_typ': 'beitrag', 'zahler_typ': 'mitglied'}])
+    assert offene_aufgaben(_User(), db)["offen"]["sonstiges"] == 0
+    assert db.fibu_exporte.aufrufe == 0
+
+
+def test_fibu_zaehlt_wie_die_vorschau():
+    """Abteilungs-Posten zählen als Soll/Haben-Paar, ÜL-Honorare einzeln."""
+    db = _DB(
+        fibu_neu=[
+            {'quelle_typ': 'beitrag', 'zahler_typ': 'mitglied'},
+            {'quelle_typ': 'beitrag', 'zahler_typ': 'abteilung'},
+            {'quelle_typ': 'ul_abrechnung'},      # kein zahler_typ → eine Position
+        ],
+        fibu_gegen=[{'quelle_typ': 'gebuehr', 'zahler_typ': 'mitglied'}],
+    )
+    user = _User(Permission.FIBU_EXPORT)
+    assert offene_aufgaben(user, db)["offen"]["sonstiges"] == 5
+
+
+def test_fibu_zaehlt_in_den_gesamtwert_ein():
+    db = _DB(fibu_neu=[{'quelle_typ': 'beitrag', 'zahler_typ': 'mitglied'}])
+    user = _User(Permission.FIBU_EXPORT)
+    ergebnis = offene_aufgaben(user, db)
+    assert ergebnis["offen"]["sonstiges"] == 1
+    assert ergebnis["gesamt"] == 1
+
+
 def test_ohne_aufgaben_bleibt_alles_null():
     """Jeder Schlüssel wird geliefert – das Frontend blendet bei 0 selbst aus."""
     ergebnis = offene_aufgaben(_User(), _DB())
     assert ergebnis["gesamt"] == 0
-    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter", "tickets", "termine"}
+    assert set(ergebnis["offen"]) == {"rechnungen", "uebungsleiter", "tickets",
+                                      "termine", "sonstiges"}
 
 
 def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
@@ -171,7 +221,8 @@ def test_eine_kaputte_quelle_reisst_den_rest_nicht_mit():
     user = _User(Permission.UL_STUNDEN_VERWALTEN)
     assert offene_aufgaben(user, db) == {
         "gesamt": 3,
-        "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1, "termine": 0},
+        "offen": {"rechnungen": 0, "uebungsleiter": 2, "tickets": 1, "termine": 0,
+                  "sonstiges": 0},
         # Ohne Zahl auch keine Aufschlüsselung – die Oberfläche zeigt dann nichts,
         # statt eine erfundene Null an einen Reiter zu hängen.
         "detail": {},
