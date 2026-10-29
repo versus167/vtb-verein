@@ -90,6 +90,27 @@ Code.
   **leeren Wegwerf-Postgres** (z. B. `docker run … postgres:18`); `VereinsDB` legt das
   Schema beim Connect an. Beide Schema-Pfade (Frischaufbau *und* Migration) prüfen.
 
+## Abhängigkeiten aktuell halten
+- **Python läuft nur aus den Locks:** `requirements.lock` (Image) und `requirements-dev.lock`
+  (venv/Tests) im Repo-Root, mit Version + Hash für den ganzen Baum. Die `requirements.txt`
+  sind nur die Eingabe (direkte Abhängigkeiten mit Untergrenze). Neue Abhängigkeit dort
+  eintragen, dann `tools/abhaengigkeiten_sperren.sh` (behält bestehende Pins) und das venv
+  angleichen: `uv pip sync --python venv/bin/python requirements-dev.lock`.
+  Nie `pip install` direkt ins venv — sonst testet man gegen einen anderen Stand als das Image.
+- **Frontend** analog über `frontend/package-lock.json` (`npm ci` im Image).
+- **Update-Runde mindestens quartalsweise**, auf eigenem Branch, je Seite ein Commit:
+  `tools/abhaengigkeiten_sperren.sh --upgrade` bzw. `npm update && npm audit fix`, danach
+  Suite **mit** Wegwerf-Postgres, `npm run lint`, `quasar build --mode pwa` und ein Start
+  des Images gegen eine leere DB. Code-Anpassungen, die ein Update erzwingt, als eigener
+  Commit, wenn sie auch mit dem alten Stand laufen. Major-Sprünge (z. B. pinia 4,
+  vue-router 5, @quasar/app-vite 3) nicht in der Runde, sondern einzeln mit Changelog.
+- **Sicherheitsbefunde zwischendurch:** `uv tool run pip-audit --no-deps --disable-pip -r
+  requirements.lock` und `npm audit` (in `frontend/`) — Laufzeit-Befunde (Bundle/Image)
+  sofort beheben, Befunde reiner Build-Werkzeuge in der nächsten Runde.
+- Basis-Images (`node:22-slim`, `python:3.12-slim`, `postgres:18`) kommen nur mit
+  `docker compose build --pull` bzw. `docker compose pull` neu — beim Deploy einer
+  Update-Runde mitmachen.
+
 ## Frontend-Konventionen
 - Navigation und Dashboard-Kacheln sind rechte-/ACL-gesteuert (`auth.hasPermission(...)`;
   für ACL-Ressourcen zusätzlich eine Liste laden, z. B. `/api/kassen/`, `/api/tresor`).
