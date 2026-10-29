@@ -2,6 +2,7 @@
 E-Mail-Service für Versand von Magic-Links und anderen E-Mails
 """
 import smtplib
+import ssl
 import threading
 from contextlib import contextmanager
 from email.mime.text import MIMEText
@@ -25,23 +26,40 @@ from app.config.email_config import EmailConfig
 _SITZUNG = threading.local()
 
 
-def _verbindung_oeffnen() -> smtplib.SMTP:
+def _tls_kontext() -> ssl.SSLContext:
+    """TLS-Kontext, der Zertifikat UND Hostnamen des Mailservers prüft (#65).
+
+    Ohne ausdrücklichen Kontext nimmt smtplib ``ssl._create_stdlib_context()`` –
+    verschlüsselt, aber ``CERT_NONE``: Wer sich zwischen App und Mailserver setzt,
+    gibt sich mit einem beliebigen Zertifikat als Server aus und liest SMTP-
+    Zugangsdaten und Login-Links mit. ``create_default_context()`` prüft gegen die
+    System-CAs (im python-slim-Image über ca-certificates vorhanden).
+    """
+    return ssl.create_default_context()
+
+
+def verbindung_oeffnen() -> smtplib.SMTP:
     """Angemeldete SMTP-Verbindung nach der Konfiguration.
 
     Port 465 spricht implizites TLS und braucht ``SMTP_SSL``; mit ``SMTP`` plus
     ``starttls()`` liefe man dort in den Timeout, weil der Server die
     Klartext-Begrüßung nie beantwortet. Alles andere (587) verbindet im Klartext
     und hebt per STARTTLS hoch, sofern ``SMTP_USE_TLS`` gesetzt ist.
+
+    Einziger Weg zum Mailserver – auch der Login-Link aus backend/api/auth.py
+    geht hier durch, damit TLS-Prüfung und Timeout nicht an zwei Stellen
+    gepflegt werden (und eine davon vergessen wird).
     """
     server_name = EmailConfig.get_smtp_server()
     port = EmailConfig.get_smtp_port()
     timeout = EmailConfig.get_smtp_timeout()
     if port == 465:
-        server = smtplib.SMTP_SSL(server_name, port, timeout=timeout)
+        server = smtplib.SMTP_SSL(server_name, port, timeout=timeout,
+                                  context=_tls_kontext())
     else:
         server = smtplib.SMTP(server_name, port, timeout=timeout)
         if EmailConfig.get_use_tls():
-            server.starttls()
+            server.starttls(context=_tls_kontext())
     server.login(EmailConfig.get_smtp_username(), EmailConfig.get_smtp_password())
     return server
 
@@ -63,7 +81,7 @@ def sammel_verbindung():
         yield
         return
     try:
-        _SITZUNG.smtp = _verbindung_oeffnen()
+        _SITZUNG.smtp = verbindung_oeffnen()
     except Exception as e:                      # noqa: BLE001 – Lauf soll weiterlaufen
         print(f"❌ SMTP-Verbindung fehlgeschlagen: {e}")
         _SITZUNG.smtp = None
@@ -352,13 +370,13 @@ Viele Grüße,
         absender = EmailConfig.get_mail_from()
         smtp = getattr(_SITZUNG, 'smtp', None)
         if smtp is None:
-            with _verbindung_oeffnen() as server:
+            with verbindung_oeffnen() as server:
                 server.sendmail(absender, to, msg.as_string())
             return
         try:
             smtp.sendmail(absender, to, msg.as_string())
         except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, OSError):
-            _SITZUNG.smtp = smtp = _verbindung_oeffnen()
+            _SITZUNG.smtp = smtp = verbindung_oeffnen()
             smtp.sendmail(absender, to, msg.as_string())
 
     @staticmethod

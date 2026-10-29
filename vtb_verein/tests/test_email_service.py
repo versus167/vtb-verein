@@ -6,6 +6,7 @@ enthalten — sonst steht man vor einem verbrauchten Magic-Link ohne Ausweg —
 und der Einmal-Charakter des Links muss deutlich benannt sein.
 """
 import os
+import smtplib
 import sys
 from email import message_from_string
 from pathlib import Path
@@ -69,14 +70,16 @@ def test_backend_magic_link_mail_nennt_app_und_einmal_nutzung(monkeypatch):
     from backend.api import auth as auth_api
 
     monkeypatch.setattr(auth_api.settings, 'BASE_URL', f'{APP_URL}/', raising=False)
-    monkeypatch.setattr(auth_api.settings, 'SMTP_PORT', 587, raising=False)
+    # Seit #65 läuft auch der Login-Link über email_service.verbindung_oeffnen,
+    # und das liest die Env, nicht settings.
+    monkeypatch.setenv('SMTP_PORT', '587')
     gesendet = {}
 
     class _FakeSMTP:
         def __init__(self, *args, **kwargs):
             pass
 
-        def starttls(self):
+        def starttls(self, context=None):
             pass
 
         def login(self, *args):
@@ -88,7 +91,7 @@ def test_backend_magic_link_mail_nennt_app_und_einmal_nutzung(monkeypatch):
         def quit(self):
             pass
 
-    monkeypatch.setattr(auth_api.smtplib, 'SMTP', _FakeSMTP)
+    monkeypatch.setattr(smtplib, 'SMTP', _FakeSMTP)
     with patch.dict(os.environ, {'BASE_URL': APP_URL}):
         auth_api._send_magic_link_email('tester@example.org', 'tester', 'tok123')
 
@@ -242,14 +245,16 @@ def test_backend_login_mail_traegt_den_code_auch_als_text(monkeypatch):
     from backend.api import auth as auth_api
 
     monkeypatch.setattr(auth_api.settings, 'BASE_URL', APP_URL, raising=False)
-    monkeypatch.setattr(auth_api.settings, 'SMTP_PORT', 587, raising=False)
+    # Seit #65 läuft auch der Login-Link über email_service.verbindung_oeffnen,
+    # und das liest die Env, nicht settings.
+    monkeypatch.setenv('SMTP_PORT', '587')
     gesendet = {}
 
     class _FakeSMTP:
         def __init__(self, *args, **kwargs):
             pass
 
-        def starttls(self):
+        def starttls(self, context=None):
             pass
 
         def login(self, *args):
@@ -261,7 +266,7 @@ def test_backend_login_mail_traegt_den_code_auch_als_text(monkeypatch):
         def quit(self):
             pass
 
-    monkeypatch.setattr(auth_api.smtplib, 'SMTP', _FakeSMTP)
+    monkeypatch.setattr(smtplib, 'SMTP', _FakeSMTP)
     auth_api._send_magic_link_email('tester@example.org', 'tester', 'tok123', '483912')
 
     msg = message_from_string(gesendet['body'])
