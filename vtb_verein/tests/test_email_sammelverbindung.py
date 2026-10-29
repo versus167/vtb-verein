@@ -10,6 +10,9 @@ Mail — der Request-Pfad der App schickt Einzelmails), und dass eine mitten im 
 weggebrochene Verbindung neu aufgebaut wird, statt den Rest des Laufs mitzureißen.
 """
 import smtplib
+import ssl
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -21,8 +24,9 @@ class _FakeSMTP:
 
     instanzen: list = []
 
-    def __init__(self, server, port, timeout=None):
+    def __init__(self, server, port, timeout=None, context=None):
         self.server, self.port, self.timeout = server, port, timeout
+        self.context = context
         self.logins = 0
         self.gesendet: list = []
         self.tls = False
@@ -31,8 +35,9 @@ class _FakeSMTP:
         _FakeSMTP.instanzen.append(self)
 
     # smtplib-Oberfläche, so weit der Service sie nutzt
-    def starttls(self):
+    def starttls(self, context=None):
         self.tls = True
+        self.context = context
 
     def login(self, user, passwort):
         self.logins += 1
@@ -130,3 +135,46 @@ def test_ohne_konfiguration_bleibt_der_block_folgenlos(monkeypatch):
     with mail.sammel_verbindung():
         assert mail.EmailService.send_text_email("m@example.org", "B", "T") is False
     assert _FakeSMTP.instanzen == []
+
+
+# ── TLS mit Zertifikatsprüfung (#65) ─────────────────────────────────────────
+# Ohne ausdrücklichen Kontext nimmt smtplib einen, der nichts prüft (CERT_NONE):
+# verschlüsselt, aber jeder kann sich als Mailserver ausgeben und Zugangsdaten
+# und Login-Links mitlesen. Geprüft wird deshalb der übergebene Kontext selbst.
+
+def _prueft(context) -> bool:
+    return (context is not None
+            and context.verify_mode == ssl.CERT_REQUIRED
+            and context.check_hostname)
+
+
+def test_starttls_prueft_zertifikat_und_hostnamen():
+    _schicke(1)
+    verbindung, = _FakeSMTP.instanzen
+    assert verbindung.tls
+    assert _prueft(verbindung.context)
+
+
+def test_port_465_prueft_zertifikat_und_hostnamen(monkeypatch):
+    monkeypatch.setenv('SMTP_PORT', '465')
+    _schicke(1)
+    verbindung, = _FakeSMTP.instanzen
+    assert _prueft(verbindung.context)
+
+
+def test_login_link_nutzt_den_gemeinsamen_verbindungsaufbau(monkeypatch):
+    """Der Login-Link (backend/api/auth.py) hatte einen eigenen Versandweg – ohne
+    TLS-Prüfung und ohne SMTP_TIMEOUT. Er muss denselben Weg gehen wie alle Mails."""
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from backend.api import auth as auth_api
+
+    monkeypatch.setenv('SMTP_TIMEOUT', '7')
+    auth_api._send_magic_link_email('tester@example.org', 'tester', 'tok123')
+
+    verbindung, = _FakeSMTP.instanzen
+    assert verbindung.timeout == 7
+    assert verbindung.tls and _prueft(verbindung.context)
+    assert verbindung.gesendet == ['tester@example.org']
+    assert verbindung.beendet

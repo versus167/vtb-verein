@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import smtplib
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -9,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import AliasChoices, BaseModel, Field
 from app.services.user_service import UserService
-from app.services.email_service import EmailService
+from app.services.email_service import EmailService, verbindung_oeffnen
 from ..core.db import get_db, get_db as _get_db
 from ..core.security import create_access_token, session_lifetime, set_session_cookie
 from ..core.deps import CurrentUser, CurrentSessionId, DB
@@ -511,14 +510,11 @@ def _send_magic_link_email(recipient: str, username: str, token: str,
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
 
-    if settings.SMTP_PORT == 465:
-        srv = smtplib.SMTP_SSL(settings.SMTP_SERVER, settings.SMTP_PORT)
-    else:
-        srv = smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT)
-        if settings.SMTP_USE_TLS:
-            srv.starttls()
+    # Über den gemeinsamen Verbindungsaufbau: TLS mit Zertifikatsprüfung und
+    # SMTP_TIMEOUT (#65). Der eigene Weg hier prüfte beides nicht – gerade für die
+    # Mail mit dem Login-Link, die man am wenigsten mitlesen lassen will.
+    srv = verbindung_oeffnen()
     try:
-        srv.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
         srv.sendmail(settings.MAIL_FROM, recipient, msg.as_string())
     finally:
         srv.quit()
