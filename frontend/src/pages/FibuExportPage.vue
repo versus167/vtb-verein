@@ -337,8 +337,10 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { formatDate, formatDateTime } from 'src/utils/datetime'
+import { useAufgabenStore } from 'src/stores/aufgaben'
 
 const $q = useQuasar()
+const aufgaben = useAufgabenStore()
 
 // SEPA-Einzug vorerst stillgelegt (Stand 2026-08-01): ob der Zahlungsverkehr in der App
 // oder über die Fibu läuft, ist noch nicht entschieden. Der Reiter bleibt sichtbar, aber
@@ -446,6 +448,9 @@ async function doExport() {
     downloadBlob(res.data, name)
     $q.notify({ type: 'positive', message: `Export erstellt (${name})` })
     await Promise.all([loadVorschau(), loadExporte()])
+    // Der Hinweis an Nav und Kachel soll mit dem Lauf verschwinden, nicht erst
+    // beim nächsten Refresh – wie auf der Rechnungen-Export-Seite.
+    aufgaben.laden()
   } catch {
     $q.notify({ type: 'negative', message: 'Export fehlgeschlagen' })
   } finally { exportiere.value = false }
@@ -488,6 +493,7 @@ function zuruecknehmen(x) {
       const { data } = await api.post(`/api/fibu/exporte/${x.id}/zuruecknehmen`)
       $q.notify({ type: 'positive', message: `Lauf #${x.id} zurückgenommen · ${data.positionen_wieder_offen} Position(en) wieder offen` })
       await Promise.all([loadVorschau(), loadExporte()])
+      aufgaben.laden()
     } catch (e) {
       $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Rücknahme fehlgeschlagen' })
     }
@@ -508,6 +514,7 @@ function stornieren(x) {
       downloadBlob(res.data, name)
       $q.notify({ type: 'positive', message: `Gegenbuchungs-Lauf für #${x.id} erstellt (${name})` })
       await Promise.all([loadVorschau(), loadExporte()])
+      aufgaben.laden()
     } catch (e) {
       $q.notify({ type: 'negative', message: await blobFehler(e, 'Storno fehlgeschlagen') })
     }

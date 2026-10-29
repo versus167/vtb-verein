@@ -91,7 +91,8 @@
       </div>
 
       <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="sonstiges" icon="more_horiz" title="Sonstiges" caption="Import, Bereinigen, Fibu, Protokoll" />
+        <SettingsTile to="sonstiges" icon="more_horiz" title="Sonstiges" caption="Import, Bereinigen, Fibu, Protokoll"
+          :badge="aufgaben.anzahl('sonstiges')" />
       </div>
 
       <!-- Für jeden sichtbar, aber bewusst als letzte Kachel: Wer die App täglich
