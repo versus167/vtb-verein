@@ -375,7 +375,7 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
         for typ, wert, label, primaer in contacts:
             k_repo.create(mid, typ, wert, label, primaer, ACTOR)
         for aid, status, von in zuordnungen:
-            ma_repo.create(mid, aid, status, von, None, ACTOR)
+            ma_repo.create(mid, aid, von, None, ACTOR)
         for key, von, bis in funktionen:
             mf_repo.create(mid, None, key, von, bis, ACTOR)
         for tmid in member_team_mids:

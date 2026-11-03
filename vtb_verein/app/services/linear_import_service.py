@@ -267,6 +267,6 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             k_repo.create(mid, typ, wert, label, primaer, ACTOR)
         for aid in zuordnungen:
             # Von-Datum = Eintritt; ohne Eintritt bleibt es offen statt erfunden.
-            ma_repo.create(mid, aid, 'aktiv', eintritt, None, ACTOR)
+            ma_repo.create(mid, aid, eintritt, None, ACTOR)
 
     return res
