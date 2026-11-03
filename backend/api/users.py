@@ -245,6 +245,78 @@ def get_permission_groups(user: CurrentUser):
     return permission_groups_payload()
 
 
+def _quelle_label(src: dict) -> str:
+    """Herkunft eines Rechts als Anzeigetext (wie die Chips der PermissionMatrix)."""
+    if src['typ'] == 'sockel':
+        return 'Sockel'
+    if src['typ'] == 'funktion':
+        name = src.get('funktion_name') or 'Funktion'
+        return f"{name} ({src['abteilung_name']})" if src.get('abteilung_name') else name
+    return 'individuell'
+
+
+def rechte_uebersicht_payload(personen: list[dict], effektiv: dict, abteilung_namen: dict) -> dict:
+    """Umkehrsicht der Rechte: je Permission-Key, wer es (effektiv) hat.
+
+    personen        : [{'id', 'username', 'name', 'role', 'active'}] – lebende User
+    effektiv        : user_id → EffectivePermissions
+    abteilung_namen : abteilung_id → Name (für abteilungsgebundene Rechte)
+
+    Admins zählen bewusst nicht als Inhaber: Sie haben jedes Recht über die Rolle,
+    jede Zeile hätte sonst dieselben Namen. Die UI nennt sie einmal gesondert.
+    """
+    inhaber: dict[str, list[dict]] = {key: [] for key in Permission.all()}
+    for p in personen:
+        if p['role'] == 'admin':
+            continue
+        eff = effektiv.get(p['id'])
+        if eff is None:
+            continue
+        for key in eff.keys():
+            if key in eff.global_perms:
+                scopes = 'global'
+            else:
+                scopes = sorted(abteilung_namen.get(a, f'#{a}') for a in eff.scoped.get(key, set()))
+            quellen = sorted({_quelle_label(s) for s in eff.sources.get(key, [])})
+            inhaber.setdefault(key, []).append(
+                {'user_id': p['id'], 'scopes': scopes, 'quellen': quellen})
+    from app.models.permission import BASE_PERMISSIONS
+    return {
+        'groups':   permission_groups_payload(),
+        'sockel':   sorted(BASE_PERMISSIONS),
+        'personen': personen,
+        'inhaber':  inhaber,
+    }
+
+
+@router.get("/permission-overview")
+def get_permission_overview(user: CurrentUser, db: DB):
+    """Wer hat welches Recht? – Übersicht über alle Konten (nur Rechteverwaltung)."""
+    _require_permissions(user)
+    with db.conn.cursor() as cur:
+        cur.execute("""
+            SELECT u.id, u.username, u.role, u.active, m.vorname, m.nachname
+            FROM users u
+            LEFT JOIN mitglied m ON m.user_id = u.id AND m.deleted_at IS NULL
+            WHERE u.deleted_at IS NULL
+            ORDER BY COALESCE(m.nachname, u.username), COALESCE(m.vorname, '')
+        """)
+        rows = cur.fetchall()
+    personen = [
+        {
+            'id': r['id'],
+            'username': r['username'],
+            'name': f"{r['nachname']}, {r['vorname']}" if r['nachname'] else None,
+            'role': r['role'],
+            'active': bool(r['active']),
+        }
+        for r in rows
+    ]
+    abteilung_namen = {a.id: a.name for a in db.list_abteilungen()}
+    effektiv = db.permissions.get_effective_permissions_all()
+    return rechte_uebersicht_payload(personen, effektiv, abteilung_namen)
+
+
 @router.get("/{user_id}")
 def get_user(user_id: int, user: CurrentUser, db: DB):
     _require_read(user)

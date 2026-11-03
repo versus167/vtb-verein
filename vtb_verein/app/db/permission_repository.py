@@ -94,6 +94,72 @@ class PermissionRepository(BaseRepository):
 
         return compute_effective_permissions(funktion_rows, override_rows)
 
+    def get_effective_permissions_all(
+        self,
+        stichtag: str | None = None,
+    ) -> dict[int, EffectivePermissions]:
+        """Effektive Rechte ALLER lebenden User (Rechteübersicht für Admins).
+
+        Dieselben zwei Queries wie get_effective_permissions, nur ohne User-Filter
+        und nach user_id gruppiert – sonst wären es 2×N Queries. Die Mengenlogik
+        bleibt in compute_effective_permissions, damit die Übersicht nie etwas
+        anderes zeigt als die Berechtigungsseite des einzelnen Users.
+        Auch User ohne Funktion/Override sind enthalten (sie haben den Sockel).
+        """
+        if stichtag is None:
+            stichtag = date.today().isoformat()
+
+        with self.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE deleted_at IS NULL")
+            funktion_rows: dict[int, list[dict]] = {row['id']: [] for row in cur.fetchall()}
+            override_rows: dict[int, list[dict]] = {uid: [] for uid in funktion_rows}
+
+            cur.execute(
+                """
+                SELECT m.user_id,
+                       fp.permission,
+                       mf.abteilung_id,
+                       f.name  AS funktion_name,
+                       a.name  AS abteilung_name
+                FROM mitglied m
+                JOIN mitglied_funktion mf
+                     ON mf.mitglied_id = m.id
+                    AND mf.deleted_at IS NULL
+                    AND mf.von <= %s
+                    AND (mf.bis IS NULL OR mf.bis >= %s)
+                JOIN funktion f
+                     ON f.key = mf.funktion AND f.deleted_at IS NULL
+                JOIN funktion_permission fp
+                     ON fp.funktion_id = f.id AND fp.deleted_at IS NULL
+                LEFT JOIN abteilung a ON a.id = mf.abteilung_id
+                WHERE m.user_id IS NOT NULL AND m.deleted_at IS NULL
+                """,
+                (stichtag, stichtag),
+            )
+            for row in cur.fetchall():
+                row = dict(row)
+                uid = row.pop('user_id')
+                if uid in funktion_rows:
+                    funktion_rows[uid].append(row)
+
+            cur.execute(
+                """
+                SELECT user_id, permission, effect, abteilung_id
+                FROM user_permissions
+                WHERE deleted_at IS NULL
+                """
+            )
+            for row in cur.fetchall():
+                row = dict(row)
+                uid = row.pop('user_id')
+                if uid in override_rows:
+                    override_rows[uid].append(row)
+
+        return {
+            uid: compute_effective_permissions(funktion_rows[uid], override_rows[uid])
+            for uid in funktion_rows
+        }
+
     def list_user_ids_mit_permission(
         self,
         permission: str,

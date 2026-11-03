@@ -176,7 +176,14 @@ const routes = [
         path: 'einstellungen',
         name: 'einstellungen',
         component: () => import('pages/EinstellungenAllgemeinPage.vue'),
-        meta: { title: 'Einstellungen', permission: ['funktionen.verwalten', 'abteilungen.read'] },
+        meta: { title: 'Einstellungen',
+                permission: ['funktionen.verwalten', 'abteilungen.read', 'personen.permissions'] },
+      },
+      {
+        path: 'rechte-uebersicht',
+        name: 'rechte-uebersicht',
+        component: () => import('pages/RechteUebersichtPage.vue'),
+        meta: { title: 'Rechteübersicht', permission: 'personen.permissions' },
       },
       {
         path: 'sonstiges',
