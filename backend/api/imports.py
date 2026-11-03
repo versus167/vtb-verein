@@ -1,7 +1,10 @@
 import logging
+from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Optional
 
+import psycopg
+from psycopg.rows import dict_row
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from app.models.permission import Permission
@@ -22,6 +25,22 @@ router = APIRouter(prefix="/import", tags=["import"])
 logger = logging.getLogger(__name__)
 
 
+@contextmanager
+def _eigene_verbindung():
+    """Eigene DB-Verbindung für einen Mitglieder-Import.
+
+    Der Import läuft als EINE Transaktion (#66). Auf der geteilten Verbindung
+    aus `get_db()` könnte ein parallel laufender Request mit seinem commit()
+    oder rollback() mitten hineinfunken – den halben Import festschreiben oder
+    still verwerfen. Eine eigene Verbindung ist davor sicher.
+    """
+    conn = psycopg.connect(settings.DATABASE_URL, row_factory=dict_row)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 async def _lese_import(file: UploadFile) -> bytes:
     """Import-Datei begrenzt einlesen (s. lese_upload) und die Grenze als 422 melden.
 
@@ -39,7 +58,6 @@ async def _lese_import(file: UploadFile) -> bytes:
 @router.post("/spg")
 async def import_spg(
     user: CurrentUser,
-    db: DB,
     file: UploadFile = File(...),
     commit: bool = Form(False),
     update: bool = Form(False),
@@ -53,8 +71,9 @@ async def import_spg(
     if not data:
         raise HTTPException(status_code=422, detail="Leere Datei")
     try:
-        result = run_import(db.conn, data, commit=commit, update=update,
-                            allow_unmatched=allow_unmatched)
+        with _eigene_verbindung() as conn:
+            result = run_import(conn, data, commit=commit, update=update,
+                                allow_unmatched=allow_unmatched)
     except UnicodeDecodeError:
         raise HTTPException(status_code=422, detail="Datei ist nicht im erwarteten Format (cp1252-CSV)")
     except Exception as e:  # noqa: BLE001
@@ -65,7 +84,6 @@ async def import_spg(
 @router.post("/linear")
 async def import_linear(
     user: CurrentUser,
-    db: DB,
     file: UploadFile = File(...),
     commit: bool = Form(False),
     update: bool = Form(False),
@@ -83,8 +101,9 @@ async def import_linear(
     if not data:
         raise HTTPException(status_code=422, detail="Leere Datei")
     try:
-        result = run_linear_import(db.conn, data, commit=commit, update=update,
-                                   allow_unmatched=allow_unmatched)
+        with _eigene_verbindung() as conn:
+            result = run_linear_import(conn, data, commit=commit, update=update,
+                                       allow_unmatched=allow_unmatched)
     except UnicodeDecodeError:
         raise HTTPException(status_code=422,
                             detail="Datei ist in keiner erwarteten Kodierung lesbar "

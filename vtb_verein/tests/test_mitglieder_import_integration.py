@@ -272,3 +272,71 @@ def test_linear_legt_fehlenden_passiv_schluessel_an(db, abteilungen):
             cur.execute("DELETE FROM funktion WHERE created_by = %s", (linear.ACTOR,))
             cur.execute("UPDATE funktion SET deleted_at = NULL, deleted_by = NULL, "
                         "version = version + 1 WHERE id = %s", (seed.id,))
+
+
+# --- Eine Transaktion: Ein Abbruch hinterlässt keinen Teilbestand -------------
+
+def _anzahl(db, tabelle, akteur):
+    with db.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS n FROM {tabelle} WHERE created_by = %s", (akteur,))
+        return cur.fetchone()["n"]
+
+
+def _scheitert_beim_zweiten_aufruf(monkeypatch, repo_klasse, methode):
+    original = getattr(repo_klasse, methode)
+    aufrufe = []
+
+    def ersatz(self, *args, **kwargs):
+        aufrufe.append(args)
+        if len(aufrufe) == 2:
+            raise RuntimeError("Abbruch mitten im Import")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(repo_klasse, methode, ersatz)
+
+
+def test_spg_abbruch_rollt_den_ganzen_lauf_zurueck(db, abteilungen, monkeypatch):
+    """Vorher blieben die neuen Funktionen, die Mannschaft und das erste Mitglied
+    stehen – und ein zweiter Lauf übersprang es als „schon importiert"."""
+    _scheitert_beim_zweiten_aufruf(monkeypatch, MitgliedKontaktRepository, 'create')
+    csv = spg_csv(spg_zeile(), spg_zeile(nr='102', nachname='Zweitmann', email='z@example.org'))
+
+    with pytest.raises(RuntimeError):
+        spg.run_import(db.conn, csv, commit=True)
+
+    for tabelle in ('mitglied', 'mitglied_abteilung', 'mitglied_funktion',
+                    'mitglied_kontakt', 'mannschaft', 'funktion'):
+        assert _anzahl(db, tabelle, spg.ACTOR) == 0, tabelle
+
+    # Die Verbindung ist danach wieder nutzbar, und der zweite Lauf ist vollständig.
+    monkeypatch.undo()
+    res = spg.run_import(db.conn, csv, commit=True)
+    assert (res.neu, res.skip_exist) == (2, 0)
+    assert len(_zuordnungen(db, _mitglied_id(db, "[SPG:101]"))) == 2
+
+
+def test_linear_abbruch_rollt_den_ganzen_lauf_zurueck(db, abteilungen, monkeypatch):
+    _scheitert_beim_zweiten_aufruf(monkeypatch, MitgliedAbteilungRepository, 'create')
+    csv = linear_csv(linear_zeile(), linear_zeile(nr='0202', nachname='Zweitmann'))
+
+    with pytest.raises(RuntimeError):
+        linear.run_import(db.conn, csv, commit=True)
+
+    for tabelle in ('mitglied', 'mitglied_abteilung', 'mitglied_kontakt'):
+        assert _anzahl(db, tabelle, linear.ACTOR) == 0, tabelle
+
+
+def test_sammeltransaktion_laesst_vorher_geschriebenes_stehen(db, abteilungen):
+    """Was vor dem Block committet war (hier: die Abteilungen der Fixture),
+    rollt der Abbruch nicht mit zurück."""
+    from app.db.base_repository import sammeltransaktion
+    with pytest.raises(RuntimeError):
+        with sammeltransaktion(db.conn):
+            with db.cursor() as cur:
+                cur.execute("UPDATE abteilung SET name = 'umbenannt' WHERE id = %s",
+                            (abteilungen[ABT_A],))
+            raise RuntimeError("weg damit")
+    with db.cursor() as cur:
+        cur.execute("SELECT name FROM abteilung WHERE id = ANY(%s) ORDER BY name",
+                    (list(abteilungen.values()),))
+        assert [r["name"] for r in cur.fetchall()] == sorted([ABT_A, ABT_B])

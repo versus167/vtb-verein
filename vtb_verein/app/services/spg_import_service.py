@@ -25,6 +25,7 @@ from app.db.mitglied_repository import MitgliedRepository
 from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository
+from app.db.base_repository import sammeltransaktion
 from app.db.funktion_repository import FUNKTION_PASSIV, FunktionRepository
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository
 from app.db.mannschaft_repository import MannschaftRepository, Mannschaft
@@ -176,7 +177,19 @@ def row_abteilungen(row):
 
 def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = False,
                allow_unmatched: bool = False, limit: int = 0) -> ImportResult:
-    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False."""
+    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False.
+
+    Der ganze Lauf ist eine Transaktion (#66): Bricht er ab, bleibt nichts davon
+    stehen – kein halbes Mitglied ohne Abteilungen, keine angelegten Funktionen.
+    Die Verbindung darf deshalb niemand gleichzeitig nutzen (s. sammeltransaktion).
+    """
+    with sammeltransaktion(conn):
+        return _run_import(conn, csv_bytes, commit=commit, update=update,
+                           allow_unmatched=allow_unmatched, limit=limit)
+
+
+def _run_import(conn, csv_bytes: bytes, *, commit: bool, update: bool,
+                allow_unmatched: bool, limit: int) -> ImportResult:
     m_repo = MitgliedRepository(conn)
     k_repo = MitgliedKontaktRepository(conn)
     a_repo = AbteilungRepository(conn)
