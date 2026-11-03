@@ -187,6 +187,9 @@ def test_import_spiegelt_den_austritt_nicht_in_den_status(db, status_text, erwar
                     (name,))
         row = cur.fetchone()
         cur.execute("DELETE FROM mitglied_kontakt WHERE mitglied_id = %s", (row['id'],))
+        # „Passiv" legt seit #66 zusätzlich die Funktion `passiv` an.
+        cur.execute("DELETE FROM mitglied_funktion_history WHERE mitglied_id = %s", (row['id'],))
+        cur.execute("DELETE FROM mitglied_funktion WHERE mitglied_id = %s", (row['id'],))
         cur.execute("DELETE FROM mitglied_history WHERE id = %s", (row['id'],))
         cur.execute("DELETE FROM mitglied WHERE id = %s", (row['id'],))
     assert row['status'] == erwartet

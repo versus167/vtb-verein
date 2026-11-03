@@ -192,3 +192,83 @@ def test_linear_update_ersetzt_zuordnungen(db, abteilungen):
     assert upd.aktualisiert == 1
     mid = _mitglied_id(db, "[LINEAR:0201]")
     assert _zuordnungen(db, mid) == {(ABT_B, "2019-05-01", None)}
+
+
+# --- Passiv: seit v105 eine Funktion, kein Abteilungs-Status ------------------
+
+def test_spg_passiv_wird_funktion_mit_abteilungsbezug(db, abteilungen):
+    """Abt_Status 'p' ging beim Umbau ersatzlos verloren – passiv in Turnen heißt
+    jetzt: Funktion `passiv` für Turnen ab dem Abteilungsdatum."""
+    zeile = spg_zeile(status1='p', funktion='', f_von='', team='')
+    res = spg.run_import(db.conn, spg_csv(zeile), commit=True)
+
+    assert (res.passiv, res.funktionen) == (1, 1)
+    assert 'passiv' not in res.neue_funktionen          # kommt mit dem Schema
+    mid = _mitglied_id(db, "[SPG:101]")
+    assert _funktionen(db, mid) == {("passiv", abteilungen[ABT_A], "2020-03-01", None)}
+    # Die Zuordnung selbst bleibt – passiv ist man IN der Abteilung.
+    assert _zuordnungen(db, mid) == {(ABT_A, "2020-03-01", None), (ABT_B, "2021-04-01", None)}
+
+
+def test_spg_probelauf_zaehlt_passiv_ohne_zu_schreiben(db, abteilungen):
+    res = spg.run_import(db.conn, spg_csv(spg_zeile(status1='p', status2='p')))
+    assert (res.neu, res.passiv) == (1, 2)
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM mitglied_funktion WHERE created_by = %s",
+                    (spg.ACTOR,))
+        assert cur.fetchone()["n"] == 0
+
+
+@pytest.mark.parametrize("abt_a,abt_b,bezug", [
+    ('X', '', ABT_A),     # genau eine Abteilung → deren Bezug
+    ('X', 'X', None),     # mehrere → vereinsweit, statt eine zu raten
+    ('', '', None),       # keine → vereinsweit
+])
+def test_linear_passiv_wird_funktion(db, abteilungen, abt_a, abt_b, bezug):
+    res = linear.run_import(
+        db.conn, linear_csv(linear_zeile(status='Passiv', abt_a=abt_a, abt_b=abt_b)),
+        commit=True)
+
+    assert res.passiv == 1
+    mid = _mitglied_id(db, "[LINEAR:0201]")
+    erwartet_aid = abteilungen[bezug] if bezug else None
+    assert _funktionen(db, mid) == {("passiv", erwartet_aid, "2019-05-01", None)}
+    with db.cursor() as cur:
+        cur.execute("SELECT status FROM mitglied WHERE id = %s", (mid,))
+        assert cur.fetchone()["status"] == "passiv"
+
+
+def test_linear_aktiv_legt_keine_passiv_funktion_an(db, abteilungen):
+    res = linear.run_import(db.conn, linear_csv(linear_zeile()), commit=True)
+    assert res.passiv == 0
+    assert _funktionen(db, _mitglied_id(db, "[LINEAR:0201]")) == set()
+
+
+def test_linear_update_ersetzt_nur_die_eigene_passiv_zeile(db, abteilungen):
+    """Wird aus Passiv wieder Aktiv, fällt die Import-Zeile weg; eine von Hand
+    gepflegte Funktion bleibt – die Datei kennt keine Funktionen."""
+    linear.run_import(db.conn, linear_csv(linear_zeile(status='Passiv')), commit=True)
+    mid = _mitglied_id(db, "[LINEAR:0201]")
+    MitgliedFunktionRepository(db.conn).create(mid, None, 'vorstand', '2024-01-01', None, MARKE)
+
+    linear.run_import(db.conn, linear_csv(linear_zeile()), commit=True, update=True)
+
+    assert _funktionen(db, mid) == {("vorstand", None, "2024-01-01", None)}
+
+
+def test_linear_legt_fehlenden_passiv_schluessel_an(db, abteilungen):
+    from app.db.funktion_repository import FunktionRepository
+    f_repo = FunktionRepository(db.conn)
+    seed = f_repo.get_by_key('passiv')
+    f_repo.mark_deleted(seed.id, MARKE)
+    try:
+        res = linear.run_import(db.conn, linear_csv(linear_zeile(status='Passiv')), commit=True)
+        assert res.neue_funktionen == ['passiv']
+        assert f_repo.get_by_key('passiv') is not None
+    finally:
+        # Seed-Zeile zurückholen, damit andere Module ihn weiter finden.
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM funktion_history WHERE created_by = %s", (linear.ACTOR,))
+            cur.execute("DELETE FROM funktion WHERE created_by = %s", (linear.ACTOR,))
+            cur.execute("UPDATE funktion SET deleted_at = NULL, deleted_by = NULL, "
+                        "version = version + 1 WHERE id = %s", (seed.id,))
