@@ -87,7 +87,7 @@
       </div>
 
       <div v-if="zeigeEinstellungen" class="col-6 col-sm-4 col-md-3">
-        <SettingsTile to="einstellungen" icon="tune" title="Einstellungen" caption="Funktionen, Abteilungen" />
+        <SettingsTile to="einstellungen" icon="tune" title="Einstellungen" caption="Funktionen, Abteilungen, Rechte" />
       </div>
 
       <div v-if="zeigeSonstiges" class="col-6 col-sm-4 col-md-3">
@@ -167,7 +167,8 @@ const zeigePlatzbelegung = computed(() =>
 const zeigeEinstellungen = computed(() =>
   auth.user?.role === 'admin' ||
   auth.hasPermission('funktionen.verwalten') ||
-  auth.hasPermission('abteilungen.read'),
+  auth.hasPermission('abteilungen.read') ||
+  auth.hasPermission('personen.permissions'),
 )
 const zeigeSonstiges = computed(() =>
   auth.user?.role === 'admin' ||

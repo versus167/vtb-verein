@@ -421,14 +421,15 @@ const toolbarTitle = computed(() => {
   return route.name === 'dashboard' ? '' : pageTitle.value
 })
 
-// Zwei gebündelte Bereiche: „Einstellungen" (Funktionen/Abteilungen) und „Sonstiges"
+// Zwei gebündelte Bereiche: „Einstellungen" (Funktionen/Abteilungen/Rechteübersicht) und „Sonstiges"
 // (Import/Bereinigung/Fibu-Export/Protokoll). Jeweils sichtbar, sobald der Nutzer
 // mindestens einen Unterbereich darf. Import ist adminOnly – Admins sehen ohnehin alles.
 const hatEinstellungenZugriff = computed(
   () =>
     auth.user?.role === 'admin' ||
     auth.hasPermission('funktionen.verwalten') ||
-    auth.hasPermission('abteilungen.read'),
+    auth.hasPermission('abteilungen.read') ||
+    auth.hasPermission('personen.permissions'),
 )
 const hatSonstigesZugriff = computed(
   () =>

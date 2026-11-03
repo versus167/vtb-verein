@@ -10,6 +10,11 @@
       <div v-if="auth.hasPermission('abteilungen.read')" class="col-6 col-sm-4 col-md-3">
         <SettingsTile to="abteilungen" icon="account_tree" title="Abteilungen" caption="Abteilungen verwalten" />
       </div>
+
+      <div v-if="auth.hasPermission('personen.permissions')" class="col-6 col-sm-4 col-md-3">
+        <SettingsTile to="rechte-uebersicht" icon="admin_panel_settings" title="Rechteübersicht"
+          caption="Wer hat welches Recht?" />
+      </div>
     </div>
   </q-page>
 </template>
