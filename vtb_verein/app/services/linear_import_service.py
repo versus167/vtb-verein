@@ -15,6 +15,11 @@ Bewusst NICHT übernommen: die Staatsangehörigkeit (Entscheidung 3 im Plan — 
 Vereinsverwaltung hat für die Angabe keinen Zweck) sowie Anrede (steckt im
 Geschlecht). Was die Datei ohnehin nicht liefert: E-Mail-Adressen,
 SEPA-Mandatsdaten, Funktionen, Mannschaften, Beiträge.
+
+„Passiv" landet außer im Mitgliedsstatus auch als Funktion `passiv` (Schema
+v105) – nur die wirkt auf die Abteilungsbeiträge. LINEAR führt den Status je
+Mitglied, nicht je Abteilung: Bei genau einer Abteilung bekommt die Funktion
+deren Bezug, sonst gilt sie vereinsweit (ohne Abteilung = alle Abteilungen).
 """
 import csv
 from collections import Counter
@@ -25,8 +30,11 @@ from app.db.mitglied_repository import MitgliedRepository
 from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository
+from app.db.base_repository import sammeltransaktion
+from app.db.funktion_repository import FUNKTION_PASSIV, FunktionRepository
+from app.db.mitglied_funktion_repository import MitgliedFunktionRepository
 from app.services.import_common import clean, decode_csv, norm_abt, to_iso
-from app.services.spg_import_service import ImportResult
+from app.services.spg_import_service import PASSIV_FUNKTION_NAME, ImportResult
 
 ACTOR = 'linear-import'
 
@@ -121,11 +129,25 @@ def build_contacts(row):
 
 def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = False,
                allow_unmatched: bool = False, limit: int = 0) -> LinearImportResult:
-    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False."""
+    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False.
+
+    Der ganze Lauf ist eine Transaktion (#66): Bricht er ab, bleibt nichts davon
+    stehen – kein halbes Mitglied ohne Abteilungen, keine angelegten Funktionen.
+    Die Verbindung darf deshalb niemand gleichzeitig nutzen (s. sammeltransaktion).
+    """
+    with sammeltransaktion(conn):
+        return _run_import(conn, csv_bytes, commit=commit, update=update,
+                           allow_unmatched=allow_unmatched, limit=limit)
+
+
+def _run_import(conn, csv_bytes: bytes, *, commit: bool, update: bool,
+                allow_unmatched: bool, limit: int) -> LinearImportResult:
     m_repo = MitgliedRepository(conn)
     k_repo = MitgliedKontaktRepository(conn)
     a_repo = AbteilungRepository(conn)
     ma_repo = MitgliedAbteilungRepository(conn)
+    f_repo = FunktionRepository(conn)
+    mf_repo = MitgliedFunktionRepository(conn)
 
     rows, abteilungs_spalten = parse_csv_bytes(csv_bytes)
     if limit:
@@ -161,6 +183,14 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
                             + ", ".join(res.unmatched_abteilungen)
                             + ". Bitte erst in der App anlegen (oder 'unmatched zulassen').")
         return res
+
+    # Der Schlüssel kommt mit dem Schema (Seed); fehlt er trotzdem (z. B. im
+    # Katalog gelöscht), legt ihn der Import wie beim SPG-Import an.
+    if (any(STATUS.get(r.get('Status', '').upper()) == 'passiv' for r in rows)
+            and f_repo.get_by_key(FUNKTION_PASSIV) is None):
+        res.neue_funktionen = [FUNKTION_PASSIV]
+        if commit:
+            f_repo.create(FUNKTION_PASSIV, PASSIV_FUNKTION_NAME, 'aus LINEAR-Import', ACTOR)
 
     def lookup_mitglied(linear_nr: str):
         """Bereits importiertes Mitglied am LINEAR-Vermerk in bemerkungen finden."""
@@ -233,6 +263,15 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             else:
                 zuordnungen.append(aid)
 
+        # Passiv als Funktion: mit Abteilungsbezug nur, wenn es genau eine
+        # Abteilung gibt – sonst wäre die Wahl einer davon geraten.
+        passiv = None
+        if status == 'passiv':
+            passiv = (zuordnungen[0] if len(zuordnungen) == 1 else None,
+                      eintritt or '1900-01-01')
+            res.passiv += 1
+            res.funktionen += 1
+
         res.kontakte += len(contacts)
         res.abteilungen += len(zuordnungen)
 
@@ -258,6 +297,11 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
                 k_repo.mark_deleted(z.id, ACTOR)
             for z in ma_repo.list_for_mitglied(mid):
                 ma_repo.mark_deleted(z.id, ACTOR)
+            # Nur die eigene passiv-Zeile ersetzen: Andere Funktionen liefert die
+            # Datei nicht, und ein von Hand gepflegtes „passiv" bleibt stehen.
+            for z in mf_repo.list_for_mitglied(mid):
+                if z.funktion == FUNKTION_PASSIV and z.created_by == ACTOR:
+                    mf_repo.mark_deleted(z.id, ACTOR)
             res.aktualisiert += 1
         else:
             mid = m_repo.create_mitglied(m, ACTOR).id
@@ -267,6 +311,9 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             k_repo.create(mid, typ, wert, label, primaer, ACTOR)
         for aid in zuordnungen:
             # Von-Datum = Eintritt; ohne Eintritt bleibt es offen statt erfunden.
-            ma_repo.create(mid, aid, 'aktiv', eintritt, None, ACTOR)
+            ma_repo.create(mid, aid, eintritt, None, ACTOR)
+        if passiv:
+            passiv_aid, passiv_von = passiv
+            mf_repo.create(mid, passiv_aid, FUNKTION_PASSIV, passiv_von, None, ACTOR)
 
     return res

@@ -208,6 +208,9 @@ const summary = computed(() => {
     { label: 'Kontakte', value: r.kontakte },
     { label: 'Abteilungs-Zuordnungen', value: r.abteilungen },
     { label: 'Funktions-Zuordnungen', value: r.funktionen },
+    // Passiv steckt seit Schema v105 in der Funktion `passiv` – bei beiden
+    // Formaten, deshalb nicht „davon": Bei LINEAR fehlt die Zeile darüber.
+    { label: 'Passiv-Zuordnungen (Funktion)', value: r.passiv },
     { label: 'Kader-Zuordnungen', value: r.kader },
     { label: 'Zeilen gelesen', value: r.rows },
   ].filter((s) => !nurSpg.includes(s.label))

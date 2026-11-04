@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 import psycopg
 from psycopg.rows import dict_row
 
+from app.db.base_repository import in_sammeltransaktion
+
 SCHEMA_VERSION = 125
 
 
@@ -4092,13 +4094,19 @@ class Database:
 
     @contextmanager
     def cursor(self):
-        """Context manager for cursor with automatic commit/rollback."""
+        """Context manager for cursor with automatic commit/rollback.
+
+        Wie BaseRepository.cursor: Im `sammeltransaktion`-Block schließt der Block ab.
+        """
         cur = self.conn.cursor()
+        sammel = in_sammeltransaktion(self.conn)
         try:
             yield cur
-            self.conn.commit()
+            if not sammel:
+                self.conn.commit()
         except Exception:
-            self.conn.rollback()
+            if not sammel:
+                self.conn.rollback()
             raise
         finally:
             cur.close()

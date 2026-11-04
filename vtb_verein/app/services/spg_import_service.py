@@ -25,7 +25,8 @@ from app.db.mitglied_repository import MitgliedRepository
 from app.db.mitglied_kontakt_repository import MitgliedKontaktRepository
 from app.db.abteilung_repository import AbteilungRepository
 from app.db.mitglied_abteilung_repository import MitgliedAbteilungRepository
-from app.db.funktion_repository import FunktionRepository
+from app.db.base_repository import sammeltransaktion
+from app.db.funktion_repository import FUNKTION_PASSIV, FunktionRepository
 from app.db.mitglied_funktion_repository import MitgliedFunktionRepository
 from app.db.mannschaft_repository import MannschaftRepository, Mannschaft
 from app.db.mitglied_mannschaft_repository import MitgliedMannschaftRepository
@@ -44,7 +45,11 @@ FUNKTION_MAP = {
     'Mitarbeiter':             ('mitarbeiter',           'Mitarbeiter'),
 }
 ZAHLART = {'s': 'lastschrift', 'b': 'ueberweisung'}
+# Abt_Status_n: 'p' wird seit Schema v105 nicht mehr an der Zuordnung vermerkt,
+# sondern als Funktion `passiv` MIT Abteilungsbezug – SPG führt den Status je
+# Abteilung, also betrifft er genau diese eine.
 ABT_STATUS = {'a': 'aktiv', 'p': 'passiv'}
+PASSIV_FUNKTION_NAME = 'Passiv'
 ABT_ALIAS = {}  # optionale Aliasse: {CSV-Name: App-Name}
 
 # Spalten, die Mannschaften/Teams enthalten (ein Mitglied kann in mehreren sein)
@@ -78,6 +83,9 @@ class ImportResult:
     abteilungen: int = 0
     funktionen: int = 0
     abt_unmatched_zuordnungen: int = 0
+    # Zuordnungen der Funktion `passiv` (aus dem Abteilungs- bzw. Mitgliedsstatus);
+    # zählen auch in `funktionen` mit.
+    passiv: int = 0
     neue_funktionen: list = field(default_factory=list)
     unmatched_abteilungen: list = field(default_factory=list)
     # [{name, count, matched}] für die Anzeige
@@ -169,7 +177,19 @@ def row_abteilungen(row):
 
 def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = False,
                allow_unmatched: bool = False, limit: int = 0) -> ImportResult:
-    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False."""
+    """Führt den Import auf der gegebenen Verbindung aus. Dry-Run, wenn commit=False.
+
+    Der ganze Lauf ist eine Transaktion (#66): Bricht er ab, bleibt nichts davon
+    stehen – kein halbes Mitglied ohne Abteilungen, keine angelegten Funktionen.
+    Die Verbindung darf deshalb niemand gleichzeitig nutzen (s. sammeltransaktion).
+    """
+    with sammeltransaktion(conn):
+        return _run_import(conn, csv_bytes, commit=commit, update=update,
+                           allow_unmatched=allow_unmatched, limit=limit)
+
+
+def _run_import(conn, csv_bytes: bytes, *, commit: bool, update: bool,
+                allow_unmatched: bool, limit: int) -> ImportResult:
     m_repo = MitgliedRepository(conn)
     k_repo = MitgliedKontaktRepository(conn)
     a_repo = AbteilungRepository(conn)
@@ -197,6 +217,8 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
         member_abts = [row.get(f'Abteilung_{i}', '') for i in range(1, 8) if row.get(f'Abteilung_{i}', '')]
         for n in member_abts:
             abt_count[n] += 1
+        if any(status == 'passiv' for _, status, _ in row_abteilungen(row)[0]):
+            funk_keys[FUNKTION_PASSIV] = PASSIV_FUNKTION_NAME
         for i in range(1, 11):
             raw = row.get(f'Funktion_{i}', '')
             if raw:
@@ -320,9 +342,9 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
                 continue
             k, _ = funktion_key_name(raw)
             von = to_iso(row.get(f'Funkt_von_Datum_{i}')) or eintritt or '1900-01-01'
-            funktionen.append((k, von, to_iso(row.get(f'Funkt_Bis_Datum_{i}'))))
+            funktionen.append((k, None, von, to_iso(row.get(f'Funkt_Bis_Datum_{i}'))))
         if ehren:
-            funktionen.append((EHRENMITGLIED_FUNKTION[0], eintritt or '1900-01-01', None))
+            funktionen.append((EHRENMITGLIED_FUNKTION[0], None, eintritt or '1900-01-01', None))
             res.ehrenmitglied += 1
 
         zuordnungen = []
@@ -330,8 +352,13 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
             aid = matched.get(name)
             if aid is None:
                 res.abt_unmatched_zuordnungen += 1
-            else:
-                zuordnungen.append((aid, status, von))
+                continue
+            zuordnungen.append((aid, von))
+            if status == 'passiv':
+                # Passiv ab dem Abteilungsdatum – derselbe Zeitraum wie die
+                # Zuordnung, nur dass die Funktion ein Von-Datum braucht.
+                funktionen.append((FUNKTION_PASSIV, aid, von or eintritt or '1900-01-01', None))
+                res.passiv += 1
 
         # Kader: alle Teams des Mitglieds -> mannschaft_ids (sofern Team angelegt/gematcht)
         member_team_mids = [team_to_mid[t] for t in row_teams(row) if t in team_to_mid]
@@ -374,10 +401,10 @@ def run_import(conn, csv_bytes: bytes, *, commit: bool = False, update: bool = F
 
         for typ, wert, label, primaer in contacts:
             k_repo.create(mid, typ, wert, label, primaer, ACTOR)
-        for aid, status, von in zuordnungen:
-            ma_repo.create(mid, aid, status, von, None, ACTOR)
-        for key, von, bis in funktionen:
-            mf_repo.create(mid, None, key, von, bis, ACTOR)
+        for aid, von in zuordnungen:
+            ma_repo.create(mid, aid, von, None, ACTOR)
+        for key, aid, von, bis in funktionen:
+            mf_repo.create(mid, aid, key, von, bis, ACTOR)
         for tmid in member_team_mids:
             tm_repo.create(mid, tmid, 'spieler', eintritt or '1900-01-01', None, ACTOR)
 
