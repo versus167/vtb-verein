@@ -22,9 +22,13 @@ from app.db.funktion_repository import FUNKTION_PASSIV
 _MONATS_VORLAUF = 3
 
 
-def _laeuft_heute(alias: str) -> str:
-    """Zeitfilter für eine Abteilungs-Zuordnung: heute gültig. Am Von- und am
-    Bis-Tag selbst zählt sie mit; fehlende Daten heißen „unbefristet".
+# SQL-Ausdruck für den Stichtag der Auswertung; das Dashboard rechnet mit heute.
+_HEUTE = "CURRENT_DATE"
+
+
+def _laeuft_am(alias: str, tag: str = _HEUTE) -> str:
+    """Zeitfilter für eine Abteilungs-Zuordnung: am Stichtag ``tag`` gültig. Am Von-
+    und am Bis-Tag selbst zählt sie mit; fehlende Daten heißen „unbefristet".
 
     Als Funktion, weil dieselbe Bedingung an drei Stellen gebraucht wird und sie
     an zweien schlicht gefehlt hat: Eine vor Jahren beendete Zuordnung lief in der
@@ -32,12 +36,12 @@ def _laeuft_heute(alias: str) -> str:
     `status = 'aktiv'` geprüft wurde, ein Kennzeichen ohne Datum (bis v105).
     """
     return (f"(safe_to_date({alias}.von) IS NULL "
-            f"     OR safe_to_date({alias}.von) <= CURRENT_DATE) "
+            f"     OR safe_to_date({alias}.von) <= {tag}) "
             f"AND (safe_to_date({alias}.bis) IS NULL "
-            f"     OR safe_to_date({alias}.bis) >= CURRENT_DATE)")
+            f"     OR safe_to_date({alias}.bis) >= {tag})")
 
 
-def _nicht_passiv(alias: str) -> str:
+def _nicht_passiv(alias: str, tag: str = _HEUTE) -> str:
     """„Macht in dieser Abteilung aktiv mit": keine laufende `passiv`-Funktion.
 
     Seit v105 sagt das die Funktion und nicht mehr ein Kennzeichen an der
@@ -52,7 +56,7 @@ def _nicht_passiv(alias: str) -> str:
         "               AND mf_p.deleted_at IS NULL "
         f"              AND (mf_p.abteilung_id IS NULL "
         f"                   OR mf_p.abteilung_id = {alias}.abteilung_id) "
-        f"              AND {_laeuft_heute('mf_p')})"
+        f"              AND {_laeuft_am('mf_p', tag)})"
     )
 
 
@@ -60,23 +64,31 @@ def _nicht_passiv(alias: str) -> str:
 # das Mitglied nicht passiv geführt wird. Bewusst NICHT über m.status – der wird
 # weder angezeigt noch gepflegt (#173) und wäre eine Kennzahl über ein totes
 # Feld. Die Abteilungs-Zuordnung dagegen wird gepflegt und hat von/bis.
-_IN_ABTEILUNG = (
-    "EXISTS (SELECT 1 FROM mitglied_abteilung ma_a "
-    "         WHERE ma_a.mitglied_id = m.id AND ma_a.deleted_at IS NULL "
-    f"           AND {_laeuft_heute('ma_a')} "
-    f"           AND {_nicht_passiv('ma_a')})"
-)
-# "zählt zum Bestand": aktueller Mitgliederstand zum Anzeigetag (heute) – wer HEUTE
-# Mitglied ist. Eintritt nicht in der Zukunft (am Eintrittstag schon dabei) UND Austritt
-# nicht in der Vergangenheit (am Austrittstag noch dabei → >= CURRENT_DATE). Fehlende/
-# ungültige Datumsfelder = dabei. Rein datumsbasiert – der Status sagt seit v103 nur
-# noch, welche FORM die Mitgliedschaft hat (aktiv/passiv), nicht ob sie besteht (#173).
-_BESTAND = (
-    "(safe_to_date(m.eintrittsdatum) IS NULL "
-    " OR safe_to_date(m.eintrittsdatum) <= CURRENT_DATE) "
-    "AND (safe_to_date(m.austrittsdatum) IS NULL "
-    "     OR safe_to_date(m.austrittsdatum) >= CURRENT_DATE)"
-)
+def _in_abteilung(tag: str = _HEUTE) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM mitglied_abteilung ma_a "
+        "         WHERE ma_a.mitglied_id = m.id AND ma_a.deleted_at IS NULL "
+        f"           AND {_laeuft_am('ma_a', tag)} "
+        f"           AND {_nicht_passiv('ma_a', tag)})"
+    )
+
+
+_IN_ABTEILUNG = _in_abteilung()
+# "zählt zum Bestand": Mitgliederstand am Stichtag (Dashboard: heute) – wer an dem
+# Tag Mitglied ist. Eintritt nicht danach (am Eintrittstag schon dabei) UND Austritt
+# nicht davor (am Austrittstag noch dabei → >= Stichtag). Fehlende/ungültige
+# Datumsfelder = dabei. Rein datumsbasiert – der Status sagt seit v103 nur noch,
+# welche FORM die Mitgliedschaft hat (aktiv/passiv), nicht ob sie besteht (#173).
+def _bestand(tag: str = _HEUTE) -> str:
+    return (
+        "(safe_to_date(m.eintrittsdatum) IS NULL "
+        f" OR safe_to_date(m.eintrittsdatum) <= {tag}) "
+        "AND (safe_to_date(m.austrittsdatum) IS NULL "
+        f"     OR safe_to_date(m.austrittsdatum) >= {tag})"
+    )
+
+
+_BESTAND = _bestand()
 # Gastspieler (art='gastspieler', Schema v72) sind keine Vereinsmitglieder und
 # bleiben aus sämtlichen Mitglieder-Kennzahlen draußen.
 _NUR_MITGLIEDER = "m.art = 'mitglied'"
@@ -102,7 +114,7 @@ class StatistikRepository(BaseRepository):
             "JOIN mitglied_abteilung ma "
             "ON ma.mitglied_id = m.id AND ma.abteilung_id = %(aid)s "
             "AND ma.deleted_at IS NULL "
-            f"AND {_laeuft_heute('ma')} "
+            f"AND {_laeuft_am('ma')} "
             f"AND {_nicht_passiv('ma')}"
         )
         return (
@@ -300,7 +312,7 @@ class StatistikRepository(BaseRepository):
                       AND ma.deleted_at IS NULL
                       -- Zeitraum UND Passiv-Funktion: Beides fehlte hier, solange
                       -- nur ein Status geprüft wurde, der kein Datum kannte.
-                      AND {_laeuft_heute('ma')}
+                      AND {_laeuft_am('ma')}
                       AND {_nicht_passiv('ma')}
                 LEFT JOIN mitglied m
                        ON m.id = ma.mitglied_id
