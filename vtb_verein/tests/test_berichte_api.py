@@ -117,3 +117,18 @@ def test_ehrungen_nur_im_abteilungs_scope():
                            db, stichtag=date(2027, 3, 31))
     assert [z["mitglied_id"] for z in res["ehrungen"]] == [2]
     assert res["stufen"] == [25, 40, 50, 60, 70, 75, 80]
+
+
+# --- Übungsleiter -------------------------------------------------------------
+
+def test_uebungsleiter_ohne_personenrecht_403():
+    with pytest.raises(HTTPException) as e:
+        api.get_uebungsleiter(_user(Permission.BERICHTE_READ), _db())
+    assert e.value.status_code == 403
+
+
+def test_uebungsleiter_nur_im_abteilungs_scope():
+    db = _db(sichtbar=[1])
+    db.berichtslisten.uebungsleiter = lambda: list(_LUECKEN)
+    res = api.get_uebungsleiter(_user(Permission.BERICHTE_READ, Permission.PERSONEN_READ, scope={5}), db)
+    assert [z["mitglied_id"] for z in res] == [1]

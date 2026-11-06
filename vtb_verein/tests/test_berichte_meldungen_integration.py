@@ -215,3 +215,75 @@ def test_ehrung_nur_stufen_und_nur_bestand(db):
     jubilare = _jubilare(db, date(2027, 3, 31))
     assert set(jubilare) == {'EhrSechzig', 'EhrFuenfundzwanzig'}
     assert (jubilare['EhrSechzig']["jahre"], jubilare['EhrSechzig']["abteilungen"]) == (60, 'MT-Fußball')
+
+
+# --- Übungsleiter -------------------------------------------------------------
+
+def _mannschaft(db, aid, name):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mannschaft (abteilung_id, name, created_by, updated_by) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id", (aid, name, _MARKE, _MARKE))
+        return cur.fetchone()['id']
+
+
+def _kader(db, mid, mannschaft_id, rolle='uebungsleiter', von='2020-01-01', bis=None):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO mitglied_mannschaft (mitglied_id, mannschaft_id, rolle, von, bis, "
+                    "created_by, updated_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (mid, mannschaft_id, rolle, von, bis, _MARKE, _MARKE))
+
+
+def _lizenz(db, mid, nr, von, bis):
+    with db.cursor() as cur:
+        cur.execute("UPDATE mitglied SET trainerlizenz_nr = %s, trainerlizenz_gueltig_von = %s, "
+                    "trainerlizenz_gueltig_bis = %s WHERE id = %s", (nr, von, bis, mid))
+
+
+def _uel(db):
+    return {r["nachname"]: r for r in db.berichtslisten.uebungsleiter()
+            if r["nachname"].startswith("Uel")}
+
+
+def test_uel_nur_mit_laufender_uel_funktion(db):
+    for name, funktion, bis in [('UelEinfach', 'uebungsleiter', None),
+                                ('UelLizenz', 'uebungsleiter_lizenz', None),
+                                ('UelBeendet', 'uebungsleiter', '2020-12-31'),
+                                ('UelBetreuer', 'betreuer', None)]:
+        _funktion(db, _mitglied(db, name), funktion, bis=bis)
+    _funktion(db, _mitglied(db, 'UelAusgetreten', austritt='2020-12-31'), 'uebungsleiter')
+
+    assert set(_uel(db)) == {'UelEinfach', 'UelLizenz'}
+
+
+def test_uel_abteilung_aus_mannschaft_sonst_zuordnung(db):
+    fb, tt = _abteilung(db, 'MT-Fußball'), _abteilung(db, 'MT-Tischtennis')
+    team = _mannschaft(db, tt, 'MT-Erste')
+    trainer = _mitglied(db, 'UelTrainer')
+    _funktion(db, trainer, 'uebungsleiter')
+    _zuordnung(db, trainer, fb)
+    _kader(db, trainer, team)
+    spieler = _mitglied(db, 'UelSpieler')
+    _funktion(db, spieler, 'uebungsleiter')
+    _zuordnung(db, spieler, fb)
+    _kader(db, spieler, team, rolle='spieler')
+    _funktion(db, _mitglied(db, 'UelNirgends'), 'uebungsleiter')
+
+    uel = _uel(db)
+    assert (uel['UelTrainer']["abteilungen"], uel['UelTrainer']["abteilung_quelle"]) == ('MT-Tischtennis', 'mannschaft')
+    assert (uel['UelSpieler']["abteilungen"], uel['UelSpieler']["abteilung_quelle"]) == ('MT-Fußball', 'zuordnung')
+    assert (uel['UelNirgends']["abteilungen"], uel['UelNirgends']["abteilung_quelle"]) == (None, None)
+
+
+def test_uel_lizenz_gilt_heute(db):
+    gueltig = _mitglied(db, 'UelGueltig')
+    _funktion(db, gueltig, 'uebungsleiter_lizenz')
+    _lizenz(db, gueltig, 'L-1', '2020-01-01', '2099-12-31')
+    abgelaufen = _mitglied(db, 'UelAbgelaufen')
+    _funktion(db, abgelaufen, 'uebungsleiter_lizenz')
+    _lizenz(db, abgelaufen, 'L-2', '2015-01-01', '2019-12-31')
+    _funktion(db, _mitglied(db, 'UelOhne'), 'uebungsleiter')
+
+    uel = _uel(db)
+    assert {n: (r["lizenz"], r["funktion_mit_lizenz"]) for n, r in uel.items()} == {
+        'UelGueltig': (True, True), 'UelAbgelaufen': (False, True), 'UelOhne': (False, False)}
+    assert uel['UelAbgelaufen']["trainerlizenz_nr"] == 'L-2'

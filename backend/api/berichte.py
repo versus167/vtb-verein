@@ -97,3 +97,11 @@ def get_ehrungen(user: CurrentUser, db: DB, stichtag: date | None = None):
         "stufen":   list(EHRUNG_STUFEN),
         "ehrungen": _im_scope(user, db, db.berichtslisten.ehrungen(stichtag)),
     }
+
+
+@router.get("/uebungsleiter")
+def get_uebungsleiter(user: CurrentUser, db: DB):
+    """Übungsleiter mit Lizenzstand – LSB-Meldung und Januar-Liste der
+    auslaufenden Lizenzen (#155); den Jahresfilter macht die Oberfläche."""
+    _require_namen(user)
+    return _im_scope(user, db, db.berichtslisten.uebungsleiter())
