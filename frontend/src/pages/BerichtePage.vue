@@ -3,12 +3,13 @@
     <div class="row items-center q-mb-md q-gutter-sm">
       <div>
         <div class="text-h4">Berichte &amp; Statistik</div>
-        <div class="text-caption text-grey-7">
+        <div v-if="tab === 'statistik'" class="text-caption text-grey-7">
           {{ abteilungId ? 'Abteilung: ' + aktuelleAbteilungName : 'Gesamtverein' }}
         </div>
       </div>
       <q-space />
       <q-select
+        v-if="tab === 'statistik'"
         v-model="abteilungId"
         :options="abteilungSelectOptions"
         option-value="id"
@@ -22,141 +23,166 @@
         style="min-width: 200px"
         @update:model-value="load"
       />
-      <q-btn flat round icon="refresh" :loading="loading" @click="load" />
+      <q-btn flat round icon="refresh" :loading="tab === 'statistik' && loading" @click="refresh" />
     </div>
 
-    <div v-if="loading && !data" class="row justify-center q-pa-xl">
-      <q-spinner size="3rem" color="primary" />
-    </div>
+    <q-tabs v-model="tab" dense align="left" class="q-mb-md">
+      <q-tab name="statistik" label="Statistik" icon="insights" />
+      <q-tab name="lsb" label="LSB-Meldung" icon="assignment" />
+      <!-- Namenslisten: zusätzlich Personen lesen (das Backend prüft dasselbe). -->
+      <q-tab v-if="darfNamen" name="ehrungen" label="Ehrungen" icon="military_tech" />
+      <q-tab v-if="darfNamen" name="uebungsleiter" label="Übungsleiter" icon="sports" />
+    </q-tabs>
 
-    <template v-else-if="data">
-      <!-- Kennzahlen -->
-      <div class="row q-col-gutter-md q-mb-lg">
-        <div class="col-6 col-sm-4 col-md" v-for="kpi in kpiCards" :key="kpi.label">
-          <q-card flat bordered class="fit">
-            <q-card-section class="text-center">
-              <div class="text-h4 text-weight-bold" :class="kpi.color">{{ kpi.value }}</div>
-              <div class="text-caption text-grey-7">
-                {{ kpi.label }}
-                <q-icon v-if="kpi.hint" name="info" size="14px" class="q-ml-xs cursor-pointer text-grey-6">
-                  <q-tooltip max-width="280px" anchor="top middle" self="bottom middle" class="text-body2">
-                    {{ kpi.hint }}
-                  </q-tooltip>
-                </q-icon>
-              </div>
-            </q-card-section>
-          </q-card>
+    <!-- keep-alive: Ein Tab lädt beim ersten Öffnen und behält Stichtag und Daten. -->
+    <q-tab-panels v-model="tab" animated keep-alive>
+      <q-tab-panel name="statistik" class="q-pa-none">
+        <div v-if="loading && !data" class="row justify-center q-pa-xl">
+          <q-spinner size="3rem" color="primary" />
         </div>
-      </div>
 
-      <div class="row q-col-gutter-md">
-        <!-- Mitgliederentwicklung -->
-        <div class="col-12 col-md-6">
-          <q-card flat bordered class="fit">
-            <q-card-section class="row items-center q-gutter-sm">
-              <div>
-                <div class="text-h6">Mitgliederentwicklung</div>
-                <div class="text-caption text-grey-7">
-                  Zu- und Abgänge je {{ entwicklungGran === 'monat' ? 'Monat' : 'Jahr' }}
-                </div>
-              </div>
-              <q-space />
-              <q-btn-toggle
-                v-model="entwicklungGran"
-                :dense="$q.screen.gt.sm"
-                no-caps
-                outline
-                :size="$q.screen.lt.md ? 'md' : 'sm'"
-                toggle-color="primary"
-                :options="[
-                  { label: '12 Monate', value: 'monat' },
-                  { label: '12 Jahre', value: 'jahr' },
-                ]"
-              />
-            </q-card-section>
-            <q-separator />
-            <q-card-section>
-              <div class="row q-gutter-md q-mb-md text-caption">
-                <div><q-badge rounded color="positive" /> Eintritte</div>
-                <div><q-badge rounded color="negative" /> Austritte</div>
-                <div v-if="hatZukunft" class="text-grey-6">
-                  <q-badge rounded color="grey-5" /> Vorschau (geplant)
-                </div>
-              </div>
-              <div class="entwicklung-chart">
-                <div
-                  v-for="e in entwicklungReihe"
-                  :key="e.periode"
-                  class="entwicklung-jahr"
-                  :class="{ 'ist-zukunft': e.istZukunft }"
-                  :title="e.istZukunft ? 'geplant / Vorschau' : undefined"
-                >
-                  <div class="entwicklung-bars">
-                    <div
-                      class="entwicklung-bar bg-positive"
-                      :style="{ height: barHeight(e.eintritte, entwicklungMax) }"
-                      :title="`${e.eintritte} Eintritte`"
-                    >
-                      <span v-if="e.eintritte" class="entwicklung-wert">{{ e.eintritte }}</span>
-                    </div>
-                    <div
-                      class="entwicklung-bar bg-negative"
-                      :style="{ height: barHeight(e.austritte, entwicklungMax) }"
-                      :title="`${e.austritte} Austritte`"
-                    >
-                      <span v-if="e.austritte" class="entwicklung-wert">{{ e.austritte }}</span>
+        <template v-else-if="data">
+          <!-- Kennzahlen -->
+          <div class="row q-col-gutter-md q-mb-lg">
+            <div class="col-6 col-sm-4 col-md" v-for="kpi in kpiCards" :key="kpi.label">
+              <q-card flat bordered class="fit">
+                <q-card-section class="text-center">
+                  <div class="text-h4 text-weight-bold" :class="kpi.color">{{ kpi.value }}</div>
+                  <div class="text-caption text-grey-7">
+                    {{ kpi.label }}
+                    <q-icon v-if="kpi.hint" name="info" size="14px" class="q-ml-xs cursor-pointer text-grey-6">
+                      <q-tooltip max-width="280px" anchor="top middle" self="bottom middle" class="text-body2">
+                        {{ kpi.hint }}
+                      </q-tooltip>
+                    </q-icon>
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
+          </div>
+
+          <div class="row q-col-gutter-md">
+            <!-- Mitgliederentwicklung -->
+            <div class="col-12 col-md-6">
+              <q-card flat bordered class="fit">
+                <q-card-section class="row items-center q-gutter-sm">
+                  <div>
+                    <div class="text-h6">Mitgliederentwicklung</div>
+                    <div class="text-caption text-grey-7">
+                      Zu- und Abgänge je {{ entwicklungGran === 'monat' ? 'Monat' : 'Jahr' }}
                     </div>
                   </div>
-                  <div class="text-caption q-mt-xs" :class="e.istZukunft ? 'text-grey-5' : 'text-grey-7'">{{ e.label }}</div>
-                </div>
-              </div>
-            </q-card-section>
-          </q-card>
-        </div>
+                  <q-space />
+                  <q-btn-toggle
+                    v-model="entwicklungGran"
+                    :dense="$q.screen.gt.sm"
+                    no-caps
+                    outline
+                    :size="$q.screen.lt.md ? 'md' : 'sm'"
+                    toggle-color="primary"
+                    :options="[
+                      { label: '12 Monate', value: 'monat' },
+                      { label: '12 Jahre', value: 'jahr' },
+                    ]"
+                  />
+                </q-card-section>
+                <q-separator />
+                <q-card-section>
+                  <div class="row q-gutter-md q-mb-md text-caption">
+                    <div><q-badge rounded color="positive" /> Eintritte</div>
+                    <div><q-badge rounded color="negative" /> Austritte</div>
+                    <div v-if="hatZukunft" class="text-grey-6">
+                      <q-badge rounded color="grey-5" /> Vorschau (geplant)
+                    </div>
+                  </div>
+                  <div class="entwicklung-chart">
+                    <div
+                      v-for="e in entwicklungReihe"
+                      :key="e.periode"
+                      class="entwicklung-jahr"
+                      :class="{ 'ist-zukunft': e.istZukunft }"
+                      :title="e.istZukunft ? 'geplant / Vorschau' : undefined"
+                    >
+                      <div class="entwicklung-bars">
+                        <div
+                          class="entwicklung-bar bg-positive"
+                          :style="{ height: barHeight(e.eintritte, entwicklungMax) }"
+                          :title="`${e.eintritte} Eintritte`"
+                        >
+                          <span v-if="e.eintritte" class="entwicklung-wert">{{ e.eintritte }}</span>
+                        </div>
+                        <div
+                          class="entwicklung-bar bg-negative"
+                          :style="{ height: barHeight(e.austritte, entwicklungMax) }"
+                          :title="`${e.austritte} Austritte`"
+                        >
+                          <span v-if="e.austritte" class="entwicklung-wert">{{ e.austritte }}</span>
+                        </div>
+                      </div>
+                      <div class="text-caption q-mt-xs" :class="e.istZukunft ? 'text-grey-5' : 'text-grey-7'">{{ e.label }}</div>
+                    </div>
+                  </div>
+                </q-card-section>
+              </q-card>
+            </div>
 
-        <!-- Altersstruktur -->
-        <div class="col-12 col-md-6">
-          <q-card flat bordered class="fit">
-            <q-card-section>
-              <div class="text-h6">Altersstruktur</div>
-              <div class="text-caption text-grey-7">Aktive Mitglieder mit Geburtsdatum</div>
-            </q-card-section>
-            <q-separator />
-            <q-card-section>
-              <StatBalken :items="alterItems" color="primary" empty-text="Keine Geburtsdaten erfasst" />
-            </q-card-section>
-          </q-card>
-        </div>
+            <!-- Altersstruktur -->
+            <div class="col-12 col-md-6">
+              <q-card flat bordered class="fit">
+                <q-card-section>
+                  <div class="text-h6">Altersstruktur</div>
+                  <div class="text-caption text-grey-7">Aktive Mitglieder mit Geburtsdatum</div>
+                </q-card-section>
+                <q-separator />
+                <q-card-section>
+                  <StatBalken :items="alterItems" color="primary" empty-text="Keine Geburtsdaten erfasst" />
+                </q-card-section>
+              </q-card>
+            </div>
 
-        <!-- Abteilungsübersicht – nur im Gesamtverein-Modus (bei Filter redundant) -->
-        <div class="col-12 col-md-6" v-if="!abteilungId">
-          <q-card flat bordered class="fit">
-            <q-card-section>
-              <div class="text-h6">Mitglieder je Abteilung</div>
-              <div class="text-caption text-grey-7">Aktive Zuordnungen</div>
-            </q-card-section>
-            <q-separator />
-            <q-card-section>
-              <StatBalken :items="abteilungItems" color="teal" empty-text="Keine Abteilungen" />
-            </q-card-section>
-          </q-card>
-        </div>
+            <!-- Abteilungsübersicht – nur im Gesamtverein-Modus (bei Filter redundant) -->
+            <div class="col-12 col-md-6" v-if="!abteilungId">
+              <q-card flat bordered class="fit">
+                <q-card-section>
+                  <div class="text-h6">Mitglieder je Abteilung</div>
+                  <div class="text-caption text-grey-7">Aktive Zuordnungen</div>
+                </q-card-section>
+                <q-separator />
+                <q-card-section>
+                  <StatBalken :items="abteilungItems" color="teal" empty-text="Keine Abteilungen" />
+                </q-card-section>
+              </q-card>
+            </div>
 
-        <!-- Geschlechterverteilung -->
-        <div class="col-12 col-md-6">
-          <q-card flat bordered class="fit">
-            <q-card-section>
-              <div class="text-h6">Geschlechterverteilung</div>
-              <div class="text-caption text-grey-7">Aktive Mitglieder</div>
-            </q-card-section>
-            <q-separator />
-            <q-card-section>
-              <StatBalken :items="geschlechtItems" color="indigo" empty-text="Keine Daten" />
-            </q-card-section>
-          </q-card>
-        </div>
-      </div>
-    </template>
+            <!-- Geschlechterverteilung -->
+            <div class="col-12 col-md-6">
+              <q-card flat bordered class="fit">
+                <q-card-section>
+                  <div class="text-h6">Geschlechterverteilung</div>
+                  <div class="text-caption text-grey-7">Aktive Mitglieder</div>
+                </q-card-section>
+                <q-separator />
+                <q-card-section>
+                  <StatBalken :items="geschlechtItems" color="indigo" empty-text="Keine Daten" />
+                </q-card-section>
+              </q-card>
+            </div>
+          </div>
+        </template>
+      </q-tab-panel>
+
+      <q-tab-panel name="lsb" class="q-pa-none">
+        <BerichtLsbMeldung ref="lsbRef" />
+      </q-tab-panel>
+
+      <q-tab-panel v-if="darfNamen" name="ehrungen" class="q-pa-none">
+        <BerichtEhrungen ref="ehrungenRef" />
+      </q-tab-panel>
+
+      <q-tab-panel v-if="darfNamen" name="uebungsleiter" class="q-pa-none">
+        <BerichtUebungsleiter ref="uebungsleiterRef" />
+      </q-tab-panel>
+    </q-tab-panels>
   </q-page>
 </template>
 
@@ -166,13 +192,23 @@ import { usePageRefresh } from 'src/composables/useRefresh'
 import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import StatBalken from 'src/components/StatBalken.vue'
+import BerichtLsbMeldung from 'src/components/BerichtLsbMeldung.vue'
+import BerichtEhrungen from 'src/components/BerichtEhrungen.vue'
+import BerichtUebungsleiter from 'src/components/BerichtUebungsleiter.vue'
+import { useAuthStore } from 'src/stores/auth'
 
 const $q = useQuasar()
+const auth = useAuthStore()
 const loading = ref(false)
 const data = ref(null)
 const entwicklungGran = ref('monat')
 const abteilungId = ref(null)
 const abteilungOptionen = ref([])
+const tab = ref('statistik')
+const lsbRef = ref(null)
+const ehrungenRef = ref(null)
+const uebungsleiterRef = ref(null)
+const darfNamen = computed(() => auth.hasPermission('personen.read'))
 
 const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
@@ -268,7 +304,13 @@ async function load() {
   }
 }
 
-usePageRefresh(load)
+// Ein Seiten-Handler für alle Tabs: Er lädt, was gerade zu sehen ist.
+const tabRefs = { lsb: lsbRef, ehrungen: ehrungenRef, uebungsleiter: uebungsleiterRef }
+function refresh() {
+  return tab.value === 'statistik' ? load() : tabRefs[tab.value]?.value?.load()
+}
+
+usePageRefresh(refresh)
 onMounted(load)
 </script>
 
