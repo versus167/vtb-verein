@@ -287,3 +287,27 @@ def test_uel_lizenz_gilt_heute(db):
     assert {n: (r["lizenz"], r["funktion_mit_lizenz"]) for n, r in uel.items()} == {
         'UelGueltig': (True, True), 'UelAbgelaufen': (False, True), 'UelOhne': (False, False)}
     assert uel['UelAbgelaufen']["trainerlizenz_nr"] == 'L-2'
+
+
+# --- Altersgruppen zum Stichtag -------------------------------------------------
+
+def test_altersgruppen_grenzen_am_stichtag(db):
+    stichtag = date(2026, 11, 12)
+
+    def stand():
+        a = db.statistik.altersgruppen_am(stichtag)
+        return [g["anzahl"] for g in a["gruppen"]] + [a["ohne_geburtsdatum"], a["summe"]]
+
+    vorher = stand()
+    _mitglied(db, 'AgSiebzehn', geburt='2008-11-13')      # 18 erst morgen
+    _mitglied(db, 'AgAchtzehn', geburt='2008-11-12')      # heute 18
+    _mitglied(db, 'AgFuenfzig', geburt='1976-11-12')      # heute 50 – noch 18–50
+    _mitglied(db, 'AgEinundfuenfzig', geburt='1975-11-12')
+    _mitglied(db, 'AgOhne', geburt=None)
+    _mitglied(db, 'AgSpaeter', geburt='1990-01-01', eintritt='2026-11-13')
+    _mitglied(db, 'AgGast', geburt='1990-01-01', art='gastspieler')
+
+    nachher = stand()
+    assert [n - v for n, v in zip(nachher, vorher)] == [1, 2, 1, 1, 5]
+    assert [g["gruppe"] for g in db.statistik.altersgruppen_am(stichtag)["gruppen"]] == \
+        ["unter 18", "18–50", "über 50"]

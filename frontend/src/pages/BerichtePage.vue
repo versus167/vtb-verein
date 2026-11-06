@@ -29,6 +29,7 @@
     <q-tabs v-model="tab" dense align="left" class="q-mb-md">
       <q-tab name="statistik" label="Statistik" icon="insights" />
       <q-tab name="lsb" label="LSB-Meldung" icon="assignment" />
+      <q-tab name="altersgruppen" label="Altersgruppen" icon="groups" />
       <!-- Namenslisten: zusätzlich Personen lesen (das Backend prüft dasselbe). -->
       <q-tab v-if="darfNamen" name="ehrungen" label="Ehrungen" icon="military_tech" />
       <q-tab v-if="darfNamen" name="uebungsleiter" label="Übungsleiter" icon="sports" />
@@ -175,6 +176,10 @@
         <BerichtLsbMeldung ref="lsbRef" />
       </q-tab-panel>
 
+      <q-tab-panel name="altersgruppen" class="q-pa-none">
+        <BerichtAltersgruppen ref="altersgruppenRef" />
+      </q-tab-panel>
+
       <q-tab-panel v-if="darfNamen" name="ehrungen" class="q-pa-none">
         <BerichtEhrungen ref="ehrungenRef" />
       </q-tab-panel>
@@ -193,6 +198,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import StatBalken from 'src/components/StatBalken.vue'
 import BerichtLsbMeldung from 'src/components/BerichtLsbMeldung.vue'
+import BerichtAltersgruppen from 'src/components/BerichtAltersgruppen.vue'
 import BerichtEhrungen from 'src/components/BerichtEhrungen.vue'
 import BerichtUebungsleiter from 'src/components/BerichtUebungsleiter.vue'
 import { useAuthStore } from 'src/stores/auth'
@@ -206,6 +212,7 @@ const abteilungId = ref(null)
 const abteilungOptionen = ref([])
 const tab = ref('statistik')
 const lsbRef = ref(null)
+const altersgruppenRef = ref(null)
 const ehrungenRef = ref(null)
 const uebungsleiterRef = ref(null)
 const darfNamen = computed(() => auth.hasPermission('personen.read'))
@@ -305,7 +312,9 @@ async function load() {
 }
 
 // Ein Seiten-Handler für alle Tabs: Er lädt, was gerade zu sehen ist.
-const tabRefs = { lsb: lsbRef, ehrungen: ehrungenRef, uebungsleiter: uebungsleiterRef }
+const tabRefs = {
+  lsb: lsbRef, altersgruppen: altersgruppenRef, ehrungen: ehrungenRef, uebungsleiter: uebungsleiterRef,
+}
 function refresh() {
   return tab.value === 'statistik' ? load() : tabRefs[tab.value]?.value?.load()
 }

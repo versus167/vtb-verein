@@ -132,3 +132,14 @@ def test_uebungsleiter_nur_im_abteilungs_scope():
     db.berichtslisten.uebungsleiter = lambda: list(_LUECKEN)
     res = api.get_uebungsleiter(_user(Permission.BERICHTE_READ, Permission.PERSONEN_READ, scope={5}), db)
     assert [z["mitglied_id"] for z in res] == [1]
+
+
+# --- Altersgruppen ------------------------------------------------------------
+
+def test_altersgruppen_vorgabe_heute_und_ohne_personenrecht():
+    tage = []
+    db = SimpleNamespace(statistik=SimpleNamespace(altersgruppen_am=lambda s: tage.append(s)))
+    api.get_altersgruppen(_user(Permission.BERICHTE_READ), db)
+    assert tage == [date.today()]
+    with pytest.raises(HTTPException):
+        api.get_altersgruppen(_user(Permission.PERSONEN_READ), db)

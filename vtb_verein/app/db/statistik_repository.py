@@ -440,3 +440,38 @@ class StatistikRepository(BaseRepository):
             "b_summe":        sum(x["anzahl"] for x in b),
             "ohne_abteilung": ohne_abteilung,
         }
+
+    # (Bezeichnung, Mindestalter, Höchstalter) – beide Grenzen einschließlich.
+    ALTERSGRUPPEN_STICHTAG = (("unter 18", 0, 17), ("18–50", 18, 50), ("über 50", 51, None))
+
+    def altersgruppen_am(self, stichtag: date) -> dict:
+        """Mitglieder je Altersgruppe, Alter am ``stichtag`` (#155-Nachtrag).
+
+        Wie die A-Meldung: alle Vereinsmitglieder im Bestand am Stichtag, ohne
+        Gastspieler. Wer kein gültiges Geburtsdatum hat, steht unter
+        ``ohne_geburtsdatum`` – so stimmt die Summe mit der A-Meldung überein.
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT date_part('year', age({_STICHTAG},
+                                             safe_to_date(m.geburtsdatum)))::int AS jahre
+                FROM mitglied m
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
+                  AND {_bestand(_STICHTAG)}
+                """,
+                {"stichtag": stichtag.isoformat()},
+            )
+            alter = [r["jahre"] for r in cur.fetchall()]
+        gruppen = [
+            {"gruppe": name,
+             "anzahl": sum(1 for j in alter
+                           if j is not None and j >= von and (bis is None or j <= bis))}
+            for name, von, bis in self.ALTERSGRUPPEN_STICHTAG
+        ]
+        return {
+            "stichtag":          stichtag.isoformat(),
+            "gruppen":           gruppen,
+            "ohne_geburtsdatum": sum(1 for j in alter if j is None),
+            "summe":             len(alter),
+        }
