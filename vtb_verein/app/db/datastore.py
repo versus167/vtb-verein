@@ -66,6 +66,7 @@ from app.db.fibu_einstellungen_repository import FibuEinstellungenRepository
 from app.db.sepa_repository import SepaRepository
 from app.db.beitrag_einstellungen_repository import BeitragEinstellungenRepository
 from app.db.statistik_repository import StatistikRepository
+from app.db.berichtslisten_repository import BerichtslistenRepository
 from app.db.ul_abrechnung_repository import ULAbrechnungRepository
 from app.db.ul_satz_repository import ULSatzRepository
 from app.db.ttlock_konto_repository import TTLockKontoRepository
@@ -158,6 +159,7 @@ class VereinsDB:
         self._ul_abrechnung_repo = ULAbrechnungRepository(self.conn)
         self._ul_satz_repo = ULSatzRepository(self.conn)
         self._statistik_repo = StatistikRepository(self.conn)
+        self._berichtslisten_repo = BerichtslistenRepository(self.conn)
 
         # Zutrittskontrolle / Schließanlage (TT-Lock)
         self._ttlock_konto_repo = TTLockKontoRepository(self.conn)
@@ -458,6 +460,11 @@ class VereinsDB:
     def statistik(self) -> StatistikRepository:
         """Aggregierte Kennzahlen für das Berichte-/Statistik-Dashboard."""
         return self._statistik_repo
+
+    @property
+    def berichtslisten(self) -> BerichtslistenRepository:
+        """Namenslisten für Berichte (Ehrungen, Übungsleiter, Meldelücken)."""
+        return self._berichtslisten_repo
 
     # --- Passwort-Tresor (#85) ---
     @property

@@ -22,8 +22,10 @@ from app.db.funktion_repository import FUNKTION_PASSIV
 _MONATS_VORLAUF = 3
 
 
-# SQL-Ausdruck für den Stichtag der Auswertung; das Dashboard rechnet mit heute.
+# SQL-Ausdruck für den Stichtag der Auswertung. Das Dashboard rechnet mit heute,
+# die Meldungen (#155) mit einem gewählten Tag – als Platzhalter ``%(stichtag)s``.
 _HEUTE = "CURRENT_DATE"
+_STICHTAG = "%(stichtag)s::date"
 
 
 def _laeuft_am(alias: str, tag: str = _HEUTE) -> str:
@@ -92,6 +94,33 @@ _BESTAND = _bestand()
 # Gastspieler (art='gastspieler', Schema v72) sind keine Vereinsmitglieder und
 # bleiben aus sämtlichen Mitglieder-Kennzahlen draußen.
 _NUR_MITGLIEDER = "m.art = 'mitglied'"
+
+# Meldungen (#155) gruppieren nach Jahrgang × Geschlecht. Was nicht m/w/d ist oder
+# fehlt, landet in „ohne" – die Zeile mit ``jahrgang`` None sammelt fehlende
+# Geburtsdaten. So geht niemand still verloren; die Summe stimmt immer.
+_JAHRGANG = "EXTRACT(YEAR FROM safe_to_date(m.geburtsdatum))::int"
+_GESCHLECHT = ("CASE WHEN m.geschlecht IN ('m', 'w', 'd') "
+               "THEN m.geschlecht ELSE 'ohne' END")
+_GESCHLECHTER = ("m", "w", "d", "ohne")
+
+
+def _jahrgangstabelle(rows) -> dict:
+    """``(jahrgang, geschlecht, anzahl)``-Zeilen → Tabelle je Jahrgang plus Summe.
+
+    Jahrgänge aufsteigend, „ohne Geburtsdatum" (None) zuletzt; nur Jahrgänge, die
+    jemand belegt.
+    """
+    zeilen: dict = {}
+    for r in rows:
+        z = zeilen.setdefault(r["jahrgang"], {"jahrgang": r["jahrgang"],
+                                               **{g: 0 for g in _GESCHLECHTER}})
+        z[r["geschlecht"]] += int(r["anzahl"])
+    liste = sorted(zeilen.values(),
+                   key=lambda z: (z["jahrgang"] is None, z["jahrgang"] or 0))
+    for z in liste:
+        z["summe"] = sum(z[g] for g in _GESCHLECHTER)
+    summe = {g: sum(z[g] for z in liste) for g in (*_GESCHLECHTER, "summe")}
+    return {"zeilen": liste, "summe": summe}
 
 
 class StatistikRepository(BaseRepository):
@@ -332,3 +361,82 @@ class StatistikRepository(BaseRepository):
                 {"abteilung_id": r["id"], "name": r["name"], "anzahl": int(r["anzahl"] or 0)}
                 for r in cur.fetchall()
             ]
+
+    def lsb_meldung(self, stichtag: date) -> dict:
+        """Bestandsmeldung an den LSB zum ``stichtag`` (#155).
+
+        A-Meldung: jedes Vereinsmitglied einmal, auch passive und solche ohne
+        Abteilung. B-Meldung: je Abteilung, wer dort am Stichtag aktiv (nicht
+        passiv) zugeordnet ist – wer in zwei Abteilungen ist, zählt in beiden.
+        ``ohne_abteilung`` ist keine Meldezahl, sondern die Kontrolle, warum die
+        Summen von A und B auseinanderlaufen.
+
+        Am Austrittstag zählt man noch mit (wie im Dashboard): Stichtag 31.12.
+        meldet also auch, wer zum Jahresende gekündigt hat.
+        """
+        params = {"stichtag": stichtag.isoformat()}
+        with self.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_JAHRGANG} AS jahrgang, {_GESCHLECHT} AS geschlecht,
+                       COUNT(*) AS anzahl
+                FROM mitglied m
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
+                  AND {_bestand(_STICHTAG)}
+                GROUP BY 1, 2
+                """,
+                params,
+            )
+            a = _jahrgangstabelle(cur.fetchall())
+
+            # DISTINCT je (Abteilung, Mitglied): Zwei überlappende Zuordnungen zur
+            # selben Abteilung sind immer noch eine Person in dieser Abteilung.
+            cur.execute(
+                f"""
+                SELECT abteilung_id, jahrgang, geschlecht, COUNT(*) AS anzahl
+                FROM (
+                    SELECT DISTINCT ma.abteilung_id, m.id,
+                           {_JAHRGANG} AS jahrgang, {_GESCHLECHT} AS geschlecht
+                    FROM mitglied_abteilung ma
+                    JOIN mitglied m ON m.id = ma.mitglied_id
+                    WHERE ma.deleted_at IS NULL
+                      AND {_laeuft_am('ma', _STICHTAG)}
+                      AND {_nicht_passiv('ma', _STICHTAG)}
+                      AND m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
+                      AND {_bestand(_STICHTAG)}
+                ) z
+                GROUP BY 1, 2, 3
+                """,
+                params,
+            )
+            je_abteilung: dict[int, list] = {}
+            for r in cur.fetchall():
+                je_abteilung.setdefault(r["abteilung_id"], []).append(r)
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*) AS anzahl
+                FROM mitglied m
+                WHERE m.deleted_at IS NULL AND {_NUR_MITGLIEDER}
+                  AND {_bestand(_STICHTAG)}
+                  AND NOT {_in_abteilung(_STICHTAG)}
+                """,
+                params,
+            )
+            ohne_abteilung = int(cur.fetchone()["anzahl"] or 0)
+
+            cur.execute("SELECT id, name FROM abteilung WHERE deleted_at IS NULL ORDER BY name")
+            abteilungen = cur.fetchall()
+
+        b = []
+        for abt in abteilungen:
+            tabelle = _jahrgangstabelle(je_abteilung.get(abt["id"], []))
+            b.append({"abteilung_id": abt["id"], "name": abt["name"],
+                      "anzahl": tabelle["summe"]["summe"], **tabelle})
+        return {
+            "stichtag":       stichtag.isoformat(),
+            "a":              a,
+            "b":              b,
+            "b_summe":        sum(x["anzahl"] for x in b),
+            "ohne_abteilung": ohne_abteilung,
+        }

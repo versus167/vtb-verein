@@ -1,7 +1,10 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
+from ..core.scope import visible_mitglied_ids
 
 router = APIRouter(prefix="/berichte", tags=["berichte"])
 
@@ -12,6 +15,18 @@ def _require_read(user):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Keine Berechtigung für Berichte",
         )
+
+
+def _darf_namen(user) -> bool:
+    """Namenslisten in Berichten: zusätzlich zum Berichte- das Personen-Leserecht.
+    Wer Personen nur für eine Abteilung lesen darf, sieht nur deren Leute
+    (s. ``_im_scope``)."""
+    return user.has_permission(Permission.PERSONEN_READ)
+
+
+def _im_scope(user, db, zeilen: list[dict]) -> list[dict]:
+    sichtbar = visible_mitglied_ids(user, db)
+    return zeilen if sichtbar is None else [z for z in zeilen if z["mitglied_id"] in sichtbar]
 
 
 @router.get("/statistik")
@@ -35,3 +50,20 @@ def get_statistik(user: CurrentUser, db: DB, abteilung_id: int | None = None):
         "abteilungen":          db.statistik.abteilungsuebersicht() if abteilung_id is None else [],
         "abteilung_optionen":   [{"id": a.id, "name": a.name} for a in db.list_abteilungen()],
     }
+
+
+@router.get("/lsb-meldung")
+def get_lsb_meldung(user: CurrentUser, db: DB, stichtag: date | None = None):
+    """A- und B-Meldung für die LSB-Bestandserhebung (#155).
+
+    Vorgabe für den Stichtag ist der 31.12. des Vorjahres – gemeldet wird im
+    Januar. ``luecken`` (wer ohne Geburtsdatum/Geschlecht unter „ohne Angabe"
+    steht) nur mit Personen-Leserecht, sonst None.
+    """
+    _require_read(user)
+    if stichtag is None:
+        stichtag = date(date.today().year - 1, 12, 31)
+    meldung = db.statistik.lsb_meldung(stichtag)
+    meldung["luecken"] = (_im_scope(user, db, db.berichtslisten.fehlende_meldeangaben(stichtag))
+                          if _darf_namen(user) else None)
+    return meldung
