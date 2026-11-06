@@ -9,6 +9,11 @@ from app.db.base_repository import BaseRepository
 # Migration und Statistik nicht je einzeln buchstabieren.
 FUNKTION_PASSIV = 'passiv'
 
+# ÜL-Funktionen, die als Übungsleiter gelten – für die (Fremd-)Erfassung (#65) und den
+# ÜL-Bericht (#155). 'uebungsleiter_lizenz' ("Übungsleiter mit Lizenz") entsteht über
+# den SPG-Import und ist keine Seed-Funktion, zählt aber gleichwertig als Übungsleiter.
+UL_FUNKTIONEN = ('uebungsleiter', 'uebungsleiter_lizenz')
+
 
 @dataclass
 class Funktion:

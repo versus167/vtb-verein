@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 
+from app.db.funktion_repository import UL_FUNKTIONEN
 from app.models.permission import Permission
 from app.models.ul_stunden import (
     ULSatz, LIZENZ_KLASSIFIKATIONEN, VERGUETUNGSARTEN, VERGUETUNG_OHNE,
@@ -23,11 +24,6 @@ from ..core.config import settings
 from ..core.deps import CurrentUser, DB
 
 router = APIRouter(prefix="/ul-stunden", tags=["ul-stunden"])
-
-# ÜL-Funktionen, die als Übungsleiter für die (Fremd-)Erfassung gelten (#65).
-# 'uebungsleiter_lizenz' ("Übungsleiter mit Lizenz") entsteht über den SPG-Import und
-# ist keine Seed-Funktion, zählt hier aber gleichwertig als Übungsleiter.
-UL_FUNKTIONEN = ('uebungsleiter', 'uebungsleiter_lizenz')
 
 # "Offene" (noch laufende) Abrechnungen für die Fremderfassungs-Übersicht (#73).
 OFFENE_STATUS = ('entwurf', 'eingereicht')
