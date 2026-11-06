@@ -29,6 +29,8 @@
     <q-tabs v-model="tab" dense align="left" class="q-mb-md">
       <q-tab name="statistik" label="Statistik" icon="insights" />
       <q-tab name="lsb" label="LSB-Meldung" icon="assignment" />
+      <!-- Namenslisten: zusätzlich Personen lesen (das Backend prüft dasselbe). -->
+      <q-tab v-if="darfNamen" name="ehrungen" label="Ehrungen" icon="military_tech" />
     </q-tabs>
 
     <!-- keep-alive: Ein Tab lädt beim ersten Öffnen und behält Stichtag und Daten. -->
@@ -171,6 +173,10 @@
       <q-tab-panel name="lsb" class="q-pa-none">
         <BerichtLsbMeldung ref="lsbRef" />
       </q-tab-panel>
+
+      <q-tab-panel v-if="darfNamen" name="ehrungen" class="q-pa-none">
+        <BerichtEhrungen ref="ehrungenRef" />
+      </q-tab-panel>
     </q-tab-panels>
   </q-page>
 </template>
@@ -182,8 +188,11 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import StatBalken from 'src/components/StatBalken.vue'
 import BerichtLsbMeldung from 'src/components/BerichtLsbMeldung.vue'
+import BerichtEhrungen from 'src/components/BerichtEhrungen.vue'
+import { useAuthStore } from 'src/stores/auth'
 
 const $q = useQuasar()
+const auth = useAuthStore()
 const loading = ref(false)
 const data = ref(null)
 const entwicklungGran = ref('monat')
@@ -191,6 +200,8 @@ const abteilungId = ref(null)
 const abteilungOptionen = ref([])
 const tab = ref('statistik')
 const lsbRef = ref(null)
+const ehrungenRef = ref(null)
+const darfNamen = computed(() => auth.hasPermission('personen.read'))
 
 const MONATE_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
@@ -287,7 +298,7 @@ async function load() {
 }
 
 // Ein Seiten-Handler für alle Tabs: Er lädt, was gerade zu sehen ist.
-const tabRefs = { lsb: lsbRef }
+const tabRefs = { lsb: lsbRef, ehrungen: ehrungenRef }
 function refresh() {
   return tab.value === 'statistik' ? load() : tabRefs[tab.value]?.value?.load()
 }

@@ -91,3 +91,29 @@ def test_lsb_namen_nur_im_abteilungs_scope():
     res = api.get_lsb_meldung(_user(Permission.BERICHTE_READ, Permission.PERSONEN_READ, scope={5}),
                               _db(_LUECKEN, sichtbar=[2]), stichtag=date(2026, 12, 31))
     assert [z["mitglied_id"] for z in res["luecken"]] == [2]
+
+
+# --- Ehrungen -----------------------------------------------------------------
+
+def test_ehrungen_ohne_personenrecht_403():
+    with pytest.raises(HTTPException) as e:
+        api.get_ehrungen(_user(Permission.BERICHTE_READ), _db())
+    assert e.value.status_code == 403
+
+
+@pytest.mark.parametrize("heute, erwartet", [
+    (date(2027, 1, 15), date(2027, 3, 31)),   # Januar: Hauptausschuss fürs laufende Jahr
+    (date(2027, 3, 31), date(2027, 3, 31)),
+    (date(2026, 11, 6), date(2027, 3, 31)),   # ab April schon das kommende Jahr
+])
+def test_ehrungen_vorgabe_naechster_31_maerz(heute, erwartet):
+    assert api._naechster_31_maerz(heute) == erwartet
+
+
+def test_ehrungen_nur_im_abteilungs_scope():
+    db = _db(sichtbar=[2])
+    db.berichtslisten.ehrungen = lambda s: list(_LUECKEN)
+    res = api.get_ehrungen(_user(Permission.BERICHTE_READ, Permission.PERSONEN_READ, scope={5}),
+                           db, stichtag=date(2027, 3, 31))
+    assert [z["mitglied_id"] for z in res["ehrungen"]] == [2]
+    assert res["stufen"] == [25, 40, 50, 60, 70, 75, 80]

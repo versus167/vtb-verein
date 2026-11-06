@@ -2,6 +2,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.db.berichtslisten_repository import EHRUNG_STUFEN
 from app.models.permission import Permission
 from ..core.deps import CurrentUser, DB
 from ..core.scope import visible_mitglied_ids
@@ -22,6 +23,15 @@ def _darf_namen(user) -> bool:
     Wer Personen nur für eine Abteilung lesen darf, sieht nur deren Leute
     (s. ``_im_scope``)."""
     return user.has_permission(Permission.PERSONEN_READ)
+
+
+def _require_namen(user):
+    _require_read(user)
+    if not _darf_namen(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Für Namenslisten fehlt das Recht, Personen zu sehen",
+        )
 
 
 def _im_scope(user, db, zeilen: list[dict]) -> list[dict]:
@@ -67,3 +77,23 @@ def get_lsb_meldung(user: CurrentUser, db: DB, stichtag: date | None = None):
     meldung["luecken"] = (_im_scope(user, db, db.berichtslisten.fehlende_meldeangaben(stichtag))
                           if _darf_namen(user) else None)
     return meldung
+
+
+def _naechster_31_maerz(heute: date) -> date:
+    """Vorgabe-Stichtag der Ehrungen: der nächste 31.3. ab heute – im Januar der
+    des laufenden Jahres, ab April schon der fürs kommende."""
+    stichtag = date(heute.year, 3, 31)
+    return stichtag if heute <= stichtag else date(heute.year + 1, 3, 31)
+
+
+@router.get("/ehrungen")
+def get_ehrungen(user: CurrentUser, db: DB, stichtag: date | None = None):
+    """Jubilare der Mitgliedschaft für das Ehrungsjahr = Jahr des Stichtags (#155)."""
+    _require_namen(user)
+    if stichtag is None:
+        stichtag = _naechster_31_maerz(date.today())
+    return {
+        "stichtag": stichtag.isoformat(),
+        "stufen":   list(EHRUNG_STUFEN),
+        "ehrungen": _im_scope(user, db, db.berichtslisten.ehrungen(stichtag)),
+    }

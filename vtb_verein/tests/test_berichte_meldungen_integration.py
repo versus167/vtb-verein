@@ -180,3 +180,38 @@ def test_b_ohne_abteilung_ist_kontrollzahl(db):
     meldung = db.statistik.lsb_meldung(STICHTAG)
     assert meldung["ohne_abteilung"] == vorher + 2
     assert _abt(meldung, fb)["anzahl"] == 1
+
+
+# --- Ehrungen -----------------------------------------------------------------
+
+def _jubilare(db, stichtag):
+    return {r["nachname"]: r for r in db.berichtslisten.ehrungen(stichtag)
+            if r["nachname"].startswith("Ehr")}
+
+
+def test_ehrung_fenster_1_april_bis_31_maerz(db):
+    """Stichtag 31.3.2027, 40 Jahre: Eintritt 1.4.1986 bis 31.3.1987 (Beispiel aus #155)."""
+    _mitglied(db, 'EhrFensterAnfang', eintritt='1986-04-01')
+    _mitglied(db, 'EhrFensterEnde', eintritt='1987-03-31')
+    _mitglied(db, 'EhrSchonLetztesJahr', eintritt='1986-03-31')
+    _mitglied(db, 'EhrErstNaechstesJahr', eintritt='1987-04-01')
+
+    jubilare = _jubilare(db, date(2027, 3, 31))
+    assert set(jubilare) == {'EhrFensterAnfang', 'EhrFensterEnde'}
+    assert {r["jahre"] for r in jubilare.values()} == {40}
+    # Ein Jahr früher war „SchonLetztesJahr" dran – jedes Jubiläum genau einmal.
+    assert set(_jubilare(db, date(2026, 3, 31))) == {'EhrSchonLetztesJahr'}
+
+
+def test_ehrung_nur_stufen_und_nur_bestand(db):
+    fb = _abteilung(db, 'MT-Fußball')
+    sechzig = _mitglied(db, 'EhrSechzig', eintritt='1967-01-01')
+    _zuordnung(db, sechzig, fb)
+    _mitglied(db, 'EhrFuenfundzwanzig', eintritt='2002-01-01')
+    _mitglied(db, 'EhrDreissig', eintritt='1997-01-01')
+    _mitglied(db, 'EhrAusgetreten', eintritt='1977-01-01', austritt='2026-12-31')
+    _mitglied(db, 'EhrGast', eintritt='1967-01-01', art='gastspieler')
+
+    jubilare = _jubilare(db, date(2027, 3, 31))
+    assert set(jubilare) == {'EhrSechzig', 'EhrFuenfundzwanzig'}
+    assert (jubilare['EhrSechzig']["jahre"], jubilare['EhrSechzig']["abteilungen"]) == (60, 'MT-Fußball')
