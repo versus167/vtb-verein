@@ -105,3 +105,10 @@ def get_uebungsleiter(user: CurrentUser, db: DB):
     auslaufenden Lizenzen (#155); den Jahresfilter macht die Oberfläche."""
     _require_namen(user)
     return _im_scope(user, db, db.berichtslisten.uebungsleiter())
+
+
+@router.get("/altersgruppen")
+def get_altersgruppen(user: CurrentUser, db: DB, stichtag: date | None = None):
+    """Mitglieder unter 18 / 18–50 / über 50 am Stichtag (Vorgabe heute)."""
+    _require_read(user)
+    return db.statistik.altersgruppen_am(stichtag or date.today())
