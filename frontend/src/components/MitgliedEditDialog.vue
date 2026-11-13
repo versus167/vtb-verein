@@ -66,6 +66,18 @@
               <q-input v-model="form.eintrittsdatum" label="Eintrittsdatum *" outlined dense type="date" class="col" :readonly="!canWrite" />
               <q-input v-model="form.austrittsdatum" label="Austrittsdatum" outlined dense type="date" class="col" :readonly="!canWrite" />
             </div>
+            <q-banner v-if="austrittZeitraeume.length" dense rounded class="vtb-warnung">
+              <template #avatar><q-icon name="warning" /></template>
+              <div class="text-weight-medium">
+                Bereits abgerechnet: {{ austrittZeitraeume.join(', ') }}
+              </div>
+              <div class="text-caption">
+                Das Austrittsdatum ändert diese Zeiträume nachträglich. Die Sollstellungen
+                müssen <b>gelöscht</b> und der Lauf wiederholt werden – er rechnet dann bis
+                einschließlich Austrittsmonat neu. Nicht stornieren: Storno heißt „diesmal
+                nicht abrechnen“, auch die Monate vor dem Austritt fielen dann weg.
+              </div>
+            </q-banner>
             <q-expansion-item label="Adresse" dense icon="home">
               <div class="q-gutter-sm q-pt-sm">
                 <q-input v-model="form.strasse" label="Straße" outlined dense :readonly="!canWrite" />
@@ -724,6 +736,31 @@ async function ladeAbrechnungsWarnung(ab) {
     // Die Warnung ist Beiwerk – wenn sie nicht kommt, darf das den Wechsel nicht aufhalten.
   }
 }
+
+// Dasselbe für ein nachgetragenes oder geändertes Austrittsdatum: Der Austrittsmonat
+// zählt voll, betroffen ist also alles ab dem Folgemonat – gerechnet vom früheren
+// der beiden Daten, denn auch ein späteres oder gelöschtes Austrittsdatum ändert
+// den Zeitraum, der bisher nach dem alten Austritt gekappt war.
+const austrittZeitraeume = ref([])
+let austrittAnfrage = 0
+
+async function ladeAustrittsWarnung(neu, alt) {
+  const anfrage = ++austrittAnfrage
+  austrittZeitraeume.value = []
+  if (!getMitgliedId() || (neu || null) === (alt || null)) return
+  const basis = [neu, alt].filter(Boolean).sort()[0]
+  const [j, m] = basis.slice(0, 10).split('-').map(Number)
+  try {
+    const { data } = await api.get(`/api/mitglieder/${getMitgliedId()}/abrechnung-betroffen`,
+      { params: { ab: monatsErster(new Date(j, m, 1)) } })
+    if (anfrage === austrittAnfrage) austrittZeitraeume.value = data.zeitraeume ?? []
+  } catch {
+    // Wie oben: Beiwerk, darf das Speichern nicht aufhalten.
+  }
+}
+
+watch(() => [form.value.austrittsdatum, pristineForm.value.austrittsdatum],
+  ([neu, alt]) => ladeAustrittsWarnung(neu, alt))
 
 /** Vorschlag: der Erste des laufenden Monats, sonst der früheste zulässige. */
 function vorgeschlagenerStichtag(optionen) {
