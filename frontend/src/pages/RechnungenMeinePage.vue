@@ -60,6 +60,8 @@
         </q-card-section>
 
         <q-card-section class="q-pt-none">
+          <RechnungVerlauf :rechnung="aktuell" class="q-mb-sm" />
+
           <!-- Pflicht zum Einreichen: Kategorie, Betrag, Zahlungsrichtung, Beleg. -->
           <q-select v-model="form.kategorie_id" :options="kategorien" option-value="id"
             option-label="name" emit-value map-options outlined dense
@@ -192,6 +194,7 @@ import { useAuthStore } from 'stores/auth'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
 import BelegScannenDialog from 'components/BelegScannenDialog.vue'
+import RechnungVerlauf from 'components/RechnungVerlauf.vue'
 import {
   STATUS_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, parseBetrag, fehlertext,
   BELEG_ACCEPT, BELEG_HINWEIS, belegFehler, baueEmpfaengerOptionen, empfaengerText,

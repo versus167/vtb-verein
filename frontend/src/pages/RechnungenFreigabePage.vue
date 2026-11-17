@@ -76,6 +76,8 @@
             {{ aktuell.beschreibung }}
           </div>
 
+          <RechnungVerlauf :rechnung="aktuell" class="q-mb-sm" />
+
           <!-- Wer bekommt das Geld – die eigentliche Entscheidungsgrundlage. -->
           <q-banner dense class="bg-grey-2 q-mb-sm">
             <template #avatar><q-icon name="payments" color="primary" /></template>
@@ -132,6 +134,7 @@ import { api } from 'src/boot/axios'
 import { useAufgabenStore } from 'src/stores/aufgaben'
 import { usePageRefresh } from 'src/composables/useRefresh'
 import AnhangPanel from 'components/AnhangPanel.vue'
+import RechnungVerlauf from 'components/RechnungVerlauf.vue'
 import {
   FREIGABE_FILTER_OPTIONEN, anzeigeStatus, fmtBetrag, fmtDatum, fehlertext,
   empfaengerText, empfaengerIban,

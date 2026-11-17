@@ -95,6 +95,15 @@ export function fmtDatum(wert) {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('de-DE')
 }
 
+// Workflow-Stempel kommen als Zeitstempel mit Offset – Datum + Uhrzeit lokal.
+export function fmtZeitpunkt(wert) {
+  if (!wert) return ''
+  const d = new Date(wert)
+  if (Number.isNaN(d.getTime())) return String(wert)
+  return `${d.toLocaleDateString('de-DE')}, ${d.toLocaleTimeString('de-DE',
+    { hour: '2-digit', minute: '2-digit' })} Uhr`
+}
+
 export function fehlertext(e, fallback) {
   return e?.response?.data?.detail || fallback
 }
