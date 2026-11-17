@@ -357,6 +357,23 @@ def test_nur_freigegebene_werden_exportiert(db):
         db.rechnung_export.exportieren(gs.username)
 
 
+def test_rechnung_traegt_zeitpunkt_und_benutzer_des_laufs(db):
+    """Fürs Prüfen im Nachhinein: wann/von wem exportiert, steht am Lauf."""
+    abteilung, einreicher, gs = _setup(db)
+    r = _freigegebene_rechnung(db, einreicher, gs, abteilung)
+    assert db.rechnungen.get(r.id, gs).exportiert_am is None
+    db.rechnung_export.exportieren(gs.username)
+
+    export = db.rechnung_export.list_exporte()[0]
+    gestempelt = db.rechnungen.get(r.id, gs)
+    assert gestempelt.exportiert_am == export.exportiert_am
+    assert gestempelt.exportiert_von == gs.username
+
+    db.rechnung_export.zuruecknehmen(export.id, gs.username)
+    offen = db.rechnungen.get(r.id, gs)
+    assert offen.exportiert_am is None and offen.exportiert_von is None
+
+
 def test_un_export_gibt_rechnungen_wieder_frei(db):
     abteilung, einreicher, gs = _setup(db)
     r = _freigegebene_rechnung(db, einreicher, gs, abteilung)

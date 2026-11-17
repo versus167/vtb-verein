@@ -86,6 +86,9 @@ class Rechnung:
     empfaenger_mitglied_name: Optional[str] = None
     empfaenger_mitglied_iban: Optional[str] = None
     anhang_count: int = 0
+    # Zeitpunkt/Benutzer des Export-Laufs – steht am Lauf, nicht an der Rechnung
+    exportiert_am: Optional[str] = None
+    exportiert_von: Optional[str] = None
     version: int = 1
     created_at: Optional[str] = None
     created_by: Optional[str] = None

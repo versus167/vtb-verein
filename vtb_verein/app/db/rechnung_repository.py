@@ -16,6 +16,7 @@ _SELECT = """
            r.empfaenger_typ, r.empfaenger_mitglied_id, r.empfaenger_name, r.empfaenger_iban,
            r.eingereicht_am, r.eingereicht_von, r.freigegeben_am, r.freigegeben_von,
            r.abgelehnt_grund, r.exportiert_in_export_id,
+           ex.exportiert_am, ex.exportiert_von,
            k.name AS kategorie_name, k.sachkonto AS kategorie_sachkonto,
            ab.name AS abteilung_name, ab.kostenstelle AS abteilung_kostenstelle,
            u.username AS ersteller_name,
@@ -33,6 +34,7 @@ _SELECT = """
     LEFT JOIN abteilung ab ON ab.id = r.abteilung_id
     LEFT JOIN users u ON u.id = r.ersteller_user_id
     LEFT JOIN mitglied em ON em.id = r.empfaenger_mitglied_id
+    LEFT JOIN rechnung_exporte ex ON ex.id = r.exportiert_in_export_id
 """
 
 _ORDER = " ORDER BY r.id DESC"
