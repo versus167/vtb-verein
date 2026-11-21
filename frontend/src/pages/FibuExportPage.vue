@@ -24,14 +24,21 @@
         <q-btn color="primary" outline icon="refresh" label="Vorschau" :loading="ladeVorschau" @click="loadVorschau" />
         <q-space />
         <q-btn color="primary" unelevated icon="download"
-          :label="anzahlBelege ? 'Exportieren (Zip mit Belegen)' : 'Exportieren (fbasc.hia)'"
+          :label="exportLabel"
           :disable="!kannExportieren" :loading="exportiere" @click="doExport" />
+      </div>
+
+      <div v-if="wirtschaftsjahre.length > 1" class="text-caption text-grey-7 q-mb-sm">
+        <q-icon name="event" size="16px" class="q-mr-xs" />
+        Der Lauf betrifft mehrere Wirtschaftsjahre – der Export kommt als Zip mit je
+        einer Datei pro Jahr:
+        <code v-for="j in wirtschaftsjahre" :key="j" class="q-mr-xs">fbasc_{{ j }}.hia</code>
       </div>
 
       <div v-if="anzahlBelege" class="text-caption text-grey-7 q-mb-sm">
         <q-icon name="attach_file" size="16px" class="q-mr-xs" />
         {{ anzahlBelege }} ÜL-Honorar(e) im Lauf – der Export kommt als Zip:
-        <code>fbasc.hia</code> plus je Abrechnung den Stundennachweis als PDF
+        <code>fbasc_&lt;Jahr&gt;.hia</code> plus je Abrechnung den Stundennachweis als PDF
         (Dateiname steht in Feld 39 der Buchung).
       </div>
 
@@ -381,6 +388,23 @@ const anzahlBelege = computed(() => {
     .filter(p => p.quelle_typ === 'ul_abrechnung').length
 })
 
+// Je Wirtschaftsjahr (= Jahr des Belegdatums) entsteht eine eigene fbasc_<Jahr>.hia;
+// mehr als ein Jahr → der Lauf kommt als Zip (s. fibu_formatter.render_je_wirtschaftsjahr).
+const wirtschaftsjahre = computed(() => {
+  const v = vorschau.value
+  if (!v) return []
+  const jahre = new Set([...v.forderungen, ...v.gegenbuchungen]
+    .map(p => (p.belegdatum || '').slice(0, 4)).filter(Boolean))
+  return [...jahre].sort()
+})
+
+const exportLabel = computed(() => {
+  if (anzahlBelege.value) return 'Exportieren (Zip mit Belegen)'
+  if (wirtschaftsjahre.value.length > 1) return 'Exportieren (Zip je Wirtschaftsjahr)'
+  const jahr = wirtschaftsjahre.value[0]
+  return jahr ? `Exportieren (fbasc_${jahr}.hia)` : 'Exportieren'
+})
+
 const kannEinziehen = computed(() =>
   !!sepaVorschau.value && sepaVorschau.value.anzahl > 0
   && sepaVorschau.value.konfiguration_fehler.length === 0)
@@ -425,7 +449,8 @@ function downloadBlob(data, filename) {
 }
 
 // Dateiname aus dem Content-Disposition des Servers: SEPA-Läufe heißen nach Einzugstermin,
-// Fibu-Läufe je nach Inhalt .hia oder – mit beiliegenden ÜL-Belegen – .zip.
+// Fibu-Läufe je nach Inhalt fbasc_<Jahr>.hia oder – mit ÜL-Belegen bzw. mehreren
+// Wirtschaftsjahren – .zip.
 function dateinameAusResponse(res, fallback) {
   const treffer = /filename="?([^"]+)"?/.exec(res.headers?.['content-disposition'] || '')
   return treffer ? treffer[1] : fallback
