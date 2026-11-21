@@ -9,7 +9,7 @@ von Hand in der Fibu.
 Das Zip ist flach (alles im Root):
 
     rechnungen-export-7.zip
-    ├─ fbasc.hia
+    ├─ fbasc_2026.hia      (je Wirtschaftsjahr des Belegdatums eine Datei)
     ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - beleg.pdf
     ├─ R42 - Zahlung Aussteller - Fussball - Sportmaterial - Trikots - lieferschein.jpg
     └─ R43 - Erstattung Tim Trainer - Verein - Reisekosten - Fahrt - tanken.pdf
@@ -403,7 +403,7 @@ class RechnungExportService:
         )
 
     def _baue_fbasc_zip(self, rechnungen: list, zeilen: list[dict]) -> bytes:
-        """fbasc.hia + Belege, alles flach im Root."""
+        """Je Wirtschaftsjahr eine fbasc_<Jahr>.hia + Belege, alles flach im Root."""
         einst = self._einstellungen()
         nach_id = {z["id"]: z for z in zeilen}
         positionen: list[FibuExportPosition] = []
@@ -434,7 +434,8 @@ class RechnungExportService:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(fibu_formatter.FBASC_DATEINAME, fibu_formatter.render(positionen))
+            for hia_name, hia in fibu_formatter.render_je_wirtschaftsjahr(positionen).items():
+                zf.writestr(hia_name, hia)
             for name, inhalt in dateien.items():
                 zf.writestr(name, inhalt)
         return buf.getvalue()

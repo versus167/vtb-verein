@@ -17,6 +17,7 @@ Läuft nur mit ``VTB_TEST_DATABASE_URL`` (leere Wegwerf-DB).
 """
 import io
 import os
+import re
 import sys
 import zipfile
 from datetime import date, timedelta
@@ -174,8 +175,13 @@ def _freigegebene_rechnung(db, einreicher, gs, abteilung, *, belege=1, **felder)
     return db.rechnungen.freigeben(r.id, gs)
 
 
-# Was im Zip neben den Belegen liegt: die Buchungsdatei für die Fibu.
-_METADATEIEN = {"fbasc.hia"}
+# Was im Zip neben den Belegen liegt: die Buchungsdateien für die Fibu, je
+# Wirtschaftsjahr eine fbasc_<Jahr>.hia.
+_HIA = re.compile(r"^fbasc_\d{4}\.hia$")
+
+
+def _ist_hia(name: str) -> bool:
+    return bool(_HIA.match(name))
 
 # Feldnummern der FBASC-Zeile, soweit hier gebraucht (s. fibu_formatter.felder).
 _F_KONTO, _F_BETRAG, _F_BELEGNR, _F_KOSTENSTELLE = 0, 2, 4, 7
@@ -189,14 +195,14 @@ def _entpacke(zip_bytes):
 
 def _buchungszeilen(zip_bytes) -> list[list[str]]:
     zf, _ = _entpacke(zip_bytes)
-    text = zf.read("fbasc.hia").decode("utf-8")
+    text = "".join(zf.read(n).decode("utf-8") for n in zf.namelist() if _ist_hia(n))
     return [z.split(";") for z in text.split("\r\n") if z]
 
 
 # ------------------------------------------------------------------- Tests
 
 def test_zip_enthaelt_beleg_und_buchungsdatei(db):
-    """Im Zip liegen die Belege und die fbasc.hia – sonst nichts (keine CSV mehr)."""
+    """Im Zip liegen die Belege und die fbasc_<Jahr>.hia – sonst nichts (keine CSV mehr)."""
     abteilung, einreicher, gs = _setup(db)
     r = _freigegebene_rechnung(db, einreicher, gs, abteilung,
                                betrag_cent=1250, rechnungsdatum="2026-07-01",
@@ -208,7 +214,7 @@ def test_zip_enthaelt_beleg_und_buchungsdatei(db):
     _, namen = _entpacke(zip_bytes)
     beleg = f"R{r.id} - Erstattung ExpTest xtester_ein - X-Fussball - " \
             f"Buerobedarf - Baelle - beleg0.jpg"     # PNG wird zu JPEG normalisiert
-    assert sorted(namen) == [beleg, "fbasc.hia"]
+    assert sorted(namen) == [beleg, "fbasc_2026.hia"]   # Jahr des Rechnungsdatums
 
     (zeile,) = _buchungszeilen(zip_bytes)
     assert zeile[_F_BELEGNR] == f"R{r.id}"
@@ -251,7 +257,7 @@ def test_mehrere_belege_behalten_ihren_namen(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    belege = sorted(n for n in namen if n not in _METADATEIEN)
+    belege = sorted(n for n in namen if not _ist_hia(n))
     assert [n.rsplit(" - ", 1)[-1] for n in belege] == \
         ["beleg0.jpg", "beleg1.jpg", "beleg2.jpg"]
     assert all(n.startswith(f"R{r.id} - ") for n in belege)
@@ -273,7 +279,7 @@ def test_gleicher_originalname_wird_durchgezaehlt(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     zf, namen = _entpacke(zip_bytes)
-    belege = [n for n in namen if n not in _METADATEIEN]
+    belege = [n for n in namen if not _ist_hia(n)]
     assert len(set(belege)) == 2
     assert sorted(n.rsplit(" - ", 1)[-1] for n in belege) == ["scan (2).jpg", "scan.jpg"]
 
@@ -287,7 +293,7 @@ def test_dateiname_traegt_die_erfassten_angaben(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n not in _METADATEIEN)
+    beleg = next(n for n in namen if not _ist_hia(n))
     # 'Bürobedarf' ist die erste Kategorie (alphabetisch) – der Umlaut wird
     # umschrieben, nicht weggeworfen.
     assert beleg == (f"R{r.id} - Zahlung Aussteller - X-Fussball - "
@@ -303,7 +309,7 @@ def test_dateiname_bleibt_windowstauglich(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n not in _METADATEIEN)
+    beleg = next(n for n in namen if not _ist_hia(n))
     assert beleg.isascii()
     assert not set(beleg) & set('\\/:*?"<>|')
     assert "Baelle Netze" in beleg
@@ -319,7 +325,7 @@ def test_langer_dateiname_wird_gekappt(db):
 
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
-    beleg = next(n for n in namen if n not in _METADATEIEN)
+    beleg = next(n for n in namen if not _ist_hia(n))
     assert len(beleg) <= 160
     assert not beleg.rsplit(".", 1)[0].endswith((" ", "-", "."))
 
@@ -470,7 +476,7 @@ def test_fehlende_belegdatei_bricht_lauf_nicht_ab(db):
     _, zip_bytes = db.rechnung_export.exportieren(gs.username)
     _, namen = _entpacke(zip_bytes)
     # Kein Beleg, aber ein Lauf: die Buchungszeile entsteht trotzdem, nur ohne Dokument.
-    assert sorted(namen) == ["fbasc.hia"]
+    assert len(namen) == 1 and _ist_hia(namen[0])
     assert _buchungszeilen(zip_bytes)[0][_F_DOKUMENT] == ""
 
 

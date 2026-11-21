@@ -32,7 +32,8 @@
     <!-- Was im Zip zu erwarten ist – die Dateinamen tragen die Angaben mit,
          damit man einen Beleg auch ohne Liste seiner Buchungszeile zuordnen kann. -->
     <div class="text-caption text-grey-7 q-mb-md">
-      Das Zip enthält <code>fbasc.hia</code> (die Buchungszeilen für die Fibu) und
+      Das Zip enthält je Wirtschaftsjahr eine <code>fbasc_&lt;Jahr&gt;.hia</code>
+      (die Buchungszeilen für die Fibu, getrennt nach Jahr des Belegdatums) und
       je Beleg eine Datei. Jede Rechnung wird als Kreditor-Buchung übergeben:
       Aufwandskonto der Kategorie im Soll gegen den Empfänger im Haben. Die
       Dateinamen tragen die Angaben mit:

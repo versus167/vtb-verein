@@ -356,7 +356,7 @@ def get_datum_bereich(kasse_id: int, user: CurrentUser, db: DB):
 
 
 # ---------------------------------------------------------------------------
-# FBASC-Export (hmd) – Zip mit fbasc.hia + Belegen + Kassenbericht
+# FBASC-Export (hmd) – Zip mit fbasc_<Jahr>.hia + Belegen + Kassenbericht
 # ---------------------------------------------------------------------------
 
 def _zip_response(dateiname: str, zip_bytes: bytes) -> Response:
@@ -379,7 +379,7 @@ def _csv_response(dateiname: str, csv_bytes: bytes) -> Response:
 def create_export(kasse_id: int, data: ExportRequest, user: CurrentUser, db: DB):
     """Exportiert die offenen Buchungen bis bis_datum als hmd-FBASC-Zip.
 
-    Das Zip enthält flach im Root: fbasc.hia, alle Belege (Feld 39) und den
+    Das Zip enthält flach im Root: je Wirtschaftsjahr eine fbasc_<Jahr>.hia, alle Belege (Feld 39) und den
     Perioden-Kassenbericht. Sperrt die Buchungen danach (Export-Schutz).
     """
     try:

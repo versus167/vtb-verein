@@ -385,7 +385,8 @@
             hint="Alle noch nicht exportierten Buchungen bis einschließlich dieses Datums werden gesperrt."
           />
           <div class="text-caption text-grey-7">
-            Ergebnis: ein Zip mit <code>fbasc.hia</code>, allen Belegen und dem Kassenbericht (PDF).
+            Ergebnis: ein Zip mit je Wirtschaftsjahr einer <code>fbasc_&lt;Jahr&gt;.hia</code>,
+            allen Belegen und dem Kassenbericht (PDF).
             Der jüngste Export lässt sich unten wieder zurücknehmen.
           </div>
         </q-card-section>

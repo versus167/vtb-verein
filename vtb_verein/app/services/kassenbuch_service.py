@@ -524,7 +524,7 @@ class KassenbuchService:
     ) -> tuple[str, bytes]:
         """Exportiert die offenen Buchungen bis bis_datum als hmd-FBASC-Zip.
 
-        Das Zip ist "plain": `fbasc.hia` und alle Belege liegen flach im Root, dazu der
+        Das Zip ist "plain": je Wirtschaftsjahr eine `fbasc_<Jahr>.hia` und alle Belege liegen flach im Root, dazu der
         Perioden-Kassenbericht als PDF. Belege werden pro Buchung in Feld 39 referenziert;
         Zusatzbelege und der Bericht bekommen je eine eigene 0,00-Zeile (hmd verkraftet das).
         Nach dem Rendern werden die Buchungen gesperrt (Export-Schutz).
@@ -700,7 +700,10 @@ class KassenbuchService:
         self, kasse: Kasse, buchungen: list[dict], von_datum: str, bis_datum: str,
         kostenstelle, kostentraeger, gegenkonto_map: dict, kostentraeger_map: dict, exported_by: str,
     ) -> bytes:
-        """Rendert fbasc.hia + sammelt Belege + Bericht in ein flaches Zip (alles im Root)."""
+        """Rendert je Wirtschaftsjahr eine fbasc_<Jahr>.hia + sammelt Belege + Bericht in ein
+        flaches Zip (alles im Root). Reicht der Zeitraum über einen Jahreswechsel, steht die
+        0,00-Zeile des Berichts in der Datei des jüngsten Jahres (sie hängt an der letzten
+        Buchung)."""
         positionen: list[FibuExportPosition] = []
         dateien: dict[str, bytes] = {}
         verwendet: set[str] = set()
@@ -746,7 +749,8 @@ class KassenbuchService:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(fibu_formatter.FBASC_DATEINAME, fibu_formatter.render(positionen))
+            for hia_name, hia in fibu_formatter.render_je_wirtschaftsjahr(positionen).items():
+                zf.writestr(hia_name, hia)
             for fname, content in dateien.items():
                 zf.writestr(fname, content)
         return buf.getvalue()
