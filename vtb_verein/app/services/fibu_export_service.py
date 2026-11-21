@@ -6,8 +6,13 @@ Ablauf:
 2. exportieren(...) → Lauf anlegen, fbasc.hia rendern, Quellzeilen als „exportiert" stempeln
 3. re_download(id)  → einen früheren Lauf erneut rendern
 
-Belege: Enthält ein Lauf ÜL-Honorare, wird statt der nackten `fbasc.hia` ein Zip
-geliefert – die Datei plus je Abrechnung den Stundennachweis als PDF, dessen Dateiname
+Wirtschaftsjahre: Je Jahr des Belegdatums entsteht eine eigene `fbasc_<Jahr>.hia`
+(s. fibu_formatter.render_je_wirtschaftsjahr). Reicht ein Lauf über einen Jahreswechsel,
+kommt er als Zip mit einer Datei je Jahr. Gegenbuchungen tragen das Belegdatum ihrer
+Forderung und landen damit im Jahr, in dem die Forderung gebucht wurde.
+
+Belege: Enthält ein Lauf ÜL-Honorare, wird statt der nackten `fbasc_<Jahr>.hia` ein Zip
+geliefert – die Datei(en) plus je Abrechnung den Stundennachweis als PDF, dessen Dateiname
 in Feld 39 („Dokument zur Erfassung") der ÜL-Zeile steht (Muster: Kassenbuch-Export).
 Die Belege werden bei jedem Rendern neu erzeugt; das ist reproduzierbar, weil eine
 exportierte Abrechnung gegen Statuswechsel und Löschen gesperrt ist. Beitrags-/Gebühren-
@@ -89,8 +94,8 @@ HIA_MEDIA_TYPE = "text/plain; charset=utf-8"
 
 @dataclass(frozen=True)
 class ExportDatei:
-    """Was beim Export herausfällt: entweder die nackte `fbasc.hia` oder ein Zip
-    aus Datei + Belegen. Trägt den Dateinamen mit, weil er davon abhängt."""
+    """Was beim Export herausfällt: entweder die nackte `fbasc_<Jahr>.hia` oder ein Zip
+    aus Jahresdateien + Belegen. Trägt den Dateinamen mit, weil er davon abhängt."""
     name: str
     inhalt: bytes
 
@@ -308,7 +313,8 @@ class FibuExportService:
 
         positionen = forderungen + gegenbuchungen
         # Erst rendern, dann den Lauf anlegen: Der Dateiname steht erst fest, wenn klar
-        # ist, ob Belege dabei sind (.hia vs. .zip) – und er gehört so in den Header.
+        # ist, ob Belege oder mehrere Wirtschaftsjahre dabei sind (fbasc_<Jahr>.hia vs.
+        # .zip) – und er gehört so in den Header.
         datei = self._datei(positionen, f"fbasc_{date.today().isoformat()}")
 
         # Abteilungs-Posten liefern zwei Positionen mit gleicher quelle_id → deduplizieren,
@@ -376,8 +382,9 @@ class FibuExportService:
                            for p in self._positionen_fuer_row(r, 'forderung', einst)]
                           + [p for r in storno_rows
                              for p in self._positionen_fuer_row(r, 'gegenbuchung', einst)])
-        # Der Name des Laufs steht im Header; die Endung entscheidet sich neu, weil
-        # Läufe von vor der Beleg-Beilage als „.hia" gespeichert sind.
+        # Der Name des Laufs steht im Header; flach oder Zip entscheidet sich neu, weil
+        # Läufe von vor der Beleg-Beilage bzw. der Jahrestrennung als „.hia" gespeichert
+        # sind. Ein flacher Lauf heißt dabei nach seinem Wirtschaftsjahr.
         stamm = (export.dateiname or f"fbasc_{export_id}").rsplit('.', 1)[0]
         return self._datei(positionen, stamm)
 
@@ -386,14 +393,21 @@ class FibuExportService:
     # ------------------------------------------------------------------
 
     def _datei(self, positionen: list[FibuExportPosition], stamm: str) -> ExportDatei:
-        """Rendert die Positionen zur Auslieferungsdatei – flach oder als Zip mit Belegen."""
+        """Rendert die Positionen zur Auslieferungsdatei – flach oder als Zip.
+
+        Je Wirtschaftsjahr entsteht eine eigene `fbasc_<Jahr>.hia`. Betrifft der Lauf
+        nur ein Jahr und liegen keine Belege bei, wird genau diese Datei geliefert
+        (unter ihrem Jahresnamen); sonst ein Zip `<stamm>.zip` mit allen Jahresdateien
+        und den Belegen."""
         positionen, belege = self._belege(positionen)
-        inhalt = fibu_formatter.render(positionen)
-        if not belege:
-            return ExportDatei(f"{stamm}.hia", inhalt)
+        hia_dateien = fibu_formatter.render_je_wirtschaftsjahr(positionen)
+        if not belege and len(hia_dateien) == 1:
+            ((name, inhalt),) = hia_dateien.items()
+            return ExportDatei(name, inhalt)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(fibu_formatter.FBASC_DATEINAME, inhalt)
+            for name, inhalt in hia_dateien.items():
+                zf.writestr(name, inhalt)
             for name, pdf in belege.items():
                 zf.writestr(name, pdf)
         return ExportDatei(f"{stamm}.zip", buf.getvalue())

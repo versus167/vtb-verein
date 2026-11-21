@@ -5,12 +5,20 @@ Aufbau laut „Schnittstellenbeschreibung FBASC Format" (hmd, Stand 21.11.2025):
 Zeilenende CR+LF, leere Felder bleiben leer (`;;`), Betrag `n,nn` (Komma), Datum
 `TT.MM.JJJJ`. Encoding UTF-8 (mit dem Nutzer abgestimmt). Beträge sind immer positiv –
 das Vorzeichen steckt im S/H-Kennzeichen (Feld 03).
+
+Eine Datei je Wirtschaftsjahr: Die Fibu führt jedes Wirtschaftsjahr als eigenen
+Buchungskreis und liest eine Datei nur in eines davon ein. Alle Exporte rendern
+deshalb über `render_je_wirtschaftsjahr` und legen je Jahr eine `fbasc_<Jahr>.hia`
+ab (`fbasc_2025.hia`, `fbasc_2026.hia`). Maßgeblich ist das Jahr des Belegdatums
+(Feld 10); Wirtschaftsjahr = Kalenderjahr.
 """
 from datetime import date
 from typing import Optional
 
 from app.models.fibu import FibuExportPosition
 
+# Name ohne Jahr: nur noch für Positionen ohne lesbares Belegdatum (dürfte es nicht
+# geben – Feld 10 ist bei allen Exporten Pflicht) und als Name eines leeren Laufs.
 FBASC_DATEINAME = "fbasc.hia"
 _FELD_ANZAHL = 71          # Felder 00..70 (59 Mailadresse, 70 abw. Kontoinhaber)
 _SEP = ";"
@@ -107,3 +115,30 @@ def render(positionen: list[FibuExportPosition]) -> bytes:
     """Rendert die komplette `fbasc.hia` (UTF-8, CR+LF je Satz)."""
     text = "".join(render_zeile(p) + _EOL for p in positionen)
     return text.encode("utf-8")
+
+
+def wirtschaftsjahr(p: FibuExportPosition) -> Optional[int]:
+    """Wirtschaftsjahr einer Position = Jahr des Belegdatums; unlesbar → None."""
+    datum = _datum(p.belegdatum)
+    return int(datum[-4:]) if datum else None
+
+
+def dateiname(jahr: Optional[int]) -> str:
+    """`fbasc_<Jahr>.hia`; ohne Jahr der alte Name `fbasc.hia`."""
+    return f"fbasc_{jahr}.hia" if jahr is not None else FBASC_DATEINAME
+
+
+def render_je_wirtschaftsjahr(positionen: list[FibuExportPosition]) -> dict[str, bytes]:
+    """Rendert je Wirtschaftsjahr eine eigene Datei: {'fbasc_2026.hia': bytes, …}.
+
+    Aufsteigend nach Jahr; innerhalb eines Jahres bleibt die Reihenfolge der
+    Positionen erhalten – 0,00-Zeilen für Zusatzbelege tragen das Belegdatum ihrer
+    Hauptzeile und landen so in derselben Datei wie sie. Ohne Positionen gibt es
+    eine leere `fbasc.hia`, damit ein (Re-)Download nicht ins Leere läuft."""
+    if not positionen:
+        return {FBASC_DATEINAME: render([])}
+    gruppen: dict[Optional[int], list[FibuExportPosition]] = {}
+    for p in positionen:
+        gruppen.setdefault(wirtschaftsjahr(p), []).append(p)
+    reihenfolge = sorted(gruppen, key=lambda j: (j is None, j or 0))
+    return {dateiname(j): render(gruppen[j]) for j in reihenfolge}

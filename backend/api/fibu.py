@@ -131,8 +131,8 @@ def _export_dict(x: FibuExport) -> dict:
 
 
 def _datei_response(datei: ExportDatei) -> StreamingResponse:
-    """Auslieferung des Laufs: die nackte `.hia` oder – wenn ÜL-Belege beiliegen –
-    ein Zip. Der Dateiname steht im Content-Disposition, das Frontend liest ihn dort."""
+    """Auslieferung des Laufs: die nackte `fbasc_<Jahr>.hia` oder – wenn ÜL-Belege
+    beiliegen oder der Lauf mehrere Wirtschaftsjahre betrifft – ein Zip. Der Dateiname steht im Content-Disposition, das Frontend liest ihn dort."""
     return StreamingResponse(
         io.BytesIO(datei.inhalt),
         media_type=datei.media_type,

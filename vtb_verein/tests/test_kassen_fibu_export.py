@@ -122,14 +122,14 @@ def test_export_zip_struktur_und_zeilen(tmp_path):
     assert dateiname == "handkasse-turnen-export-42.zip"
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
     namen = set(zf.namelist())
-    # flaches Zip: fbasc.hia + Belege + Bericht, alles im Root
-    assert "fbasc.hia" in namen
+    # flaches Zip: fbasc_<Jahr>.hia + Belege + Bericht, alles im Root
+    assert "fbasc_2026.hia" in namen and "fbasc.hia" not in namen
     assert "B1.jpg" in namen and zf.read("B1.jpg") == b"JPGDATA"
     assert "B1-2.pdf" in namen and zf.read("B1-2.pdf") == b"PDFDATA"
     assert "bericht-2026-06-05-bis-2026-06-30.pdf" in namen
     assert not any("/" in n for n in namen)   # keine Unterordner
 
-    zeilen = _zeilen(zf.read("fbasc.hia"))
+    zeilen = _zeilen(zf.read("fbasc_2026.hia"))
     # 2 Buchungen + 1 Zusatzbeleg-Zeile + 1 Bericht-Zeile = 4
     assert len(zeilen) == 4
 
@@ -153,6 +153,28 @@ def test_export_zip_struktur_und_zeilen(tmp_path):
     assert calls["create_export"].format == "fbasc"
 
 
+def test_export_ueber_den_jahreswechsel_je_wirtschaftsjahr_eine_datei(tmp_path):
+    """Die Fibu liest eine Datei nur in ein Wirtschaftsjahr ein: Buchungen vom
+    Dezember und Januar gehören in zwei Dateien. Die Bericht-Zeile hängt an der
+    letzten Buchung und landet damit im jüngeren Jahr."""
+    kasse = Kasse(name="K", sachkonto="1000", id=1)
+    buchungen = [
+        _buchung(1, "2025-12-30", "B1", "Silvesterlauf", "Startgelder", einnahme=1000),
+        _buchung(2, "2026-01-03", "B2", "Neujahrsturnier", "Startgelder", einnahme=500),
+    ]
+    kategorien = [KassenKategorie(name="Startgelder", gegenkonto="4400")]
+    svc, _ = _service(kasse, buchungen, kategorien, {}, tmp_path)
+    _, zip_bytes = svc.exportiere_fbasc(1, "2026-01-31", "tester", user_id=None)
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    assert {"fbasc_2025.hia", "fbasc_2026.hia"} <= set(zf.namelist())
+    assert "fbasc.hia" not in zf.namelist()
+    z2025 = _zeilen(zf.read("fbasc_2025.hia"))
+    z2026 = _zeilen(zf.read("fbasc_2026.hia"))
+    assert [z[4] for z in z2025] == ["B1"]
+    assert [z[4] for z in z2026] == ["B2", "B2"]          # Buchung + Bericht-Zeile
+    assert z2026[1][39] == "bericht-2025-12-30-bis-2026-01-31.pdf"
+
+
 def test_kostentraeger_override_je_kategorie(tmp_path):
     # Kategorie mit eigenem Kostenträger (Feld 08) überschreibt den Default (1).
     kasse = Kasse(name="K", sachkonto="1000", id=1)
@@ -166,7 +188,7 @@ def test_kostentraeger_override_je_kategorie(tmp_path):
     ]
     svc, _ = _service(kasse, buchungen, kategorien, {}, tmp_path)
     _, zip_bytes = svc.exportiere_fbasc(1, "2026-06-30", "tester", user_id=None)
-    zeilen = _zeilen(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("fbasc.hia"))
+    zeilen = _zeilen(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("fbasc_2026.hia"))
     assert zeilen[0][8] == "7"   # Turnier -> Override
     assert zeilen[1][8] == "1"   # Sonstiges -> Default aus Fibu-Einstellungen
 
@@ -179,7 +201,7 @@ def test_export_ohne_abteilung_nutzt_verein_kostenstelle(tmp_path):
 
     _, zip_bytes = svc.exportiere_fbasc(1, "2026-06-30", "tester", user_id=None)
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    b9 = _zeilen(zf.read("fbasc.hia"))[0]
+    b9 = _zeilen(zf.read("fbasc_2026.hia"))[0]
     assert b9[7] == "12"        # Verein-Kostenstelle aus FibuEinstellungen
 
 
@@ -214,7 +236,7 @@ def test_kassendifferenz_gegenkonto_aus_einstellungen(tmp_path):
     buchungen = [_buchung(1, "2026-06-30", "Z1", "Kassensturz", "Kassendifferenz", ausgabe=37)]
     svc, _ = _service(kasse, buchungen, [], {}, tmp_path, kassendifferenz_gegenkonto="6970")
     _, zip_bytes = svc.exportiere_fbasc(1, "2026-06-30", "tester", user_id=None)
-    z = _zeilen(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("fbasc.hia"))[0]
+    z = _zeilen(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("fbasc_2026.hia"))[0]
     assert z[0] == "1000" and z[1] == "6970" and z[3] == "H"
 
 

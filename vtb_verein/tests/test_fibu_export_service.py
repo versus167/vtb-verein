@@ -109,6 +109,44 @@ class TestFormatterRender:
 
     def test_dateiname(self):
         assert ff.FBASC_DATEINAME == 'fbasc.hia'
+        assert ff.dateiname(2026) == 'fbasc_2026.hia'
+        assert ff.dateiname(None) == 'fbasc.hia'
+
+
+class TestJeWirtschaftsjahr:
+    """Die Fibu liest eine Datei nur in ein Wirtschaftsjahr ein – je Jahr eine Datei."""
+
+    def test_ein_jahr_eine_datei(self):
+        dateien = ff.render_je_wirtschaftsjahr([_pos(belegdatum='2026-03-01'),
+                                                _pos(belegdatum='2026-12-31')])
+        assert list(dateien) == ['fbasc_2026.hia']
+        assert dateien['fbasc_2026.hia'].decode('utf-8').count('\r\n') == 2
+
+    def test_jahreswechsel_trennt_nach_belegdatum(self):
+        dateien = ff.render_je_wirtschaftsjahr([
+            _pos(belegdatum='2026-01-02', belegnummer='B3'),
+            _pos(belegdatum='2025-12-31', belegnummer='B1'),
+            _pos(belegdatum='2026-01-05', belegnummer='B4'),
+        ])
+        assert list(dateien) == ['fbasc_2025.hia', 'fbasc_2026.hia']   # aufsteigend
+        z2025 = dateien['fbasc_2025.hia'].decode('utf-8').strip().split('\r\n')
+        z2026 = dateien['fbasc_2026.hia'].decode('utf-8').strip().split('\r\n')
+        assert [z.split(';')[4] for z in z2025] == ['B1']
+        # Reihenfolge innerhalb eines Jahres bleibt erhalten.
+        assert [z.split(';')[4] for z in z2026] == ['B3', 'B4']
+
+    def test_datetime_und_timestamp_strings_zaehlen_nach_ihrem_jahr(self):
+        from datetime import datetime
+        assert ff.wirtschaftsjahr(_pos(belegdatum=datetime(2025, 12, 31, 23, 0))) == 2025
+        assert ff.wirtschaftsjahr(_pos(belegdatum='2027-01-01 00:30:00+00')) == 2027
+
+    def test_ohne_belegdatum_faellt_auf_den_alten_namen_zurueck(self):
+        dateien = ff.render_je_wirtschaftsjahr([_pos(belegdatum=None),
+                                                _pos(belegdatum='2026-05-05')])
+        assert list(dateien) == ['fbasc_2026.hia', 'fbasc.hia']
+
+    def test_ohne_positionen_eine_leere_datei(self):
+        assert ff.render_je_wirtschaftsjahr([]) == {'fbasc.hia': b''}
 
 
 # ---------------------------------------------------------------------------
@@ -254,10 +292,10 @@ def _zip_namen(inhalt: bytes) -> list[str]:
 
 
 def _hia_zeilen(datei) -> list[str]:
-    """Buchungszeilen der fbasc.hia – egal ob flach oder im Zip geliefert."""
+    """Buchungszeilen aller fbasc_<Jahr>.hia – egal ob flach oder im Zip geliefert."""
     if datei.ist_zip:
         with zipfile.ZipFile(io.BytesIO(datei.inhalt)) as zf:
-            roh = zf.read(ff.FBASC_DATEINAME)
+            roh = b''.join(zf.read(n) for n in zf.namelist() if n.endswith('.hia'))
     else:
         roh = datei.inhalt
     return roh.decode('utf-8').strip().split('\r\n')
@@ -887,7 +925,7 @@ class TestBelegBeilage:
                           abrechnungen=[_abrechnung(id=4)])
         _, datei = svc.exportieren(erstellt_von='admin')
         assert datei.ist_zip and datei.name.endswith('.zip')
-        assert _zip_namen(datei.inhalt) == ['fbasc.hia', 'U4-Stundennachweis-Wagner.pdf']
+        assert _zip_namen(datei.inhalt) == ['fbasc_2026.hia', 'U4-Stundennachweis-Wagner.pdf']
 
     def test_beigelegter_beleg_ist_ein_pdf(self):
         svc, _ = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
@@ -911,11 +949,29 @@ class TestBelegBeilage:
         assert _hia_zeilen(datei)[0].split(';')[39] == 'U4-Stundennachweis-Süß.pdf'
 
     def test_lauf_ohne_ul_bleibt_eine_flache_datei(self):
-        """Beiträge und Gebühren haben nichts anzuhängen – kein Zip um nichts herum."""
-        svc, _ = _service(neu=[_row()])
+        """Beiträge und Gebühren haben nichts anzuhängen – kein Zip um nichts herum.
+        Die Datei heißt nach ihrem Wirtschaftsjahr."""
+        svc, stub = _service(neu=[_row()])
         _, datei = svc.exportieren(erstellt_von='admin')
-        assert not datei.ist_zip and datei.name.endswith('.hia')
+        assert not datei.ist_zip and datei.name == 'fbasc_2026.hia'
+        assert stub.calls[0]['dateiname'] == 'fbasc_2026.hia'
         assert _hia_zeilen(datei)[0].split(';')[39] == ''
+
+    def test_lauf_ueber_den_jahreswechsel_kommt_als_zip_je_jahr(self):
+        svc, stub = _service(neu=[_row(quelle_id=1, belegdatum='2025-12-30'),
+                                  _row(quelle_id=2, belegdatum='2026-01-02')])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert datei.ist_zip and datei.name.startswith('fbasc_') and datei.name.endswith('.zip')
+        assert _zip_namen(datei.inhalt) == ['fbasc_2025.hia', 'fbasc_2026.hia']
+        assert stub.calls[0]['dateiname'] == datei.name
+
+    def test_ul_belege_neben_mehreren_jahresdateien(self):
+        svc, _ = _service(neu=[_row(quelle_id=1, belegdatum='2025-12-30'),
+                               _ul_row(quelle_id=4)],
+                          abrechnungen=[_abrechnung(id=4)])
+        _, datei = svc.exportieren(erstellt_von='admin')
+        assert _zip_namen(datei.inhalt) == ['fbasc_2025.hia', 'fbasc_2026.hia',
+                                            'U4-Stundennachweis-Wagner.pdf']
 
     def test_dateiname_des_laufs_steht_im_header(self):
         svc, stub = _service(neu=[_ul_row(quelle_id=4)], abrechnungen=[_abrechnung(id=4)])
@@ -934,7 +990,7 @@ class TestBelegBeilage:
         svc, _ = _service(neu=[_ul_row(quelle_id=4), _ul_row(quelle_id=5, nachname='Kern')],
                           abrechnungen=[_abrechnung(id=4)])
         _, datei = svc.exportieren(erstellt_von='admin')
-        assert _zip_namen(datei.inhalt) == ['fbasc.hia', 'U4-Stundennachweis-Wagner.pdf']
+        assert _zip_namen(datei.inhalt) == ['fbasc_2026.hia', 'U4-Stundennachweis-Wagner.pdf']
         felder = [z.split(';') for z in _hia_zeilen(datei)]
         assert felder[0][39] == 'U4-Stundennachweis-Wagner.pdf'
         assert felder[1][39] == ''

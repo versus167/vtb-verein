@@ -17,6 +17,7 @@ Zwei Ebenen:
 """
 import io
 import os
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -326,8 +327,13 @@ def _entpacke(zip_bytes: bytes) -> dict[str, bytes]:
         return {n: zf.read(n) for n in zf.namelist()}
 
 
+def _hia_namen(dateien) -> list[str]:
+    """Die Buchungsdateien im Zip – je Wirtschaftsjahr eine fbasc_<Jahr>.hia."""
+    return [n for n in dateien if re.match(r"^fbasc_\d{4}\.hia$", n)]
+
+
 def _hia_zeilen(dateien: dict) -> list[list[str]]:
-    text = dateien["fbasc.hia"].decode("utf-8")
+    text = "".join(dateien[n].decode("utf-8") for n in _hia_namen(dateien))
     return [z.split(";") for z in text.split("\r\n") if z]
 
 
@@ -339,7 +345,7 @@ class TestExportInhalt:
         _freigegebene_rechnung(db, welt)
         _, zip_bytes = db.rechnung_export.exportieren("fbasctest")
         namen = _entpacke(zip_bytes).keys()
-        assert "fbasc.hia" in namen
+        assert len(_hia_namen(namen)) == 1 and "fbasc.hia" not in namen
         assert "uebersicht.csv" not in namen
         assert any(n.startswith("R1 - ") for n in namen)
 
@@ -366,6 +372,18 @@ class TestExportInhalt:
         assert zeilen[1][0] == zeilen[0][0] and zeilen[1][1] == zeilen[0][1]
         assert zeilen[1][39] != zeilen[0][39]
 
+    def test_je_wirtschaftsjahr_eine_datei(self, db, welt):
+        """Die Fibu liest eine Datei nur in ein Wirtschaftsjahr ein – maßgeblich
+        ist das Belegdatum (= Rechnungsdatum)."""
+        _freigegebene_rechnung(db, welt, rechnungsdatum="2025-12-28")
+        _freigegebene_rechnung(db, welt, rechnungsdatum="2026-01-04")
+        _, zip_bytes = db.rechnung_export.exportieren("fbasctest")
+        dateien = _entpacke(zip_bytes)
+        assert _hia_namen(dateien) == ["fbasc_2025.hia", "fbasc_2026.hia"]
+        (z2025,) = _hia_zeilen({"fbasc_2025.hia": dateien["fbasc_2025.hia"]})
+        (z2026,) = _hia_zeilen({"fbasc_2026.hia": dateien["fbasc_2026.hia"]})
+        assert z2025[10] == "28.12.2025" and z2026[10] == "04.01.2026"
+
     def test_lauf_wird_als_fbasc_gefuehrt(self, db, welt):
         _freigegebene_rechnung(db, welt)
         db.rechnung_export.exportieren("fbasctest")
@@ -391,7 +409,7 @@ class TestAltlaeufe:
             cur.execute("UPDATE rechnung_exporte SET format='zip' WHERE id=%s", (export_id,))
         _, zip_bytes = db.rechnung_export.re_download(export_id)
         namen = _entpacke(zip_bytes).keys()
-        assert "fbasc.hia" not in namen
+        assert "fbasc.hia" not in namen and not _hia_namen(namen)
         # Dort war die CSV die einzige Lesehilfe – sie bleibt dem Altlauf erhalten.
         assert "uebersicht.csv" in namen
 
