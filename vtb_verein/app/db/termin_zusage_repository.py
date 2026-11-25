@@ -22,6 +22,22 @@ VALID_ANTWORTEN = ('zu', 'vielleicht', 'ab')
 _COLS = ("id, termin_id, mitglied_id, antwort, kommentar, version, "
          "created_at, created_by, updated_at, updated_by, deleted_at, deleted_by")
 
+# Seit wann steht die aktuelle Antwort (#215)? Nicht `updated_at` der Zeile: Das
+# rückt auch bei einer reinen Kommentar-Änderung oder einem erneuten Setzen
+# derselben Antwort vor. Gesucht ist die erste Version nach dem letzten Wechsel
+# der Antwort – aus der History, die der Audit-Trigger ohnehin schreibt. Erwartet
+# die aktive Zeile als `z`; ohne Zeile (Kader-Mitglied ohne Antwort) bleibt es NULL.
+_SEIT_JOIN = """
+    LEFT JOIN LATERAL (
+        SELECT MIN(h.updated_at) AS seit
+        FROM termin_zusage_history h
+        WHERE h.id = z.id
+          AND h.version > COALESCE((
+              SELECT MAX(h2.version) FROM termin_zusage_history h2
+              WHERE h2.id = z.id AND h2.antwort IS DISTINCT FROM z.antwort), 0)
+    ) s ON TRUE
+"""
+
 
 def _map(row) -> TerminZusage:
     return TerminZusage(
@@ -223,10 +239,12 @@ class TerminZusageRepository(BaseRepository):
                     FROM termine WHERE id = %(tid)s AND deleted_at IS NULL
                 )
                 SELECT m.id AS mitglied_id, m.vorname, m.nachname,
-                       z.antwort, z.kommentar
+                       z.antwort, z.kommentar,
+                       COALESCE(s.seit, z.updated_at) AS antwort_seit
                 FROM t
                 CROSS JOIN termin_zusage z
                 JOIN mitglied m ON m.id = z.mitglied_id AND m.deleted_at IS NULL
+                """ + _SEIT_JOIN + """
                 WHERE z.termin_id = %(tid)s AND z.deleted_at IS NULL
                   AND NOT EXISTS (
                       SELECT 1 FROM mitglied_mannschaft mm
@@ -243,7 +261,7 @@ class TerminZusageRepository(BaseRepository):
                 {"mitglied_id": r['mitglied_id'],
                  "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
                  "rollen": None, "antwort": r['antwort'],
-                 "kommentar": r['kommentar']}
+                 "kommentar": r['kommentar'], "antwort_seit": r['antwort_seit']}
                 for r in cur.fetchall()
             ]
 
@@ -259,7 +277,8 @@ class TerminZusageRepository(BaseRepository):
                 )
                 SELECT m.id AS mitglied_id, m.vorname, m.nachname,
                        string_agg(DISTINCT mm.rolle, ', ' ORDER BY mm.rolle) AS rollen,
-                       z.antwort, z.kommentar
+                       z.antwort, z.kommentar,
+                       COALESCE(s.seit, z.updated_at) AS antwort_seit
                 FROM t
                 JOIN mitglied_mannschaft mm ON mm.mannschaft_id = t.mannschaft_id
                     AND mm.deleted_at IS NULL
@@ -267,7 +286,9 @@ class TerminZusageRepository(BaseRepository):
                 JOIN mitglied m ON m.id = mm.mitglied_id AND m.deleted_at IS NULL
                 LEFT JOIN termin_zusage z ON z.termin_id = %(tid)s
                     AND z.mitglied_id = m.id AND z.deleted_at IS NULL
-                GROUP BY m.id, m.vorname, m.nachname, z.antwort, z.kommentar
+                """ + _SEIT_JOIN + """
+                GROUP BY m.id, m.vorname, m.nachname, z.antwort, z.kommentar,
+                         s.seit, z.updated_at
                 ORDER BY lower(m.nachname), lower(m.vorname)
                 """,
                 {"tid": termin_id},
@@ -276,6 +297,102 @@ class TerminZusageRepository(BaseRepository):
                 {"mitglied_id": r['mitglied_id'],
                  "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
                  "rollen": r['rollen'], "antwort": r['antwort'],
-                 "kommentar": r['kommentar']}
+                 "kommentar": r['kommentar'], "antwort_seit": r['antwort_seit']}
                 for r in cur.fetchall()
             ]
+
+    def verlauf(self, termin_id: int) -> list[dict]:
+        """Zeitleiste aller Zu-/Absagen eines Termins, neueste zuerst (#215).
+
+        Liest die History, die der Audit-Trigger bei jedem version-Bump schreibt,
+        und leitet je Version ab, was passiert ist (`art`):
+
+        * ``eingeladen``      – erste Version ohne Antwort (lade_ein)
+        * ``antwort``         – erste Antwort oder Wechsel; ``von`` = vorherige
+                                Antwort (None bei der ersten bzw. nach Einladung)
+        * ``kommentar``       – Antwort gleich, nur der Kommentar hat sich geändert
+        * ``zurueckgenommen`` – Soft-Delete; ``antwort`` = die zurückgenommene
+                                (None = Einladung zurückgenommen)
+
+        Erneutes Setzen derselben Antwort mit demselben Kommentar erzeugt zwar
+        eine Version, ist aber kein Ereignis und fällt heraus. Nach einer
+        Rücknahme beginnt eine neue Zeile (eigene id) – deren erste Antwort
+        erscheint deshalb ohne ``von``.
+
+        ``durch_selbst`` sagt, ob das Mitglied selbst geantwortet hat; sonst
+        nennt ``durch_name`` den, der es eingetragen hat (Name des mit dem
+        Konto verknüpften Mitglieds, ersatzweise der Benutzername).
+        """
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                WITH h AS (
+                    SELECT h.id, h.version, h.mitglied_id, h.antwort, h.kommentar,
+                           h.updated_at, h.updated_by, h.deleted_at, h.deleted_by,
+                           LAG(h.antwort)    OVER w AS vorher_antwort,
+                           LAG(h.kommentar)  OVER w AS vorher_kommentar,
+                           LAG(h.deleted_at) OVER w AS vorher_deleted_at,
+                           ROW_NUMBER()      OVER w AS nr
+                    FROM termin_zusage_history h
+                    WHERE h.termin_id = %(tid)s
+                    WINDOW w AS (PARTITION BY h.id ORDER BY h.version)
+                ),
+                e AS (
+                    SELECT h.*,
+                        CASE
+                            WHEN h.deleted_at IS NOT NULL THEN
+                                CASE WHEN h.vorher_deleted_at IS NULL
+                                     THEN 'zurueckgenommen' END
+                            WHEN h.nr = 1 AND h.antwort IS NULL THEN 'eingeladen'
+                            WHEN h.nr = 1 THEN 'antwort'
+                            WHEN h.antwort IS DISTINCT FROM h.vorher_antwort THEN 'antwort'
+                            WHEN h.kommentar IS DISTINCT FROM h.vorher_kommentar
+                                THEN 'kommentar'
+                        END AS art,
+                        CASE WHEN h.deleted_at IS NOT NULL
+                             THEN h.deleted_at ELSE h.updated_at END AS zeit,
+                        CASE WHEN h.deleted_at IS NOT NULL
+                             THEN h.deleted_by ELSE h.updated_by END AS durch
+                    FROM h
+                )
+                SELECT e.id, e.version, e.mitglied_id, e.art, e.antwort,
+                       e.vorher_antwort, e.kommentar, e.zeit, e.durch,
+                       m.vorname, m.nachname, u.username AS eigener_username,
+                       sm.id AS durch_mitglied_id,
+                       sm.vorname AS durch_vorname, sm.nachname AS durch_nachname
+                FROM e
+                JOIN mitglied m ON m.id = e.mitglied_id AND m.deleted_at IS NULL
+                LEFT JOIN users u ON u.id = m.user_id
+                LEFT JOIN LATERAL (
+                    SELECT m2.id, m2.vorname, m2.nachname
+                    FROM users u2
+                    JOIN mitglied m2 ON m2.user_id = u2.id AND m2.deleted_at IS NULL
+                    WHERE u2.username = e.durch
+                    ORDER BY m2.id
+                    LIMIT 1
+                ) sm ON TRUE
+                WHERE e.art IS NOT NULL
+                ORDER BY e.zeit DESC, e.id DESC, e.version DESC
+                """,
+                {"tid": termin_id},
+            )
+            ergebnis = []
+            for r in cur.fetchall():
+                selbst = r['eigener_username'] is not None and r['durch'] == r['eigener_username']
+                durch_name = None
+                if not selbst:
+                    durch_name = (f"{r['durch_vorname'] or ''} {r['durch_nachname'] or ''}".strip()
+                                  if r['durch_mitglied_id'] else r['durch'])
+                ergebnis.append({
+                    "mitglied_id": r['mitglied_id'],
+                    "name": f"{r['vorname'] or ''} {r['nachname'] or ''}".strip(),
+                    "art": r['art'],
+                    "antwort": r['antwort'],
+                    "von": r['vorher_antwort'] if r['art'] == 'antwort' else None,
+                    "kommentar": r['kommentar'] if r['art'] in ('antwort', 'kommentar') else None,
+                    "zeit": r['zeit'],
+                    "durch_selbst": selbst,
+                    "durch_mitglied_id": None if selbst else r['durch_mitglied_id'],
+                    "durch_name": durch_name,
+                })
+            return ergebnis

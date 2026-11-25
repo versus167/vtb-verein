@@ -309,3 +309,103 @@ def test_konto_ohne_mitglied_bleibt_bei_null(db):
                     "'mitglied',1,'t','t') RETURNING id")
         uid = cur.fetchone()['id']
     assert _offen(db, uid) == 0
+
+
+# ------------------------------------------------------- Verlauf / seit (#215)
+def _set_zeit(db, zusage_id, version, zeit):
+    """Setzt den Zeitstempel einer History-Version (die Aufrufe laufen sonst
+    in derselben Sekunde, und die Reihenfolge wäre nur noch über die id stabil)."""
+    with db.cursor() as cur:
+        cur.execute("UPDATE termin_zusage_history SET updated_at=%s, "
+                    "deleted_at = CASE WHEN deleted_at IS NULL THEN NULL ELSE %s::timestamptz END "
+                    "WHERE id=%s AND version=%s", (zeit, zeit, zusage_id, version))
+
+
+def test_verlauf_leitet_ereignisse_ab(db):
+    mid = _make_mannschaft(db)
+    _u1, m1 = _make_kader_mitglied(db, mid, username="zusagetester1", nachname="Eins")
+    _u2, m2 = _make_kader_mitglied(db, mid, rolle="uebungsleiter",
+                                   username="zusagetester2", nachname="Trainer")
+    t = _termin(db, mid)
+
+    z = db.termin_zusagen.set_antwort(t.id, m1, 'zu', None, 'zusagetester1')           # v1
+    db.termin_zusagen.set_antwort(t.id, m1, 'zu', None, 'zusagetester1')               # v2 No-Op
+    db.termin_zusagen.set_antwort(t.id, m1, 'zu', 'komme später', 'zusagetester1')     # v3 Kommentar
+    db.termin_zusagen.set_antwort(t.id, m1, 'ab', 'Knie', 'zusagetester2')             # v4 Wechsel durch Trainer
+    db.termin_zusagen.remove_antwort(t.id, m1, 'zusagetester1')                        # v5 Rücknahme
+    z2 = db.termin_zusagen.set_antwort(t.id, m1, 'vielleicht', None, 'unbekannt')      # neue Zeile
+    for v, zeit in enumerate(['2026-11-01 10:00+00', '2026-11-02 10:00+00',
+                              '2026-11-03 10:00+00', '2026-11-04 10:00+00',
+                              '2026-11-05 10:00+00'], start=1):
+        _set_zeit(db, z.id, v, zeit)
+    _set_zeit(db, z2.id, 1, '2026-11-06 10:00+00')
+
+    verlauf = db.termin_zusagen.verlauf(t.id)
+    arten = [(e['art'], e['von'], e['antwort']) for e in verlauf]
+    # neueste zuerst; das No-Op-Setzen (v2) taucht nicht auf
+    assert arten == [
+        ('antwort', None, 'vielleicht'),     # nach Rücknahme: neue Zeile, ohne „von"
+        ('zurueckgenommen', None, 'ab'),
+        ('antwort', 'zu', 'ab'),
+        ('kommentar', None, 'zu'),
+        ('antwort', None, 'zu'),
+    ]
+    neu, rueck, wechsel, komm, erst = verlauf
+    assert erst['durch_selbst'] and erst['durch_name'] is None
+    assert komm['kommentar'] == 'komme später'
+    assert wechsel['kommentar'] == 'Knie'
+    assert not wechsel['durch_selbst']
+    assert wechsel['durch_mitglied_id'] == m2
+    assert wechsel['durch_name'] == 'Zusage Trainer'
+    assert rueck['durch_selbst'] and rueck['kommentar'] is None
+    assert rueck['zeit'].isoformat().startswith('2026-11-05')
+    # Eintragender ohne verknüpftes Mitglied: Benutzername als Rückfall
+    assert neu['durch_name'] == 'unbekannt' and neu['durch_mitglied_id'] is None
+    assert all(e['mitglied_id'] == m1 and e['name'] == 'Zusage Eins' for e in verlauf)
+
+
+def test_verlauf_einladung_und_ruecknahme(db):
+    mid = _make_mannschaft(db)
+    gast_mid = _make_mannschaft(db, name="Andere")
+    _ug, gast = _make_kader_mitglied(db, gast_mid, username="zusagetester5", nachname="Gast")
+    t = _termin(db, mid)
+    assert db.termin_zusagen.lade_ein(t.id, gast, 'zusagetester9')
+    db.termin_zusagen.remove_antwort(t.id, gast, 'zusagetester9')
+
+    verlauf = db.termin_zusagen.verlauf(t.id)
+    assert {(e['art'], e['antwort']) for e in verlauf} == {
+        ('eingeladen', None), ('zurueckgenommen', None)}
+
+
+def test_verlauf_nur_dieser_termin(db):
+    mid = _make_mannschaft(db)
+    _u1, m1 = _make_kader_mitglied(db, mid)
+    t = _termin(db, mid)
+    andere = _termin(db, mid, beginn=f"{NEXTWEEK}T19:00")
+    db.termin_zusagen.set_antwort(andere.id, m1, 'zu', None, 'zusagetester')
+    assert db.termin_zusagen.verlauf(t.id) == []
+
+
+def test_antwort_seit_zaehlt_ab_letztem_wechsel(db):
+    mid = _make_mannschaft(db)
+    _u1, m1 = _make_kader_mitglied(db, mid, username="zusagetester1", nachname="Eins")
+    _u2, m2 = _make_kader_mitglied(db, mid, username="zusagetester2", nachname="Zwei")
+    gast_mid = _make_mannschaft(db, name="Andere")
+    _ug, gast = _make_kader_mitglied(db, gast_mid, username="zusagetester5", nachname="Gast")
+    t = _termin(db, mid)
+
+    z = db.termin_zusagen.set_antwort(t.id, m1, 'zu', None, 't')            # v1
+    db.termin_zusagen.set_antwort(t.id, m1, 'ab', None, 't')                # v2 Wechsel
+    db.termin_zusagen.set_antwort(t.id, m1, 'ab', 'Grund', 't')             # v3 nur Kommentar
+    _set_zeit(db, z.id, 1, '2026-11-01 10:00+00')
+    _set_zeit(db, z.id, 2, '2026-11-02 10:00+00')
+    _set_zeit(db, z.id, 3, '2026-11-03 10:00+00')
+    zg = db.termin_zusagen.set_antwort(t.id, gast, 'zu', None, 't')
+    _set_zeit(db, zg.id, 1, '2026-11-04 10:00+00')
+
+    by_id = {k['mitglied_id']: k for k in db.termin_zusagen.list_kader_with_zusage(t.id)}
+    # Seit dem Wechsel auf „ab" – die Kommentar-Änderung schiebt das nicht vor
+    assert by_id[m1]['antwort_seit'].isoformat().startswith('2026-11-02')
+    assert by_id[m2]['antwort_seit'] is None                                # offen
+    gaeste = db.termin_zusagen.list_gaeste_with_zusage(t.id)
+    assert gaeste[0]['antwort_seit'].isoformat().startswith('2026-11-04')
