@@ -29,6 +29,17 @@ export function formatDateTime(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
   return v || placeholder
 }
 
+// Zeitstempel (UTC) → knappe lokale Angabe mit Wochentag, ohne Jahr, z. B.
+// "Mo., 24.11., 21:14". Für Listen rund um einen Termin, in denen das Jahr
+// ohnehin klar ist und jede Zeichenbreite zählt (Zu-/Absage-Verlauf, #215).
+export function formatDateTimeKurz(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
+  const d = parseTimestamp(v)
+  if (!d) return v || placeholder
+  return d.toLocaleString('de-DE', {
+    weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 // Reine Datumsangabe "YYYY-MM-DD[…]" → "DD.MM.YYYY", ohne Zeitzonen-Umrechnung.
 export function formatDate(v, { placeholder = DEFAULT_PLACEHOLDER } = {}) {
   if (!v) return placeholder

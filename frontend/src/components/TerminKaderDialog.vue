@@ -7,15 +7,21 @@
       :style="$q.screen.lt.md ? '' : 'min-width: 380px; max-width: 92vw'">
       <q-card-section class="row items-center q-pb-none"
         :class="$q.screen.lt.md ? 'col-auto' : ''">
-        <div class="text-h6">Kader &amp; Antworten</div>
+        <div class="text-h6">{{ zeigeVerlauf ? 'Verlauf' : 'Kader & Antworten' }}</div>
         <q-space />
+        <!-- Wer hat wann zu-/abgesagt (#215) – umschalten statt eigener Dialog,
+             damit man ohne Umweg zwischen Stand und Verlauf wechselt -->
+        <q-btn flat round dense :icon="zeigeVerlauf ? 'groups' : 'history'"
+          class="q-mr-xs" @click="verlaufUmschalten">
+          <q-tooltip>{{ zeigeVerlauf ? 'Zurück zum Kader' : 'Verlauf: wer hat wann geantwortet' }}</q-tooltip>
+        </q-btn>
         <q-btn flat round dense icon="close" v-close-popup />
       </q-card-section>
 
       <!-- Einladen und Gast eintragen: feststehend unter dem Titel, nur für Verwalter.
            Zwei verschiedene Dinge – einladen heißt „bitte antworten", eintragen heißt
            „sagt zu" (etwa für den Aushilfsspieler, der schon zugesagt hat). -->
-      <q-card-section v-if="darfVerwalten" class="q-pb-none"
+      <q-card-section v-if="darfVerwalten && !zeigeVerlauf" class="q-pb-none"
         :class="$q.screen.lt.md ? 'col-auto' : ''">
         <q-select v-model="einladungAuswahl" :options="kandidatenGefiltert"
           multiple use-chips use-input input-debounce="0" outlined dense
@@ -69,47 +75,82 @@
       <q-card-section style="min-height: 120px" class="relative-position"
         :class="$q.screen.lt.md ? 'col scroll' : 'kader-dialog__liste'">
         <q-inner-loading :showing="loading" />
-        <div v-if="!loading && kader.length === 0" class="text-grey text-center q-py-md">
-          Kein Kader hinterlegt.
-        </div>
-        <div v-for="grp in gruppen" :key="grp.key" class="q-mb-md">
-          <div class="text-subtitle2 text-weight-bold text-grey-8 q-mb-xs">
-            <q-icon :name="grp.icon" :color="grp.color" size="18px" class="q-mr-xs" />{{ grp.label }} ({{ grp.leute.length }})
+
+        <!-- Verlauf (#215): neueste Änderung oben -->
+        <template v-if="zeigeVerlauf">
+          <div v-if="!loading && verlauf.length === 0" class="text-grey text-center q-py-md">
+            Noch keine Zu- oder Absagen.
           </div>
           <q-list separator>
-            <q-item v-for="p in grp.leute" :key="p.mitglied_id" class="q-px-none">
+            <q-item v-for="(e, i) in verlauf" :key="i" class="q-px-none">
+              <q-item-section avatar class="kader-verlauf__icon">
+                <span :class="verlaufIconKlasse(e)">
+                  <q-icon :name="verlaufIcon(e)" size="22px" />
+                </span>
+              </q-item-section>
               <q-item-section>
                 <q-item-label class="kader-dialog__name">
-                  {{ p.name }}
-                  <q-badge v-if="p.gast" color="vtb-gelb" text-color="primary"
-                    class="q-ml-xs text-weight-bold">Gast</q-badge>
+                  {{ e.name }} <span class="kader-verlauf__was">{{ verlaufText(e) }}</span>
                 </q-item-label>
-                <!-- Spitzname oben, bürgerlicher Name in der Zeile, die es
-                     ohnehin gibt (#194) — kostet keine zusätzliche Höhe. -->
-                <q-item-label v-if="p.voller_name || p.rollen" caption class="kader-dialog__rolle">
-                  <span v-if="p.voller_name">{{ p.voller_name }}</span>
-                  <span v-if="p.voller_name && p.rollen"> · </span>
-                  <span v-if="p.rollen">{{ p.rollen }}</span>
+                <q-item-label caption class="kader-dialog__rolle">
+                  {{ formatDateTimeKurz(e.zeit) }}<span v-if="!e.durch_selbst && e.durch_name"> · durch {{ e.durch_name }}</span>
                 </q-item-label>
-                <q-item-label v-if="p.kommentar" caption class="kader-dialog__rolle text-italic">
-                  „{{ p.kommentar }}"
+                <q-item-label v-if="e.kommentar" caption class="kader-dialog__rolle text-italic">
+                  „{{ e.kommentar }}"
                 </q-item-label>
-              </q-item-section>
-              <q-item-section v-if="darfVerwalten" side>
-                <div class="row no-wrap q-gutter-xs">
-                  <!-- Gesetzte Antwort farbig, die übrigen gedimmt — so sieht man
-                       in der Liste sofort, was gewählt ist (#151) -->
-                  <q-btn v-for="a in ANTWORTEN" :key="a.key" flat dense round :size="btnSize"
-                    :icon="a.icon"
-                    :class="p.antwort === a.key ? `kader-antwort--${a.key}` : 'kader-antwort--aus'"
-                    :disable="busy" @click="setFuer(p, a.key)">
-                    <q-tooltip>{{ a.label }}</q-tooltip>
-                  </q-btn>
-                </div>
               </q-item-section>
             </q-item>
           </q-list>
-        </div>
+        </template>
+
+        <template v-else>
+          <div v-if="!loading && kader.length === 0" class="text-grey text-center q-py-md">
+            Kein Kader hinterlegt.
+          </div>
+          <div v-for="grp in gruppen" :key="grp.key" class="q-mb-md">
+            <div class="text-subtitle2 text-weight-bold text-grey-8 q-mb-xs">
+              <q-icon :name="grp.icon" :color="grp.color" size="18px" class="q-mr-xs" />{{ grp.label }} ({{ grp.leute.length }})
+            </div>
+            <q-list separator>
+              <q-item v-for="p in grp.leute" :key="p.mitglied_id" class="q-px-none">
+                <q-item-section>
+                  <q-item-label class="kader-dialog__name">
+                    {{ p.name }}
+                    <q-badge v-if="p.gast" color="vtb-gelb" text-color="primary"
+                      class="q-ml-xs text-weight-bold">Gast</q-badge>
+                  </q-item-label>
+                  <!-- Spitzname oben, bürgerlicher Name in der Zeile, die es
+                       ohnehin gibt (#194) — kostet keine zusätzliche Höhe. -->
+                  <q-item-label v-if="p.voller_name || p.rollen" caption class="kader-dialog__rolle">
+                    <span v-if="p.voller_name">{{ p.voller_name }}</span>
+                    <span v-if="p.voller_name && p.rollen"> · </span>
+                    <span v-if="p.rollen">{{ p.rollen }}</span>
+                  </q-item-label>
+                  <q-item-label v-if="p.kommentar" caption class="kader-dialog__rolle text-italic">
+                    „{{ p.kommentar }}"
+                  </q-item-label>
+                  <!-- Seit wann gilt die Antwort (#215) – wer kurzfristig umschwenkt,
+                       fällt so auch ohne Blick in den Verlauf auf -->
+                  <q-item-label v-if="p.antwort_seit" caption class="kader-dialog__seit">
+                    {{ p.antwort ? 'seit' : 'eingeladen' }} {{ formatDateTimeKurz(p.antwort_seit) }}
+                  </q-item-label>
+                </q-item-section>
+                <q-item-section v-if="darfVerwalten" side>
+                  <div class="row no-wrap q-gutter-xs">
+                    <!-- Gesetzte Antwort farbig, die übrigen gedimmt — so sieht man
+                         in der Liste sofort, was gewählt ist (#151) -->
+                    <q-btn v-for="a in ANTWORTEN" :key="a.key" flat dense round :size="btnSize"
+                      :icon="a.icon"
+                      :class="p.antwort === a.key ? `kader-antwort--${a.key}` : 'kader-antwort--aus'"
+                      :disable="busy" @click="setFuer(p, a.key)">
+                      <q-tooltip>{{ a.label }}</q-tooltip>
+                    </q-btn>
+                  </div>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </div>
+        </template>
       </q-card-section>
     </q-card>
   </q-dialog>
@@ -121,6 +162,7 @@ import { useQuasar } from 'quasar'
 import { api } from 'src/boot/axios'
 import { ANTWORTEN } from 'src/composables/useTermine'
 import { useAufgabenStore } from 'src/stores/aufgaben'
+import { formatDateTimeKurz } from 'src/utils/datetime'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -169,6 +211,59 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// ── Verlauf: wer hat wann zu-/abgesagt (#215) ─────────────────
+// Erst beim Umschalten geladen – die meisten öffnen den Dialog nur für den Stand.
+const zeigeVerlauf = ref(false)
+const verlauf = ref([])
+
+const ANTWORT_LABEL = Object.fromEntries(ANTWORTEN.map(a => [a.key, a.label]))
+const ANTWORT_ICON = Object.fromEntries(ANTWORTEN.map(a => [a.key, a.icon]))
+
+async function loadVerlauf() {
+  loading.value = true
+  try {
+    const { data } = await api.get(`/api/termine/${props.terminId}/zusagen-verlauf`)
+    verlauf.value = data
+  } catch {
+    $q.notify({ type: 'negative', message: 'Verlauf konnte nicht geladen werden' })
+    verlauf.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+function verlaufUmschalten() {
+  zeigeVerlauf.value = !zeigeVerlauf.value
+  if (zeigeVerlauf.value) loadVerlauf()
+}
+
+function verlaufText(e) {
+  switch (e.art) {
+    case 'eingeladen': return 'eingeladen'
+    case 'kommentar': return 'Kommentar geändert'
+    case 'zurueckgenommen':
+      return e.antwort ? `${ANTWORT_LABEL[e.antwort]} zurückgenommen` : 'Einladung zurückgenommen'
+    default:
+      return e.von
+        ? `${ANTWORT_LABEL[e.von]} → ${ANTWORT_LABEL[e.antwort]}`
+        : ANTWORT_LABEL[e.antwort]
+  }
+}
+
+function verlaufIcon(e) {
+  return {
+    eingeladen: 'mail',
+    kommentar: 'chat_bubble_outline',
+    zurueckgenommen: 'undo',
+  }[e.art] ?? ANTWORT_ICON[e.antwort]
+}
+
+// Antworten in ihren Statusfarben (dieselben Klassen wie die Daumen der
+// Kaderliste), alles andere gedimmt
+function verlaufIconKlasse(e) {
+  return e.art === 'antwort' ? `kader-antwort--${e.antwort}` : 'kader-antwort--aus'
 }
 
 // ── Gäste einladen/eintragen (nur Verwalter) ──────────────────
@@ -242,6 +337,8 @@ async function einladen() {
 }
 
 function onShow() {
+  zeigeVerlauf.value = false
+  verlauf.value = []
   einladungAuswahl.value = []
   load()
   loadKandidaten()
@@ -343,6 +440,18 @@ body.vtb-theme--hell .kader-antwort {
 .kader-dialog__rolle {
   font-size: 13px;
 }
+// „seit …" (#215): Nebeninfo, eine Spur leiser als Rolle und Kommentar
+.kader-dialog__seit {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.kader-verlauf__icon {
+  min-width: 36px;
+}
+.kader-verlauf__was {
+  font-size: 14px;
+  opacity: 0.85;
+}
 // Desktop: nur die Liste scrollt, Titel + Gast-Auswahl bleiben stehen
 .kader-dialog__liste {
   max-height: 60vh;
@@ -355,6 +464,9 @@ body.vtb-theme--hell .kader-antwort {
   }
   .kader-dialog__rolle {
     font-size: 14px;
+  }
+  .kader-dialog__seit {
+    font-size: 13px;
   }
 }
 </style>
