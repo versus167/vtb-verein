@@ -699,6 +699,25 @@ def kader_mit_zusagen(termin_id: int, user: CurrentUser, db: DB):
     }
 
 
+@router.get("/{termin_id}/zusagen-verlauf")
+def zusagen_verlauf(termin_id: int, user: CurrentUser, db: DB):
+    """Wer hat wann zu-, ab- oder umgesagt (#215) – Zeitleiste zum Kader-Dialog,
+    neueste zuerst. Sichtbar für alle mit Lese-Zugriff auf den Termin (Kader und
+    Gäste), wie die aktuellen Antworten auch: Der Verlauf zeigt nur, wie es zu
+    diesem Stand kam."""
+    t = _lade_termin(db, termin_id)
+    _require_lesen_termin(db, user, t)
+    # Dieselben Spitznamen wie im Kader-Dialog (#194) – sonst stünde dort „Basti"
+    # und hier „Sebastian Müller". Auch für den, der die Antwort eingetragen hat.
+    spitznamen = db.mannschaft_spitznamen(t.mannschaft_id)
+    eintraege = db.termin_zusagen.verlauf(termin_id)
+    for e in eintraege:
+        e['name'] = spitznamen.get(e['mitglied_id'], e['name'])
+        if e['durch_mitglied_id'] in spitznamen:
+            e['durch_name'] = spitznamen[e['durch_mitglied_id']]
+    return eintraege
+
+
 @router.get("/{termin_id}/gast-kandidaten")
 def gast_kandidaten(termin_id: int, user: CurrentUser, db: DB):
     """Kandidaten fürs Eintragen/Einladen durch Verwalter: Mitglieder außerhalb des
