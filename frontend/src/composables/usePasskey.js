@@ -68,6 +68,15 @@ function meldung (err, fallback) {
   if (err?.code === 'ERROR_INVALID_DOMAIN' || err?.code === 'ERROR_INVALID_RP_ID') {
     return 'Passkeys sind für diese Adresse nicht eingerichtet. Bitte wende dich an den Vorstand.'
   }
+  // Chrome (Android) meldet so, dass die Übergabe an den Passwortmanager des
+  // Systems scheiterte. Im Live-Test lag es am Google Passwortmanager, dessen
+  // Synchronisierung in Chrome noch nicht bestätigt war.
+  if ((err?.cause?.name || err?.name) === 'NotReadableError') {
+    return 'Das Handy kam nicht an seinen Passwortmanager heran. Beim Google ' +
+      'Passwortmanager: in Chrome mit dem Google-Konto angemeldet sein und die ' +
+      'Synchronisierung bestätigen (Passwort bzw. PIN des Google-Kontos), dann ' +
+      'noch einmal versuchen. (NotReadableError)'
+  }
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string') return detail
   if (detail?.message) return detail.message
