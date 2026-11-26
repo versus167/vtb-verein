@@ -20,7 +20,10 @@ export default boot(({ app, router }) => {
       // Sonst landet ein verbrauchter Login-Link wortlos auf /login und meldet
       // eine im Browser noch gültige Sitzung obendrein lokal ab (#208).
       const anmeldung = /^\/api\/auth\/(login|magic-link\/)/.test(error.config?.url ?? '')
-      if (error.response?.status === 401 && !anmeldung) {
+      // Die Sitzungsprüfung beim Start (#216) räumt selbst auf; eine Umleitung
+      // hier liefe vor der ersten Navigation des Routers.
+      const still = error.config?.ohneAnmeldeUmleitung === true
+      if (error.response?.status === 401 && !anmeldung && !still) {
         const auth = useAuthStore(pinia)
         auth.logout()
         // Abgelaufene Sitzung auf einer App-Seite (etwa per Link aus einer Mail

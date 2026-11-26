@@ -51,6 +51,22 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('vtb_user', JSON.stringify(this.user))
     },
 
+    // Beim App-Start (#216): fragt IMMER den Server, auch ohne lokalen Cache.
+    // Safari löscht localStorage nach 7 Tagen ohne Besuch (ITP), das HttpOnly-
+    // Cookie aber nicht – ohne diese Prüfung stand man dann vor dem Login,
+    // obwohl die Sitzung noch galt. 401 → nur lokal abmelden, ohne Umleitung:
+    // Die erledigt der Router-Guard bei der ersten Navigation (samt Ziel-Merken).
+    // Andere Fehler (offline, 5xx) lassen den Cache stehen wie bisher.
+    async pruefeSitzung() {
+      try {
+        const { data } = await api.get('/api/auth/me', { ohneAnmeldeUmleitung: true })
+        this.user = data
+        localStorage.setItem('vtb_user', JSON.stringify(this.user))
+      } catch (error) {
+        if (error.response?.status === 401) this.logout()
+      }
+    },
+
     logout() {
       this.user = null
       localStorage.removeItem('vtb_user')
