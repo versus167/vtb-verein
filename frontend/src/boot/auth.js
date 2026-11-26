@@ -45,12 +45,9 @@ export default boot(async ({ router }) => {
     }).catch(() => {})
   })
 
-  // Permissions nach Guard-Registrierung fresh laden
-  if (auth.isAuthenticated) {
-    try {
-      await auth.loadMe()
-    } catch {
-      // 401 wird vom Axios-Interceptor behandelt
-    }
-  }
+  // Sitzung + Permissions nach Guard-Registrierung frisch vom Server – auch ohne
+  // lokalen Cache, denn das Cookie kann den localStorage überleben (#216).
+  // Quasar navigiert erst nach den Boot-Dateien, der Guard sieht also schon das
+  // Ergebnis.
+  await auth.pruefeSitzung()
 })
