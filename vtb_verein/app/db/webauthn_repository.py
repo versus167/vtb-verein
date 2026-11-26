@@ -122,3 +122,15 @@ class WebAuthnRepository(BaseRepository):
                 (revoked_by, cred_id, user_id),
             )
             return cur.rowcount == 1
+
+    def widerrufen_alle_fuer_user(self, user_id: int, revoked_by: str) -> int:
+        """Alle aktiven Passkeys eines Kontos widerrufen (z. B. Handy gestohlen –
+        ein synchronisierter Passkey liegt auch auf den anderen Geräten)."""
+        with self.cursor() as cur:
+            cur.execute(
+                "UPDATE webauthn_credential SET revoked_at = CURRENT_TIMESTAMP, "
+                "revoked_by = %s, version = version + 1 "
+                "WHERE user_id = %s AND revoked_at IS NULL",
+                (revoked_by, user_id),
+            )
+            return cur.rowcount

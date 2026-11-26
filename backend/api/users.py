@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from typing import Optional
 from app.models.permission import Permission
@@ -6,6 +6,8 @@ from app.services.user_service import UserService
 from ..core.deps import CurrentUser, DB
 from ..core.authz import authorize_permission_delegation, authorize_role_assignment
 from ..core.validation import mailadresse_or_422
+from .auth import _log_access
+from .passkeys import _info as _passkey_info
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -480,3 +482,43 @@ def set_permissions(user_id: int, data: PermissionsUpdate, user: CurrentUser, db
         raise HTTPException(status_code=422, detail="grants/denies oder permissions erforderlich")
 
     return _permissions_payload(target, db)
+
+
+# --- Passkeys eines Kontos (Admin-Sicht) ---
+# Für den Notfall „Handy gestohlen/verloren": Wer Konten verwaltet, sieht die Passkeys
+# eines Kontos und kann sie widerrufen. Gleiches Recht wie „Passwort setzen" – beides
+# entscheidet darüber, wie man in ein fremdes Konto hineinkommt. Das Mitglied selbst
+# verwaltet seine Passkeys im Profil (backend/api/passkeys.py).
+
+def _passkey_ziel(user_id: int, user, db):
+    _require_permissions(user)
+    target = db.get_user_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Benutzer nicht gefunden")
+    return target
+
+
+@router.get("/{user_id}/passkeys")
+def list_user_passkeys(user_id: int, user: CurrentUser, db: DB):
+    target = _passkey_ziel(user_id, user, db)
+    return [_passkey_info(r).model_dump() for r in db.webauthn.list_active_for_user(target.id)]
+
+
+@router.delete("/{user_id}/passkeys/{passkey_id}")
+def revoke_user_passkey(user_id: int, passkey_id: int, request: Request, user: CurrentUser, db: DB):
+    target = _passkey_ziel(user_id, user, db)
+    if not db.webauthn.widerrufen(passkey_id, target.id, revoked_by=user.username):
+        raise HTTPException(status_code=404, detail="Passkey nicht gefunden")
+    _log_access(db, request, "passkey_revoked", user_id=target.id, username=target.username,
+                detail=f"{passkey_id} · durch {user.username}")
+    return {"ok": True}
+
+
+@router.delete("/{user_id}/passkeys")
+def revoke_all_user_passkeys(user_id: int, request: Request, user: CurrentUser, db: DB):
+    target = _passkey_ziel(user_id, user, db)
+    anzahl = db.webauthn.widerrufen_alle_fuer_user(target.id, revoked_by=user.username)
+    if anzahl:
+        _log_access(db, request, "passkey_revoked", user_id=target.id, username=target.username,
+                    detail=f"alle ({anzahl}) · durch {user.username}")
+    return {"ok": True, "widerrufen": anzahl}
