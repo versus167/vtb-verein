@@ -232,3 +232,17 @@ def test_prune_trifft_verbrauchte_challenges(db):
     db.webauthn.challenge_verbrauchen(secrets.token_bytes(32), 'login', None, _bis())
     assert _faellig(db, 'webauthn_challenge') == vorher + 1
     assert _faellig(db, 'webauthn_challenge', 30) < vorher + 1
+
+
+def test_alle_passkeys_eines_kontos_widerrufen(db, user_id):
+    a, b = _cred(db, user_id), _cred(db, user_id)
+    fremd = _neuer_user(db)
+    c = _cred(db, fremd)
+    assert db.webauthn.widerrufen_alle_fuer_user(user_id, 'vorstand') == 2
+    assert db.webauthn.list_active_for_user(user_id) == []
+    assert [r['id'] for r in db.webauthn.list_active_for_user(fremd)] == [c['id']]
+    with db.cursor() as cur:
+        cur.execute("SELECT id, max(version) v FROM webauthn_credential_history "
+                    "WHERE id IN (%s, %s) GROUP BY id", (a['id'], b['id']))
+        assert {r['v'] for r in cur.fetchall()} == {2}
+    assert db.webauthn.widerrufen_alle_fuer_user(user_id, 'vorstand') == 0
