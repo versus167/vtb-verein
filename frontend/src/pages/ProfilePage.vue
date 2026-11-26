@@ -326,6 +326,65 @@
           />
         </ProfilPanel>
 
+        <!-- Passkeys: Anmeldung per Fingerabdruck/Face ID. Einrichten nur am Handy;
+             die Liste erscheint überall, damit man einen Passkey auch vom Laptop
+             aus entfernen kann (z. B. nach Handy-Verlust). -->
+        <ProfilPanel
+          v-if="passkeyGeraet || passkeys.length"
+          icon="fingerprint"
+          titel="Anmeldung per Fingerabdruck"
+          :info="passkeyInfo"
+        >
+          <div class="text-caption text-grey-7 q-mb-md">
+            Melde dich am Handy per Fingerabdruck oder Gesichtserkennung an – ohne Passwort
+            und ohne Login-Mail. Dein Fingerabdruck bleibt dabei auf dem Handy; die App
+            bekommt ihn nie zu sehen.
+          </div>
+
+          <q-btn
+            v-if="passkeyGeraet"
+            class="full-width q-mb-md"
+            label="Dieses Handy einrichten"
+            icon="add"
+            color="primary"
+            unelevated
+            no-caps
+            :loading="passkeyEinrichtenLaeuft"
+            @click="onPasskeyEinrichten"
+          />
+
+          <q-list v-if="passkeys.length" separator>
+            <q-item v-for="p in passkeys" :key="p.id" class="q-px-none">
+              <q-item-section avatar>
+                <q-icon name="fingerprint" size="sm" color="primary" />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>{{ p.name }}</q-item-label>
+                <q-item-label caption>
+                  Eingerichtet {{ fmt(p.created_at) }}<template v-if="p.last_used_at"> · zuletzt genutzt {{ fmt(p.last_used_at) }}</template>
+                </q-item-label>
+                <q-item-label v-if="p.synchronisiert" caption>
+                  Im Schlüsselbund gesichert – auch auf deinen anderen Geräten nutzbar
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <div class="row no-wrap">
+                  <q-btn flat round dense icon="edit" color="grey-7" aria-label="Umbenennen" @click="onPasskeyUmbenennen(p)">
+                    <q-tooltip>Umbenennen</q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    flat round dense icon="delete" color="negative" aria-label="Entfernen"
+                    :loading="passkeyEntfernenId === p.id"
+                    @click="onPasskeyEntfernen(p)"
+                  >
+                    <q-tooltip>Entfernen</q-tooltip>
+                  </q-btn>
+                </div>
+              </q-item-section>
+            </q-item>
+          </q-list>
+        </ProfilPanel>
+
         <!-- Meine Geräte / angemeldete Sessions (Ticket #24) -->
         <ProfilPanel icon="devices" titel="Meine Geräte" :info="geraeteInfo">
           <div class="text-caption text-grey-7 q-mb-md">
@@ -508,6 +567,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { formatDateTime } from 'src/utils/datetime'
 import ProfilPanel from 'components/ProfilPanel.vue'
+import { passkeyEinrichten, passkeyMoeglich } from 'src/composables/usePasskey'
 import KontakteEditor from 'components/KontakteEditor.vue'
 
 const $q = useQuasar()
@@ -958,10 +1018,96 @@ function onRevokeOthers() {
   })
 }
 
-usePageRefresh(() => Promise.all([load(), loadSessions()]))
-onMounted(() => {
+// ---- Passkeys (Fingerabdruck/Face ID) ----
+const passkeys = ref([])
+const passkeyGeraet = ref(false)
+const passkeyEinrichtenLaeuft = ref(false)
+const passkeyEntfernenId = ref(null)
+
+const passkeyInfo = computed(() => {
+  const n = passkeys.value.length
+  if (!n) return 'Noch nicht eingerichtet'
+  return n === 1 ? '1 Passkey eingerichtet' : `${n} Passkeys eingerichtet`
+})
+
+async function loadPasskeys() {
+  try {
+    const { data } = await api.get('/api/auth/passkey')
+    passkeys.value = data
+  } catch { /* Anzeige optional */ }
+}
+
+async function onPasskeyEinrichten() {
+  passkeyEinrichtenLaeuft.value = true
+  try {
+    await passkeyEinrichten()
+    await loadPasskeys()
+    $q.notify({ type: 'positive', message: 'Fertig – ab jetzt kannst du dich hier per Fingerabdruck anmelden.' })
+  } catch (err) {
+    if (err.code === 'neu_anmelden') {
+      // Einrichten geht nur kurz nach einer echten Anmeldung (Schutz vor einer
+      // erwischten offenen Sitzung) – also einmal ab- und wieder anmelden.
+      $q.dialog({
+        title: 'Bitte kurz neu anmelden',
+        message: 'Zur Sicherheit geht das Einrichten nur direkt nach dem Anmelden. ' +
+          'Melde dich einmal ab und wieder an (Passwort, Login-Link oder Code) und ' +
+          'richte das Handy dann gleich hier ein.',
+        ok: { label: 'Jetzt abmelden', color: 'primary', noCaps: true },
+        cancel: { label: 'Später', flat: true, noCaps: true },
+      }).onOk(async () => {
+        await auth.logoutServer()
+        router.push({ name: 'login' })
+      })
+    } else if (!err.abgebrochen) {
+      $q.notify({ type: 'negative', message: err.message || 'Einrichten hat nicht geklappt.' })
+    }
+  } finally {
+    passkeyEinrichtenLaeuft.value = false
+  }
+}
+
+function onPasskeyUmbenennen(p) {
+  $q.dialog({
+    title: 'Passkey umbenennen',
+    prompt: { model: p.name, type: 'text', maxlength: 60, isValid: (v) => !!v?.trim() },
+    cancel: true,
+  }).onOk(async (name) => {
+    try {
+      await api.patch(`/api/auth/passkey/${p.id}`, { name: name.trim() })
+      await loadPasskeys()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Umbenennen fehlgeschlagen' })
+    }
+  })
+}
+
+function onPasskeyEntfernen(p) {
+  $q.dialog({
+    title: 'Passkey entfernen?',
+    message: `„${p.name}" kann sich danach nicht mehr per Fingerabdruck anmelden. ` +
+      'Im Schlüsselbund des Handys kannst du den Eintrag anschließend auch löschen.',
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    passkeyEntfernenId.value = p.id
+    try {
+      await api.delete(`/api/auth/passkey/${p.id}`)
+      await loadPasskeys()
+      $q.notify({ type: 'positive', message: 'Passkey entfernt' })
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entfernen fehlgeschlagen' })
+    } finally {
+      passkeyEntfernenId.value = null
+    }
+  })
+}
+
+usePageRefresh(() => Promise.all([load(), loadSessions(), loadPasskeys()]))
+onMounted(async () => {
   load()
   loadSessions()
+  loadPasskeys()
+  passkeyGeraet.value = await passkeyMoeglich()
 })
 </script>
 
