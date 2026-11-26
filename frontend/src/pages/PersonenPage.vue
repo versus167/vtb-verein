@@ -532,6 +532,45 @@
         </q-card-section>
 
         <q-separator />
+        <!-- Passkeys (Fingerabdruck/Face ID): für den Notfall „Handy verloren/gestohlen".
+             Einrichten kann nur das Mitglied selbst im Profil – hier nur ansehen/entfernen. -->
+        <q-card-section class="q-gutter-xs">
+          <div class="text-subtitle2">Anmeldung per Fingerabdruck</div>
+          <div class="text-caption text-grey-7">
+            Ist ein Handy verloren oder gestohlen, hier den Passkey entfernen. Ein im Google-Konto
+            bzw. iCloud-Schlüsselbund gesicherter Passkey gilt auch auf den anderen Geräten des
+            Mitglieds. Schon angemeldete Sitzungen beendet erst das Deaktivieren des Accounts.
+          </div>
+          <div v-if="passkeyLaden" class="text-caption text-grey-7">wird geladen …</div>
+          <div v-else-if="!passkeys.length" class="text-caption text-grey-7">
+            <q-icon name="fingerprint" size="xs" class="q-mr-xs" />Keine Passkeys eingerichtet.
+          </div>
+          <q-list v-else dense separator>
+            <q-item v-for="pk in passkeys" :key="pk.id" class="q-px-none">
+              <q-item-section avatar>
+                <q-icon name="fingerprint" color="primary" />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>{{ pk.name }}</q-item-label>
+                <q-item-label caption>
+                  Eingerichtet {{ formatDateTime(pk.created_at) }}<template v-if="pk.last_used_at"> · zuletzt genutzt {{ formatDateTime(pk.last_used_at) }}</template>
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side>
+                <q-btn flat round dense icon="delete" color="negative" aria-label="Passkey entfernen"
+                  :loading="passkeyEntfernenId === pk.id" @click="onPasskeyEntfernen(pk)">
+                  <q-tooltip>Passkey entfernen</q-tooltip>
+                </q-btn>
+              </q-item-section>
+            </q-item>
+          </q-list>
+          <div v-if="passkeys.length > 1" class="row justify-end">
+            <q-btn label="Alle entfernen" icon="delete_sweep" color="negative" outline dense size="sm"
+              :loading="passkeyAlleLaeuft" @click="onPasskeysAlleEntfernen" />
+          </div>
+        </q-card-section>
+
+        <q-separator />
         <q-card-actions align="right">
           <q-btn flat label="Abbrechen" v-close-popup />
           <q-btn label="Speichern" color="primary" unelevated :loading="editUserSaving" @click="onSaveUser" />
@@ -1253,7 +1292,67 @@ function openEditUserDialog(row) {
   pwForm.value = { pw1: '', pw2: '' }
   pwShow.value = false
   pwError.value = ''
+  passkeys.value = []
   editUserOpen.value = true
+  ladePasskeys()
+}
+
+// Passkeys des Accounts (im Account-Dialog) – ansehen und entfernen
+const passkeys           = ref([])
+const passkeyLaden       = ref(false)
+const passkeyEntfernenId = ref(null)
+const passkeyAlleLaeuft  = ref(false)
+
+async function ladePasskeys() {
+  const id = editingUserId.value
+  passkeyLaden.value = true
+  try {
+    const { data } = await api.get(`/api/users/${id}/passkeys`)
+    if (id === editingUserId.value) passkeys.value = data
+  } catch { /* Anzeige optional – Abschnitt zeigt dann „keine" */ } finally {
+    passkeyLaden.value = false
+  }
+}
+
+function onPasskeyEntfernen(pk) {
+  $q.dialog({
+    title: 'Passkey entfernen?',
+    message: `„${pk.name}" von ${editUserForm.value.username} kann sich danach nicht mehr per Fingerabdruck anmelden.`,
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    passkeyEntfernenId.value = pk.id
+    try {
+      await api.delete(`/api/users/${editingUserId.value}/passkeys/${pk.id}`)
+      $q.notify({ type: 'positive', message: 'Passkey entfernt' })
+      await ladePasskeys()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entfernen fehlgeschlagen' })
+    } finally {
+      passkeyEntfernenId.value = null
+    }
+  })
+}
+
+function onPasskeysAlleEntfernen() {
+  $q.dialog({
+    title: 'Alle Passkeys entfernen?',
+    message: `${editUserForm.value.username} kann sich danach auf keinem Gerät mehr per ` +
+      'Fingerabdruck anmelden, bis neu eingerichtet wird.',
+    cancel: true,
+    persistent: true,
+  }).onOk(async () => {
+    passkeyAlleLaeuft.value = true
+    try {
+      const { data } = await api.delete(`/api/users/${editingUserId.value}/passkeys`)
+      $q.notify({ type: 'positive', message: `${data.widerrufen} Passkey(s) entfernt` })
+      await ladePasskeys()
+    } catch (e) {
+      $q.notify({ type: 'negative', message: e.response?.data?.detail || 'Entfernen fehlgeschlagen' })
+    } finally {
+      passkeyAlleLaeuft.value = false
+    }
+  })
 }
 
 async function onSetPassword() {
