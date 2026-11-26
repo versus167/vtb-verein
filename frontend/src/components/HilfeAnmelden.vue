@@ -4,8 +4,8 @@
        drin ist — stünde die Erklärung nur hinter dem Login, käme sie zu spät. -->
   <div class="hilfe-anmelden">
     <p>
-      Zum Anmelden gibt es <b>zwei Wege</b> — am Handy kommt ein dritter dazu. Alle führen
-      zum selben Konto, du kannst jederzeit wechseln.
+      Zum Anmelden gibt es <b>drei Wege</b>. Alle führen zum selben Konto — du kannst
+      jederzeit wechseln.
     </p>
 
     <div class="hilfe-anmelden__weg">
@@ -42,12 +42,21 @@
     </div>
 
     <div class="hilfe-anmelden__weg">
-      <div class="text-weight-bold"><q-icon name="fingerprint" size="18px" /> Fingerabdruck / Face ID (nur am Handy)</div>
+      <div class="text-weight-bold"><q-icon name="fingerprint" size="18px" /> Fingerabdruck / Face ID (Passkey)</div>
       <p>
-        Bist du einmal angemeldet, kannst du dein Handy unter
+        Bist du einmal angemeldet, kannst du dein Gerät unter
         <b>Mein Profil → Anmeldung per Fingerabdruck</b> einrichten. Danach reicht auf der
-        Anmeldeseite ein Tipp auf <i>Mit Fingerabdruck / Face ID</i> — kein Passwort, keine Mail.
-        Das klappt im Browser <b>und</b> in der installierten App.
+        Anmeldeseite ein Tipp auf <i>Mit Fingerabdruck / Face ID</i> (am Rechner:
+        <i>Mit Passkey anmelden</i>) — kein Passwort, keine Mail. Das klappt im Browser
+        <b>und</b> in der installierten App.
+      </p>
+      <p>
+        <b>Am Rechner</b> brauchst du meist nichts extra einzurichten: Ist der Passkey vom
+        Handy über deinen Passwortmanager synchronisiert (z. B. Chrome mit demselben
+        Google-Konto), steht er dort direkt zur Auswahl. Sonst bietet der Browser
+        <i>Mit Handy anmelden</i> an — QR-Code mit dem Handy scannen und dort bestätigen
+        (der Rechner braucht dafür Bluetooth). Alternativ richtest du den Rechner selbst
+        ein, mit Windows Hello oder Touch ID.
       </p>
       <p>
         Das Einrichten geht zur Sicherheit nur <b>direkt nach dem Anmelden</b> (innerhalb von
@@ -55,9 +64,9 @@
         Du bekommst danach eine Mail, dass ein Passkey eingerichtet wurde.
       </p>
       <p class="text-caption text-grey">
-        Dein Fingerabdruck bzw. dein Gesicht verlässt das Handy nie — das Handy bestätigt nur,
+        Dein Fingerabdruck bzw. dein Gesicht verlässt das Gerät nie — es bestätigt nur,
         dass du es bist. Statt Finger oder Gesicht nimmt es auch die Geräte-PIN. Jeder, der
-        dein Handy entsperren kann, kommt damit also auch in die App.
+        dein Gerät entsperren kann, kommt damit also auch in die App.
       </p>
       <p>
         <b>Einrichten klappt nicht?</b> Der Passkey landet im Passwortmanager deines Handys

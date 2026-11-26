@@ -12,9 +12,9 @@
         </q-card-section>
 
         <q-card-section>
-          <!-- Passkey (nur am Handy): Fingerabdruck/Face ID statt Passwort oder Mail.
-               Ist das Handy schon eingerichtet, ist das der Hauptweg; sonst nur ein
-               Hinweis-Knopf, weil man es erst im Profil einrichten muss. -->
+          <!-- Passkey: Fingerabdruck/Face ID (Handy) bzw. Passkey (Rechner) statt
+               Passwort oder Mail. Ist das Gerät schon eingerichtet, ist das der
+               Hauptweg; sonst nur ein Hinweis-Knopf. -->
           <div v-if="passkeyVerfuegbar" class="q-mb-md">
             <q-btn
               :unelevated="passkeyHier"
@@ -22,7 +22,7 @@
               :color="passkeyHier ? 'vtb-gelb' : 'white'"
               :text-color="passkeyHier ? 'primary' : 'white'"
               icon="fingerprint"
-              label="Mit Fingerabdruck / Face ID"
+              :label="istHandy ? 'Mit Fingerabdruck / Face ID' : 'Mit Passkey anmelden'"
               no-caps
               class="full-width login-btn text-weight-bold"
               size="lg"
@@ -31,7 +31,12 @@
               @click="onPasskeyLogin"
             />
             <div v-if="!passkeyHier" class="text-caption text-center login-hint q-mt-xs">
-              Einmal angemeldet, kannst du dein Handy unter „Mein Profil" dafür einrichten.
+              <template v-if="istHandy">
+                Einmal angemeldet, kannst du dein Handy unter „Mein Profil" dafür einrichten.
+              </template>
+              <template v-else>
+                Auch mit dem Passkey von deinem Handy – eingerichtet wird er unter „Mein Profil".
+              </template>
             </div>
             <div v-if="passkeyFehler" class="login-error text-center text-body2 q-mt-sm">
               {{ passkeyFehler }}
@@ -284,7 +289,7 @@ import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInf
 import { zurUebersicht } from 'src/router/nach-login'
 import { pruefeMailadresse } from 'src/utils/email'
 import HilfeAnmelden from 'components/HilfeAnmelden.vue'
-import { passkeyHierEingerichtet, passkeyMoeglich } from 'src/composables/usePasskey'
+import { istHandy, passkeyAnmeldenMoeglich, passkeyHierEingerichtet } from 'src/composables/usePasskey'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -352,14 +357,14 @@ onMounted(() => {
 const loading = ref(false)
 const errorMsg = ref('')
 
-// Passkey (Fingerabdruck/Face ID) – nur am Handy mit eingebautem Sensor.
+// Passkey (Fingerabdruck/Face ID bzw. Passkey vom Handy) – überall, wo der Browser WebAuthn kann.
 const passkeyVerfuegbar = ref(false)
 const passkeyHier = ref(passkeyHierEingerichtet())
 const passkeyLaeuft = ref(false)
 const passkeyFehler = ref('')
 
-onMounted(async () => {
-  passkeyVerfuegbar.value = await passkeyMoeglich()
+onMounted(() => {
+  passkeyVerfuegbar.value = passkeyAnmeldenMoeglich()
 })
 
 async function onPasskeyLogin () {
@@ -368,7 +373,8 @@ async function onPasskeyLogin () {
   passkeyLaeuft.value = true
   try {
     // Am eigenen Handy angemeldet bleiben – wer den Finger auflegen kann, hat das Gerät.
-    await auth.loginWithPasskey(true)
+    // Am Rechner (evtl. geteilt) entscheidet wie sonst der Haken „Angemeldet bleiben".
+    await auth.loginWithPasskey(istHandy || rememberMe.value)
   } catch (err) {
     passkeyHier.value = passkeyHierEingerichtet()
     if (!err.abgebrochen) passkeyFehler.value = err.message || 'Anmeldung fehlgeschlagen'
