@@ -227,23 +227,7 @@ def login(
             detail="Falscher Benutzername oder Passwort",
         )
     _log_access(db, request, "login_success", user_id=user.id, username=user.username)
-    expire = session_lifetime(remember_me)
-    sid = db.user_session_repository.create_session(
-        user_id=user.id,
-        expires_at=datetime.now(timezone.utc) + expire,
-        user_agent=request.headers.get("user-agent"),
-        ip=_client_ip(request),
-    )
-    token = create_access_token(user.id, expires_delta=expire, session_id=sid, remember=remember_me)
-    db.update_last_login(user.id)
-    set_session_cookie(response, token, max_age=int(expire.total_seconds()))
-    return SessionUser(
-        id=user.id,
-        username=user.username,
-        display_name=_klarname(db, user),
-        role=user.role,
-        permissions=list(user.permissions),
-    )
+    return _login_session(db, request, response, user, remember_me)
 
 
 class OwnPasswordChange(BaseModel):
@@ -639,7 +623,7 @@ def validate_magic_link(data: MagicLinkValidate, request: Request, response: Res
         raise HTTPException(status_code=401, detail="Benutzer nicht gefunden oder inaktiv")
 
     _log_access(db, request, "magic_link_login", user_id=user.id, username=user.username)
-    return _mail_login_session(db, request, response, user, data.remember)
+    return _login_session(db, request, response, user, data.remember)
 
 
 @router.post("/magic-link/code", response_model=SessionUser)
@@ -692,11 +676,12 @@ def validate_login_code(data: MagicLinkCode, request: Request, response: Respons
         raise fehler
 
     _log_access(db, request, "magic_code_login", user_id=user.id, username=user.username)
-    return _mail_login_session(db, request, response, user, data.remember)
+    return _login_session(db, request, response, user, data.remember)
 
 
-def _mail_login_session(db, request: Request, response: Response, user, remember: bool) -> SessionUser:
-    """Session anlegen und Cookie setzen – gemeinsam für Login-Link und Login-Code."""
+def _login_session(db, request: Request, response: Response, user, remember: bool) -> SessionUser:
+    """Session anlegen und Cookie setzen – gemeinsam für alle Login-Wege
+    (Passwort, Login-Link, Login-Code, Passkey)."""
     db.update_last_login(user.id)
     expire = session_lifetime(remember)
     sid = db.user_session_repository.create_session(

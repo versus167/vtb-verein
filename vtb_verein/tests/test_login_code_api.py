@@ -67,7 +67,7 @@ def _request():
 def session(monkeypatch):
     """Session-Anlage abklemmen – die ist beim Login-Link schon getestet."""
     angelegt = []
-    monkeypatch.setattr(api, '_mail_login_session',
+    monkeypatch.setattr(api, '_login_session',
                         lambda db, req, resp, user, remember: angelegt.append((user.id, remember)) or 'ok')
     return angelegt
 
