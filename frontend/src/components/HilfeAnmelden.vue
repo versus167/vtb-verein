@@ -59,6 +59,14 @@
         dass du es bist. Statt Finger oder Gesicht nimmt es auch die Geräte-PIN. Jeder, der
         dein Handy entsperren kann, kommt damit also auch in die App.
       </p>
+      <p>
+        <b>Einrichten klappt nicht?</b> Der Passkey landet im Passwortmanager deines Handys
+        (Android: meist der Google Passwortmanager, iPhone: iCloud-Schlüsselbund). Der muss
+        eingeschaltet und eingerichtet sein, und das Handy braucht eine Displaysperre. Beim
+        Google Passwortmanager heißt das: in Chrome mit deinem Google-Konto angemeldet und
+        die Synchronisierung bestätigt — sonst meldet die App „kam nicht an seinen
+        Passwortmanager heran“.
+      </p>
     </div>
 
     <q-banner dense class="hilfe-anmelden__merk">
