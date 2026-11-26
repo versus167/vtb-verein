@@ -506,3 +506,62 @@ def test_liste_umbenennen_entfernen():
     api.entfernen(info.id, _request(), user, db)
     assert api.meine_passkeys(user, db) == []
     assert "passkey_revoked" in db.access_log_repository.typen()
+
+
+# ------------------------------------------------------------ Diagnose
+
+def test_fehlschlag_beim_einrichten_steht_im_protokoll():
+    user = _user()
+    db = _db(user)
+    with pytest.raises(HTTPException):
+        _einrichten(db, user, origin="https://boese.example")
+    eintrag = db.access_log_repository.eintraege[-1]
+    assert eintrag["event_type"] == "passkey_register_failed"
+    assert eintrag["detail"].startswith("server: InvalidRegistrationResponse")
+
+
+def test_kaputte_antwort_gibt_400_statt_500():
+    user = _user()
+    db = _db(user)
+    options = api.registrieren_optionen(user, "sid", db)
+    antwort = Handy().registrieren(options)
+    antwort["response"]["attestationObject"] = b64(b"kein cbor")
+    with pytest.raises(HTTPException) as e:
+        api.registrieren(api.RegistrierenAntwort(credential=antwort), _request(),
+                         BackgroundTasks(), user, db)
+    assert e.value.status_code == 400
+    assert db.access_log_repository.typen()[-1] == "passkey_register_failed"
+
+
+def test_abgelaufene_einrichtung_steht_im_protokoll(monkeypatch):
+    user = _user()
+    db = _db(user)
+    monkeypatch.setattr(api, "CHALLENGE_MINUTEN", -1)
+    with pytest.raises(HTTPException):
+        _einrichten(db, user)
+    assert db.access_log_repository.eintraege[-1]["detail"] == "server: challenge"
+
+
+def test_geraetefehler_melden():
+    user = _user()
+    db = _db(user)
+    api.einrichten_fehler_melden(
+        api.ClientFehler(name="NotAllowedError", code="ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY",
+                         message="The operation either timed out or was not allowed."),
+        _request(), user, db)
+    eintrag = db.access_log_repository.eintraege[-1]
+    assert eintrag["event_type"] == "passkey_register_failed" and eintrag["user_id"] == user.id
+    assert eintrag["detail"] == ("geraet: NotAllowedError / ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY: "
+                                 "The operation either timed out or was not allowed.")
+
+
+def test_geraetefehler_ohne_angaben():
+    user = _user()
+    db = _db(user)
+    api.einrichten_fehler_melden(api.ClientFehler(), _request(), user, db)
+    assert db.access_log_repository.eintraege[-1]["detail"] == "geraet: unbekannt"
+
+
+def test_geraetefehler_laenge_begrenzt():
+    with pytest.raises(Exception):
+        api.ClientFehler(message="x" * 301)

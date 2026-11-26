@@ -213,11 +213,19 @@ def registrieren_optionen(user: CurrentUser, sid: CurrentSessionId, db: DB):
     return _options_json(options)
 
 
+def _einrichten_fehlgeschlagen(db, request: Request, user, grund: str) -> None:
+    """Fehlschläge beim Einrichten ins Zugriffsprotokoll – sonst sähe sie nur das
+    Server-Log, und das Mitglied bliebe mit „hat nicht geklappt" allein."""
+    _log_access(db, request, "passkey_register_failed", user_id=user.id,
+                username=user.username, detail=grund[:300])
+
+
 @router.post("/register/verify", response_model=PasskeyInfo)
 def registrieren(data: RegistrierenAntwort, request: Request, background: BackgroundTasks,
                  user: CurrentUser, db: DB):
     challenge = _challenge_aus_antwort(data.credential)
     if not challenge_einloesen(db, challenge, "register", user.id):
+        _einrichten_fehlgeschlagen(db, request, user, "server: challenge")
         raise HTTPException(status_code=400, detail="Die Einrichtung ist abgelaufen – bitte noch einmal.")
     try:
         ergebnis = verify_registration_response(
@@ -227,8 +235,9 @@ def registrieren(data: RegistrierenAntwort, request: Request, background: Backgr
             expected_origin=settings.WEBAUTHN_ORIGINS,
             require_user_verification=True,
         )
-    except WebAuthnException as exc:
-        logger.info("Passkey-Registrierung abgelehnt (user %s): %s", user.id, exc)
+    except Exception as exc:  # WebAuthnException, aber auch Parse-Fehler aus Fremdformaten
+        logger.info("Passkey-Registrierung abgelehnt (user %s): %r", user.id, exc)
+        _einrichten_fehlgeschlagen(db, request, user, f"server: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=400, detail="Passkey konnte nicht geprüft werden.")
 
     transports = data.credential.get("response", {}).get("transports") or []
@@ -251,6 +260,24 @@ def registrieren(data: RegistrierenAntwort, request: Request, background: Backgr
     if fresh and (fresh.email or "").strip() and _smtp_configured():
         background.add_task(_hinweis_mail, fresh.email, fresh.username, row["geraet_label"])
     return _info(row)
+
+
+class ClientFehler(BaseModel):
+    """Was der Browser beim Einrichten gemeldet hat. Diese Fehler entstehen im Handy
+    und erreichen den Server sonst nie."""
+    name: str | None = Field(default=None, max_length=80)
+    code: str | None = Field(default=None, max_length=80)
+    message: str | None = Field(default=None, max_length=300)
+
+
+@router.post("/register/fehler")
+def einrichten_fehler_melden(data: ClientFehler, request: Request, user: CurrentUser, db: DB):
+    teile = [t for t in (data.name, data.code) if t]
+    grund = f"geraet: {' / '.join(teile) or 'unbekannt'}"
+    if data.message:
+        grund += f": {data.message}"
+    _einrichten_fehlgeschlagen(db, request, user, grund)
+    return {"ok": True}
 
 
 @router.patch("/{passkey_id}", response_model=PasskeyInfo)
