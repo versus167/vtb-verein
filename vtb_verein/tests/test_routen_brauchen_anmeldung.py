@@ -43,6 +43,12 @@ OEFFENTLICH: dict[tuple[str, str], str] = {
     ("POST", "/api/auth/magic-link/code"):
         "Login-Code aus derselben Mail einlösen (#208) – für die installierte App, "
         "die den Link nicht abbekommt. 15 Minuten, 5 Versuche je Mail, IP-Bremse.",
+    ("POST", "/api/auth/passkey/login/options"):
+        "Challenge für die Anmeldung per Passkey – vor dem Login gibt es kein Konto. "
+        "Signiert statt gespeichert: schreibt nichts in die DB, verrät nichts.",
+    ("POST", "/api/auth/passkey/login/verify"):
+        "Passkey-Anmeldung einlösen – die Signatur des Geräts IST der Nachweis. "
+        "Challenge einmal einlösbar, Biometrie/PIN Pflicht, IP-Bremse.",
     ("GET", "/api/kalender/{token}.ics"):
         "ICS-Feed für Kalender-Clients, die sich nicht anmelden können. Der Token "
         "in der URL ist das Geheimnis (256 Bit, nur als Hash gespeichert).",
