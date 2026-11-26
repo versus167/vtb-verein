@@ -43,12 +43,25 @@ export async function passkeyMoeglich () {
   }
 }
 
+// Technische Kurzform eines Fehlers – hängt an der Meldung, damit man bei einem
+// Fehlschlag am Handy weiß, wo man suchen muss.
+function technisch (err) {
+  const teile = []
+  const name = err?.cause?.name || err?.name
+  if (name && name !== 'Error' && name !== 'AxiosError') teile.push(name)
+  if (err?.code && err.code !== name && !String(err.code).startsWith('ERR_BAD_')) teile.push(err.code)
+  if (err?.response?.status) teile.push(`HTTP ${err.response.status}`)
+  return teile.join(' · ')
+}
+
+function abgebrochen (err) {
+  const name = err?.cause?.name || err?.name
+  return name === 'NotAllowedError' || name === 'AbortError' || err?.code === 'ERROR_CEREMONY_ABORTED'
+}
+
 // Verständliche Meldung statt Browser-Fehlertext. `null` = abgebrochen, kein Hinweis nötig.
 function meldung (err, fallback) {
-  const name = err?.cause?.name || err?.name
-  if (name === 'NotAllowedError' || name === 'AbortError' || err?.code === 'ERROR_CEREMONY_ABORTED') {
-    return null
-  }
+  if (abgebrochen(err)) return null
   if (err?.code === 'ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED') {
     return 'Dieses Handy ist schon eingerichtet.'
   }
@@ -58,7 +71,8 @@ function meldung (err, fallback) {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string') return detail
   if (detail?.message) return detail.message
-  return fallback
+  const tech = technisch(err)
+  return tech ? `${fallback} (${tech})` : fallback
 }
 
 export class PasskeyFehler extends Error {
@@ -69,6 +83,18 @@ export class PasskeyFehler extends Error {
   }
 }
 
+// Fehler, die im Handy entstehen (oder als 5xx ohne eigenes Protokoll), dem Server
+// melden – sonst tauchen sie im Zugriffsprotokoll nie auf. Best effort.
+function fehlerMelden (err) {
+  const status = err?.response?.status
+  if (status && status < 500) return  // 4xx protokolliert der Server selbst
+  api.post('/api/auth/passkey/register/fehler', {
+    name: (err?.cause?.name || err?.name || '').slice(0, 80) || null,
+    code: (err?.code ? String(err.code) : '').slice(0, 80) || null,
+    message: (err?.cause?.message || err?.message || '').slice(0, 300) || null,
+  }).catch(() => {})
+}
+
 export async function passkeyEinrichten (name) {
   try {
     const { data: optionsJSON } = await api.post('/api/auth/passkey/register/options')
@@ -77,10 +103,20 @@ export async function passkeyEinrichten (name) {
     merkeEingerichtet(true)
     return data
   } catch (err) {
-    throw new PasskeyFehler(
-      meldung(err, 'Einrichten hat nicht geklappt.'),
-      err?.response?.data?.detail?.code,
-    )
+    const code = err?.response?.data?.detail?.code
+    if (code !== 'neu_anmelden') fehlerMelden(err)
+    // Beim Einrichten ist „abgelehnt" nicht immer ein Abbruch: Das Handy meldet
+    // denselben Fehler, wenn es keinen Passkey speichern kann (kein Passwort-
+    // manager, keine Displaysperre). Deshalb hier ein Hinweis statt Stille.
+    if (abgebrochen(err)) {
+      throw new PasskeyFehler(
+        'Abgebrochen – oder das Handy konnte keinen Passkey speichern. Ist eine ' +
+        'Displaysperre eingerichtet und der Passwortmanager (Google bzw. iCloud-' +
+        `Schlüsselbund) eingeschaltet? (${technisch(err)})`,
+        code,
+      )
+    }
+    throw new PasskeyFehler(meldung(err, 'Einrichten hat nicht geklappt.'), code)
   }
 }
 

@@ -177,6 +177,7 @@ const EVENT_META = {
   passkey_login: { label: 'Passkey Login', color: 'positive' },
   passkey_failed: { label: 'Passkey fehlgeschlagen', color: 'negative' },
   passkey_registered: { label: 'Passkey eingerichtet', color: 'info' },
+  passkey_register_failed: { label: 'Passkey-Einrichtung fehlgeschlagen', color: 'negative' },
   passkey_revoked: { label: 'Passkey entfernt', color: 'warning' },
   page_view: { label: 'Seitenaufruf', color: 'primary' },
   zugang_freigeschaltet: { label: 'Zugang freigeschaltet', color: 'positive' },
