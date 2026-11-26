@@ -22,6 +22,7 @@ from backend.core.security import pruefe_signaturschluessel, set_session_cookie
 from app.config.app_info import APP_NAME, get_app_version
 from app.services.anhang_service import ERLAUBTE_MIME_TYPEN, max_upload_mb
 from backend.api.auth import router as auth_router
+from backend.api.passkeys import router as passkeys_router
 from backend.api.mitglieder import router as mitglieder_router
 from backend.api.users import router as users_router
 from backend.api.personen import router as personen_router
@@ -221,6 +222,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/api")
+app.include_router(passkeys_router, prefix="/api")
 app.include_router(mitglieder_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(personen_router, prefix="/api")

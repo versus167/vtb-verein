@@ -39,6 +39,13 @@ export const useAuthStore = defineStore('auth', {
       this._applyUser(data)
     },
 
+    // Passkey (Fingerabdruck/Face ID): Die Zeremonie samt Server-Prüfung steckt in
+    // usePasskey – hier nur das Ergebnis übernehmen wie bei den anderen Wegen.
+    async loginWithPasskey(remember = true) {
+      const { passkeyAnmelden } = await import('src/composables/usePasskey')
+      this._applyUser(await passkeyAnmelden(remember))
+    },
+
     _applyUser(data) {
       // Server setzt das Session-Cookie; hier nur die User-Infos übernehmen.
       this.user = { id: data.id, username: data.username, display_name: data.display_name, role: data.role, permissions: data.permissions }

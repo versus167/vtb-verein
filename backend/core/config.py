@@ -1,7 +1,14 @@
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _ROOT = Path(__file__).parent.parent.parent  # Repo-Root
+
+
+def _origin(url: str) -> str:
+    """'https://app.example.org/pfad' → 'https://app.example.org' (Port bleibt)."""
+    teile = urlsplit(url)
+    return f"{teile.scheme}://{teile.netloc}"
 
 
 class Settings:
@@ -101,6 +108,18 @@ class Settings:
     # ersten Mail auf, eine stillschweigend geerbte Adresse nicht.
     MAIL_FROM: str = os.getenv("MAIL_FROM", "Beispielverein <noreply@example.org>")
     BASE_URL: str = os.getenv("BASE_URL", "http://localhost:9000")
+
+    # Passkeys (WebAuthn): Ein Passkey gilt nur für die Domain (RP-ID), auf der er
+    # angelegt wurde. Zieht die App auf eine andere Domain um, sind alle Passkeys
+    # ungültig und die Mitglieder melden sich per Login-Link an und richten ihr Handy
+    # neu ein. Default: Hostname bzw. Origin aus BASE_URL – überschreiben nur, wenn
+    # die App unter mehreren Adressen läuft (Origins kommagetrennt).
+    WEBAUTHN_RP_ID: str = (os.getenv("VTB_WEBAUTHN_RP_ID", "").strip()
+                           or urlsplit(BASE_URL).hostname or "localhost")
+    WEBAUTHN_ORIGINS: list[str] = [
+        o.strip() for o in os.getenv("VTB_WEBAUTHN_ORIGINS", "").split(",") if o.strip()
+    ] or [_origin(BASE_URL)]
+    WEBAUTHN_RP_NAME: str = os.getenv("VTB_WEBAUTHN_RP_NAME", "").strip() or VEREIN_NAME
 
     # TTLock / Zutrittskontrolle (ein Vereinskonto, Secrets nur aus Env/.env).
     # Dev-Account-Portal: euopen.ttlock.com; API-Host ist euapi.ttlock.com (NICHT euopen.*).

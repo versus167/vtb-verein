@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 
 from app.db.base_repository import in_sammeltransaktion
 
-SCHEMA_VERSION = 125
+SCHEMA_VERSION = 126
 
 
 # ---------------------------------------------------------------------------
@@ -2994,6 +2994,106 @@ _PUSH_SUBSCRIPTIONS_INDEXES = (
 
 
 # ============================================================================
+# Passkeys / WebAuthn (Schema v126): Anmeldung per Fingerabdruck/Face ID
+# ----------------------------------------------------------------------------
+# webauthn_credential: je Gerät (bzw. je synchronisiertem Schlüsselbund) ein
+# Passkey. Gespeichert wird nur der ÖFFENTLICHE Schlüssel – Biometrie verlässt
+# das Handy nie. Gerätebindung wie push_subscriptions: Soft-Revoke über
+# revoked_at/revoked_by + version-Bump, *_history per Audit-Trigger, Prune über
+# die LOG_REGISTRY (Frist ab revoked_at). sign_count/last_used_at laufen bei
+# jeder Anmeldung OHNE version-Bump mit (Aktivitätsnotiz, kein History-Wildwuchs).
+#
+# webauthn_challenge: Liste der EINGELÖSTEN Challenges (nur SHA-256-Hash). Der
+# Server gibt Challenges signiert und mit Ablaufzeit aus, ohne dabei in die DB zu
+# schreiben (der Login-Aufruf ist anonym – sonst ließe sich die Tabelle von außen
+# füllen). Der Unique-Index auf den Hash macht jede Challenge genau einmal
+# einlösbar, auch über mehrere Worker. Append-only, keine History. Beim Login ist
+# das Konto vorher unbekannt (Passkey ohne Kennung) – deshalb user_id NULL und
+# nicht auth_tokens, wo user_id Pflicht ist.
+# DDL/Trigger/Index-Konstanten geteilt zwischen Frischaufbau und Migration v125→v126.
+# ============================================================================
+_WEBAUTHN_CREDENTIAL_COLS = (
+    "id, version, user_id, credential_id, public_key, sign_count, transports, "
+    "aaguid, backed_up, geraet_label, user_agent, last_used_at, "
+    "revoked_at, revoked_by, created_at"
+)
+_WEBAUTHN_CREDENTIAL_VALS = ", ".join(
+    "NEW." + c.strip() for c in _WEBAUTHN_CREDENTIAL_COLS.split(",")
+)
+
+_DDL_WEBAUTHN = """
+    CREATE TABLE IF NOT EXISTS webauthn_credential (
+      id             SERIAL PRIMARY KEY,
+      user_id        INTEGER NOT NULL REFERENCES users(id),
+      credential_id  TEXT NOT NULL UNIQUE,
+      public_key     BYTEA NOT NULL,
+      sign_count     BIGINT NOT NULL DEFAULT 0,
+      transports     TEXT,
+      aaguid         TEXT,
+      backed_up      BOOLEAN NOT NULL DEFAULT FALSE,
+      geraet_label   TEXT,
+      user_agent     TEXT,
+      last_used_at   TIMESTAMPTZ,
+      revoked_at     TIMESTAMPTZ,
+      revoked_by     TEXT,
+      version        INTEGER NOT NULL DEFAULT 1,
+      created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS webauthn_credential_history (
+      id INTEGER NOT NULL, version INTEGER NOT NULL,
+      user_id INTEGER, credential_id TEXT, public_key BYTEA, sign_count BIGINT,
+      transports TEXT, aaguid TEXT, backed_up BOOLEAN, geraet_label TEXT,
+      user_agent TEXT, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+      revoked_by TEXT, created_at TEXT,
+      PRIMARY KEY (id, version)
+    );
+    CREATE TABLE IF NOT EXISTS webauthn_challenge (
+      id              BIGSERIAL PRIMARY KEY,
+      challenge_hash  TEXT NOT NULL UNIQUE,
+      zweck           TEXT NOT NULL CHECK (zweck IN ('register', 'login')),
+      user_id         INTEGER REFERENCES users(id),
+      expires_at      TIMESTAMPTZ NOT NULL,
+      used_at         TIMESTAMPTZ,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+"""
+
+_FN_WEBAUTHN_CREDENTIAL_AUDIT_INSERT = f"""
+    CREATE OR REPLACE FUNCTION fn_webauthn_credential_audit_insert() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        INSERT INTO webauthn_credential_history ({_WEBAUTHN_CREDENTIAL_COLS})
+        VALUES ({_WEBAUTHN_CREDENTIAL_VALS});
+        RETURN NEW;
+    END; $$;
+"""
+_FN_WEBAUTHN_CREDENTIAL_AUDIT_UPDATE = f"""
+    CREATE OR REPLACE FUNCTION fn_webauthn_credential_audit_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+    BEGIN
+        IF NEW.version != OLD.version THEN
+            INSERT INTO webauthn_credential_history ({_WEBAUTHN_CREDENTIAL_COLS})
+            VALUES ({_WEBAUTHN_CREDENTIAL_VALS});
+        END IF;
+        RETURN NEW;
+    END; $$;
+"""
+
+_WEBAUTHN_TRIGGERS = (
+    ('trig_webauthn_credential_audit_insert', 'INSERT', 'webauthn_credential',
+     'fn_webauthn_credential_audit_insert'),
+    ('trig_webauthn_credential_audit_update', 'UPDATE', 'webauthn_credential',
+     'fn_webauthn_credential_audit_update'),
+)
+
+_WEBAUTHN_INDEXES = (
+    ("idx_webauthn_credential_user_id",     "webauthn_credential(user_id)"),
+    ("idx_webauthn_credential_revoked_at",  "webauthn_credential(revoked_at)"),
+    ("idx_webauthn_credential_history_id",  "webauthn_credential_history(id)"),
+    ("idx_webauthn_challenge_user_id",      "webauthn_challenge(user_id)"),
+    ("idx_webauthn_challenge_expires_at",   "webauthn_challenge(expires_at)"),
+)
+
+
+# ============================================================================
 # Mannschafts-Termine (Schema v68, Spielbetrieb Etappe 1, #95)
 # ----------------------------------------------------------------------------
 # Termine (Training/Spiel/Sonstiges) je Mannschaft. Zugriff über die Kader-ACL
@@ -4276,6 +4376,7 @@ class Database:
             123: self._migrate_v122_to_v123,
             124: self._migrate_v123_to_v124,
             125: self._migrate_v124_to_v125,
+            126: self._migrate_v125_to_v126,
         }
         for target in range(current_version + 1, SCHEMA_VERSION + 1):
             fn = migration_map.get(target)
@@ -9269,6 +9370,28 @@ class Database:
             self._normalize_audit_timestamps(cur)
             cur.execute("UPDATE schema_version SET version = 125 WHERE id = 1")
 
+    def _migrate_v125_to_v126(self) -> None:
+        """Passkeys (WebAuthn): `webauthn_credential` (+History) und `webauthn_challenge`.
+
+        Reines DDL, keine Datenübernahme – Passkeys entstehen erst, wenn jemand im
+        Profil sein Handy einrichtet. DDL/Trigger/Indexe kommen aus denselben
+        Konstanten wie der Frischaufbau (Fresh == Migriert).
+        """
+        with self.cursor() as cur:
+            cur.execute(_DDL_WEBAUTHN)
+            cur.execute(_FN_WEBAUTHN_CREDENTIAL_AUDIT_INSERT)
+            cur.execute(_FN_WEBAUTHN_CREDENTIAL_AUDIT_UPDATE)
+            for name, event, table, fn in _WEBAUTHN_TRIGGERS:
+                cur.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
+                cur.execute(
+                    f"CREATE TRIGGER {name} AFTER {event} ON {table} "
+                    f"FOR EACH ROW EXECUTE FUNCTION {fn}()"
+                )
+            for name, target in _WEBAUTHN_INDEXES:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self._normalize_audit_timestamps(cur)
+            cur.execute("UPDATE schema_version SET version = 126 WHERE id = 1")
+
     @staticmethod
     def _seed_spielstaette_platzhalter(cur) -> None:
         """Die beiden Platzhalter-Spielstätten anlegen – idempotent.
@@ -10663,6 +10786,9 @@ class Database:
         # Web-Push-Subscriptions (Schema v67): geräte-gebundene Push-Abos +History.
         # DDL geteilt mit Migration v66→v67.
         cur.execute(_DDL_PUSH_SUBSCRIPTIONS)
+        # Passkeys (Schema v126): öffentliche Schlüssel je Gerät + Challenges.
+        # DDL geteilt mit Migration v125→v126.
+        cur.execute(_DDL_WEBAUTHN)
         # Mannschafts-Termine (Schema v68): Training/Spiel/Sonstiges je Mannschaft,
         # Zugriff über Kader-ACL. DDL geteilt mit Migration v67→v68.
         cur.execute(_DDL_TERMINE)
@@ -10909,6 +11035,8 @@ class Database:
             cur.execute(fn_sql)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_INSERT)
         cur.execute(_FN_PUSH_SUBSCRIPTIONS_AUDIT_UPDATE)
+        cur.execute(_FN_WEBAUTHN_CREDENTIAL_AUDIT_INSERT)
+        cur.execute(_FN_WEBAUTHN_CREDENTIAL_AUDIT_UPDATE)
         cur.execute(_FN_TERMINE_AUDIT_INSERT)
         cur.execute(_FN_TERMINE_AUDIT_UPDATE)
         cur.execute(_FN_TERMIN_ZUSAGE_AUDIT_INSERT)
@@ -11452,6 +11580,7 @@ class Database:
             *_CLUBDECKEL_TRIGGERS,
             *_CLUBDECKEL_EVENT_TRIGGERS,
             *_PUSH_SUBSCRIPTIONS_TRIGGERS,
+            *_WEBAUTHN_TRIGGERS,
             *_TERMINE_TRIGGERS,
             *_TERMIN_ZUSAGE_TRIGGERS,
             *_TERMIN_SERIE_TRIGGERS,
@@ -11588,6 +11717,7 @@ class Database:
             *_CLUBDECKEL_VORTRAG_INDEXES,
             *_TICKET_LOESCH_REF_INDEXES,
             *_PUSH_SUBSCRIPTIONS_INDEXES,
+            *_WEBAUTHN_INDEXES,
             *_TERMINE_INDEXES,
             *_TERMIN_ZUSAGE_INDEXES,
             *_TERMIN_SERIE_INDEXES,

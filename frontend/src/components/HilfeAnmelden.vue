@@ -4,8 +4,8 @@
        drin ist — stünde die Erklärung nur hinter dem Login, käme sie zu spät. -->
   <div class="hilfe-anmelden">
     <p>
-      Zum Anmelden gibt es <b>zwei Wege</b>. Beide führen zum selben Konto — du kannst
-      jederzeit wechseln.
+      Zum Anmelden gibt es <b>zwei Wege</b> — am Handy kommt ein dritter dazu. Alle führen
+      zum selben Konto, du kannst jederzeit wechseln.
     </p>
 
     <div class="hilfe-anmelden__weg">
@@ -41,6 +41,26 @@
       </p>
     </div>
 
+    <div class="hilfe-anmelden__weg">
+      <div class="text-weight-bold"><q-icon name="fingerprint" size="18px" /> Fingerabdruck / Face ID (nur am Handy)</div>
+      <p>
+        Bist du einmal angemeldet, kannst du dein Handy unter
+        <b>Mein Profil → Anmeldung per Fingerabdruck</b> einrichten. Danach reicht auf der
+        Anmeldeseite ein Tipp auf <i>Mit Fingerabdruck / Face ID</i> — kein Passwort, keine Mail.
+        Das klappt im Browser <b>und</b> in der installierten App.
+      </p>
+      <p>
+        Das Einrichten geht zur Sicherheit nur <b>direkt nach dem Anmelden</b> (innerhalb von
+        10 Minuten). Bist du schon länger drin, meldest du dich einmal ab und wieder an.
+        Du bekommst danach eine Mail, dass ein Passkey eingerichtet wurde.
+      </p>
+      <p class="text-caption text-grey">
+        Dein Fingerabdruck bzw. dein Gesicht verlässt das Handy nie — das Handy bestätigt nur,
+        dass du es bist. Statt Finger oder Gesicht nimmt es auch die Geräte-PIN. Jeder, der
+        dein Handy entsperren kann, kommt damit also auch in die App.
+      </p>
+    </div>
+
     <q-banner dense class="hilfe-anmelden__merk">
       <template #avatar><q-icon name="schedule" /></template>
       <div class="text-weight-bold">Der wichtigste Haken: „Angemeldet bleiben“</div>
@@ -68,7 +88,9 @@
     </p>
     <p>
       <b>Handy verloren?</b> Unter <b>Mein Profil → Meine Geräte</b> siehst du alle
-      angemeldeten Geräte und kannst mit einem Klick <i>alle anderen abmelden</i>.
+      angemeldeten Geräte und kannst mit einem Klick <i>alle anderen abmelden</i>. War das
+      Handy für den Fingerabdruck eingerichtet, entferne dort auch den Passkey unter
+      <b>Anmeldung per Fingerabdruck</b>.
     </p>
   </div>
 </template>

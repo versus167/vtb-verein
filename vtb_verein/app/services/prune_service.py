@@ -766,6 +766,8 @@ PRUNE_REGISTRY: tuple[PruneEntity, ...] = (
                     ChildRef("tuer_zutritt_log", "user_id"),
                     ChildRef("user_permissions", "user_id"),
                     ChildRef("user_sessions", "user_id"),
+                    ChildRef("webauthn_challenge", "user_id"),
+                    ChildRef("webauthn_credential", "user_id"),
                 )),
 )
 
@@ -1032,6 +1034,21 @@ LOG_REGISTRY: tuple[LogRule, ...] = (
             default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
     LogRule("push_subscriptions_history", "Push-Abo-Historie", "push_subscriptions_history",
             ts_expr="NULLIF(revoked_at, '')",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    # Passkeys (v126): aktive haben kein revoked_at -> nie fällig. In der History trägt
+    # nur die letzte Version eines widerrufenen Passkeys revoked_at; damit die früheren
+    # (Anlage, Umbenennungen) nicht ewig liegen bleiben, zählt für ALLE Versionen einer
+    # ID der Widerruf dieser ID – sie fallen gemeinsam.
+    LogRule("webauthn_credential", "Widerrufene Passkeys", "webauthn_credential",
+            ts_expr="revoked_at",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    LogRule("webauthn_credential_history", "Passkey-Historie", "webauthn_credential_history",
+            ts_expr="SELECT max(h.revoked_at) FROM webauthn_credential_history h "
+                    "WHERE h.id = webauthn_credential_history.id",
+            default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
+    # Challenges sind nach 5 Minuten wertlos – Frist ab Einlösung bzw. Ablauf.
+    LogRule("webauthn_challenge", "Passkey-Challenges", "webauthn_challenge",
+            ts_expr="COALESCE(used_at, expires_at)",
             default_days=DEFAULT_GERAET_NACHLAUF_DAYS, gruppe="Gerätebindungen"),
 
     # --- Historie von Einstellungs-Singletons ---
