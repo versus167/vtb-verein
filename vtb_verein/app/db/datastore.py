@@ -28,6 +28,7 @@ from app.db.permission_repository import PermissionRepository
 from app.db.auth_token_repository import AuthTokenRepository
 from app.db.user_session_repository import UserSessionRepository
 from app.db.push_subscription_repository import PushSubscriptionRepository
+from app.db.webauthn_repository import WebAuthnRepository
 from app.services.push_service import PushService
 from app.db.access_log_repository import AccessLogRepository
 from app.db.prune_einstellungen_repository import PruneEinstellungenRepository
@@ -281,6 +282,9 @@ class VereinsDB:
         # Kalender-Abos (#153): persönlicher ICS-Feed je User
         self._kalender_abo_repo = KalenderAboRepository(self.conn)
 
+        # Passkeys (Schema v126): Anmeldung per Fingerabdruck/Face ID
+        self._webauthn_repo = WebAuthnRepository(self.conn)
+
         # Mannschafts-Termine (#95, Spielbetrieb Etappe 1)
         self._termin_repo = TerminRepository(self.conn)
         # Termin-Zusagen/RSVP (#95, Etappe 2)
@@ -520,6 +524,11 @@ class VereinsDB:
     @property
     def kalender_abos(self) -> KalenderAboRepository:
         return self._kalender_abo_repo
+
+    # --- Passkeys (Schema v126) ---
+    @property
+    def webauthn(self) -> WebAuthnRepository:
+        return self._webauthn_repo
 
     # --- Mannschafts-Termine (#95, Spielbetrieb Etappe 1) ---
     @property
