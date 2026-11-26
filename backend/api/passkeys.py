@@ -4,7 +4,7 @@ Ein vierter Login-Weg neben Passwort, Login-Link und Login-Code. Er endet in
 derselben Session-Anlage (`auth._login_session`), Geräteliste, „Angemeldet bleiben"
 und Abmelden funktionieren also unverändert.
 
-Biometrie verlässt das Handy nie: Das Gerät prüft Finger/Gesicht (oder die
+Biometrie verlässt das Gerät nie: Das Gerät prüft Finger/Gesicht (oder die
 Geräte-PIN – unterscheiden lässt sich das nicht) und signiert damit eine Challenge
 des Servers. Hier liegt nur der öffentliche Schlüssel.
 
@@ -263,7 +263,7 @@ def registrieren(data: RegistrierenAntwort, request: Request, background: Backgr
 
 
 class ClientFehler(BaseModel):
-    """Was der Browser beim Einrichten gemeldet hat. Diese Fehler entstehen im Handy
+    """Was der Browser beim Einrichten gemeldet hat. Diese Fehler entstehen im Gerät
     und erreichen den Server sonst nie."""
     name: str | None = Field(default=None, max_length=80)
     code: str | None = Field(default=None, max_length=80)
@@ -306,7 +306,7 @@ def entfernen(passkey_id: int, request: Request, user: CurrentUser, db: DB):
 
 @router.post("/login/options")
 def anmelden_optionen():
-    """Ohne Kennung: Das Handy zeigt selbst an, welche Passkeys es für die Domain
+    """Ohne Kennung: Das Gerät (bzw. der Browser) zeigt selbst an, welche Passkeys es für die Domain
     hat. Schreibt nichts in die DB (s. Moduldoku)."""
     options = generate_authentication_options(
         rp_id=settings.WEBAUTHN_RP_ID,
@@ -340,9 +340,9 @@ def anmelden(data: AnmeldenAntwort, request: Request, response: Response, db=Dep
     credential_id = data.credential.get("id") if isinstance(data.credential.get("id"), str) else None
     cred = db.webauthn.aktiv_nach_credential_id(credential_id) if credential_id else None
     if cred is None:
-        # Typisch: Passkey im Profil entfernt, im Handy aber noch gespeichert.
+        # Typisch: Passkey im Profil entfernt, im Gerät aber noch gespeichert.
         raise fehler("unbekannt", meldung="Dieser Passkey ist hier nicht (mehr) eingerichtet. "
-                                          "Bitte mit Login-Link anmelden und das Handy neu einrichten.")
+                                          "Bitte mit Login-Link anmelden und das Gerät neu einrichten.")
 
     challenge = _challenge_aus_antwort(data.credential)
     if not challenge_einloesen(db, challenge, "login"):
