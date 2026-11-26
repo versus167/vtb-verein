@@ -326,9 +326,9 @@
           />
         </ProfilPanel>
 
-        <!-- Passkeys: Anmeldung per Fingerabdruck/Face ID. Einrichten nur am Handy;
-             die Liste erscheint überall, damit man einen Passkey auch vom Laptop
-             aus entfernen kann (z. B. nach Handy-Verlust). -->
+        <!-- Passkeys: Anmeldung per Fingerabdruck/Face ID/Windows Hello. Einrichten auf
+             Geräten mit eingebautem Sensor bzw. Geräte-PIN; die Liste erscheint
+             überall, damit man einen Passkey auch von woanders entfernen kann. -->
         <ProfilPanel
           v-if="passkeyGeraet || passkeys.length"
           icon="fingerprint"
@@ -336,15 +336,16 @@
           :info="passkeyInfo"
         >
           <div class="text-caption text-grey-7 q-mb-md">
-            Melde dich am Handy per Fingerabdruck oder Gesichtserkennung an – ohne Passwort
-            und ohne Login-Mail. Dein Fingerabdruck bleibt dabei auf dem Handy; die App
-            bekommt ihn nie zu sehen.
+            Melde dich per Fingerabdruck, Gesichtserkennung oder Geräte-PIN an – ohne Passwort
+            und ohne Login-Mail. Dein Fingerabdruck bleibt dabei auf dem Gerät; die App
+            bekommt ihn nie zu sehen. Ein Passkey vom Handy funktioniert oft auch am Rechner
+            (über den Passwortmanager oder „Mit Handy anmelden").
           </div>
 
           <q-btn
             v-if="passkeyGeraet"
             class="full-width q-mb-md"
-            label="Dieses Handy einrichten"
+            :label="istHandy ? 'Dieses Handy einrichten' : 'Dieses Gerät einrichten'"
             icon="add"
             color="primary"
             unelevated
@@ -567,7 +568,7 @@ import { useAuthStore } from 'src/stores/auth'
 import { ibanRule, normalizeIban, isValidIban } from 'src/utils/iban'
 import { formatDateTime } from 'src/utils/datetime'
 import ProfilPanel from 'components/ProfilPanel.vue'
-import { passkeyEinrichten, passkeyMoeglich } from 'src/composables/usePasskey'
+import { istHandy, passkeyEinrichten, passkeyEinrichtenMoeglich } from 'src/composables/usePasskey'
 import KontakteEditor from 'components/KontakteEditor.vue'
 
 const $q = useQuasar()
@@ -1051,7 +1052,7 @@ async function onPasskeyEinrichten() {
         title: 'Bitte kurz neu anmelden',
         message: 'Zur Sicherheit geht das Einrichten nur direkt nach dem Anmelden. ' +
           'Melde dich einmal ab und wieder an (Passwort, Login-Link oder Code) und ' +
-          'richte das Handy dann gleich hier ein.',
+          'richte das Gerät dann gleich hier ein.',
         ok: { label: 'Jetzt abmelden', color: 'primary', noCaps: true },
         cancel: { label: 'Später', flat: true, noCaps: true },
       }).onOk(async () => {
@@ -1085,7 +1086,7 @@ function onPasskeyEntfernen(p) {
   $q.dialog({
     title: 'Passkey entfernen?',
     message: `„${p.name}" kann sich danach nicht mehr per Fingerabdruck anmelden. ` +
-      'Im Schlüsselbund des Handys kannst du den Eintrag anschließend auch löschen.',
+      'Im Passwortmanager des Geräts kannst du den Eintrag anschließend auch löschen.',
     cancel: true,
     persistent: true,
   }).onOk(async () => {
@@ -1107,7 +1108,7 @@ onMounted(async () => {
   load()
   loadSessions()
   loadPasskeys()
-  passkeyGeraet.value = await passkeyMoeglich()
+  passkeyGeraet.value = await passkeyEinrichtenMoeglich()
 })
 </script>
 

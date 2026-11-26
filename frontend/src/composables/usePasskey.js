@@ -1,9 +1,10 @@
 // Anmeldung per Passkey (Fingerabdruck/Face ID über WebAuthn).
 //
-// Das Handy prüft Finger/Gesicht (oder die Geräte-PIN) selbst und signiert damit
-// eine Challenge des Servers – Biometrie verlässt das Gerät nie. Angeboten wird
-// das nur am Handy: Der Server würde auch Laptops mit Windows Hello/Touch ID
-// akzeptieren, die Oberfläche beschränkt sich aber bewusst aufs Handy.
+// Das Gerät prüft Finger/Gesicht (oder die Geräte-PIN) selbst und signiert damit
+// eine Challenge des Servers – Biometrie verlässt das Gerät nie. Anfangs nur am
+// Handy angeboten, seit v2026.11.26.308 auch am Rechner: Dort taugt ein über den
+// Passwortmanager synchronisierter Handy-Passkey, „Mit Handy anmelden" per QR-Code
+// oder ein eigener Passkey über Windows Hello/Touch ID.
 //
 // Der Passkey liegt im Schlüsselbund des Systems (iCloud/Google), nicht im
 // Cookie-Speicher des Browsers. Deshalb gilt er im Browser UND in der installierten
@@ -33,9 +34,20 @@ function merkeEingerichtet (ja) {
   } catch { /* egal */ }
 }
 
-// Nur am Handy und nur, wenn es einen eingebauten Sensor mit Biometrie/PIN gibt.
-export async function passkeyMoeglich () {
-  if (!Platform.is.mobile || !browserSupportsWebAuthn()) return false
+// Am Handy heißt es „Fingerabdruck", am Rechner „Passkey" – dort ist der Fingerabdruck
+// eher die Ausnahme, und der Passkey kommt oft vom Handy.
+export const istHandy = Platform.is.mobile
+
+// Anmelden geht in jedem Browser mit WebAuthn: Ohne eigenen Sensor bietet der Browser
+// selbst „Mit Handy anmelden" (QR-Code) an.
+export function passkeyAnmeldenMoeglich () {
+  return browserSupportsWebAuthn()
+}
+
+// Einrichten nur mit eingebautem Sensor bzw. Geräte-PIN (Fingerabdruck, Face ID,
+// Windows Hello, Touch ID) – der Server verlangt einen Plattform-Passkey.
+export async function passkeyEinrichtenMoeglich () {
+  if (!browserSupportsWebAuthn()) return false
   try {
     return await platformAuthenticatorIsAvailable()
   } catch {
