@@ -16,10 +16,10 @@ export default boot(({ app, router }) => {
     (response) => response,
     (error) => {
       // 401 von den Anmelde-Endpunkten heißt „Nachweis falsch" (Passwort, Link,
-      // Code), nicht „Sitzung abgelaufen" – die Seite zeigt den Fehler selbst.
-      // Sonst landet ein verbrauchter Login-Link wortlos auf /login und meldet
-      // eine im Browser noch gültige Sitzung obendrein lokal ab (#208).
-      const anmeldung = /^\/api\/auth\/(login|magic-link\/)/.test(error.config?.url ?? '')
+      // Code, Passkey), nicht „Sitzung abgelaufen" – die Seite zeigt den Fehler
+      // selbst. Sonst landet ein verbrauchter Login-Link wortlos auf /login und
+      // meldet eine im Browser noch gültige Sitzung obendrein lokal ab (#208).
+      const anmeldung = /^\/api\/auth\/(login|magic-link\/|passkey\/login\/)/.test(error.config?.url ?? '')
       // Die Sitzungsprüfung beim Start (#216) räumt selbst auf; eine Umleitung
       // hier liefe vor der ersten Navigation des Routers.
       const still = error.config?.ohneAnmeldeUmleitung === true

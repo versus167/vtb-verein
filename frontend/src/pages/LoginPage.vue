@@ -12,6 +12,33 @@
         </q-card-section>
 
         <q-card-section>
+          <!-- Passkey (nur am Handy): Fingerabdruck/Face ID statt Passwort oder Mail.
+               Ist das Handy schon eingerichtet, ist das der Hauptweg; sonst nur ein
+               Hinweis-Knopf, weil man es erst im Profil einrichten muss. -->
+          <div v-if="passkeyVerfuegbar" class="q-mb-md">
+            <q-btn
+              :unelevated="passkeyHier"
+              :outline="!passkeyHier"
+              :color="passkeyHier ? 'vtb-gelb' : 'white'"
+              :text-color="passkeyHier ? 'primary' : 'white'"
+              icon="fingerprint"
+              label="Mit Fingerabdruck / Face ID"
+              no-caps
+              class="full-width login-btn text-weight-bold"
+              size="lg"
+              :loading="passkeyLaeuft"
+              :disable="loading"
+              @click="onPasskeyLogin"
+            />
+            <div v-if="!passkeyHier" class="text-caption text-center login-hint q-mt-xs">
+              Einmal angemeldet, kannst du dein Handy unter „Mein Profil" dafür einrichten.
+            </div>
+            <div v-if="passkeyFehler" class="login-error text-center text-body2 q-mt-sm">
+              {{ passkeyFehler }}
+            </div>
+            <div class="login-oder text-caption q-mt-md">oder</div>
+          </div>
+
           <q-tabs
             v-model="tab"
             dense
@@ -257,6 +284,7 @@ import { ladeAppInfo, versionLabel, vereinName } from 'src/composables/useAppInf
 import { zurUebersicht } from 'src/router/nach-login'
 import { pruefeMailadresse } from 'src/utils/email'
 import HilfeAnmelden from 'components/HilfeAnmelden.vue'
+import { passkeyHierEingerichtet, passkeyMoeglich } from 'src/composables/usePasskey'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -323,6 +351,34 @@ onMounted(() => {
 
 const loading = ref(false)
 const errorMsg = ref('')
+
+// Passkey (Fingerabdruck/Face ID) – nur am Handy mit eingebautem Sensor.
+const passkeyVerfuegbar = ref(false)
+const passkeyHier = ref(passkeyHierEingerichtet())
+const passkeyLaeuft = ref(false)
+const passkeyFehler = ref('')
+
+onMounted(async () => {
+  passkeyVerfuegbar.value = await passkeyMoeglich()
+})
+
+async function onPasskeyLogin () {
+  passkeyFehler.value = ''
+  errorMsg.value = ''
+  passkeyLaeuft.value = true
+  try {
+    // Am eigenen Handy angemeldet bleiben – wer den Finger auflegen kann, hat das Gerät.
+    await auth.loginWithPasskey(true)
+  } catch (err) {
+    passkeyHier.value = passkeyHierEingerichtet()
+    if (!err.abgebrochen) passkeyFehler.value = err.message || 'Anmeldung fehlgeschlagen'
+    passkeyLaeuft.value = false
+    return
+  }
+  vergissOffeneAnforderung()
+  // Wie bei den anderen Wegen: erst fertig, wenn die Übersicht steht (#157).
+  await zurUebersicht(router)
+}
 
 async function onReloadApp() {
   if ('caches' in window) {
@@ -540,6 +596,20 @@ async function onLoginWithCode() {
 }
 :deep(.q-field--outlined:hover .q-field__control:before) {
   border-color: $akzent;
+}
+
+/* Trenner „oder" zwischen Passkey-Knopf und den übrigen Wegen */
+.login-oder {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  &::before,
+  &::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid rgba(255, 255, 255, 0.25);
+  }
 }
 
 /* Tab-Panels ohne eigenen Hintergrund (sonst Kasten auf der blauen Karte) */
