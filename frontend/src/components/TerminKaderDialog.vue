@@ -33,20 +33,23 @@
           </template>
         </q-select>
 
-        <!-- Ein Klick statt zehn: alle mit dieser Funktion in die Auswahl.
-             Schnappschuss – wer die Funktion später bekommt, ist nicht dabei. -->
-        <div v-if="funktionOptionen.length" class="row items-center q-gutter-xs q-mt-sm">
-          <span class="text-caption text-grey-7">Nach Funktion:</span>
-          <q-chip v-for="f in funktionOptionen" :key="f" clickable outline dense
-            color="primary" :disable="busy" @click="funktionUebernehmen(f)">
-            {{ f }}
-          </q-chip>
-        </div>
-
         <div class="row items-center q-gutter-sm q-mt-sm">
           <q-btn color="primary" unelevated no-caps icon="mail"
             :label="einladungAuswahl.length ? `${einladungAuswahl.length} einladen` : 'Einladen'"
             :disable="!einladungAuswahl.length || busy" :loading="busy" @click="einladen" />
+          <!-- Ein Klick statt zehn: alle mit dieser Funktion in die Auswahl.
+               Schnappschuss – wer die Funktion später bekommt, ist nicht dabei.
+               Als Menü statt Chip-Wolke, die auf dem Handy den halben Kopf
+               belegt und die Liste wegdrückt (#219). -->
+          <q-btn-dropdown v-if="funktionOptionen.length" outline color="primary" no-caps
+            icon="badge" label="Nach Funktion" :disable="busy">
+            <q-list dense style="min-width: 200px">
+              <q-item v-for="f in funktionOptionen" :key="f" clickable v-close-popup
+                @click="funktionUebernehmen(f)">
+                <q-item-section>{{ f }}</q-item-section>
+              </q-item>
+            </q-list>
+          </q-btn-dropdown>
           <q-btn v-if="einladungAuswahl.length" flat dense no-caps label="Auswahl leeren"
             :disable="busy" @click="einladungAuswahl = []" />
         </div>
