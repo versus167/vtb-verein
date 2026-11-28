@@ -495,8 +495,18 @@
           </q-item>
         </q-card>
 
-        <q-list bordered separator class="rounded-borders">
-          <q-item v-for="s in saldenOhneBank" :key="s.mitglied_id">
+        <!-- Wie eine Ligatabelle: Plätze und Zonen (#218) -->
+        <q-list v-if="saldenOhneBank.length" bordered separator class="rounded-borders">
+          <template v-for="z in tabellenZonen" :key="z.key">
+          <q-item-label header class="row items-center no-wrap q-py-sm text-weight-bold"
+            :class="z.key === 'abstieg' ? 'text-negative' : ''">
+            <q-icon :name="z.icon" size="18px" class="q-mr-xs" />
+            {{ z.titel }}
+          </q-item-label>
+          <q-item v-for="s in z.eintraege" :key="s.mitglied_id">
+            <q-item-section side class="tt-platz text-weight-bold">
+              {{ s.platz }}.
+            </q-item-section>
             <q-item-section>
               <q-item-label :class="{ 'text-weight-bold': s.mitglied_id === deckel.mein_mitglied_id }">
                 {{ s.mitglied_name }}
@@ -513,8 +523,9 @@
               </span>
             </q-item-section>
           </q-item>
+          </template>
         </q-list>
-        <div v-if="!saldenOhneBank.length" class="text-grey q-mt-md">
+        <div v-else class="text-grey q-mt-md">
           Noch keine Buchungen.
         </div>
       </div>
@@ -1299,6 +1310,37 @@ const bankEintrag = computed(() => {
 const saldenOhneBank = computed(() =>
   salden.value.filter(s => s.mitglied_id !== bankMitgliedId.value),
 )
+
+// Tabelle als Ligatabelle (#218). Platz wie im Sport: Gleicher Saldo = gleicher
+// Platz, der nächste zählt weiter (1., 2., 2., 4.). Zonen:
+//   Champions League – Plätze 1–3, aber nur mit Guthaben
+//   1. Liga / Kreisklasse – übrige im Plus (inkl. 0 €), obere/untere Hälfte;
+//                          Gleichstand an der Grenze geht nach oben
+//   Abstiegszone – alle im Minus
+const TABELLEN_ZONEN = [
+  { key: 'cl', titel: 'Champions League', icon: 'emoji_events' },
+  { key: 'liga', titel: '1. Liga', icon: 'sports_soccer' },
+  { key: 'kreis', titel: 'Kreisklasse', icon: 'grass' },
+  { key: 'abstieg', titel: 'Abstiegszone', icon: 'trending_down' },
+]
+const tabellenZonen = computed(() => {
+  const liste = [...saldenOhneBank.value]
+    .map(s => ({ ...s, wert: Number(s.saldo) }))
+    .sort((a, b) => b.wert - a.wert)
+  const mehrAls = (wert, menge) => menge.filter(x => x.wert > wert).length
+  liste.forEach(s => { s.platz = mehrAls(s.wert, liste) + 1 })
+  const istCl = s => s.wert > 0 && s.platz <= 3
+  const rest = liste.filter(s => s.wert >= 0 && !istCl(s))
+  const ligaPlaetze = Math.ceil(rest.length / 2)
+  const zoneVon = (s) => {
+    if (s.wert < 0) return 'abstieg'
+    if (istCl(s)) return 'cl'
+    return mehrAls(s.wert, rest) < ligaPlaetze ? 'liga' : 'kreis'
+  }
+  return TABELLEN_ZONEN
+    .map(z => ({ ...z, eintraege: liste.filter(s => zoneVon(s) === z.key) }))
+    .filter(z => z.eintraege.length)
+})
 
 // Beitrag „aktiv" = Kader-Mitglied ohne Befreiung (Opt-out). Der Sammellauf bucht
 // den Monatsbeitrag am Monatsersten für genau diese Mitglieder.
@@ -2637,6 +2679,15 @@ body.body--dark .tt-artikel-row + .tt-artikel-row {
 // Bank-Karte (Zahlungsempfänger) in den Salden mit gelbem Akzent abgesetzt (#127)
 .tt-bank-card {
   border-left: 4px solid $akzent;
+}
+
+// Platzziffer der Tabelle (#218): feste Breite, damit die Namen bündig stehen
+// (auch bei zweistelligen Plätzen).
+.tt-platz {
+  min-width: 32px;
+  padding-right: 8px;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
 // ── Buchungsmatrix (#167) ────────────────────────────────────────────────────
